@@ -130,17 +130,25 @@ async function viewerChildVisibleInListing({
 export function createViewerReadOnlyFilesystem({
   fs,
   readPolicy,
+  authorize,
 }: {
   fs: ConatFilesystem;
   readPolicy: ProjectViewerReadPolicy;
+  authorize?: () => Promise<void>;
 }): ConatFilesystem {
+  const authorized = async () => await authorize?.();
   return {
-    constants: async () => await fs.constants(),
+    constants: async () => {
+      await authorized();
+      return await fs.constants();
+    },
     describeFile: async (path: string) => {
+      await authorized();
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.describeFile(path);
     },
     exists: async (path: string) => {
+      await authorized();
       try {
         await assertViewerPathAllowed({ fs, readPolicy, path });
       } catch {
@@ -149,6 +157,7 @@ export function createViewerReadOnlyFilesystem({
       return await fs.exists(path);
     },
     getListing: async (path: string) => {
+      await authorized();
       const canonical = await canonicalProjectRelativePath({ fs, path });
       if (canonical == null) {
         throw viewerAccessDenied(path);
@@ -182,14 +191,17 @@ export function createViewerReadOnlyFilesystem({
       return { ...listing, files: filtered };
     },
     lstat: async (path: string) => {
+      await authorized();
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.lstat(path);
     },
     readFile: async (path: string, encoding?: string, lock?: number) => {
+      await authorized();
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.readFile(path, encoding, lock);
     },
     readdir: async (path: string, options?: any) => {
+      await authorized();
       if (options?.recursive) {
         throw new Error("recursive viewer directory listing is not supported");
       }
@@ -222,16 +234,20 @@ export function createViewerReadOnlyFilesystem({
       return allowed as any;
     },
     readlink: async (path: string) => {
+      await authorized();
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.readlink(path);
     },
     realpath: async (path: string) => {
+      await authorized();
       return await assertViewerPathAllowed({ fs, readPolicy, path });
     },
     canonicalSyncIdentityPath: async (path: string) => {
+      await authorized();
       return await assertViewerPathAllowed({ fs, readPolicy, path });
     },
     stat: async (path: string) => {
+      await authorized();
       await assertViewerPathAllowed({ fs, readPolicy, path });
       return await fs.stat(path);
     },

@@ -24,6 +24,7 @@ owns the local connection and token mechanics.
 
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
+import type { AgentFileGrantSubject } from "@cocalc/conat/agents/file-grants";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -334,6 +335,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
   public_directory_share_id,
   ttl_seconds,
   browser_session_exp_s,
+  file_grant,
   loadHostForListing,
 }: {
   account_id: string;
@@ -342,6 +344,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
   public_directory_share_id?: string;
   ttl_seconds?: number;
   browser_session_exp_s?: number;
+  file_grant?: AgentFileGrantSubject;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<{
   host_id: string;
@@ -369,6 +372,25 @@ export async function issueProjectHostAuthTokenLocalHelper({
       project_id,
       expected_host_id: host_id,
     });
+  }
+
+  if (file_grant) {
+    if (
+      account_id !== file_grant.account_id ||
+      project_id !== file_grant.target_project_id ||
+      browser_session_exp_s != null
+    ) {
+      throw new Error("invalid agent file grant token request");
+    }
+    const { token, expires_at } = issueProjectHostAuthTokenJwt({
+      account_id,
+      host_id,
+      ttl_seconds,
+      auth_actor: "agent",
+      file_grant,
+      private_key: getProjectHostAuthTokenPrivateKey(),
+    });
+    return { host_id, token, expires_at };
   }
 
   const { token, expires_at } = issueProjectHostAuthTokenJwt({

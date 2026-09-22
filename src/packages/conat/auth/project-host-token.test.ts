@@ -12,6 +12,14 @@ import {
 const hostId = "00000000-0000-4000-8000-000000000001";
 const accountId = "00000000-0000-4000-8000-000000000002";
 const sessionId = "00000000-0000-4000-8000-000000000003";
+const fileGrant = {
+  account_id: accountId,
+  target_project_id: "00000000-0000-4000-8000-000000000004",
+  source_project_id: "00000000-0000-4000-8000-000000000005",
+  grant_id: "00000000-0000-4000-8000-000000000006",
+  agent_id: "00000000-0000-4000-8000-000000000007",
+  run_id: "00000000-0000-4000-8000-000000000008",
+};
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const privateKeyPem = privateKey
   .export({
@@ -112,5 +120,43 @@ describe("project-host agent session tokens", () => {
         now_ms: 1_000_000,
       }),
     ).toThrow("invalid browser session expiration");
+  });
+
+  it("binds an agent file grant into a distinct signed token version", () => {
+    const issued = issueProjectHostAuthToken({
+      host_id: hostId,
+      account_id: accountId,
+      private_key: privateKeyPem,
+      auth_actor: "agent",
+      file_grant: fileGrant,
+    });
+    expect(
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: hostId,
+        public_key: publicKeyPem,
+      }),
+    ).toMatchObject({
+      v: "phat-v3",
+      auth_actor: "agent",
+      file_grant: fileGrant,
+    });
+  });
+
+  it("rejects file grants on human tokens", () => {
+    const issued = issueProjectHostAuthToken({
+      host_id: hostId,
+      account_id: accountId,
+      private_key: privateKeyPem,
+      auth_actor: "account",
+      file_grant: fileGrant,
+    });
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: hostId,
+        public_key: publicKeyPem,
+      }),
+    ).toThrow("invalid file grant token");
   });
 });

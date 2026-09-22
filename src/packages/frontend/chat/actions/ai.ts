@@ -12,6 +12,7 @@ import { processAcpLLM } from "../acp-api";
 import type { ChatActions } from "../actions";
 import type { ChatMessage } from "../types";
 import { contextForVmToolbox } from "@cocalc/frontend/agents/vm-toolbox-service";
+import { contextForFileGrants } from "@cocalc/frontend/agents/file-grants-service";
 
 export async function processAI({
   actions,
@@ -84,12 +85,21 @@ export async function processAI({
           threadId: threadIdForThread,
         })
       : "";
+  const fileGrantsContext =
+    threadIdForThread && toolboxProjectId && toolboxPath
+      ? await contextForFileGrants({
+          accountId: message.sender_id,
+          projectId: toolboxProjectId,
+          path: toolboxPath,
+          threadId: threadIdForThread,
+        })
+      : "";
 
   await processAcpLLM({
     actions,
     message,
     model,
-    input: [acpPromptOverride || input, toolboxContext]
+    input: [acpPromptOverride || input, toolboxContext, fileGrantsContext]
       .filter(Boolean)
       .join("\n\n"),
     sendMode: effectiveAcpSendMode,

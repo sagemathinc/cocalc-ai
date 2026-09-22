@@ -656,6 +656,7 @@ export interface IssueProjectHostAuthTokenRequest {
   public_directory_share_id?: string;
   ttl_seconds?: number;
   browser_session_exp_s?: number;
+  file_grant?: import("@cocalc/conat/agents/file-grants").AgentFileGrantSubject;
 }
 
 export interface IssueProjectHostAuthTokenResponse {

@@ -2615,6 +2615,7 @@ export async function issueProjectHostAuthTokenLocal({
   public_directory_share_id,
   ttl_seconds,
   browser_session_exp_s,
+  file_grant,
 }: {
   account_id?: string;
   actor?: "account" | "hub";
@@ -2623,6 +2624,7 @@ export async function issueProjectHostAuthTokenLocal({
   public_directory_share_id?: string;
   ttl_seconds?: number;
   browser_session_exp_s?: number;
+  file_grant?: import("@cocalc/conat/agents/file-grants").AgentFileGrantSubject;
 }): Promise<{
   host_id: string;
   token: string;
@@ -2642,8 +2644,36 @@ export async function issueProjectHostAuthTokenLocal({
     public_directory_share_id,
     ttl_seconds,
     browser_session_exp_s,
+    file_grant,
     loadHostForListing,
   });
+}
+
+export async function issueProjectHostFileGrantToken({
+  account_id,
+  host_id,
+  project_id,
+  file_grant,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id: string;
+  file_grant: import("@cocalc/conat/agents/file-grants").AgentFileGrantSubject;
+}) {
+  const hostBay = await resolveHostBay(host_id);
+  const request = {
+    account_id,
+    host_id,
+    project_id,
+    ttl_seconds: 60,
+    file_grant,
+  };
+  if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectHostAuthToken(hostBay.bay_id)
+      .issue(request);
+  }
+  return issueProjectHostAuthTokenLocal(request);
 }
 
 export async function issueProjectHostAgentAuthToken({

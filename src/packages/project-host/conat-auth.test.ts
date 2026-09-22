@@ -49,6 +49,10 @@ import {
   BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE,
   browserRuntimePresenceSubject,
 } from "@cocalc/conat/project-host/browser-runtime-presence";
+import {
+  agentFileGrantInboxPrefix,
+  agentFileGrantSubject,
+} from "@cocalc/conat/agents/file-grants";
 
 describe("project-host Conat auth", () => {
   const host_id = "00000000-1000-4000-8000-000000000099";
@@ -343,6 +347,67 @@ describe("project-host Conat auth", () => {
         type: "pub",
         subject: `fs-viewer.project-${project_id}.account-00000000-1000-4000-8000-000000000002`,
       }),
+    ).resolves.toBe(false);
+  });
+
+  it("restricts an agent file credential to its exact signed subject", async () => {
+    const binding = {
+      account_id,
+      target_project_id: project_id,
+      source_project_id: "00000000-1000-4000-8000-000000000010",
+      grant_id: "00000000-1000-4000-8000-000000000011",
+      agent_id: "00000000-1000-4000-8000-000000000012",
+      run_id: "00000000-1000-4000-8000-000000000013",
+    };
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "agent",
+      file_grant: binding,
+    });
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "owner" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    const user = await getUser({
+      handshake: { auth: { bearer: "signed-file-grant" }, headers: {} },
+    } as any);
+    const subject = agentFileGrantSubject(binding);
+
+    await expect(isAllowed({ user, type: "pub", subject })).resolves.toBe(true);
+    await expect(isAllowed({ user, type: "sub", subject })).resolves.toBe(
+      false,
+    );
+    await expect(
+      isAllowed({
+        user,
+        type: "sub",
+        subject: `${agentFileGrantInboxPrefix(binding)}.client.reply`,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      isAllowed({
+        user,
+        type: "sub",
+        subject: `${agentFileGrantInboxPrefix({
+          ...binding,
+          run_id: "00000000-1000-4000-8000-000000000014",
+        })}.client.reply`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user,
+        type: "pub",
+        subject: agentFileGrantSubject({
+          ...binding,
+          run_id: "00000000-1000-4000-8000-000000000014",
+        }),
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({ user, type: "pub", subject: `fs.project-${project_id}` }),
     ).resolves.toBe(false);
   });
 

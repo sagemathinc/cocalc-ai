@@ -27,6 +27,10 @@ import {
   type AgentInspectionResult,
   type AgentCredential,
 } from "@cocalc/conat/agents/protocol";
+import type {
+  AgentFileGrant,
+  PreparedAgentFileGrant,
+} from "@cocalc/conat/agents/file-grants";
 
 export function validateIdentityCredential(value: AgentCredential): void {
   if (
@@ -89,9 +93,22 @@ export function sendIdentityMessage(
   apiUrl?: string,
 ): Promise<AgentRpcPreparation>;
 export function sendIdentityMessage(
+  request: Extract<AgentRpcRequest, { action: "file-grants" }>,
+  apiUrl?: string,
+): Promise<AgentFileGrant[]>;
+export function sendIdentityMessage(
+  request: Extract<AgentRpcRequest, { action: "prepare-file-grant" }>,
+  apiUrl?: string,
+): Promise<PreparedAgentFileGrant>;
+export function sendIdentityMessage(
   request: AgentRpcRequest,
   apiUrl?: string,
-): Promise<AgentNetworkDiscovery | AgentRpcPreparation>;
+): Promise<
+  | AgentNetworkDiscovery
+  | AgentRpcPreparation
+  | AgentFileGrant[]
+  | PreparedAgentFileGrant
+>;
 export async function sendIdentityMessage(
   request: AgentInspectionRequest | AgentRpcRequest,
   apiUrl?: string,
@@ -102,6 +119,8 @@ export async function sendIdentityMessage(
   | AgentRpcBroadcastOutcome
   | AgentRpcOutcome
   | AgentRpcPreparation
+  | AgentFileGrant[]
+  | PreparedAgentFileGrant
 > {
   if ("version" in request) validateAgentRpcRequest(request);
   else validateAgentInspection(request);

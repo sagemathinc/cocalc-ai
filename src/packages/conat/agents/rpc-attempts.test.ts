@@ -380,6 +380,45 @@ test("validation bounds UTF-8 payloads and forbids claimed sender fields", () =>
   ).toThrow();
 });
 
+test("file grant RPC requests accept one exact locator and no authority fields", () => {
+  expect(() =>
+    validateAgentRpcRequest({ version: 3, action: "file-grants" }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "prepare-file-grant",
+      grant_id: randomUUID(),
+    }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "prepare-file-grant",
+      target_project_id: randomUUID(),
+    }),
+  ).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({ version: 3, action: "prepare-file-grant" }),
+  ).toThrow("exactly one");
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "prepare-file-grant",
+      grant_id: randomUUID(),
+      target_project_id: randomUUID(),
+    }),
+  ).toThrow("exactly one");
+  expect(() =>
+    validateAgentRpcRequest({
+      version: 3,
+      action: "prepare-file-grant",
+      grant_id: randomUUID(),
+      account_id: randomUUID(),
+    } as any),
+  ).toThrow("unexpected");
+});
+
 test("changing attached file references conflicts with an existing attempt", async () => {
   const evidence = new AgentRpcAttempts(),
     source = endpoint();

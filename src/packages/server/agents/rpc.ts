@@ -776,6 +776,25 @@ export async function acceptAgentRpc(
   const identity = await agentStore().get(agent_id);
   const source = { agent_id, project_id: identity.project_id };
   const run = await sourceRun(source, run_id);
+  if (request.action === "file-grants") {
+    const { listFileGrantsLocal } = await import("./file-grants");
+    return listFileGrantsLocal({
+      account_id: run.account_id,
+      project_id: source.project_id,
+      agent_id,
+    });
+  }
+  if (request.action === "prepare-file-grant") {
+    const { prepareAgentFileGrant } = await import("./file-grants");
+    return prepareAgentFileGrant({
+      account_id: run.account_id,
+      source_project_id: source.project_id,
+      agent_id,
+      run_id,
+      grant_id: request.grant_id,
+      target_project_id: request.target_project_id,
+    });
+  }
   if (request.action === "destinations")
     return withPersonalHome(run.account_id, {
       action: "discoverNetworks",
@@ -874,6 +893,12 @@ export async function acceptExternalAgentRpc(
 ) {
   assertExternalAgentLoginEnabled();
   validateAgentRpcRequest(request);
+  if (
+    request.action === "file-grants" ||
+    request.action === "prepare-file-grant"
+  ) {
+    throw new Error("native project identity required");
+  }
   const { account_id, installation_id } = parseExternalAgentSubject(subject);
   const installation = await externalStore().activeInstallation(
     account_id,

@@ -13,6 +13,12 @@ import {
   recoverIdentityLocal,
   startFreshConversationLocal,
 } from "./api";
+import {
+  authorizeFileGrantReadLocal,
+  listFileGrantsLocal,
+  revokeFileGrantLocal,
+  saveFileGrantLocal,
+} from "./file-grants";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
   requireUuid(opts.account_id, "account_id");
@@ -30,6 +36,30 @@ async function assertOwner(opts: AgentIdentityReadRequest) {
 
 // Only exposed on the trusted inter-bay fabric, not the public hub agent API.
 export const agentIdentityControl: InterBayAgentIdentityApi = {
+  authorizeFileGrantRead: async (opts) => {
+    await assertOwner(opts);
+    return authorizeFileGrantReadLocal({
+      account_id: opts.account_id,
+      host_id: opts.host_id,
+      source_project_id: opts.project_id,
+      target_project_id: opts.target_project_id,
+      grant_id: opts.grant_id,
+      agent_id: opts.agent_id,
+      run_id: opts.run_id,
+    });
+  },
+  listFileGrants: async (opts) => {
+    await assertOwner(opts);
+    return listFileGrantsLocal(opts);
+  },
+  saveFileGrant: async (opts) => {
+    await assertOwner(opts);
+    return saveFileGrantLocal(opts);
+  },
+  revokeFileGrant: async (opts) => {
+    await assertOwner(opts);
+    return revokeFileGrantLocal(opts);
+  },
   startFreshConversation: async (opts) => {
     await assertOwner(opts);
     return startFreshConversationLocal(opts);

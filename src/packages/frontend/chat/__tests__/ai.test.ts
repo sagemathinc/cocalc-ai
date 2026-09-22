@@ -3,9 +3,13 @@
 import { processAI } from "../actions/ai";
 import { processAcpLLM } from "../acp-api";
 import { contextForVmToolbox } from "@cocalc/frontend/agents/vm-toolbox-service";
+import { contextForFileGrants } from "@cocalc/frontend/agents/file-grants-service";
 
 jest.mock("@cocalc/frontend/agents/vm-toolbox-service", () => ({
   contextForVmToolbox: jest.fn(async () => ""),
+}));
+jest.mock("@cocalc/frontend/agents/file-grants-service", () => ({
+  contextForFileGrants: jest.fn(async () => ""),
 }));
 
 jest.mock("../acp-api", () => ({
@@ -67,6 +71,25 @@ describe("processAI Codex dispatch", () => {
     });
     expect(processAcpLLM).toHaveBeenCalledWith(
       expect.objectContaining({ input: "hello\n\nVM context" }),
+    );
+  });
+  it("adds the sending user's file grants to the current turn", async () => {
+    (contextForFileGrants as jest.Mock).mockResolvedValueOnce(
+      "File grant context",
+    );
+    await processAI({
+      actions: makeActions(),
+      message: makeMessage(),
+      threadModel: "gpt-5.4",
+    });
+    expect(contextForFileGrants).toHaveBeenCalledWith({
+      accountId: "user-1",
+      projectId: "proj",
+      path: "chat.chat",
+      threadId: "thread-test-1",
+    });
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ input: "hello\n\nFile grant context" }),
     );
   });
   it("never dispatches a posted message, even on regenerate", async () => {

@@ -48,6 +48,11 @@ import {
   isBrowserRuntimePresenceSubject,
   parseBrowserRuntimePresenceSubject,
 } from "@cocalc/conat/project-host/browser-runtime-presence";
+import {
+  AGENT_FILE_SERVICE,
+  agentFileGrantInboxPrefix,
+  agentFileGrantSubject,
+} from "@cocalc/conat/agents/file-grants";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -62,7 +67,9 @@ function shouldCacheAuthDecision(subject: string): boolean {
     !isAcpSubject(subject) &&
     !extractProjectSubject(subject) &&
     !extractViewerFileSubject(subject) &&
-    !extractShareFileSubject(subject)
+    !extractShareFileSubject(subject) &&
+    !subject.startsWith(`${AGENT_FILE_SERVICE}.`) &&
+    !subject.startsWith(`_INBOX.${AGENT_FILE_SERVICE}.`)
   );
 }
 
@@ -143,6 +150,7 @@ function userFromBearerToken({
     account_id: claims.sub,
     auth_iat_s: claims.iat,
     auth_actor: claims.auth_actor,
+    ...(claims.file_grant ? { auth_file_grant: claims.file_grant } : {}),
   } satisfies CoCalcUser;
 }
 
@@ -355,6 +363,21 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
 
     const userId = getCoCalcUserId(user);
+    if (user.auth_file_grant != null) {
+      if (
+        userType !== "account" ||
+        user.auth_actor !== "agent" ||
+        userId !== user.auth_file_grant.account_id
+      ) {
+        return false;
+      }
+      if (type === "pub") {
+        return subject === agentFileGrantSubject(user.auth_file_grant);
+      }
+      return subject.startsWith(
+        `${agentFileGrantInboxPrefix(user.auth_file_grant)}.`,
+      );
+    }
     const examProjectId =
       userType === "account" ? getLocalExamAccountProjectId(userId) : undefined;
     if (

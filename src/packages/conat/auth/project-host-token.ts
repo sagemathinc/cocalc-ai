@@ -6,6 +6,7 @@ import {
   randomUUID,
 } from "crypto";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { AgentFileGrantSubject } from "@cocalc/conat/agents/file-grants";
 
 /*
 Project-host auth token protocol (overview):
@@ -35,6 +36,7 @@ const TOKEN_TYPE = "JWT";
 const TOKEN_ALG = "EdDSA";
 const TOKEN_VERSION = "phat-v1";
 const RESTRICTED_BROWSER_SESSION_TOKEN_VERSION = "phat-v2";
+const AGENT_FILE_GRANT_TOKEN_VERSION = "phat-v3";
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
 const MAX_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -57,6 +59,7 @@ export interface ProjectHostAuthClaims {
   auth_actor?: "account" | "agent";
   sid?: string;
   browser_session_exp_s?: number;
+  file_grant?: AgentFileGrantSubject;
 }
 
 export interface IssueProjectHostTokenOptions {
@@ -71,6 +74,7 @@ export interface IssueProjectHostTokenOptions {
   hub_id?: string;
   session_id?: string;
   browser_session_exp_s?: number;
+  file_grant?: AgentFileGrantSubject;
 }
 
 export interface VerifyProjectHostTokenOptions {
@@ -162,6 +166,7 @@ export function issueProjectHostAuthToken({
   hub_id,
   session_id,
   browser_session_exp_s,
+  file_grant,
 }: IssueProjectHostTokenOptions): {
   token: string;
   expires_at: number;
@@ -194,8 +199,9 @@ export function issueProjectHostAuthToken({
     iat,
     exp,
     jti: randomUUID(),
-    v:
-      browserSessionExp == null
+    v: file_grant
+      ? AGENT_FILE_GRANT_TOKEN_VERSION
+      : browserSessionExp == null
         ? TOKEN_VERSION
         : RESTRICTED_BROWSER_SESSION_TOKEN_VERSION,
     act: identity.actor,
@@ -204,6 +210,7 @@ export function issueProjectHostAuthToken({
     ...(browserSessionExp == null
       ? {}
       : { browser_session_exp_s: browserSessionExp }),
+    ...(file_grant ? { file_grant } : {}),
   };
 
   const header = {
@@ -266,7 +273,8 @@ export function verifyProjectHostAuthToken({
 
   if (
     claims?.v !== TOKEN_VERSION &&
-    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION
+    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION &&
+    claims?.v !== AGENT_FILE_GRANT_TOKEN_VERSION
   ) {
     throw new Error("invalid token version");
   }
@@ -327,6 +335,19 @@ export function verifyProjectHostAuthToken({
     }
   } else if (claims.browser_session_exp_s != null) {
     throw new Error("invalid browser session token version");
+  }
+  if (claims.v === AGENT_FILE_GRANT_TOKEN_VERSION) {
+    const grant = claims.file_grant;
+    if (
+      !grant ||
+      Object.values(grant).some((value) => !isValidUUID(value)) ||
+      claims.auth_actor !== "agent" ||
+      claims.browser_session_exp_s != null
+    ) {
+      throw new Error("invalid file grant token");
+    }
+  } else if (claims.file_grant != null) {
+    throw new Error("invalid file grant token version");
   }
 
   return claims;

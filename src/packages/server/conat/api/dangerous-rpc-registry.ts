@@ -64,6 +64,19 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "replaces a disabled or abandoned thread identity without reviving prior approvals",
   },
+  "agent.saveFileGrant": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "adds revocable read-only roots after current source and target collaborator authorization",
+  },
+  "agent.revokeFileGrant": {
+    decision: "fresh-auth-not-required",
+    reason: "removes read-only agent access and cannot expand authority",
+  },
+  "agent.authorizeFileGrantRead": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.issueIdentity": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
@@ -591,6 +604,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "host RootFS image garbage collection",
   },
   "hosts.issueProjectHostAgentAuthToken": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "hosts.issueProjectHostFileGrantToken": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },

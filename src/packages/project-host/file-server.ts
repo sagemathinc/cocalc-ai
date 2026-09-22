@@ -115,6 +115,10 @@ import {
   parseShareFsSubject,
   parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
+import {
+  AGENT_FILE_SERVICE,
+  parseAgentFileGrantSubject,
+} from "@cocalc/conat/agents/file-grants";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
 import execSandbox from "@cocalc/backend/sandbox/exec";
@@ -5165,6 +5169,63 @@ export async function initViewerFsServer({
   });
 }
 
+async function getAgentFileGrantReadPolicy(subject: string) {
+  const grant = parseAgentFileGrantSubject(subject);
+  if (!grant) throw new Error("invalid agent file grant subject");
+  const client = getMasterConatClient();
+  if (!client) throw new Error("project-host control plane is unavailable");
+  const response = (await callHub({
+    client,
+    host_id: requireHostId(),
+    name: "agent.authorizeFileGrantRead",
+    args: [
+      {
+        account_id: grant.account_id,
+        source_project_id: grant.source_project_id,
+        target_project_id: grant.target_project_id,
+        grant_id: grant.grant_id,
+        agent_id: grant.agent_id,
+        run_id: grant.run_id,
+      },
+    ],
+    timeout: 15_000,
+  })) as { read_policy: ProjectViewerReadPolicy };
+  return { grant, read_policy: response.read_policy };
+}
+
+export async function initAgentFileGrantFsServer({
+  client,
+}: {
+  client: ConatClient;
+}) {
+  logger.debug("initAgentFileGrantFsServer");
+  return await fsReadOnlyServer({
+    service: AGENT_FILE_SERVICE,
+    client,
+    fs: async (subject?: string) => {
+      if (!subject) throw new Error("agent file grant subject is required");
+      const { grant, read_policy } = await getAgentFileGrantReadPolicy(subject);
+      const { path } = await getOrEnsureVolume(grant.target_project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id: grant.target_project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(grant.target_project_id),
+        scratch: getScratchMountpoint(grant.target_project_id),
+        sharedScratch: getSharedScratchMountpoint(),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id: grant.target_project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy: read_policy,
+        authorize: async () => {
+          await getAgentFileGrantReadPolicy(subject);
+        },
+      });
+    },
+  });
+}
+
 export async function initShareFsServer({
   client,
   service = SHARE_FILE_SERVICE,
@@ -5208,10 +5269,16 @@ function invalidateProjectFsServer(project_id: string): void {
   servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
   servers?.viewerFile?.invalidateAll?.();
   servers?.shareFile?.invalidateAll?.();
+  servers?.agentFile?.invalidateAll?.();
 }
 
-let servers: null | { ssh: any; file: any; viewerFile: any; shareFile: any } =
-  null;
+let servers: null | {
+  ssh: any;
+  file: any;
+  viewerFile: any;
+  shareFile: any;
+  agentFile: any;
+} = null;
 
 export async function initFileServer({
   client,
@@ -5360,6 +5427,7 @@ export async function initFileServer({
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
   const viewerFile = await initViewerFsServer({ client });
+  const agentFile = await initAgentFileGrantFsServer({ client });
   const shareFile = await initShareFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
   startProjectQuotaRepairMonitor();
@@ -5588,7 +5656,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh, viewerFile, shareFile };
+  servers = { file, ssh, viewerFile, shareFile, agentFile };
   return servers;
 }
 
@@ -5635,11 +5703,12 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh, viewerFile, shareFile } = servers;
+  const { file, ssh, viewerFile, shareFile, agentFile } = servers;
   servers = null;
   file.close();
   viewerFile.close();
   shareFile.close();
+  agentFile.close();
   void ssh.close?.();
 }
 

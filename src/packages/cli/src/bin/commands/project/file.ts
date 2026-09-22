@@ -6,6 +6,11 @@
  */
 import { dirname } from "node:path";
 import { Command } from "commander";
+import { writeFile } from "node:fs/promises";
+import {
+  listAgentFileGrants,
+  openAgentFileGrant,
+} from "../../core/agent-file-grant";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -47,6 +52,134 @@ export function registerProjectFileCommands(
   } = deps;
 
   const file = project.command("file").description("project file operations");
+  const grant = file
+    .command("grant")
+    .description("read files authorized for this active agent run");
+
+  grant
+    .command("show")
+    .description("show this agent's configured file grants")
+    .action(async (_opts: unknown, command: Command) => {
+      const globals = globalsFrom(command);
+      try {
+        emitSuccess(
+          { globals },
+          "project file grant show",
+          await listAgentFileGrants(globals.api),
+        );
+      } catch (error) {
+        emitError({ globals }, "project file grant show", error);
+        process.exitCode = 1;
+      }
+    });
+
+  grant
+    .command("list [path]")
+    .description("list an authorized directory in another project")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(
+      async (
+        path: string | undefined,
+        opts: { project: string },
+        command: Command,
+      ) => {
+        const globals = globalsFrom(command);
+        let opened: Awaited<ReturnType<typeof openAgentFileGrant>> | undefined;
+        try {
+          opened = await openAgentFileGrant({
+            projectId: opts.project,
+            apiUrl: globals.api,
+          });
+          const targetPath = path?.trim() || ".";
+          const listing = await opened.fs.getListing(targetPath);
+          const rows = Object.entries(listing?.files ?? {})
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, info]: [string, any]) => ({
+              project_id: opened!.prepared.grant.target_project_id,
+              path: targetPath,
+              name,
+              is_dir: !!info?.isDir,
+              size: info?.size ?? null,
+              mtime: info?.mtime ?? null,
+            }));
+          emitSuccess({ globals }, "project file grant list", rows);
+        } catch (error) {
+          emitError({ globals }, "project file grant list", error);
+          process.exitCode = 1;
+        } finally {
+          opened?.close();
+        }
+      },
+    );
+
+  grant
+    .command("cat <path>")
+    .description("print an authorized text file from another project")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(
+      async (path: string, opts: { project: string }, command: Command) => {
+        const globals = globalsFrom(command);
+        let opened: Awaited<ReturnType<typeof openAgentFileGrant>> | undefined;
+        try {
+          opened = await openAgentFileGrant({
+            projectId: opts.project,
+            apiUrl: globals.api,
+          });
+          const content = String(await opened.fs.readFile(path, "utf8"));
+          if (!globals.json && globals.output !== "json") {
+            emitProjectFileCatHumanContent(content);
+          } else {
+            emitSuccess({ globals }, "project file grant cat", {
+              project_id: opened.prepared.grant.target_project_id,
+              path,
+              content,
+              bytes: Buffer.byteLength(content),
+            });
+          }
+        } catch (error) {
+          emitError({ globals }, "project file grant cat", error);
+          process.exitCode = 1;
+        } finally {
+          opened?.close();
+        }
+      },
+    );
+
+  grant
+    .command("get <path> <dest>")
+    .description("download an authorized file from another project")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(
+      async (
+        path: string,
+        dest: string,
+        opts: { project: string },
+        command: Command,
+      ) => {
+        const globals = globalsFrom(command);
+        let opened: Awaited<ReturnType<typeof openAgentFileGrant>> | undefined;
+        try {
+          opened = await openAgentFileGrant({
+            projectId: opts.project,
+            apiUrl: globals.api,
+          });
+          const value = await opened.fs.readFile(path);
+          const data = Buffer.isBuffer(value) ? value : Buffer.from(value);
+          await writeFile(dest, data);
+          emitSuccess({ globals }, "project file grant get", {
+            project_id: opened.prepared.grant.target_project_id,
+            path,
+            dest,
+            bytes: data.length,
+          });
+        } catch (error) {
+          emitError({ globals }, "project file grant get", error);
+          process.exitCode = 1;
+        } finally {
+          opened?.close();
+        }
+      },
+    );
 
   file
     .command("list [path]")

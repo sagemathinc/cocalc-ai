@@ -128,6 +128,13 @@ export type AgentRpcRequest =
   | { version: 3; action: "destinations" }
   | { version: 3; action: "inbox"; limit?: number }
   | { version: 3; action: "ack-inbox"; message_id: string }
+  | { version: 3; action: "file-grants" }
+  | {
+      version: 3;
+      action: "prepare-file-grant";
+      grant_id?: string;
+      target_project_id?: string;
+    }
   | AgentRpcBroadcast
   | ({
       version: 3;
@@ -260,7 +267,18 @@ export function validateAgentRpcRequest(
       new TextEncoder().encode(value.body).length > 32768
     )
       throw new Error("broadcast body must contain 1 to 32768 UTF-8 bytes");
-  } else if (value.action !== "destinations") {
+  } else if (value.action === "prepare-file-grant") {
+    keys.push("grant_id", "target_project_id");
+    if ((value.grant_id == null) === (value.target_project_id == null)) {
+      throw new Error("specify exactly one file grant or target project");
+    }
+    if (value.grant_id != null) requireUuid(value.grant_id, "grant_id");
+    if (value.target_project_id != null)
+      requireUuid(value.target_project_id, "target_project_id");
+  } else if (
+    value.action !== "destinations" &&
+    value.action !== "file-grants"
+  ) {
     throw new Error("unsupported agent RPC operation");
   }
   if (Object.keys(value).some((key) => !keys.includes(key)))

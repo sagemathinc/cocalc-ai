@@ -77,6 +77,12 @@ export async function sendExternalAgentMessage(
   | { acknowledged: true; message_id: string }
 > {
   validateAgentRpcRequest(request);
+  if (
+    request.action === "file-grants" ||
+    request.action === "prepare-file-grant"
+  ) {
+    throw new Error("external agents cannot use native project file grants");
+  }
   if ("file_references" in request && request.file_references !== undefined)
     throw new Error(
       "External agents may send snapshots, not guidance or project references",

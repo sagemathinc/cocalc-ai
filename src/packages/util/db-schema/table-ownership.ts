@@ -360,6 +360,21 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
+  agent_file_grants: {
+    table: "agent_file_grants",
+    ownership: "project-owning",
+    authority: "source_project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Human grant principal, not account-home placement authority.",
+      target_project_id:
+        "Granted project reference, not ownership or placement authority.",
+    },
+    notes:
+      "Agent file grants belong to the source agent project's owning bay. Project moves require explicit migration or reconstruction rules before grants can be portable.",
+  },
+
   ...entries(["agent_identity_runs"], {
     ownership: "row-scoped",
     authority: "mixed",

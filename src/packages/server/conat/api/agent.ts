@@ -5,6 +5,7 @@ import {
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
+import * as fileGrants from "@cocalc/server/agents/file-grants";
 import * as rpc from "@cocalc/server/agents/rpc";
 import {
   createAgentNetwork as createAgentNetworkImpl,
@@ -33,6 +34,10 @@ export const getIdentity = identities.getIdentity;
 export const resolveIdentity = identities.resolveIdentity;
 export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = identities.recoverIdentity;
+export const listFileGrants = fileGrants.listFileGrants;
+export const saveFileGrant = fileGrants.saveFileGrant;
+export const revokeFileGrant = fileGrants.revokeFileGrant;
+export const authorizeFileGrantRead = fileGrants.authorizeFileGrantRead;
 export const issueIdentity = identities.issueIdentity;
 export const getMentionIdentity = identities.getMentionIdentity;
 export const endIdentityRun = identities.endIdentityRun;

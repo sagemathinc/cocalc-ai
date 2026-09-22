@@ -2,13 +2,15 @@
 
 Date: 2026-09-19
 
-Revised: 2026-09-21, following product discussion. Implementation base:
-`feature/my-agents-workspace` ([PR #640](https://github.com/sagemathinc/cocalc-ai/pull/640)).
+Revised: 2026-09-22, following product discussion and the first File Grants
+implementation. PR #640 is deployed and the implementation base is now `main`.
 
-Status: roadmap with an initial VM toolbox implementation; not a security signoff.
+Status: roadmap with initial VM toolbox and read-only File Grants implementations;
+not a security signoff.
 See [VM toolbox implementation and dogfooding notes](agent-connectors-vm-toolbox-2026-09-21.md)
 for the delivered scope, validation, and remaining work. Sections below describe
-the target design unless explicitly identified as implemented.
+the target design unless explicitly identified as implemented. The first File
+Grants slice is in PR #662.
 
 ## 1. Product Goal
 
@@ -907,6 +909,49 @@ support rather than assuming Chrome and SSH packaging are identical.
 
 ### File Grants
 
+#### Implemented Read-Only Slice (PR #662)
+
+The first slice is persistent read-only access keyed by human account, stable
+agent identity and target project. The granting human chooses another project
+where they are currently an owner or collaborator and selects project-home-relative
+roots. The `+` menu exposes **Files from another project...** and later turns by
+the same human and agent receive compact CLI instructions automatically.
+
+An active native agent run can use:
+
+```text
+cocalc project file grant show
+cocalc project file grant list --project <project-id> [path]
+cocalc project file grant cat --project <project-id> <path>
+cocalc project file grant get --project <project-id> <path> <destination>
+```
+
+These commands require the agent identity credential. They do not fall back to
+an account API key or broad project credential. The source owning bay verifies
+the exact account, stable agent and active run, then issues a one-minute signed
+credential for one grant and one target project-host subject. The CLI connects
+directly to the target project-host. The target's `fs-agent` service reauthorizes
+every filesystem operation with the source owning bay, including the live run,
+unrevoked grant, current source and target collaboration, and current target-host
+assignment. Revoking or changing a grant rotates/inactivates its grant ID, so an
+old subject cannot retain a cached path policy. One already admitted operation
+may finish.
+
+Path enforcement reuses the project-host viewer filesystem sandbox and read-policy
+implementation, including realpath/symlink checks and read-only method exposure.
+This slice intentionally has no write, execution, watch, archive, history or
+snapshot operations. The configuration is persistent, but usable authority exists
+only during a matching active run. Because the identity credential is present in
+the source project runtime, source-project processes and collaborators may use the
+grant while that run is active. The UI states this directly; this is useful
+shared-project authority, not per-process isolation.
+
+The current implementation is a native-agent slice. External agent installations
+cannot request these project-run grants. A future ACP adapter should consume the
+same grant/prepare protocol rather than receiving a general account credential.
+
+#### Target Scope
+
 From agent P's Access panel, choose project Q from projects the granting human
 currently has appropriate collaborator access to. Select whole project files or
 explicit roots, then read or read/write. No automatic access to all current or
@@ -942,11 +987,16 @@ directory. Exclude special files and runtime credential mounts. Users who need
 strong dataset boundaries should use dedicated projects rather than treat a
 directory as a security boundary against project administrators.
 
-Use live text/notebook APIs for collaborative document operations; support
-version/hash preconditions rather than overwriting unsaved editor state with a
-raw filesystem write. Notebook execution requires exec authority, not write
-authority. Enumerate which regular filesystem operations, watchers, archives and
-search endpoints are supported; reject unsupported ones explicitly.
+Future write grants should use CoCalc's established filesystem concurrency model:
+arbitrary project processes can already create, replace, rename and delete files,
+and open editors watch and reconcile those external changes. File Grants do not
+need a second editor-specific overwrite protocol merely because the writer is an
+agent. Live text/notebook APIs may still be useful when an operation specifically
+needs collaborative in-memory state or version/hash preconditions, but they are
+not a prerequisite for ordinary filesystem writes. Notebook execution requires
+exec authority, not write authority. Enumerate which regular filesystem operations,
+watchers, archives and search endpoints are supported; reject unsupported ones
+explicitly.
 
 Writing code/configuration can cause later execution by Q's services, imports,
 hooks or collaborators. Therefore file write is not a guarantee of "no code

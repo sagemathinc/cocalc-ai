@@ -10,6 +10,8 @@ import {
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
+import type { AgentFileGrant } from "@cocalc/conat/agents/file-grants";
+import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
 export interface AgentIdentityRoute {
   bay_id: string;
@@ -44,6 +46,24 @@ export interface InterBayAgentIdentityApi {
       fresh_auth_at: number;
     },
   ): Promise<AgentIdentity>;
+  listFileGrants(opts: AgentIdentityLookupRequest): Promise<AgentFileGrant[]>;
+  saveFileGrant(
+    opts: AgentIdentityLookupRequest & {
+      target_project_id: string;
+      roots: string[];
+    },
+  ): Promise<AgentFileGrant>;
+  revokeFileGrant(
+    opts: AgentIdentityLookupRequest & { grant_id: string },
+  ): Promise<void>;
+  authorizeFileGrantRead(
+    opts: AgentIdentityLookupRequest & {
+      host_id: string;
+      target_project_id: string;
+      grant_id: string;
+      run_id: string;
+    },
+  ): Promise<{ read_policy: ProjectViewerReadPolicy }>;
 }
 
 export function agentIdentityControlSubject(bay_id: string): string {

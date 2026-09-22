@@ -1,6 +1,7 @@
 import { inboxPrefix } from "@cocalc/conat/names";
 import { isValidUUID } from "@cocalc/util/misc";
 import { isAcpSubject } from "../ai/acp/subjects";
+import type { AgentFileGrantSubject } from "@cocalc/conat/agents/file-grants";
 
 export type CoCalcUser =
   | {
@@ -19,6 +20,7 @@ export type CoCalcUser =
       auth_project_id?: string;
       auth_token_fingerprint?: string;
       auth_exp_s?: number;
+      auth_file_grant?: AgentFileGrantSubject;
     }
   | {
       account_id?: string;

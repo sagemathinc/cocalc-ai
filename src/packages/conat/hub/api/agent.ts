@@ -18,6 +18,8 @@ import type {
   AgentIdentity,
   AgentCredential,
 } from "@cocalc/conat/agents/protocol";
+import type { AgentFileGrant } from "@cocalc/conat/agents/file-grants";
+import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import type { AgentEndpoint, AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
 import type {
   AgentNetwork,
@@ -57,6 +59,10 @@ export const agent = {
   resolveIdentity: authFirstRequireAccount,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
+  listFileGrants: authFirstRequireAccount,
+  saveFileGrant: authFirstRequireAccount,
+  revokeFileGrant: authFirstRequireAccount,
+  authorizeFileGrantRead: authFirstRequireHostWithAccountTarget,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
@@ -276,6 +282,25 @@ export interface AgentApi {
   recoverIdentity(
     opts: AgentHumanAuth & { project_id: string; agent_id: string },
   ): Promise<AgentIdentity>;
+  listFileGrants(opts: AgentIdentityLocator): Promise<AgentFileGrant[]>;
+  saveFileGrant(
+    opts: AgentIdentityLocator & {
+      target_project_id: string;
+      roots: string[];
+    },
+  ): Promise<AgentFileGrant>;
+  revokeFileGrant(
+    opts: AgentIdentityLocator & { grant_id: string },
+  ): Promise<void>;
+  authorizeFileGrantRead(
+    opts: AgentHostAuth & {
+      source_project_id: string;
+      target_project_id: string;
+      grant_id: string;
+      agent_id: string;
+      run_id: string;
+    },
+  ): Promise<{ read_policy: ProjectViewerReadPolicy }>;
   issueIdentity(
     opts: AgentHostAuth & {
       project_id: string;

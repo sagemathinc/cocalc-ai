@@ -30,6 +30,27 @@ function mockFilesystem(
 }
 
 describe("viewer read-only filesystem boundary", () => {
+  it("rechecks dynamic authorization for every filesystem operation", async () => {
+    const fs = mockFilesystem({
+      canonicalSyncIdentityPath: jest.fn(async () => "/home/user/docs/a.txt"),
+    });
+    const authorize = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("grant ended"));
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: { rules: [{ action: "include", path: "docs/**" }] },
+      authorize,
+    });
+
+    await expect(viewerFs.readFile("docs/a.txt")).resolves.toBe("content");
+    await expect(viewerFs.readFile("docs/a.txt")).rejects.toThrow(
+      "grant ended",
+    );
+    expect(fs.readFile).toHaveBeenCalledTimes(1);
+  });
+
   it("authorizes the canonical identity supplied by an opened handle", () => {
     expect(
       assertViewerCanonicalPathAllowed({

@@ -16,6 +16,8 @@ import {
 } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { VmToolbox } from "@cocalc/frontend/agents/vm-toolbox";
+import { FileGrants } from "@cocalc/frontend/agents/file-grants";
+import { fileGrantsForAgent } from "@cocalc/frontend/agents/file-grants-service";
 import {
   readVmToolbox,
   VM_TOOLBOX_SETTING,
@@ -45,6 +47,8 @@ export function AgentFileAttachment({
 }) {
   const settings = useTypedRedux("account", "other_settings");
   const [toolboxOpen, setToolboxOpen] = useState(false);
+  const [fileGrantsOpen, setFileGrantsOpen] = useState(false);
+  const [fileGrantCount, setFileGrantCount] = useState(0);
   const vmCount =
     readVmToolbox(settings?.get?.(VM_TOOLBOX_SETTING)).find(
       (item) =>
@@ -64,6 +68,18 @@ export function AgentFileAttachment({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const uploadRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!path || !threadId) return;
+    let disposed = false;
+    void fileGrantsForAgent({ projectId, path, threadId }).then(
+      ({ grants }) => !disposed && setFileGrantCount(grants.length),
+      () => undefined,
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [path, projectId, threadId]);
 
   useEffect(() => {
     if (!open) return;
@@ -175,6 +191,11 @@ export function AgentFileAttachment({
               icon: <Icon name="server" />,
               label: "Virtual machine...",
             },
+            {
+              key: "file-grants",
+              icon: <Icon name="folder-open" />,
+              label: "Files from another project...",
+            },
           ]
         : []),
       ...(onSetGoal
@@ -193,6 +214,7 @@ export function AgentFileAttachment({
       if (key === "choose") setOpen(true);
       if (key === "goal") onSetGoal?.();
       if (key === "vm") setToolboxOpen(true);
+      if (key === "file-grants") setFileGrantsOpen(true);
     },
   };
 
@@ -231,12 +253,30 @@ export function AgentFileAttachment({
               {vmCount}
             </Button>
           )}
+          {fileGrantCount > 0 && (
+            <Button
+              type="text"
+              aria-label={`File grants, ${fileGrantCount} attached`}
+              icon={<Icon name="folder-open" />}
+              onClick={() => setFileGrantsOpen(true)}
+            >
+              {fileGrantCount}
+            </Button>
+          )}
           <VmToolbox
             projectId={projectId}
             path={path}
             threadId={threadId}
             open={toolboxOpen}
             onClose={() => setToolboxOpen(false)}
+          />
+          <FileGrants
+            projectId={projectId}
+            path={path}
+            threadId={threadId}
+            open={fileGrantsOpen}
+            onClose={() => setFileGrantsOpen(false)}
+            onCountChange={setFileGrantCount}
           />
         </>
       )}
