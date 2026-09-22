@@ -1715,6 +1715,11 @@ export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
     expires_at?: Date | string | null;
     allowed_domains?: string[];
   }) => Promise<MembershipPackageDetails>;
+  linkCourseMembershipPackage: (opts: {
+    account_id?: string;
+    package_id: string;
+    course_project_id: string;
+  }) => Promise<void>;
   getMembershipPackages: (opts?: {
     account_id?: string;
     user_account_id?: string;
@@ -2029,6 +2034,7 @@ export const purchases = {
   purchaseTeamLicenseChange: authFirstRequireAccount,
   updateMembershipPackage: authFirstRequireAccount,
   getMembershipPackages: authFirstRequireAccount,
+  linkCourseMembershipPackage: authFirstRequireAccount,
   assignMembershipPackageSeat: authFirstRequireAccount,
   revokeMembershipPackageSeat: authFirstRequireAccount,
   assignSiteLicensePoolSeat: authFirstRequireAccount,

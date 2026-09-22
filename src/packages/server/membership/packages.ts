@@ -4,6 +4,7 @@
  */
 
 import dayjs from "dayjs";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
@@ -2120,6 +2121,52 @@ async function syncUpdatedGrantForAssignment({
       grant,
     },
     client,
+  });
+}
+
+export async function linkCourseMembershipPackage({
+  account_id,
+  package_id,
+  course_project_id,
+}: {
+  account_id: string;
+  package_id: string;
+  course_project_id: string;
+}): Promise<void> {
+  if (!isValidUUID(package_id) || !isValidUUID(course_project_id)) {
+    throw Error("valid package_id and course_project_id required");
+  }
+  await withPackageOwnerWriteFence({
+    package_id,
+    action: "link course membership package",
+    fn: async ({ client, pkg }) => {
+      if (pkg.owner_account_id !== account_id) {
+        throw Error("must own membership package");
+      }
+      if (pkg.kind !== "course") {
+        throw Error("only course packages can be linked to courses");
+      }
+      await assertProjectCollaboratorAccessAllowRemote({
+        account_id,
+        project_id: course_project_id,
+      });
+      const metadata = pkg.metadata ?? {};
+      const ids = new Set<string>(
+        [
+          metadata.course_project_id,
+          ...(Array.isArray(metadata.course_project_ids)
+            ? metadata.course_project_ids
+            : []),
+        ].filter(
+          (id): id is string => typeof id === "string" && isValidUUID(id),
+        ),
+      );
+      ids.add(course_project_id);
+      await client.query(
+        "UPDATE membership_packages SET metadata=$2::jsonb, updated=NOW() WHERE id=$1",
+        [package_id, { ...metadata, course_project_ids: [...ids] }],
+      );
+    },
   });
 }
 
