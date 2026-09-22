@@ -11,7 +11,7 @@ import {
   extendArtifactSelection,
 } from "@cocalc/frontend/chat/artifact-selection";
 import { focusChatFrameInput } from "./actions";
-import { Alert, Button, Select, Space } from "antd";
+import { Alert, Button, Select, Space, message } from "antd";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import {
   artifactKey,
@@ -59,6 +59,21 @@ const DocumentDiff = lazyWithRetry(
   "artifact changes",
 );
 
+function returnToOriginChat(actions: Actions, origin: string, frameId: string) {
+  // The composer must be visible before focusing it, especially when maximized.
+  flushSync(() => {
+    if (
+      window.innerWidth < 768 ||
+      actions.store?.getIn(["local_view_state", "full_id"]) === frameId
+    ) {
+      actions.set_frame_full(origin);
+    } else {
+      actions.set_active_id(origin);
+    }
+  });
+  return focusChatFrameInput(origin, { waitForInput: true });
+}
+
 export const workbench: EditorDescription = {
   type: "workbench",
   short: "Artifact",
@@ -74,6 +89,7 @@ export function WorkbenchSurface(props: EditorComponentProps) {
   const syncdb = actions.getArtifactSyncdb();
   useArtifactChanges(syncdb);
   const [edit, setEdit] = useState(false);
+  const [returnError, setReturnError] = useState("");
   let record: ArtifactRecord | undefined;
   try {
     record = readArtifact(syncdb, {
@@ -84,6 +100,10 @@ export function WorkbenchSurface(props: EditorComponentProps) {
     /* Loading or removed. */
   }
   const directPath = props.desc.get("data-path");
+  const isDirectFile = !!directPath && !props.desc.get("data-artifact");
+  const origin = props.desc.get("data-origin");
+  const originChat =
+    isDirectFile && origin ? actions.getChatActions(origin) : undefined;
   const title =
     record?.theme?.title ||
     record?.title ||
@@ -114,16 +134,57 @@ export function WorkbenchSurface(props: EditorComponentProps) {
             borderBottom: `2px solid ${theme?.color ?? UI_COLORS.border}`,
             display: "flex",
             alignItems: "center",
+            flexWrap: "wrap",
             gap: 8,
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: isDirectFile ? 120 : 0,
+              ...(isDirectFile
+                ? {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }
+                : {}),
+            }}
+          >
             {record ? (
               <ArtifactIdentity title={record.title} theme={theme} />
             ) : (
               <strong>{title}</strong>
             )}
           </div>
+          {isDirectFile && origin && (
+            <Button
+              size="small"
+              disabled={!originChat}
+              onClick={() => {
+                try {
+                  setReturnError("");
+                  if (!actions.getChatActions(origin)) {
+                    setReturnError(
+                      "Original conversation is no longer open. Find it in Agents.",
+                    );
+                    return;
+                  }
+                  if (!returnToOriginChat(actions, origin, props.id)) {
+                    message.error(
+                      "Could not focus the conversation. Reopen it from Agents if needed.",
+                    );
+                  }
+                } catch {
+                  message.error(
+                    "Could not focus the conversation. Reopen it from Agents if needed.",
+                  );
+                }
+              }}
+            >
+              Back to chat
+            </Button>
+          )}
           {!props.read_only && record && (
             <Button
               size="small"
@@ -135,7 +196,13 @@ export function WorkbenchSurface(props: EditorComponentProps) {
           )}
         </div>
       )}
-      {directPath && !props.desc.get("data-artifact") ? (
+      {isDirectFile && origin && !originChat && !returnError && (
+        <div role="status" style={{ padding: "8px 12px" }}>
+          Original conversation is no longer open. Find it in Agents.
+        </div>
+      )}
+      {returnError && <Alert type="error" title={returnError} />}
+      {isDirectFile ? (
         <DirectFileWorkbench
           path={directPath}
           projectId={props.project_id}
@@ -342,18 +409,7 @@ export function Workbench({
   };
   const returnToChat = () => {
     const origin = desc.get("data-origin");
-    // The composer must be visible before focusing it, especially when maximized.
-    flushSync(() => {
-      if (
-        window.innerWidth < 768 ||
-        actions.store?.getIn(["local_view_state", "full_id"]) === id
-      ) {
-        actions.set_frame_full(origin);
-      } else {
-        actions.set_active_id(origin);
-      }
-    });
-    focusChatFrameInput(origin, { waitForInput: true });
+    returnToOriginChat(actions, origin, id);
   };
   if (artifact.kind === "file")
     return (

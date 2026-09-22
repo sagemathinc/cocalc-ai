@@ -1,9 +1,10 @@
 import { EventEmitter } from "events";
 import { useState } from "react";
+import { message } from "antd";
 import { fromJS } from "immutable";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
-import { Workbench } from "./workbench";
+import { Workbench, WorkbenchSurface } from "./workbench";
 import { focusChatFrameInput } from "./actions";
 import { refreshPR } from "./github-pr-operations";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -28,6 +29,11 @@ jest.mock("@cocalc/frontend/chat/contextual-reply-editor", () => ({
 }));
 
 jest.mock("./actions", () => ({ focusChatFrameInput: jest.fn() }));
+jest.mock("./file-artifact", () => ({
+  FileArtifact: ({ artifact }: { artifact: { title: string } }) => (
+    <div role="article" aria-label={`File preview: ${artifact.title}`} />
+  ),
+}));
 jest.mock("@cocalc/frontend/components/diff-viewer/document-diff", () => ({
   __esModule: true,
   default: ({ before, after }) => (
@@ -171,6 +177,269 @@ test("Back to chat renders the destination before requesting composer focus", ()
     screen.getByRole("textbox", { name: "Restored composer" }),
   );
   screen.getByRole("textbox", { name: "Restored composer" }).blur();
+});
+
+test.each([
+  { width: 1024, maximized: false, method: "set_active_id" },
+  { width: 1024, maximized: true, method: "set_frame_full" },
+  { width: 390, maximized: false, method: "set_frame_full" },
+])(
+  "direct-file Back to chat restores the origin at $width px (maximized=$maximized)",
+  async ({ width, maximized, method }) => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: width,
+    });
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: () => undefined,
+      get: () => [],
+    });
+    const set_active_id = jest.fn();
+    const set_frame_full = jest.fn();
+    const actions = {
+      getArtifactSyncdb: () => syncdb,
+      getChatActions: (frameId: string) =>
+        frameId === "origin" ? { syncdb } : undefined,
+      set_frame_data: jest.fn(),
+      set_active_id,
+      set_frame_full,
+      store: { getIn: () => (maximized ? "file-frame" : undefined) },
+    };
+    try {
+      jest.mocked(focusChatFrameInput).mockClear();
+      jest.mocked(focusChatFrameInput).mockReturnValue(true);
+      render(
+        <WorkbenchSurface
+          {...({
+            id: "file-frame",
+            actions,
+            desc: fromJS({
+              "data-origin": "origin",
+              "data-path": "/results/decision.png",
+              "data-thread": "thread",
+            }),
+            read_only: false,
+            font_size: 14,
+            project_id: "p",
+            path: "x.chat",
+          } as any)}
+        />,
+      );
+      const button = screen.getByRole("button", { name: "Back to chat" });
+      button.focus();
+      await userEvent.setup().keyboard("{Enter}");
+      expect(actions[method]).toHaveBeenCalledWith("origin");
+      expect(focusChatFrameInput).toHaveBeenCalledWith("origin", {
+        waitForInput: true,
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalWidth,
+      });
+    }
+  },
+);
+
+test("direct-file return renders the chat composer before restoring focus", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    get: () => [],
+  });
+  function Harness() {
+    const [chatVisible, setChatVisible] = useState(false);
+    return chatVisible ? (
+      <input aria-label="Restored composer" />
+    ) : (
+      <WorkbenchSurface
+        {...({
+          id: "file-frame",
+          actions: {
+            getArtifactSyncdb: () => syncdb,
+            getChatActions: () => ({ syncdb }),
+            set_frame_data: jest.fn(),
+            set_active_id: () => setChatVisible(true),
+            store: { getIn: () => undefined },
+          },
+          desc: fromJS({
+            "data-origin": "origin",
+            "data-path": "/results/decision.png",
+          }),
+          read_only: false,
+          font_size: 14,
+          project_id: "p",
+          path: "x.chat",
+        } as any)}
+      />
+    );
+  }
+  jest.mocked(focusChatFrameInput).mockImplementationOnce(() => {
+    screen.getByRole("textbox", { name: "Restored composer" }).focus();
+    return true;
+  });
+  render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(document.activeElement).toBe(
+    screen.getByRole("textbox", { name: "Restored composer" }),
+  );
+});
+
+test("direct-file Workbench does not route a stale origin to another chat", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    get: () => [],
+  });
+  const actions = {
+    getArtifactSyncdb: () => syncdb,
+    getChatActions: () => undefined,
+    set_frame_data: jest.fn(),
+    set_active_id: jest.fn(),
+    set_frame_full: jest.fn(),
+    store: { getIn: () => undefined },
+  };
+  render(
+    <WorkbenchSurface
+      {...({
+        id: "file-frame",
+        actions,
+        desc: fromJS({
+          "data-origin": "closed-chat",
+          "data-path": "/results/decision.png",
+        }),
+        read_only: false,
+        font_size: 14,
+        project_id: "p",
+        path: "x.chat",
+      } as any)}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Back to chat" })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Original conversation is no longer open",
+  );
+  expect(actions.set_active_id).not.toHaveBeenCalled();
+  expect(actions.set_frame_full).not.toHaveBeenCalled();
+});
+
+test("direct file without a chat origin has no return control", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    get: () => [],
+  });
+  render(
+    <WorkbenchSurface
+      {...({
+        id: "file-frame",
+        actions: {
+          getArtifactSyncdb: () => syncdb,
+          getChatActions: jest.fn(),
+          set_frame_data: jest.fn(),
+        },
+        desc: fromJS({ "data-path": "/results/decision.png" }),
+        read_only: false,
+        font_size: 14,
+        project_id: "p",
+        path: "x.chat",
+      } as any)}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Back to chat" })).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+test("direct-file return detects when its origin closes after rendering", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    get: () => [],
+  });
+  let originOpen = true;
+  const actions = {
+    getArtifactSyncdb: () => syncdb,
+    getChatActions: () => (originOpen ? { syncdb } : undefined),
+    set_frame_data: jest.fn(),
+    set_active_id: jest.fn(),
+    store: { getIn: () => undefined },
+  };
+  render(
+    <WorkbenchSurface
+      {...({
+        id: "file-frame",
+        actions,
+        desc: fromJS({
+          "data-origin": "origin",
+          "data-path": "/results/decision.png",
+        }),
+        read_only: false,
+        font_size: 14,
+        project_id: "p",
+        path: "x.chat",
+      } as any)}
+    />,
+  );
+  originOpen = false;
+  jest.mocked(focusChatFrameInput).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(actions.set_active_id).not.toHaveBeenCalled();
+  expect(focusChatFrameInput).not.toHaveBeenCalled();
+  expect(
+    screen.getByText(/Original conversation is no longer open/),
+  ).toBeInTheDocument();
+});
+
+test("direct-file return reports a failed focus handoff", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    get: () => [],
+  });
+  const set_active_id = jest.fn();
+  const notify = jest
+    .spyOn(message, "error")
+    .mockImplementation(jest.fn() as any);
+  function Harness() {
+    const [chatVisible, setChatVisible] = useState(false);
+    return chatVisible ? (
+      <input aria-label="Restored composer" />
+    ) : (
+      <WorkbenchSurface
+        {...({
+          id: "file-frame",
+          actions: {
+            getArtifactSyncdb: () => syncdb,
+            getChatActions: () => ({ syncdb }),
+            set_frame_data: jest.fn(),
+            set_active_id: (id: string) => {
+              set_active_id(id);
+              setChatVisible(true);
+            },
+            store: { getIn: () => undefined },
+          },
+          desc: fromJS({
+            "data-origin": "origin",
+            "data-path": "/results/decision.png",
+          }),
+          read_only: false,
+          font_size: 14,
+          project_id: "p",
+          path: "x.chat",
+        } as any)}
+      />
+    );
+  }
+  jest.mocked(focusChatFrameInput).mockReturnValueOnce(false);
+  try {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+    expect(set_active_id).toHaveBeenCalledWith("origin");
+    expect(
+      screen.getByRole("textbox", { name: "Restored composer" }),
+    ).toBeInTheDocument();
+    expect(notify).toHaveBeenCalledWith(
+      "Could not focus the conversation. Reopen it from Agents if needed.",
+    );
+  } finally {
+    notify.mockRestore();
+  }
 });
 
 test.each([false, true])(
