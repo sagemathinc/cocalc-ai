@@ -254,8 +254,14 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   const watchedDiskType = Form.useWatch("disk_type", formInstance);
   const watchedDisk = Form.useWatch("disk", formInstance);
   const watchedDiskGb = Form.useWatch("disk_gb", formInstance);
-  const watchedSharedDiskGb = Form.useWatch("shared_disk_gb", formInstance);
-  const watchedSharedDiskType = Form.useWatch("shared_disk_type", formInstance);
+  const watchedSharedDiskGb = Form.useWatch("shared_disk_gb", {
+    form: formInstance,
+    preserve: true,
+  });
+  const watchedSharedDiskType = Form.useWatch("shared_disk_type", {
+    form: formInstance,
+    preserve: true,
+  });
   const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedProviderPlatform = Form.useWatch(
     "provider_platform",
@@ -488,14 +494,17 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       ),
     [provider.fields.options.machine_type, watchedMachineType],
   );
-  const selectedResourceSummary = React.useMemo(
-    () =>
-      formatCpuRamDiskSummary({
-        machineOption: selectedMachineOption,
-        diskLabel: selectedDiskLabel,
-      }),
-    [selectedDiskLabel, selectedMachineOption],
-  );
+  const selectedResourceSummary = React.useMemo(() => {
+    const base = formatCpuRamDiskSummary({
+      machineOption: selectedMachineOption,
+      diskLabel: selectedDiskLabel,
+    });
+    return typeof watchedSharedDiskGb === "number" &&
+      Number.isFinite(watchedSharedDiskGb) &&
+      watchedSharedDiskGb > 0
+      ? `${base}, Scratch: ${watchedSharedDiskGb.toLocaleString()} GB`
+      : base;
+  }, [selectedDiskLabel, selectedMachineOption, watchedSharedDiskGb]);
   const fullCreateForm = (
     <HostCreateForm
       form={formInstance}

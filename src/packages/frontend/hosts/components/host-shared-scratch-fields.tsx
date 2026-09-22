@@ -193,17 +193,25 @@ export const HostSharedScratchFields: React.FC<
     : undefined;
   const supported = !!cap?.supported;
   const autoGrowSupported = cap?.autoGrowable === true;
-  const watchedSize = Form.useWatch("shared_disk_gb", form);
-  const watchedType = Form.useWatch("shared_disk_type", form);
+  // Create-similar seeds these values before the conditional fields mount.
+  // Preserve unregistered values so the switch cannot appear off while the
+  // submitted draft still contains billable scratch storage.
+  const watchedSize = Form.useWatch("shared_disk_gb", {
+    form,
+    preserve: true,
+  });
+  const watchedType = Form.useWatch("shared_disk_type", {
+    form,
+    preserve: true,
+  });
   const watchedAutoGrowEnabled = Form.useWatch(
     "shared_scratch_auto_grow_enabled",
-    form,
+    { form, preserve: true },
   );
   const currentSize = Number(currentSizeGb ?? 0);
-  const [scratchEnabled, setScratchEnabled] = React.useState(
-    () => currentSize > 0,
-  );
-  const enabled = currentSize > 0 || scratchEnabled;
+  const configuredSize = Number(watchedSize ?? 0);
+  const enabled =
+    currentSize > 0 || (Number.isFinite(configuredSize) && configuredSize > 0);
   const diskTypes = cap?.disk_types ?? [];
   const defaultDiskType =
     diskTypes.find((entry) => entry.default)?.value ?? diskTypes[0]?.value;
@@ -239,12 +247,14 @@ export const HostSharedScratchFields: React.FC<
 
   React.useEffect(() => {
     if (!supported) {
-      setScratchEnabled(false);
       if (watchedSize != null || watchedType != null) {
         setFields({
           shared_disk_gb: undefined,
           shared_disk_type: undefined,
           shared_scratch_auto_grow_enabled: false,
+          shared_scratch_auto_grow_max_disk_gb: undefined,
+          shared_scratch_auto_grow_growth_step_gb: undefined,
+          shared_scratch_auto_grow_min_grow_interval_minutes: undefined,
         });
       }
       return;
@@ -271,19 +281,6 @@ export const HostSharedScratchFields: React.FC<
     watchedType,
     watchedAutoGrowEnabled,
   ]);
-  React.useEffect(() => {
-    if (currentSize > 0) {
-      setScratchEnabled(true);
-      return;
-    }
-    if (
-      typeof watchedSize === "number" &&
-      Number.isFinite(watchedSize) &&
-      watchedSize > 0
-    ) {
-      setScratchEnabled(true);
-    }
-  }, [currentSize, watchedSize]);
   React.useEffect(() => {
     if (!watchedAutoGrowEnabled) return;
     const size = Number(watchedSize ?? currentSize ?? defaultSharedDiskGb);
@@ -368,10 +365,10 @@ export const HostSharedScratchFields: React.FC<
             </Typography.Text>
           </div>
           <Switch
+            aria-label="Enable shared scratch disk"
             checked={enabled}
             disabled={disabled || currentSize > 0}
             onChange={(checked) => {
-              setScratchEnabled(checked);
               if (checked) {
                 setFields({
                   shared_disk_gb: Math.max(minSize, defaultSharedDiskGb),
@@ -382,6 +379,9 @@ export const HostSharedScratchFields: React.FC<
                   shared_disk_gb: undefined,
                   shared_disk_type: undefined,
                   shared_scratch_auto_grow_enabled: false,
+                  shared_scratch_auto_grow_max_disk_gb: undefined,
+                  shared_scratch_auto_grow_growth_step_gb: undefined,
+                  shared_scratch_auto_grow_min_grow_interval_minutes: undefined,
                 });
               }
             }}

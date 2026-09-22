@@ -1,5 +1,7 @@
 import { Form } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HostCreateForm } from "./host-create-form";
 import { addMonthlyDiskPriceLabels } from "./host-create-advanced-fields";
@@ -113,6 +115,54 @@ function TestSharedScratchWithMismatchedCatalog() {
   );
 }
 
+function TestCreateSimilarSharedScratch({
+  onDraftPatch,
+}: {
+  onDraftPatch: (patch: Record<string, any>) => void;
+}) {
+  const [form] = Form.useForm();
+  React.useEffect(() => {
+    form.setFieldsValue({
+      shared_disk_gb: 500,
+      shared_disk_type: "balanced",
+      shared_scratch_auto_grow_enabled: true,
+      shared_scratch_auto_grow_max_disk_gb: 600,
+      shared_scratch_auto_grow_growth_step_gb: 50,
+      shared_scratch_auto_grow_min_grow_interval_minutes: 5,
+    });
+  }, [form]);
+  return (
+    <Form form={form}>
+      <HostSharedScratchFields
+        provider="gcp"
+        catalog={{
+          provider: "gcp",
+          entries: [],
+          provider_capabilities: {
+            gcp: {
+              sharedScratchDisk: {
+                supported: true,
+                growable: true,
+                autoGrowable: true,
+                disk_types: [
+                  {
+                    value: "balanced",
+                    label: "Balanced persistent disk",
+                    durability: "replicated",
+                    default: true,
+                  },
+                ],
+              },
+            },
+          },
+        }}
+        draftManaged
+        onDraftPatch={onDraftPatch}
+      />
+    </Form>
+  );
+}
+
 describe("HostCreateForm", () => {
   it("requires an explicit project-host title without a generic default", () => {
     const html = renderToStaticMarkup(<TestHostCreateForm />);
@@ -204,5 +254,33 @@ describe("HostCreateForm", () => {
 
     expect(html).toContain("Shared scratch disk");
     expect(html).not.toContain("Automatically grow /scratch");
+  });
+
+  it("shows and can remove shared scratch copied into an unregistered draft", async () => {
+    const user = userEvent.setup();
+    const onDraftPatch = jest.fn();
+    render(<TestCreateSimilarSharedScratch onDraftPatch={onDraftPatch} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: "Enable shared scratch disk",
+    });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    expect(
+      screen.getByRole("spinbutton", { name: "Scratch size (GB)" }),
+    ).toHaveValue("500");
+
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(onDraftPatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shared_disk_gb: undefined,
+          shared_disk_type: undefined,
+          shared_scratch_auto_grow_enabled: false,
+          shared_scratch_auto_grow_max_disk_gb: undefined,
+        }),
+      ),
+    );
+    expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 });
