@@ -1160,6 +1160,26 @@ test("strict profile validation and defensive copy", () => {
     assert.throws(() => parseAcpHarnessProfile({ ...profile, ...changes }));
   }
 });
+test("qualified profiles accept only pinned catalog identity", () => {
+  const qualified = {
+    version: 2,
+    kind: "acp",
+    id: "claude-code",
+    revision: "0.79.0",
+    cwd: "/home/user",
+    executionPolicy: "full-access",
+    credentialMode: "project-managed",
+  };
+  assert.deepEqual(parseAcpHarnessProfile(qualified), qualified);
+  for (const changes of [
+    { id: "unknown" },
+    { revision: "latest" },
+    { executable: "/tmp/claude" },
+    { args: [] },
+  ]) {
+    assert.throws(() => parseAcpHarnessProfile({ ...qualified, ...changes }));
+  }
+});
 test("negotiates, opens, streams in order, drains before completion, reuses session", async (t) => {
   const client = await start(t);
   assert.equal(client.capabilities.agentInfo.name, "cocalc-fixture");

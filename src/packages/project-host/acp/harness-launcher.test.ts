@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { launchHarnessInProject as launch } from "./harness-launcher";
+import {
+  launchHarnessInProject as launch,
+  resolveHarnessCommand,
+} from "./harness-launcher";
 
 const conversation = { path: "a.chat", threadId: "thread-a" };
 const launchHarnessInProject = (input: typeof binding) =>
@@ -141,6 +144,25 @@ test("sidecar preserves structured argv, project networking and pool containment
   expect(mockCloseLease).toHaveBeenCalledTimes(1);
   await handle.stop();
   expect(mockUnmount).toHaveBeenCalledTimes(1);
+});
+
+test("qualified profiles resolve only through the trusted entry point", () => {
+  const command = resolveHarnessCommand({
+    version: 2,
+    kind: "acp",
+    id: "claude-code",
+    revision: "0.79.0",
+    cwd: "/home/user",
+    credentialMode: "project-managed",
+    executionPolicy: "full-access",
+  });
+  expect(command.executable).toBe("/opt/cocalc/bin/node");
+  expect(command.args).toEqual([
+    "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js",
+    "claude-code",
+    "0.79.0",
+  ]);
+  expect(command.args.join(" ")).not.toContain("ANTHROPIC_API_KEY");
 });
 
 test("invalid bindings and profiles never start a container", async () => {

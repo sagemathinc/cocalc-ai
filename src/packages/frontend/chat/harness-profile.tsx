@@ -164,10 +164,19 @@ function HarnessRuntimeSummaryContent({
           <dd>Project-managed (not CoCalc billing)</dd>
           <dt>Revision</dt>
           <dd>{profile.revision}</dd>
-          <dt>Executable</dt>
-          <dd>{profile.executable}</dd>
-          <dt>Arguments</dt>
-          <dd>{JSON.stringify(profile.args)}</dd>
+          {profile.version === 1 ? (
+            <>
+              <dt>Executable</dt>
+              <dd>{profile.executable}</dd>
+              <dt>Arguments</dt>
+              <dd>{JSON.stringify(profile.args)}</dd>
+            </>
+          ) : (
+            <>
+              <dt>Launch policy</dt>
+              <dd>CoCalc qualified and pinned</dd>
+            </>
+          )}
           <dt>Working directory</dt>
           <dd>{profile.cwd}</dd>
         </dl>

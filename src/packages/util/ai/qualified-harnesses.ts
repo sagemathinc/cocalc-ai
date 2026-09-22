@@ -17,7 +17,12 @@ export type QualifiedHarnessCandidate = {
   };
   launch: {
     binary: string;
+    executable: string;
     requiredArgs: readonly string[];
+    projectSecret?: {
+      name: string;
+      environmentVariable: string;
+    };
   };
   authentication: {
     allowed: readonly string[];
@@ -47,7 +52,13 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   },
   launch: {
     binary: "claude-agent-acp",
+    executable:
+      "/home/user/.local/share/cocalc/acp/claude-code/0.79.0/node_modules/.bin/claude-agent-acp",
     requiredArgs: ["--hide-claude-auth"],
+    projectSecret: {
+      name: "ANTHROPIC_API_KEY",
+      environmentVariable: "ANTHROPIC_API_KEY",
+    },
   },
   authentication: {
     allowed: ["anthropic-api-key"],
@@ -64,3 +75,9 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
 
 export const QUALIFIED_HARNESS_CANDIDATES: readonly QualifiedHarnessCandidate[] =
   [CLAUDE_CODE_QUALIFICATION];
+
+export function getQualifiedHarnessCandidate(
+  id: string,
+): QualifiedHarnessCandidate | undefined {
+  return QUALIFIED_HARNESS_CANDIDATES.find((candidate) => candidate.id === id);
+}

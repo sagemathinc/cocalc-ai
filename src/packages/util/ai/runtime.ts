@@ -1,9 +1,10 @@
 import type { CodexSessionConfig } from "./codex";
 import { parseHarnessSessionSettings } from "./harness-controls";
 import type { HarnessSessionSettings } from "./harness-controls";
+import { getQualifiedHarnessCandidate } from "./qualified-harnesses";
 
 /** Project-managed configuration only. Never store credential values here. */
-export interface AcpHarnessProfile {
+export interface CustomAcpHarnessProfile {
   version: 1;
   kind: "acp";
   id: string;
@@ -14,6 +15,21 @@ export interface AcpHarnessProfile {
   executionPolicy: "full-access";
   credentialMode: "project-managed";
 }
+
+/** Catalog identity only. Launch details are resolved from trusted code. */
+export interface QualifiedAcpHarnessProfile {
+  version: 2;
+  kind: "acp";
+  id: string;
+  revision: string;
+  cwd: string;
+  executionPolicy: "full-access";
+  credentialMode: "project-managed";
+}
+
+export type AcpHarnessProfile =
+  | CustomAcpHarnessProfile
+  | QualifiedAcpHarnessProfile;
 
 export type AgentRuntimeConfig =
   | { version: 1; kind: "codex-native"; codex: CodexSessionConfig }
@@ -54,22 +70,23 @@ export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
     throw Error("ACP profile must be an object");
   }
   const obj = value as Record<string, unknown>;
-  const keys = new Set([
+  const commonKeys = [
     "version",
     "kind",
     "id",
     "revision",
-    "executable",
-    "args",
     "cwd",
     "executionPolicy",
     "credentialMode",
-  ]);
+  ];
+  const keys = new Set(
+    obj.version === 2 ? commonKeys : [...commonKeys, "executable", "args"],
+  );
   if (Object.keys(obj).some((key) => !keys.has(key))) {
     throw Error("Unsupported ACP profile field");
   }
   if (
-    obj.version !== 1 ||
+    (obj.version !== 1 && obj.version !== 2) ||
     obj.kind !== "acp" ||
     obj.executionPolicy !== "full-access" ||
     obj.credentialMode !== "project-managed"
@@ -88,12 +105,34 @@ export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
     }
     return v;
   };
-  const executable = text("executable", 4096);
   const cwd = text("cwd", 4096);
-  if (!executable.startsWith("/") || !cwd.startsWith("/")) {
-    throw Error(
-      "ACP executable and working directory must be absolute container paths",
-    );
+  if (!cwd.startsWith("/")) {
+    throw Error("ACP working directory must be an absolute container path");
+  }
+  const id = text("id", 128);
+  const revision = text("revision", 128);
+  if (obj.version === 2) {
+    const candidate = getQualifiedHarnessCandidate(id);
+    if (
+      !candidate ||
+      candidate.status === "disabled" ||
+      revision !== candidate.package.version
+    ) {
+      throw Error("Unsupported qualified ACP harness or revision");
+    }
+    return {
+      version: 2,
+      kind: "acp",
+      id,
+      revision,
+      cwd,
+      executionPolicy: "full-access",
+      credentialMode: "project-managed",
+    };
+  }
+  const executable = text("executable", 4096);
+  if (!executable.startsWith("/")) {
+    throw Error("ACP executable must be an absolute container path");
   }
   if (
     !Array.isArray(obj.args) ||
@@ -109,8 +148,8 @@ export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
   return {
     version: 1,
     kind: "acp",
-    id: text("id", 128),
-    revision: text("revision", 128),
+    id,
+    revision,
     executable,
     args: [...obj.args],
     cwd,

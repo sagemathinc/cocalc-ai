@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { mountArg } from "@cocalc/backend/podman";
@@ -38,6 +39,29 @@ import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
+const QUALIFIED_HARNESS_ENTRY =
+  "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js";
+
+export function resolveHarnessCommand(
+  profile: ReturnType<typeof parseAcpHarnessProfile>,
+): { executable: string; args: string[] } {
+  if (profile.version === 1) {
+    return { executable: profile.executable, args: [...profile.args] };
+  }
+  const candidate = getQualifiedHarnessCandidate(profile.id);
+  if (
+    !candidate ||
+    candidate.status === "disabled" ||
+    candidate.package.version !== profile.revision
+  ) {
+    throw Error("Qualified ACP harness is not available");
+  }
+  return {
+    executable: "/opt/cocalc/bin/node",
+    args: [QUALIFIED_HARNESS_ENTRY, candidate.id, candidate.package.version],
+  };
+}
+
 /** Internal worker launcher. Admission must authorize the principal before calling. */
 export async function launchHarnessInProject(
   binding: HarnessBinding,
@@ -47,6 +71,7 @@ export async function launchHarnessInProject(
   const path = conversation?.path;
   const threadId = conversation?.threadId;
   const profile = parseAcpHarnessProfile(binding.profile);
+  const harnessCommand = resolveHarnessCommand(profile);
   if (
     !isValidUUID(projectId) ||
     !isValidUUID(accountId) ||
@@ -204,7 +229,12 @@ export async function launchHarnessInProject(
       args.push(mountArg({ source, target, readOnly: true }));
     for (const [key, value] of Object.entries(env))
       args.push("--env", `${key}=${value}`);
-    args.push("--rootfs", rootfs, profile.executable, ...profile.args);
+    args.push(
+      "--rootfs",
+      rootfs,
+      harnessCommand.executable,
+      ...harnessCommand.args,
+    );
     // Mark before awaiting: timeout/disconnect can leave a successfully created container.
     created = true;
     await command(args);

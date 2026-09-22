@@ -530,8 +530,8 @@ function NewAgentPanel({
       return {
         id: profile.id,
         revision: profile.revision,
-        executable: profile.executable,
-        args: profile.args.join("\n"),
+        executable: profile.version === 1 ? profile.executable : "",
+        args: profile.version === 1 ? profile.args.join("\n") : "",
       };
     } catch {
       return { id: "", revision: "", executable: "", args: "" };
