@@ -191,6 +191,7 @@ export const HostSharedScratchFields: React.FC<
   const cap = provider
     ? catalog?.provider_capabilities?.[provider]?.sharedScratchDisk
     : undefined;
+  const capabilitiesKnown = catalog?.provider_capabilities != null;
   const supported = !!cap?.supported;
   const autoGrowSupported = cap?.autoGrowable === true;
   // Create-similar seeds these values before the conditional fields mount.
@@ -210,8 +211,12 @@ export const HostSharedScratchFields: React.FC<
   );
   const currentSize = Number(currentSizeGb ?? 0);
   const configuredSize = Number(watchedSize ?? 0);
-  const enabled =
-    currentSize > 0 || (Number.isFinite(configuredSize) && configuredSize > 0);
+  const hasConfiguredSize =
+    Number.isFinite(configuredSize) && configuredSize > 0;
+  const [scratchEnabled, setScratchEnabled] = React.useState(
+    () => currentSize > 0,
+  );
+  const enabled = currentSize > 0 || scratchEnabled;
   const diskTypes = cap?.disk_types ?? [];
   const defaultDiskType =
     diskTypes.find((entry) => entry.default)?.value ?? diskTypes[0]?.value;
@@ -246,7 +251,19 @@ export const HostSharedScratchFields: React.FC<
   );
 
   React.useEffect(() => {
+    if (currentSize > 0 || hasConfiguredSize) {
+      setScratchEnabled(true);
+    } else if (watchedSize === undefined) {
+      // InputNumber uses null while its editor is temporarily empty. Only an
+      // absent value means external draft state explicitly disabled scratch.
+      setScratchEnabled(false);
+    }
+  }, [currentSize, hasConfiguredSize, watchedSize]);
+
+  React.useEffect(() => {
+    if (!capabilitiesKnown) return;
     if (!supported) {
+      setScratchEnabled(false);
       if (watchedSize != null || watchedType != null) {
         setFields({
           shared_disk_gb: undefined,
@@ -272,6 +289,7 @@ export const HostSharedScratchFields: React.FC<
     }
   }, [
     autoGrowSupported,
+    capabilitiesKnown,
     currentDiskType,
     defaultDiskType,
     enabled,
@@ -369,6 +387,7 @@ export const HostSharedScratchFields: React.FC<
             checked={enabled}
             disabled={disabled || currentSize > 0}
             onChange={(checked) => {
+              setScratchEnabled(checked);
               if (checked) {
                 setFields({
                   shared_disk_gb: Math.max(minSize, defaultSharedDiskGb),

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HostCreateForm } from "./host-create-form";
 import { addMonthlyDiskPriceLabels } from "./host-create-advanced-fields";
 import { HostSharedScratchFields } from "./host-shared-scratch-fields";
+import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const actual = jest.requireActual("@cocalc/frontend/app-framework");
@@ -115,10 +116,41 @@ function TestSharedScratchWithMismatchedCatalog() {
   );
 }
 
+const GCP_SHARED_SCRATCH_CATALOG: HostCatalog = {
+  provider: "gcp",
+  entries: [],
+  provider_capabilities: {
+    gcp: {
+      supportsStop: true,
+      supportsDiskType: true,
+      supportsDiskResize: true,
+      supportsCustomImage: true,
+      supportsGpu: true,
+      supportsZones: true,
+      persistentStorage: { supported: true, growable: true },
+      sharedScratchDisk: {
+        supported: true,
+        growable: true,
+        autoGrowable: true,
+        disk_types: [
+          {
+            value: "balanced",
+            label: "Balanced persistent disk",
+            durability: "replicated",
+            default: true,
+          },
+        ],
+      },
+    },
+  },
+};
+
 function TestCreateSimilarSharedScratch({
   onDraftPatch,
+  catalog,
 }: {
   onDraftPatch: (patch: Record<string, any>) => void;
+  catalog?: HostCatalog;
 }) {
   const [form] = Form.useForm();
   React.useEffect(() => {
@@ -135,27 +167,7 @@ function TestCreateSimilarSharedScratch({
     <Form form={form}>
       <HostSharedScratchFields
         provider="gcp"
-        catalog={{
-          provider: "gcp",
-          entries: [],
-          provider_capabilities: {
-            gcp: {
-              sharedScratchDisk: {
-                supported: true,
-                growable: true,
-                autoGrowable: true,
-                disk_types: [
-                  {
-                    value: "balanced",
-                    label: "Balanced persistent disk",
-                    durability: "replicated",
-                    default: true,
-                  },
-                ],
-              },
-            },
-          },
-        }}
+        catalog={catalog}
         draftManaged
         onDraftPatch={onDraftPatch}
       />
@@ -259,7 +271,12 @@ describe("HostCreateForm", () => {
   it("shows and can remove shared scratch copied into an unregistered draft", async () => {
     const user = userEvent.setup();
     const onDraftPatch = jest.fn();
-    render(<TestCreateSimilarSharedScratch onDraftPatch={onDraftPatch} />);
+    render(
+      <TestCreateSimilarSharedScratch
+        onDraftPatch={onDraftPatch}
+        catalog={GCP_SHARED_SCRATCH_CATALOG}
+      />,
+    );
 
     const toggle = screen.getByRole("switch", {
       name: "Enable shared scratch disk",
@@ -282,5 +299,62 @@ describe("HostCreateForm", () => {
       ),
     );
     expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("preserves copied scratch while provider capabilities load", async () => {
+    const onDraftPatch = jest.fn();
+    const view = render(
+      <TestCreateSimilarSharedScratch
+        onDraftPatch={onDraftPatch}
+        catalog={undefined}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        onDraftPatch.mock.calls.some(
+          ([patch]) => patch.shared_disk_gb === undefined,
+        ),
+      ).toBe(false),
+    );
+
+    view.rerender(
+      <TestCreateSimilarSharedScratch
+        onDraftPatch={onDraftPatch}
+        catalog={GCP_SHARED_SCRATCH_CATALOG}
+      />,
+    );
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Enable shared scratch disk",
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("spinbutton", { name: "Scratch size (GB)" }),
+    ).toHaveValue("500");
+  });
+
+  it("keeps scratch enabled while the size editor is temporarily empty", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestCreateSimilarSharedScratch
+        onDraftPatch={jest.fn()}
+        catalog={GCP_SHARED_SCRATCH_CATALOG}
+      />,
+    );
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Enable shared scratch disk",
+    });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    const size = screen.getByRole("spinbutton", {
+      name: "Scratch size (GB)",
+    });
+    await user.clear(size);
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("spinbutton", { name: "Scratch size (GB)" }),
+    ).toBeInTheDocument();
   });
 });
