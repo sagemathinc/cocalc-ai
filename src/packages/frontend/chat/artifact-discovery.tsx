@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState } from "react";
-import type { ButtonRef } from "antd";
+import type { ComponentRef } from "react";
 import { Button } from "antd";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { ChatActions } from "./actions";
@@ -18,7 +18,7 @@ export function ArtifactBrowserButton({
   compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<ButtonRef>(null);
+  const triggerRef = useRef<ComponentRef<typeof Button>>(null);
   if (!actions?.syncdb) return null;
   return (
     <>

@@ -1,5 +1,6 @@
-import { useDeferredValue, useRef, useState } from "react";
+import { useDeferredValue, useLayoutEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
+import type { ComponentRef } from "react";
 import { Button, Empty, Input, Modal, Select, Space, message } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -10,6 +11,13 @@ import { ArtifactCard } from "./artifact-card";
 import { artifactSyncdbReady, useArtifactChanges } from "./artifacts";
 import { openArtifact } from "./open-artifact";
 import { dateValue } from "./access";
+import { Icon } from "@cocalc/frontend/components";
+import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
+import { useArtifactPins } from "./use-artifact-pins";
 
 async function showConversation(
   actions: ChatActions,
@@ -59,6 +67,7 @@ export function ArtifactResults({
   kind,
   sort = "published",
   onOpen,
+  organization,
 }: {
   actions: ChatActions;
   query?: string;
@@ -66,6 +75,7 @@ export function ArtifactResults({
   kind?: string;
   sort?: "published" | "created" | "title";
   onOpen?: () => void;
+  organization?: ReturnType<typeof useArtifactPins>;
 }) {
   useArtifactChanges(actions.syncdb);
   const [limit, setLimit] = useState(50);
@@ -76,6 +86,109 @@ export function ArtifactResults({
     kind,
     sort,
   });
+  const entryId = (entry: ArtifactCatalogEntry) =>
+    JSON.stringify([
+      actions.store?.get("project_id"),
+      actions.store?.get("path"),
+      entry.publication.thread_id,
+      entry.publication.artifact_id,
+    ]);
+  const pins = organization?.pins ?? [];
+  const focusPin = useRef<string | undefined>(undefined);
+  const pinButtons = useRef(new Map<string, ComponentRef<typeof Button>>());
+  useLayoutEffect(() => {
+    if (focusPin.current) {
+      pinButtons.current.get(focusPin.current)?.focus();
+      focusPin.current = undefined;
+    }
+  });
+  const pinned = entries
+    .filter((entry) => pins.includes(entryId(entry)))
+    .sort((a, b) => pins.indexOf(entryId(a)) - pins.indexOf(entryId(b)));
+  const unpinned = entries.filter((entry) => !pins.includes(entryId(entry)));
+  const visiblePins = pinned.map(entryId);
+  function renderEntry(entry: ArtifactCatalogEntry, pinnedIndex = -1) {
+    const id = entryId(entry);
+    const canOpen = !!actions.frameTreeActions && !!actions.frameId;
+    return (
+      <div key={id} style={{ marginBottom: 10 }}>
+        {organization?.canPin && (
+          <Space wrap size={4}>
+            {pinnedIndex >= 0 && (
+              <DragHandle
+                id={id}
+                ariaLabel={`Drag ${entry.title} to reorder`}
+              />
+            )}
+            <Button
+              ref={(button) => {
+                if (button) pinButtons.current.set(id, button);
+                else pinButtons.current.delete(id);
+              }}
+              size="small"
+              type="text"
+              aria-label={`${pinnedIndex >= 0 ? "Unpin" : "Pin"} ${entry.title}`}
+              onClick={() => {
+                focusPin.current = id;
+                organization.setPinned(id, pinnedIndex < 0);
+              }}
+              icon={
+                <Icon name={pinnedIndex >= 0 ? "pushpin-filled" : "pushpin"} />
+              }
+            />
+            {pinnedIndex >= 0 && (
+              <>
+                <Button
+                  size="small"
+                  type="text"
+                  aria-label={`Move ${entry.title} up`}
+                  disabled={pinnedIndex === 0}
+                  onClick={() =>
+                    organization.move(visiblePins, id, pinnedIndex - 1)
+                  }
+                  icon={<Icon name="arrow-up" />}
+                />
+                <Button
+                  size="small"
+                  type="text"
+                  aria-label={`Move ${entry.title} down`}
+                  disabled={pinnedIndex === pinned.length - 1}
+                  onClick={() =>
+                    organization.move(visiblePins, id, pinnedIndex + 1)
+                  }
+                  icon={<Icon name="arrow-down" />}
+                />
+              </>
+            )}
+          </Space>
+        )}
+        <ArtifactCard
+          publication={entry.publication}
+          current={entry.current}
+          syncdb={actions.syncdb}
+          projectId={actions.store?.get("project_id")}
+          open={
+            canOpen
+              ? (version) => {
+                  openArtifact(
+                    actions,
+                    entry.publication,
+                    version ??
+                      (entry.current
+                        ? undefined
+                        : entry.publication.operation_id),
+                  );
+                  onOpen?.();
+                }
+              : undefined
+          }
+          showInConversation={async () => {
+            if (await showConversation(actions, entry)) onOpen?.();
+          }}
+        />
+      </div>
+    );
+  }
   if (!artifactSyncdbReady(actions.syncdb))
     return <div role="status">Loading artifacts...</div>;
   return (
@@ -92,43 +205,31 @@ export function ArtifactResults({
           description="No matching artifacts"
         />
       )}
-      {entries.slice(0, limit).map((entry) => {
-        const canOpen = !!actions.frameTreeActions && !!actions.frameId;
-        return (
-          <div
-            key={`${entry.publication.thread_id}:${entry.publication.artifact_id}`}
-            style={{
-              marginBottom: 10,
+      {!!pinned.length && (
+        <section aria-label="Pinned artifacts">
+          <h4>Pinned</h4>
+          <SortableList
+            items={visiblePins}
+            onDragStop={(_from, to, id) => {
+              if (typeof id === "string")
+                organization?.move(visiblePins, id, to);
             }}
           >
-            <ArtifactCard
-              publication={entry.publication}
-              current={entry.current}
-              syncdb={actions.syncdb}
-              projectId={actions.store?.get("project_id")}
-              open={
-                canOpen
-                  ? (version) => {
-                      openArtifact(
-                        actions,
-                        entry.publication,
-                        version ??
-                          (entry.current
-                            ? undefined
-                            : entry.publication.operation_id),
-                      );
-                      onOpen?.();
-                    }
-                  : undefined
-              }
-              showInConversation={async () => {
-                if (await showConversation(actions, entry)) onOpen?.();
-              }}
-            />
-          </div>
-        );
-      })}
-      {entries.length > limit && (
+            {pinned.map((entry, index) => (
+              <SortableItem
+                key={entryId(entry)}
+                id={entryId(entry)}
+                hideActive={false}
+              >
+                {renderEntry(entry, index)}
+              </SortableItem>
+            ))}
+          </SortableList>
+        </section>
+      )}
+      {!!pinned.length && !!unpinned.length && <h4>Other artifacts</h4>}
+      {unpinned.slice(0, limit).map((entry) => renderEntry(entry))}
+      {unpinned.length > limit && (
         <Button onClick={() => setLimit(limit + 50)}>
           Show more artifacts
         </Button>
@@ -147,6 +248,7 @@ export default function ArtifactBrowser({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState(threadId ? "thread" : "room");
+  const organization = useArtifactPins();
   const inputRef = useRef<InputRef>(null);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string>();
@@ -177,6 +279,7 @@ export default function ArtifactBrowser({
         <Space wrap style={{ margin: "12px 0" }}>
           <Select
             aria-label="Artifact scope"
+            style={{ width: 170 }}
             value={scope}
             onChange={setScope}
             options={[
@@ -195,6 +298,7 @@ export default function ArtifactBrowser({
           />
           <Select
             aria-label="Sort artifacts"
+            style={{ width: 180 }}
             value={sort}
             onChange={setSort}
             options={[
@@ -204,6 +308,7 @@ export default function ArtifactBrowser({
             ]}
           />
         </Space>
+        {organization.error && <div role="alert">{organization.error}</div>}
         <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
           <ArtifactResults
             actions={actions}
@@ -212,6 +317,7 @@ export default function ArtifactBrowser({
             kind={kind}
             sort={sort}
             onOpen={onClose}
+            organization={organization}
           />
         </div>
       </KeyboardBoundary>

@@ -1,9 +1,75 @@
 import { EventEmitter } from "events";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { useState } from "react";
+import { moveVisibleArtifactPin } from "../use-artifact-pins";
 import userEvent from "@testing-library/user-event";
 import { publishArtifact } from "@cocalc/chat";
 import ArtifactBrowser, { ArtifactResults } from "../artifact-browser";
 import { ArtifactBrowserButton } from "../artifact-discovery";
+
+test("pinning and keyboard move buttons retain custom order independently of sorting", async () => {
+  const rows: any[] = [];
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+    get: () => rows.filter((row) => row.event === "chat-artifact-publication"),
+  });
+  for (const title of ["Alpha", "Beta"])
+    publishArtifact(syncdb, {
+      thread_id: "one",
+      artifact_id: title,
+      operation_id: "op",
+      message_id: "message",
+      title,
+      markdown: "hello",
+    });
+  function Results() {
+    const [pins, setPins] = useState<string[]>([]);
+    return (
+      <ArtifactResults
+        actions={{ syncdb } as any}
+        sort="title"
+        organization={{
+          pins,
+          error: "",
+          canPin: true,
+          setPinned: (id, pinned) =>
+            setPins((pins) =>
+              pinned ? [...pins, id] : pins.filter((pin) => pin !== id),
+            ),
+          move: (visible, id, index) =>
+            setPins((pins) => moveVisibleArtifactPin(pins, visible, id, index)),
+        }}
+      />
+    );
+  }
+  render(<Results />);
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Pin Alpha" }).focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Unpin Alpha" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Pin Beta" }));
+  const up = screen.getByRole("button", { name: "Move Beta up" });
+  up.focus();
+  await user.keyboard("{Enter}");
+  const pinned = within(
+    screen.getByRole("region", { name: "Pinned artifacts" }),
+  );
+  expect(
+    pinned
+      .getAllByRole("button", { name: /^Unpin / })
+      .map((b) => b.getAttribute("aria-label")),
+  ).toEqual(["Unpin Beta", "Unpin Alpha"]);
+  expect(up).toHaveFocus();
+  await user.click(pinned.getByRole("button", { name: "Unpin Beta" }));
+  expect(screen.getByRole("button", { name: "Pin Beta" })).toHaveFocus();
+});
 
 test("compact toolbar opens the current thread browser by keyboard and restores focus", async () => {
   const rows: any[] = [];
@@ -101,6 +167,34 @@ test("Escape dismisses the artifact browser", async () => {
   filter.focus();
   fireEvent.keyDown(filter, { key: "Escape", keyCode: 27, which: 27 });
   await waitFor(() => expect(close).toHaveBeenCalled());
+});
+
+test("scope and sort selectors keep room for their longest labels", async () => {
+  render(
+    <ArtifactBrowser
+      actions={
+        { syncdb: Object.assign(new EventEmitter(), { get: () => [] }) } as any
+      }
+      threadId="one"
+      onClose={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  const sort = screen.getByRole("combobox", { name: "Sort artifacts" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Filter artifacts" }),
+    ).toHaveFocus(),
+  );
+  await user.click(sort);
+  fireEvent.click(screen.getByText("Title"));
+  expect(sort.closest(".ant-select")).toHaveTextContent("Title");
+  expect(sort.closest(".ant-select")).toHaveStyle({ width: "180px" });
+  expect(
+    screen
+      .getByRole("combobox", { name: "Artifact scope" })
+      .closest(".ant-select"),
+  ).toHaveStyle({ width: "170px" });
 });
 
 test("conversation navigation uses the publication's message and thread", async () => {
