@@ -24,6 +24,7 @@ export type TableAuthorityKey =
   | "recipient_account_id"
   | "pool_id"
   | "project_id"
+  | "source_project_id"
   | "host_id"
   | "connector_id"
   | "bay_id"
@@ -42,6 +43,8 @@ export type TableReferenceField =
   | "account_id"
   | "owner_account_id"
   | "project_id"
+  | "source_project_id"
+  | "target_project_id"
   | "host_id"
   | "connector_id"
   | "bay_id";
