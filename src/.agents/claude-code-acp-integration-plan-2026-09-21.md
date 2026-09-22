@@ -6,6 +6,36 @@ Status: implementation in progress. The 2026-09-22 qualification record pins
 the first adapter candidate and documents the current credential/tool isolation
 blocker.
 
+### Implemented Foundation (2026-09-22)
+
+- Added a provider-neutral account credential broker with home-bay routing,
+  account/provider mutation leases, exact-ID reads, verified-before-publish
+  create/reconnect, identity checks, revocation, and bounded safe metadata.
+- Added a verified Anthropic API-key adapter. Verification uses a bounded
+  models-list request and stores only encrypted payload plus a safe fingerprint
+  and billing metadata.
+- Pinned and probed `@agentclientprotocol/claude-agent-acp@0.79.0` against
+  CoCalc's ACP v1 client without inference or subscription authentication.
+- Added version-2 qualified ACP profiles. Persisted chat state contains no
+  executable or arguments; the project host resolves the pinned read-only
+  executable and mandatory `--hide-claude-auth` argument from trusted code.
+- Added the project-owned key launch path. The qualified entrypoint reads
+  `/run/secrets/cocalc/ANTHROPIC_API_KEY` only after sidecar creation, so the
+  value is absent from chat metadata, Podman arguments, and project-host env.
+- Added a provider-neutral fixed-origin HTTP credential relay and sidecar
+  loopback bridge. The durable account key remains in project-host memory; the
+  sidecar receives only a short-lived capability usable against the admitted
+  provider policy.
+- Added exact-ID Anthropic account-key relay admission through the existing
+  host/home-bay credential route, including project-host/account authorization,
+  provider-profile validation, authority recheck, and fail-closed teardown.
+
+The account relay is intentionally not connected to chat selection yet. The
+next change must add an account-local credential selection that is pinned into
+the admitted turn by authenticated server code. A credential ID from shared
+thread metadata, generic ACP profile data, or a collaborator-controlled config
+must never reach relay admission.
+
 Depends on:
 
 - `feature/my-agents-workspace` / PR 640
