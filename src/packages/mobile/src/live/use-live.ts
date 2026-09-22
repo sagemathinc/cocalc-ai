@@ -132,6 +132,25 @@ export function useLiveVoice(
           current.current.snapshot.connection !== "connected"
         )
           throw new Error("Chat disconnected.");
+        if (!isPreviewProfile(profile)) {
+          const config = current.current.snapshot.threads.find(
+            (t) => t.thread_id === thread,
+          )?.acp_config;
+          const site = await getActiveSiteSession(profile);
+          const payment = await site.hubApi.system.getCodexPaymentSource({
+            project_id: project,
+            preference: config?.paymentSource ?? "auto",
+            credential_id:
+              config?.paymentSource === "subscription"
+                ? config.credentialId
+                : undefined,
+          });
+          if (payment.source === "none" || payment.unavailableReason)
+            throw new Error(
+              payment.unavailableReason ||
+                "Codex payment is not configured. Select a payment source in agent settings.",
+            );
+        }
         return await clientAtStart.sendToExistingCodexThread({
           thread_id: thread,
           text,

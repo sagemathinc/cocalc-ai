@@ -115,11 +115,24 @@ export async function getAuthBootstrap({
   cookieHeader?: string;
   signal?: AbortSignal;
 }): Promise<AuthBootstrapResponse> {
-  return await postSiteApi<AuthBootstrapResponse>({
-    site,
-    endpoint: "auth/bootstrap",
-    body: {},
-    cookieHeader,
-    signal,
-  });
+  const check = () =>
+    postSiteApi<AuthBootstrapResponse>({
+      site,
+      endpoint: "auth/bootstrap",
+      body: {},
+      cookieHeader,
+      signal,
+    });
+  try {
+    return await check();
+  } catch (error) {
+    if (
+      signal?.aborted ||
+      !/network|timed?\s*out|timeout|disconnected|connection.*lost/i.test(
+        String(error),
+      )
+    )
+      throw error;
+    return await check();
+  }
 }

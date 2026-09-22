@@ -156,3 +156,57 @@ test("no transcript means no speculative backend submission", async () => {
   });
   assert.equal(sends, 0);
 });
+
+test("explains payment submission errors to the voice intermediary without retrying", async () => {
+  const updates: string[] = [];
+  let sends = 0;
+  const bridge = new LiveDelegation(
+    async () => {
+      sends++;
+      throw Error("Selected ChatGPT credential is unavailable");
+    },
+    (_type, text) => updates.push(text),
+    () => {},
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "Run tests",
+    end_ms: 1,
+  });
+  await bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 2,
+    delegation: { id: "d", target: "client" },
+  });
+  assert.equal(sends, 1);
+  assert.match(updates[0], /Selected ChatGPT credential is unavailable/);
+  assert.match(updates[0], /Do not retry/);
+});
+
+test("reports a failed accepted task instead of waiting forever for an assistant reply", async () => {
+  const updates: string[] = [];
+  const bridge = new LiveDelegation(
+    async () => ({ message_id: "m" }),
+    (_type, text) => updates.push(text),
+    () => {},
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "Run tests",
+    end_ms: 1,
+  });
+  await bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 2,
+    delegation: { id: "d", target: "client" },
+  });
+  bridge.observe([
+    { message_id: "m", role: "human", state: "error" } as ProjectedChatMessage,
+  ]);
+  assert.match(updates.at(-1)!, /request failed/);
+  const count = updates.length;
+  bridge.observe([
+    { message_id: "m", role: "human", state: "error" } as ProjectedChatMessage,
+  ]);
+  assert.equal(updates.length, count);
+});

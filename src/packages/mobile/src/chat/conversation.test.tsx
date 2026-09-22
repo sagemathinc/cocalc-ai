@@ -32,6 +32,8 @@ jest.mock("expo-router/react-navigation", () => ({
   useHeaderHeight: () => 116,
 }));
 jest.mock("expo-router", () => ({
+  useFocusEffect: (callback: () => void) =>
+    require("react").useEffect(callback, [callback]),
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({
     projectId: "project",

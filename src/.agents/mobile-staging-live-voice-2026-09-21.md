@@ -54,3 +54,17 @@ Local deployment report: `/tmp/cocalc-staging-live-voice-deploy`, log `/tmp/coca
 ## Rollback
 
 Previous release is `20260922021112-static`. The existing `bay-rollback-workers` helper accepts that release version. Once every development voice session is closed, remove the `mobile-live-voice.conf` drop-in and daemon-reload before rolling workers back. Do not disable the cleanup switch with active development sessions. Do not deploy this older staging-only branch as a general release.
+
+## September 22 phone follow-up
+
+The user's staging thread selected `subscription`, but its ChatGPT credential selection existed only in the web browser's local storage. Staging returned a non-default subscription in `subscriptions` while `hasSubscription` was false. Mobile incorrectly disabled the plan choice and omitted individual credentials.
+
+Mobile now lists individual ChatGPT credentials, passes the selected ID to payment resolution/model discovery, and persists the explicit credential ID in thread configuration. The existing ACP config builder already forwards this ID as `subscription-credential`; the backend validates caller ownership. No secret is stored in thread configuration. Other collaborators still need access to their own appropriate credentials. The always-visible payment row reports the resolved agent funding source and links to settings. Voice admission continues to use its separate OpenAI API key.
+
+Browser sign-in status polling now tolerates transient network failures until the original challenge expires, without creating/redeeming a second challenge. Session confirmation retries one transient failure; hub connection setup allows 30 seconds and one fresh connection retry.
+
+The voice bridge now checks agent payment before delegation, relays submission error details, and reports queued/running/failed task state. It still does not persist the full voice-intermediary transcript. Distinct transcript records/rendering remain planned work; intermediary speech must not masquerade as Codex output or user commands.
+
+Read-only staging checks confirmed the specific named credential resolves as `subscription`. The exact thread config and latest persisted Codex activity were inspected. No test turn or paid voice call was submitted by the agent.
+
+Validation for the follow-up: 45 mobile UI tests, 15 focused auth/voice tests, 56 shared ACP config tests, mobile typecheck, and frontend lint passed. Simulator settings flows passed in light/dark mode. The large-text directory flow missed its chat-navigation tap; a focused direct-chat payment flow passed at accessibility text size and its screenshot was inspected.

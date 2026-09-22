@@ -81,3 +81,49 @@ test("native API requests use explicit profile cookies without the platform cook
     globalThis.fetch = originalFetch;
   }
 });
+
+test("session confirmation retries a network failure once", async () => {
+  const { getAuthBootstrap } = await import("./protocol");
+  const { normalizeSiteUrl } = await import("./site-url");
+  const before = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    if (++calls === 1) throw new TypeError("Network request failed");
+    return new Response(JSON.stringify({ signed_in: true }));
+  };
+  try {
+    assert.equal(
+      (
+        await getAuthBootstrap({
+          site: normalizeSiteUrl("https://cocalc.test"),
+        })
+      ).signed_in,
+      true,
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = before;
+  }
+});
+
+test("session confirmation does not retry an authentication rejection", async () => {
+  const { getAuthBootstrap } = await import("./protocol");
+  const { normalizeSiteUrl } = await import("./site-url");
+  const before = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+    });
+  };
+  try {
+    await assert.rejects(
+      getAuthBootstrap({ site: normalizeSiteUrl("https://cocalc.test") }),
+      /Unauthorized/,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = before;
+  }
+});

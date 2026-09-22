@@ -2,6 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
+import { PaymentSummary } from "../../../chat/payment-summary";
 import { ChatSettings } from "../../../chat/settings";
 
 import {
@@ -519,6 +520,14 @@ export default function ChatScreen() {
             <Text style={styles.smallLink}>Web</Text>
           </Pressable>
         </View>
+        {client && snapshot.ready && (
+          <PaymentSummary
+            profile={profileId}
+            project={projectId}
+            config={selectedThread?.acp_config}
+            onPress={() => setSettingsOpen(true)}
+          />
+        )}
         {error ? (
           <View style={styles.errorBox}>
             <Text accessibilityRole="alert" style={styles.errorText}>

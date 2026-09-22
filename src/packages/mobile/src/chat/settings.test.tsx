@@ -108,3 +108,62 @@ it("keeps settings open after a failed save", async () => {
     renderer.root.findByProps({ accessibilityRole: "alert" }).props.children,
   ).toBe("offline");
 });
+
+it("selects a non-default ChatGPT credential even when hasSubscription is false", async () => {
+  const lookup = jest.fn(async ({ credential_id }: any) => ({
+    source: credential_id ? "subscription" : "account-api-key",
+    hasSubscription: !!credential_id,
+    hasAccountApiKey: true,
+    credentialId: credential_id,
+    subscriptions: [{ id: "personal", label: "My Pro", isDefault: false }],
+  }));
+  jest
+    .mocked(getActiveSiteSession)
+    .mockResolvedValue({
+      hubApi: {
+        system: { getCodexPaymentSource: lookup },
+        projects: {
+          getCodexUsageStatus: async () => ({
+            models: [
+              {
+                model: "test",
+                displayName: "Test model",
+                reasoning: [],
+                serviceTiers: [],
+              },
+            ],
+          }),
+        },
+      },
+    } as any);
+  const save = jest.fn();
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="t"
+        config={{ model: "test" }}
+        client={{ updateCodexThreadConfig: save } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("ChatGPT plan").props.disabled).toBe(false);
+  await act(async () => find("ChatGPT: My Pro").props.onPress());
+  expect(lookup).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      preference: "subscription",
+      credential_id: "personal",
+    }),
+  );
+  await act(async () => find("Save agent settings").props.onPress());
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      acp_config: expect.objectContaining({
+        paymentSource: "subscription",
+        credentialId: "personal",
+      }),
+    }),
+  );
+});

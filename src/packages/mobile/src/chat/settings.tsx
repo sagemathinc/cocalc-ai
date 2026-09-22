@@ -54,6 +54,7 @@ export function ChatSettings({
     reasoning: config?.reasoning,
     serviceTier: config?.serviceTier,
     paymentSource: config?.paymentSource,
+    credentialId: config?.credentialId,
   }));
   const [source, setSource] = useState<CodexPaymentSourceInfo>();
   const [models, setModels] = useState<CodexModelCapabilityInfo[]>([]);
@@ -78,6 +79,10 @@ export function ChatSettings({
       const payment = await session.hubApi.system.getCodexPaymentSource({
         project_id: project,
         preference: draft.paymentSource ?? "auto",
+        credential_id:
+          draft.paymentSource === "subscription"
+            ? draft.credentialId
+            : undefined,
       });
       if (!active) return;
       setSource(payment);
@@ -97,6 +102,10 @@ export function ChatSettings({
         const current = await session.hubApi.system.getCodexPaymentSource({
           project_id: project,
           preference: draft.paymentSource ?? "auto",
+          credential_id:
+            draft.paymentSource === "subscription"
+              ? draft.credentialId
+              : undefined,
         });
         if (
           current.credentialId !== payment.credentialId ||
@@ -122,7 +131,7 @@ export function ChatSettings({
     return () => {
       active = false;
     };
-  }, [profile, project, draft.paymentSource]);
+  }, [profile, project, draft.paymentSource, draft.credentialId]);
 
   const modelName = draft.model ?? DEFAULT_CODEX_MODEL_NAME;
   const model = models.find((m) => m.model === modelName);
@@ -211,18 +220,37 @@ export function ChatSettings({
           {choice(
             "Automatic",
             !draft.paymentSource || draft.paymentSource === "auto",
-            () => setDraft({ ...draft, paymentSource: "auto" }),
+            () =>
+              setDraft({
+                ...draft,
+                paymentSource: "auto",
+                credentialId: undefined,
+              }),
           )}
           {choice(
             "ChatGPT plan",
             draft.paymentSource === "subscription",
-            () => setDraft({ ...draft, paymentSource: "subscription" }),
-            !!source && !source.hasSubscription,
+            () =>
+              setDraft({
+                ...draft,
+                paymentSource: "subscription",
+                credentialId:
+                  source?.subscriptions?.find((c) => c.isDefault)?.id ??
+                  source?.subscriptions?.[0]?.id,
+              }),
+            !!source &&
+              !source.hasSubscription &&
+              !source.subscriptions?.length,
           )}
           {choice(
             "CoCalc membership",
             draft.paymentSource === "site-api-key",
-            () => setDraft({ ...draft, paymentSource: "site-api-key" }),
+            () =>
+              setDraft({
+                ...draft,
+                paymentSource: "site-api-key",
+                credentialId: undefined,
+              }),
             !!source &&
               !(
                 source.hasSiteApiKey &&
@@ -230,17 +258,40 @@ export function ChatSettings({
                 source.siteAiUsageLimitPositive !== false
               ),
           )}
+          {source?.subscriptions?.map((c) =>
+            choice(
+              `ChatGPT: ${c.label || c.email || c.id}${c.plan ? ` (${c.plan})` : ""}`,
+              draft.paymentSource === "subscription" &&
+                draft.credentialId === c.id,
+              () =>
+                setDraft({
+                  ...draft,
+                  paymentSource: "subscription",
+                  credentialId: c.id,
+                }),
+            ),
+          )}
           {source?.hasProjectApiKey &&
             choice(
               "Project API key",
               draft.paymentSource === "project-api-key",
-              () => setDraft({ ...draft, paymentSource: "project-api-key" }),
+              () =>
+                setDraft({
+                  ...draft,
+                  paymentSource: "project-api-key",
+                  credentialId: undefined,
+                }),
             )}
           {source?.hasAccountApiKey &&
             choice(
               "Account API key",
               draft.paymentSource === "account-api-key",
-              () => setDraft({ ...draft, paymentSource: "account-api-key" }),
+              () =>
+                setDraft({
+                  ...draft,
+                  paymentSource: "account-api-key",
+                  credentialId: undefined,
+                }),
             )}
           {source && (
             <Text style={{ color: colors.secondary }}>

@@ -25,6 +25,7 @@ export class LiveDelegation {
   private fragments: { text: string; end: number }[] = [];
   private tasks = new Map<string, string>();
   private closed = false;
+  private progress = new Map<string, string>();
 
   constructor(
     private send: (text: string) => Promise<{ message_id: string }>,
@@ -89,20 +90,48 @@ export class LiveDelegation {
         id,
       );
       this.report("Agent accepted your spoken request.");
-    } catch {
+    } catch (error) {
       if (this.closed) return;
+      const detail = String(
+        error instanceof Error ? error.message : error,
+      ).slice(0, 800);
       this.append(
         "session.commentary.append",
-        "Could not confirm whether the agent accepted the request. Ask the user to check the chat before resending. Do not retry it.",
+        "Agent submission reported this error: " +
+          detail +
+          ". Could not confirm acceptance. Explain the error and ask the user to check chat/settings before resending. Do not retry it.",
         id,
       );
-      this.report("Submission unconfirmed. Check chat before resending.");
+      this.report("Submission unconfirmed: " + detail);
     }
   }
 
   observe(messages: ProjectedChatMessage[]) {
     if (this.closed) return;
     for (const message of messages) {
+      const pendingId = this.tasks.get(message.message_id);
+      if (pendingId && message.role === "human") {
+        if (message.state === "error") {
+          this.tasks.delete(message.message_id);
+          this.append(
+            "session.commentary.append",
+            "The submitted agent request failed. Tell the user to inspect the error in chat and check payment settings. Do not claim completion or retry.",
+            pendingId,
+          );
+          this.report("Agent request failed. Check chat and payment settings.");
+        } else if (
+          ["queued", "running"].includes(message.state ?? "") &&
+          this.progress.get(message.message_id) !== message.state
+        ) {
+          this.progress.set(message.message_id, message.state!);
+          this.append(
+            "session.thinking.append",
+            `The selected agent request is ${message.state}. No final result is available yet.`,
+            pendingId,
+          );
+        }
+      }
+
       if (
         message.role !== "agent" ||
         message.generating ||
@@ -131,5 +160,6 @@ export class LiveDelegation {
     this.closed = true;
     this.fragments = [];
     this.tasks.clear();
+    this.progress.clear();
   }
 }

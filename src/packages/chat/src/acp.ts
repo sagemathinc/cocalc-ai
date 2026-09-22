@@ -33,6 +33,7 @@ export interface CodexThreadConfig {
   codexPathOverride?: string;
   notifyOnTurnFinish?: boolean;
   paymentSource?: CodexPaymentSourcePreference;
+  credentialId?: string; // Explicit credential; server validates caller ownership.
 }
 
 export type CodexCompletionNotificationOverride = "inherit" | "on" | "off";
