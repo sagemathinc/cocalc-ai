@@ -87,6 +87,10 @@ describe("Codex onboarding availability", () => {
     "Help me create notebooks comparing different models",
     "Use JupyterLab to explore the measurements",
     "Update results.ipynb with this comparison",
+    "Jupyter is not only allowed but required",
+    "Not only a notebook; also export a PDF",
+    "A notebook cannot be avoided for this assignment",
+    "I cannot recommend Jupyter highly enough",
   ])("retains notebook guidance when requested: %s", (request) => {
     const prompt = buildCodexOnboardingPrompt(request);
     expect(prompt).toContain("Prefer a runnable Jupyter notebook");
@@ -105,6 +109,8 @@ describe("Codex onboarding availability", () => {
     "A notebook should not be used here",
     "JupyterLab is unavailable in this environment",
     "Notebooks are prohibited for this deliverable",
+    "Make a report, not a notebook",
+    "I am not using Jupyter for this task",
   ])("respects a request to avoid notebooks: %s", (request) => {
     const prompt = buildCodexOnboardingPrompt(request);
     expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");

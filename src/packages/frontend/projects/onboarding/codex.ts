@@ -26,14 +26,21 @@ function detectCodexOnboardingMode(request: string): CodexOnboardingMode {
   }
   // Asking for an analysis or visualization does not select its underlying
   // editor. A mention that rules out notebooks is not a format request.
-  const mentionsNotebook = /\b(jupyter(?:lab)?|notebooks?|ipynb)\b/.test(goal);
+  const notebookTerm = String.raw`\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b`;
+  const mentionsNotebook = new RegExp(notebookTerm).test(goal);
   const rulesOutNotebook =
-    /\b(?:no|without|avoid|never|not|don't|do not|can't|cannot|can not)\b(?:\s+[\w'-]+){0,5}[\s.]+\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b/.test(
+    new RegExp(
+      String.raw`\b(?:no|without)(?:\s+[\w'-]+){0,2}[\s.]+${notebookTerm}`,
+    ).test(goal) ||
+    new RegExp(String.raw`\bnot\s+(?:(?:a|an|the)\s+)?${notebookTerm}`).test(
       goal,
     ) ||
-    /\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b(?:\s+[\w'-]+){0,5}\s+\b(?:not|never|prohibited|forbidden|disallowed|unsupported|unavailable|avoided|can't|cannot|shouldn't|mustn't|isn't)\b/.test(
-      goal,
-    );
+    new RegExp(
+      String.raw`\b(?:avoid(?:\s+using)?|(?:never|don't|do not|can't|cannot|can not|should not|must not|not)\s+(?:use|using|create|make|write|build|open|run|edit|update|produce|include))(?:\s+[\w'-]+){0,2}[\s.]+${notebookTerm}`,
+    ).test(goal) ||
+    new RegExp(
+      String.raw`${notebookTerm}\s+(?:(?:(?:is|are|was|were)\s+)?(?:not\s+(?:allowed|permitted|available|supported|wanted|used|created)|prohibited|forbidden|disallowed|unavailable|unsupported)|(?:should|must|can|could|may)\s+not\s+be\s+(?:used|created|opened|included)|(?:can't|cannot)\s+be\s+(?:used|created|opened|included)|(?:isn't|aren't)\s+(?:allowed|permitted|available|supported))\b`,
+    ).test(goal);
   if (mentionsNotebook && !rulesOutNotebook) {
     return "notebook";
   }
