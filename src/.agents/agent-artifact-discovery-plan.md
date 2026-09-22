@@ -1,8 +1,88 @@
 # Cross-agent artifact discovery
 
-Status: PR #668 now implements an initial bounded All agents discovery path.
-Agents offers This agent / All agents; ordinary chat files retain This thread /
-Entire chatroom. The persistent metadata index below remains follow-up work.
+Status: the bounded All agents scan works but is rejected as everyday UX.
+Replace it with a project-owned Postgres metadata catalog, account-home
+projections/feed, a browser cache, and an artifact shelf. Opening or filtering
+the shelf must never initiate chat-file scans or require starting projects.
+
+## Catalog implementation checkpoint (2026-09-22)
+
+Implemented storage primitives, not yet integrated into running services:
+
+- Bounded, content-free metadata protocol with canonical source identities.
+- Shared extraction of published current artifacts from complete chat records.
+  Malformed artifact rows fail a snapshot rather than becoming silent removals.
+- Host-private SQLite write-intent journal with crash recovery, immutable retry
+  payloads, generation checks, persisted backoff and asynchronous registration.
+  First writes can be journaled without contacting an available hub.
+- Bounded single-flight source projector with injectable sandbox reader and
+  owner-routed sender. It has no timer or RPC wiring yet.
+- Project-owning-bay Postgres catalog/source/outbox tables. Ingestion checks
+  current project owner/host under a lock; owner-issued writer epochs fence
+  stale writers. Registration and delivery retries are idempotent.
+- Catalog updates and the projection outbox commit atomically. Removals leave
+  tombstones; original creation order survives updates and reappearance.
+  Ordinary chat writes with unchanged metadata do not generate feed churn.
+
+Not implemented yet: filesystem/service hooks, epoch recovery/registration RPC,
+cross-bay transport, backfill, account projections, live feed, IndexedDB cache,
+or shelf UI. The existing global browser still scans. These primitives are not
+a claim that the new catalog is operational or that the UX issue is fixed.
+
+## Chosen ownership model
+
+- Source documents remain authoritative for content. The Postgres catalog is a
+  durable, rebuildable metadata projection in the project's owning bay.
+- Account-home projections contain only artifacts visible through project
+  collaboration. Agent Network membership confers no artifact access.
+- DKV holds only personal pins, ordering, hidden state and shelf preferences.
+- The frontend cache is partitioned by account/server. Revocation purges cached
+  project metadata; every open rechecks service authorization independently.
+- Artifacts are independent of agents. Optional agent association is a filter,
+  not their owner or lifecycle. File contents and stateful sessions remain in
+  the project data plane. Opening must eventually support source-aware tabs in
+  the current workbench without changing the user's composing conversation.
+
+## Next catalog stages
+
+1. Wire the source journal into service-owned chat filesystem mutations before
+   writes, deletes and renames, covering CLI and browser saves. Fence prior
+   service writers before recovering interrupted intents. Journal registration
+   must retain its retry identity across lost responses and host restarts.
+   Add authenticated, owner-routed registration/ingestion RPC; host identity and
+   owning bay must come from authenticated routing, never caller payload.
+   Workspace/Lite service integration needs its own lifecycle adapter.
+2. Add resumable background backfill of saved chat sources, including prior
+   agent conversations. Never drive it from opening the shelf. Bound parsing,
+   bytes, concurrency and retries; expose incomplete/error coverage. External
+   filesystem edits and project moves/restores need reconciliation. Source
+   registration/state lookup must support a journal lost during host migration.
+3. Drain the catalog outbox into authorized account-home projections using
+   trusted inter-bay routing. Cover new collaborators, removal, project deletion,
+   account/project rehome and revocation races with replayed updates. Membership
+   removal must win over delayed artifact deliveries. Keep tombstone/revision
+   floors until replay/snapshot recovery can no longer resurrect old rows.
+4. Add authenticated snapshot/cursor APIs and account-feed delivery with explicit
+   snapshot-to-feed handoff and gap recovery. Feed broadcast alone is not the
+   source of truth. Do not delete outbox work until durable projection succeeds.
+   Use keyset pagination and indexed metadata queries, not chat scans.
+5. Maintain one account-scoped frontend catalog store, warmed independently of
+   the modal, then persist metadata in IndexedDB. Switch scopes/search/order
+   locally. Replace the scanning browser only after this path is verified.
+6. Add the compact artifact shelf and source-aware tabs. Preserve pin ordering
+   across scopes; other artifacts use creation order with an identity tie-break.
+   Virtualize large lists and lazy-load thumbnails. Keep a searchable expanded
+   browser for large collections.
+
+Performance acceptance: a warmed shelf and scope toggle must render without a
+network round trip (target under 50 ms local interaction at 1,000 entries).
+Cold first use requires a bounded metadata fetch and must show truthful loading
+or coverage state. Verify 10,000-entry behavior without rendering all thumbnails.
+
+The initial complete-source transport caps 5,000 items / 2 MiB. Capacity errors
+must retain the previous catalog and surface incomplete coverage, never silently
+truncate a replacement snapshot. Larger sources need a staged, atomically
+committed paginated snapshot protocol before increasing these bounds.
 
 ## Initial implementation and limits
 
@@ -44,7 +124,7 @@ and cross-source tabs in one stationary Workbench are not implemented.
 - Personal pin keys already include project, chat path, thread and artifact ID.
   They are references/preferences, not an authorization source or content cache.
 
-## Next implementation slices
+## Superseded scan-oriented implementation slices
 
 1. Add a rebuildable project-host metadata catalog of published artifacts. Store
    source locators, title/description, kind, searchable metadata, current
