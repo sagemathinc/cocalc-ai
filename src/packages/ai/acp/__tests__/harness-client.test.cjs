@@ -10,6 +10,73 @@ const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
 const { harnessPrompt } = require("../../dist/acp/harness-context.js");
 const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
 
+const claudeAgentAcpBin = process.env.CLAUDE_AGENT_ACP_BIN;
+
+test(
+  "qualified Claude adapter negotiates ACP v1 without subscription auth",
+  { skip: !claudeAgentAcpBin },
+  async (t) => {
+    const probeProfile = {
+      version: 1,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.79.0",
+      executable: claudeAgentAcpBin,
+      args: ["--hide-claude-auth"],
+      cwd: "/tmp",
+      credentialMode: "project-managed",
+      executionPolicy: "full-access",
+    };
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "qualification-project",
+        accountId: "qualification-account",
+        profile: probeProfile,
+      },
+      async ({ profile }) => {
+        const child = spawn(profile.executable, profile.args, {
+          cwd: profile.cwd,
+          env: {
+            HOME:
+              process.env.CLAUDE_AGENT_ACP_PROBE_HOME ??
+              "/tmp/cocalc-claude-agent-acp-probe",
+            PATH: process.env.PATH,
+            LANG: "C.UTF-8",
+          },
+          stdio: "pipe",
+        });
+        const closed = new Promise((resolve) => {
+          child.once("close", resolve);
+          child.once("error", resolve);
+        });
+        return {
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          closed,
+          stop: async () => {
+            child.kill("SIGKILL");
+            await closed;
+          },
+        };
+      },
+    );
+    t.after(() => client.dispose());
+
+    const info = client.capabilities;
+    assert.equal(info.protocolVersion, 1);
+    assert.deepEqual(info.agentInfo, {
+      name: "@agentclientprotocol/claude-agent-acp",
+      title: "Claude Agent",
+      version: "0.79.0",
+    });
+    assert.deepEqual(info.authMethods, []);
+    assert.equal(info.agentCapabilities.loadSession, true);
+    assert.equal(info.agentCapabilities.promptCapabilities.image, true);
+    assert.deepEqual(info.agentCapabilities.sessionCapabilities.subagents, {});
+  },
+);
+
 function questionForm() {
   return {
     mode: "form",

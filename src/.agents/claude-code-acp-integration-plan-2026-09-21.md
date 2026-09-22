@@ -2,7 +2,9 @@
 
 Date: 2026-09-21
 
-Status: proposed implementation plan
+Status: implementation in progress. The 2026-09-22 qualification record pins
+the first adapter candidate and documents the current credential/tool isolation
+blocker.
 
 Depends on:
 
@@ -87,6 +89,9 @@ variables.
   failed Pro/Max login.
 - May be account-scoped for a personal key or project-scoped for a team-managed
   key.
+- A project-owned key can use the project's existing trusted secret boundary.
+  An account-owned key remains gated on credential/tool isolation just like a
+  personal subscription.
 - UI must state that Anthropic API billing applies.
 - Existing secret-setting components and project-secret authorization are
   reused rather than introducing a new plaintext key store.
@@ -101,11 +106,15 @@ variables.
 - On-prem administrators can disable providers, pin endpoints, and preinstall
   the Claude runtime.
 
-## Terms And Provider Approval
+## Terms And Provider Policy
 
-Before marketing or generally enabling Claude Pro/Max subscription login in a
-hosted multi-user CoCalc deployment, obtain written confirmation from Anthropic
-that the intended integration is permitted:
+Seek written confirmation from Anthropic that the intended integration is
+permitted, while recognizing that vendors using the supported Claude Agent SDK
+may not receive an individualized answer. The product and legal review should
+evaluate the published terms and established SDK integration model rather than
+making an unanswered inquiry the only release criterion.
+
+The UI must link to the applicable Anthropic terms and clearly state that:
 
 - each credential belongs to the individual user;
 - CoCalc does not pool, resell, or share subscriptions;
@@ -113,8 +122,9 @@ that the intended integration is permitted:
 - collaborators cannot spend against the credential;
 - CoCalc uses the maintained Claude Agent SDK/ACP adapter as intended.
 
-Technical prototyping may proceed before this confirmation. Public rollout of
-subscription authentication may not.
+Do not imply Anthropic endorsement. Re-check the published terms and SDK policy
+before each rollout expansion, and retain a provider kill switch. Engineering
+and qualification may proceed while confirmation is pending.
 
 ## Authority And Ownership
 
@@ -179,6 +189,14 @@ hosts or bays.
 ## Blocking Security Design: Separate Credentials From Agent Tools
 
 This is the most important release gate.
+
+Qualification on 2026-09-22 established that adapter version `0.79.0` runs
+Claude's built-in Bash, file, and subagent tools through the Claude Agent SDK
+runtime. ACP receives permission and rendering events but cannot relocate all
+of those tools into CoCalc callbacks. The preferred architecture below
+therefore requires upstream SDK/adapter support or a different controller
+boundary; it is not achievable by only enabling today's ACP terminal methods.
+See `src/.agents/claude-code-acp-qualification-2026-09-22.md`.
 
 A process that can read a long-lived Pro/Max credential and also run
 model-controlled shell commands may be induced to print or exfiltrate that
@@ -571,17 +589,18 @@ Credential deletion remains an explicit, fresh-authenticated user action.
 
 ## Decisions Still Required
 
-1. Can the maintained Claude ACP adapter route every model-controlled file and
-   terminal operation through CoCalc callbacks while the controller retains
-   authentication state?
+1. What upstream SDK hook, credential helper/proxy, or hardened process boundary
+   can separate the credential-bearing controller from every model-controlled
+   tool? The current adapter cannot route all built-in tools through ACP.
 2. What exact Pro/Max login and refresh flow is supported by the pinned
    Anthropic SDK, and is it approved for hosted CoCalc use?
 3. Which native Claude session artifacts are safe and necessary to persist?
 4. Does changing credential, model family, or provider require a new native
    Claude session?
 5. Which ACP extensions are stable enough to expose in the first release?
-6. Should the first rollout include both subscription and API billing, or ship
-   API/project credentials while subscription approval is pending?
+6. The first live rollout should use project-owned API credentials. What exact
+   evidence is required before account-owned API keys or subscriptions are
+   enabled?
 7. Which enterprise provider is the first on-prem qualification target?
 
 ## References
@@ -589,6 +608,8 @@ Credential deletion remains an explicit, fresh-authenticated user action.
 - Generic CoCalc ACP plan:
   `src/.agents/acp-runtime-integration-plan-2026-09-19.md`
 - Current operator documentation: `docs/acp-harnesses.md`
+- Claude qualification record:
+  `src/.agents/claude-code-acp-qualification-2026-09-22.md`
 - CoCalc security policy: `SECURITY.md`
 - CoCalc scalable architecture: `src/.agents/scalable-architecture.md`
 - CoCalc accessibility requirements: `src/.agents/accessibility.md`
