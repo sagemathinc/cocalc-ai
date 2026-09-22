@@ -3,6 +3,45 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { publishArtifact } from "@cocalc/chat";
 import ArtifactBrowser, { ArtifactResults } from "../artifact-browser";
+import { ArtifactBrowserButton } from "../artifact-discovery";
+
+test("compact toolbar opens the current thread browser by keyboard and restores focus", async () => {
+  const rows: any[] = [];
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+    get: () => rows.filter((row) => row.event === "chat-artifact-publication"),
+  });
+  for (const thread_id of ["one", "two"])
+    publishArtifact(syncdb, {
+      thread_id,
+      artifact_id: "doc",
+      operation_id: "op",
+      message_id: "message",
+      title: `Plan ${thread_id}`,
+      markdown: "hello",
+    });
+  render(
+    <ArtifactBrowserButton
+      actions={{ syncdb } as any}
+      threadId="one"
+      compact
+    />,
+  );
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Browse artifacts" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const filter = await screen.findByRole("textbox", {
+    name: "Filter artifacts",
+  });
+  await waitFor(() => expect(filter).toHaveFocus());
+  expect(screen.getByText("Plan one")).toBeVisible();
+  expect(screen.queryByText("Plan two")).toBeNull();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
 
 test("filter and keyboard opening preserve the source thread and close the modal", async () => {
   const rows: any[] = [];

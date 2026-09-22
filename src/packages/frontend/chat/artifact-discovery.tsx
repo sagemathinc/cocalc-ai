@@ -1,5 +1,7 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
+import type { ButtonRef } from "antd";
 import { Button } from "antd";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { ChatActions } from "./actions";
 const Browser = lazy(() => import("./artifact-browser"));
 const Results = lazy(() =>
@@ -9,21 +11,42 @@ const Results = lazy(() =>
 export function ArtifactBrowserButton({
   actions,
   threadId,
+  compact = false,
 }: {
   actions?: ChatActions;
   threadId?: string;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<ButtonRef>(null);
   if (!actions?.syncdb) return null;
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Artifacts</Button>
+      <Tooltip title="Browse artifacts">
+        <Button
+          ref={triggerRef}
+          aria-label="Browse artifacts"
+          aria-haspopup="dialog"
+          size={compact ? "small" : undefined}
+          type={compact ? "text" : "default"}
+          icon={compact ? <Icon name="files" /> : undefined}
+          style={
+            compact ? { minWidth: 24, height: 22, padding: "0 4px" } : undefined
+          }
+          onClick={() => setOpen(true)}
+        >
+          {compact ? null : "Artifacts"}
+        </Button>
+      </Tooltip>
       {open && (
         <Suspense fallback={<span role="status">Loading artifacts...</span>}>
           <Browser
             actions={actions}
             threadId={threadId}
-            onClose={() => setOpen(false)}
+            onClose={() => {
+              setOpen(false);
+              triggerRef.current?.focus();
+            }}
           />
         </Suspense>
       )}
