@@ -1566,6 +1566,12 @@ export interface AccountUsageOverview {
     managed_cpu?: ManagedCpuEventSummary[];
   };
   measurement_warnings: string[];
+  site_funded_codex_credits?: {
+    windows: Array<{
+      window: "5h" | "7d";
+      credits_microusd: Record<string, number>;
+    }>;
+  };
 }
 
 export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {

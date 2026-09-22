@@ -17,6 +17,7 @@ export interface AIUsageWindowStatus {
   resets_at?: Date;
   reset_at?: Date;
   reset_in?: string;
+  site_funded_credits_microusd?: Record<string, number>;
 }
 
 export interface AIUsageStatus {
@@ -32,9 +33,11 @@ export interface AIUsageLimits {
 export async function getAIUsageStatus({
   account_id,
   analytics_cookie,
+  include_site_funded_credits = false,
 }: {
   account_id?: string;
   analytics_cookie?: string;
+  include_site_funded_credits?: boolean;
 }): Promise<AIUsageStatus> {
   await ensureExactAIUsageSchema();
   if (account_id && !(await isValidAccount(account_id))) {
@@ -50,6 +53,7 @@ export async function getAIUsageStatus({
     analytics_cookie,
     limit: limits.units_5h,
     cache: "short",
+    include_site_funded_credits,
   });
   windows.push(window5h);
 
@@ -60,6 +64,7 @@ export async function getAIUsageStatus({
     analytics_cookie,
     limit: limits.units_7d,
     cache: "short",
+    include_site_funded_credits,
   });
   windows.push(window7d);
 
@@ -76,6 +81,7 @@ async function getUsageWindow({
   analytics_cookie,
   limit,
   cache,
+  include_site_funded_credits,
 }: {
   window: AIUsageWindowStatus["window"];
   period: "5 hours" | "7 days";
@@ -83,6 +89,7 @@ async function getUsageWindow({
   analytics_cookie?: string;
   limit?: number;
   cache?: CacheTime;
+  include_site_funded_credits?: boolean;
 }): Promise<AIUsageWindowStatus> {
   const activeWindow = account_id
     ? await getActiveAccountUsageWindow({
@@ -90,20 +97,20 @@ async function getUsageWindow({
         window,
       })
     : undefined;
-  const used =
+  const fixedWindowUsage =
     account_id != null
       ? activeWindow
-        ? await recentUsageUnitsInFixedWindow({
+        ? await usageInFixedWindow({
             account_id,
             usageWindow: activeWindow,
             cache,
+            include_site_funded_credits,
           })
-        : 0
-      : await recentUsageUnits({
-          period,
-          analytics_cookie,
-          cache,
-        });
+        : { used: 0, site_funded_credits_microusd: {} }
+      : undefined;
+  const used = fixedWindowUsage
+    ? fixedWindowUsage.used
+    : await recentUsageUnits({ period, analytics_cookie, cache });
   const reset_at =
     activeWindow?.resets_at ??
     (account_id
@@ -128,19 +135,66 @@ async function getUsageWindow({
     resets_at: activeWindow?.resets_at,
     reset_at,
     reset_in: reset_in && reset_in.length > 0 ? reset_in : undefined,
+    site_funded_credits_microusd: include_site_funded_credits
+      ? fixedWindowUsage?.site_funded_credits_microusd
+      : undefined,
   };
 }
 
-async function recentUsageUnitsInFixedWindow({
+async function usageInFixedWindow({
   account_id,
   usageWindow,
   cache,
+  include_site_funded_credits,
 }: {
   account_id: string;
   usageWindow: AccountUsageWindow;
   cache?: CacheTime;
-}): Promise<number> {
+  include_site_funded_credits?: boolean;
+}): Promise<{
+  used: number;
+  site_funded_credits_microusd?: Record<string, number>;
+}> {
   const pool = getPool(cache);
+  if (include_site_funded_credits) {
+    const { rows } = await pool.query(
+      `WITH per_turn AS (
+         SELECT funded_turn_id,
+           SUM(COALESCE(
+             cost_microusd * $4::numeric / 1000000,
+             usage_units,
+             0
+           )) AS usage,
+           SUM(COALESCE(cost_microusd, 0))::bigint AS funded_microusd
+         FROM ai_usage_log
+         WHERE account_id=$1
+           AND time >= $2
+           AND time < $3
+           AND (tag IS DISTINCT FROM 'chat-speech-reservation'
+                OR time >= NOW() - INTERVAL '5 minutes')
+         GROUP BY funded_turn_id
+       )
+       SELECT COALESCE(SUM(usage), 0) AS usage,
+         COALESCE(
+           jsonb_object_agg(funded_turn_id::text, funded_microusd)
+             FILTER (WHERE funded_turn_id IS NOT NULL),
+           '{}'::jsonb
+         ) AS site_funded_credits_microusd
+       FROM per_turn`,
+      [
+        account_id,
+        usageWindow.starts_at,
+        usageWindow.resets_at,
+        AI_USAGE_UNITS_PER_DOLLAR,
+      ],
+    );
+    return {
+      used: Number(rows[0]?.usage ?? 0),
+      site_funded_credits_microusd: normalizeFundedTurnCredits(
+        rows[0]?.site_funded_credits_microusd,
+      ),
+    };
+  }
   const { rows } = await pool.query(
     `SELECT SUM(COALESCE(
        cost_microusd * $4::numeric / 1000000,
@@ -160,7 +214,21 @@ async function recentUsageUnitsInFixedWindow({
       AI_USAGE_UNITS_PER_DOLLAR,
     ],
   );
-  return Number(rows[0]?.["usage"] ?? 0);
+  return { used: Number(rows[0]?.["usage"] ?? 0) };
+}
+
+function normalizeFundedTurnCredits(value: unknown): Record<string, number> {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const credits: Record<string, number> = {};
+  for (const [fundedTurnId, amount] of Object.entries(value)) {
+    const numeric = Number(amount);
+    if (Number.isSafeInteger(numeric) && numeric >= 0) {
+      credits[fundedTurnId] = numeric;
+    }
+  }
+  return credits;
 }
 
 async function recentUsageUnits({

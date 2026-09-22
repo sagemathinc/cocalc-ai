@@ -7,7 +7,7 @@ import { Alert, Button, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { markLegacyBillingMigrationReviewRequested } from "@cocalc/frontend/purchases/legacy-billing-migration-review";
@@ -24,6 +24,7 @@ const REFRESH_MS = 15 * 60 * 1000;
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 const PROJECT_CHECK_LIMIT = 1000;
 const DISMISSED_KEY_PREFIX = "legacy-migration-cta-dismissed";
+const PERMANENT_DISMISSAL_SETTING = "legacy_migration_banner_dismissed";
 
 type MigrationCtaState = {
   financialApply: boolean;
@@ -99,6 +100,10 @@ function dismiss(account_id: string, key: string): void {
 }
 
 export function LegacyMigrationCtaBanner() {
+  const accountActions = useActions("account");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const permanentlyDismissed =
+    otherSettings?.get(PERMANENT_DISMISSAL_SETTING) === true;
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const legacyMigrationEnabled = !!useTypedRedux(
@@ -109,7 +114,12 @@ export function LegacyMigrationCtaBanner() {
   const [dismissedKey, setDismissedKey] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!is_logged_in || !account_id || !legacyMigrationEnabled) {
+    if (
+      !is_logged_in ||
+      !account_id ||
+      !legacyMigrationEnabled ||
+      permanentlyDismissed
+    ) {
       setState(null);
       return;
     }
@@ -155,7 +165,7 @@ export function LegacyMigrationCtaBanner() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [account_id, is_logged_in, legacyMigrationEnabled]);
+  }, [account_id, is_logged_in, legacyMigrationEnabled, permanentlyDismissed]);
 
   const key = workKey(state);
   const dismissed = useMemo(
@@ -166,7 +176,7 @@ export function LegacyMigrationCtaBanner() {
     [account_id, dismissedKey, key],
   );
 
-  if (!account_id || !state || !key || dismissed) {
+  if (!account_id || !state || !key || dismissed || permanentlyDismissed) {
     return null;
   }
 
@@ -213,6 +223,17 @@ export function LegacyMigrationCtaBanner() {
             <Text type="secondary">{description}</Text>
           </Space>
           <Space size="small" wrap>
+            <Button
+              size="small"
+              onClick={() =>
+                accountActions.set_other_settings(
+                  PERMANENT_DISMISSAL_SETTING,
+                  true,
+                )
+              }
+            >
+              Don't show again
+            </Button>
             {showBilling ? (
               <Button
                 size="small"

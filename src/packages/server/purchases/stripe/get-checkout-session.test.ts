@@ -86,6 +86,7 @@ describe("getCheckoutSession", () => {
     await expect(
       getCheckoutSession({
         account_id: "acct-1",
+        checkout_instance_id: "instance-a",
         description: "Buy course membership",
         lineItems,
         metadata: { membership_package_product: "product-a" },
@@ -110,6 +111,7 @@ describe("getCheckoutSession", () => {
     await expect(
       getCheckoutSession({
         account_id: "acct-1",
+        checkout_instance_id: "instance-a",
         description: "Buy course membership",
         lineItems,
         metadata: { membership_package_product: "product-a" },
@@ -122,6 +124,7 @@ describe("getCheckoutSession", () => {
 
     expect(createdMetadata).toMatchObject({
       account_id: "acct-1",
+      checkout_instance_id: "instance-a",
       cocalc_site: "staging.cocalc.ai",
       membership_package_product: "product-a",
       purpose: "membership-package-purchase",
@@ -130,6 +133,54 @@ describe("getCheckoutSession", () => {
     expect(createdMetadata.checkout_key).toMatch(/^[a-f0-9]{64}$/);
     expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
     expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a distinct session for a remounted embedded checkout", async () => {
+    let createdMetadata;
+    stripe.checkout.sessions.create.mockImplementationOnce(async (params) => {
+      createdMetadata = params.metadata;
+      return {
+        id: "cs_first",
+        client_secret: "cs_first_secret",
+        metadata: params.metadata,
+      };
+    });
+
+    await getCheckoutSession({
+      account_id: "acct-1",
+      checkout_instance_id: "instance-a",
+      description: "Buy course membership",
+      lineItems,
+      metadata: { membership_package_product: "product-a" },
+      purpose: "membership-package-purchase",
+    });
+    stripe.checkout.sessions.list.mockResolvedValueOnce({
+      data: [
+        {
+          id: "cs_first",
+          client_secret: "cs_first_secret",
+          created: Math.floor(Date.now() / 1000),
+          metadata: createdMetadata,
+        },
+      ],
+    });
+
+    await expect(
+      getCheckoutSession({
+        account_id: "acct-1",
+        checkout_instance_id: "instance-b",
+        description: "Buy course membership",
+        lineItems,
+        metadata: { membership_package_product: "product-a" },
+        purpose: "membership-package-purchase",
+      }),
+    ).resolves.toEqual({
+      clientSecret: "cs_new_secret",
+      sessionId: "cs_new",
+    });
+
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(2);
   });
 
   it("expires same-price sessions with different purchase metadata", async () => {

@@ -199,6 +199,33 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("keeps oversized drafts visible and enables submission after shortening", async () => {
+    const user = userEvent.setup();
+    const record = {
+      ...questionRecord,
+      questions: [{ ...questionRecord.questions[0], isOther: true }],
+    };
+    jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
+      ok: true,
+      records: [record],
+    });
+    const view = render(<CodexAttentionCard initialRecord={record} />);
+    const input = screen.getByRole("textbox", {
+      name: "Custom answer for Region",
+    });
+    await user.click(input);
+    fireEvent.change(input, { target: { value: "a".repeat(32_001) } });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("a".repeat(32_001));
+    expect(screen.getByRole("status")).toHaveTextContent("1 over the limit");
+    expect(
+      screen.getByRole("button", { name: "Send response" }),
+    ).toBeDisabled();
+    fireEvent.change(input, { target: { value: "a".repeat(32_000) } });
+    expect(screen.getByRole("button", { name: "Send response" })).toBeEnabled();
+    view.unmount();
+  });
+
   it("submits Markdown and image links through the shared upload-enabled editor", async () => {
     const user = userEvent.setup();
     jest

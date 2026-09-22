@@ -225,6 +225,7 @@ import {
 import {
   assertSiteFundedCodexReservationHost,
   finishSiteFundedCodexTurn,
+  getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
   heartbeatSiteFundedCodexTurn,
   recordSiteFundedCodexUsageEvent,
@@ -867,11 +868,14 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        accountReservations: accountId
+          ? await getSiteFundedCodexAccountReservationStatus({ accountId })
+          : undefined,
         reconciliation: reconcile
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
@@ -1480,8 +1484,14 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
-    getAccountUsageOverview: async ({ account_id }) =>
-      await getAccountUsageOverviewForAccount({ account_id }),
+    getAccountUsageOverview: async ({
+      account_id,
+      include_site_funded_codex_credits,
+    }) =>
+      await getAccountUsageOverviewForAccount({
+        account_id,
+        include_site_funded_codex_credits,
+      }),
     recordSiteFundedCodexUsage: async (opts) =>
       await recordSiteFundedCodexAccountUsage(opts),
     getVerifiedEmailAddresses: async ({ account_id }) => ({

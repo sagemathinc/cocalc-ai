@@ -1184,6 +1184,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const codeDecorate = useCallback(
     ([node, path]): DecoratedRange[] => {
       if (!Text.isText(node)) return [];
+      // The render entry can be stale while an external update replaces blocks.
+      if (!Node.has(editor, path)) return [];
       const lineEntry = Editor.above(editor, {
         at: path,
         match: (n) => SlateElement.isElement(n) && n.type === "code_line",
