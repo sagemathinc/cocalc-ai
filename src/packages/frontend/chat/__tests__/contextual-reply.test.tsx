@@ -11,6 +11,13 @@ import {
 } from "../contextual-reply-context";
 import ContextualReply, { LocalCommentButton } from "../contextual-reply";
 import Editor from "../contextual-reply-editor";
+import { selectedMarkdown } from "@cocalc/frontend/editors/slate/selection-source";
+
+jest.mock("@cocalc/frontend/editors/slate/selection-source", () => ({
+  selectedMarkdown: jest.fn(
+    () => "- **important**\n- [details](https://example.com)",
+  ),
+}));
 
 const privateDrafts = new Map<string, string>();
 const outbox = jest.fn().mockResolvedValue({ id: "pending" });
@@ -83,6 +90,7 @@ const identity = {
   message_id: "reply",
 };
 const actions: any = {
+  appendToComposerDraft: jest.fn(),
   reserveChatSendIdentity: jest.fn(() => identity),
   sendChat: jest.fn(() => identity.date),
   getMessageByDate: jest.fn(),
@@ -315,6 +323,48 @@ test("a double click creates only one outbox entry and one send", async () => {
   await act(async () => release());
   await waitFor(() => expect(actions.sendChat).toHaveBeenCalledTimes(1));
   expect(outbox).toHaveBeenCalledTimes(1);
+});
+
+test("Quote stages formatted Markdown without sending or opening a reply dialog", () => {
+  const { container } = render(
+    <ContextualReply {...props} source={source}>
+      <ul>
+        <li>
+          <strong>important</strong>
+        </li>
+        <li>
+          <a href="https://example.com">details</a>
+        </li>
+      </ul>
+    </ContextualReply>,
+  );
+  const range = document.createRange();
+  range.selectNodeContents(container.querySelector("ul")!);
+  range.getBoundingClientRect = () => props.rect;
+  act(() => {
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  const quote = screen.getByRole("button", { name: "Quote" });
+  expect(quote).not.toHaveFocus();
+  // Capture survives keyboard focus moving away from the selected passage.
+  quote.focus();
+  fireEvent.click(quote);
+  expect(selectedMarkdown).toHaveBeenCalled();
+  expect(actions.appendToComposerDraft).toHaveBeenCalledTimes(1);
+  const request = actions.appendToComposerDraft.mock.calls[0][0];
+  expect(request.threadKey).toBe("thread");
+  expect(request.text).toContain("**important**");
+  expect(request.text).toContain("[details](https://example.com)");
+  expect(request.text.split("\n").every((line) => line.startsWith("> "))).toBe(
+    true,
+  );
+  expect(actions.sendChat).not.toHaveBeenCalled();
+  expect(outbox).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(container.querySelector('[tabindex="0"]')).toHaveFocus();
 });
 
 test("selection exposes Reply without stealing focus, and read-only disables comments", async () => {
