@@ -39,10 +39,10 @@ Tarball SHA-256:
    text in a horizontal scroll view. No public wrap option was found. Adopting
    it would lose our new per-block wrap control unless added upstream or via a
    targeted extension. Do not recreate the whole renderer just to preserve this.
-2. **Math:** native math uses RaTeX, not CoCalc's web MathJax pipeline. Test
+2. **Math:** native math uses RaTeX, not CoCalc's web KaTeX pipeline. Test
    fractions, matrices, aligned equations, long displays, inline baselines,
    macros, unsupported commands, malformed input, dollar currency, and CoCalc
-   delimiter conventions. Do not promise full LaTeX/MathJax compatibility.
+   delimiter conventions. Do not promise full parity with CoCalc’s KaTeX configuration.
 3. **Released versus main:** current math docs describe `onLatexError`; neither
    the 1.0.2 TS API nor its source contains that callback. Avoid relying on it.
 4. **Streaming:** the core accepts updated Markdown and exposes table/code
@@ -96,3 +96,7 @@ Tarball SHA-256:
 
 Main-branch documentation may describe functionality newer than the inspected
 release; the package-source findings above take precedence for the proposed pin.
+
+Correction: CoCalc uses KaTeX. RaTeX is a Rust engine targeting KaTeX-compatible
+math; the relevant parity checks are our macros, preprocessing, delimiters,
+and rendering behavior. See the companion Markdown Display evaluation.
