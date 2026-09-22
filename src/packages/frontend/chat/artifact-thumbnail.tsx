@@ -8,16 +8,18 @@ import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 export function ThumbnailImage({
   src,
   title,
+  size = 48,
 }: {
   src?: string;
   title: string;
+  size?: number;
 }) {
   const [failed, setFailed] = useState<string>();
   return (
     <div
       style={{
-        width: 48,
-        height: 48,
+        width: size,
+        height: size,
         borderRadius: 8,
         overflow: "hidden",
         background: UI_COLORS.inset,
@@ -32,7 +34,7 @@ export function ThumbnailImage({
           loading="lazy"
           decoding="async"
           onError={() => setFailed(src)}
-          style={{ width: "100%", height: 48, objectFit: "contain" }}
+          style={{ width: "100%", height: size, objectFit: "contain" }}
         />
       ) : (
         <span
@@ -54,10 +56,12 @@ function FileThumbnail({
   path,
   projectId,
   title,
+  size,
 }: {
   path: string;
   projectId: string;
   title: string;
+  size?: number;
 }) {
   const { projectAccess } = useProjectContext();
   const url = useProjectHostAuthedUrl({
@@ -68,7 +72,7 @@ function FileThumbnail({
       viewer: projectAccess?.role === "viewer",
     }),
   });
-  return <ThumbnailImage key={path} src={url} title={title} />;
+  return <ThumbnailImage key={path} src={url} title={title} size={size} />;
 }
 
 export default function ArtifactThumbnail({
@@ -76,17 +80,20 @@ export default function ArtifactThumbnail({
   path,
   projectId,
   title,
+  size,
 }: {
   imageBlob?: string | null;
   path?: string;
   projectId?: string;
   title: string;
+  size?: number;
 }) {
   if (imageBlob)
     return (
       <ThumbnailImage
         src={`${appBasePath}/blobs/theme-image.png?uuid=${encodeURIComponent(imageBlob)}`}
         title={title}
+        size={size}
       />
     );
   if (path && projectId)
@@ -96,6 +103,7 @@ export default function ArtifactThumbnail({
         path={path}
         projectId={projectId}
         title={title}
+        size={size}
       />
     );
   return null;

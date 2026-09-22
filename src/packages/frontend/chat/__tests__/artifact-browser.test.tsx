@@ -13,7 +13,7 @@ import { publishArtifact } from "@cocalc/chat";
 import ArtifactBrowser, { ArtifactResults } from "../artifact-browser";
 import { ArtifactBrowserButton } from "../artifact-discovery";
 
-test("pinning and keyboard move buttons retain custom order independently of sorting", async () => {
+test("pinning and keyboard menu actions retain custom order independently of sorting", async () => {
   const rows: any[] = [];
   const syncdb = Object.assign(new EventEmitter(), {
     get_one: () => undefined,
@@ -55,9 +55,13 @@ test("pinning and keyboard move buttons retain custom order independently of sor
   await user.keyboard("{Enter}");
   expect(screen.getByRole("button", { name: "Unpin Alpha" })).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Pin Beta" }));
-  const up = screen.getByRole("button", { name: "Move Beta up" });
-  up.focus();
+  expect(screen.queryByRole("button", { name: /Move .* up/ })).toBeNull();
+  const menu = screen.getByRole("button", { name: "More options for Beta" });
+  menu.focus();
   await user.keyboard("{Enter}");
+  const up = await screen.findByRole("menuitem", { name: "Move up" });
+  up.focus();
+  fireEvent.keyDown(up, { key: "Enter", keyCode: 13, which: 13 });
   const pinned = within(
     screen.getByRole("region", { name: "Pinned artifacts" }),
   );
@@ -66,7 +70,6 @@ test("pinning and keyboard move buttons retain custom order independently of sor
       .getAllByRole("button", { name: /^Unpin / })
       .map((b) => b.getAttribute("aria-label")),
   ).toEqual(["Unpin Beta", "Unpin Alpha"]);
-  expect(up).toHaveFocus();
   await user.click(pinned.getByRole("button", { name: "Unpin Beta" }));
   expect(screen.getByRole("button", { name: "Pin Beta" })).toHaveFocus();
 });

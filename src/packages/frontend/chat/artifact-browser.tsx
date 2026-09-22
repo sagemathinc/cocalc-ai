@@ -111,58 +111,63 @@ export function ArtifactResults({
     const id = entryId(entry);
     const canOpen = !!actions.frameTreeActions && !!actions.frameId;
     return (
-      <div key={id} style={{ marginBottom: 10 }}>
-        {organization?.canPin && (
-          <Space wrap size={4}>
-            {pinnedIndex >= 0 && (
+      <div key={id} style={{ marginBottom: 2 }}>
+        <ArtifactCard
+          compact
+          leading={
+            organization?.canPin &&
+            (pinnedIndex >= 0 ? (
               <DragHandle
                 id={id}
                 ariaLabel={`Drag ${entry.title} to reorder`}
+                style={{ padding: "4px 2px" }}
               />
-            )}
-            <Button
-              ref={(button) => {
-                if (button) pinButtons.current.set(id, button);
-                else pinButtons.current.delete(id);
-              }}
-              size="small"
-              type="text"
-              aria-label={`${pinnedIndex >= 0 ? "Unpin" : "Pin"} ${entry.title}`}
-              onClick={() => {
-                focusPin.current = id;
-                organization.setPinned(id, pinnedIndex < 0);
-              }}
-              icon={
-                <Icon name={pinnedIndex >= 0 ? "pushpin-filled" : "pushpin"} />
-              }
-            />
-            {pinnedIndex >= 0 && (
-              <>
-                <Button
-                  size="small"
-                  type="text"
-                  aria-label={`Move ${entry.title} up`}
-                  disabled={pinnedIndex === 0}
-                  onClick={() =>
-                    organization.move(visiblePins, id, pinnedIndex - 1)
-                  }
-                  icon={<Icon name="arrow-up" />}
-                />
-                <Button
-                  size="small"
-                  type="text"
-                  aria-label={`Move ${entry.title} down`}
-                  disabled={pinnedIndex === pinned.length - 1}
-                  onClick={() =>
-                    organization.move(visiblePins, id, pinnedIndex + 1)
-                  }
-                  icon={<Icon name="arrow-down" />}
-                />
-              </>
-            )}
-          </Space>
-        )}
-        <ArtifactCard
+            ) : (
+              <span style={{ display: "inline-block", width: 18 }} />
+            ))
+          }
+          trailing={
+            organization?.canPin && (
+              <Button
+                ref={(button) => {
+                  if (button) pinButtons.current.set(id, button);
+                  else pinButtons.current.delete(id);
+                }}
+                size="small"
+                type="text"
+                style={{
+                  color:
+                    pinnedIndex >= 0 ? UI_COLORS.link : UI_COLORS.secondary,
+                }}
+                aria-label={`${pinnedIndex >= 0 ? "Unpin" : "Pin"} ${entry.title}`}
+                onClick={() => {
+                  focusPin.current = id;
+                  organization.setPinned(id, pinnedIndex < 0);
+                }}
+                icon={
+                  <Icon
+                    name={pinnedIndex >= 0 ? "pushpin-filled" : "pushpin"}
+                  />
+                }
+              />
+            )
+          }
+          reorder={
+            organization?.canPin && pinnedIndex >= 0
+              ? {
+                  up:
+                    pinnedIndex > 0
+                      ? () =>
+                          organization.move(visiblePins, id, pinnedIndex - 1)
+                      : undefined,
+                  down:
+                    pinnedIndex < pinned.length - 1
+                      ? () =>
+                          organization.move(visiblePins, id, pinnedIndex + 1)
+                      : undefined,
+                }
+              : undefined
+          }
           publication={entry.publication}
           current={entry.current}
           syncdb={actions.syncdb}
@@ -207,7 +212,16 @@ export function ArtifactResults({
       )}
       {!!pinned.length && (
         <section aria-label="Pinned artifacts">
-          <h4>Pinned</h4>
+          <h4
+            style={{
+              margin: "8px 0 4px",
+              fontSize: 13,
+              fontWeight: 400,
+              color: UI_COLORS.secondary,
+            }}
+          >
+            Pinned
+          </h4>
           <SortableList
             items={visiblePins}
             onDragStop={(_from, to, id) => {
@@ -227,7 +241,18 @@ export function ArtifactResults({
           </SortableList>
         </section>
       )}
-      {!!pinned.length && !!unpinned.length && <h4>Other artifacts</h4>}
+      {!!pinned.length && !!unpinned.length && (
+        <h4
+          style={{
+            margin: "8px 0 4px",
+            fontSize: 13,
+            fontWeight: 400,
+            color: UI_COLORS.secondary,
+          }}
+        >
+          Other artifacts
+        </h4>
+      )}
       {unpinned.slice(0, limit).map((entry) => renderEntry(entry))}
       {unpinned.length > limit && (
         <Button onClick={() => setLimit(limit + 50)}>

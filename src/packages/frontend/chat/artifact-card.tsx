@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from "react";
+import type { ReactNode } from "react";
 import { Button, Dropdown } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -77,6 +78,10 @@ export function ArtifactCard({
   showInConversation,
   syncdb,
   projectId,
+  compact = false,
+  leading,
+  trailing,
+  reorder,
 }: {
   publication: ArtifactPublication;
   current?: ArtifactRecord;
@@ -84,6 +89,10 @@ export function ArtifactCard({
   showInConversation?: () => void | Promise<void>;
   syncdb?: any;
   projectId?: string;
+  compact?: boolean;
+  leading?: ReactNode;
+  trailing?: ReactNode;
+  reorder?: { up?: () => void; down?: () => void };
 }) {
   const [editing, setEditing] = useState(false);
   const published = publication.snapshot;
@@ -153,6 +162,12 @@ export function ArtifactCard({
     .filter(Boolean)
     .join("\n");
   const menuItems = [
+    ...(reorder
+      ? [
+          { key: "move-up", label: "Move up", disabled: !reorder.up },
+          { key: "move-down", label: "Move down", disabled: !reorder.down },
+        ]
+      : []),
     {
       key: "message-version",
       label: published.file
@@ -184,6 +199,16 @@ export function ArtifactCard({
           ? `linear-gradient(120deg, color-mix(in srgb, ${theme.accent_color} 10%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
           : `linear-gradient(120deg, ${UI_COLORS.surface}, ${UI_COLORS.inset})`,
         color: UI_COLORS.text,
+        ...(compact
+          ? {
+              width: "100%",
+              maxWidth: "100%",
+              marginTop: 0,
+              border: "none",
+              borderRadius: 6,
+              background: "transparent",
+            }
+          : {}),
       }}
     >
       {open && (
@@ -208,17 +233,28 @@ export function ArtifactCard({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "10px 12px",
+          padding: compact ? "8px 4px" : "10px 12px",
           pointerEvents: "none",
           minWidth: 0,
         }}
       >
+        {leading && (
+          <span
+            style={{
+              position: "relative",
+              pointerEvents: "auto",
+              flexShrink: 0,
+            }}
+          >
+            {leading}
+          </span>
+        )}
         <span
           aria-hidden
           style={{
-            flex: "0 0 48px",
-            width: 48,
-            height: 48,
+            flex: `0 0 ${compact ? 32 : 48}px`,
+            width: compact ? 32 : 48,
+            height: compact ? 32 : 48,
             display: "grid",
             placeItems: "center",
             borderRadius: 6,
@@ -231,6 +267,7 @@ export function ArtifactCard({
               fallback={<Icon name={(theme?.icon || icon) as IconName} />}
             >
               <Thumbnail
+                size={compact ? 32 : 48}
                 imageBlob={theme?.image_blob}
                 path={s.file?.path}
                 projectId={projectId}
@@ -271,7 +308,18 @@ export function ArtifactCard({
             {updated && <span> · Updated</span>}
           </span>
         </span>
-        {(open || showInConversation) && (
+        {trailing && (
+          <span
+            style={{
+              position: "relative",
+              pointerEvents: "auto",
+              flexShrink: 0,
+            }}
+          >
+            {trailing}
+          </span>
+        )}
+        {(open || showInConversation || reorder) && (
           <Dropdown
             autoFocus
             trigger={["click"]}
@@ -279,7 +327,9 @@ export function ArtifactCard({
               items: menuItems,
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
-                if (key === "appearance") setEditing(true);
+                if (key === "move-up") reorder?.up?.();
+                else if (key === "move-down") reorder?.down?.();
+                else if (key === "appearance") setEditing(true);
                 else if (key === "conversation") void showInConversation?.();
                 else open?.(publication.operation_id);
               },
