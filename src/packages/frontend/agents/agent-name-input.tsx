@@ -1,4 +1,6 @@
-import { Input } from "antd";
+import { useState } from "react";
+import { InfoCircleOutlined } from "@ant-design/icons";
+import { Button, Input } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
@@ -29,6 +31,18 @@ export function agentNameProblem(
     return `@${name} is already used by another agent in your account.`;
 }
 
+export function isAgentNameRename(
+  value: string,
+  currentName: string | undefined,
+): boolean {
+  if (!currentName) return false;
+  try {
+    return normalizeAgentName(value) !== normalizeAgentName(currentName);
+  } catch {
+    return false;
+  }
+}
+
 export function AgentNameInput({
   id,
   value,
@@ -37,6 +51,7 @@ export function AgentNameInput({
   busy,
   onEnter,
   label = "Agent name",
+  showRetirementWarning = false,
 }: {
   id: string;
   value: string;
@@ -45,10 +60,44 @@ export function AgentNameInput({
   busy?: boolean;
   onEnter?: () => void;
   label?: string;
+  showRetirementWarning?: boolean;
 }) {
+  const [showRequirements, setShowRequirements] = useState(false);
+  const requirementsId = `${id}-requirements`;
+  const retirementId = `${id}-retirement`;
+  const problemId = `${id}-problem`;
+  const describedBy = [
+    showRequirements ? requirementsId : undefined,
+    showRetirementWarning ? retirementId : undefined,
+    problem ? problemId : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <>
-      <label htmlFor={id}>{label}</label>
+      <div
+        style={{
+          alignItems: "baseline",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          justifyContent: "space-between",
+        }}
+      >
+        <label htmlFor={id}>{label}</label>
+        <Button
+          type="link"
+          size="small"
+          htmlType="button"
+          icon={<InfoCircleOutlined />}
+          aria-label="Agent name requirements"
+          aria-expanded={showRequirements}
+          aria-controls={requirementsId}
+          title="Name requirements"
+          onClick={() => setShowRequirements((value) => !value)}
+          style={{ height: "auto", padding: 0 }}
+        />
+      </div>
       <Input
         id={id}
         autoFocus
@@ -56,25 +105,29 @@ export function AgentNameInput({
         maxLength={32}
         disabled={busy}
         aria-invalid={!!problem}
-        aria-describedby={`${id}-help ${id}-availability`}
+        aria-describedby={describedBy || undefined}
         onChange={(event) => onChange(event.target.value)}
         onPressEnter={onEnter}
       />
-      <div id={`${id}-help`}>
-        1-32 letters, digits or internal hyphens, beginning with a letter. Old
-        names are retired after renaming.
+      <div id={requirementsId} hidden={!showRequirements}>
+        Use 1-32 letters, digits, or internal hyphens, beginning with a letter.
+        Availability is checked again when saved.
       </div>
-      <div
-        id={`${id}-availability`}
-        role="status"
-        aria-live="polite"
-        style={problem ? { color: UI_COLORS.danger } : undefined}
-      >
-        {value.trim()
-          ? (problem ??
-            "No conflict in your loaded agent names. Availability is checked again when saved.")
-          : "Choose a name for this agent in your account."}
-      </div>
+      {showRetirementWarning && (
+        <div id={retirementId} role="status" aria-live="polite">
+          The old name will be retired when you save this rename.
+        </div>
+      )}
+      {problem && (
+        <div
+          id={problemId}
+          role="status"
+          aria-live="polite"
+          style={{ color: UI_COLORS.danger }}
+        >
+          {problem}
+        </div>
+      )}
     </>
   );
 }
