@@ -244,3 +244,44 @@ it("keeps an edited draft while voice hides the composer, and restores it afterw
   expect(clearChatDraftIfUnchanged).not.toHaveBeenCalled();
   expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
 });
+
+it("opens at recent messages without imperative scrolling during streamed updates", async () => {
+  const original = client.getSnapshot();
+  original.messages = Array.from({ length: 100 }, (_, i) => ({
+    message_id: String(i),
+    role: i % 2 ? "agent" : "human",
+    content: "Message " + i,
+    generating: false,
+  }));
+  const chronological = [...original.messages];
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  expect(createRemoteHeadlessChatClient).toHaveBeenCalledWith(
+    expect.objectContaining({ initial_message_limit: 8 }),
+  );
+  const list = () => renderer.root.findByType("FlatList");
+  expect(list().props.data[0].message_id).toBe("99");
+  expect(list().props.data[99].message_id).toBe("0");
+  expect(original.messages).toEqual(chronological);
+  expect(list().props.inverted).toBe(true);
+  expect(list().props.onContentSizeChange).toBeUndefined();
+  expect(list().props.onLayout).toBeUndefined();
+  expect(list().props.maintainVisibleContentPosition).toEqual({
+    minIndexForVisible: 0,
+    autoscrollToTopThreshold: 80,
+  });
+  original.messages = [
+    ...original.messages,
+    {
+      message_id: "100",
+      role: "agent",
+      content: "Streaming result",
+      generating: true,
+    },
+  ];
+  await act(async () => renderer.update(<ChatScreen />));
+  expect(list().props.data[0].message_id).toBe("100");
+  await act(async () => button("Load earlier messages").props.onPress());
+  expect(client.loadOlderMessages).toHaveBeenCalledWith(60);
+});

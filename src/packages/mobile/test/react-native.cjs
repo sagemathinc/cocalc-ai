@@ -12,10 +12,17 @@ module.exports = {
   TextInput: "TextInput",
   ActivityIndicator: "ActivityIndicator",
   RefreshControl: "RefreshControl",
-  FlatList: ({ data, renderItem, ListEmptyComponent, ListHeaderComponent }) =>
+  FlatList: ({
+    data,
+    renderItem,
+    ListEmptyComponent,
+    ListHeaderComponent,
+    ListFooterComponent,
+    ...props
+  }) =>
     React.createElement(
       "FlatList",
-      {},
+      { ...props, data },
       ListHeaderComponent,
       data.length
         ? data.map((item) =>
@@ -26,6 +33,7 @@ module.exports = {
             ),
           )
         : ListEmptyComponent,
+      ListFooterComponent,
     ),
   AppState: {
     currentState: "active",

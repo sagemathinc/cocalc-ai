@@ -32,8 +32,6 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Linking,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   Platform,
   Pressable,
   StyleSheet,
@@ -201,8 +199,6 @@ export default function ChatScreen() {
   const clientRef = useRef<ConversationClient | undefined>(undefined);
   const generation = useRef(0);
   const listRef = useRef<FlatList<ProjectedChatMessage>>(null);
-  const shouldFollowNewest = useRef(true);
-  const userControlsScroll = useRef(false);
   const [draft, setDraft] = useState("");
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -268,6 +264,7 @@ export default function ChatScreen() {
         path: chatPath,
         projectHostClient: lease.client,
         selected_thread_id: threadId,
+        initial_message_limit: 8,
       });
       clientRef.current = next;
       setClient(next);
@@ -304,35 +301,12 @@ export default function ChatScreen() {
     };
   }, [draftKey, draftRevision]);
 
-  const scrollToNewest = useCallback(() => {
-    listRef.current?.scrollToEnd({ animated: false });
-  }, []);
-  const hasMessages = snapshot.messages.length > 0;
-
-  const updateFollowNewest = useCallback(
-    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (userControlsScroll.current) return;
-      const distanceFromNewest =
-        nativeEvent.contentSize.height -
-        nativeEvent.layoutMeasurement.height -
-        nativeEvent.contentOffset.y;
-      shouldFollowNewest.current = distanceFromNewest < 80;
-    },
-    [],
+  // Inverted layout starts at the newest message without measuring or scrolling
+  // through older Markdown. Never mutate the shared chronological snapshot.
+  const newestFirstMessages = useMemo(
+    () => [...snapshot.messages].reverse(),
+    [snapshot.messages],
   );
-
-  useEffect(() => {
-    if (!snapshot.ready || !hasMessages) return;
-    shouldFollowNewest.current = true;
-    const frame = requestAnimationFrame(scrollToNewest);
-    const first = setTimeout(scrollToNewest, 100);
-    const settled = setTimeout(scrollToNewest, 400);
-    return () => {
-      cancelAnimationFrame(frame);
-      clearTimeout(first);
-      clearTimeout(settled);
-    };
-  }, [hasMessages, scrollToNewest, snapshot.ready, threadId]);
 
   const changeDraft = (value: string) => {
     draftRef.current = value;
@@ -404,7 +378,7 @@ export default function ChatScreen() {
     const activeClient = clientRef.current;
     const text = draft.trim();
     if (!activeClient || !canSend || !text) return;
-    shouldFollowNewest.current = true;
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
     setSubmitting(true);
     setError(undefined);
     try {
@@ -478,7 +452,6 @@ export default function ChatScreen() {
     const activeClient = clientRef.current;
     if (!activeClient?.loadOlderMessages || loadingOlder) return;
     setLoadingOlder(true);
-    shouldFollowNewest.current = false;
     try {
       await activeClient.loadOlderMessages(
         (snapshot.message_window?.limit ?? 30) + 30,
@@ -546,9 +519,18 @@ export default function ChatScreen() {
           keyboardShouldPersistTaps="handled"
           contentInsetAdjustmentBehavior="never"
           contentContainerStyle={styles.messages}
-          data={snapshot.messages}
+          key={threadId}
+          inverted
+          initialNumToRender={3}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 80,
+          }}
+          data={newestFirstMessages}
           keyExtractor={(item) => item.message_id}
-          ListHeaderComponent={
+          ListFooterComponent={
             snapshot.message_window?.has_older ? (
               <Pressable
                 accessibilityRole="button"
@@ -569,28 +551,6 @@ export default function ChatScreen() {
               <Text style={styles.emptyText}>No messages in this thread.</Text>
             ) : null
           }
-          onContentSizeChange={() =>
-            shouldFollowNewest.current && scrollToNewest()
-          }
-          onLayout={() => {
-            if (shouldFollowNewest.current) scrollToNewest();
-          }}
-          onMomentumScrollBegin={() => {
-            userControlsScroll.current = true;
-          }}
-          onMomentumScrollEnd={(event) => {
-            userControlsScroll.current = false;
-            updateFollowNewest(event);
-          }}
-          onScrollBeginDrag={() => {
-            userControlsScroll.current = true;
-            shouldFollowNewest.current = false;
-          }}
-          onScrollEndDrag={(event) => {
-            userControlsScroll.current = false;
-            updateFollowNewest(event);
-          }}
-          onScroll={updateFollowNewest}
           ref={listRef}
           renderItem={({ item }) => (
             <Message
@@ -601,7 +561,6 @@ export default function ChatScreen() {
               }
             />
           )}
-          scrollEventThrottle={16}
         />
         <View style={styles.composer}>
           <LiveVoiceControls
@@ -757,7 +716,6 @@ const makeStyles = (colors: AppearancePalette) =>
     },
     agentMessage: {
       alignSelf: "flex-start",
-      backgroundColor: colors.inset,
     },
     messageActions: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
     messageAction: {
