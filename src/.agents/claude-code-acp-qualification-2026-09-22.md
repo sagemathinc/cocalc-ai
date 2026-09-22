@@ -93,6 +93,28 @@ This establishes lifecycle behavior and testing but does not yet authorize or
 materialize an account key into a Claude runtime. That binding remains blocked
 on credential/tool isolation.
 
+## Managed Distribution Discovery
+
+The current Claude Agent SDK dependency installs an architecture-specific
+Claude executable of about 220 MB. Bundling both amd64 and arm64 copies into
+the universal CoCalc project-tools artifact would add roughly 440 MB before
+compression to every project host, including hosts that never enable Claude.
+The adapter should therefore ship as a separate versioned managed-harness
+artifact or host cache, mounted read-only into qualified ACP sidecars. A
+project-local exact-version install remains suitable for qualification with a
+project-owned API key, but is not the intended managed-service distribution.
+
+## Credential Relay Foundation
+
+The project host now has a provider-neutral streaming HTTP relay foundation.
+It holds the real credential in project-host memory, listens on a mode-0600
+Unix socket, requires a random per-runtime capability, fixes the upstream
+origin and path prefix, strips caller-supplied authorization headers, injects
+the real provider header, does not follow redirects, and bounds request size
+and duration. The next integration step is a tiny sidecar-local TCP-to-Unix
+bridge plus exact-ID broker admission. This lets model-controlled shell tools
+use the admitted provider session without receiving the durable account key.
+
 ## Next Engineering Work
 
 1. Add a project-owned Anthropic API-key path using the existing project-secret
@@ -101,7 +123,7 @@ on credential/tool isolation.
    failures, recommended model/effort values, subagents, and URL elicitation.
 3. Build managed installation from the pinned package manifest rather than
    invoking an unversioned package command.
-4. Prototype and adversarially test a controller/tool isolation strategy before
-   enabling account-owned credentials.
+4. Connect exact-ID broker admission to the credential relay and adversarially
+   test the local bridge before enabling account-owned API keys.
 5. Re-run the live package probe and adapter upstream test suite whenever the
    pinned version changes.

@@ -229,6 +229,22 @@ controller, inherit secrets, or access a credential-bearing socket.
 This alternative needs an adversarial test suite and a security review. A UID
 change by itself is not enough.
 
+### HTTP API Credential Relay
+
+API credentials have a simpler isolation option that does not require moving
+Claude's built-in tools. Keep the durable key in project-host memory behind a
+mode-0600 Unix-socket relay. Give one ACP sidecar only a random short-lived
+capability and a local provider base URL. The relay fixes the upstream origin
+and allowed path prefix, strips caller authorization headers, injects the
+durable key, streams responses without following redirects, and closes with
+the runtime. Model-controlled shell tools may use the admitted provider
+session, but cannot read the durable credential; an exfiltrated capability is
+useless after teardown and cannot address another origin.
+
+This architecture is applicable to account-owned Anthropic API keys and other
+HTTP providers. It does not by itself solve Claude Pro/Max credentials if the
+native client cannot use a supported provider relay or brokered login flow.
+
 ### Non-Solution
 
 Warnings, hidden paths, file permissions readable by the runtime user, and
@@ -266,6 +282,11 @@ Installation is an explicit operation with progress and failure reporting. It
 targets a managed project cache or prebuilt project image, is reproducible, and
 supports rollback to the previous qualified version. On-prem operators can
 preinstall and pin the package globally.
+
+Keep large harness payloads out of the universal tools bundle. The pinned
+Claude Agent SDK currently contributes an architecture-specific executable of
+about 220 MB, so use a separately versioned managed-harness artifact or host
+cache instead of adding both architectures to every tools image.
 
 An existing user-installed binary may be detected and offered through Custom
 ACP, but is not silently treated as the qualified Claude runtime.
