@@ -28,7 +28,10 @@ function detectCodexOnboardingMode(request: string): CodexOnboardingMode {
   // editor. A mention that rules out notebooks is not a format request.
   const mentionsNotebook = /\b(jupyter(?:lab)?|notebooks?|ipynb)\b/.test(goal);
   const rulesOutNotebook =
-    /\b(?:no|without|avoid|never|not|don't|do not)\b(?:\s+[\w'-]+){0,5}[\s.]+\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b/.test(
+    /\b(?:no|without|avoid|never|not|don't|do not|can't|cannot|can not)\b(?:\s+[\w'-]+){0,5}[\s.]+\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b/.test(
+      goal,
+    ) ||
+    /\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b(?:\s+[\w'-]+){0,5}\s+\b(?:not|never|prohibited|forbidden|disallowed|unsupported|unavailable|avoided|can't|cannot|shouldn't|mustn't|isn't)\b/.test(
       goal,
     );
   if (mentionsNotebook && !rulesOutNotebook) {

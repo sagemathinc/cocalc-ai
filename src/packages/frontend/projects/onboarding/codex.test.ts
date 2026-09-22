@@ -100,6 +100,11 @@ describe("Codex onboarding availability", () => {
     "Do not use Jupyter; give me an HTML report",
     "Don't create a notebook; return a chart in chat",
     "Do not use results.ipynb for this report",
+    "I can't use Jupyter for this analysis",
+    "Jupyter is not allowed for this project",
+    "A notebook should not be used here",
+    "JupyterLab is unavailable in this environment",
+    "Notebooks are prohibited for this deliverable",
   ])("respects a request to avoid notebooks: %s", (request) => {
     const prompt = buildCodexOnboardingPrompt(request);
     expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
