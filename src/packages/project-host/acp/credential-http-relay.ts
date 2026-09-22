@@ -33,6 +33,7 @@ export interface CredentialHttpRelayOptions {
   upstream: string;
   allowedPathPrefix: string;
   credential: { header: string; value: string };
+  allowedMethods?: readonly string[];
   /** Tests only. Production provider relays must use HTTPS. */
   allowHttpForTests?: boolean;
 }
@@ -106,6 +107,17 @@ export async function createCredentialHttpRelay(
     throw Error("Invalid credential relay policy");
   }
   const token = randomBytes(32).toString("base64url");
+  const allowedMethods = new Set(
+    (options.allowedMethods ?? ["GET", "POST"]).map((method) =>
+      method.toUpperCase(),
+    ),
+  );
+  if (
+    allowedMethods.size === 0 ||
+    [...allowedMethods].some((method) => !/^[A-Z]+$/.test(method))
+  ) {
+    throw Error("Invalid credential relay methods");
+  }
   await mkdir(dirname(options.socketPath), { recursive: true, mode: 0o700 });
   await unlink(options.socketPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
@@ -114,6 +126,11 @@ export async function createCredentialHttpRelay(
     if (request.headers[RELAY_HEADER] !== token) {
       request.resume();
       fail(response, 401, "Credential relay authorization failed");
+      return;
+    }
+    if (!request.method || !allowedMethods.has(request.method.toUpperCase())) {
+      request.resume();
+      fail(response, 405, "Provider request method is outside relay policy");
       return;
     }
     let target: URL;
@@ -169,6 +186,8 @@ export async function createCredentialHttpRelay(
     );
     request.pipe(providerRequest);
   });
+  server.on("connect", (_request, socket) => socket.destroy());
+  server.on("upgrade", (_request, socket) => socket.destroy());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.socketPath, () => {

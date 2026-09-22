@@ -16,17 +16,19 @@ async function callRelay({
   socketPath,
   token,
   path = "/v1/messages?beta=1",
+  method = "POST",
 }: {
   socketPath: string;
   token: string;
   path?: string;
+  method?: string;
 }): Promise<{ status: number; body: string }> {
   return await new Promise((resolve, reject) => {
     const req = request(
       {
         socketPath,
         path,
-        method: "POST",
+        method,
         headers: {
           [CREDENTIAL_RELAY_AUTH_HEADER]: token,
           "x-api-key": "attacker-key",
@@ -118,6 +120,9 @@ test("rejects invalid capabilities and off-policy request targets", async () => 
     await expect(
       callRelay({ ...relay, path: "/admin", token: relay.token }),
     ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      callRelay({ ...relay, method: "DELETE", token: relay.token }),
+    ).resolves.toMatchObject({ status: 405 });
   } finally {
     await relay.close();
     await new Promise<void>((resolve) => provider.close(() => resolve()));
