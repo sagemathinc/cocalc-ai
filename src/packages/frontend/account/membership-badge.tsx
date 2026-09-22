@@ -33,7 +33,11 @@ interface MembershipBadgeData {
   tiers: MembershipTier[];
 }
 
-export default function MembershipBadge(): ReactElement | null {
+export default function MembershipBadge({
+  alwaysShowFree = false,
+}: {
+  alwaysShowFree?: boolean;
+} = {}): ReactElement | null {
   const accountId = useTypedRedux("account", "account_id");
   const hidden =
     useAccountOtherSetting<boolean>(HIDE_NAVBAR_MEMBERSHIP_SETTING) ?? false;
@@ -42,7 +46,7 @@ export default function MembershipBadge(): ReactElement | null {
 
   useAsyncEffect(
     async (isMounted) => {
-      if (!accountId || hidden) {
+      if (!accountId || (hidden && !alwaysShowFree)) {
         setData(undefined);
         return;
       }
@@ -63,7 +67,7 @@ export default function MembershipBadge(): ReactElement | null {
         }
       }
     },
-    [accountId, hidden, refreshToken],
+    [accountId, alwaysShowFree, hidden, refreshToken],
   );
 
   useEffect(() => {
@@ -75,11 +79,14 @@ export default function MembershipBadge(): ReactElement | null {
     };
   }, []);
 
-  if (hidden || !accountId || data?.accountId !== accountId) {
+  if (!accountId || data?.accountId !== accountId) {
     return null;
   }
 
   const membershipClass = data.membership.class;
+  if (hidden && membershipClass !== "free") {
+    return null;
+  }
   const tierLabel =
     data.tiers.find(({ id }) => id === membershipClass)?.label ??
     capitalize(membershipClass);

@@ -53,6 +53,31 @@ jest.mock("use-debounce", () => ({
 }));
 
 describe("ChatInput send lifecycle regressions", () => {
+  it("routes Ctrl+Enter to Post and Shift+Enter to the agent", () => {
+    const send = jest.fn();
+    const post = jest.fn();
+    render(
+      <ChatInput
+        input="hello"
+        onChange={() => {}}
+        on_send={send}
+        on_post={post}
+        syncdb={
+          {
+            set: jest.fn(),
+            commit: jest.fn(),
+            set_cursor_locs: jest.fn(),
+          } as any
+        }
+        date={0}
+      />,
+    );
+    act(() => lastMarkdownInputProps.onCtrlEnter("hello people"));
+    expect(post).toHaveBeenCalledWith("hello people");
+    expect(send).not.toHaveBeenCalled();
+    act(() => lastMarkdownInputProps.onShiftEnter("hello agent"));
+    expect(send).toHaveBeenCalledWith("hello agent");
+  });
   beforeEach(() => {
     lastMarkdownInputProps = null;
     jest.useFakeTimers();
@@ -149,6 +174,7 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.redoMode).toBe("local");
     expect(lastMarkdownInputProps.hideHelp).toBe(true);
     expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
+    expect(lastMarkdownInputProps.reserveModeSwitchSpace).toBe(true);
     expect(lastMarkdownInputProps.disableModeSwitchShortcuts).toBe(true);
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
     expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);

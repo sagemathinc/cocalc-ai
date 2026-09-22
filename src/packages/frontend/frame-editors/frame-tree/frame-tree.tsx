@@ -31,6 +31,7 @@ or
 import { delay } from "awaiting";
 import { Map, Set } from "immutable";
 import React from "react";
+import { useChatEmbeddingOptions } from "@cocalc/frontend/chat/embedding-options";
 
 import { AccountState } from "@cocalc/frontend/account/types";
 import {
@@ -118,6 +119,7 @@ function shouldMemoize(prev, next) {
 }
 export const FrameTree: React.FC<FrameTreeProps> = React.memo(
   (props: FrameTreeProps) => {
+    const { hideSingleFrameToolbar } = useChatEmbeddingOptions();
     const {
       actions,
       active_id,
@@ -234,6 +236,9 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       spec: EditorDescription,
       editor_actions: Actions,
     ): Rendered {
+      if (hideSingleFrameToolbar && is_only && desc.get("type") === "chatroom") {
+        return <></>;
+      }
       const id = desc.get("id");
       return (
         <FrameTitleBar

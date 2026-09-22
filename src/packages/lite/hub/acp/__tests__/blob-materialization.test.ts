@@ -1,4 +1,39 @@
-import { rewriteBlobReferencesInPrompt } from "../blob-materialization";
+import {
+  extractBlobReferences,
+  projectBlobMaterializationRoots,
+  rewriteBlobReferencesInPrompt,
+} from "../blob-materialization";
+
+describe("projectBlobMaterializationRoots", () => {
+  it("maps a host project mount to the path visible inside its container", () => {
+    expect(
+      projectBlobMaterializationRoots({
+        hostProjectRoot: "/mnt/projects/project-1",
+        runtimeProjectRoot: "/home/user",
+      }),
+    ).toEqual({
+      host: "/mnt/projects/project-1/.local/share/cocalc/tmp",
+      runtime: "/home/user/.local/share/cocalc/tmp",
+    });
+  });
+});
+
+describe("extractBlobReferences", () => {
+  it("extracts the HTML image markup emitted by the rich chat composer", () => {
+    const prompt = [
+      "Can you see this UI:",
+      '<img alt="" title="" src="/blobs/paste-mprbim5suah.png?uuid=13f56890-208b-4590-81c4-2605ace1b29d" style="width: 855.79px; max-width: 100%;">',
+    ].join("\n\n");
+
+    expect(extractBlobReferences(prompt)).toEqual([
+      {
+        url: "/blobs/paste-mprbim5suah.png?uuid=13f56890-208b-4590-81c4-2605ace1b29d",
+        uuid: "13f56890-208b-4590-81c4-2605ace1b29d",
+        filename: "paste-mprbim5suah.png",
+      },
+    ]);
+  });
+});
 
 describe("rewriteBlobReferencesInPrompt", () => {
   it("replaces markdown and html blob refs with attachment placeholders", () => {

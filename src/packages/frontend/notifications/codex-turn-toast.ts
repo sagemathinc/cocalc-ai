@@ -276,14 +276,24 @@ async function openCodexTurnNoticeTarget(
     : undefined;
   if (project_id && path) {
     const fragmentId = codexNotificationFragment(row.summary ?? {});
-    await ensureProjectReduxRuntime();
-    await redux.getProjectActions(project_id)?.open_file({
-      path,
-      foreground: true,
-      foreground_project: true,
-      chat: !!fragmentId?.chat,
-      fragmentId,
-    });
+    const { openAgentNotification } =
+      await import("../agents/open-notification");
+    if (
+      !(await openAgentNotification(
+        project_id,
+        path,
+        row.summary?.thread_id ?? fragmentId?.thread,
+      ))
+    ) {
+      await ensureProjectReduxRuntime();
+      await redux.getProjectActions(project_id)?.open_file({
+        path,
+        foreground: true,
+        foreground_project: true,
+        chat: !!fragmentId?.chat,
+        fragmentId,
+      });
+    }
   }
   if (row.summary?.local_delivery !== true) {
     await webapp_client.conat_client.hub.notifications.markRead({

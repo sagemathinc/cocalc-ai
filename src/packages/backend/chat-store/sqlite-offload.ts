@@ -32,11 +32,14 @@
  *   thread selection, and ACP streaming behavior are handled elsewhere.
  */
 import { randomUUID, createHash } from "node:crypto";
-import { mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
+import { searchAdmission } from "./search-admission";
 import getLogger from "@cocalc/backend/logger";
+import { chatSearchIndex, searchableChatText } from "@cocalc/util/chat-search";
 
 const logger = getLogger("lite:hub:sqlite:chat-offload");
 
@@ -208,6 +211,7 @@ export interface ReadArchivedHitResult {
 }
 
 export interface SearchArchivedOptions {
+  include_head?: boolean;
   chat_path: string;
   query: string;
   db_path?: string;
@@ -228,6 +232,7 @@ export interface SearchArchivedHit {
 }
 
 export interface SearchArchivedResult {
+  includes_head?: boolean;
   chat_id: string;
   hits: SearchArchivedHit[];
   offset: number;
@@ -1404,6 +1409,143 @@ export function readChatStoreArchivedHit({
   };
 }
 
+/** Search saved recent messages as well as offloaded history without opening an editor. */
+export async function searchChatStore(
+  opts: SearchArchivedOptions,
+  principal: string,
+): Promise<SearchArchivedResult> {
+  if (
+    (opts.include_head && !opts.thread_id) ||
+    (opts.thread_id !== undefined &&
+      (typeof opts.thread_id !== "string" ||
+        !opts.thread_id.length ||
+        opts.thread_id.length > 200)) ||
+    typeof opts.query !== "string" ||
+    !opts.query.trim() ||
+    opts.query.length > 256 ||
+    (opts.limit !== undefined &&
+      (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) ||
+    (opts.offset !== undefined &&
+      (!Number.isInteger(opts.offset) ||
+        opts.offset < 0 ||
+        opts.offset > 10_000)) ||
+    (opts.exclude_thread_ids !== undefined &&
+      (!Array.isArray(opts.exclude_thread_ids) ||
+        opts.exclude_thread_ids.length > 100 ||
+        opts.exclude_thread_ids.some(
+          (id) => typeof id !== "string" || !id.length || id.length > 200,
+        )))
+  )
+    throw new Error("Invalid or oversized search request");
+  const release = searchAdmission.acquire(principal);
+  let worker: Worker | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const localWorker = path.join(__dirname, "search-worker.js");
+    worker = new Worker(
+      existsSync(localWorker)
+        ? localWorker
+        : path.join(__dirname, "../chat-search-worker/index.js"),
+      {
+        workerData: opts,
+        resourceLimits: { maxOldGenerationSizeMb: 128 },
+      },
+    );
+    return await new Promise<SearchArchivedResult>((resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("Project search exceeded its time budget")),
+        6000,
+      );
+      worker!.once("message", (result) =>
+        result.error ? reject(new Error(result.error)) : resolve(result.value),
+      );
+      worker!.once("error", reject);
+      worker!.once("exit", () =>
+        reject(new Error("Search worker stopped before returning results")),
+      );
+    });
+  } finally {
+    clearTimeout(timer);
+    try {
+      await worker?.terminate();
+    } finally {
+      release();
+    }
+  }
+}
+
+export async function searchChatStoreCombined(
+  opts: SearchArchivedOptions,
+): Promise<SearchArchivedResult> {
+  if (!opts.thread_id || opts.thread_id.length > 200)
+    throw new Error("A bounded thread scope is required");
+  const query = opts.query.trim();
+  if (!query || query.length > 256)
+    throw new Error("Search requires 1-256 characters");
+  if (opts.offset) throw new Error("Combined search does not support offsets");
+  const limit = Math.min(100, Math.max(1, Math.floor(opts.limit || 50)));
+  const file = await fs.open(normalizeChatPath(opts.chat_path), "r");
+  let raw: string;
+  try {
+    const maxBytes = 8 * 1024 * 1024;
+    if ((await file.stat()).size > maxBytes)
+      throw new Error("Chat head exceeds search size limit");
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > maxBytes)
+      throw new Error("Chat head exceeds search size limit");
+    raw = buffer.toString("utf8", 0, length);
+  } finally {
+    await file.close();
+  }
+  const archived = searchChatStoreArchived({
+    ...opts,
+    query,
+    limit,
+    offset: 0,
+  });
+  const hits = new Map<string, SearchArchivedHit>();
+  const key = (hit: SearchArchivedHit) =>
+    `${hit.thread_id}:${hit.message_id || hit.date_ms}`;
+  for (const hit of archived.hits) hits.set(key(hit), hit);
+  let headMatches = 0;
+  for (const [index, row] of parseChatFile(raw).entries()) {
+    if (!row.is_chat || row.thread_id !== opts.thread_id || !row.obj) continue;
+    const body = searchableChatText(extractBody(row.obj));
+    const at = chatSearchIndex(extractBody(row.obj), query);
+    if (at < 0) continue;
+    const hit: SearchArchivedHit = {
+      row_id: -(index + 1),
+      segment_id: "head",
+      thread_id: row.thread_id,
+      message_id: row.message_id,
+      date_ms: row.date_ms,
+      excerpt: body.slice(Math.max(0, at - 90), at + query.length + 180),
+    };
+    if (!hits.has(key(hit))) headMatches++;
+    hits.set(key(hit), hit);
+  }
+  return {
+    chat_id: archived.chat_id,
+    includes_head: true,
+    offset: 0,
+    total_hits: archived.total_hits + headMatches,
+    hits: [...hits.values()]
+      .sort((a, b) => (b.date_ms ?? 0) - (a.date_ms ?? 0))
+      .slice(0, limit),
+  };
+}
+
 export function searchChatStoreArchived({
   chat_path,
   query,
@@ -1448,6 +1590,60 @@ export function searchChatStoreArchived({
   }
   const normalizedLimit = Math.max(1, limit);
   const normalizedOffset = Math.max(0, offset);
+  if (thread_id) {
+    if (q.length > 256)
+      throw new Error("Search requires 1-256 query characters");
+    // Scan only this thread, with explicit bounds, inside the search worker.
+    // Match message bodies, never metadata or earlier edits in serialized JSON.
+    const rows = db
+      .prepare(
+        `SELECT ar.row_id, ar.segment_id, ar.message_id, ar.thread_id, ar.date_ms,
+              length(CAST(ar.row_json AS BLOB)) AS bytes,
+              CASE WHEN length(CAST(ar.row_json AS BLOB)) <= 8388608
+                   THEN ar.row_json ELSE NULL END AS row_json
+         FROM archived_rows ar WHERE ${where.join(" AND ")}
+         ORDER BY ar.date_ms DESC, ar.row_id DESC LIMIT 50001`,
+      )
+      .iterate(...params);
+    const hits: SearchArchivedHit[] = [];
+    let scanned = 0,
+      bytes = 0,
+      total_hits = 0;
+    for (const row of rows) {
+      bytes += Number(row.bytes);
+      if (++scanned > 50000 || bytes > 32 * 1024 * 1024 || row.row_json == null)
+        throw new Error("Conversation history exceeds search size limit");
+      const body = extractBody(JSON.parse(String(row.row_json)));
+      const at = chatSearchIndex(body, q);
+      if (at < 0) continue;
+      if (
+        total_hits++ < normalizedOffset ||
+        hits.length >= Math.min(100, normalizedLimit)
+      )
+        continue;
+      hits.push({
+        row_id: Number(row.row_id),
+        segment_id: String(row.segment_id),
+        message_id: row.message_id == null ? undefined : String(row.message_id),
+        thread_id: String(row.thread_id),
+        date_ms: row.date_ms == null ? undefined : Number(row.date_ms),
+        excerpt: searchableChatText(body).slice(
+          Math.max(0, at - 90),
+          at + q.length + 180,
+        ),
+      });
+    }
+    return {
+      chat_id,
+      hits,
+      total_hits,
+      offset: normalizedOffset,
+      next_offset:
+        normalizedOffset + hits.length < total_hits
+          ? normalizedOffset + hits.length
+          : undefined,
+    };
+  }
   const ftsParams = [...params, q, normalizedLimit, normalizedOffset];
   let rows: SearchArchivedHit[] = [];
   let totalHits = 0;
@@ -1459,7 +1655,7 @@ export function searchChatStoreArchived({
            FROM archived_rows_fts
            JOIN archived_rows ar ON ar.row_id = archived_rows_fts.rowid
           WHERE ${where.join(" AND ")} AND archived_rows_fts MATCH ?
-          ORDER BY bm25(archived_rows_fts), ar.date_ms DESC
+          ORDER BY ar.date_ms DESC, ar.row_id DESC
           LIMIT ? OFFSET ?`,
       )
       .all(...ftsParams) as unknown as SearchArchivedHit[];

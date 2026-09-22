@@ -40,11 +40,19 @@ import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
+import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
+import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
+import {
+  readEmbeddedSidebarHidden,
+  useChatEmbeddingOptions,
+  chatIsForeground,
+  writeEmbeddedSidebarHidden,
+} from "./embedding-options";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import {
   APP_NAVIGATION_EVENT,
@@ -60,6 +68,7 @@ import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
+import { requestThreadSearch } from "./thread-search-request";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import { ChatFontSizeControls } from "./chat-font-size-controls";
 import {
@@ -158,6 +167,10 @@ import { getLiveCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
 import { CodexConfigButton, CodexPaymentCredentialsModal } from "./codex";
 import { showLocalCodexTurnCompletionToast } from "@cocalc/frontend/notifications/codex-turn-toast";
 import {
+  resultKey,
+  setUnseenResult,
+} from "@cocalc/frontend/agents/unseen-result";
+import {
   codexConnectionNeedsAttentionAfterSubmit,
   ensureProjectRunningForCodex,
   isCodexPaymentSourceNeedsUserConfiguration,
@@ -166,7 +179,6 @@ import {
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
 import { registerDirectlyWatchedCodexThread } from "./codex-watch-presence";
 import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
-import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import { useCodexAttentionSummary } from "./use-codex-attention";
 import type { ChatInputControl } from "./input";
@@ -440,7 +452,7 @@ export function hasActiveAcpTurnForComposer({
   if (!isSelectedThreadAI) return false;
   if (selectedThreadId) {
     const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
-    if (byThread === "running") {
+    if (isActiveAcpState(byThread)) {
       return true;
     }
   }
@@ -693,7 +705,9 @@ function ChatPanelContent({
   isCurrent = true,
 }: ChatPanelProps) {
   const narrow = useNarrowChatViewport();
-  const standalone = variant === "default";
+  const embeddingOptions = useChatEmbeddingOptions();
+  const standalone =
+    variant === "default" && !embeddingOptions.disableConversationFocus;
   const [focusOverride, setFocusOverride] = useState<boolean | undefined>();
   const focused =
     standalone &&
@@ -780,7 +794,9 @@ function ChatPanelContent({
       : DEFAULT_SIDEBAR_WIDTH,
   );
   const [sidebarHidden, setSidebarHidden] = useState<boolean>(
-    asBoolean(storedSidebarHiddenRaw),
+    embeddingOptions.sidebarPreferenceKey
+      ? readEmbeddedSidebarHidden(embeddingOptions)
+      : asBoolean(storedSidebarHiddenRaw),
   );
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
   const isCompact = variant === "compact";
@@ -813,12 +829,24 @@ function ChatPanelContent({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
   useEffect(() => {
+    if (embeddingOptions.sidebarPreferenceKey) {
+      writeEmbeddedSidebarHidden(
+        embeddingOptions.sidebarPreferenceKey,
+        sidebarHidden,
+      );
+      return;
+    }
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
       id: actions.frameId,
       sidebarHidden,
     });
-  }, [sidebarHidden, actions?.frameTreeActions, actions?.frameId]);
+  }, [
+    sidebarHidden,
+    embeddingOptions.sidebarPreferenceKey,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
 
   const { threads, archivedThreads, threadSections } = useThreadSections({
     messages,
@@ -908,8 +936,21 @@ function ChatPanelContent({
     Map<string, ChatThreadCompletionSnapshot>
   >(new Map());
   const isChatForeground = useMemo(
-    () => tab_to_path(activeProjectTab ?? "") === path,
-    [activeProjectTab, path],
+    () =>
+      chatIsForeground(
+        path,
+        activeProjectTab,
+        embeddingOptions.agentWorkspace,
+        isCurrent && isVisible && tabIsVisible,
+      ),
+    [
+      activeProjectTab,
+      path,
+      embeddingOptions.agentWorkspace,
+      isCurrent,
+      isVisible,
+      tabIsVisible,
+    ],
   );
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
     const title = asTrimmedString(
@@ -1097,6 +1138,14 @@ function ChatPanelContent({
       path,
       composerDraftKey,
     });
+  const artifactFeedback = useArtifactFeedbackDraft({
+    actions,
+    account_id,
+    project_id,
+    path,
+    composerDraftKey,
+    threadId: selectedThreadKey,
+  });
   const {
     input: acpPrompt,
     setInput: setAcpPrompt,
@@ -1295,7 +1344,9 @@ function ChatPanelContent({
         }
         const sent = actions.sendChat({
           input: pending.input,
+          postOnly: pending.postOnly,
           acp_prompt: pending.acp_prompt,
+          artifact_feedback: pending.artifact_feedback,
           sender_id: pending.sender_id,
           reply_thread_id: pending.reply_thread_id,
           parent_message_id: pending.parent_message_id,
@@ -1704,6 +1755,20 @@ function ChatPanelContent({
     for (const [threadKey, current] of currentSnapshots) {
       const previous = previousSnapshots.get(threadKey);
       if (!previous?.active || current.active || current.interrupted) continue;
+      if (current.threadId) {
+        const viewing =
+          isCurrent &&
+          isChatForeground &&
+          isVisible &&
+          tabIsVisible &&
+          selectedThreadId === current.threadId &&
+          document.visibilityState === "visible" &&
+          document.hasFocus();
+        setUnseenResult(
+          resultKey(account_id, project_id, path, current.threadId),
+          !viewing,
+        );
+      }
       const completedAt = Number(current.newestMessageDate ?? "");
       if (Number.isFinite(completedAt) && completedAt > newestCompletedAt) {
         newestCompletedAt = completedAt;
@@ -1746,6 +1811,49 @@ function ChatPanelContent({
     threads,
     messages,
     readOnly,
+    isVisible,
+    tabIsVisible,
+    selectedThreadId,
+    isCurrent,
+  ]);
+
+  useEffect(() => {
+    if (
+      readOnly ||
+      !account_id ||
+      !selectedThreadId ||
+      !isChatForeground ||
+      !isVisible ||
+      !isCurrent ||
+      !tabIsVisible
+    )
+      return;
+    const acknowledge = () => {
+      if (document.visibilityState === "visible" && document.hasFocus()) {
+        setUnseenResult(
+          resultKey(account_id, project_id, path, selectedThreadId),
+          false,
+        );
+      }
+    };
+    acknowledge();
+    window.addEventListener("focus", acknowledge);
+    document.addEventListener("visibilitychange", acknowledge);
+    return () => {
+      window.removeEventListener("focus", acknowledge);
+      document.removeEventListener("visibilitychange", acknowledge);
+    };
+  }, [
+    readOnly,
+    account_id,
+    selectedThreadId,
+    isChatForeground,
+    isVisible,
+    tabIsVisible,
+    project_id,
+    path,
+    hasRunningAcpTurn,
+    isCurrent,
   ]);
 
   useEffect(() => {
@@ -2010,14 +2118,14 @@ function ChatPanelContent({
   }, []);
 
   const clearComposerNow = useCallback(
-    (draftKey: number) => {
+    (draftKey: number, preserveAgentPrompt = false) => {
       // Keep local guard state coherent immediately, before async state/render.
       inputRef.current = "";
-      acpPromptRef.current = "";
+      if (!preserveAgentPrompt) acpPromptRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
       void clearInput();
-      void clearAcpPrompt();
+      if (!preserveAgentPrompt) void clearAcpPrompt();
     },
     [actions, clearAcpPrompt, clearInput],
   );
@@ -2061,10 +2169,22 @@ function ChatPanelContent({
 
   async function sendMessage(
     extraInput?: string,
-    opts?: { immediate?: boolean },
+    opts?: { immediate?: boolean; postOnly?: boolean },
   ): Promise<void> {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const rawAcpPrompt = `${acpPromptRef.current ?? ""}`.trim();
+    let feedback;
+    try {
+      feedback = opts?.postOnly ? undefined : artifactFeedback.read();
+    } catch (err) {
+      antdMessage.error(String(err));
+      return;
+    }
+    const feedbackPrompt = opts?.postOnly
+      ? ""
+      : feedback
+        ? `${rawAcpPrompt || rawSendingText}\n\n${artifactFeedbackPrompt(feedback)}`
+        : rawAcpPrompt;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     const target = resolveReplyTarget(opts?.immediate === true);
@@ -2076,15 +2196,17 @@ function ChatPanelContent({
             threadId: reply_thread_id,
           })
         : undefined;
-    const isCodexSubmit = isCodexSubmitTarget({
-      newThreadAgentMode: !reply_thread_id
-        ? newThreadSetup.agentMode
-        : undefined,
-      existingThreadAgentKind: existingThreadMetadata?.agent_kind,
-      existingThreadAgentModel:
-        existingThreadMetadata?.agent_model ??
-        existingThreadMetadata?.acp_config?.model,
-    });
+    const isCodexSubmit =
+      !opts?.postOnly &&
+      isCodexSubmitTarget({
+        newThreadAgentMode: !reply_thread_id
+          ? newThreadSetup.agentMode
+          : undefined,
+        existingThreadAgentKind: existingThreadMetadata?.agent_kind,
+        existingThreadAgentModel:
+          existingThreadMetadata?.agent_model ??
+          existingThreadMetadata?.acp_config?.model,
+      });
     if (isCodexSubmit && !aiAgentPolicyAllowed) {
       Modal.error({
         title: "AI integrations are disabled",
@@ -2252,20 +2374,23 @@ function ChatPanelContent({
       account_id,
       sender_id: account_id,
       input: resolvedInput,
-      acp_prompt: rawAcpPrompt || undefined,
+      acp_prompt: feedbackPrompt || undefined,
+      artifact_feedback: feedback,
       date: chatIdentity.date,
       message_id: chatIdentity.message_id,
       thread_id: chatIdentity.thread_id,
       reply_thread_id,
       parent_message_id,
       send_mode: sendMode,
+      postOnly: opts?.postOnly,
       name: newThreadName,
       threadAgent,
       threadAppearance,
       acpConfigOverride,
       shouldMarkNotSent:
-        (!reply_thread_id && newThreadSetup.agentMode === "codex") ||
-        existingThreadMetadata?.agent_kind === "acp",
+        !opts?.postOnly &&
+        ((!reply_thread_id && newThreadSetup.agentMode === "codex") ||
+          existingThreadMetadata?.agent_kind === "acp"),
     };
     let pendingStored = false;
     try {
@@ -2275,14 +2400,15 @@ function ChatPanelContent({
     }
 
     if (pendingStored) {
-      clearComposerNow(composerDraftKey);
+      clearComposerNow(composerDraftKey, opts?.postOnly);
     }
 
     const timeStamp = actions.sendChat({
       reply_thread_id,
       parent_message_id,
       input: resolvedInput,
-      acp_prompt: rawAcpPrompt || undefined,
+      acp_prompt: feedbackPrompt || undefined,
+      artifact_feedback: feedback,
       send_mode: sendMode,
       name: newThreadName,
       threadAgent,
@@ -2290,6 +2416,7 @@ function ChatPanelContent({
       acpConfigOverride,
       chatIdentity,
       skipDraftDelete: !pendingStored,
+      postOnly: opts?.postOnly,
     });
     if (!timeStamp) {
       await removePendingChatSend(pendingChatSend);
@@ -2301,6 +2428,7 @@ function ChatPanelContent({
       setAcpPrompt(rawAcpPrompt);
       return;
     }
+    if (feedback) await artifactFeedback.clear(feedback);
     const threadKey =
       !reply_thread_id && timeStamp
         ? (() => {
@@ -2536,7 +2664,10 @@ function ChatPanelContent({
   ]);
 
   const selectedThreadMenuControl =
-    !readOnly && selectedThreadKey && selectedThread ? (
+    !embeddingOptions.agentWorkspace &&
+    !readOnly &&
+    selectedThreadKey &&
+    selectedThread ? (
       <ChatRoomThreadMenu
         actions={actions}
         threadKey={selectedThreadKey}
@@ -2577,6 +2708,17 @@ function ChatPanelContent({
         }
         openAutomationModal={openAutomationModalForThread}
         buttonAriaLabel="Selected thread actions"
+        openHistory={() =>
+          requestThreadSearch(project_id, path, selectedThreadId!, "history")
+        }
+        openMaintenance={() =>
+          requestThreadSearch(
+            project_id,
+            path,
+            selectedThreadId!,
+            "maintenance",
+          )
+        }
         buttonLabel={narrow ? "Thread actions" : undefined}
       />
     ) : null;
@@ -2895,17 +3037,27 @@ function ChatPanelContent({
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
-        hideTopControls={hideTopControls}
-        hideCompactThreadHeader={hideCompactThreadHeader || narrow}
+        hideTopControls={hideTopControls || embeddingOptions.hideTopControls}
+        codexConfigInComposer={!effectiveReadOnly}
+        hideCompactThreadHeader={
+          hideCompactThreadHeader ||
+          embeddingOptions.hideCompactThreadHeader ||
+          narrow
+        }
         mobile={narrow}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
-        allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
+        allowSidebarToggle={
+          !embeddingOptions.agentWorkspace &&
+          !hideSidebar &&
+          !isCompact &&
+          !isExternalSideChat
+        }
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
         topRightControlsPrefix={
           <>
             {threadPanelTopRightPrefix}
-            {!narrow && !focused && focusButton}
+            {!narrow && focusButton}
           </>
         }
         compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
@@ -2924,6 +3076,7 @@ function ChatPanelContent({
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (
         <>
+          {artifactFeedback.control}
           <ChatRoomComposer
             actions={actions}
             project_id={project_id}
@@ -2937,6 +3090,7 @@ function ChatPanelContent({
             acpPrompt={acpPrompt}
             setAcpPrompt={setComposerAcpPrompt}
             on_send={on_send}
+            on_post={(value) => sendMessage(value, { postOnly: true })}
             onPrepareAgentThread={(draft) =>
               createThreadWithoutMessage(true, draft)
             }
@@ -2966,6 +3120,7 @@ function ChatPanelContent({
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
+            refreshCodexPaymentSource={refreshCodexPaymentSource}
             onOpenCodexPaymentConfig={() => {
               refreshCodexPaymentSource?.();
               setCodexPaymentConfigOpen(true);
@@ -3038,16 +3193,14 @@ function ChatPanelContent({
           : {}),
       }}
     >
-      {!narrow && focused && (
-        <div
-          style={{ display: "flex", justifyContent: "flex-end", flexShrink: 0 }}
-        >
+      {!narrow && focused && hideTopControls && (
+        <div style={{ position: "absolute", top: 0, right: 0, zIndex: 30 }}>
           {focusButton}
         </div>
       )}
       {narrow && (
         <div className="cocalc-chat-mobile-header">
-          {!hideSidebar && (
+          {!hideSidebar && !embeddingOptions.agentWorkspace && (
             <Badge dot={totalUnread > 0}>
               <Button
                 type="text"
@@ -3073,7 +3226,7 @@ function ChatPanelContent({
                 "New chat",
             )}
           </span>
-          {!effectiveReadOnly &&
+          {effectiveReadOnly &&
             selectedThreadKey &&
             selectedThreadId &&
             (threadSupportsCodexAutomation(selectedThreadMetadata) ||
@@ -3117,15 +3270,17 @@ function ChatPanelContent({
         onClose={() => setMobileToolsOpen(false)}
       >
         <KeyboardBoundary boundary="chat-tools">
-          <Button
-            icon={<Icon name="plus" />}
-            onClick={() => {
-              onNewChat();
-              setMobileToolsOpen(false);
-            }}
-          >
-            New Chat
-          </Button>
+          {!embeddingOptions.agentWorkspace && (
+            <Button
+              icon={<Icon name="plus" />}
+              onClick={() => {
+                onNewChat();
+                setMobileToolsOpen(false);
+              }}
+            >
+              New Chat
+            </Button>
+          )}
           <div ref={setMobileToolsPortal} />
         </KeyboardBoundary>
       </Drawer>
@@ -3136,7 +3291,11 @@ function ChatPanelContent({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
-        hideSidebar={hideSidebar || (!narrow && sidebarHidden)}
+        hideSidebar={
+          embeddingOptions.agentWorkspace ||
+          hideSidebar ||
+          (!narrow && sidebarHidden)
+        }
         hideCompactNavigation={narrow}
         onSidebarClosed={() => {
           if (narrow)

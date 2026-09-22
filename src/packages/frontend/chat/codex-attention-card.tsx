@@ -25,7 +25,6 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
-import { AgentMessagingRequests } from "@cocalc/frontend/agents/messaging-requests";
 
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
@@ -93,31 +92,6 @@ export function CodexAttentionCard({
   draft?: CodexAttentionDraft;
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
-  if (initialRecord.action?.kind === "agent_messaging") {
-    return (
-      <section
-        aria-label="Codex needs attention"
-        data-codex-attention-id={initialRecord.attention_id}
-        tabIndex={-1}
-        style={{
-          border: `1px solid ${UI_COLORS.warning}`,
-          borderRadius: 8,
-          padding: 12,
-          width: "100%",
-          color: UI_COLORS.text,
-          background: UI_COLORS.warningBg,
-        }}
-      >
-        <Title level={5}>Agent requests messaging approval</Title>
-        <AgentMessagingRequests
-          projectId={initialRecord.project_id}
-          path={initialRecord.path}
-          threadId={initialRecord.thread_id}
-          requestId={initialRecord.action.reference}
-        />
-      </section>
-    );
-  }
   return (
     <RuntimeCodexAttentionCard
       initialRecord={initialRecord}

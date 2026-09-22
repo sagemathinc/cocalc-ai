@@ -12,7 +12,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { loadMessagingAttention } from "@cocalc/frontend/agents/messaging-attention";
 
 const REFRESH_MS = 5_000;
 
@@ -85,32 +84,16 @@ export function useCodexAttentionSummary(opts: {
       if (disposed || refreshing) return;
       refreshing = true;
       try {
-        const [runtime, messaging] = await Promise.allSettled([
-          webapp_client.conat_client.attentionAcp({
-            action: "list",
-            project_id: opts.project_id,
-            path: opts.path,
-            state: "pending",
-          }),
-          opts.account_id
-            ? loadMessagingAttention({
-                account_id: opts.account_id,
-                project_id: opts.project_id,
-                path: opts.path,
-              })
-            : Promise.resolve([]),
-        ]);
+        const runtime = await webapp_client.conat_client.attentionAcp({
+          action: "list",
+          project_id: opts.project_id,
+          path: opts.path,
+          state: "pending",
+        });
         if (!disposed) {
-          const isMessaging = (record: AcpAttentionRecord) =>
-            record.action?.kind === "agent_messaging";
-          const next = [
-            ...(runtime.status === "fulfilled" && runtime.value.ok
-              ? (runtime.value.records ?? [])
-              : recordsRef.current.filter((record) => !isMessaging(record))),
-            ...(messaging.status === "fulfilled"
-              ? messaging.value
-              : recordsRef.current.filter(isMessaging)),
-          ].filter(
+          const next = (
+            runtime.ok ? (runtime.records ?? []) : recordsRef.current
+          ).filter(
             (record) =>
               (!opts.account_id || record.account_id === opts.account_id) &&
               (!record.expires_at || record.expires_at > Date.now()),

@@ -61,3 +61,36 @@ it("retains disconnected warning colors", () => {
     backgroundColor: COLORS.ANTD_RED_WARN,
   });
 });
+
+it("can hide a healthy connection without hiding connection problems", () => {
+  connection = "connected";
+  const { unmount } = render(
+    <IntlProvider locale="en">
+      <ConnectionIndicator
+        pageStyle={pageStyle}
+        height={32}
+        hideWhenConnected
+      />
+    </IntlProvider>,
+  );
+  expect(
+    screen.queryByRole("button", { name: /Connection status/ }),
+  ).toBeNull();
+
+  unmount();
+  connection = "disconnected";
+  render(
+    <IntlProvider locale="en">
+      <ConnectionIndicator
+        pageStyle={pageStyle}
+        height={32}
+        hideWhenConnected
+      />
+    </IntlProvider>,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "Connection status: disconnected. Show details",
+    }),
+  ).toBeTruthy();
+});

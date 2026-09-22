@@ -532,4 +532,39 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.getByText("UI review")).not.toBeNull();
     expect(summarizeSubagentEvents(events)).toEqual({ total: 2, active: 1 });
   });
+
+  it("renders outgoing peer messages as named compact cards", () => {
+    render(
+      <CodexActivity
+        expanded
+        events={[
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "peerMessage",
+              direction: "outgoing",
+              target: { project_id: "project", agent_id: "agent" },
+              target_name: "reviewer",
+              body: "Please check the proof.",
+              agent_network_id: "session",
+              agent_network_title: "CoCalc development",
+              attempt_id: "attempt",
+              outcome: "accepted",
+              observed_at: 1,
+            },
+          } as any,
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Message sent to @reviewer" }),
+    ).not.toBeNull();
+    expect(screen.getByText("To @reviewer")).not.toBeNull();
+    expect(screen.getByText("Please check the proof.")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    expect(screen.getByText("CoCalc development")).not.toBeNull();
+    expect(screen.queryByText("session")).toBeNull();
+  });
 });

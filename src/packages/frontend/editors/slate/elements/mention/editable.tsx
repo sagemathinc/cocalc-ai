@@ -36,7 +36,12 @@ const Element: React.FC<RenderElementProps> = ({
 
   return (
     <span {...attributes}>
-      <span contentEditable={false} className="user-mention" style={{ border }}>
+      <span
+        contentEditable={false}
+        className="user-mention"
+        style={{ border }}
+        title="Notify this person when you send or post this message."
+      >
         @{element.name}
       </span>
       {children}

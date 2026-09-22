@@ -337,6 +337,7 @@ export default function PublicAuthApp({
           account_email_address_verified: bootstrap.email_address_verified,
           account_id: bootstrap.account_id,
           is_authenticated: !!bootstrap.signed_in,
+          openai_disabled: bootstrap.openai_disabled,
         }));
       } catch {
         // Public auth routes can still render with server-provided customize

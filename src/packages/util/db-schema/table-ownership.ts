@@ -315,10 +315,14 @@ export const TABLE_OWNERSHIP = {
     [
       "agent_personal_controls",
       "agent_personal_names",
-      "agent_personal_grants",
-      "agent_personal_requests",
+      "agent_networks",
+      "agent_network_mutations",
+      "agent_network_activity",
+      "agent_network_proposals",
+      "agent_network_broadcasts",
       "agent_external_identities",
       "agent_external_installations",
+      "agent_external_inbox",
     ],
     {
       ownership: "account-home",
@@ -329,9 +333,21 @@ export const TABLE_OWNERSHIP = {
           "Named-agent locator for an account-home record, not project placement authority.",
       },
       notes:
-        "Human-scoped agent names, approvals, controls, and external installations are authoritative only on the account home bay. Account rehome must remain fenced until these rows have explicit migration support.",
+        "Human-scoped agent names, networks, controls, activity evidence, and external installations are authoritative only on the account home bay. Account rehome must remain fenced until these rows have explicit migration support.",
     },
   ),
+
+  ...entries(["agent_network_members"], {
+    ownership: "account-home",
+    authority: "mixed",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Member endpoint locator within the account-home network, not project placement authority.",
+    },
+    notes:
+      "Membership is subordinate to the account-home Agent Network row and must never be routed independently.",
+  }),
 
   ...entries(["agent_identities", "agent_message_project_fences"], {
     ownership: "project-owning",
@@ -344,21 +360,13 @@ export const TABLE_OWNERSHIP = {
       "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
   }),
 
-  ...entries(
-    [
-      "agent_identity_runs",
-      "agent_rpc_links",
-      "agent_message_grants",
-      "agent_message_inbox",
-    ],
-    {
-      ownership: "row-scoped",
-      authority: "mixed",
-      portability: "unsupported",
-      notes:
-        "Agent run, permission, and delivery rows derive authority from referenced source and target identities. They must use agent routing helpers; generic account/project rehome must not move or delete them without table-specific reconciliation.",
-    },
-  ),
+  ...entries(["agent_identity_runs"], {
+    ownership: "row-scoped",
+    authority: "mixed",
+    portability: "unsupported",
+    notes:
+      "Agent runs derive authority from their project-owned identity and account execution principal. They must use agent routing helpers.",
+  }),
 
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",

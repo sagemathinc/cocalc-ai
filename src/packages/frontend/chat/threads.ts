@@ -55,6 +55,16 @@ export interface ThreadSectionWithUnread extends ThreadSection<ThreadMeta> {
   unreadCount: number;
 }
 
+export function threadMetadataAgentClassification(
+  threadMeta: { agent_kind?: string | null; acp_config?: unknown } | undefined,
+): boolean | undefined {
+  if (threadMeta?.agent_kind != null) {
+    return threadMeta.agent_kind === "acp";
+  }
+  if (threadMeta?.acp_config != null) return true;
+  return undefined;
+}
+
 export function useThreadList(
   messages?: ChatMessages,
   threadIndex?: Map<string, ThreadIndexEntry>,
@@ -299,10 +309,10 @@ export function useThreadSections({
       const unreadCount = readStateReady
         ? Math.max(thread.messageCount - readCount, 0)
         : 0;
-      const metadataIsAI =
-        threadMeta?.agent_kind === "acp" || threadMeta?.acp_config != null;
-      let isAI = metadataIsAI;
-      if (!isAI && actions?.isLanguageModelThread) {
+      const metadataClassification =
+        threadMetadataAgentClassification(threadMeta);
+      let isAI = metadataClassification ?? false;
+      if (metadataClassification == null && actions?.isLanguageModelThread) {
         const fallbackDate =
           rootMessage?.date != null
             ? new Date(rootMessage.date as any)

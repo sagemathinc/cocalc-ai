@@ -47,7 +47,7 @@ export class DraftController {
       return this.getSnapshot();
     }
     this.initialized = true;
-    const local = this.getSnapshot();
+    const local = this.state;
     let remote: DraftSnapshot | undefined;
     try {
       remote = await this.adapter.load(this.key);
@@ -55,6 +55,11 @@ export class DraftController {
       this.onError?.(error);
     }
     if (this.disposed) {
+      return this.getSnapshot();
+    }
+    // Edits (including clearing) made while load was pending take precedence.
+    if (this.state !== local) {
+      this.scheduleSave();
       return this.getSnapshot();
     }
     if (remote == null) {
@@ -122,7 +127,9 @@ export class DraftController {
     await this.persist(this.getSnapshot());
   }
 
-  async clear(): Promise<void> {
+  async clear({
+    persistEmpty = false,
+  }: { persistEmpty?: boolean } = {}): Promise<void> {
     if (this.disposed) return;
     this.debouncedPersist.cancel();
     this.state = {
@@ -131,8 +138,13 @@ export class DraftController {
       updatedAt: this.now(),
     };
     this.emit();
+    const snapshot = this.getSnapshot();
     this.enqueue(async () => {
-      await this.adapter.clear(this.key);
+      if (persistEmpty) {
+        await this.adapter.save(this.key, snapshot, { ttlMs: this.ttlMs });
+      } else {
+        await this.adapter.clear(this.key);
+      }
     });
     await this.saveChain;
   }

@@ -4,6 +4,8 @@ describe("routing/app", () => {
   it("recognizes host absolute web routes", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/agents")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/agents/agent-123")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/app-docs")).toBe(true);
     expect(
       hasHostAbsoluteRoutePrefix("/app-docs/projects/project-secrets"),

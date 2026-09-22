@@ -3,7 +3,7 @@ import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 
 export async function authorizeAgentDeliveryExecution(
   request: AcpRequest,
-  api: Pick<AgentApi, "authorizeDelivery" | "authorizeRpcExecution">,
+  api: Pick<AgentApi, "authorizeRpcExecution">,
 ): Promise<void> {
   const chat = request.chat;
   if (chat?.agent_rpc_execution) {

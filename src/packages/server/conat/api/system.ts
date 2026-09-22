@@ -99,7 +99,10 @@ import {
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
-import { aiUsageUnitsToMicrousd } from "@cocalc/server/ai/usage-units";
+import {
+  AI_USAGE_UNITS_PER_DOLLAR,
+  aiUsageUnitsToMicrousd,
+} from "@cocalc/server/ai/usage-units";
 import {
   cancelChatSpeech as cancelChatSpeechLocal,
   getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
@@ -6449,6 +6452,40 @@ export async function assertCodexPaymentSourceCaller({
   }
 }
 
+export async function getAIUsageStatusForAccountHome(account_id: string) {
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (home_bay_id === getConfiguredBayId()) {
+    return await getAIUsageStatus({ account_id });
+  }
+  const overview = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).getAccountUsageOverview({ account_id });
+  return {
+    units_per_dollar: AI_USAGE_UNITS_PER_DOLLAR,
+    windows: (["5h", "7d"] as const).map((window) => {
+      const meter = overview.meters.find(
+        (item) => item.source === "ai_usage_status" && item.window === window,
+      );
+      const date = (value?: Date | string) =>
+        value == null ? undefined : new Date(value);
+      return {
+        window,
+        used: meter?.used ?? 0,
+        limit: meter?.limit,
+        remaining: meter?.remaining,
+        starts_at: date(meter?.starts_at),
+        resets_at: date(meter?.resets_at),
+        reset_at: date(meter?.reset_at),
+        reset_in: meter?.reset_in,
+      };
+    }),
+  };
+}
+
 export async function listExternalCredentials({
   account_id,
   provider,
@@ -6805,7 +6842,7 @@ export async function getCodexPaymentSource({
     !(await isAiLaunchDisabled()) &&
     !!`${settings.openai_api_key ?? ""}`.trim();
   const siteAiUsageStatus = hasSiteApiKey
-    ? await getAIUsageStatus({ account_id })
+    ? await getAIUsageStatusForAccountHome(account_id)
     : undefined;
   const usage5h = siteAiUsageStatus?.windows.find(
     ({ window }) => window === "5h",

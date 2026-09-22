@@ -6,6 +6,8 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown, message as antdMessage } from "antd";
 import type { MouseEvent, ReactNode } from "react";
+import { Suspense, useState } from "react";
+import { ArtifactBrowserModal } from "./artifact-discovery";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { ChatActions } from "./actions";
@@ -39,6 +41,8 @@ export interface ChatRoomThreadMenuProps {
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openChatFile?: () => void;
   openAutomationModal?: (threadKey: string) => void;
+  openHistory?: () => void;
+  openMaintenance?: () => void;
   archiveLabel?: string;
   onArchive?: () => void | Promise<void>;
   onPinChange?: (pinned: boolean) => void | Promise<void>;
@@ -80,6 +84,8 @@ export function ChatRoomThreadMenu({
   confirmDeleteThread,
   openChatFile,
   openAutomationModal,
+  openHistory,
+  openMaintenance,
   archiveLabel = "Archive chat",
   onArchive,
   onPinChange,
@@ -112,8 +118,10 @@ export function ChatRoomThreadMenu({
         ]
       : [];
 
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
   const menu: MenuProps = {
     items: [
+      { key: "artifacts", label: "Artifacts", disabled: !actions?.syncdb },
       { key: "appearance", label: "Appearance..." },
       { key: "behavior", label: "Behavior..." },
       ...(openChatFile
@@ -168,8 +176,34 @@ export function ChatRoomThreadMenu({
         key: "delete",
         label: <span style={{ color: COLORS.ANTD_RED }}>Delete chat</span>,
       },
+      ...(openHistory || openMaintenance
+        ? [
+            {
+              key: "advanced",
+              label: "Advanced / technical",
+              children: [
+                ...(openHistory ? [{ key: "history", label: "History" }] : []),
+                ...(openMaintenance
+                  ? [{ key: "maintenance", label: "Maintenance" }]
+                  : []),
+              ],
+            },
+          ]
+        : []),
     ],
     onClick: ({ key }) => {
+      if (key === "history") {
+        openHistory?.();
+        return;
+      }
+      if (key === "maintenance") {
+        openMaintenance?.();
+        return;
+      }
+      if (key === "artifacts") {
+        setArtifactsOpen(true);
+        return;
+      }
       if (key === "appearance") {
         openAppearanceModal(
           threadKey,
@@ -255,24 +289,35 @@ export function ChatRoomThreadMenu({
   };
 
   return (
-    <Dropdown
-      menu={menu}
-      trigger={["click"]}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      <Button
-        type={buttonType}
-        size={buttonSize}
-        aria-label={buttonAriaLabel}
-        data-testid={buttonTestId}
-        onClick={onButtonClick}
-        icon={
-          buttonLabel == null ? <Icon name="ellipsis-vertical" /> : undefined
-        }
+    <>
+      <Dropdown
+        menu={menu}
+        trigger={["click"]}
+        open={open}
+        onOpenChange={onOpenChange}
       >
-        {buttonLabel}
-      </Button>
-    </Dropdown>
+        <Button
+          type={buttonType}
+          size={buttonSize}
+          aria-label={buttonAriaLabel}
+          data-testid={buttonTestId}
+          onClick={onButtonClick}
+          icon={
+            buttonLabel == null ? <Icon name="ellipsis-vertical" /> : undefined
+          }
+        >
+          {buttonLabel}
+        </Button>
+      </Dropdown>
+      {artifactsOpen && (
+        <Suspense fallback={null}>
+          <ArtifactBrowserModal
+            actions={actions}
+            threadId={threadKey}
+            onClose={() => setArtifactsOpen(false)}
+          />
+        </Suspense>
+      )}
+    </>
   );
 }

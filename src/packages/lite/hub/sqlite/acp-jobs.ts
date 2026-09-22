@@ -6,6 +6,8 @@ import {
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 import { upsertAcpSessionFromJob } from "./acp-sessions";
 
+import { installThreadSuccessorFence } from "./acp-thread-successors";
+
 const TABLE = "acp_jobs";
 export const ACP_PROJECT_RESTART_FENCE_REASON =
   "project restart security fence";
@@ -150,6 +152,7 @@ function init(): void {
     `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
   );
   ensureAcpTableMigrated(TABLE);
+  installThreadSuccessorFence(TABLE);
 }
 
 let initialized = false;

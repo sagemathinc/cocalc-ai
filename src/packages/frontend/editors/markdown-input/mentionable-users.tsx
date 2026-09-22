@@ -4,6 +4,13 @@
  */
 
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { useState } from "react";
+import { useChatEmbeddingOptions } from "@cocalc/frontend/chat/embedding-options";
+import { agentMentionSuggestions } from "@cocalc/frontend/agents/mention-suggestions";
+import {
+  MY_AGENTS_ORGANIZATION_SETTING,
+  normalizeAgentWorkspaceOrganization,
+} from "@cocalc/frontend/agents/workspace-organization";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -18,10 +25,10 @@ import type { Item } from "./complete";
 import {
   namedAgentReference,
   useNamedAgents,
+  useAgentNetworks,
 } from "@cocalc/frontend/agents/api";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
-import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 
 interface Opts {
   avatarUserSize?: number;
@@ -34,44 +41,80 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
-  const enabled = useAgentMessagingUI();
+  const { allowAgentMentions, states, source, postOnly } =
+    useAgentMentionContext();
+  const { selectedNetworkId } = useChatEmbeddingOptions();
+  const settings = useTypedRedux("account", "other_settings");
+  const [expanded, setExpanded] = useState(false);
+  const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
-  const { states } = useAgentMentionContext();
+  const { directory: networkDirectory } = useAgentNetworks(enabled);
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
       const query = search?.toLowerCase() ?? "";
-      const agents: Item[] = (enabled ? (directory?.agents ?? []) : [])
-        .filter((agent) =>
-          `${agent.name} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`
-            .toLowerCase()
-            .includes(query),
-        )
-        .sort(
-          (a, b) =>
-            Number(b.name === query) - Number(a.name === query) ||
-            a.name.localeCompare(b.name),
-        )
-        .map((agent) => ({
+      const suggestions = agentMentionSuggestions({
+        agents: enabled ? (directory?.agents ?? []) : [],
+        networks: networkDirectory?.networks ?? [],
+        source,
+        selectedNetworkId,
+        query,
+        expanded,
+        paused: networkDirectory?.controls.paused,
+        activity: normalizeAgentWorkspaceOrganization(
+          settings?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
+        ).lastOpened,
+      });
+      const agents: Item[] = suggestions.rows.map(
+        ({ agent, group, connected, paused }) => ({
           value: serializeAgentMention(namedAgentReference(agent)),
-          group: "Agents",
+          group,
           search:
-            `${agent.name} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`.toLowerCase(),
+            `${agent.name} ${agent.description ?? ""} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`.toLowerCase(),
           label: (
-            <span>
-              <strong>@{agent.name}</strong> ·{" "}
-              {agent.thread_title ?? "Agent thread"} /{" "}
-              {agent.project_title ?? "Project"}
-              {!agent.available
-                ? " · Unavailable"
-                : states?.[agent.endpoint.agent_id]
-                  ? ` · ${states[agent.endpoint.agent_id]}`
-                  : ""}
+            <span
+              title={
+                postOnly
+                  ? "Reference only; this post will not contact the agent."
+                  : "Reference agent; mentioning does not send a message."
+              }
+            >
+              <strong>@{agent.name}</strong>
+              <div
+                style={{
+                  fontSize: "0.9em",
+                  maxWidth: 360,
+                  whiteSpace: "normal",
+                }}
+              >
+                {agent.description || agent.thread_title || agent.project_title}
+                {!agent.available
+                  ? " · Unavailable"
+                  : states?.[agent.endpoint.agent_id]
+                    ? ` · ${states[agent.endpoint.agent_id]}`
+                    : paused
+                      ? " · Communication paused"
+                      : !connected
+                        ? " · Connection required"
+                        : ""}
+              </div>
             </span>
           ),
-        }));
+        }),
+      );
       return [
         ...agents,
+        ...(enabled && !query && !expanded
+          ? [
+              {
+                value: "show-all-agent-mentions",
+                label: suggestions.hasMore
+                  ? "Search all agents…"
+                  : "Browse all agents…",
+                onSelect: () => setExpanded(true),
+              },
+            ]
+          : []),
         ...mentionableUsers({
           search,
           project_id,
@@ -80,7 +123,19 @@ export function useMentionableUsers(): (
         }).map((item) => ({ ...item, group: "People" })),
       ];
     };
-  }, [project_id, user_map, directory, states, enabled]);
+  }, [
+    project_id,
+    user_map,
+    directory,
+    states,
+    enabled,
+    networkDirectory,
+    source,
+    selectedNetworkId,
+    settings,
+    expanded,
+    postOnly,
+  ]);
 }
 
 interface Props {

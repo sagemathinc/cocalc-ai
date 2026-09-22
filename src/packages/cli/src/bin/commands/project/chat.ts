@@ -14,13 +14,21 @@ import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type {
-  AgentEndpoint,
-  AgentRpcLink,
   AgentRpcOutcome,
   AgentRpcPreparation,
   AgentRpcSend,
+  AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
-import { validateAgentRpcPreparation } from "@cocalc/conat/agents/rpc";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
+import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
+import {
+  isExternalAgentSource,
+  validateAgentRpcPreparation,
+} from "@cocalc/conat/agents/rpc";
+import { readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -66,6 +74,217 @@ export function registerProjectChatCommands(
   const chat = project.command("chat").description("project chat operations");
   registerChatAgentCommands(chat, deps);
 
+  const artifact = chat
+    .command("artifact")
+    .description(
+      "experimental Markdown, file-reference, proposed-action, GitHub PR, and commit artifacts with shared appearance",
+    );
+  artifact
+    .command("publish")
+    .description(
+      "publish a reviewable result using current turn context; returns verified card and retry identity",
+    )
+    .option("-w, --project <project>", "target project")
+    .option("--path <path>", "chat path (defaults to COCALC_CODEX_CHAT_PATH)")
+    .option(
+      "--thread-id <id>",
+      "originating thread (defaults to COCALC_CODEX_THREAD_ID)",
+    )
+    .option(
+      "--message-date <date>",
+      "exact producing timestamp (defaults to COCALC_CODEX_MESSAGE_DATE)",
+    )
+    .option(
+      "--source <path>",
+      "absolute project file path to preview, including plans and images",
+    )
+    .option(
+      "--commit <revision>",
+      "pin a commit resolved from the local repository",
+    )
+    .option(
+      "--repo <path>",
+      "local repository/worktree for --commit",
+      process.cwd(),
+    )
+    .option(
+      "--file <path>",
+      "publication JSON: title, markdown, optional file/actions/github_pr/commit/theme; - for stdin",
+    )
+    .option(
+      "--title <title>",
+      "card title (defaults to filename or commit subject for shortcuts)",
+    )
+    .option(
+      "--update <id>",
+      "update this artifact; requires --base from a prior read",
+    )
+    .option(
+      "--base <base>",
+      "reviewed update base; never automatically rebased",
+    )
+    .option(
+      "--experimental",
+      "explicitly enable publication outside a workbench-enabled turn",
+    )
+    .action(async (opts, command: Command) => {
+      await withContext(
+        command,
+        "project chat artifact publish",
+        async (ctx) => {
+          if (!opts.experimental && process.env.COCALC_WORKBENCH !== "1")
+            throw Error(
+              "Publication requires a workbench-enabled turn or --experimental",
+            );
+          if (
+            [opts.source, opts.commit, opts.file].filter(Boolean).length !== 1
+          )
+            throw Error("Choose exactly one of --source, --commit, --file");
+          let payload: any;
+          if (opts.source) {
+            if (!opts.source.startsWith("/"))
+              throw Error("--source must be an absolute project file path");
+            payload = {
+              title: basename(opts.source),
+              file: { path: opts.source },
+            };
+          } else if (opts.commit) {
+            const git = async (...args: string[]) =>
+              (
+                await promisify(execFile)("git", args, {
+                  cwd: resolve(opts.repo),
+                  maxBuffer: 1024 * 1024,
+                })
+              ).stdout.trim();
+            const sha = await git(
+              "rev-parse",
+              "--verify",
+              "--end-of-options",
+              `${opts.commit}^{commit}`,
+            );
+            payload = {
+              title: await git("show", "-s", "--format=%s", sha),
+              commit: {
+                sha,
+                path: await git("rev-parse", "--show-toplevel"),
+                common_directory: await git(
+                  "rev-parse",
+                  "--path-format=absolute",
+                  "--git-common-dir",
+                ),
+              },
+            };
+          } else {
+            let source = "";
+            if (opts.file === "-") {
+              const chunks: Buffer[] = [];
+              let size = 0;
+              for await (const chunk of process.stdin) {
+                const b = Buffer.from(chunk);
+                size += b.length;
+                if (size > 128 * 1024)
+                  throw Error("artifact payload exceeds 128 KiB");
+                chunks.push(b);
+              }
+              source = Buffer.concat(chunks).toString("utf8");
+            } else source = await readFile(opts.file, "utf8");
+            if (Buffer.byteLength(source) > 128 * 1024)
+              throw Error("artifact payload exceeds 128 KiB");
+            payload = JSON.parse(source);
+          }
+          if (opts.title) payload.title = opts.title;
+          if (opts.base !== undefined) payload.base = opts.base;
+          return deps.projectChatArtifactData({
+            ctx,
+            action: "publish",
+            experimental: true,
+            projectIdentifier: opts.project,
+            path: normalizePath(
+              opts.path ?? process.env.COCALC_CODEX_CHAT_PATH,
+            ),
+            threadId: normalizeThreadId(
+              opts.threadId ?? process.env.COCALC_CODEX_THREAD_ID,
+            ),
+            messageDate:
+              opts.messageDate ?? process.env.COCALC_CODEX_MESSAGE_DATE,
+            artifactId: opts.update,
+            payload,
+          });
+        },
+      );
+    });
+  for (const action of [
+    "create",
+    "update",
+    "read",
+    "list",
+    "context",
+  ] as const) {
+    artifact
+      .command(action)
+      .requiredOption("--path <path>", "chat document path")
+      .requiredOption("--thread-id <id>", "originating thread")
+      .option("-w, --project <project>", "project id or name")
+      .option("--artifact-id <id>", "stable artifact id (required except list)")
+      .option("--operation-id <id>", "read an exact published snapshot")
+      .option(
+        "--message-date <date>",
+        "exact producing message timestamp for context",
+      )
+      .option(
+        "--file <path>",
+        "JSON publication payload (Markdown, or one of file, actions, github_pr, commit; optional theme); - for stdin. See exec-api for payload types",
+      )
+      .option("--experimental", "opt into prototype artifact writes")
+      .action(async (opts, command: Command) => {
+        await withContext(
+          command,
+          `project chat artifact ${action}`,
+          async (ctx) => {
+            if (action !== "list" && action !== "context" && !opts.artifactId)
+              throw Error("--artifact-id is required");
+            let payload;
+            if (action === "create" || action === "update") {
+              if (!opts.file)
+                throw Error(
+                  "--file <path> (or --file - for stdin) is required",
+                );
+              let source: string;
+              if (opts.file === "-") {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                for await (const chunk of process.stdin) {
+                  const buffer = Buffer.from(chunk);
+                  size += buffer.length;
+                  if (size > 128 * 1024)
+                    throw Error("artifact payload exceeds 128 KiB");
+                  chunks.push(buffer);
+                }
+                source = Buffer.concat(chunks).toString("utf8");
+              } else {
+                source = await readFile(opts.file, "utf8");
+              }
+              if (Buffer.byteLength(source) > 128 * 1024)
+                throw Error("artifact payload exceeds 128 KiB");
+              payload = JSON.parse(source);
+            }
+            return deps.projectChatArtifactData({
+              ctx,
+              action,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              threadId: normalizeThreadId(opts.threadId),
+              artifactId: opts.artifactId,
+              operationId: opts.operationId,
+              messageDate: opts.messageDate,
+              experimental: opts.experimental,
+              payload,
+            });
+          },
+        );
+      });
+  }
+
   const thread = chat.command("thread").description("project chat threads");
 
   chat
@@ -102,14 +321,18 @@ export function registerProjectChatCommands(
       (value: string, paths: string[]) => [...paths, value],
       [],
     )
-    .option("--rpc", "opt in to V2 single-attempt RPC (no delivery retries)")
+    .option("--rpc", "send one network-authorized attempt (no retries)")
     .option(
       "--external-agent <profile>",
-      "use only this browser-approved external send profile",
+      "use only this network-enrolled external agent profile",
     )
     .option(
       "--attempt-id <uuid>",
-      "V2 attempt identifier; deliberate retries require a NEW identifier",
+      "attempt identifier; deliberate retries require a NEW identifier",
+    )
+    .option(
+      "--agent-network <title-or-uuid>",
+      "exact Agent Network title (or internal id) when disambiguation is needed",
     )
     .option(
       "--guidance",
@@ -130,6 +353,7 @@ export function registerProjectChatCommands(
           rpc?: boolean;
           externalAgent?: string;
           attemptId?: string;
+          agentNetwork?: string;
           attach?: string[];
         },
         command: Command,
@@ -139,8 +363,10 @@ export function registerProjectChatCommands(
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
         if (opts.rpc || opts.to || opts.externalAgent) {
-          if (opts.externalAgent && opts.guidance)
-            throw new Error("External agents cannot steer turns");
+          if (opts.guidance)
+            throw new Error(
+              "Agent delivery is determined by --agent-network; --guidance is not accepted",
+            );
           if (
             (!opts.toAgent && !opts.to) ||
             (opts.toAgent && opts.to) ||
@@ -162,26 +388,57 @@ export function registerProjectChatCommands(
             opts.externalAgent
               ? sendExternalAgentMessage(opts.externalAgent, request)
               : sendIdentityMessage(request, globals.api);
-          let target: AgentEndpoint;
+          let target: AgentRpcTarget;
+          let targetName: string | undefined;
+          let agent_network_id: string;
+          let agent_network_title: string;
           if (opts.to) {
-            target = opts.externalAgent
-              ? await resolveExternalAgentName(opts.externalAgent, opts.to)
-              : await resolveRuntimeAgentName(opts.to, globals.api);
+            const resolved = opts.externalAgent
+              ? await resolveExternalAgentName(
+                  opts.externalAgent,
+                  opts.to,
+                  opts.agentNetwork,
+                )
+              : await resolveRuntimeAgentName(
+                  opts.to,
+                  globals.api,
+                  opts.agentNetwork,
+                );
+            target = resolved.target;
+            targetName = opts.to.trim().replace(/^@/, "");
+            agent_network_id = resolved.agent_network_id;
+            agent_network_title = resolved.agent_network_title;
           } else {
-            const destinations = (await send({
-              version: 2,
-              action: "destinations",
-            })) as AgentRpcLink[];
-            const destination = destinations.find(
-              (link) =>
-                link.target.agent_id === opts.toAgent &&
-                (!opts.guidance || link.allow_guidance),
-            );
-            if (!destination)
+            if (!opts.agentNetwork)
               throw new Error(
-                "No approved RPC destination; no submission attempted",
+                "--to-agent requires --agent-network with the exact network title",
               );
-            target = destination.target;
+            const destinations = (await send({
+              version: 3,
+              action: "destinations",
+            })) as AgentNetworkDiscovery;
+            const destination = destinations.peers.find(
+              ({ member }) =>
+                member.kind === "registered" &&
+                member.endpoint.agent_id === opts.toAgent,
+            );
+            if (!destination || destination.member.kind !== "registered")
+              throw new Error(
+                "Target is not a registered network member; no submission attempted",
+              );
+            const networks = destination.networks.filter(
+              (network) =>
+                network.agent_network_id === opts.agentNetwork ||
+                network.title === opts.agentNetwork,
+            );
+            if (networks.length !== 1)
+              throw new Error(
+                "--agent-network must identify one exact network title; no submission attempted",
+              );
+            target = destination.member.endpoint;
+            targetName = destination.member.name;
+            agent_network_id = networks[0].agent_network_id;
+            agent_network_title = networks[0].title;
           }
           process.stderr.write(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
@@ -191,6 +448,10 @@ export function registerProjectChatCommands(
             | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
             | undefined;
           if (opts.attach?.length) {
+            if (isExternalAgentSource(target))
+              throw new Error(
+                "Attachments to external network members are not supported",
+              );
             const self = opts.externalAgent
               ? undefined
               : ((await sendIdentityMessage(
@@ -207,11 +468,11 @@ export function registerProjectChatCommands(
             }
           }
           const request: AgentRpcSend = {
-            version: 2,
+            version: 3,
             attempt_id,
+            agent_network_id,
             target,
             body: prompt,
-            guidance: opts.guidance,
             ...(file_references ? { file_references } : {}),
           };
           if (snapshots) {
@@ -245,6 +506,31 @@ export function registerProjectChatCommands(
             ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
           })) as AgentRpcOutcome;
           deps.emitSuccess({ globals }, "project chat send", result);
+          if (
+            process.env.COCALC_CLI_AGENT_MODE === "1" &&
+            process.env.COCALC_CODEX_CHAT_PATH &&
+            process.env.COCALC_CODEX_THREAD_ID
+          ) {
+            process.stderr.write(
+              encodeAgentMessageRuntimeEvent({
+                version: 1,
+                type: "agent-message",
+                direction: "outgoing",
+                target,
+                ...(targetName ? { target_name: targetName } : {}),
+                body: prompt,
+                agent_network_id,
+                agent_network_title,
+                attempt_id,
+                outcome: result.outcome,
+                observed_at: result.observed_at,
+                ...(result.reason ? { reason: result.reason } : {}),
+                ...(result.chat_effect
+                  ? { chat_effect: result.chat_effect }
+                  : {}),
+              }),
+            );
+          }
           process.exitCode =
             result.outcome === "accepted"
               ? 0

@@ -13,12 +13,18 @@ function deferred() {
 
 function setup() {
   const envelope: AgentRpcEnvelope = {
-    version: 2,
+    version: 3,
     source: { project_id: randomUUID(), agent_id: randomUUID() },
+    source_label: "@source",
     target: { project_id: randomUUID(), agent_id: randomUUID() },
+    target_label: "@target",
     run_id: randomUUID(),
     account_id: randomUUID(),
-    link_id: randomUUID(),
+    agent_network_id: randomUUID(),
+    network_generation: randomUUID(),
+    account_generation: 0,
+    configured_delivery: "queued",
+    guidance: false,
     permit_id: randomUUID(),
     attempt_id: randomUUID(),
     thread_id: randomUUID(),
@@ -157,27 +163,26 @@ describe("attachment preparation admission", () => {
     );
   });
 
-  test.each(["run_id", "account_id", "link_id", "attempt_id", "body"] as const)(
-    "%s cannot change after preparation",
-    async (key) => {
-      const s = setup();
-      const ticket = await s.reservations.prepare(s.request);
-      const changed = {
-        ...s.request,
-        envelope: { ...s.envelope, [key]: randomUUID() },
-      };
-      await expect(
-        s.reservations.commit(
-          ticket.reservation_id,
-          changed,
-          s.files,
-          s.adapter,
-        ),
-      ).rejects.toThrow("unavailable");
-      expect(s.adapter.stage).not.toHaveBeenCalled();
-      await s.reservations.cancel(ticket.reservation_id, s.request);
-    },
-  );
+  test.each([
+    "run_id",
+    "account_id",
+    "agent_network_id",
+    "network_generation",
+    "attempt_id",
+    "body",
+  ] as const)("%s cannot change after preparation", async (key) => {
+    const s = setup();
+    const ticket = await s.reservations.prepare(s.request);
+    const changed = {
+      ...s.request,
+      envelope: { ...s.envelope, [key]: randomUUID() },
+    };
+    await expect(
+      s.reservations.commit(ticket.reservation_id, changed, s.files, s.adapter),
+    ).rejects.toThrow("unavailable");
+    expect(s.adapter.stage).not.toHaveBeenCalled();
+    await s.reservations.cancel(ticket.reservation_id, s.request);
+  });
 
   test("changed metadata or bytes cannot become a text-only send", async () => {
     const s = setup();

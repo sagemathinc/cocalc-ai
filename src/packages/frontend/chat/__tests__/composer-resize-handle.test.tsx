@@ -3,9 +3,18 @@
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatRoomComposer } from "../composer";
+import {
+  allowAgentMentionsInComposer,
+  approvedDraftIsCurrent,
+  ChatRoomComposer,
+} from "../composer";
+import {
+  ChatEmbeddingOptionsProvider,
+  type ChatEmbeddingOptions,
+} from "../embedding-options";
 
 let lastChatInputProps: any;
+let lastCodexConfigProps: any;
 
 jest.mock("../input", () => ({
   __esModule: true,
@@ -23,6 +32,17 @@ jest.mock("../input", () => ({
         </button>
         {props.toolbarRightContent}
       </>
+    );
+  },
+}));
+
+jest.mock("../codex", () => ({
+  CodexConfigButton: (props: any) => {
+    lastCodexConfigProps = props;
+    return (
+      <button type="button" aria-label="Codex settings">
+        Codex settings
+      </button>
     );
   },
 }));
@@ -57,6 +77,7 @@ jest.mock("../utils", () => ({
 
 function renderComposer(
   overrides: Partial<React.ComponentProps<typeof ChatRoomComposer>> = {},
+  embeddingOptions: ChatEmbeddingOptions = {},
 ) {
   const props: React.ComponentProps<typeof ChatRoomComposer> = {
     actions: {
@@ -79,12 +100,90 @@ function renderComposer(
     onComposerFocusChange: jest.fn(),
     ...overrides,
   };
-  return render(<ChatRoomComposer {...props} />);
+  return render(
+    <ChatEmbeddingOptionsProvider value={embeddingOptions}>
+      <ChatRoomComposer {...props} />
+    </ChatEmbeddingOptionsProvider>,
+  );
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it.each([false, true])(
+    "uses compact settings only on mobile (%s)",
+    (mobile) => {
+      renderComposer({
+        mobile,
+        isSelectedThreadAI: true,
+        selectedThread: { key: "thread-mobile", label: "Agent" } as any,
+      });
+      expect(lastCodexConfigProps.compact).toBe(mobile ? "icon" : "composer");
+      expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Codex settings" }),
+      ).toBeTruthy();
+    },
+  );
   beforeEach(() => {
     lastChatInputProps = undefined;
+  });
+
+  it("allows agent mentions only in explicit ACP or new Codex threads", () => {
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "none",
+        hasSelectedThread: true,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(false);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: undefined,
+        hasSelectedThread: true,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(false);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "acp",
+        hasSelectedThread: true,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(true);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "none",
+        hasSelectedThread: false,
+        isNewThreadCodex: true,
+      }),
+    ).toBe(true);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "none",
+        hasSelectedThread: true,
+        isNewThreadCodex: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("checks approved sends against the live editor instead of debounced state", () => {
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "latest editor draft",
+        editorDraft: "latest editor draft",
+      }),
+    ).toBe(true);
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "latest editor draft",
+        editorDraft: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "approved draft",
+        editorDraft: "changed during approval",
+      }),
+    ).toBe(false);
   });
 
   it("prepares naming before the first turn using the latest private editor draft, without sending", async () => {
@@ -159,10 +258,45 @@ describe("ChatRoomComposer resize handle", () => {
       expect(onEditThreadAppearance).toHaveBeenCalledTimes(3);
       expect(onSend).not.toHaveBeenCalled();
       if (isAI) {
-        expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+        await user.click(
+          screen.getByRole("button", { name: "Add files and more" }),
+        );
+        expect(
+          await screen.findByRole("menuitem", { name: "Set goal" }),
+        ).not.toBeNull();
       }
     },
   );
+
+  it("hides the identity row when requested by an embedded surface", () => {
+    renderComposer(
+      {
+        selectedThread: {
+          key: "thread-embedded",
+          label: "Agent thread title",
+          newestTime: 0,
+          messageCount: 1,
+          hasCustomName: true,
+          hasCustomAppearance: false,
+          readCount: 1,
+          unreadCount: 0,
+          isAI: true,
+          isAutomation: false,
+          isPinned: false,
+          isArchived: false,
+        },
+        onEditThreadAppearance: jest.fn(),
+      },
+      { hideComposerIdentity: true },
+    );
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit Thread Appearance: Agent thread title",
+      }),
+    ).toBeNull();
+    expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
+  });
 
   it("does not show the resize handle when the composer is empty but focused", () => {
     const { container } = renderComposer();
@@ -175,18 +309,19 @@ describe("ChatRoomComposer resize handle", () => {
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
   });
 
-  it("keeps dictation above the composer instead of adjacent to Send", () => {
+  it("keeps dictation in the composer control rail", () => {
     renderComposer({ hasInput: true, input: "draft" });
 
     const dictate = screen.getByRole("button", { name: "Dictate message" });
     const actions = screen.getByTestId("chat-composer-actions");
-    expect(actions.contains(dictate)).toBe(false);
+    expect(actions.contains(dictate)).toBe(true);
     expect(actions.contains(screen.getByRole("button", { name: "Send" }))).toBe(
       true,
     );
   });
 
-  it("shows goal controls for legacy Codex thread metadata", () => {
+  it("offers goal controls for legacy Codex thread metadata", async () => {
+    const user = userEvent.setup();
     renderComposer({
       selectedThread: {
         key: "thread-legacy",
@@ -212,10 +347,15 @@ describe("ChatRoomComposer resize handle", () => {
       } as any,
     });
 
-    expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Add files and more" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Set goal" }),
+    ).not.toBeNull();
   });
 
-  it("keeps the thread title clear of its accent line", () => {
+  it("does not add a divider beside the thread title", () => {
     renderComposer({
       selectedThread: {
         key: "thread-accent",
@@ -236,10 +376,91 @@ describe("ChatRoomComposer resize handle", () => {
       onEditThreadAppearance: jest.fn(),
     });
 
+    const title = screen.getByRole("button", {
+      name: "Edit Thread Appearance: hi",
+    });
+    expect(title.style.borderLeft).toBe("0px");
+    expect(title.style.paddingLeft).toBe("4px");
+  });
+
+  it("uses the shared attachment and submit controls for human chats", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-human",
+        label: "Human thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: false,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    });
+
     expect(
-      screen.getByRole("button", { name: "Edit Thread Appearance: hi" }).style
-        .paddingLeft,
-    ).toBe("12px");
+      screen.getByRole("button", { name: "Add files and more" }),
+    ).not.toBeNull();
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    expect(send.style.width).toBe("32px");
+    expect(send.style.height).toBe("32px");
+  });
+
+  it("keeps execution settings available for AI threads without ACP metadata", () => {
+    renderComposer({
+      isSelectedThreadAI: true,
+      selectedThread: {
+        key: "thread-ai",
+        label: "AI thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Codex settings" }),
+    ).not.toBeNull();
+  });
+
+  it("uses a product-neutral prompt for agent chats", () => {
+    renderComposer({
+      isSelectedThreadAI: true,
+      selectedThread: {
+        key: "thread-agent",
+        label: "Agent thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({ agent_kind: "acp" }),
+        isCodexThread: () => true,
+      } as any,
+    });
+
+    expect(lastChatInputProps.placeholder).toBe(
+      "What would you like to work on?",
+    );
   });
 
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {
@@ -376,6 +597,12 @@ describe("ChatRoomComposer resize handle", () => {
       expect(
         screen.getByTestId("chat-composer-actions").style.flexDirection,
       ).toBe("row");
+      expect(screen.getByTestId("chat-composer-actions").style.flexWrap).toBe(
+        "wrap",
+      );
+      expect(
+        screen.getByTestId("chat-composer-input").parentElement?.style.order,
+      ).toBe("");
       expect(
         screen.getByTestId("chat-composer-input").parentElement?.style.width,
       ).toBe("100%");

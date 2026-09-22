@@ -2572,6 +2572,7 @@ export function registerHostCommand(
       const summary = await waitForLro(ctx, op.op_id, {
         timeoutMs: ctx.timeoutMs,
         pollMs: ctx.pollMs,
+        scope: { type: "host", id: h.id },
       });
       if (summary.timedOut) {
         throw new Error(
@@ -2622,6 +2623,7 @@ export function registerHostCommand(
       const summary = await waitForLro(ctx, op.op_id, {
         timeoutMs: ctx.timeoutMs,
         pollMs: ctx.pollMs,
+        scope: { type: "host", id: h.id },
         onUpdate: createHostLroProgressReporter(ctx, {
           host_id: h.id,
           name: h.name,
@@ -2687,6 +2689,7 @@ export function registerHostCommand(
       const summary = await waitForLro(ctx, op.op_id, {
         timeoutMs: ctx.timeoutMs,
         pollMs: ctx.pollMs,
+        scope: { type: "host", id: host.id },
         onUpdate: createHostLroProgressReporter(ctx, {
           host_id: host.id,
           name: host.name,
@@ -3169,6 +3172,7 @@ Examples:
               const summary = await waitForLro(ctx, entry.op_id, {
                 timeoutMs: ctx.timeoutMs,
                 pollMs: ctx.pollMs,
+                scope: { type: "host", id: entry.host_id },
                 onUpdate: createHostLroProgressReporter(ctx, entry),
               });
               return {
@@ -3307,6 +3311,7 @@ Examples:
               const summary = await waitForLro(ctx, entry.op_id, {
                 timeoutMs: ctx.timeoutMs,
                 pollMs: ctx.pollMs,
+                scope: { type: "host", id: entry.host_id },
                 onUpdate: createHostLroProgressReporter(ctx, entry),
               });
               return {
@@ -3386,6 +3391,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: hostRow.id },
             onUpdate: createHostLroProgressReporter(ctx, {
               host_id: hostRow.id,
               name: hostRow.name,
@@ -3577,6 +3583,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: host.id },
             onUpdate: createHostLroProgressReporter(ctx, {
               host_id: host.id,
               name: host.name,
@@ -3849,6 +3856,7 @@ does not yet have the required runtime artifact version installed.
               const summary = await waitForLro(ctx, entry.op_id, {
                 timeoutMs: ctx.timeoutMs,
                 pollMs: ctx.pollMs,
+                scope: { type: "host", id: entry.host_id },
                 onUpdate: createHostLroProgressReporter(ctx, entry),
               });
               return {
@@ -3984,6 +3992,7 @@ version when available, or \`--to-version\` to force a specific published versio
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: host.id },
             onUpdate: createHostLroProgressReporter(ctx, {
               host_id: host.id,
               name: host.name,
@@ -4913,6 +4922,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: h.id },
             onUpdate: createHostLroProgressReporter(ctx, {
               host_id: h.id,
               name: h.name,
@@ -4980,6 +4990,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: h.id },
           });
           if (summary.timedOut) {
             throw new Error(
@@ -5037,6 +5048,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: h.id },
           });
           if (summary.timedOut) {
             throw new Error(
@@ -5146,6 +5158,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: source.id },
           });
           if (summary.timedOut) {
             throw new Error(
@@ -5198,6 +5211,7 @@ Examples:
           const summary = await waitForLro(ctx, op.op_id, {
             timeoutMs: ctx.timeoutMs,
             pollMs: ctx.pollMs,
+            scope: { type: "host", id: h.id },
           });
           if (summary.timedOut) {
             throw new Error(

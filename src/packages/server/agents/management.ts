@@ -6,21 +6,23 @@ export function isRestrictiveAgentManagement(
 ): boolean {
   switch (request.action) {
     case "listNamedAgents":
-    case "listPersonalConnections":
-    case "listPersonalConnectionRequests":
+    case "listAgentNetworks":
+    case "listAgentNetworkActivity":
+    case "inspectAgentNetworkAttempt":
+    case "listAgentNetworkProposals":
+    case "retireNamedAgent":
       return true;
-    case "setPersonalConnectionState":
-      return (
-        request.options.state === "paused" ||
-        request.options.state === "revoked"
+    case "resolveAgentNetworkProposal":
+      return request.options.action === "reject";
+    case "updateAgentNetwork":
+      return ["pause", "remove-member", "close"].includes(
+        request.options.action,
       );
     case "setPersonalMessagingState":
       return (
         request.options.action === "pause" ||
         request.options.action === "revoke_all"
       );
-    case "resolvePersonalConnectionRequest":
-      return request.options.decision === "deny";
     default:
       return false;
   }

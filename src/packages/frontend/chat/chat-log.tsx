@@ -43,6 +43,7 @@ import type {
   NumChildren,
 } from "./types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import { useChatEmbeddingOptions } from "./embedding-options";
 import type { ThreadIndexEntry } from "./message-cache";
 import { getMessageAtDate, newest_content } from "./utils";
 import {
@@ -61,6 +62,7 @@ import {
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
+import { agentRpcMessageMarkdown } from "./agent-message-presentation";
 import {
   CodexAttentionCard,
   type CodexAttentionDraft,
@@ -311,8 +313,11 @@ function collectSteers({
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const text = newest_content(message)?.trim();
-    if (!messageId || !text) continue;
+    const rawText = newest_content(message)?.trim();
+    if (!messageId || !rawText) continue;
+    const rawRpc = field<any>(message, "agent_rpc");
+    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const text = rpc ? agentRpcMessageMarkdown(rawText, rpc) : rawText;
     const anchoredParentId = resolveSteerAnchorMessageId({
       message,
       byMessageId,
@@ -541,6 +546,7 @@ export function ChatLog({
     [messages, visibleKeys, acpState, docVersion],
   );
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const { agentWorkspace } = useChatEmbeddingOptions();
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const isForegroundChatTab =
@@ -548,7 +554,7 @@ export function ChatLog({
   const canAutoScroll =
     isVisible &&
     !anyOverlayOpen &&
-    (mode === "sidechat" || isForegroundChatTab);
+    (agentWorkspace || mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
   const keepBottomAnchoredRef = useRef(false);

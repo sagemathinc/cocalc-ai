@@ -1,23 +1,21 @@
 import { useId, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Space } from "antd";
+import type { ButtonProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
-import { useAgentMessagingUI } from "./use-ui-preference";
+import {
+  isNamedAgentLimitError,
+  namedAgentLimitReached,
+  NamedAgentLimitAlert,
+  NamedAgentUsage,
+} from "./agent-limit";
 
-export function NameAgent(props: Parameters<typeof EnabledNameAgent>[0]) {
-  return useAgentMessagingUI() ? <EnabledNameAgent {...props} /> : null;
-}
-
-function EnabledNameAgent({
+export function NameAgent({
   agent,
   projectId,
   path,
@@ -25,6 +23,9 @@ function EnabledNameAgent({
   threadTitle,
   projectTitle,
   initiallyOpen = false,
+  triggerLabel,
+  triggerButtonProps,
+  modalTitle,
 }: {
   agent?: NamedAgent;
   projectId: string;
@@ -33,6 +34,9 @@ function EnabledNameAgent({
   threadTitle?: string;
   projectTitle?: string;
   initiallyOpen?: boolean;
+  triggerLabel?: string;
+  triggerButtonProps?: ButtonProps;
+  modalTitle?: string;
 }) {
   const id = useId();
   const boundAccount = useBoundAgentAccount();
@@ -43,7 +47,6 @@ function EnabledNameAgent({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const problem = agentNameProblem(
     name,
     directory?.agents ?? [],
@@ -53,8 +56,9 @@ function EnabledNameAgent({
       thread_id: threadId,
     },
   );
+  const atLimit = !agent && namedAgentLimitReached(directory);
   async function save() {
-    if (lock.current || problem) return;
+    if (lock.current || problem || atLimit) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -68,12 +72,8 @@ function EnabledNameAgent({
         let identity = await api.resolveIdentity(locator);
         boundAccount.assertCurrent();
         if (!identity) {
-          const completed = await runFreshAuthAction(async () => {
-            boundAccount.assertCurrent();
-            identity = await api.registerIdentity(locator);
-            boundAccount.assertCurrent();
-          });
-          if (!completed) return;
+          identity = await api.registerIdentity(locator);
+          boundAccount.assertCurrent();
         }
         if (!identity) throw new Error("Unable to register this agent thread");
         endpoint = { project_id: projectId, agent_id: identity.agent_id };
@@ -96,7 +96,12 @@ function EnabledNameAgent({
       refreshNamedAgents();
       setOpen(false);
     } catch (err) {
-      setError(`${err}`);
+      setError(
+        isNamedAgentLimitError(err)
+          ? "Your membership's named-agent limit was reached."
+          : `${err}`,
+      );
+      if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
       lock.current = false;
       setBusy(false);
@@ -106,6 +111,7 @@ function EnabledNameAgent({
   return (
     <>
       <Button
+        {...triggerButtonProps}
         size="small"
         aria-label={agent ? `Rename @${agent.name}` : "Name agent"}
         onClick={() => {
@@ -115,14 +121,14 @@ function EnabledNameAgent({
           setOpen(true);
         }}
       >
-        {agent ? `@${agent.name} - Rename` : "Name agent"}
+        {triggerLabel ?? (agent ? `@${agent.name}` : "Name agent")}
       </Button>
       <Modal
         open={open}
-        title="Name in your agents"
+        title={modalTitle ?? (agent ? "Edit agent name" : "Name agent")}
         okText="Save agent name"
         confirmLoading={busy}
-        okButtonProps={{ disabled: !!problem || busy }}
+        okButtonProps={{ disabled: !!problem || busy || atLimit }}
         onOk={() => void save()}
         onCancel={() => {
           if (!busy) setOpen(false);
@@ -134,6 +140,8 @@ function EnabledNameAgent({
             This name is in your account across projects. Naming does not start
             work, grant communication, or make shared chat history private.
           </p>
+          <NamedAgentLimitAlert directory={agent ? undefined : directory} />
+          {!agent && <NamedAgentUsage directory={directory} />}
           <AgentNameInput
             id={`${id}-name`}
             value={name}
@@ -157,7 +165,6 @@ function EnabledNameAgent({
           )}
         </Space>
       </Modal>
-      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }

@@ -114,6 +114,8 @@ import type {
   ChatExportOpenRequest,
 } from "./export-types";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
+import { validateArtifactFeedback } from "@cocalc/chat";
+import type { ArtifactFeedback } from "@cocalc/chat";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const logger = getLogger("frontend:chat:actions");
@@ -498,6 +500,8 @@ export class ChatActions extends Actions<ChatState> {
   // this prevents that at least.
   public chatStreams: Set<string> = new Set([]);
   public frameId: string = "";
+  // Surface capability only; each thread must separately opt in via acp_config.
+  public workbenchEnabled = false;
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;
@@ -505,6 +509,7 @@ export class ChatActions extends Actions<ChatState> {
   public appendToComposerDraft?: (
     request: ChatComposerDraftAppendRequest,
   ) => void;
+  public stageArtifactFeedback?: (feedback: ArtifactFeedback) => Promise<void>;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
@@ -886,6 +891,7 @@ export class ChatActions extends Actions<ChatState> {
   // chatgpt is totally done.
   sendChat = ({
     input,
+    artifact_feedback,
     acp_prompt,
     sender_id = this.redux.getStore("account").get_account_id(),
     reply_thread_id,
@@ -899,6 +905,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAppearance,
     preserveSelectedThread,
     skipModelDispatch,
+    postOnly,
     parent_message_id,
     acpConfigOverride,
     chatIdentity,
@@ -906,6 +913,7 @@ export class ChatActions extends Actions<ChatState> {
     skipDraftDelete,
   }: {
     input?: string;
+    artifact_feedback?: ArtifactFeedback;
     acp_prompt?: string;
     sender_id?: string;
     reply_thread_id?: string;
@@ -924,6 +932,7 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;
+    postOnly?: boolean;
     // direct parent for linear thread placement
     parent_message_id?: string;
     // explicit ACP config snapshot to use for immediate dispatch
@@ -1016,17 +1025,23 @@ export class ChatActions extends Actions<ChatState> {
       parent_message_id: resolvedParentMessageId,
       editing: {},
     } as ChatMessage;
-    if (send_mode === "immediate") {
+    if (postOnly) (message as any).post_only = true;
+    if (!postOnly && send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
       if (recoveredNotSent !== true) {
         (message as any).acp_state = "sending";
       }
     }
-    if (recoveredNotSent === true) {
+    if (!postOnly && recoveredNotSent === true) {
       (message as any).acp_state = "not-sent";
     }
     if (trimmedAcpPrompt) {
       (message as any).acp_prompt = trimmedAcpPrompt;
+    }
+    if (artifact_feedback) {
+      const feedback = validateArtifactFeedback(artifact_feedback);
+      if (feedback.thread_id !== thread_id) return "";
+      (message as any).artifact_feedback = feedback;
     }
     if (trimmedName && !explicitReplyThreadId) {
       (message as any).name = trimmedName;
@@ -1034,8 +1049,9 @@ export class ChatActions extends Actions<ChatState> {
     if (!this.setSyncdb(message)) {
       return "";
     }
-    const initialAcpState =
-      recoveredNotSent === true
+    const initialAcpState = postOnly
+      ? undefined
+      : recoveredNotSent === true
         ? "not-sent"
         : send_mode === "immediate"
           ? "sending"
@@ -1047,7 +1063,7 @@ export class ChatActions extends Actions<ChatState> {
       );
       this.store.setState({ acpState: nextAcpState });
     }
-    if (send_mode === "immediate") {
+    if (!postOnly && send_mode === "immediate") {
       // Syncdoc changes are throttled, but guidance must move from the composer
       // into the running activity immediately. The authoritative row replaces
       // this exact message_id/date when the syncdoc change arrives.
@@ -1165,7 +1181,7 @@ export class ChatActions extends Actions<ChatState> {
       });
     }
 
-    if (!skipModelDispatch) {
+    if (!skipModelDispatch && !postOnly) {
       (async () => {
         await this.processAI({
           message,
@@ -2771,6 +2787,7 @@ export class ChatActions extends Actions<ChatState> {
     if (!threadMessages) return history;
 
     for (const message of threadMessages) {
+      if (field<boolean>(message, "post_only")) continue;
       const mostRecent = historyArray(message)[0];
       // there must be at least one history entry, otherwise the message is broken
       if (!mostRecent) continue;
@@ -2791,7 +2808,11 @@ export class ChatActions extends Actions<ChatState> {
     const normalizedThreadId = this.normalizeThreadId(threadId);
     if (!normalizedThreadId) return;
     const threadConfig = this.getThreadConfigRecordById(normalizedThreadId);
-    const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
+    // Preferred SyncDB records are Immutable, while cache records are plain.
+    const cfgFromThread = field<CodexThreadConfig>(
+      threadConfig?.toJS?.() ?? threadConfig,
+      "acp_config",
+    );
     if (cfgFromThread == null) return;
     return cfgFromThread;
   };
@@ -3268,6 +3289,7 @@ export class ChatActions extends Actions<ChatState> {
 
     const history: { author: string; content: string }[] = [];
     for (const message of threadMessages) {
+      if (field<boolean>(message, "post_only")) continue;
       const mostRecent = historyArray(message)[0];
       if (!mostRecent) continue;
       const sender_id: string = senderId(message) ?? "";

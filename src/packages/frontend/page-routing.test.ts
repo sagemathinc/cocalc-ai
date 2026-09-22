@@ -27,6 +27,26 @@ describe("page-routing", () => {
     });
   });
 
+  it("parses and formats My Agents targets", () => {
+    expect(parsePageTarget("agents")).toEqual({
+      page: "agents",
+      agent_id: undefined,
+    });
+    const parsed = parsePageTarget("agents/agent-123");
+    expect(parsed).toEqual({ page: "agents", agent_id: "agent-123" });
+    expect(getPageTopTab(parsed)).toBe("agents");
+    expect(getPageTargetPath(parsed)).toBe("agents/agent-123");
+
+    const create = parsePageTarget("agents/new");
+    expect(create).toEqual({ page: "agents", agent_id: "new" });
+    expect(getPageUrlPath(create)).toBe("/agents/new");
+
+    expect(parsePageTarget("agents/agent-123?network=legacy-filter")).toEqual({
+      page: "agents",
+      agent_id: "agent-123",
+    });
+  });
+
   it("parses auth and ssh routes explicitly", () => {
     expect(parsePageTarget("auth/password-reset")).toEqual({
       page: "auth",

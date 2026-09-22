@@ -66,6 +66,7 @@ import {
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { handoffToPrivateProjectApp } from "@cocalc/frontend/project/private-app-handoff";
 import { parsePrivateProjectAppHandoffTarget } from "@cocalc/frontend/project-routing";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 import {
   APP_NAVIGATION_EVENT,
@@ -84,7 +85,9 @@ function params(): string {
   const page = redux.getStore("page");
   const u = new URL(location.href);
   if (page != null) {
-    for (const param of ["get_api_key", "test"]) {
+    // `network` was briefly used by the Agents page and must not survive
+    // navigation now that its filter is localStorage-only.
+    for (const param of ["get_api_key", "test", "network"]) {
       const val = page.get(param);
       if (val) {
         u.searchParams.set(param, val);
@@ -185,6 +188,17 @@ export function load_target(
     return;
   }
   switch (parsed.page) {
+    case "agents":
+      redux.getActions("page").setState({
+        active_agent_id: parsed.agent_id,
+        active_agent_name:
+          parsed.agent_id && !is_valid_uuid_string(parsed.agent_id)
+            ? parsed.agent_id
+            : undefined,
+      });
+      redux.getActions("page").set_active_tab("agents", change_history);
+      break;
+
     case "project": {
       const privateApp = parsePrivateProjectAppHandoffTarget(parsed.target);
       if (privateApp != null) {

@@ -11,6 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
+import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 const getCodexSiteKeyGovernorMock: jest.Mock<any, []> = jest.fn(() => null);
 const loggerMock = {
   debug: jest.fn(),
@@ -242,6 +243,23 @@ describe("CodexAppServerAgent", () => {
     const loginRequests: any[] = [];
     const threadStartRequests: any[] = [];
     const turnStartRequests: any[] = [];
+    const peerMessage = {
+      version: 1 as const,
+      type: "agent-message" as const,
+      direction: "outgoing" as const,
+      target: {
+        project_id: "00000000-0000-4000-8000-000000000010",
+        agent_id: "00000000-0000-4000-8000-000000000011",
+      },
+      target_name: "reviewer",
+      body: "Review this",
+      agent_network_id: "00000000-0000-4000-8000-000000000012",
+      attempt_id: "00000000-0000-4000-8000-000000000013",
+      outcome: "accepted" as const,
+      observed_at: 1234,
+      chat_effect: "saved" as const,
+    };
+    const peerMessageRecord = encodeAgentMessageRuntimeEvent(peerMessage);
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
@@ -291,7 +309,7 @@ describe("CodexAppServerAgent", () => {
               threadId: "thr-shared-1",
               turnId: "turn-1",
               itemId: "cmd-1",
-              delta: "hi\n",
+              delta: `hi\n${peerMessageRecord}`,
             });
             fake.sendNotification("item/completed", {
               threadId: "thr-shared-1",
@@ -304,7 +322,7 @@ describe("CodexAppServerAgent", () => {
                 processId: null,
                 status: "completed",
                 commandActions: [],
-                aggregatedOutput: "hi\n",
+                aggregatedOutput: `hi\n${peerMessageRecord}`,
                 exitCode: 0,
                 durationMs: 5,
               },
@@ -470,6 +488,22 @@ describe("CodexAppServerAgent", () => {
         {
           type: "event",
           event: {
+            type: "peerMessage",
+            direction: "outgoing",
+            target: peerMessage.target,
+            target_name: "reviewer",
+            body: "Review this",
+            agent_network_id: peerMessage.agent_network_id,
+            attempt_id: peerMessage.attempt_id,
+            outcome: "accepted",
+            observed_at: 1234,
+            reason: undefined,
+            chat_effect: "saved",
+          },
+        },
+        {
+          type: "event",
+          event: {
             type: "subagent",
             operationId: "spawn-1",
             threadId: "thr-child-1",
@@ -520,6 +554,9 @@ describe("CodexAppServerAgent", () => {
         delta: false,
       },
     });
+    expect(JSON.stringify(streamPayloads)).not.toContain(
+      "::cocalc-agent-message::",
+    );
     expect(
       streamPayloads.filter(
         (payload) =>
@@ -4066,6 +4103,10 @@ describe("CodexAppServerAgent", () => {
           COCALC_BEARER_TOKEN: "project-token",
           COCALC_AGENT_TOKEN: "project-token",
           PATH: "/root/.local/bin:/usr/bin",
+          COCALC_CODEX_CHAT_PATH: "/old.chat",
+          COCALC_CODEX_THREAD_ID: "old-thread",
+          COCALC_CODEX_MESSAGE_DATE: "2026-09-08T00:00:00Z",
+          COCALC_BROWSER_ID: "old-browser",
         },
         appServerLogin: {
           type: "apiKey",
@@ -4083,6 +4124,10 @@ describe("CodexAppServerAgent", () => {
         COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
         COCALC_BROWSER_ID: "browser-1",
         COCALC_API_URL: "https://lite3.cocalc.ai",
+        COCALC_CODEX_CHAT_PATH: "/new.chat",
+        COCALC_CODEX_THREAD_ID: "new-thread",
+        COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
+        COCALC_WORKBENCH: "1",
       },
       stream: async () => {},
       config: {
@@ -4099,8 +4144,20 @@ describe("CodexAppServerAgent", () => {
       COCALC_BEARER_TOKEN: "project-token",
       COCALC_AGENT_TOKEN: "project-token",
       PATH: "/root/.local/bin:/usr/bin",
+      COCALC_CODEX_CHAT_PATH: "/new.chat",
+      COCALC_CODEX_THREAD_ID: "new-thread",
+      COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
     });
     expect(turnStartParams?.approvalPolicy).toBe("never");
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "Publishing durable reviewable results is part of task completion",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "artifact publication is required",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "file link alone does not satisfy the request",
+    );
     expect(turnStartParams?.sandboxPolicy).toEqual({
       type: "workspaceWrite",
       writableRoots: [],
@@ -4113,6 +4170,15 @@ describe("CodexAppServerAgent", () => {
       'When you need the CoCalc CLI, use this exact command: `"/root/.local/bin/cocalc"`.',
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
+      JSON.stringify({
+        COCALC_CODEX_CHAT_PATH: "/new.chat",
+        COCALC_CODEX_THREAD_ID: "new-thread",
+        COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
+      }),
+    );
+    expect(turnStartParams?.input?.[0]?.text).not.toContain("/old.chat");
+    expect(turnStartParams?.input?.[0]?.text).not.toContain("project-token");
+    expect(turnStartParams?.input?.[0]?.text).toContain(
       "For live text editor content or edits, prefer backend exec with the live sync/session API",
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
@@ -4120,6 +4186,12 @@ describe("CodexAppServerAgent", () => {
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
       "write/append/replace methods save to disk by default",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "project chat artifact context",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "a changed-base error requires rereading",
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
       "Project secret changes apply immediately to running projects",
@@ -4195,29 +4267,20 @@ describe("CodexAppServerAgent", () => {
 
     const text = turnStartParams?.input?.[0]?.text;
     expect(text).toContain("project build -h");
+    expect(text).toContain("Do not publish artifacts by default");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
-    expect(text).toContain("project chat agent rpc destinations --json");
     expect(text).toContain("project chat agent destinations --json");
     expect(text).toContain("project chat send --to NAME --stdin --json");
-    expect(text).toContain(
-      "project chat agent request-connection --to NAME --reason TEXT",
-    );
-    expect(text).toContain("project chat agent connection-request REQUEST_ID");
-    expect(text).toContain("Legacy grants do not authorize personal sends");
-    expect(text).toContain("the approval handler never replays one");
+    expect(text).toContain("preferring live delivery when available");
+    expect(text).toContain("explicit two-way Agent Network");
+    expect(text).toContain("cannot create authority themselves");
+    expect(text).toContain("subagents remain internal");
     expect(text).toContain(
       "protocol_version describes identity authentication",
     );
-    expect(text).toContain("project chat send --rpc --to-agent ID");
-    expect(text).toContain(
-      "supply it with a pipe or heredoc in the same shell invocation",
-    );
-    expect(text).toContain("A timeout is unknown, never proof of rejection");
-    expect(text).toContain("Do not automatically retry");
-    expect(text).toContain(
-      "Replies require a separately approved reverse link",
-    );
+    expect(text).not.toContain("request-connection");
+    expect(text).not.toContain("reverse link");
     expect(text).not.toContain("COCALC_BROWSER_ID");
     expect(text).not.toContain("browser files --project-id");
     expect(text).not.toContain("browser workspace-state");
@@ -4287,7 +4350,7 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
-  it("uses full-access sandboxing for container-backed sessions by default", async () => {
+  it("uses full-access sandboxing for container-backed networks by default", async () => {
     let threadStartParams: any;
     let turnStartParams: any;
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
@@ -4365,7 +4428,7 @@ describe("CodexAppServerAgent", () => {
     const originalCodexHome = process.env.COCALC_CODEX_HOME;
     const codexHome = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const sessionId = "019d0000-0000-7000-8000-000000000001";
-    const sessionDir = path.join(codexHome, "sessions", "2026", "04", "08");
+    const sessionDir = path.join(codexHome, "networks", "2026", "04", "08");
     mkdirSync(sessionDir, { recursive: true });
     const sessionFile = path.join(
       sessionDir,
@@ -4478,7 +4541,7 @@ describe("CodexAppServerAgent", () => {
     const sessionDir = path.join(
       rootHostPath,
       ".codex",
-      "sessions",
+      "networks",
       "2026",
       "04",
       "08",
@@ -4586,13 +4649,13 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
-  it("resumes container-backed sessions with full access by default", async () => {
+  it("resumes container-backed networks with full access by default", async () => {
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const sessionId = "019d0000-0000-7000-8000-000000000003";
     const sessionDir = path.join(
       rootHostPath,
       ".codex",
-      "sessions",
+      "networks",
       "2026",
       "04",
       "08",
@@ -6912,12 +6975,12 @@ describe("CodexAppServerAgent", () => {
 
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const codexHome = path.join(rootHostPath, ".codex");
-    mkdirSync(path.join(codexHome, "sessions", "2026", "03", "15"), {
+    mkdirSync(path.join(codexHome, "networks", "2026", "03", "15"), {
       recursive: true,
     });
     const rolloutPath = path.join(
       codexHome,
-      "sessions",
+      "networks",
       "2026",
       "03",
       "15",
@@ -6972,7 +7035,7 @@ describe("CodexAppServerAgent", () => {
     );
     db.prepare("INSERT INTO threads(id, rollout_path) VALUES(?, ?)").run(
       "thr-rollout-1",
-      "/root/.codex/sessions/2026/03/15/rollout-test.jsonl",
+      "/root/.codex/networks/2026/03/15/rollout-test.jsonl",
     );
     db.close();
 
@@ -7071,12 +7134,12 @@ describe("CodexAppServerAgent", () => {
   it("surfaces persisted compaction markers in the ACP stream", async () => {
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const codexHome = path.join(rootHostPath, ".codex");
-    mkdirSync(path.join(codexHome, "sessions", "2026", "03", "15"), {
+    mkdirSync(path.join(codexHome, "networks", "2026", "03", "15"), {
       recursive: true,
     });
     const rolloutPath = path.join(
       codexHome,
-      "sessions",
+      "networks",
       "2026",
       "03",
       "15",
@@ -7114,7 +7177,7 @@ describe("CodexAppServerAgent", () => {
     );
     db.prepare("INSERT INTO threads(id, rollout_path) VALUES(?, ?)").run(
       "thr-compacted-1",
-      "/root/.codex/sessions/2026/03/15/rollout-compacted.jsonl",
+      "/root/.codex/networks/2026/03/15/rollout-compacted.jsonl",
     );
     db.close();
 

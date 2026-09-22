@@ -1,14 +1,126 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
-import { requireUuid, validateAgentPage } from "@cocalc/conat/agents/protocol";
-import type { AgentGrant } from "@cocalc/conat/hub/api/agent";
-import { agentPage, ownMessageReceipts } from "./inspection";
+import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
 import { assertLocalAgentProject, assertActor, assertAgent } from "./access";
 import { withAgentChat } from "./chat";
 import { withAgentIdentityOwner } from "./identity-routing";
+import { controlAcp } from "@cocalc/conat/ai/acp/client";
+import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+
+export const startFreshConversation: AgentApi["startFreshConversation"] =
+  async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    const request = {
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      agent_id: opts.agent_id,
+      expected_thread_id: opts.expected_thread_id,
+    };
+    return withAgentIdentityOwner({
+      project_id: opts.project_id,
+      local: () => startFreshConversationLocal(request),
+      remote: (api, route) => api.startFreshConversation({ ...request, route }),
+    });
+  };
+
+export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
+  async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    requireUuid(opts.project_id, "project_id");
+    requireUuid(opts.agent_id, "agent_id");
+    if (
+      typeof opts.expected_thread_id !== "string" ||
+      !opts.expected_thread_id ||
+      opts.expected_thread_id.length > 200
+    )
+      throw new Error("invalid expected_thread_id");
+    const db = agentStore();
+    await assertLocalAgentProject(opts.project_id);
+    await assertActor(opts.account_id, opts.project_id);
+    const previous = await db.get(opts.agent_id);
+    if (
+      previous.project_id !== opts.project_id ||
+      previous.created_by !== opts.account_id ||
+      previous.disabled_at
+    )
+      throw new Error(
+        "Only the active agent's registrant can start a fresh conversation",
+      );
+    if (previous.thread_id !== opts.expected_thread_id) {
+      if (
+        previous.conversation_history?.some(
+          (entry) => entry.thread_id === opts.expected_thread_id,
+        )
+      )
+        return previous;
+      throw new Error(
+        "The agent conversation changed; refresh before starting fresh",
+      );
+    }
+    if ((previous.conversation_history?.length ?? 0) >= 1000)
+      throw new Error("Agent conversation history capacity reached");
+    // Remote host work never runs under a database lock. The host durably fences
+    // old-thread admission and returns the same successor on an explicit retry.
+    const prepared = await controlAcp(
+      {
+        project_id: previous.project_id,
+        account_id: opts.account_id,
+        path: previous.path,
+        thread_id: previous.thread_id,
+        user_message_id: previous.thread_id,
+        action: "prepare_fresh_conversation",
+      },
+      conatWithProjectRoutingForAccount({ account_id: opts.account_id }),
+    );
+    if (!prepared.ok || !prepared.successor_thread_id)
+      throw new Error(
+        "Project host could not prepare a fresh conversation; retry to finish",
+      );
+    requireUuid(prepared.successor_thread_id, "successor_thread_id");
+    await assertActor(opts.account_id, opts.project_id);
+    return db.transaction(async (sql) => {
+      await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `agent-identities:${opts.project_id}`,
+      ]);
+      const current = (
+        await sql.query(
+          "SELECT * FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
+          [opts.agent_id],
+        )
+      ).rows[0];
+      if (
+        !current ||
+        current.disabled_at ||
+        current.created_by !== opts.account_id ||
+        current.project_id !== previous.project_id ||
+        current.path !== previous.path
+      )
+        throw new Error("Agent identity changed");
+      if (current.thread_id !== previous.thread_id) return current;
+      const history = [
+        ...(current.conversation_history ?? []),
+        { thread_id: previous.thread_id, ended_at: new Date().toISOString() },
+      ];
+      await sql.query(
+        "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
+        [opts.agent_id],
+      );
+      return (
+        await sql.query(
+          `UPDATE agent_identities SET thread_id=$2,conversation_history=$3::jsonb
+      WHERE agent_id=$1 RETURNING *`,
+          [
+            opts.agent_id,
+            prepared.successor_thread_id,
+            JSON.stringify(history),
+          ],
+        )
+      ).rows[0];
+    });
+  };
 
 async function human(opts: AgentHumanAuth): Promise<string> {
   requireUuid(opts.account_id, "account_id");
@@ -23,22 +135,22 @@ async function human(opts: AgentHumanAuth): Promise<string> {
 }
 
 export const registerIdentity: AgentApi["registerIdentity"] = async (opts) => {
-  const account_id = await human(opts);
+  requireUuid(opts.account_id, "account_id");
+  const account_id = opts.account_id;
   const request = {
     account_id,
     project_id: opts.project_id,
     path: opts.path,
     thread_id: opts.thread_id,
   };
-  const fresh_auth_at = Date.now();
   return await withAgentIdentityOwner({
     project_id: opts.project_id,
     local: () => registerIdentityLocal(request),
-    remote: (api, route) => api.register({ ...request, route, fresh_auth_at }),
+    remote: (api, route) => api.register({ ...request, route }),
   });
 };
 
-// Internal implementation; callers must establish fresh human auth first.
+// Internal implementation; callers must establish the authenticated account.
 export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
   opts,
 ) => {
@@ -184,98 +296,6 @@ export const resolveIdentityLocal: AgentApi["resolveIdentity"] = async (
     throw new Error("invalid thread_id");
   await assertActor(opts.account_id, opts.project_id);
   return agentStore().find(opts.project_id, opts.path, opts.thread_id);
-};
-
-export const listGrants: AgentApi["listGrants"] = async (opts) => {
-  requireUuid(opts.account_id, "account_id");
-  requireUuid(opts.agent_id, "agent_id");
-  validateAgentPage(opts);
-  if (opts.project_id === undefined) return listGrantsLocal(opts);
-  const request = {
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    agent_id: opts.agent_id,
-    limit: opts.limit,
-    cursor: opts.cursor,
-  };
-  return withAgentIdentityOwner({
-    project_id: opts.project_id,
-    local: () => listGrantsLocal(request),
-    remote: (api, route) => api.listGrants({ ...request, route }),
-  });
-};
-
-export const listGrantsLocal: AgentApi["listGrants"] = async (opts) => {
-  const limit = validateAgentPage(opts);
-  const agent = await getIdentityLocal(opts);
-  if (agent.created_by !== opts.account_id)
-    throw new Error("only the endpoint registrant may inspect its links");
-  const { rows } = await agentStore().query<AgentGrant>(
-    `SELECT grant_id,source_agent_id,target_agent_id,allow_guidance,approved_by,reason,expires_at,revoked_at
-     FROM agent_message_grants WHERE (source_agent_id=$1 OR target_agent_id=$1)
-       AND ($2::uuid IS NULL OR grant_id>$2) ORDER BY grant_id LIMIT $3`,
-    [agent.agent_id, opts.cursor ?? null, limit + 1],
-  );
-  return agentPage(rows, limit, (row) => row.grant_id);
-};
-
-export const listMessageReceipts: AgentApi["listMessageReceipts"] = async (
-  opts,
-) => {
-  requireUuid(opts.account_id, "account_id");
-  requireUuid(opts.agent_id, "agent_id");
-  validateAgentPage(opts);
-  if (opts.project_id === undefined) return listMessageReceiptsLocal(opts);
-  const request = {
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    agent_id: opts.agent_id,
-    limit: opts.limit,
-    cursor: opts.cursor,
-  };
-  return withAgentIdentityOwner({
-    project_id: opts.project_id,
-    local: () => listMessageReceiptsLocal(request),
-    remote: (api, route) => api.listMessageReceipts({ ...request, route }),
-  });
-};
-
-export const listMessageReceiptsLocal: AgentApi["listMessageReceipts"] = async (
-  opts,
-) => {
-  validateAgentPage(opts);
-  const agent = await getIdentityLocal(opts);
-  if (agent.created_by !== opts.account_id)
-    throw new Error("only the endpoint registrant may inspect its receipts");
-  return ownMessageReceipts(agent.agent_id, opts);
-};
-
-export const grantMessaging: AgentApi["grantMessaging"] = async () => {
-  throw new Error("Legacy grants are retired; approve an RPC link instead");
-};
-
-export const revokeMessaging: AgentApi["revokeMessaging"] = async (opts) => {
-  const db = agentStore();
-  const account_id = await human(opts);
-  requireUuid(opts.grant_id, "grant_id");
-  const grant = (
-    await db.query("SELECT * FROM agent_message_grants WHERE grant_id=$1", [
-      opts.grant_id,
-    ])
-  ).rows[0];
-  if (!grant) throw new Error("link not found");
-  const source = await db.get(grant.source_agent_id);
-  const target = await db.get(grant.target_agent_id);
-  if (account_id !== source.created_by && account_id !== target.created_by)
-    throw new Error("only an endpoint registrant may revoke the link");
-  await assertActor(
-    account_id,
-    account_id === source.created_by ? source.project_id : target.project_id,
-  );
-  await db.query(
-    "UPDATE agent_message_grants SET revoked_at=COALESCE(revoked_at,now()),revoked_by=$2 WHERE grant_id=$1",
-    [opts.grant_id, account_id],
-  );
 };
 
 export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
@@ -462,12 +482,3 @@ export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
     [opts.agent_id, opts.run_id, opts.account_id],
   );
 };
-
-// Compatibility gates for old hosts. Never revive experimental pending work.
-export const authorizeDelivery: AgentApi["authorizeDelivery"] = async () => {
-  throw new Error("Legacy agent delivery is retired; no work was authorized");
-};
-export const beginMessageAdmission: AgentApi["beginMessageAdmission"] =
-  async () => {
-    throw new Error("Legacy agent delivery is retired; no work was authorized");
-  };

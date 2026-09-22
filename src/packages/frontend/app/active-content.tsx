@@ -32,6 +32,7 @@ import {
   DocsPage,
   FileUsePage,
   HostsPage,
+  MyAgentsWorkspacePage,
   NotificationPage,
   ProjectPage,
   ProjectsPage,
@@ -120,6 +121,13 @@ export const ActiveContent: React.FC = React.memo(() => {
   const page_actions = useActions("page");
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const aiDisabled = !!otherSettings?.get("openai_disabled");
+  React.useEffect(() => {
+    if (aiDisabled && active_top_tab === "agents") {
+      void page_actions.set_active_tab("projects");
+    }
+  }, [aiDisabled, active_top_tab, page_actions]);
   const admin_route = useTypedRedux("page", "admin_route");
   const docs_print = useTypedRedux("page", "docs_print");
   const docs_slug = useTypedRedux("page", "docs_slug");
@@ -173,6 +181,7 @@ export const ActiveContent: React.FC = React.memo(() => {
             : STACK_LAYER_INACTIVE_STYLE),
         }}
         aria-hidden={!is_active}
+        inert={!is_active}
       >
         <CocalcErrorBoundary
           autoRetry={false}
@@ -203,6 +212,12 @@ export const ActiveContent: React.FC = React.memo(() => {
   // activated during this browser session. Persisted tab state must not force
   // every project page into the signed-in startup dependency path.
   const mountedProjectIds = React.useRef(new Set<string>());
+  const agentsMounted = React.useRef(false);
+  if (aiDisabled) {
+    agentsMounted.current = false;
+  } else if (active_top_tab === "agents") {
+    agentsMounted.current = true;
+  }
   updateMountedProjectIds(
     mountedProjectIds.current,
     active_top_tab,
@@ -269,6 +284,21 @@ export const ActiveContent: React.FC = React.memo(() => {
 
   const layers: React.JSX.Element[] = [...project_layers];
   let overlay: React.JSX.Element | null = null;
+  const agentsActive =
+    active_top_tab === "agents" &&
+    managedEgressBlocked == null &&
+    fullscreen !== "kiosk";
+  if (agentsMounted.current) {
+    layers.push(
+      renderLayer(
+        "agents",
+        agentsActive,
+        <RouteChunk route="agents">
+          <MyAgentsWorkspacePage active={agentsActive} />
+        </RouteChunk>,
+      ),
+    );
+  }
 
   if (managedEgressBlocked != null) {
     overlay = renderLayer(
@@ -281,6 +311,8 @@ export const ActiveContent: React.FC = React.memo(() => {
     overlay = renderLayer("kiosk", true, <KioskModeBanner />);
   } else {
     switch (active_top_tab) {
+      case "agents":
+        break;
       case "projects":
         overlay = renderLayer(
           "projects",
@@ -339,7 +371,11 @@ export const ActiveContent: React.FC = React.memo(() => {
     }
   }
 
-  if (overlay == null && project_layers.length === 0) {
+  if (
+    overlay == null &&
+    project_layers.length === 0 &&
+    active_top_tab !== "agents"
+  ) {
     overlay = renderLayer("project-loading", true, renderProjectLoading());
   }
 

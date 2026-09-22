@@ -512,7 +512,7 @@ export class AgentTimeTravelRecorder {
       file_path: relativePath,
     };
     if (this.sessionId) {
-      meta.agent_session_id = this.sessionId;
+      meta.agent_network_id = this.sessionId;
     }
     if (this.threadId) {
       meta.agent_thread_id = this.threadId;

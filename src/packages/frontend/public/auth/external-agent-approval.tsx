@@ -6,8 +6,9 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
-import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkDirectory } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { AgentNetworkSummary } from "@cocalc/frontend/agents/agent-network-summary";
 
 export function ExternalAgentApproval({
   challengeId,
@@ -22,8 +23,8 @@ export function ExternalAgentApproval({
   isAuthenticated: boolean;
   accountLabel?: string;
 }) {
-  const [directory, setDirectory] = useState<NamedAgentDirectory>();
-  const [selected, setSelected] = useState<string[]>([]);
+  const [directory, setDirectory] = useState<AgentNetworkDirectory>();
+  const [selected, setSelected] = useState<string>();
   const [duration, setDuration] = useState(86400);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,10 +34,13 @@ export function ExternalAgentApproval({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     origin,
   });
+  const selectedNetwork = directory?.networks.find(
+    ({ agent_network_id }) => agent_network_id === selected,
+  );
   useEffect(() => {
     let disposed = false;
     if (isAuthenticated) {
-      void postAuthApi<NamedAgentDirectory>({
+      void postAuthApi<AgentNetworkDirectory>({
         origin,
         endpoint: "auth/cli/agent/destinations",
         body: {},
@@ -54,11 +58,7 @@ export function ExternalAgentApproval({
   }, [isAuthenticated, origin]);
 
   async function approve() {
-    const targets =
-      directory?.agents
-        .filter((agent) => selected.includes(agent.name) && agent.available)
-        .map((agent) => agent.endpoint) ?? [];
-    if (!targets.length) return;
+    if (!selected) return;
     setError("");
     setBusy(true);
     try {
@@ -69,7 +69,7 @@ export function ExternalAgentApproval({
           body: {
             challenge_id: challengeId,
             origin_bay_id: originBayId,
-            targets,
+            agent_network_id: selected,
             ttl_seconds: duration,
           },
         });
@@ -90,8 +90,8 @@ export function ExternalAgentApproval({
     >
       <h2>Connect External Agent</h2>
       <p>
-        <strong>{label}</strong> is requesting its own send-only identity, not
-        access to your CoCalc account.
+        <strong>{label}</strong> is requesting a network-scoped external agent
+        identity, not access to your CoCalc account.
       </p>
       {isAuthenticated && accountLabel && (
         <p>
@@ -102,7 +102,7 @@ export function ExternalAgentApproval({
         <Alert
           type="info"
           role="note"
-          title="Sign in to select the agents this installation may message."
+          title="Sign in to select the Agent Network this installation may join."
         />
       ) : approved ? (
         <Alert
@@ -116,7 +116,7 @@ export function ExternalAgentApproval({
             type="warning"
             role="note"
             title="Only approve a request you started."
-            description="Anyone who can read this installation's credential can use it until it expires or you revoke it. Messages may start projects and agent work under your account, subject to your normal permissions and limits. This does not allow receiving messages or browsing project files."
+            description="Anyone who can read this installation's credential can send and receive messages as this external agent within the selected network until it expires or you revoke it. Every network member can exchange prompt data with it. This does not permit browsing project files."
           />
           {error && <Alert type="error" role="alert" title={error} />}
           {!directory ? (
@@ -127,50 +127,47 @@ export function ExternalAgentApproval({
                 disabled={busy}
                 style={{ border: 0, padding: 0, minWidth: 0 }}
               >
-                <legend>Allow sending to these agents</legend>
-                {directory.agents.length === 0 && (
+                <legend>Join one Agent Network</legend>
+                {directory.networks.filter(
+                  (network) =>
+                    network.state === "active" &&
+                    network.members.length < directory.usage.member_limit,
+                ).length === 0 && (
                   <p>
-                    Name an agent in CoCalc first, then reopen this approval
-                    page.
+                    Create an Agent Network with room for another member, then
+                    reopen this approval page.
                   </p>
                 )}
-                {directory.agents.map((agent) => (
-                  <label
-                    key={agent.name}
-                    style={{
-                      display: "flex",
-                      alignItems: "start",
-                      gap: 8,
-                      marginBottom: 12,
-                      overflowWrap: "anywhere",
-                    }}
+                <Select
+                  aria-label="Agent Network"
+                  value={selected}
+                  onChange={setSelected}
+                  style={{ width: "100%" }}
+                  placeholder="Select an Agent Network"
+                  options={directory.networks
+                    .filter(
+                      (network) =>
+                        network.state === "active" &&
+                        network.members.length < directory.usage.member_limit,
+                    )
+                    .map((network) => ({
+                      value: network.agent_network_id,
+                      label: `${network.title} (${network.members.length} members, ${network.delivery_mode})`,
+                    }))}
+                />
+                {selectedNetwork && (
+                  <Space
+                    orientation="vertical"
+                    style={{ width: "100%", marginTop: 12 }}
                   >
-                    <input
-                      type="checkbox"
-                      disabled={
-                        !agent.available ||
-                        (!selected.includes(agent.name) &&
-                          selected.length >= 32)
-                      }
-                      checked={selected.includes(agent.name)}
-                      onChange={(event) =>
-                        setSelected((values) =>
-                          event.target.checked
-                            ? [...values, agent.name]
-                            : values.filter((name) => name !== agent.name),
-                        )
-                      }
+                    <AgentNetworkSummary network={selectedNetwork} />
+                    <Alert
+                      type="info"
+                      title="Two-way complete-graph membership"
+                      description="This external agent and every current or future member of the selected network may message one another in both directions."
                     />
-                    <span>
-                      <strong>@{agent.name}</strong>
-                      {!agent.available && " (unavailable)"}
-                      <br />
-                      {[agent.project_title, agent.thread_title]
-                        .filter(Boolean)
-                        .join(" / ")}
-                    </span>
-                  </label>
-                ))}
+                  </Space>
+                )}
               </fieldset>
               <label htmlFor={durationId}>Credential expires after</label>
               <Select
@@ -191,17 +188,15 @@ export function ExternalAgentApproval({
                 type="primary"
                 onClick={approve}
                 loading={busy}
-                disabled={
-                  busy || !selected.length || directory.controls?.paused
-                }
+                disabled={busy || !selected || directory.controls.paused}
               >
-                Approve Send-Only Access
+                Approve Network Membership
               </Button>
-              {directory.controls?.paused && (
+              {directory.controls.paused && (
                 <Alert
                   type="info"
                   role="note"
-                  title="Your agent connections are paused. Resume them in My Agents before approving this request."
+                  title="Your agent messaging is paused. Resume it in Agents before approving this request."
                 />
               )}
             </>

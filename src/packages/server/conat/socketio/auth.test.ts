@@ -178,7 +178,7 @@ function projectHostBearerToken(nonce?: string) {
   })}.signature`;
 }
 
-describe("external send-only transport", () => {
+describe("external session transport", () => {
   it("authenticates installation without using human or native credentials and rechecks every subject", async () => {
     externalEnabled.mockReset();
     const installation = {

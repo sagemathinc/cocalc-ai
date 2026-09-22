@@ -9,13 +9,7 @@ import {
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
 import type { Options } from "@cocalc/conat/service/service";
-import type {
-  AgentIdentity,
-  AgentPage,
-  AgentPageOptions,
-  AgentMessageHistoryEntry,
-} from "@cocalc/conat/agents/protocol";
-import type { AgentGrant } from "@cocalc/conat/hub/api/agent";
+import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 
 export interface AgentIdentityRoute {
   bay_id: string;
@@ -41,18 +35,9 @@ export interface InterBayAgentIdentityApi {
   list(opts: AgentIdentityReadRequest): Promise<AgentIdentity[]>;
   resolve(opts: AgentIdentityThreadRequest): Promise<AgentIdentity | undefined>;
   get(opts: AgentIdentityLookupRequest): Promise<AgentIdentity>;
-  listGrants(
-    opts: AgentIdentityLookupRequest & AgentPageOptions,
-  ): Promise<AgentPage<AgentGrant>>;
-  listMessageReceipts(
-    opts: AgentIdentityLookupRequest & AgentPageOptions,
-  ): Promise<AgentPage<AgentMessageHistoryEntry>>;
-  register(
-    opts: AgentIdentityThreadRequest & {
-      // Entry hub verified fresh, non-impersonated human auth for this operation.
-      // Valid only on the trusted fabric, never a public request argument.
-      fresh_auth_at: number;
-    },
+  register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
+  startFreshConversation(
+    opts: AgentIdentityLookupRequest & { expected_thread_id: string },
   ): Promise<AgentIdentity>;
   recover(
     opts: AgentIdentityLookupRequest & {

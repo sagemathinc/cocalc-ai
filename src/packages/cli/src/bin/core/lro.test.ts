@@ -76,3 +76,52 @@ test("waitForLro still throws non-transient polling errors", async () => {
     /permission denied/,
   );
 });
+
+test("waitForLro polls a routed scope when one is provided", async () => {
+  const requests: any[] = [];
+  let calls = 0;
+  const summary = await waitForLro({
+    hub: {
+      lro: {
+        get: async () => {
+          throw new Error("unscoped get must not be used");
+        },
+        list: async (opts) => {
+          requests.push(opts);
+          calls++;
+          return [
+            {
+              op_id: "other-op",
+              status: "succeeded",
+            },
+            {
+              op_id: "remote-op",
+              status: calls === 1 ? "running" : "succeeded",
+              result: calls === 1 ? undefined : { ok: true },
+            },
+          ];
+        },
+      },
+    } as any,
+    opId: "remote-op",
+    timeoutMs: 5000,
+    pollMs: 0,
+    terminalStatuses: new Set(["succeeded", "failed"]),
+    scope: { type: "host", id: "host-1" },
+  });
+
+  assert.deepEqual(summary.result, { ok: true });
+  assert.equal(calls, 2);
+  assert.deepEqual(requests, [
+    {
+      scope_type: "host",
+      scope_id: "host-1",
+      include_completed: true,
+    },
+    {
+      scope_type: "host",
+      scope_id: "host-1",
+      include_completed: true,
+    },
+  ]);
+});

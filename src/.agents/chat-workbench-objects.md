@@ -1,0 +1,450 @@
+# Chat Workbench Objects
+
+Status: implementation in progress. Extends the text prototype without replacing
+Patchflow, the existing artifact tools, or CoCalc's editors.
+
+## Next Slice (2026-09-11)
+
+The maintainer approved expanding the plan before further implementation.
+[Contextual Replies And Artifact References](chat-contextual-replies.md) is the
+next review document. It covers message selection replies as well as artifact
+comments, private durable popup drafts, multiple references, captured image
+context, and runtime capability alignment. Its next-slice decisions supersede
+the single-feedback and whole-text-snapshot restrictions described below.
+Keep PR #509 draft until the new acceptance gates and outstanding earlier
+permissions/collaboration checks are satisfied. Existing progress entries below
+are historical evidence; do not reset or silently mark them complete.
+
+## Ordered Delivery
+
+- [ ] File references: stable artifact ID, same-project path, read-only workbench
+      preview, explicit Open file, refresh without remounting the frame, useful
+      missing/unsupported/oversized states. Current saved content is labeled as
+      such; publication captures the locator, not a claim to immutable file bytes.
+- [ ] Proposed action lists: bounded structured proposals, per-action editing,
+      comments, exact-version approval/rejection, and separate execution outcomes.
+      Acceptance uses fictional support replies first, then an explicitly authorized
+      real workflow. Never automatically send mail or update tickets during QA.
+      Maintainer decision: approve drafts and return exact decisions to the
+      originating agent, not dedicated email/Zendesk execution integrations.
+      Approval is not execution; no external executor is part of this version.
+      The agent subsequently uses cocalc-cli and appropriate temporary fresh
+      auth to call the existing hub Zendesk service, which records the reason
+      and audit trail. Card decisions do not replace service authorization.
+- [ ] GitHub PR: cached metadata with retrieval time, external link, refresh,
+      and local review with explicit repository and base/head SHAs. No checkout,
+      worktree creation, or remote mutation when opening a card. Issues are a later
+      small extension, not required for this objective.
+
+## Boundaries
+
+### First File Slice
+
+Implemented shared `file: {path}` publication payloads through existing artifact
+create/update APIs. `markdown` remains the bounded optional-description text
+(send an empty string for no description). File locator changes participate in
+the exact editing base, and historical publication references retain their old
+locator. File content is not copied into chat records.
+
+The workbench supports saved Markdown and source/text previews with an explicit
+Refresh and Open file. Refresh retains the mounted preview; missing/read errors
+retain the previous text with a stale warning. A 1 MiB text size gate applies.
+Raster images and PDFs use the existing authenticated project-host preview URL
+and read-only renderer. Selection feedback is implemented below; active formats,
+live file updates and full live acceptance are not yet completed. Viewer-only
+cards offer an on-demand current-file preview (see acceptance below). Do not
+mark the file milestone complete from this initial slice.
+
+Reuse typed CLI/backend artifact publication with explicit thread/turn identity,
+observed-base checks, idempotent retries, and immutable publication records.
+Do not encode special objects in Markdown or accept arbitrary renderer props.
+Use project-host file access with existing permissions; do not proxy file data
+through the hub. Cross-project references are deferred until independently
+authorized and routed. Public artifact rendering stays disabled.
+
+The collaborative chat document is not proof of human approval: project code
+can edit it. Execution authorization must use authenticated human decisions
+bound to the exact proposal revision, rechecked by a trusted executor. Ordinary
+agent publication cannot set an authoritative approved state. Retries must not
+duplicate external effects; ambiguous results require reconciliation, not a
+blind resend. Prototype review-only decisions must be labeled as such if an
+executor is not available. Do not imply generic arbitrary commands are safely
+authorized by a checkbox.
+
+GitHub cached private data inherits the chat's visibility; explicitly disclose
+this when publishing. Tokens are never artifact fields. External text is
+untrusted. Review must verify repository identity and object availability;
+fetch is an explicit action, and inaccessible/stale information is labeled.
+
+## File History And Feedback
+
+Artifact identity differs from a path. Explicit locator updates retain identity;
+shell rename tracking is not promised. Git or TimeTravel references may help
+recover prior content, but only a verified exact revision is presented as such.
+Selection feedback must pin the displayed bytes/revision and original thread;
+refresh must not silently move a selection onto different content. No execution
+of notebook cells, HTML, SVG, or services from previewing. Start with text,
+Markdown, raster images and PDF where existing preview policies are suitable;
+unsupported formats retain Open file.
+
+File feedback now pins the displayed text and file locator in the existing
+thread-bound feedback schema. Selection survives refresh as an explicit pinned
+snapshot; the agent prompt requires rereading the real file before editing.
+The existing feedback size limits still apply. Component tests cover selecting
+old text, refreshing to new text, and commenting with the old quote and source.
+Live browser acceptance remains outstanding.
+
+## PR Implementation Progress
+
+`github_pr` publication data now carries repository/number, cached status and
+checks, retrieval time, full base/head SHAs, and optional absolute local
+repository/common-directory paths. Title and Markdown description use the
+existing fields. Metadata changes participate in observed-base validation;
+publication rows retain their original metadata. Unknown extra fields are not
+persisted. Only github.com PR URLs are constructed from validated identity.
+
+The workbench preview shows cached status and description, links to GitHub, and
+opens the existing review drawer with a pinned merge-base comparison. An already
+open review retains its SHAs when artifact metadata changes. No checkout or
+worktree creation is triggered. Local review now verifies the associated Git
+common directory, a matching GitHub fetch remote and both pinned commit objects.
+An explicit fetch retrieves those SHAs without checking out or updating a branch.
+Refresh uses the project's existing gh credentials, validates remote data, and
+saves against the observed artifact base. Publication snapshots remain unchanged.
+Remote metadata and check requests run from the project default directory,
+not the associated worktree. A removed worktree therefore does not prevent
+refreshing the online PR; local review still independently verifies the saved
+repository association and commit availability. A regression covers a missing
+worktree with successful metadata/check requests and preserves that association.
+The UI discloses that refreshed metadata is visible to chat collaborators.
+
+The installed gh version lacks baseRefOid in pr view, so refresh uses the PR REST
+endpoint for exact base/head SHAs and a separate check rollup query. Check results
+are accepted only for the same head; unavailable checks remain unknown. Both
+commands were exercised against PR 509. Component/helper tests cover identity
+mismatch, missing objects, explicit fetch, refresh and pinned open comparisons.
+PR review feedback now uses an explicit originating-thread sender rather than
+the Git helper that may create another thread for a different directory. It
+preserves the existing thread configuration and composer draft; the reviewed
+directory is included as context only. Feedback includes the pinned PR revisions
+even after metadata refresh. Missing source threads fail rather than spawning a
+new conversation. Viewer-only cards display current and published cached PR data
+with canonical external links and no refresh/fetch controls. Live browser
+acceptance remains incomplete.
+
+## Action List Implementation Progress
+
+Structured action lists now use the existing artifact publication API and
+immutable publication snapshots. Proposals have bounded IDs, titles, targets,
+drafts and optional agent-reported execution outcomes/receipts. Review decisions
+are separate from publication data and never service authorization.
+
+The workbench supports editing targets/drafts, per-item comments and
+approve/reject/undecided decisions. Draft edits invalidate approval. A changed
+agent proposal blocks staging until the reviewer explicitly adopts its new
+content. Unfinished reviews persist in browser storage scoped by account,
+project, chat, thread and artifact; restored data is validated and checked
+against the current proposals. This is local review state, not collaborative
+approval or fresh auth.
+
+Returning decisions stages the exact drafts in the originating chat, without
+sending a message or executing an external action. The composer and sent-message
+notice expose decision counts and expandable exact review snapshots. The CLI
+exec API declaration describes all three new object payloads. Focused schema,
+workbench and composer tests cover these paths. Viewer-only action cards now
+display current proposals and published drafts without editable controls or
+approval actions. Live browser/agent acceptance and the complete acceptance
+matrix remain open.
+
+## Live Acceptance Checkpoint (2026-09-10)
+
+Hosted run `34462407685` completed: build, checks, frontend, both server shards,
+and backend/database passed. The rest lane stopped at the lightweight Codex
+chat budget (550.3 KiB Brotli against 550 KiB), before its package tests ran.
+Reproduced locally and separated `@cocalc/chat/core` from the default artifact
+exports for the lightweight chat client. The default API remains compatible.
+Local production measurement now passes every existing budget, including
+Codex chat at 547.5 KiB Brotli, without changing limits. Shared-chat tests (101),
+chat-client tests (26), package typechecks, and frontend lint pass. New hosted
+verification is required for the fix; the failed rest lane was not a passing
+package-test result.
+
+Action source-revision acceptance on merged build `52778b23b3`: used the
+authenticated CLI/backend artifact update path to revise only Alex's fictional
+proposal in `qa-actions-20260910`, with the observed base and operation ID
+`qa-source-revision-20260910`. Retrying the identical operation returned
+`replayed: true`. Reopening the card on `WRMYM7B97U` retained the prior reviewed
+draft but disabled both its editing and Return decisions. Explicitly choosing
+Use updated proposal loaded the revised draft and reset the decision to Not
+reviewed. No feedback was sent and no external action was performed. This
+checks stale review restoration/adoption; it does not assert a live update
+while the card stayed mounted. Hosted run `34462407685` now has successful plan
+and checks jobs; build remains in progress.
+
+Merged build `52778b23b3` passes the development static build. On dedicated
+browser `WRMYM7B97U`, inspected native screenshots at 320x812 in dark mode:
+action draft/target/comment fields and decisions remain readable and usable;
+PR controls and full commit hashes wrap inside the frame without horizontal
+overflow. Returning the restored action review stages the expected one approved
+and one unreviewed decision and focuses `Ask Codex...`, with no send or external
+execution. Restored the owner's original System appearance. These are owner
+presentation checks, not viewer authorization or successful PR refresh checks.
+Hosted run `34462407685` targets `52778b23b3`; its plan job passed and build/checks
+were still running at the last observation. Do not infer CI success from this.
+
+Integrated `origin/main` at `209529099b` after GitHub reported PR merge
+conflicts and no current test run. Main now routes ordinary comparison feedback
+to the selected/originating thread using `preserveThread`; removed the
+workbench-specific `feedbackToOriginThread` flag rather than restoring obsolete
+worktree-consent checks. The PR card still wraps feedback with its pinned
+repository/revision context. Eighteen focused comparison/card/routing tests,
+frontend typecheck, and frontend lint pass on the combined tree.
+
+The previous hosted dependency-check failure was reproduced in Lite: a test
+imports `@cocalc/sync` without declaring it. Added the workspace dev dependency
+with only its three-line lockfile entry; Lite depcheck and a frozen-lockfile
+install now pass. Hosted CI for the merged head must be checked separately.
+
+Cross-object regression pass after `acac1173c7`: 13 frontend suites (84 tests)
+cover artifact cards, read-only presentation, file/action/PR workbench views,
+feedback drafts and origin routing, merge/selection behavior, and focus. Three
+shared-schema suites pass (32 tests). The CLI and shared package builds pass;
+the CLI test compilation and four artifact scripting tests pass. CLI coverage
+now explicitly checks create/read/update/retry forwarding for file, actions,
+and GitHub PR payloads with unchanged project/thread/message/operation context
+and observed editing base. These are protocol forwarding tests, not evidence
+of external execution or live viewer authorization.
+
+Viewer prerequisites rechecked after `53f93ff3a5`: the `workbench-viewer-qa`
+profile has no active credentials (`auth status --check`), and the owner browser
+session list contains only the dedicated owner QA browser. Do not count owner
+preview tests as viewer acceptance. A new authenticated viewer session is still
+needed. PR operation/component suites pass (13 tests) after decoupling remote
+refresh from the local worktree; frontend typecheck and lint pass. Successful
+live project-side GitHub refresh remains unverified.
+
+Maximized action review at 320x812 is verified on dedicated browser
+`HH3NHQMY82` (spawn `workbench-layout-20260910`). Build `c1354bb1cb` enabled
+review while the originating composer was unmounted. Editing Alex's fictional
+draft, approving it, and returning decisions staged one approved and one
+unreviewed action in the original QA thread without sending a message. Reload
+preserved the exact edited draft and decision. Native screenshot inspection
+confirmed readable labels and controls without horizontal overflow.
+
+That live check exposed a delayed-composer focus race: focus remained on the
+restored frame. The follow-up waits for the editable input with a bounded
+MutationObserver, ignores read-only Slate messages, and cancels when the user
+moves focus elsewhere. After rebuilding with this follow-up, the same live
+return flow focused the `Ask Codex...` textbox and retained staged decisions.
+The focused workbench/focus suites pass (21 tests), frontend typecheck and lint
+pass, and the development static build passes. No QA action was executed or
+feedback message sent. This does not establish viewer permissions, successful
+project-side GitHub refresh, or the remaining full acceptance matrix.
+
+Built frontend revision `92d3b04c00` and restored the stopped local seed hub
+(port 9100); other bays were left running. Dedicated browser `8QDTTQAT9G`
+(spawn `workbench-objects-20260910`) is usable, unlike the older Chromium QA
+tabs. Operator CLI profile: `workbench-owner-qa-20260910`.
+
+The installed runtime CLI predates artifact commands and cannot be modified.
+It was left unchanged. Its supported `exec --file` command ran the built
+`createProjectChatOps` API through authenticated direct project-host routing,
+not filesystem chat JSON. Temporary harness: `/tmp/workbench-object-fixtures.js`.
+
+In `/home/user/chat-workbench-agent-qa-20260909.chat`, thread
+`9382a253-236b-4a0e-8c54-4f5a83c46ad9`, published `qa-file-20260910`,
+`qa-actions-20260910`, and `qa-pr-20260910`. Create/read succeeded for all three;
+identical retries reported replayed and retained the same editing base. All
+three cards appeared on the intended existing QA message.
+
+The file card opened the repository README and rendered its saved contents in
+the workbench. The action list opened two fictional replies. Approved Alex's
+reply, edited it, observed Not reviewed, approved the revised draft, and staged
+the decisions. The composer showed one approved and one not reviewed; focus
+returned to Ask Codex. No message was sent. Removed the staged QA feedback
+afterward; local review draft state remains available for persistence testing.
+
+PR Refresh retained cached metadata but failed because `gh` was unavailable on
+the project's command PATH. Added a focused prerequisite error instead of raw
+spawn diagnostics. Successful project-side refresh, local review/feedback,
+reload, viewer file previews, keyboard/theme/narrow layout and the rest of the
+acceptance matrix remain unverified. Do not infer completion from this checkpoint.
+
+## Acceptance
+
+320px action-list acceptance found a functional maximization bug: hiding the
+composer removes its staging hook, disabling all proposal controls. Workbench
+feedback now falls back to the existing persistent composer-draft writer when
+the origin chat exists but its composer is unmounted. It validates the artifact,
+targets the exact thread/suffix, and persists before returning/focusing chat.
+Mounted composers retain their existing hook path. Also separated proposal
+headings from Target labels. The new keyboard test covers action editing and
+staging without a mounted hook; both focused suites pass (16 tests), with
+frontend typecheck/lint passing. Live narrow-layout verification of this fix
+remains pending; do not mark the previous disabled screenshot as acceptance.
+
+Confirmed the QA project has neither `gh` on its full command PATH nor a GitHub
+CLI configuration; successful credentialed PR refresh remains a prerequisite
+gap, not an unexplained PATH mismatch. No credentials were copied or changed.
+
+Generated a 607-byte one-page PDF fixture, uploaded it with the project file
+API, and published `qa-pdf-20260910` with an identical replayed retry. Native
+capture shows the expected page text in Chromium's PDF viewer at 1400x950.
+Opening the card at 375px selected a full workbench frame; at 375px and 320px
+the host title/path/Open file/Refresh controls wrap and remain visible. The PDF
+viewer retains its own zoom behavior on resize. Restored the QA viewport to
+1400x950. Native capture used the existing spawned daemon through the CLI exec
+helper with its original browser ID (`GPB9TDP768`), avoiding the installed
+CLI's stale post-reload ID mapping; current browser is `X2Q2YQQ9T5`. Actual
+viewer-role access and action/PR-specific narrow layouts remain unverified.
+
+Live sizing check found the raster preview stretched a 1400x933 image to
+302x666 because it inherited the PDF's full-height style. Image previews now
+use intrinsic sizing bounded by the frame, while PDF keeps its full-height
+viewport. Rebuilt and reloaded; browser `X2Q2YQQ9T5` measured 302.44x201.56,
+preserving the original aspect ratio. The 13 focused file-preview tests,
+frontend typecheck/lint, and static build pass. PDF live rendering remains
+unverified; this sizing fix does not establish PDF acceptance.
+
+Published `qa-image-20260910` through the artifact API with an identical retry
+(replayed, editing base unchanged). Opened its card in browser `8LZYATQUBD`;
+the existing `/home/user/cocalc-ai/src/.agents/scalable-bay.png` loaded through
+the project file route, with natural size 1400x933. File-preview component
+coverage now checks viewer query preservation across refresh/path changes and
+missing project identity (13 tests pass; frontend typecheck/lint pass). This is
+live raster-image acceptance; PDF and actual viewer-role access remain open.
+
+Built `020aeaf0b4` and reloaded the previously crashed QA browser. New session
+`8LZYATQUBD` rendered the chat and artifact cards without the readiness crash or
+stuck loading state. Opened the README file card, then Open file; typed browser
+file listing confirmed `/home/user/cocalc-ai/README.md` opened in the normal
+editor while the chat remained open. The workbench preview occupied the full
+available frame (844 px; content area 758 px at 1400x950). Captured and inspected
+dark-mode file preview in `/tmp/workbench-file-dark.png`, using DOM capture of
+`#cocalc-webapp-container`. Restored the account's original System appearance.
+This verifies the text-file path, not binary/viewer/narrow-layout acceptance.
+
+File-selection smoke check on `G67DCMTM72`: after closing Git dialogs, selecting
+README text and invoking Comment staged artifact feedback and focused Ask Codex.
+No feedback message was sent. Open file and visual layout remain unverified.
+
+Fresh browser `GPB9TDP768` (spawn `workbench-layout-20260910`) exposed a startup
+crash: ArtifactCards called SyncDB.get before ready. Artifact cards and the
+workbench now guard readiness, and the shared subscription listens for ready
+and closed as well as change. Regression coverage exercises initialization,
+ready without change, close, and listener cleanup. Native screenshots work
+with selector `#cocalc-webapp-container`; body and html have zero layout height.
+The older spawn's browser-ID mapping became stale after reload. Latest crash
+fix still requires rebuilding and fresh-browser acceptance.
+
+Live build `38056890f6` acceptance: after browser reload (new browser ID
+`G67DCMTM72`), Alex's edited draft and Approve exact draft decision both restored.
+The PR comparison displayed origin-thread routing without worktree consent.
+Saved the disposable `WB-20260910-PR` acknowledgement-only review and sent it
+once. Authenticated live SyncDB inspection confirmed message
+`c359257e-ea6a-4c7a-9af9-161e642d7923` in the original QA thread
+`9382a253-236b-4a0e-8c54-4f5a83c46ad9`, including PR URL, requested base,
+resolved merge base, head and source directory as context only. Agent reply
+`40ca73a9-92bd-44be-a443-9157ce39f2be` acknowledged those revisions in the same
+thread. The test explicitly prohibited commands, edits and external actions;
+the agent reported none. A browser transport timeout during the initial save
+was inspected before retrying; no send was attempted until save was verified.
+Successful PR refresh still needs project-side gh availability; viewer file,
+theme/narrow layout, and remaining matrix checks are not implied by this test.
+
+Further live PR acceptance: the missing-commit guard retained the card, explicit
+Fetch PR commits succeeded, and Review locally opened the pinned merge-base
+comparison (50 changed files). The rendered comparison exposed an inherited
+worktree-consent/HEAD-equality restriction on feedback. PR cards now explicitly
+route comparison feedback to their existing origin-thread callback, retaining
+saved-review conflict checks and revision context without requiring a checkout.
+Other Git callers retain their worktree dispatch checks. Three focused suites
+pass (18 tests), with frontend typecheck and lint passing. Live feedback
+submission with this fix remains to be checked; no QA message was sent here.
+
+Read-only file cards now offer an on-demand current-saved-file preview using
+the existing file renderer and the host project context. No file is loaded
+until the native disclosure is expanded; collapsing unmounts the preview.
+The publication locator is preserved and explicitly not described as historical
+file bytes. No feedback callback or writable chat actions are supplied. This
+viewer presentation is inline because read-only chat has no live workbench
+frame actions. Focused read-only card and file renderer suites pass (16 tests),
+as do frontend typecheck and lint. Live viewer validation remains outstanding.
+
+For each object: CLI create/read/update/retry, current vs publication view,
+reload, thread/frame routing, keyboard navigation, light/dark and narrow layout,
+missing source, permissions, and malformed payload tests. Preserve existing
+Markdown artifact behavior and stale-base guarantees. Validate package-local
+tests, typechecks and frontend lint, then live UI with disposable fixtures.
+
+File scenario: publish a compliance Markdown file, preview beside chat, open its
+editor, modify it, refresh, verify scroll and exact feedback context. Action
+scenario: revise one fictional reply, approve only that version, change it and
+verify approval invalidation. PR scenario: preview a known PR, review its exact
+commits locally, and handle a newer remote head without silently switching the
+review under the reader.
+
+### Themed Cards And Commit Artifacts (2026-09-10)
+
+Artifacts now accept the shared EntityTheme shape, also used by the existing
+appearance editor. The canonical type lives in util and is re-exported by the
+frontend theme module. The live artifact owns its editable appearance; a
+publication retains a theme snapshot. Content updates without a theme preserve
+the user's choice, and appearance edits write only theme data with a stale-theme
+check. Cards show current content and indicate changes since publication; the
+overflow menu retains access to the original publication. Workbench headers and
+native frame tabs follow the same title, icon, and color metadata.
+
+Commit artifacts store a full SHA, absolute worktree/repository path, absolute
+common Git directory, and optional branch context. Opening review checks the
+directory identity and commit availability, then uses the existing Git reviewer
+without inferred worktree routing, fetches, or checkout. Feedback returns through
+the origin-thread path with the opened commit identity. Missing repositories or
+commits produce a visible error instead of silently switching targets.
+
+Live owner QA created `qa-commit-themed-20260910` through the typed backend API,
+verified identical retry, and opened commit
+`7f83541fa1808e3860df5692371a792934f3a8e2` with the expected four changed files.
+Editing its title through Edit Artifact Appearance updated both its chat card
+and workbench header. Desktop screenshots were inspected. These checks do not
+establish read-only viewer acceptance or standalone artifact export.
+The edited title survived reload; the commit workbench was also visually
+checked at 375px in dark mode, then the prior System appearance was restored.
+Production startup budgets pass unchanged (lightweight chat: 547.5 KiB Brotli).
+
+### Live PR Refresh Acceptance (2026-09-10)
+
+After the maintainer installed and authenticated project-side `gh`, the owner
+QA browser successfully refreshed `qa-pr-20260910` through the card's Refresh
+button. At 18:44:46 UTC, cached fixture metadata was replaced with PR #509's
+actual title, description, draft/open status, passing checks, base
+`209529099bde33eec3d008c0f1d7f88cdf0e7d77`, and head
+`c472681e57008088c76cf0c43b9d0525b895e87f`. No credentials were copied and no
+external GitHub mutation was performed. This closes the project-side GitHub
+refresh prerequisite and successful-refresh acceptance gap, not authenticated
+read-only viewer acceptance or refresh-with-an-already-open-review validation.
+
+Hosted CI run `34463989320` passed on `c472681e57`, including the lightweight
+chat startup budget after the core-entry split. The PR remains draft pending
+the remaining acceptance checks.
+
+### Artifact Discovery (2026-09-10)
+
+- Thread menu > Artifacts and the chatroom sidebar Artifacts button open a
+  shared lazy-loaded browser with thread/chatroom scope, text/type filters,
+  and title/first-publication/latest-publication sorting.
+- Thread and chatroom search include a separate artifact result section using
+  the same catalog. Results are deduplicated by thread and artifact ID and
+  search current stored text, titles, descriptions, paths, and typed metadata.
+  They do not fetch external file contents or GitHub data to search them.
+- Rows preserve themes and open native workbench tabs with the source thread;
+  Show in conversation resolves the publishing message, including archived
+  messages through the existing authorized archive reader. Missing source
+  messages produce an explicit error rather than jumping elsewhere.
+- Publication-only artifacts open their published snapshot. Opening a current
+  artifact no longer silently reuses a historical snapshot tab.
+- The timestamp sort is labeled Recently published, not Recently updated:
+  direct collaborative edits do not have a reliable edit timestamp here.
+- Focused discovery/navigation/search tests, frontend typecheck and lint, and
+  development build pass. Live visual acceptance remains outstanding because
+  the dedicated QA CLI session expired and requires interactive sign-in.

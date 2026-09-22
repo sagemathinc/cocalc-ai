@@ -1,16 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { connect } from "@cocalc/conat/core/client";
 import { withTimeout } from "./context";
-import type { AgentConnectionRequest } from "@cocalc/conat/agents/personal";
+import type {
+  AgentNetworkDiscovery,
+  AgentNetworkProposal,
+} from "@cocalc/conat/agents/personal";
 import {
   rpcOutcome,
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
+  validateAgentRpcBroadcastOutcome,
   validateAgentRpcPreparation,
   type AgentRpcRequest,
-  type AgentRpcLink,
   type AgentRpcOutcome,
   type AgentRpcPreparation,
+  type AgentRpcBroadcastOutcome,
 } from "@cocalc/conat/agents/rpc";
 import {
   AGENT_IDENTITY_FILE_ENV,
@@ -18,13 +22,10 @@ import {
   agentMessagingSubject,
   agentInboxPrefix,
   requireUuid,
-  validateAgentMessage,
   validateAgentInspection,
   type AgentInspectionRequest,
   type AgentInspectionResult,
   type AgentCredential,
-  type AgentMessageRequest,
-  type AgentMessageReceipt,
 } from "@cocalc/conat/agents/protocol";
 
 export function validateIdentityCredential(value: AgentCredential): void {
@@ -61,24 +62,21 @@ export async function readIdentityCredential(): Promise<AgentCredential> {
 }
 
 export function sendIdentityMessage(
-  request: AgentMessageRequest,
-  apiUrl?: string,
-): Promise<AgentMessageReceipt>;
-export function sendIdentityMessage(
   request: AgentInspectionRequest,
   apiUrl?: string,
 ): Promise<AgentInspectionResult>;
 export function sendIdentityMessage(
-  request: Extract<
-    AgentRpcRequest,
-    { action: "request-connection" | "connection-request" }
-  >,
-  apiUrl?: string,
-): Promise<AgentConnectionRequest>;
-export function sendIdentityMessage(
   request: Extract<AgentRpcRequest, { action: "destinations" }>,
   apiUrl?: string,
-): Promise<AgentRpcLink[]>;
+): Promise<AgentNetworkDiscovery>;
+export function sendIdentityMessage(
+  request: Extract<AgentRpcRequest, { action: "propose-network" }>,
+  apiUrl?: string,
+): Promise<AgentNetworkProposal>;
+export function sendIdentityMessage(
+  request: Extract<AgentRpcRequest, { action: "broadcast" }>,
+  apiUrl?: string,
+): Promise<AgentRpcBroadcastOutcome>;
 export function sendIdentityMessage(
   request: Extract<AgentRpcRequest, { action: "send" | "inspect" }>,
   apiUrl?: string,
@@ -93,24 +91,19 @@ export function sendIdentityMessage(
 export function sendIdentityMessage(
   request: AgentRpcRequest,
   apiUrl?: string,
-): Promise<AgentRpcLink[] | AgentRpcPreparation | AgentConnectionRequest>;
+): Promise<AgentNetworkDiscovery | AgentRpcPreparation>;
 export async function sendIdentityMessage(
-  request: AgentMessageRequest | AgentInspectionRequest | AgentRpcRequest,
+  request: AgentInspectionRequest | AgentRpcRequest,
   apiUrl?: string,
 ): Promise<
-  | AgentMessageReceipt
   | AgentInspectionResult
-  | AgentRpcLink[]
+  | AgentNetworkDiscovery
+  | AgentNetworkProposal
+  | AgentRpcBroadcastOutcome
   | AgentRpcOutcome
   | AgentRpcPreparation
-  | AgentConnectionRequest
 > {
-  if (!("version" in request) && request.action === "send")
-    throw new Error(
-      "Legacy delivery is retired; use --rpc with an approved RPC link",
-    );
   if ("version" in request) validateAgentRpcRequest(request);
-  else if (request?.action === "receipt") validateAgentMessage(request);
   else validateAgentInspection(request);
   const credential = await readIdentityCredential();
   const address = apiUrl || credential.api_url || process.env.COCALC_API_URL;
@@ -142,6 +135,8 @@ export async function sendIdentityMessage(
       throw new Error("message receipt was not confirmed");
     if ("version" in request && request.action === "prepare-attachments")
       validateAgentRpcPreparation(response.data.result, request);
+    if ("version" in request && request.action === "broadcast")
+      validateAgentRpcBroadcastOutcome(response.data.result, request);
     if (
       "version" in request &&
       (request.action === "send" ||
@@ -149,36 +144,6 @@ export async function sendIdentityMessage(
         request.action === "cancel-attachments")
     )
       validateAgentRpcOutcome(response.data.result, request);
-    if (
-      "version" in request &&
-      (request.action === "request-connection" ||
-        request.action === "connection-request")
-    ) {
-      const result = response.data.result as AgentConnectionRequest;
-      requireUuid(result.request_id, "connection request_id");
-      if (
-        (request.action === "connection-request" &&
-          result.request_id !== request.request_id) ||
-        (request.action === "request-connection" &&
-          (result.target?.agent_id !== request.target.agent_id ||
-            result.target?.project_id !== request.target.project_id ||
-            result.reason !== request.reason.trim() ||
-            (result.ttl_seconds === undefined ? 86400 : result.ttl_seconds) !==
-              (request.ttl_seconds === undefined
-                ? 86400
-                : request.ttl_seconds) ||
-            !!result.both_directions !== !!request.both_directions ||
-            !!result.allow_guidance !== !!request.allow_guidance)) ||
-        result.run_id !== credential.run_id ||
-        result.source?.agent_id !== credential.agent_id ||
-        !["pending", "approved", "denied", "expired", "invalidated"].includes(
-          result.state,
-        )
-      )
-        throw new Error(
-          "Connection approval response is invalid or mismatched; inspect the request before explicitly trying again",
-        );
-    }
     return response.data.result;
   } catch (error) {
     if ("version" in request && request.action === "prepare-attachments")
@@ -190,7 +155,6 @@ export async function sendIdentityMessage(
       });
     if (
       "version" in request &&
-      request.version === 2 &&
       (request.action === "send" || request.action === "inspect")
     )
       return rpcOutcome(request, "unknown", {

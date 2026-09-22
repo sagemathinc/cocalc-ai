@@ -185,9 +185,7 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("initCodexProjectRunner", () => {
-  const originalMessagingEnabled = process.env.COCALC_AGENT_MESSAGING_ENABLED;
   beforeEach(() => {
-    delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
     hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
     hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
     spawnMock.mockReset();
@@ -246,15 +244,9 @@ describe("initCodexProjectRunner", () => {
 
   afterEach(() => {
     setCodexProjectSpawner(null);
-    if (originalMessagingEnabled === undefined) {
-      delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
-    } else {
-      process.env.COCALC_AGENT_MESSAGING_ENABLED = originalMessagingEnabled;
-    }
   });
 
   it("attaches late registration to the next turn without replacing the app-server", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const proc = new FakeProc();
     spawnMock.mockReturnValue(proc);
     execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
@@ -369,7 +361,6 @@ describe("initCodexProjectRunner", () => {
   });
 
   it("exports each scoped run's reference sidecar in the actual process environment", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     spawnMock.mockImplementation(() => new FakeProc());
     execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
       cb(null, "true\n", ""),
@@ -915,7 +906,6 @@ describe("initCodexProjectRunner", () => {
   });
 
   it("revokes a late identity if the runtime closes during issuance", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const home = await mkTempDir("codex-project-late-identity-close-");
     const { createProjectCliTokenLease } =
       await import("./codex/codex-project");

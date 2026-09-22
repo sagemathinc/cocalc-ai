@@ -29,7 +29,6 @@ describeDb("native identity recovery", () => {
   const run = randomUUID();
 
   beforeAll(async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const db = getPool();
     await db.query(
       "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",
@@ -40,7 +39,8 @@ describeDb("native identity recovery", () => {
           "agent_identities",
           "agent_identity_runs",
           "agent_personal_names",
-          "agent_personal_grants",
+          "agent_networks",
+          "agent_network_members",
         ].map((name) => [name, SCHEMA[name]]),
       ),
     );
@@ -77,20 +77,20 @@ describeDb("native identity recovery", () => {
        VALUES($1,'old-name',$2,$3,'{}')`,
       [account, project, oldAgent],
     );
+    const network = randomUUID();
     await db.query(
-      `INSERT INTO agent_personal_grants
-       (link_id,account_id,source_project_id,source_agent_id,target_project_id,target_agent_id,direction_group_id,approval_request_id,approval,reason,generation)
-       VALUES($1,$2,$3,$4,$3,$5,$6,$7,'{}','old approval',0)`,
-      [
-        randomUUID(),
-        account,
-        project,
-        oldAgent,
-        target,
-        randomUUID(),
-        randomUUID(),
-      ],
+      `INSERT INTO agent_networks
+       (agent_network_id,account_id,title,generation,created_by)
+       VALUES($1,$2,'Existing network',$3,$2)`,
+      [network, account, randomUUID()],
     );
+    for (const agent of [oldAgent, target])
+      await db.query(
+        `INSERT INTO agent_network_members
+         (agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by)
+         VALUES($1,'registered',$2,$2,$3,$4)`,
+        [network, agent, project, account],
+      );
   });
 
   test("owner creates a new identity without transferring personal approvals", async () => {
@@ -129,8 +129,12 @@ describeDb("native identity recovery", () => {
         .agent_id,
     ).toBe(oldAgent);
     expect(
-      (await db.query("SELECT source_agent_id FROM agent_personal_grants"))
-        .rows[0].source_agent_id,
+      (
+        await db.query(
+          "SELECT registered_agent_id FROM agent_network_members WHERE registered_agent_id=$1",
+          [oldAgent],
+        )
+      ).rows[0].registered_agent_id,
     ).toBe(oldAgent);
   });
 });

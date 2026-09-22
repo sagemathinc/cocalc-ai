@@ -9,6 +9,7 @@ import {
   resolveCompactThreadBadgeAppearance,
   resolveSelectedThreadRunningCodexMessage,
   resolveThreadSearchHighlightQuery,
+  threadSearchExcerpt,
 } from "../chatroom-thread-panel";
 import immutable from "immutable";
 import { COLORS } from "@cocalc/util/theme";
@@ -276,6 +277,17 @@ describe("resolveThreadSearchHighlightQuery", () => {
         threadSearchQuery: "hello",
       }),
     ).toBe("hello");
+  });
+});
+
+describe("threadSearchExcerpt", () => {
+  it("keeps the matching context and removes markup", () => {
+    const text = `${"prefix ".repeat(30)}<strong>needle</strong> ${"suffix ".repeat(30)}`;
+    const excerpt = threadSearchExcerpt(text, "needle", 90);
+    expect(excerpt).toContain("needle");
+    expect(excerpt).not.toContain("<strong>");
+    expect(excerpt.startsWith("…")).toBe(true);
+    expect(excerpt.endsWith("…")).toBe(true);
   });
 });
 

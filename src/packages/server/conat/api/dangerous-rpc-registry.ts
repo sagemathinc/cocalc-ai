@@ -23,13 +23,19 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
-  "agent.grantRpcLink": {
+  "agent.createAgentNetwork": {
     decision: "fresh-auth-required",
-    reason: "authorizes V2 directional agent RPC execution",
+    reason:
+      "may create a complete-graph agent prompt/data bridge across projects",
   },
-  "agent.revokeRpcLink": {
+  "agent.updateAgentNetwork": {
     decision: "fresh-auth-required",
-    reason: "revokes V2 agent send authority",
+    reason: "may expand, resume, or enable live steering for an Agent Network",
+  },
+  "agent.resolveAgentNetworkProposal": {
+    decision: "fresh-auth-required",
+    reason:
+      "approval may create a complete-graph agent prompt/data bridge across projects",
   },
   "agent.authorizeRpcAdmission": {
     decision: "internal-auth-only",
@@ -40,18 +46,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "agent.registerIdentity": {
-    decision: "fresh-auth-required",
+    decision: "fresh-auth-not-required",
     reason:
-      "binds an agent identity and execution account to an existing thread",
+      "registers an existing Codex thread after ordinary project authorization",
   },
-  "agent.grantMessaging": {
-    decision: "fresh-auth-required",
+  "agent.startFreshConversation": {
+    decision: "fresh-auth-not-required",
     reason:
-      "authorizes send-only access and optional guidance to a specific agent",
-  },
-  "agent.revokeMessaging": {
-    decision: "fresh-auth-required",
-    reason: "revokes a directional agent messaging grant",
+      "starts a new context for the active agent's registrant after project authorization, retaining prior conversations without expanding network authority",
   },
   "agent.disableIdentity": {
     decision: "fresh-auth-required",
@@ -67,14 +69,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "agent.endIdentityRun": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
-  "agent.authorizeDelivery": {
-    decision: "internal-auth-only",
-    reason: INTERNAL_AUTH_ONLY,
-  },
-  "agent.beginMessageAdmission": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },

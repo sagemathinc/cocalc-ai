@@ -11,7 +11,7 @@ jest.mock("../master-status", () => ({
 }));
 
 describe("wireHostsApi", () => {
-  it("forwards identity issuance and queued-delivery authorization as the host, not as an account", async () => {
+  it("forwards identity issuance as the host, not as an account", async () => {
     const { hubApi } = await import("@cocalc/lite/hub/api");
     const { wireHostsApi } = await import("./hosts");
     wireHostsApi();
@@ -30,17 +30,11 @@ describe("wireHostsApi", () => {
         host_id: process.env.PROJECT_HOST_ID,
       }),
     );
-    await hubApi.agent.authorizeDelivery({ ...opts, message_id: "message" });
-    expect(callHubMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "agent.authorizeDelivery",
-        host_id: process.env.PROJECT_HOST_ID,
-      }),
-    );
   });
   beforeEach(() => {
     jest.resetModules();
-    jest.clearAllMocks();
+    callHubMock.mockReset();
+    getMasterConatClientMock.mockClear();
     process.env.PROJECT_HOST_ID = "00000000-1000-4000-8000-000000000123";
   });
 
@@ -68,7 +62,11 @@ describe("wireHostsApi", () => {
     wireHostsApi();
     const opts = {
       account_id: "target-account",
-      authorization: { version: 2, link_id: "link" },
+      authorization: {
+        version: 3,
+        agent_network_id: "session",
+        network_generation: "generation",
+      },
     };
     await hubApi.agent.authorizeRpcExecution(opts as any);
     expect(callHubMock).toHaveBeenCalledTimes(1);
@@ -97,35 +95,6 @@ describe("wireHostsApi", () => {
       host_id: process.env.PROJECT_HOST_ID,
     });
   });
-
-  it.each([true, false])(
-    "preserves one-use admission result %s through the host adapter",
-    async (result) => {
-      const { hubApi } = await import("@cocalc/lite/hub/api");
-      const { wireHostsApi } = await import("./hosts");
-      wireHostsApi();
-      const opts = {
-        account_id: "account",
-        project_id: "project",
-        path: "/home/user/recv.chat",
-        thread_id: "thread",
-        message_id: "message",
-        recovery_generation: "generation",
-        operation_id: "operation",
-      };
-      callHubMock.mockResolvedValueOnce(result);
-      await expect(hubApi.agent.beginMessageAdmission(opts)).resolves.toBe(
-        result,
-      );
-      expect(callHubMock).toHaveBeenCalledTimes(1);
-      expect(callHubMock).toHaveBeenCalledWith({
-        client: { id: "master-client" },
-        name: "agent.beginMessageAdmission",
-        args: [opts],
-        host_id: process.env.PROJECT_HOST_ID,
-      });
-    },
-  );
 
   it("forwards issueProjectHostAgentAuthToken through the master host scope", async () => {
     callHubMock.mockResolvedValue({

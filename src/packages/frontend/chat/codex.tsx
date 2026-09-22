@@ -1,11 +1,13 @@
 import {
   Alert,
   Button,
+  Collapse,
   Divider,
   Dropdown,
   Form,
   Input,
   Modal,
+  Popover,
   Radio,
   Select,
   Space,
@@ -47,6 +49,7 @@ import {
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import type {
   CodexModelCapabilityInfo,
   CodexPaymentSourceInfo,
@@ -67,6 +70,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { CodexSubagentConcurrencyButton } from "@cocalc/frontend/account/codex-subagent-concurrency";
 import type { ChatActions } from "./actions";
@@ -127,7 +131,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean | "summary";
+  compact?: boolean | "summary" | "composer" | "icon";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -303,10 +307,40 @@ function MembershipUsageMeters({
   );
 }
 
-const SectionTitle = ({ children }: { children: React.ReactNode }) => (
-  <Text strong style={{ color: UI_COLORS.text }}>
-    {children}
-  </Text>
+const HelpPopover = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) => (
+  <Popover
+    content={<div style={{ maxWidth: 360 }}>{children}</div>}
+    placement="top"
+    trigger={["click"]}
+  >
+    <Button
+      aria-label={`Help: ${label}`}
+      icon={<Icon name="question-circle" />}
+      size="small"
+      type="text"
+    />
+  </Popover>
+);
+
+const SectionTitle = ({
+  children,
+  help,
+}: {
+  children: React.ReactNode;
+  help?: React.ReactNode;
+}) => (
+  <span style={{ alignItems: "center", display: "inline-flex", gap: 2 }}>
+    <Text strong style={{ color: UI_COLORS.text }}>
+      {children}
+    </Text>
+    {help ? <HelpPopover label={`${children}`}>{help}</HelpPopover> : null}
+  </span>
 );
 
 const formItemStyle = { marginBottom: 12 } as const;
@@ -503,12 +537,16 @@ export function CodexConfigButton({
     "state",
     "tools_version",
   ]);
+  const projectTitle = useProjectMapField<string>(projectId, ["title"]);
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [membershipHelpOpen, setMembershipHelpOpen] = useState(false);
   const paymentSourceButtonRef = React.useRef<HTMLButtonElement>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [directoryPopoverOpen, setDirectoryPopoverOpen] = useState(false);
+  const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
+  const [directoryDraft, setDirectoryDraft] = useState("");
   const [form] = Form.useForm();
   const [selectedCredentialId, setSelectedCredentialId] = useState<
     string | undefined
@@ -668,6 +706,20 @@ export function CodexConfigButton({
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
   const selectedPaymentSource =
     Form.useWatch("paymentSource", form) ?? value?.paymentSource ?? "auto";
+  const selectedWorkingDirectory =
+    Form.useWatch("workingDirectory", form) ??
+    value?.workingDirectory ??
+    threadConfig?.workingDirectory ??
+    defaultWorkingDir(
+      chatPath,
+      workspaceWorkingDirectory,
+      getProjectHomeDirectory(projectId),
+    );
+  useEffect(() => {
+    if (!directoryPopoverOpen) {
+      setDirectoryDraft(selectedWorkingDirectory);
+    }
+  }, [directoryPopoverOpen, selectedWorkingDirectory]);
   const activeSessionId = normalizeCodexSessionId(
     Form.useWatch("sessionId", form) ?? value?.sessionId,
   );
@@ -935,9 +987,6 @@ export function CodexConfigButton({
   const modeLabel =
     modeOptions.find((option) => option.value === currentSessionMode)?.label ??
     "Mode";
-  const selectedModeOption = modeOptions.find(
-    (option) => option.value === currentSessionMode,
-  );
   const reasoningLabel =
     reasoningOptions.find((option) => option.value === selectedReasoningValue)
       ?.label ?? selectedReasoningValue;
@@ -960,6 +1009,14 @@ export function CodexConfigButton({
       )?.label ?? siteFundedPolicy.reasoning)
     : reasoningLabel;
   const displayedServiceTier = siteFundedPolicy ? undefined : serviceTierLabel;
+  const displayedWorkingDirectory = (() => {
+    const home = getProjectHomeDirectory(projectId);
+    if (selectedWorkingDirectory === home) return "~";
+    if (selectedWorkingDirectory.startsWith(`${home}/`)) {
+      return `~/${selectedWorkingDirectory.slice(home.length + 1)}`;
+    }
+    return selectedWorkingDirectory;
+  })();
   const paymentNeedsAttention =
     paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
   const toggleControlsCollapsed = () => {
@@ -1088,6 +1145,16 @@ export function CodexConfigButton({
     form.setFieldsValue(finalValues);
     setValue(finalValues);
     actions?.setCodexConfig?.(threadKey, finalValues);
+  };
+
+  const applyWorkingDirectory = (nextDirectory: string) => {
+    const normalized = normalizeAbsolutePath(
+      nextDirectory,
+      getProjectHomeDirectory(projectId),
+    );
+    applyQuickConfigPatch({ workingDirectory: normalized });
+    setDirectoryDraft(normalized);
+    setDirectoryPopoverOpen(false);
   };
 
   const paymentSourcePatch = (
@@ -1240,6 +1307,17 @@ export function CodexConfigButton({
       applyQuickConfigPatch(paymentSourcePatch(next));
     },
   };
+  const serviceTierMenu: MenuProps = {
+    selectedKeys: [effectiveServiceTier],
+    items: [
+      { key: "standard", label: "Standard" },
+      { key: "fast", label: "Fast", disabled: !fastModeSupported },
+    ],
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
+      applyQuickConfigPatch({ serviceTier: key as CodexServiceTier });
+    },
+  };
 
   const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
     ...pillSegmentBaseStyle,
@@ -1272,10 +1350,249 @@ export function CodexConfigButton({
           display: "flex",
           alignItems: "center",
           gap: 5,
-          maxWidth: "min(760px, calc(100vw - 32px))",
+          maxWidth:
+            compact === "composer" ? "100%" : "min(760px, calc(100vw - 32px))",
+          minWidth: 0,
+          overflow: compact === "composer" ? "hidden" : undefined,
         }}
       >
-        {compact ? (
+        {compact === "composer" ? (
+          <>
+            <Tooltip
+              title={`${projectTitle ?? "Project"} / ${selectedWorkingDirectory}`}
+            >
+              <Popover
+                open={directoryPopoverOpen}
+                onOpenChange={(nextOpen) => {
+                  setDirectoryPopoverOpen(nextOpen);
+                  if (nextOpen) setDirectoryDraft(selectedWorkingDirectory);
+                }}
+                placement="topLeft"
+                trigger="click"
+                content={
+                  <Space
+                    orientation="vertical"
+                    size={8}
+                    style={{ width: "min(360px, calc(100vw - 32px))" }}
+                  >
+                    <Text strong>Working directory</Text>
+                    <Space.Compact style={{ width: "100%" }}>
+                      <Input
+                        aria-label="Working directory"
+                        value={directoryDraft}
+                        onChange={(event) =>
+                          setDirectoryDraft(event.target.value)
+                        }
+                        onPressEnter={() =>
+                          applyWorkingDirectory(directoryDraft)
+                        }
+                      />
+                      <Button
+                        type="primary"
+                        onClick={() => applyWorkingDirectory(directoryDraft)}
+                      >
+                        Apply
+                      </Button>
+                    </Space.Compact>
+                    <Button
+                      icon={<Icon name="folder-open" />}
+                      onClick={() => {
+                        setDirectoryPopoverOpen(false);
+                        setTimeout(() => setDirectorySelectorOpen(true), 0);
+                      }}
+                    >
+                      Choose directory…
+                    </Button>
+                  </Space>
+                }
+              >
+                <Button
+                  aria-label={`Working directory: ${projectTitle ?? "Project"} / ${selectedWorkingDirectory}`}
+                  aria-haspopup="dialog"
+                  icon={<Icon name="folder-open" />}
+                  size="small"
+                  type="text"
+                  style={{
+                    color: UI_COLORS.secondary,
+                    display: "inline-flex",
+                    flex: "0 1 auto",
+                    maxWidth: 240,
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <span
+                    style={{
+                      flex: "0 1 110px",
+                      minWidth: 24,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {projectTitle ?? "Project"}
+                  </span>
+                  <Text type="secondary" style={{ flex: "0 0 auto" }}>
+                    &nbsp;/&nbsp;
+                  </Text>
+                  <span
+                    style={{
+                      flex: "1 1 70px",
+                      minWidth: 50,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {displayedWorkingDirectory}
+                  </span>
+                </Button>
+              </Popover>
+            </Tooltip>
+            <span
+              style={{
+                alignItems: "center",
+                display: "inline-flex",
+                flex: "0 1 auto",
+                minWidth: 0,
+                overflow: "hidden",
+              }}
+            >
+              {siteFundedPolicy ? (
+                <Tooltip title="CoCalc Membership chooses the model">
+                  <button
+                    type="button"
+                    style={{ ...pillSegmentBaseStyle, cursor: "default" }}
+                  >
+                    {displayedModel}
+                  </button>
+                </Tooltip>
+              ) : (
+                <Dropdown
+                  menu={modelMenu}
+                  trigger={["click"]}
+                  onOpenChange={(nextOpen) => {
+                    if (
+                      nextOpen &&
+                      paymentSource?.source === "subscription" &&
+                      !codexModelsLoading
+                    ) {
+                      setCodexModelRequestNonce((nonce) => nonce + 1);
+                    }
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Change model. Current model: ${displayedModel}`}
+                    style={{ ...pillSegmentBaseStyle, maxWidth: 150 }}
+                  >
+                    <span
+                      style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                    >
+                      {displayedModel}
+                    </span>
+                  </button>
+                </Dropdown>
+              )}
+              <Text type="secondary">·</Text>
+              {siteFundedPolicy ? (
+                <Tooltip title="CoCalc Membership chooses the thinking level">
+                  <button
+                    type="button"
+                    style={{ ...pillSegmentBaseStyle, cursor: "default" }}
+                  >
+                    {displayedReasoning}
+                  </button>
+                </Tooltip>
+              ) : (
+                <Dropdown menu={reasoningMenu} trigger={["click"]}>
+                  <button
+                    type="button"
+                    aria-label={`Change thinking level. Current level: ${displayedReasoning}`}
+                    style={pillSegmentBaseStyle}
+                  >
+                    {displayedReasoning}
+                  </button>
+                </Dropdown>
+              )}
+              {displayedServiceTier ? (
+                <>
+                  <Text type="secondary">·</Text>
+                  <Dropdown menu={serviceTierMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      aria-label={`Change speed. Current speed: ${displayedServiceTier}`}
+                      style={pillSegmentBaseStyle}
+                    >
+                      {displayedServiceTier}
+                    </button>
+                  </Dropdown>
+                </>
+              ) : null}
+              <Text type="secondary">·</Text>
+              {lite ? (
+                <Tooltip
+                  allow_touch
+                  ignore_hide_setting
+                  title={sourceTooltipDetails}
+                  styles={{ root: { maxWidth: 420 } }}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
+                    aria-haspopup="dialog"
+                    onMouseEnter={() => setCodexUsageRequested(true)}
+                    onClick={() => setPaymentOpen(true)}
+                    style={{
+                      ...pillSegmentBaseStyle,
+                      color: paymentNeedsAttention
+                        ? UI_COLORS.danger
+                        : UI_COLORS.secondary,
+                    }}
+                  >
+                    {sourceShortLabel}
+                  </button>
+                </Tooltip>
+              ) : (
+                <Tooltip
+                  allow_touch
+                  ignore_hide_setting
+                  title={sourceTooltipDetails}
+                  styles={{ root: { maxWidth: 420 } }}
+                >
+                  <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
+                      onMouseEnter={() => setCodexUsageRequested(true)}
+                      style={{
+                        ...pillSegmentBaseStyle,
+                        color: paymentNeedsAttention
+                          ? UI_COLORS.danger
+                          : UI_COLORS.secondary,
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {sourceShortLabel}
+                    </button>
+                  </Dropdown>
+                </Tooltip>
+              )}
+            </span>
+            <Tooltip title="More agent settings">
+              <Button
+                aria-label="More agent settings"
+                aria-haspopup="dialog"
+                icon={<Icon name="sliders" />}
+                onClick={() => setOpen(true)}
+                size="small"
+                type="text"
+              ></Button>
+            </Tooltip>
+          </>
+        ) : compact ? (
           <Button
             className={
               compact === "summary" ? "cocalc-chat-model-summary" : undefined
@@ -1292,12 +1609,17 @@ export function CodexConfigButton({
                 : undefined
             }
             icon={compact === "summary" ? undefined : <Icon name="sliders" />}
-            type={compact === "summary" ? "text" : "default"}
+            type={
+              compact === "summary" || compact === "icon" ? "text" : "default"
+            }
+            size={compact === "icon" ? "small" : undefined}
             onClick={() => setOpen(true)}
           >
             {compact === "summary"
               ? `${displayedModel} ${displayedReasoning}`
-              : "Codex settings"}
+              : compact === "icon"
+                ? null
+                : "Codex settings"}
           </Button>
         ) : controlsCollapsed ? (
           <span
@@ -1565,6 +1887,26 @@ export function CodexConfigButton({
         ) : null}
       </div>
       <Modal
+        open={directorySelectorOpen}
+        title="Choose working directory"
+        footer={null}
+        destroyOnHidden
+        onCancel={() => setDirectorySelectorOpen(false)}
+      >
+        {projectId ? (
+          <DirectorySelector
+            project_id={projectId}
+            startingPath={selectedWorkingDirectory}
+            allowAbsolutePaths
+            closable={false}
+            onSelect={(directory) => {
+              applyWorkingDirectory(directory);
+              setDirectorySelectorOpen(false);
+            }}
+          />
+        ) : null}
+      </Modal>
+      <Modal
         open={membershipHelpOpen}
         title="Start a new thread to use CoCalc Membership"
         onCancel={() => setMembershipHelpOpen(false)}
@@ -1577,458 +1919,297 @@ export function CodexConfigButton({
       </Modal>
       <Modal
         open={open}
-        title="Codex settings"
+        title="Agent settings"
         okText="Save"
         onOk={onSave}
         onCancel={() => setOpen(false)}
-        width={720}
-        styles={{
-          body: {
-            maxHeight: "75vh",
-            overflowY: "auto",
-            background: UI_COLORS.surface,
-            paddingTop: 12,
-          },
-        }}
+        width={680}
+        styles={{ body: { background: UI_COLORS.surface, paddingTop: 8 } }}
       >
-        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
-          {configChangedForNextTurn ? (
-            <Alert
-              type="info"
-              showIcon
-              title="Changes apply to the next turn"
-              description="The running turn and its internal retries keep the settings with which they were admitted. The current settings will be used for the next admitted turn, including recovery of a pending message that never started."
-            />
-          ) : null}
-          <div
-            style={{
-              ...sectionStyle,
-              background: UI_COLORS.infoBg,
-              borderColor: UI_COLORS.border,
-              display: "flex",
-              flexDirection: "column",
-              gap: 12,
-            }}
-          >
-            <div>
-              <Text strong style={{ color: UI_COLORS.info }}>
-                Codex configuration for this chat
-              </Text>
-              <div
-                style={{
-                  color: UI_COLORS.secondary,
-                  fontSize: 12,
-                  marginTop: 4,
-                  lineHeight: 1.35,
-                }}
-              >
-                These settings apply to the selected Codex thread. The compact
-                pill in chat shows the same model and reasoning level.
-              </div>
-            </div>
-            {paymentSource?.source === "subscription" ? (
-              <div style={{ width: "100%" }}>
-                {codexUsageLoading && !codexUsageStatus ? (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    Checking ChatGPT Codex usage...
-                  </Text>
-                ) : null}
-                <CodexUsageMeters
-                  status={codexUsageStatus}
-                  compact
-                  stale={codexUsageStale}
-                  updating={codexUsageLoading && codexUsageStale}
-                />
-              </div>
+        <Form form={form} layout="vertical">
+          <Space orientation="vertical" style={{ width: "100%" }} size={10}>
+            {configChangedForNextTurn ? (
+              <Alert
+                type="info"
+                showIcon
+                title="Changes apply to the next turn"
+                description="The running turn and its internal retries keep the settings with which they were admitted. The current settings will be used for the next admitted turn, including recovery of a pending message that never started."
+              />
             ) : null}
-            <Space
-              wrap
-              size={8}
+            <div
               style={{
                 alignItems: "center",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
                 justifyContent: "space-between",
-                width: "100%",
               }}
             >
-              <Space size={6} wrap style={{ justifyContent: "flex-end" }}>
-                <Tag color="blue">{displayedModel ?? "Model"}</Tag>
-                {lite ? (
-                  <Tag color={selectedModeOption?.warning ? "red" : "green"}>
-                    {modeLabel}
-                  </Tag>
-                ) : null}
-                {displayedReasoning ? <Tag>{displayedReasoning}</Tag> : null}
-                {displayedServiceTier ? (
-                  <Tag
-                    color={
-                      displayedServiceTier === "Fast" ? "orange" : undefined
-                    }
-                  >
-                    {displayedServiceTier}
-                  </Tag>
-                ) : null}
-              </Space>
-              <Tooltip
-                title={`Current source: ${
-                  paymentSourceLoading ? "Checking..." : sourceShortLabel
-                }. ${sourceTooltip}`}
+              <SectionTitle
+                help={
+                  <Space orientation="vertical" size={6}>
+                    <span>
+                      These settings apply to future turns in this chat.
+                    </span>
+                    {sourceTooltipDetails}
+                  </Space>
+                }
               >
+                Runtime
+              </SectionTitle>
+              <Space size={6} wrap>
                 <Button
+                  size="small"
                   icon={<Icon name="credit-card" />}
                   onClick={() => setPaymentOpen(true)}
                 >
-                  Payment & Credentials
+                  Payment & credentials
                 </Button>
-              </Tooltip>
-              <Button onClick={() => setSessionsOpen(true)}>
-                View All Codex Sessions
-              </Button>
-            </Space>
-          </div>
-          <Form form={form} layout="vertical">
-            <Space orientation="vertical" style={{ width: "100%" }} size={12}>
-              {!lite ? (
-                <div style={sectionStyle}>
-                  <SectionTitle>Payment source</SectionTitle>
-                  <div
-                    style={{
-                      color: UI_COLORS.secondary,
-                      fontSize: 12,
-                      margin: "3px 0 10px",
-                    }}
+                <Button size="small" onClick={() => setSessionsOpen(true)}>
+                  Sessions
+                </Button>
+                {paymentSource?.source === "subscription" &&
+                !siteFundedPolicy ? (
+                  <Button
+                    size="small"
+                    icon={<Icon name="refresh" />}
+                    loading={codexModelsLoading}
+                    onClick={() => clearCachedCodexModelCatalog({ accountId })}
                   >
-                    {hasEstablishedSession
-                      ? "You can continue this session with ChatGPT or a personal API key without losing context. Switching an established personal session into membership-funded mode is disabled."
-                      : "Choose how future turns in this thread are funded. This choice is independent of which credentials are connected."}
-                  </div>
-                  <Form.Item name="paymentSource" style={{ marginBottom: 0 }}>
-                    <Select
-                      aria-label="Payment source"
-                      style={{ width: "100%" }}
-                      options={paymentSourceOptions}
-                      optionRender={(option) =>
-                        renderOptionWithDescription({
-                          title: `${option.data.label}`,
-                          description: option.data.description,
-                        })
-                      }
-                      onChange={(next: CodexPaymentSourcePreference) => {
-                        form.setFieldsValue(paymentSourcePatch(next));
-                      }}
-                    />
-                  </Form.Item>
-                  {membershipNeedsNewThread ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      style={{ marginTop: 10 }}
-                      title="Start a new thread to use CoCalc Membership"
-                      description={membershipThreadHelp}
-                    />
-                  ) : null}
-                  {selectedPaymentSource === "subscription" &&
-                  paymentSource?.source === "none" ? (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      style={{ marginTop: 10 }}
-                      title="Reconnect your ChatGPT Plan"
-                      description={
-                        hasEstablishedSession
-                          ? "This session is pinned to ChatGPT. Reconnect it under Payment & Credentials, or start a new Codex chat and choose CoCalc Membership."
-                          : "This thread is configured to use ChatGPT, but that credential is unavailable. Choose CoCalc Membership or reconnect ChatGPT under Payment & Credentials."
-                      }
-                    />
-                  ) : null}
-                </div>
-              ) : null}
-              <div style={sectionStyle}>
-                <div
-                  style={{
-                    alignItems: "center",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <SectionTitle>Model and session</SectionTitle>
-                  {paymentSource?.source === "subscription" &&
-                  !siteFundedPolicy ? (
-                    <Button
-                      size="small"
-                      icon={<Icon name="refresh" />}
-                      loading={codexModelsLoading}
-                      onClick={() => {
-                        clearCachedCodexModelCatalog({ accountId });
-                      }}
-                    >
-                      Refresh models
-                    </Button>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    color: UI_COLORS.secondary,
-                    fontSize: 12,
-                    margin: "3px 0 10px",
-                  }}
-                >
-                  Choose the model, session continuity, and directory Codex uses
-                  for future turns.
-                </div>
-                {siteFundedPolicy ? (
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    title="CoCalc Membership"
-                    description={
-                      <>
-                        Membership-funded Codex turns use settings selected by
-                        CoCalc.
-                        {!paymentSource?.hasSubscription &&
-                        !paymentSource?.hasProjectApiKey &&
-                        !paymentSource?.hasAccountApiKey
-                          ? " Connect a personal ChatGPT plan or OpenAI API key to choose other settings."
-                          : null}
-                        {siteFundedAccountStatus ? (
-                          <div style={{ marginTop: 10 }}>
-                            <MembershipUsageMeters
-                              status={siteFundedAccountStatus}
-                            />
-                          </div>
-                        ) : null}
-                      </>
-                    }
-                  />
-                ) : (
-                  <div>
-                    {selectedModelUnavailable ? (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        style={{ marginBottom: 12 }}
-                        title="Model unavailable for this ChatGPT account"
-                        description="Choose an enabled model before starting the next Codex turn. Model access depends on the connected ChatGPT plan."
-                      />
-                    ) : null}
-                    <div style={gridTwoColStyle}>
-                      <Form.Item
-                        label="Model"
-                        name="model"
-                        style={formItemStyle}
-                      >
-                        <Select
-                          placeholder="e.g., gpt-5.6-sol"
-                          options={models}
-                          optionRender={(option) =>
-                            renderOptionWithDescription({
-                              title: `${option.data.label}`,
-                              description: option.data.description,
-                            })
-                          }
-                          showSearch
-                          allowClear
-                          onChange={(val) => {
-                            modelSelectionTouchedRef.current = true;
-                            const selected = models.find(
-                              (m) => m.value === val,
-                            );
-                            if (selected?.reasoning?.length) {
-                              const def =
-                                selected.reasoning.find((r) => r.default)?.id ??
-                                selected.reasoning[0]?.id;
-                              form.setFieldsValue({ reasoning: def });
-                            }
-                            if (!modelSupportsFastMode(val)) {
-                              form.setFieldsValue({ serviceTier: "standard" });
-                            }
-                          }}
-                        />
-                      </Form.Item>
-                      <Form.Item
-                        label="Reasoning level"
-                        name="reasoning"
-                        style={formItemStyle}
-                      >
-                        <Select
-                          placeholder="Select reasoning"
-                          options={reasoningOptions}
-                          optionRender={(option) =>
-                            renderOptionWithDescription({
-                              title: `${option.data.label}${
-                                option.data.default ? " (default)" : ""
-                              }`,
-                              description: option.data.description,
-                            })
-                          }
-                        />
-                      </Form.Item>
-                    </div>
-                  </div>
-                )}
-                <div style={gridTwoColStyle}>
-                  <Form.Item
-                    label="Working directory"
-                    name="workingDirectory"
-                    tooltip="Codex runs in this directory for subsequent turns."
-                    style={formItemStyle}
-                  >
-                    <Input placeholder="Derived from the directory containing this chat" />
-                  </Form.Item>
-                  <Form.Item
-                    label="Session ID"
-                    name="sessionId"
-                    tooltip="Reuse a Codex session to keep continuity."
-                    style={formItemStyle}
-                  >
-                    <Input
-                      placeholder="Leave blank to create a new session"
-                      allowClear
-                    />
-                  </Form.Item>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-end",
-                    flexWrap: "wrap",
-                    gap: 12,
-                  }}
-                >
-                  {!siteFundedPolicy ? (
-                    <Form.Item
-                      label="Speed"
-                      name="serviceTier"
-                      tooltip="Fast mode uses more Codex credits. Standard is the default."
-                      style={{ marginBottom: 0, flex: "1 1 260px" }}
-                    >
-                      <Radio.Group>
-                        <Space wrap>
-                          <Radio value="standard">Standard</Radio>
-                          <Radio value="fast" disabled={!fastModeSupported}>
-                            Fast
-                          </Radio>
-                        </Space>
-                      </Radio.Group>
-                    </Form.Item>
-                  ) : null}
-                  <CodexSubagentConcurrencyButton />
-                </div>
-                <CodexThreadId threadId={threadKey} />
-                {projectId && threadKey && accountId && (
-                  <AgentCommunication
-                    api={webapp_client.conat_client.hub.agent}
-                    projectId={projectId}
-                    path={chatPath}
-                    threadId={threadKey}
-                    accountId={accountId}
-                  />
-                )}
-                {effectiveServiceTier === "fast" && !siteFundedPolicy ? (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginTop: 10 }}
-                    title="Fast mode uses more Codex credits"
-                    description="Use this only when lower latency is worth the higher cost."
-                  />
+                    Refresh models
+                  </Button>
                 ) : null}
-              </div>
-              <div style={sectionStyle}>
-                <SectionTitle>Access</SectionTitle>
-                {lite ? (
-                  <>
-                    <div
-                      style={{
-                        color: UI_COLORS.secondary,
-                        fontSize: 12,
-                        margin: "3px 0 10px",
-                      }}
+              </Space>
+            </div>
+
+            <div style={gridTwoColStyle}>
+              {!lite ? (
+                <Form.Item
+                  label={
+                    <SectionTitle
+                      help={
+                        hasEstablishedSession
+                          ? "Established sessions may restrict switching to membership funding."
+                          : "Choose how future turns in this chat are funded."
+                      }
                     >
-                      Control whether Codex can only inspect files, edit this
-                      workspace, or use full access.
-                    </div>
-                    <Form.Item
-                      name="sessionMode"
-                      tooltip="Control how much access Codex has."
-                      style={{ marginBottom: 0 }}
+                      Payment source
+                    </SectionTitle>
+                  }
+                  name="paymentSource"
+                  style={formItemStyle}
+                >
+                  <Select
+                    aria-label="Payment source"
+                    options={paymentSourceOptions}
+                    optionRender={(option) =>
+                      renderOptionWithDescription({
+                        title: `${option.data.label}`,
+                        description: option.data.description,
+                      })
+                    }
+                    onChange={(next: CodexPaymentSourcePreference) => {
+                      form.setFieldsValue(paymentSourcePatch(next));
+                    }}
+                  />
+                </Form.Item>
+              ) : null}
+              {siteFundedPolicy ? (
+                <Form.Item
+                  label={
+                    <SectionTitle
+                      help={
+                        <>
+                          CoCalc Membership selects the model and thinking
+                          level.
+                          {siteFundedAccountStatus ? (
+                            <div style={{ marginTop: 8 }}>
+                              <MembershipUsageMeters
+                                status={siteFundedAccountStatus}
+                                compact
+                              />
+                            </div>
+                          ) : null}
+                        </>
+                      }
                     >
-                      <Radio.Group style={{ width: "100%" }}>
-                        <div
+                      Model
+                    </SectionTitle>
+                  }
+                  style={formItemStyle}
+                >
+                  <Input
+                    value={`${displayedModel} · ${displayedReasoning}`}
+                    disabled
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item label="Model" name="model" style={formItemStyle}>
+                  <Select
+                    placeholder="e.g., gpt-5.6-sol"
+                    options={models}
+                    optionRender={(option) =>
+                      renderOptionWithDescription({
+                        title: `${option.data.label}`,
+                        description: option.data.description,
+                      })
+                    }
+                    showSearch
+                    onChange={(val) => {
+                      modelSelectionTouchedRef.current = true;
+                      const selected = models.find((m) => m.value === val);
+                      const reasoning =
+                        selected?.reasoning?.find((entry) => entry.default)
+                          ?.id ?? selected?.reasoning?.[0]?.id;
+                      if (reasoning) form.setFieldsValue({ reasoning });
+                      if (!modelSupportsFastMode(val)) {
+                        form.setFieldsValue({ serviceTier: "standard" });
+                      }
+                    }}
+                  />
+                </Form.Item>
+              )}
+              {!siteFundedPolicy ? (
+                <Form.Item
+                  label="Thinking level"
+                  name="reasoning"
+                  style={formItemStyle}
+                >
+                  <Select options={reasoningOptions} />
+                </Form.Item>
+              ) : null}
+              <Form.Item
+                label="Working directory"
+                name="workingDirectory"
+                style={formItemStyle}
+              >
+                <Input />
+              </Form.Item>
+              {!siteFundedPolicy ? (
+                <Form.Item
+                  label={
+                    <SectionTitle help="Fast mode responds sooner but uses more credits.">
+                      Speed
+                    </SectionTitle>
+                  }
+                  name="serviceTier"
+                  style={formItemStyle}
+                >
+                  <Radio.Group optionType="button" buttonStyle="solid">
+                    <Radio.Button value="standard">Standard</Radio.Button>
+                    <Radio.Button value="fast" disabled={!fastModeSupported}>
+                      Fast
+                    </Radio.Button>
+                  </Radio.Group>
+                </Form.Item>
+              ) : null}
+            </div>
+
+            {selectedModelUnavailable ? (
+              <Alert
+                type="warning"
+                showIcon
+                title="Model unavailable for this ChatGPT account"
+              />
+            ) : null}
+            {membershipNeedsNewThread ? (
+              <Alert
+                type="info"
+                showIcon
+                title="Start a new chat to use CoCalc Membership"
+                action={
+                  <HelpPopover label="CoCalc Membership">
+                    {membershipThreadHelp}
+                  </HelpPopover>
+                }
+              />
+            ) : null}
+            {selectedPaymentSource === "subscription" &&
+            paymentSource?.source === "none" ? (
+              <Alert
+                type="warning"
+                showIcon
+                title="Reconnect your ChatGPT Plan"
+              />
+            ) : null}
+
+            <div style={{ ...sectionStyle, padding: 10 }}>
+              <SectionTitle help="Controls what files and commands the agent can use.">
+                Access
+              </SectionTitle>
+              {lite ? (
+                <Form.Item name="sessionMode" style={{ margin: "8px 0 0" }}>
+                  <Radio.Group optionType="button" buttonStyle="solid">
+                    {modeOptions.map((option) => (
+                      <Tooltip key={option.value} title={option.description}>
+                        <Radio.Button
+                          value={option.value}
                           style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "repeat(auto-fit, minmax(185px, 1fr))",
-                            gap: 8,
+                            color: option.warning
+                              ? UI_COLORS.danger
+                              : undefined,
                           }}
                         >
-                          {modeOptions.map((option) => {
-                            const selected =
-                              currentSessionMode === option.value;
-                            return (
-                              <label
-                                key={option.value}
-                                style={{
-                                  border: `1px solid ${
-                                    selected
-                                      ? UI_COLORS.focus
-                                      : UI_COLORS.border
-                                  }`,
-                                  borderRadius: 10,
-                                  padding: "10px 12px",
-                                  background: selected
-                                    ? UI_COLORS.selected
-                                    : UI_COLORS.surface,
-                                  boxShadow: selected
-                                    ? `0 0 0 1px ${UI_COLORS.focus} inset`
-                                    : undefined,
-                                  cursor: "pointer",
-                                  minHeight: 88,
-                                  display: "block",
-                                }}
-                              >
-                                <Radio
-                                  value={option.value}
-                                  style={{ width: "100%" }}
-                                >
-                                  <div>
-                                    <strong
-                                      style={{
-                                        color: option.warning
-                                          ? UI_COLORS.danger
-                                          : UI_COLORS.text,
-                                      }}
-                                    >
-                                      {option.label}
-                                    </strong>
-                                    <div
-                                      style={{
-                                        fontSize: 12,
-                                        color: option.warning
-                                          ? UI_COLORS.danger
-                                          : UI_COLORS.secondary,
-                                        lineHeight: 1.35,
-                                      }}
-                                    >
-                                      {option.description}
-                                    </div>
-                                  </div>
-                                </Radio>
-                              </label>
-                            );
-                          })}
+                          {option.label}
+                        </Radio.Button>
+                      </Tooltip>
+                    ))}
+                  </Radio.Group>
+                </Form.Item>
+              ) : (
+                <Space size={4} style={{ marginTop: 8 }}>
+                  <Text>Full project access</Text>
+                  <HelpPopover label="Full project access">
+                    <CodexFullAccessNotice />
+                  </HelpPopover>
+                </Space>
+              )}
+            </div>
+
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: "advanced",
+                  label: "Advanced",
+                  children: (
+                    <Space
+                      orientation="vertical"
+                      size={10}
+                      style={{ width: "100%" }}
+                    >
+                      <div style={gridTwoColStyle}>
+                        <Form.Item
+                          label="Session ID"
+                          name="sessionId"
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input
+                            placeholder="Create a new session"
+                            allowClear
+                          />
+                        </Form.Item>
+                        <div style={{ alignSelf: "end" }}>
+                          <CodexSubagentConcurrencyButton />
                         </div>
-                      </Radio.Group>
-                    </Form.Item>
-                  </>
-                ) : (
-                  <CodexFullAccessNotice />
-                )}
-              </div>
-            </Space>
-          </Form>
-        </Space>
+                      </div>
+                      <CodexThreadId threadId={threadKey} />
+                      {projectId && threadKey && accountId ? (
+                        <AgentCommunication
+                          api={webapp_client.conat_client.hub.agent}
+                          projectId={projectId}
+                          path={chatPath}
+                          threadId={threadKey}
+                          accountId={accountId}
+                        />
+                      ) : null}
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </Space>
+        </Form>
       </Modal>
       <CodexPaymentCredentialsModal
         open={paymentOpen}

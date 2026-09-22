@@ -3,7 +3,7 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 
-import { getMountedIntermediateResponseMarkdown } from "@cocalc/chat";
+import { getMountedIntermediateResponseMarkdown } from "@cocalc/chat/core";
 import type {
   AcpStreamEvent,
   AcpStreamMessage,

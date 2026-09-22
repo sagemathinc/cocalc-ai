@@ -21,7 +21,6 @@ export async function createAgentIdentityLease({
   env?: NodeJS.ProcessEnv;
   hostDir: string;
 }) {
-  if (process.env.COCALC_AGENT_MESSAGING_ENABLED !== "1") return;
   const path = env?.COCALC_CODEX_CHAT_PATH;
   const thread_id = env?.COCALC_CODEX_THREAD_ID;
   if (!path || !thread_id) return;

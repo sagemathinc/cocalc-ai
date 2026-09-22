@@ -14,15 +14,20 @@ export default async function externalAgentApprove(req, res) {
     const account_id = await getAccountId(req),
       session_hash = getRememberMeHash(req);
     if (!account_id || !session_hash) throw new Error("must be signed in");
-    const { origin_bay_id, challenge_id, targets, ttl_seconds, agent_id } =
-      getParams(req);
+    const {
+      origin_bay_id,
+      challenge_id,
+      agent_network_id,
+      ttl_seconds,
+      agent_id,
+    } = getParams(req);
     res.json(
       await approveExternalAgentLogin({
         account_id,
         session_hash,
         origin_bay_id,
         challenge_id,
-        targets,
+        agent_network_id,
         ttl_seconds,
         agent_id,
       }),

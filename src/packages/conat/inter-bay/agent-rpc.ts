@@ -6,31 +6,35 @@ import {
 import type { Options } from "@cocalc/conat/service/service";
 import type {
   AgentEndpoint,
-  AgentRpcLink,
+  AgentRpcSource,
   AgentRpcSend,
   AgentRpcAttempt,
   AgentRpcOutcome,
   AgentRpcPreparation,
 } from "@cocalc/conat/agents/rpc";
 import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
-import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import type { AgentIdentityRoute } from "./agent-identities";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type {
-  PersonalConnectionRequest,
-  PersonalConnectionRequestOptions,
+  AgentNetworkActivity,
+  AgentNetworkAuthorization,
+  AgentNetworkDiscovery,
+  AgentNetworkProposal,
   PersonalAgentDenial,
 } from "@cocalc/conat/agents/personal";
 
 export type PersonalHumanMethod =
   | "listNamedAgents"
   | "nameAgent"
-  | "listPersonalConnections"
-  | "grantPersonalConnection"
-  | "setPersonalConnectionState"
-  | "setPersonalMessagingState"
-  | "listPersonalConnectionRequests"
-  | "resolvePersonalConnectionRequest";
+  | "retireNamedAgent"
+  | "listAgentNetworks"
+  | "createAgentNetwork"
+  | "updateAgentNetwork"
+  | "listAgentNetworkActivity"
+  | "inspectAgentNetworkAttempt"
+  | "listAgentNetworkProposals"
+  | "resolveAgentNetworkProposal"
+  | "setPersonalMessagingState";
 export type PersonalControlRequest =
   | {
       [K in PersonalHumanMethod]: {
@@ -41,34 +45,57 @@ export type PersonalControlRequest =
         >;
       };
     }[PersonalHumanMethod]
-  | { action: "links"; options: { source: AgentEndpoint } }
   | {
-      action: "check";
+      action: "checkNetwork";
       options: {
-        source: AgentEndpoint;
-        target: AgentEndpoint;
-        guidance: boolean;
+        agent_network_id: string;
+        source: AgentRpcSource;
+        run_id?: string;
+        target: AgentRpcSource;
       };
     }
-  | { action: "request"; options: PersonalConnectionRequestOptions & RpcSource }
-  | { action: "requestRead"; options: RpcSource & { request_id: string } }
-  | { action: "observe"; options: { link_id: string; accepted: boolean } };
+  | {
+      action: "discoverNetworks";
+      options: { source: AgentRpcSource; run_id?: string };
+    }
+  | {
+      action: "proposeNetwork";
+      options: {
+        source: AgentRpcSource;
+        run_id?: string;
+        proposal: import("@cocalc/conat/agents/personal").ProposeAgentNetworkOptions;
+      };
+    }
+  | {
+      action: "beginBroadcast";
+      options: {
+        source: AgentRpcSource;
+        run_id?: string;
+        broadcast: import("@cocalc/conat/agents/rpc").AgentRpcBroadcast;
+      };
+    }
+  | {
+      action: "finishBroadcast";
+      options: {
+        broadcast_id: string;
+        binding_hash: string;
+        outcome: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
+      };
+    }
+  | { action: "observeNetworkActivity"; options: AgentNetworkActivity };
 export type PersonalControlResult =
   | PersonalAgentDenial
   | void
   | Awaited<ReturnType<AgentApi[PersonalHumanMethod]>>
-  | AgentRpcLink
-  | AgentRpcLink[]
-  | PersonalConnectionRequest;
-
-export interface AgentRpcLinkApproval {
-  source: AgentEndpoint;
-  target: AgentEndpoint;
-  link_id: string;
-  ttl_seconds: number;
-  reason: string;
-  allow_guidance?: boolean;
-}
+  | AgentNetworkAuthorization
+  | AgentNetworkDiscovery
+  | AgentNetworkProposal
+  | {
+      claimed: boolean;
+      binding_hash: string;
+      outcome?: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
+      authorizations?: AgentNetworkAuthorization[];
+    };
 export interface RpcRoute {
   project_id: string;
   route: AgentIdentityRoute;
@@ -78,9 +105,17 @@ export interface RpcSource {
   run_id: string;
 }
 export interface RpcSubmissionSource {
+  /** Authenticated at the source bay; the account home independently rechecks it. */
+  account_id: string;
   source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
   run_id?: string;
 }
+type RegisteredRpcSend = Omit<AgentRpcSend, "target"> & {
+  target: AgentEndpoint;
+};
+type RegisteredRpcAttempt = Omit<AgentRpcAttempt, "target"> & {
+  target: AgentEndpoint;
+};
 export interface AgentRpcControlApi {
   external(
     opts: import("@cocalc/conat/agents/external").ExternalAgentControlRequest,
@@ -96,50 +131,28 @@ export interface AgentRpcControlApi {
   principal(
     opts: RpcRoute & RpcSource,
   ): Promise<{ account_id: string; personal_messaging: boolean }>;
-  grant(
-    opts: RpcRoute &
-      AgentRpcLinkApproval & { account_id: string; fresh_auth_at: number },
-  ): Promise<AgentRpcLink>;
-  revoke(
-    opts: RpcRoute & {
-      source: AgentEndpoint;
-      link_id: string;
-      account_id: string;
-      fresh_auth_at: number;
-    },
-  ): Promise<void>;
-  links(
-    opts: RpcRoute & {
-      source: AgentEndpoint;
-      account_id?: string;
-      run_id?: string;
-    },
-  ): Promise<AgentRpcLink[]>;
-  check(
-    opts: RpcRoute & RpcSource & { target: AgentEndpoint; guidance: boolean },
-  ): Promise<
-    { source: AgentIdentity; link: AgentRpcLink } | PersonalAgentDenial
-  >;
   submit(
     opts: RpcRoute &
       RpcSubmissionSource & {
-        request: AgentRpcSend;
+        request: RegisteredRpcSend;
         snapshot_payload?: AgentSnapshot[];
+        /** Account-home proof from a just-claimed broadcast snapshot. */
+        authorization?: AgentNetworkAuthorization;
       },
   ): Promise<AgentRpcOutcome>;
   prepareAttachments(
-    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcSend },
+    opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcSend },
   ): Promise<AgentRpcPreparation>;
   cancelAttachments(
-    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcSend },
+    opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcSend },
   ): Promise<AgentRpcOutcome>;
   inspect(
-    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcAttempt },
+    opts: RpcRoute & RpcSubmissionSource & { request: RegisteredRpcAttempt },
   ): Promise<AgentRpcOutcome>;
 }
 function subject(bay: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(bay)) throw new Error("invalid bay");
-  return `bay.${bay}.rpc.agent-messaging.v2`;
+  return `bay.${bay}.rpc.agent-messaging.v3`;
 }
 export function createAgentRpcControlClient(
   client: Client,
@@ -147,7 +160,7 @@ export function createAgentRpcControlClient(
 ): AgentRpcControlApi {
   return createServiceClient<AgentRpcControlApi>({
     client,
-    service: "agent-messaging-v2",
+    service: "agent-messaging-v3",
     subject: subject(bay),
     transport: "request",
     noRetry: true,
@@ -162,7 +175,7 @@ export function createAgentRpcControlHandler(
   return createServiceHandler({
     ...options,
     impl,
-    service: "agent-messaging-v2",
+    service: "agent-messaging-v3",
     subject: subject(bay),
     transport: "request",
     parallel: true,

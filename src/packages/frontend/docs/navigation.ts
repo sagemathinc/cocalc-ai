@@ -68,15 +68,19 @@ export function openProjectDocs({
 }: ProjectDocsOpenDetail): void {
   const normalized = normalizeDocsSlug(slug);
   saveStoredProjectDocsSlug({ projectId, slug: normalized });
+  if (typeof window !== "undefined") {
+    const event = new CustomEvent<ProjectDocsOpenDetail>(
+      PROJECT_DOCS_OPEN_EVENT,
+      {
+        cancelable: true,
+        detail: { projectId, slug: normalized },
+      },
+    );
+    window.dispatchEvent(event);
+    if (event.defaultPrevented) return;
+  }
   const pageActions = redux.getActions("page");
   pageActions?.set_active_tab?.(projectId, false);
   const projectActions = redux.getProjectActions(projectId);
   projectActions?.setFlyoutExpanded?.("docs" as FixedTab, true);
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent<ProjectDocsOpenDetail>(PROJECT_DOCS_OPEN_EVENT, {
-        detail: { projectId, slug: normalized },
-      }),
-    );
-  }
 }

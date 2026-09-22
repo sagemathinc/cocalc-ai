@@ -36,10 +36,6 @@ jest.mock("../other-settings", () => ({
   OtherSettings: () => <div>OtherSettings</div>,
 }));
 
-jest.mock("../agent-messaging-preference", () => ({
-  AgentMessagingPreference: () => <div>AgentMessagingPreference</div>,
-}));
-
 jest.mock("../codex-credentials-panel", () => ({
   CodexCredentialsPanel: () => <div>CodexCredentialsPanel</div>,
 }));
@@ -60,10 +56,6 @@ jest.mock("../codex-sessions-panel", () => ({
 jest.mock("../lite-ai-settings", () => ({
   __esModule: true,
   default: () => <div>LiteAISettings</div>,
-}));
-
-jest.mock("../agent-messaging-preference", () => ({
-  AgentMessagingPreference: () => <div>AgentMessagingPreference</div>,
 }));
 
 jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
@@ -97,6 +89,8 @@ describe("AccountPreferencesAI", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("AIUsageStatus")).toBeTruthy();
-    expect(screen.getByText("AgentMessagingPreference")).toBeTruthy();
+    expect(
+      screen.queryByRole("switch", { name: /agents|communication/i }),
+    ).toBeNull();
   });
 });

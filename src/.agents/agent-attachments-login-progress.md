@@ -73,10 +73,9 @@ its files on project restart must not assume those files are still available.
 The prompt supplies actual local paths and tells the recipient to copy files into
 the project home when it needs durable retention. No 24-hour cleanup is promised.
 
-Enable `COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED=1` on participating hubs and
-hosts only after deploying the new code. Text-only messaging retains its existing
-flags. General host-control ingress permits 65 MiB messages to preserve existing
-64 MiB copy archives, with bounded partial reassembly and queueing.
+Deploy matching hub and host code before using attachments. General host-control
+ingress permits 65 MiB messages to preserve existing 64 MiB copy archives, with
+bounded partial reassembly and queueing.
 
 ## Reproduction
 
@@ -219,8 +218,8 @@ federation is necessary. Arbitrary-computer receiving and federation stay deferr
 
 ### Historical Enrollment Checkpoint (2026-09-15)
 
-Implemented behind `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED=1` (not enabled on the
-live dev hubs): `auth login --agent <profile> --agent-label <label>` starts an
+Implemented as an always-available service: `auth login --agent <profile>
+--agent-label <label>` starts an
 existing CLI-auth challenge, generates its secret locally, and opens a browser
 approval flow with explicit named destinations and finite lifetime. Approval
 uses the human's home-bay fresh-auth session; only a sealed claim attestation
@@ -309,9 +308,7 @@ No external credential is included in this document or those evidence files.
 
 ### Deployment
 
-All three dev hubs enable `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED=1` alongside the
-existing messaging, personal-connection and attachment flags. Host1 and the QA
-receiver host have all four runtime components aligned to
+All three dev hubs and the QA receiver host had all four runtime components aligned to
 `20260915T034541Z-e1d0ba73e0b5-dirty-a2912596`. This artifact was built before the
 transport commit, from the implementation subsequently committed as `3ff5331b20`;
 do not mistake its dirty build tag for an exact clean-commit release artifact.

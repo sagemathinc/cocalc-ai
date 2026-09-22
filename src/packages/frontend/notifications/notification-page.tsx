@@ -22,7 +22,7 @@ import { NotificationList } from "./notification-list";
 import { NotificationNav } from "./notification-nav";
 import { MarkEverythingRead } from "./mark-everything-read";
 
-export function NotificationPage() {
+export function NotificationPage({ embedded = false }: { embedded?: boolean }) {
   const intl = useIntl();
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
@@ -46,8 +46,8 @@ export function NotificationPage() {
     ).size ?? 0;
 
   useEffect(() => {
-    Fragment.set({ page: filter });
-  }, [filter]);
+    if (!embedded) Fragment.set({ page: filter });
+  }, [filter, embedded]);
 
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
@@ -82,7 +82,7 @@ export function NotificationPage() {
       return <Loading theme="medium" />;
     }
 
-    if (IS_MOBILE) {
+    if (IS_MOBILE && !embedded) {
       const options = [
         {
           value: "attention",
@@ -145,22 +145,30 @@ export function NotificationPage() {
     }
 
     return (
-      <Flex style={{ overflow: "hidden", flex: 1 }}>
+      <Flex
+        vertical={embedded}
+        style={{ overflow: "hidden", flex: 1, minHeight: 0, minWidth: 0 }}
+      >
         <NotificationNav
+          horizontal={embedded}
           filter={filter}
           on_click={redux.getActions("mentions").set_filter}
           unread_count={unread_count}
           attention_count={attention_count}
           news_unread={news_unread}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            width: "200px",
-            overflowY: "auto",
-            marginRight: "10px",
-            // paddingRight = so more scrollbar friendly
-            paddingRight: "15px",
-          }}
+          style={
+            embedded
+              ? { flex: "0 0 auto", minWidth: 0 }
+              : {
+                  display: "flex",
+                  flexDirection: "column",
+                  width: "200px",
+                  overflowY: "auto",
+                  marginRight: "10px",
+                  // paddingRight = so more scrollbar friendly
+                  paddingRight: "15px",
+                }
+          }
         />
         <NotificationList
           account_id={account_id}
@@ -172,6 +180,8 @@ export function NotificationPage() {
             display: "flex",
             flexDirection: "column",
             flex: 1,
+            minWidth: 0,
+            minHeight: 0,
             overflowY: "auto",
           }}
           user_map={user_map}
@@ -185,7 +195,9 @@ export function NotificationPage() {
     <div
       className={`smc-vfill${IS_MOBILE ? " cocalc-notifications-mobile" : ""}`}
       style={{
-        padding: IS_MOBILE ? "0 10px 10px 10px" : "0 30px 15px 30px",
+        padding:
+          IS_MOBILE || embedded ? "0 10px 10px 10px" : "0 30px 15px 30px",
+        minWidth: 0,
         display: "flex",
         flexDirection: "row",
         justifyContent: "center",
@@ -193,26 +205,28 @@ export function NotificationPage() {
       }}
     >
       <div className="smc-vfill" style={{ maxWidth: "1400px" }}>
-        <Title
-          level={IS_MOBILE ? 3 : 2}
-          style={{
-            textAlign: "center",
-            flex: "0 0 auto",
-            marginTop: IS_MOBILE ? "6px" : "10px",
-            marginBottom: IS_MOBILE ? "8px" : undefined,
-          }}
-        >
-          <Icon name="comments" style={{ marginRight: "10px" }} />{" "}
-          {intl.formatMessage(labels.notifications)}
-          <Button
-            type="link"
-            aria-label={intl.formatMessage(labels.help)}
-            style={{ fontSize: "12pt" }}
-            onClick={() => setShowHelp(true)}
+        {!embedded && (
+          <Title
+            level={IS_MOBILE ? 3 : 2}
+            style={{
+              textAlign: "center",
+              flex: "0 0 auto",
+              marginTop: IS_MOBILE ? "6px" : "10px",
+              marginBottom: IS_MOBILE ? "8px" : undefined,
+            }}
           >
-            <Icon name="question-circle" />
-          </Button>
-        </Title>
+            <Icon name="comments" style={{ marginRight: "10px" }} />{" "}
+            {intl.formatMessage(labels.notifications)}
+            <Button
+              type="link"
+              aria-label={intl.formatMessage(labels.help)}
+              style={{ fontSize: "12pt" }}
+              onClick={() => setShowHelp(true)}
+            >
+              <Icon name="question-circle" />
+            </Button>
+          </Title>
+        )}
         {filter !== "allNews" && (
           <Flex justify="end" style={{ flex: "0 0 auto", marginBottom: 10 }}>
             <MarkEverythingRead

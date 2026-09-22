@@ -92,6 +92,21 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
         "Maximum number of projects this account can own. Collaborating on someone else's project does not count.",
       userDescription: "Maximum number of projects this account can own.",
     },
+    max_named_agents: {
+      label: "Named agents",
+      unit: "agents",
+      adminDescription:
+        "Maximum number of active named agents in this account across all projects. Retired names and unnamed chat threads do not count.",
+      userDescription:
+        "Maximum number of active named agents in this account across all projects.",
+    },
+    max_agent_network_members: {
+      label: "Agent Network members",
+      unit: "agents",
+      adminDescription:
+        "Maximum active members in one Agent Network. This does not create or name agents.",
+      userDescription: "Maximum members in one Agent Network.",
+    },
     max_sponsored_running_projects: {
       label: "Sponsored running projects",
       unit: "projects",

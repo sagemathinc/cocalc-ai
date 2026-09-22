@@ -52,7 +52,10 @@ import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   FileAdapter,
@@ -89,6 +92,7 @@ import {
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
+  projectBlobMaterializationRoots,
   rewriteBlobReferencesInPrompt,
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
@@ -106,6 +110,7 @@ import {
 } from "@cocalc/chat";
 import { prepareChatSend } from "@cocalc/chat/send";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
+import { prepareFreshConversation } from "./fresh-conversation";
 import {
   appendStreamMessage,
   appendGeneratedImageMarkdown,
@@ -378,6 +383,10 @@ const ACP_INSTANCE_ID =
   `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
+type AttachmentBlobReader = (opts: {
+  uuid: string;
+  projectId: string;
+}) => Promise<Buffer | undefined>;
 type GeneratedImageBlobWriter = (opts: {
   uuid: string;
   blob: Buffer;
@@ -386,6 +395,13 @@ type GeneratedImageBlobWriter = (opts: {
 }) => Promise<void>;
 
 let generatedImageBlobWriter: GeneratedImageBlobWriter | undefined;
+let attachmentBlobReader: AttachmentBlobReader | undefined;
+
+export function setAttachmentBlobReader(
+  reader: AttachmentBlobReader | undefined,
+): void {
+  attachmentBlobReader = reader;
+}
 
 export function setGeneratedImageBlobWriter(
   writer: GeneratedImageBlobWriter | undefined,
@@ -4325,6 +4341,10 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
+    if (event.type === "event" && event.event.type === "peerMessage") {
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
     if (event.type === "event" && this.livePreviewText) {
       // The complete activity stream can publish tool and reasoning events
       // independently. Flush text queued before that activity so the inline
@@ -7688,6 +7708,13 @@ async function executeAcpRequest({
   );
   const { prompt, local_images, cleanup } = await materializeBlobs(
     request.prompt ?? "",
+    projectId,
+    useContainer && hostProjectRoot
+      ? projectBlobMaterializationRoots({
+          hostProjectRoot,
+          runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+        })
+      : undefined,
   );
   if (!conatClient) {
     throw Error("conat client must be initialized");
@@ -11690,6 +11717,12 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "prepare_fresh_conversation") {
+    return {
+      ok: true,
+      successor_thread_id: await prepareFreshConversation(request, client),
+    };
+  }
   if (request.action === "cancel") {
     const row = cancelQueuedAcpJob({
       project_id,
@@ -11946,12 +11979,16 @@ export async function init(
   }
 }
 
-async function materializeBlobs(prompt: string): Promise<{
+async function materializeBlobs(
+  prompt: string,
+  projectId: string,
+  projectRoots?: { host: string; runtime: string },
+): Promise<{
   prompt: string;
   local_images: string[];
   cleanup: () => Promise<void>;
 }> {
-  if (!blobStore) {
+  if (!blobStore && !attachmentBlobReader) {
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
@@ -11963,22 +12000,45 @@ async function materializeBlobs(prompt: string): Promise<{
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
+  const hostTempRoot = projectRoots?.host ?? os.tmpdir();
+  await fs.mkdir(hostTempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`),
+    path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
   );
+  const runtimeTempDir = projectRoots
+    ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
+    : tempDir;
   const attachments: MaterializedBlobAttachment[] = [];
   let bytes = 0;
   try {
     for (const ref of unique) {
       try {
-        const data = await blobStore!.get(ref.uuid);
+        let data: Buffer | Uint8Array | string | undefined;
+        if (attachmentBlobReader) {
+          try {
+            data = await attachmentBlobReader({
+              projectId,
+              uuid: ref.uuid,
+            });
+          } catch (err) {
+            logger.warn("failed to read project chat blob", {
+              project_id: projectId,
+              ref,
+              err,
+            });
+          }
+        }
+        data ??= await blobStore?.get(ref.uuid);
         if (data == null) continue;
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
         const safeName = buildSafeBlobFilename(ref);
-        const filePath = path.join(tempDir, safeName);
-        await fs.writeFile(filePath, buffer);
+        const hostFilePath = path.join(tempDir, safeName);
+        const runtimeFilePath = projectRoots
+          ? path.posix.join(runtimeTempDir, safeName)
+          : hostFilePath;
+        await fs.writeFile(hostFilePath, buffer);
         bytes += buffer.byteLength;
-        attachments.push({ ref, path: filePath });
+        attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {
         logger.warn("failed to materialize blob", { ref, err });
       }

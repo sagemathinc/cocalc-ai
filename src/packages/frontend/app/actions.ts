@@ -179,6 +179,14 @@ export class PageActions extends Actions<PageState> {
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {
+    if (
+      key === "agents" &&
+      redux.getStore("account")?.getIn(["other_settings", "openai_disabled"])
+    ) {
+      key = "projects";
+      // Direct URLs must be corrected even when routing suppresses history updates.
+      change_history = true;
+    }
     const customize = redux.getStore("customize");
     if (customize?.get("exam_mode")) {
       const examProjectId = customize.get("project_id");
@@ -199,6 +207,12 @@ export class PageActions extends Actions<PageState> {
       }
     }
 
+    if (key === "notifications" && change_history) {
+      const { setNotificationsOpen } =
+        await import("../notifications/drawer-state");
+      setNotificationsOpen(true);
+      return;
+    }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);
@@ -234,6 +248,20 @@ export class PageActions extends Actions<PageState> {
     const projectLabel = intl.formatMessage(labels.project);
 
     switch (key) {
+      case "agents": {
+        const agent_id = this.redux.getStore("page").get("active_agent_id");
+        const agent_name = this.redux.getStore("page").get("active_agent_name");
+        if (change_history) {
+          set_url(
+            getPageUrlPath({
+              page: "agents",
+              agent_id: agent_name ?? agent_id,
+            }),
+          );
+        }
+        set_window_title("Agents");
+        return;
+      }
       case "projects":
         if (change_history) {
           set_url(getPageUrlPath({ page: "projects" }));

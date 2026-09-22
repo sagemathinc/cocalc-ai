@@ -22,7 +22,10 @@ import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/
 import { initConatClient as initProjectRunnerConatClient } from "@cocalc/project-runner/run/conat-client";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
-import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs";
+import {
+  initCodexAttachmentBlobReader,
+  initCodexGeneratedImageBlobWriter,
+} from "./codex/generated-image-blobs";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { wireHostsApi } from "./hub/hosts";
@@ -134,6 +137,7 @@ function configureProjectHostAcpRuntime(): void {
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
+  initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
 }
 

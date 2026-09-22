@@ -32,6 +32,8 @@ import type { Generic } from "./generic";
 import "./generic";
 import type { Guidance } from "./guidance";
 import "./guidance";
+import type { AgentMessage } from "./agent-message";
+import "./agent-message";
 import type { Hashtag } from "./hashtag";
 import "./hashtag/editable";
 import type { Heading } from "./heading";
@@ -74,6 +76,7 @@ import type { Marks } from "../markdown-to-slate/handle-marks";
 declare module "slate" {
   export interface CustomTypes {
     Element:
+      | AgentMessage
       | Meta
       | References
       | Checkbox

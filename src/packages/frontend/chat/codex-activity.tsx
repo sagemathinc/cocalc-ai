@@ -29,13 +29,21 @@ import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AttachedSteerMessage } from "./agent-message-status";
+import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
 import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
 import { ActivityDiff } from "./activity-diff";
 import { activityPathContexts } from "./activity-path-context";
+import { PeerMessageCard, type PeerMessageEvent } from "./peer-message-card";
+import { useChatEmbeddingOptions } from "./embedding-options";
+import { openProjectFileResult } from "./open-result";
+import { projectFileTargetFromHref } from "./project-file-target";
 
 const { Text } = Typography;
+const OpenActivityFileContext = React.createContext<
+  ((target: { path: string; line?: number }) => void) | undefined
+>(undefined);
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
 type SubagentActivityItem = SubagentEvent & { seq: number; time?: number };
 type ActivityEntry =
@@ -149,6 +157,13 @@ type ActivityEntry =
       time?: number;
       text: string;
       state: AttachedSteerMessage["state"];
+    }
+  | {
+      kind: "peer-message";
+      id: string;
+      seq: number;
+      time?: number;
+      event: PeerMessageEvent;
     };
 
 export interface CodexActivityProps {
@@ -171,7 +186,26 @@ export interface CodexActivityProps {
   activitySteers?: AttachedSteerMessage[];
 }
 
-function renderSteerStatus(state: AttachedSteerMessage["state"]) {
+function renderSteerStatus(state: AttachedSteerMessage["state"], text: string) {
+  const agentDirection = agentMessageDirectionFromMarkdown(text);
+  if (agentDirection === "incoming") {
+    return {
+      label: "Agent guidance received",
+      borderColor: UI_COLORS.infoBg,
+      background: UI_COLORS.infoBg,
+      pillBackground: UI_COLORS.infoBg,
+      pillColor: UI_COLORS.info,
+    };
+  }
+  if (agentDirection === "outgoing") {
+    return {
+      label: "Agent guidance sent",
+      borderColor: UI_COLORS.successBg,
+      background: UI_COLORS.successBg,
+      pillBackground: UI_COLORS.successBg,
+      pillColor: UI_COLORS.success,
+    };
+  }
   switch (state) {
     case "sending":
       return {
@@ -266,6 +300,40 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     return !!initExpanded;
   });
   const [hovered, setHovered] = useState(false);
+  const embeddingOptions = useChatEmbeddingOptions();
+  const openFileInWorkbench = React.useCallback(
+    (target: { path: string; line?: number }) => {
+      if (!embeddingOptions.openFilesInWorkbench || !projectId || !chatPath)
+        return;
+      const projectActions = redux.getProjectActions(projectId);
+      void (async () => {
+        try {
+          let isDir = projectActions?.isDirViaCache?.(target.path);
+          if (
+            typeof isDir !== "boolean" &&
+            typeof projectActions?.isDir === "function"
+          ) {
+            isDir = await projectActions.isDir(target.path);
+          }
+          if (isDir === true) {
+            projectActions?.open_directory?.(target.path);
+            return;
+          }
+          const editorActions = redux.getEditorActions(projectId, chatPath);
+          const chatActions = editorActions?.getChatActions?.();
+          if (!chatActions) throw Error("Chat Workbench is unavailable");
+          openProjectFileResult(chatActions, { kind: "file", ...target });
+        } catch (err) {
+          alert_message({
+            type: "error",
+            message: `Cannot open path in Workbench: ${target.path} (${err})`,
+            timeout: 8,
+          });
+        }
+      })();
+    },
+    [chatPath, embeddingOptions.openFilesInWorkbench, projectId],
+  );
 
   useEffect(() => {
     if (!persistKey) return;
@@ -325,11 +393,23 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
 
   const showCloseButton = IS_TOUCH || hovered;
   const handleClickCapture = (e: React.MouseEvent) => {
-    if (!onOpenFileLink) return;
     const target = e.target as HTMLElement | null;
     const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
     if (!anchor) return;
     const href = anchor.getAttribute("href")?.trim() ?? "";
+    const file = projectFileTargetFromHref({
+      href,
+      projectId,
+      basePath,
+    });
+    if (file && embeddingOptions.openFilesInWorkbench) {
+      e.preventDefault();
+      e.stopPropagation();
+      openFileInWorkbench(file);
+      onOpenFileLink?.();
+      return;
+    }
+    if (!onOpenFileLink) return;
     if (
       href.startsWith("cocalc-file://open") ||
       href.startsWith("/") ||
@@ -463,42 +543,48 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   );
 
   return (
-    <div
-      style={{
-        marginTop: 8,
-        marginBottom: 8,
-        position: "relative",
-        padding: "8px 10px",
-        fontSize: baseFontSize,
-      }}
-      onMouseEnter={() => {
-        if (!IS_TOUCH) setHovered(true);
-      }}
-      onMouseLeave={() => {
-        if (!IS_TOUCH) setHovered(false);
-      }}
-      onClickCapture={handleClickCapture}
+    <OpenActivityFileContext.Provider
+      value={
+        embeddingOptions.openFilesInWorkbench ? openFileInWorkbench : undefined
+      }
     >
-      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        {hasActivityEntries ? header : null}
-        <CodexVmApprovalPrompt
-          projectId={projectId}
-          active={waitingForVmApproval}
-        />
-        {entries.map((entry, index) => (
-          <ActivityRow
-            key={entry.id}
-            rowIndex={index}
-            entry={entry}
-            fontSize={baseFontSize}
+      <div
+        style={{
+          marginTop: 8,
+          marginBottom: 8,
+          position: "relative",
+          padding: "8px 10px",
+          fontSize: baseFontSize,
+        }}
+        onMouseEnter={() => {
+          if (!IS_TOUCH) setHovered(true);
+        }}
+        onMouseLeave={() => {
+          if (!IS_TOUCH) setHovered(false);
+        }}
+        onClickCapture={handleClickCapture}
+      >
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+          {hasActivityEntries ? header : null}
+          <CodexVmApprovalPrompt
             projectId={projectId}
-            basePath={entryBasePaths[index]}
-            editorTheme={editorTheme}
-            inlineCodeLinks={inlineCodeLinks}
+            active={waitingForVmApproval}
           />
-        ))}
-      </Space>
-    </div>
+          {entries.map((entry, index) => (
+            <ActivityRow
+              key={entry.id}
+              rowIndex={index}
+              entry={entry}
+              fontSize={baseFontSize}
+              projectId={projectId}
+              basePath={entryBasePaths[index]}
+              editorTheme={editorTheme}
+              inlineCodeLinks={inlineCodeLinks}
+            />
+          ))}
+        </Space>
+      </div>
+    </OpenActivityFileContext.Provider>
   );
 };
 
@@ -661,7 +747,7 @@ function ActivityRow({
         </div>
       );
     case "steer":
-      const status = renderSteerStatus(entry.state);
+      const status = renderSteerStatus(entry.state, entry.text);
       return (
         <div data-codex-activity-entry-index={rowIndex}>
           <div
@@ -724,6 +810,12 @@ function ActivityRow({
               />
             </div>
           </div>
+        </div>
+      );
+    case "peer-message":
+      return (
+        <div data-codex-activity-entry-index={rowIndex}>
+          <PeerMessageCard event={entry.event} />
         </div>
       );
     case "diff":
@@ -1227,6 +1319,15 @@ function createEventEntry({
     }
     return undefined;
   }
+  if (event?.type === "peerMessage") {
+    return {
+      kind: "peer-message",
+      id: `peer-message-${event.attempt_id}`,
+      seq,
+      time,
+      event,
+    };
+  }
   if (event?.type === "file") {
     return {
       kind: "file",
@@ -1422,6 +1523,7 @@ function PathLink({
   basePath?: string;
   literal?: boolean;
 }) {
+  const openInWorkbench = React.useContext(OpenActivityFileContext);
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
   const parsedTarget = React.useMemo(
@@ -1438,6 +1540,10 @@ function PathLink({
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
       e.preventDefault();
+      if (openInWorkbench) {
+        openInWorkbench({ path: resolvedPath, line: parsedTarget.line });
+        return;
+      }
       void (async () => {
         try {
           let isDir = actions.isDirViaCache?.(resolvedPath);
@@ -1466,7 +1572,7 @@ function PathLink({
         }
       })();
     },
-    [actions, resolvedPath, parsedTarget.line],
+    [actions, openInWorkbench, resolvedPath, parsedTarget.line],
   );
   const node = (
     <code
@@ -2213,6 +2319,11 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
         break;
       case "steer":
         lines.push(`- Guidance: ${entry.text}`);
+        break;
+      case "peer-message":
+        lines.push(
+          `- Message to ${entry.event.target_name ? `@${entry.event.target_name}` : "agent"} (${entry.event.outcome}): ${entry.event.body}`,
+        );
         break;
       case "subagents":
         lines.push(

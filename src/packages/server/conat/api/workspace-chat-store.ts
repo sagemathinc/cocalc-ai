@@ -10,7 +10,7 @@ import {
   readChatStoreArchived,
   readChatStoreArchivedHit,
   rotateChatStore,
-  searchChatStoreArchived,
+  searchChatStore,
   vacuumChatStore,
   type ChatStoreScope,
 } from "@cocalc/backend/chat-store/sqlite-offload";
@@ -123,22 +123,27 @@ export async function workspaceChatStoreReadArchivedHit(
 
 export async function workspaceChatStoreSearch(
   opts: WorkspaceChatStorePaths & {
+    include_head?: boolean;
     query: string;
     thread_id?: string;
     exclude_thread_ids?: string[];
     limit?: number;
     offset?: number;
   },
+  account_id: string,
 ) {
   const { project_id, chat_path, db_path, ...search } = opts;
-  return await searchChatStoreArchived({
-    ...(await resolveWorkspaceChatStorePaths({
-      project_id,
-      chat_path,
-      db_path,
-    })),
-    ...search,
-  });
+  return await searchChatStore(
+    {
+      ...(await resolveWorkspaceChatStorePaths({
+        project_id,
+        chat_path,
+        db_path,
+      })),
+      ...search,
+    },
+    account_id,
+  );
 }
 
 export async function workspaceChatStoreDelete(

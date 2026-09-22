@@ -310,6 +310,24 @@ it("switches to a top navigation page through the page actions", async () => {
   expect(set_active_tab).toHaveBeenCalledWith("hosts", true);
 });
 
+it("selects a registered agent before opening My Agents", async () => {
+  const setState = jest.fn();
+  const set_active_tab = jest.fn();
+  Object.assign(redux, {
+    getActions: (name) =>
+      name === "page" ? { setState, set_active_tab } : undefined,
+  });
+  await navigate(
+    { kind: "agent", agentId: "agent-id", agentName: "reviewer" },
+    new AbortController().signal,
+  );
+  expect(setState).toHaveBeenCalledWith({
+    active_agent_id: "agent-id",
+    active_agent_name: "reviewer",
+  });
+  expect(set_active_tab).toHaveBeenCalledWith("agents", true);
+});
+
 it("retries focus once on the next frame and stays silent if it never sticks", async () => {
   const stubborn = navigationFixture();
   try {

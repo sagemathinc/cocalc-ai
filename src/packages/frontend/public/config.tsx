@@ -28,6 +28,7 @@ export {
 } from "@cocalc/util/public-site-metadata";
 
 export interface PublicConfig {
+  openai_disabled?: boolean;
   account_display_name?: string;
   account_email_address?: string;
   account_email_address_verified?: boolean;

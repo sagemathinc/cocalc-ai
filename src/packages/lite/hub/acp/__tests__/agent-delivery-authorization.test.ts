@@ -23,31 +23,29 @@ test.each([true, false])(
     const value = request();
     if (!generation) delete value.chat!.agent_delivery_generation;
     const api = {
-      authorizeDelivery: jest.fn(async () => {}),
       authorizeRpcExecution: jest.fn(async () => {}),
     };
     await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
       "Legacy agent delivery is retired",
     );
-    expect(api.authorizeDelivery).not.toHaveBeenCalled();
+    expect(api.authorizeRpcExecution).not.toHaveBeenCalled();
   },
 );
 test("ordinary human and RPC requests do not acquire legacy semantics", async () => {
   const value = request();
   delete value.chat!.agent_delivery_id;
   const api = {
-    authorizeDelivery: jest.fn(async () => {}),
     authorizeRpcExecution: jest.fn(async () => {}),
   };
   await authorizeAgentDeliveryExecution(value, api);
-  expect(api.authorizeDelivery).not.toHaveBeenCalled();
+  expect(api.authorizeRpcExecution).not.toHaveBeenCalled();
 });
 
 test("RPC queued work is reauthorized at execution", async () => {
   const value = request();
   delete value.chat!.agent_delivery_id;
   value.chat!.agent_rpc_execution = {
-    version: 2,
+    version: 3,
     source: {
       agent_id: "00000000-0000-4000-8000-000000000001",
       project_id: "00000000-0000-4000-8000-000000000002",
@@ -59,12 +57,14 @@ test("RPC queued work is reauthorized at execution", async () => {
     },
     target_path: "/home/user/recv.chat",
     target_thread_id: "thread",
-    link_id: "00000000-0000-4000-8000-000000000006",
+    agent_network_id: "00000000-0000-4000-8000-000000000006",
+    network_generation: "00000000-0000-4000-8000-000000000008",
+    account_generation: 0,
+    configured_delivery: "queued",
     principal_account_id: "00000000-0000-4000-8000-000000000007",
     guidance: false,
   };
   const api = {
-    authorizeDelivery: jest.fn(async () => {}),
     authorizeRpcExecution: jest.fn(async () => {}),
   };
   await authorizeAgentDeliveryExecution(value, api);

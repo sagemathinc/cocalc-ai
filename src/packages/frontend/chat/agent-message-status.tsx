@@ -19,6 +19,7 @@ import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import CodexLogPanel from "./codex-log-panel";
+import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
 import {
   reconcileSubagentEvents,
   summarizeSubagentEvents,
@@ -26,6 +27,7 @@ import {
 import type { ActivityLogContext } from "./actions/activity-logs";
 import type { CodexLiveLogStatus } from "./use-codex-log";
 import "./agent-message-status.css";
+import { PeerMessageList, type PeerMessageEvent } from "./peer-message-card";
 
 const activityScrollPositions = new Map<string, number>();
 const SCROLL_BOTTOM_SENTINEL = Number.POSITIVE_INFINITY;
@@ -76,7 +78,26 @@ export interface AttachedSteerMessage {
   state: AttachedSteerState;
 }
 
-function renderSteerStatus(state: AttachedSteerState) {
+function renderSteerStatus(state: AttachedSteerState, text: string) {
+  const agentDirection = agentMessageDirectionFromMarkdown(text);
+  if (agentDirection === "incoming") {
+    return {
+      label: "Agent guidance received",
+      borderColor: UI_COLORS.infoBg,
+      background: UI_COLORS.infoBg,
+      pillBackground: UI_COLORS.infoBg,
+      pillColor: UI_COLORS.info,
+    };
+  }
+  if (agentDirection === "outgoing") {
+    return {
+      label: "Agent guidance sent",
+      borderColor: UI_COLORS.successBg,
+      background: UI_COLORS.successBg,
+      pillBackground: UI_COLORS.successBg,
+      pillColor: UI_COLORS.success,
+    };
+  }
   switch (state) {
     case "sending":
       return {
@@ -114,7 +135,7 @@ function renderSteerStatus(state: AttachedSteerState) {
 }
 
 export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
-  const status = renderSteerStatus(steer.state);
+  const status = renderSteerStatus(steer.state, steer.text);
   return (
     <section
       aria-label={status.label}
@@ -297,7 +318,6 @@ interface AgentMessageStatusProps {
   activitySteers?: AttachedSteerMessage[];
   interruptRequested?: boolean;
   onInterrupt?: () => void;
-  onContinue?: () => void;
   activityLiveStatus?: CodexLiveLogStatus;
   activeDescendantThreadIds?: readonly string[];
   backgroundTerminalProcesses?: number;
@@ -341,28 +361,6 @@ export function AgentActivityChip({
     : UI_COLORS.secondary;
   const liveStatusIssue =
     generating && (liveStatus === "reconnecting" || liveStatus === "error");
-  const liveStatusTitle = useMemo(() => {
-    const parts: string[] = [];
-    if (liveStatusIssue) {
-      parts.push(
-        liveStatus === "error"
-          ? "Activity stream: disconnected"
-          : "Activity stream: reconnecting",
-      );
-    }
-    if (Number.isFinite(runStartMs) && runStartMs > 0) {
-      parts.push(`Running since: ${formatTimestampTitle(runStartMs)}`);
-    }
-    if (
-      typeof lastActivityAtMs === "number" &&
-      Number.isFinite(lastActivityAtMs)
-    ) {
-      parts.push(`Last activity: ${formatTimestampTitle(lastActivityAtMs)}`);
-    } else if (generating) {
-      parts.push("Last activity: awaiting first event");
-    }
-    return parts.join("\n");
-  }, [runStartMs, lastActivityAtMs, generating, liveStatus, liveStatusIssue]);
   const palette = generating
     ? {
         background: UI_COLORS.warningBg,
@@ -385,113 +383,143 @@ export function AgentActivityChip({
           : UI_COLORS.secondary,
       };
 
+  const started =
+    Number.isFinite(runStartMs) && runStartMs > 0
+      ? new Date(runStartMs)
+      : undefined;
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
-      title={liveStatusTitle || "View Codex activity log"}
-      aria-label="Open Codex activity details"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "4px 9px",
-        borderRadius: 999,
-        background: palette.background,
-        border: `1px solid ${palette.border}`,
-        lineHeight: 1.2,
-        cursor: "pointer",
-        boxShadow: generating ? `inset 0 0 0 1px ${palette.border}` : undefined,
-        ...style,
-      }}
+    <Tooltip
+      allow_touch
+      ignore_hide_setting
+      title={
+        <div>
+          {started ? (
+            <div>
+              Started <TimeAgo date={started} />
+            </div>
+          ) : (
+            <div>Start time unavailable</div>
+          )}
+          {liveStatusIssue ? (
+            <div>
+              Activity stream:{" "}
+              {liveStatus === "error" ? "disconnected" : "reconnecting"}
+            </div>
+          ) : null}
+        </div>
+      }
     >
-      <span
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: "50%",
-          background: palette.accent,
-          flex: "0 0 auto",
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen();
+          }
         }}
-      />
-      {generating ? (
-        <ClockCircleOutlined style={{ fontSize: 11, color: palette.accent }} />
-      ) : null}
-      <span
+        aria-label="Open Codex activity details"
         style={{
-          color: palette.text,
-          fontSize: 12,
-          fontWeight: generating ? 600 : 500,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 9px",
+          borderRadius: 999,
+          background: palette.background,
+          border: `1px solid ${palette.border}`,
+          lineHeight: 1.2,
+          cursor: "pointer",
+          boxShadow: generating
+            ? `inset 0 0 0 1px ${palette.border}`
+            : undefined,
+          ...style,
         }}
       >
-        {generating
-          ? `Running ${durationLabel}`
-          : `Worked for ${durationLabel}`}
-      </span>
-      {activeSubagents > 0 ? (
         <span
-          style={{ color: UI_COLORS.warning, fontSize: 12, fontWeight: 600 }}
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: palette.accent,
+            flex: "0 0 auto",
+          }}
+        />
+        {generating ? (
+          <ClockCircleOutlined
+            style={{ fontSize: 11, color: palette.accent }}
+          />
+        ) : null}
+        <span
+          style={{
+            color: palette.text,
+            fontSize: 12,
+            fontWeight: generating ? 600 : 500,
+          }}
         >
-          · {activeSubagents} subagent{activeSubagents === 1 ? "" : "s"} working
+          {generating
+            ? `Running ${durationLabel}`
+            : `Worked for ${durationLabel}`}
         </span>
-      ) : null}
-      {generating && lastActivityInfo.label ? (
-        <Tooltip
-          title={
-            typeof lastActivityAtMs === "number" &&
-            Number.isFinite(lastActivityAtMs) ? (
-              <span>
-                Last backend activity{" "}
-                <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
-                {formatTimestampTitle(lastActivityAtMs)}
-              </span>
-            ) : (
-              "The turn is running, but no Codex activity event has arrived yet."
-            )
-          }
-        >
+        {activeSubagents > 0 ? (
           <span
-            style={{
-              color: generating ? palette.text : lastActivityColor,
-              fontSize: 12,
-              fontWeight: generating ? 500 : undefined,
-              opacity: 0.82,
-            }}
+            style={{ color: UI_COLORS.warning, fontSize: 12, fontWeight: 600 }}
           >
-            {lastActivityInfo.label}
+            · {activeSubagents} subagent{activeSubagents === 1 ? "" : "s"}{" "}
+            working
           </span>
-        </Tooltip>
-      ) : null}
-      {liveStatusIssue ? (
-        <Tooltip
-          title={
-            liveStatus === "error"
-              ? "The Codex activity stream did not reconnect. Refresh this browser tab if the turn appears stuck."
-              : "The Codex activity stream is reconnecting. New activity may be delayed."
-          }
-        >
-          <span
-            style={{
-              color:
-                liveStatus === "error" ? UI_COLORS.danger : UI_COLORS.warning,
-              fontSize: 12,
-              fontWeight: 500,
-            }}
+        ) : null}
+        {generating && lastActivityInfo.label ? (
+          <Tooltip
+            title={
+              typeof lastActivityAtMs === "number" &&
+              Number.isFinite(lastActivityAtMs) ? (
+                <span>
+                  Last backend activity{" "}
+                  <TimeAgo date={new Date(lastActivityAtMs)} /> at{" "}
+                  {formatTimestampTitle(lastActivityAtMs)}
+                </span>
+              ) : (
+                "The turn is running, but no Codex activity event has arrived yet."
+              )
+            }
           >
-            {liveStatus === "error"
-              ? "Stream disconnected"
-              : "Stream reconnecting"}
-          </span>
-        </Tooltip>
-      ) : null}
-    </div>
+            <span
+              style={{
+                color: generating ? palette.text : lastActivityColor,
+                fontSize: 12,
+                fontWeight: generating ? 500 : undefined,
+                opacity: 0.82,
+              }}
+            >
+              {lastActivityInfo.label}
+            </span>
+          </Tooltip>
+        ) : null}
+        {liveStatusIssue ? (
+          <Tooltip
+            title={
+              liveStatus === "error"
+                ? "The Codex activity stream did not reconnect. Refresh this browser tab if the turn appears stuck."
+                : "The Codex activity stream is reconnecting. New activity may be delayed."
+            }
+          >
+            <span
+              style={{
+                color:
+                  liveStatus === "error" ? UI_COLORS.danger : UI_COLORS.warning,
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              {liveStatus === "error"
+                ? "Stream disconnected"
+                : "Stream reconnecting"}
+            </span>
+          </Tooltip>
+        ) : null}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -521,7 +549,6 @@ export function AgentMessageStatus({
   activitySteers,
   interruptRequested = false,
   onInterrupt,
-  onContinue,
   activityLiveStatus,
   activeDescendantThreadIds,
   backgroundTerminalProcesses = 0,
@@ -728,6 +755,11 @@ export function AgentMessageStatus({
     activeDescendantThreadIds != null
       ? new Set(activeDescendantThreadIds).size
       : summarizeSubagentEvents(effectiveLogEvents ?? []).active;
+  const peerMessages = (effectiveLogEvents ?? []).flatMap((message) =>
+    message.type === "event" && message.event.type === "peerMessage"
+      ? [message.event as PeerMessageEvent]
+      : [],
+  );
   const backgroundCommands = Math.max(
     0,
     Number.isFinite(backgroundTerminalProcesses)
@@ -775,11 +807,6 @@ export function AgentMessageStatus({
                 : "Interrupt"}
           </Button>
         ) : null}
-        {!generating && onContinue ? (
-          <Button type="primary" size="small" onClick={onContinue}>
-            Continue
-          </Button>
-        ) : null}
       </div>
       {!generating && outstandingWork > 0 ? (
         <div
@@ -802,6 +829,7 @@ export function AgentMessageStatus({
         </div>
       ) : null}
       <AttachedSteerStatusList attachedSteers={attachedSteers} />
+      <PeerMessageList events={peerMessages} />
 
       <Drawer
         title={
