@@ -21,6 +21,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   android: {
+    permissions: [
+      "android.permission.MODIFY_AUDIO_SETTINGS",
+      "android.permission.BLUETOOTH",
+    ],
     package: isProduction
       ? "com.sagemath.cocalc.mobile"
       : "com.sagemath.cocalc.mobile.dev",
@@ -32,7 +36,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-audio",
       {
         microphonePermission:
-          "Allow CoCalc to record dictation for your message drafts.",
+          "Allow CoCalc to record dictation and talk with your agents.",
         enableBackgroundRecording: false,
         enableBackgroundPlayback: false,
       },

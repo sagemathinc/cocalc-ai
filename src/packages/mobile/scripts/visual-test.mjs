@@ -91,7 +91,7 @@ try {
       "test",
       "--test-output-dir",
       resolve(output, name),
-      ".maestro/smoke.yaml",
+      env.MOBILE_VISUAL_FLOW || ".maestro/smoke.yaml",
     ]);
   }
 } finally {

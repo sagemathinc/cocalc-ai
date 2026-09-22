@@ -119,6 +119,7 @@ export function createPreviewChat(): ConversationClient {
     const sent = message("human", text);
     const response = {
       ...message("agent", ""),
+      parent_message_id: sent.message_id,
       generating: true,
       state: "running" as const,
       activity: {

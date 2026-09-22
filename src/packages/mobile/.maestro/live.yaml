@@ -1,0 +1,39 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- extendedWaitUntil:
+    visible: "Open local UI preview"
+    timeout: 30000
+- tapOn: "Open local UI preview"
+- tapOn: "Open Research"
+- assertVisible: "Message Codex.*"
+- tapOn: "Live voice"
+- assertVisible: ".*Silent local simulation.*"
+- takeScreenshot: live-confirmation
+- tapOn: "Start silent simulation"
+- assertVisible: ".*Silent simulation.*"
+- assertNotVisible: "Message Codex.*"
+- tapOn: "Simulate spoken task"
+- extendedWaitUntil:
+    visible: "Agent result is ready in chat."
+    timeout: 15000
+- takeScreenshot: live-result
+- tapOn: "Mute microphone"
+- assertVisible: "Unmute microphone"
+- takeScreenshot: live-muted
+- tapOn: "Unmute microphone"
+- tapOn: "End live call"
+- assertVisible: "Message Codex.*"
+- tapOn: "Live voice"
+- tapOn: "Start silent simulation"
+- tapOn: "Simulate spoken task"
+- tapOn: "Simulate disconnect"
+- assertVisible: ".*Simulated connection lost.*"
+- takeScreenshot: live-disconnected
+- tapOn: "Live voice"
+- tapOn: "Start silent simulation"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertNotVisible: "End live call"
+- assertVisible: "Message Codex.*"
+- takeScreenshot: live-returned

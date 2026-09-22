@@ -14,6 +14,8 @@ import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
 import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams } from "expo-router";
+import { useLiveVoice } from "../../../live/use-live";
+import { LiveVoiceControls } from "../../../live/controls";
 import { useSpeech } from "../../../speech/use-speech";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import {
@@ -344,7 +346,8 @@ export default function ChatScreen() {
     const before = draftRef.current;
     changeDraft(`${before}${before && !/\s$/.test(before) ? " " : ""}${text}`);
   });
-  const speechBusy = speech.state.phase !== "idle";
+  const live = useLiveVoice(profileId, projectId, threadId, client, snapshot);
+  const speechBusy = speech.state.phase !== "idle" || live.phase !== "idle";
 
   useEffect(() => {
     void connect();
@@ -601,12 +604,20 @@ export default function ChatScreen() {
           scrollEventThrottle={16}
         />
         <View style={styles.composer}>
+          <LiveVoiceControls
+            live={live}
+            disabled={
+              speech.state.phase !== "idle" ||
+              submitting ||
+              snapshot.connection !== "connected"
+            }
+          />
           {speech.state.error ? (
             <Text accessibilityRole="alert" style={styles.errorText}>
               {speech.state.error}
             </Text>
           ) : null}
-          {speechBusy ? (
+          {speech.state.phase !== "idle" ? (
             <View style={styles.actions}>
               <Text accessibilityLiveRegion="polite" style={styles.statusText}>
                 {speech.state.phase === "recording"
@@ -643,30 +654,34 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           ) : null}
-          <TextInput
-            accessibilityLabel="Message Codex"
-            editable={draftLoaded && !submitting}
-            multiline
-            onChangeText={changeDraft}
-            placeholder="Message Codex"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-            value={draft}
-          />
+          {live.phase === "idle" ? (
+            <TextInput
+              accessibilityLabel="Message Codex"
+              editable={draftLoaded && !submitting}
+              multiline
+              onChangeText={changeDraft}
+              placeholder="Message Codex"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft}
+            />
+          ) : null}
           <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Dictate message"
-              accessibilityState={{
-                disabled: speechBusy || !draftLoaded || submitting,
-              }}
-              disabled={speechBusy || !draftLoaded || submitting}
-              onPress={() => void speech.controller.start()}
-              style={styles.messageAction}
-            >
-              <Text style={styles.link}>Dictate</Text>
-            </Pressable>
-            {running ? (
+            {live.phase === "idle" ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dictate message"
+                accessibilityState={{
+                  disabled: speechBusy || !draftLoaded || submitting,
+                }}
+                disabled={speechBusy || !draftLoaded || submitting}
+                onPress={() => void speech.controller.start()}
+                style={styles.messageAction}
+              >
+                <Text style={styles.link}>Dictate</Text>
+              </Pressable>
+            ) : null}
+            {running && live.phase === "idle" ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Send guidance to running agent"
@@ -694,21 +709,23 @@ export default function ChatScreen() {
                 </Text>
               </Pressable>
             ) : null}
-            <Pressable
-              accessibilityLabel="Send message to Codex"
-              accessibilityRole="button"
-              disabled={!canSend}
-              onPress={() => void send()}
-              style={({ pressed }) => [
-                styles.sendButton,
-                !canSend && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.sendText}>
-                {submitting ? "Sending…" : "Send"}
-              </Text>
-            </Pressable>
+            {live.phase === "idle" ? (
+              <Pressable
+                accessibilityLabel="Send message to Codex"
+                accessibilityRole="button"
+                disabled={!canSend}
+                onPress={() => void send()}
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  !canSend && styles.disabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.sendText}>
+                  {submitting ? "Sending…" : "Send"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </KeyboardAvoidingView>

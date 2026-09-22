@@ -10,6 +10,11 @@ import {
   saveChatDraft,
 } from "./drafts";
 
+let mockLivePhase = "idle";
+jest.mock("../live/use-live", () => ({
+  useLiveVoice: () => ({ phase: mockLivePhase }),
+}));
+
 let mockTranscript: (text: string) => void;
 jest.mock("../speech/use-speech", () => ({
   useSpeech: (
@@ -85,6 +90,7 @@ const input = () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLivePhase = "idle";
   const snapshot = {
     revision: 1,
     ready: true,
@@ -219,4 +225,22 @@ it("appends dictation to the latest edited draft and never sends automatically",
   );
   expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
   expect(ensureProjectRunning).not.toHaveBeenCalled();
+});
+
+it("keeps an edited draft while voice hides the composer, and restores it afterward", async () => {
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => input().props.onChangeText("Keep this draft"));
+  mockLivePhase = "live";
+  await act(async () => renderer.update(<ChatScreen />));
+  expect(
+    renderer.root.findAllByProps({ accessibilityLabel: "Message Codex" }),
+  ).toHaveLength(0);
+  expect(button("Interrupt Codex turn")).toBeDefined();
+  mockLivePhase = "idle";
+  await act(async () => renderer.update(<ChatScreen />));
+  expect(input().props.value).toBe("Keep this draft");
+  expect(clearChatDraftIfUnchanged).not.toHaveBeenCalled();
+  expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
 });

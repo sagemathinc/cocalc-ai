@@ -136,3 +136,50 @@ check microphone permission, dictate a short task, review/send it, switch away
 while it runs, return, and try Read aloud/Stop. Also check headset routing and
 an interrupted recording. The local UI preview simulates transcription/playback;
 it never records or calls the speech provider.
+
+### Local live-voice preview
+
+Start `EXPO_PUBLIC_MOBILE_PREVIEW=1 pnpm exec expo start --dev-client --port 8081`
+for a phone (or `pnpm start:preview` on port 8082 for the simulator). Reload the
+app, return to its welcome screen, and choose **Open local UI preview → Research
+→ Live voice → Start silent simulation**. This explicit preview profile never signs in
+or uses a remote agent, microphone, audio playback, or provider connection.
+It is silent: simulated replies appear in captions.
+
+**Simulate spoken task** feeds transcript and duplicate delegation events through
+the real conversation bridge into the local fixture chat. Its delayed result
+returns through the same bridge to the simulated voice captions. Try mute/unmute,
+ending a call before the result, **Simulate disconnect**, and leaving/returning to
+the app. Accepted preview tasks continue independently of the call. The displayed
+cost is an example only. Text drafts are preserved while the call panel replaces
+the composer. The extended `pnpm test:visual` flow covers these states in light,
+dark, and enlarged-text configurations.
+
+### Real live-voice development gate
+
+The native development build includes `react-native-webrtc`; a rebuild is needed
+for actual audio, but the local simulation works without loading that module.
+The server API is implemented but awaits staging integration and real-provider
+qualification. Remote deployment is intentionally on hold.
+
+The preview API requires **both** `COCALC_LIVE_VOICE_DEV=1` on the account-home
+server and an administrator account, plus an existing account/project OpenAI API
+key. Site-funded live voice and customer access remain disabled. Keys stay on the
+server; audio travels directly between the phone and OpenAI. Session admission,
+heartbeat, and end operations route to the account's home bay; ordinary agent
+work uses the existing project-host chat transport.
+
+Calls expire after 120 seconds, with a 25-second heartbeat lease and five-second
+server cleanup sweep. Lease records are durable across server restarts; keep the
+development switch enabled until sessions are closed. Failed provider hangups
+remain pending for retries. These are application cleanup deadlines, not a
+provider-enforced monetary cap: server/provider outages, credential revocation,
+or an unknown creation response still require operator/provider reconciliation.
+This limitation must be resolved before customer rollout.
+
+Spoken task submissions and agent results live in the existing chat. Incidental
+voice captions are currently transient; full finalized-voice transcript
+reconciliation, verified provider usage settlement, configurable paid entitlements,
+and background/Bluetooth qualification remain later work. Ending a call never
+invokes agent interruption. Voice approval is not a substitute for the existing
+approval controls.

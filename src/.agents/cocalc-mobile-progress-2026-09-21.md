@@ -170,3 +170,58 @@ Real microphone, speaker/headset routing, interruptions, and actual provider
 usage still require a physical-device smoke check. The new modules and
 microphone permission require a native rebuild, with a freshly restarted Metro
 server; see the mobile README for the exact commands.
+
+## Live voice development and local preview
+
+The dictation/read-aloud milestone was confirmed working on the maintainer's
+physical iPhone after replacing unsupported AbortSignal.throwIfAborted calls.
+The native tests now use React Native's actual abort-controller implementation.
+
+Implemented a development-gated live voice path with native WebRTC, direct
+provider media, and a headless transcript/delegation bridge to the current agent
+conversation. Server admission is account-home routed, checks project access,
+and requires an administrator plus an explicit development environment switch.
+Only existing account/project OpenAI keys are supported; no site-funded or
+customer live voice is enabled. Durable leases, heartbeats, and hangup cleanup
+bound ordinary sessions. Provider uncertainty/outages still need reconciliation;
+this is not yet a production-grade spend guarantee.
+
+Staging is being prepared by the maintainer. lite1b.cocalc.ai is busy and must
+not be modified. No remote deployment has been performed. PR 640 has merged
+into origin/main; the mobile branch will need synchronization before staging
+integration.
+
+While waiting, added a local-only live voice transport to the explicitly gated
+preview profile. It exercises the same delegation bridge with duplicate events,
+delayed fixture replies, mute, end, disconnect, and background transitions. No
+microphone, credentials, provider calls, or real agent submissions are involved.
+Voice task/result messages persist in the fixture chat; incidental captions are
+transient, as in the initial real-live prototype.
+
+The call panel hides the inactive text composer without clearing its draft,
+dismisses the keyboard at start, labels caption speakers, and avoids announcing
+every timer tick to screen readers. Permission-dialog inactivity does not cancel
+a call during startup; backgrounding does. Native capture cancellation tests
+cover late permission and late admission cleanup.
+
+Native iPhone build succeeded and was installed with devicectl. Launch requires
+unlocking the phone. This proves build/install compatibility, not physical live
+audio or GPT-Live integration. Finalized transcript reconciliation, actual
+provider usage accounting, paid customer entitlement, and real-device audio
+qualification remain outstanding. See the mobile README for local preview and
+development-gate instructions.
+
+The maintainer opened the installed preview on the iPhone. Their feedback exposed
+ambiguous labeling: the simulation intentionally produces captions, not sound.
+The panel and start button now explicitly say "Silent simulation", and the
+confirmation explains that it uses neither the microphone nor audio playback.
+
+Validation: mobile typecheck, 62 mobile domain/UI/adapter tests, server build and
+six focused live-voice tests, frontend lint, dependency consistency, and diff
+whitespace checks passed. The focused Maestro live flow passed in light, dark,
+and large-text appearances (15 screenshots), covering delegation/results,
+mute, end, disconnect, and background/return. Artifacts are under
+`src/packages/mobile/dist/visual/2026-09-22T00-37-31.995Z/`.
+Run this focused flow with
+`MOBILE_VISUAL_FLOW=.maestro/live.yaml pnpm -C src/packages/mobile test:visual`.
+These simulated checks do not qualify real provider audio or billing behavior.
