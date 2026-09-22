@@ -52,8 +52,7 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   },
   launch: {
     binary: "claude-agent-acp",
-    executable:
-      "/home/user/.local/share/cocalc/acp/claude-code/0.79.0/node_modules/.bin/claude-agent-acp",
+    executable: "/opt/cocalc/harnesses/claude-code/0.79.0/bin/claude-agent-acp",
     requiredArgs: ["--hide-claude-auth"],
     projectSecret: {
       name: "ANTHROPIC_API_KEY",

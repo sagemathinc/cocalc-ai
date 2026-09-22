@@ -20,7 +20,7 @@ test("Claude qualification is pinned and fails closed on subscriptions", () => {
     },
     launch: {
       binary: "claude-agent-acp",
-      executable: expect.stringMatching(/^\/home\/user\//),
+      executable: expect.stringMatching(/^\/opt\/cocalc\/harnesses\//),
       requiredArgs: expect.arrayContaining(["--hide-claude-auth"]),
       projectSecret: {
         name: "ANTHROPIC_API_KEY",
