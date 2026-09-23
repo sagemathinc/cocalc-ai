@@ -166,6 +166,9 @@ test("account credentials are exposed only through a revocable relay mount", asy
   );
   const args = mockExec.mock.calls[0][1];
   expect(args).toContain("mount:/host-relay:/run/cocalc/credential-relay:true");
+  expect(args).toContain(
+    `mount:${process.cwd()}/qualified-harness/index.js:/opt/cocalc/acp/qualified-harness-entry.js:true`,
+  );
   expect(args).not.toContain("short-lived-token");
   expect(args.slice(-3)).toEqual(["claude-code", "0.79.0", "account-api-key"]);
   await handle.stop();
@@ -225,7 +228,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
   });
   expect(command.executable).toBe("/opt/cocalc/bin/node");
   expect(command.args).toEqual([
-    "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js",
+    "/opt/cocalc/acp/qualified-harness-entry.js",
     "claude-code",
     "0.79.0",
     "project-secret",

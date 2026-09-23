@@ -43,8 +43,10 @@ import type { CredentialHttpRelay } from "./credential-http-relay";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
-const QUALIFIED_HARNESS_ENTRY =
-  "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js";
+const QUALIFIED_HARNESS_ENTRY = "/opt/cocalc/acp/qualified-harness-entry.js";
+const QUALIFIED_HARNESS_HOST_ENTRY =
+  process.env.COCALC_QUALIFIED_HARNESS_ENTRY ??
+  join(process.cwd(), "qualified-harness", "index.js");
 const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
 export function resolveHarnessCommand(
@@ -273,6 +275,15 @@ export async function launchHarnessInProject(
         mountArg({
           source: credentialRelayDirectory,
           target: CREDENTIAL_RELAY_MOUNT,
+          readOnly: true,
+        }),
+      );
+    }
+    if (profile.version === 2) {
+      args.push(
+        mountArg({
+          source: QUALIFIED_HARNESS_HOST_ENTRY,
+          target: QUALIFIED_HARNESS_ENTRY,
           readOnly: true,
         }),
       );

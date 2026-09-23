@@ -145,6 +145,10 @@ echo "- Bundle bounded chat search worker"
 "$ROOT/scripts/ncc.sh" build packages/backend/dist/chat-store/search-worker.js \
   -o "$OUT"/chat-search-worker
 
+echo "- Bundle qualified ACP harness launcher"
+"$ROOT/scripts/ncc.sh" build packages/project-host/dist/acp/qualified-harness-entry.js \
+  -o "$OUT"/qualified-harness
+
 echo "- Copy compiled project-host dist/"
 if [ -d "packages/project-host/dist" ]; then
   mkdir -p "$OUT"/dist
