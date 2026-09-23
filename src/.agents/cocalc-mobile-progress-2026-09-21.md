@@ -314,7 +314,7 @@ lint, and iOS bundle export passed.
 A fresh `CoCalc` Release build containing those fixes was signed and installed
 on the same phone. Its 7.1 MB JavaScript bundle is embedded in the app. With
 Metro stopped, CoreDevice launched the regular CoCalc app and reported its
-process running. Screen-level acceptance of this specific Release build,
-including opening the PDF link, remains pending maintainer confirmation. The
-local signed build is still a device-test artifact, not a TestFlight or store
-distribution build.
+process running. The maintainer then confirmed this specific Release build
+opened a chat, sent a photo and PDF, and opened the PDF link on the iPhone.
+The local signed build is still a device-test artifact, not a TestFlight or
+store distribution build.
