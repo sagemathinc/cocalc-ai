@@ -1,0 +1,16 @@
+.cocalc-agent-sidebar-row .cocalc-agent-sidebar-row-reveal {
+  opacity: 0;
+}
+
+.cocalc-agent-sidebar-row:hover .cocalc-agent-sidebar-row-reveal,
+.cocalc-agent-sidebar-row:focus-within .cocalc-agent-sidebar-row-reveal,
+.cocalc-agent-sidebar-row:has(.ant-dropdown-open)
+  .cocalc-agent-sidebar-row-reveal {
+  opacity: 1;
+}
+
+@media (hover: none), (any-pointer: coarse) {
+  .cocalc-agent-sidebar-row .cocalc-agent-sidebar-row-reveal {
+    opacity: 1;
+  }
+}

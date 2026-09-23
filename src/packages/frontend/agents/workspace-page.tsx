@@ -65,6 +65,7 @@ import {
 } from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
+import "./workspace-sidebar-row.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
@@ -2852,6 +2853,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     return (
       <div
         role="listitem"
+        className="cocalc-agent-sidebar-row"
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
@@ -2861,18 +2863,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         }}
       >
         {reorderable ? (
-          <DragHandle
-            id={id}
-            ariaLabel={`Drag @${agent.name} to reorder`}
-            title="Drag to reorder"
-            style={{
-              alignItems: "center",
-              cursor: "grab",
-              display: "flex",
-              flex: "0 0 auto",
-              padding: "10px 6px",
-            }}
-          />
+          <span className="cocalc-agent-sidebar-row-reveal">
+            <DragHandle
+              id={id}
+              ariaLabel={`Drag @${agent.name} to reorder`}
+              title="Drag to reorder"
+              style={{
+                alignItems: "center",
+                cursor: "grab",
+                display: "flex",
+                flex: "0 0 auto",
+                padding: "10px 6px",
+              }}
+            />
+          </span>
         ) : (
           <span aria-hidden style={{ flex: "0 0 26px" }} />
         )}
@@ -2880,6 +2884,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           <button
             type="button"
             aria-current={active ? "page" : undefined}
+            aria-label={`${theme.title}, @${agent.name}, ${agent.project_title || agent.endpoint.project_id}`}
+            title={`@${agent.name} · ${agent.project_title || agent.endpoint.project_id}`}
             onClick={() => selectAgent(agent)}
             style={{
               alignItems: "center",
@@ -2916,27 +2922,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 {theme.title}
               </Text>
               <Text type="secondary" ellipsis style={{ display: "block" }}>
-                @{agent.name}
                 {showProjectTitle
-                  ? ` · ${agent.project_title || agent.endpoint.project_id}`
-                  : ""}
+                  ? agent.project_title || agent.endpoint.project_id
+                  : `@${agent.name}`}
               </Text>
             </span>
           </button>
-          <div style={{ marginInlineStart: 38 }}>
-            <AgentNetworkPills
-              networks={networksForAgent(networks, agent)}
-              maxVisible={3}
-              selectedNetworkId={networkFilterId}
-              onSelect={selectNetwork}
-              onOpen={(network) =>
-                setNetworkDetailsId(network.agent_network_id)
-              }
-            />
-          </div>
         </div>
         {!hidden && (
           <Button
+            className={pinned ? undefined : "cocalc-agent-sidebar-row-reveal"}
             type="text"
             size="small"
             icon={
@@ -3002,6 +2997,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           }}
         >
           <Button
+            className="cocalc-agent-sidebar-row-reveal"
             type="text"
             size="small"
             aria-label={`More actions for @${agent.name}`}

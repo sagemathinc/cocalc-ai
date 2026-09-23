@@ -28,6 +28,14 @@
         {
           "type": "assertFocusWithin",
           "selector": "[aria-label='Artifact Library']"
+        },
+        {
+          "type": "focus",
+          "selector": "aside .cocalc-agent-sidebar-row button[aria-label^='More actions for']"
+        },
+        {
+          "type": "assertFocusWithin",
+          "selector": "aside .cocalc-agent-sidebar-row"
         }
       ],
       "cleanupActions": []
