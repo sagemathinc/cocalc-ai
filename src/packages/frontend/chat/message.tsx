@@ -2434,9 +2434,6 @@ export default function Message({
       <>
         {renderForkNotice()}
         <AgentMessageStatus
-          runtimeKind={
-            field(message, "acp_runtime_kind") === "acp" ? "acp" : "codex"
-          }
           show={showCodexActivity && !suppressInlineCodexActivity}
           generating={effectiveGenerating}
           durationLabel={durationLabel}

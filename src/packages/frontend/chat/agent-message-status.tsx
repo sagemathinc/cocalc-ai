@@ -293,7 +293,6 @@ export function describeLastActivity({
 }
 
 interface AgentMessageStatusProps {
-  runtimeKind?: "codex" | "acp";
   show: boolean;
   generating: boolean;
   durationLabel: string;
@@ -527,7 +526,6 @@ export function AgentActivityChip({
 }
 
 export function AgentMessageStatus({
-  runtimeKind,
   show,
   generating,
   durationLabel,
