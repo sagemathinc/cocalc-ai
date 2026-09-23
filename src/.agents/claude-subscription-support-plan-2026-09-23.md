@@ -6,6 +6,24 @@ Status: offline auth-contract qualification completed; Pro/Max login, billing,
 and credential isolation are not implemented or verified in CoCalc. See
 `src/.agents/claude-subscription-offline-qualification-2026-09-23.md`.
 
+## Implementation Note (2026-09-23)
+
+`AcpHarnessClient` now has an opt-in `claude-subscription-controller` session
+policy. It pins the reported adapter name/version, sends `tools: []`, empty
+settings/skills/plugins/agents/MCP configuration in Claude session metadata,
+and refuses a prompt unless the adapter has pushed an explicit Pro/Max account
+status. Fixture tests cover missing status, API-key status, and an unqualified
+adapter. The existing API-key path does not opt in and is unchanged.
+
+This policy is **not a credential-isolation boundary** and is not connected to
+the production launcher. The adapter's status push is asynchronous and is not
+provider billing proof; it can also become stale after a session opens. The
+current sidecar still mounts project data and secrets, so it must not be used
+for personal subscription login. No Connect flow, credential store, isolated
+controller, mediated project tool plane, or live Pro/Max test exists yet.
+Subscription selection must remain disabled until those pieces and the exit
+gates below are complete.
+
 ## Goal
 
 Let a CoCalc user connect their own Claude Pro or Max account and run the

@@ -32,6 +32,7 @@ import type {
   HarnessSessionControls,
   HarnessSessionSettings,
 } from "@cocalc/util/ai/harness-controls";
+import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 
 function unsupportedCallback(method: string): () => Promise<never> {
   return async () => {
@@ -72,6 +73,38 @@ export type HarnessEvent =
       toolCallId: string;
       outcome: "allowed" | "cancelled";
     };
+
+export type HarnessSessionPolicy = "default" | "claude-subscription-controller";
+
+const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
+
+export function claudeSubscriptionSessionMeta(): Record<string, unknown> {
+  return {
+    claudeCode: {
+      options: {
+        tools: [],
+        settingSources: [],
+        skills: [],
+        plugins: [],
+        agents: {},
+        mcpServers: {},
+      },
+    },
+  };
+}
+
+export function isClaudeSubscriptionStatus(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  if (status.kind !== "account") return false;
+  const account = status.account;
+  if (!account || typeof account !== "object" || Array.isArray(account))
+    return false;
+  const plan = (account as Record<string, unknown>).plan;
+  return (
+    typeof plan === "string" && /^(?:claude\s+)?(?:pro|max)(?:\s|$)/i.test(plan)
+  );
+}
 
 export class HarnessError extends Error {
   constructor(
@@ -121,12 +154,14 @@ export class AcpHarnessClient {
   private questionAbort?: AbortController;
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
+  private authStatus?: unknown;
 
   private constructor(
     binding: HarnessBinding,
     private process: HarnessProcess,
     timeoutMs: number,
     private readonly questionHandler?: HarnessQuestionHandler,
+    private readonly sessionPolicy: HarnessSessionPolicy = "default",
   ) {
     this.binding = {
       ...binding,
@@ -146,6 +181,10 @@ export class AcpHarnessClient {
         sessionUpdate: (notification) => this.onUpdate(notification),
         requestPermission: (request) => this.permission(request),
         createElicitation: (request) => this.question(request),
+        extNotification: (method, params) => {
+          if (method === CLAUDE_AUTH_STATUS_METHOD)
+            this.authStatus = params.authStatus;
+        },
         // The SDK's legacy adapter otherwise reports empty success for absent
         // optional callbacks, even though we do not advertise these capabilities.
         readTextFile: unsupportedCallback("fs/read_text_file"),
@@ -171,6 +210,7 @@ export class AcpHarnessClient {
     launch: HarnessLauncher,
     timeoutMs = 30_000,
     questionHandler?: HarnessQuestionHandler,
+    sessionPolicy: HarnessSessionPolicy = "default",
   ): Promise<AcpHarnessClient> {
     const profile = parseAcpHarnessProfile(binding.profile);
     const credential = parseAcpHarnessCredential(binding.credential, profile);
@@ -181,6 +221,7 @@ export class AcpHarnessClient {
       await launch({ ...binding, profile, credential }),
       timeoutMs,
       questionHandler,
+      sessionPolicy,
     );
     try {
       client.info = await client.request(
@@ -197,6 +238,17 @@ export class AcpHarnessClient {
         throw new HarnessError(
           "unsupported",
           "Harness did not negotiate ACP v1",
+        );
+      if (
+        sessionPolicy === "claude-subscription-controller" &&
+        (client.info.agentInfo?.name !==
+          CLAUDE_CODE_QUALIFICATION.package.name ||
+          client.info.agentInfo?.version !==
+            CLAUDE_CODE_QUALIFICATION.package.version)
+      )
+        throw new HarnessError(
+          "unsupported",
+          "Subscription controller requires the qualified Claude adapter",
         );
       return client;
     } catch (error) {
@@ -358,7 +410,13 @@ export class AcpHarnessClient {
       throw new HarnessError("unavailable", "ACP runtime is closed");
     this.opening = true;
     try {
-      const params = { cwd: this.binding.profile.cwd, mcpServers: [] };
+      const params = {
+        cwd: this.binding.profile.cwd,
+        mcpServers: [],
+        ...(this.sessionPolicy === "claude-subscription-controller"
+          ? { _meta: claudeSubscriptionSessionMeta() }
+          : {}),
+      };
       if (sessionId) {
         if (!this.info.agentCapabilities?.loadSession)
           throw new HarnessError(
@@ -387,6 +445,14 @@ export class AcpHarnessClient {
       throw new HarnessError("unavailable", "ACP runtime is closed");
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
+    if (
+      this.sessionPolicy === "claude-subscription-controller" &&
+      !isClaudeSubscriptionStatus(this.authStatus)
+    )
+      throw new HarnessError(
+        "rejected",
+        "Claude subscription billing identity was not verified",
+      );
     if (
       typeof text !== "string" ||
       !text.trim() ||

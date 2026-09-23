@@ -8,7 +8,10 @@ const { mkdtemp, rm } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { AcpHarnessClient } = require("../../dist/acp/harness-client.js");
+const {
+  AcpHarnessClient,
+  isClaudeSubscriptionStatus,
+} = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
 const { harnessPrompt } = require("../../dist/acp/harness-context.js");
@@ -316,6 +319,110 @@ const profile = {
   credentialMode: "project-managed",
   executionPolicy: "full-access",
 };
+
+test("subscription status accepts only an explicit Claude account identity", () => {
+  assert.equal(
+    isClaudeSubscriptionStatus({ kind: "account", account: { plan: "max" } }),
+    true,
+  );
+  assert.equal(
+    isClaudeSubscriptionStatus({
+      kind: "account",
+      account: { plan: "Claude Pro" },
+    }),
+    true,
+  );
+  for (const status of [
+    undefined,
+    null,
+    {},
+    { kind: "account" },
+    { kind: "account", account: { plan: "free" } },
+    { kind: "api_key" },
+    { kind: "gateway" },
+    { kind: "none" },
+  ])
+    assert.equal(isClaudeSubscriptionStatus(status), false);
+});
+
+test("subscription policy disables native tools and refuses unknown or API billing", async (t) => {
+  for (const [flag, permitted] of [
+    ["--subscription-status", true],
+    ["--api-key-status", false],
+    ["--no-status", false],
+  ]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--claude-adapter", flag],
+      {
+        env: {},
+        stdio: "pipe",
+      },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile,
+      },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      30_000,
+      undefined,
+      "claude-subscription-controller",
+    );
+    t.after(() => client.dispose());
+    await client.open();
+    const events = [];
+    if (permitted) {
+      await client.prompt("hello", async (event) => events.push(event));
+      assert.ok(events.some((event) => event.type === "message"));
+    } else {
+      await assert.rejects(
+        () => client.prompt("hello", async () => {}),
+        /subscription billing identity was not verified/,
+      );
+    }
+    await client.dispose();
+  }
+});
+
+test("subscription policy refuses an unqualified adapter", async () => {
+  const child = spawn(process.execPath, profile.args, {
+    env: {},
+    stdio: "pipe",
+  });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  await assert.rejects(
+    () =>
+      AcpHarnessClient.start(
+        { projectId: "project-a", accountId: "account-a", profile },
+        async () => ({
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          closed,
+          stop: async () => {
+            child.kill("SIGKILL");
+            await closed;
+          },
+        }),
+        30_000,
+        undefined,
+        "claude-subscription-controller",
+      ),
+    /qualified Claude adapter/,
+  );
+});
 
 function adapter(
   t,

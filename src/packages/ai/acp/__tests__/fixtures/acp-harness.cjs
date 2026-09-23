@@ -88,13 +88,49 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (process.argv.includes("--hang")) return;
       return result(message.id, {
         protocolVersion: process.argv.includes("--wrong-version") ? 999 : 1,
-        agentInfo: { name: "cocalc-fixture", version: "1" },
+        agentInfo: {
+          name: process.argv.includes("--claude-adapter")
+            ? "@agentclientprotocol/claude-agent-acp"
+            : "cocalc-fixture",
+          version: process.argv.includes("--claude-adapter") ? "0.81.1" : "1",
+        },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
         },
         authMethods: [],
       });
     case "session/new":
+      if (process.argv.includes("--claude-adapter")) {
+        const options = message.params._meta?.claudeCode?.options;
+        if (
+          !options ||
+          !Array.isArray(options.tools) ||
+          options.tools.length ||
+          !Array.isArray(options.settingSources) ||
+          options.settingSources.length ||
+          message.params.mcpServers.length
+        )
+          return send({
+            id: message.id,
+            error: { code: -32602, message: "subscription policy missing" },
+          });
+        if (process.argv.includes("--subscription-status"))
+          send({
+            method: "_auth/status_update",
+            params: {
+              authStatus: {
+                kind: "account",
+                label: "Claude Max",
+                account: { plan: "max" },
+              },
+            },
+          });
+        if (process.argv.includes("--api-key-status"))
+          send({
+            method: "_auth/status_update",
+            params: { authStatus: { kind: "api_key", label: "API key" } },
+          });
+      }
       return result(message.id, {
         sessionId: "fixture-session",
         ...controls(),
