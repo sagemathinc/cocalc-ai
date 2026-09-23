@@ -38,10 +38,12 @@ import {
   bootstrapProvisionedProjectInventory,
   initFileServer,
   initFsServer,
+  artifactCatalogFilesystem,
   verifyProvisionedProjectInventoryBatch,
   PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
 } from "./file-server";
 import { handleProjectHostUpload } from "./upload";
+import { startArtifactCatalog } from "./artifact-catalog";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -1369,6 +1371,7 @@ export async function main(
   logger.info(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",
   );
+  const artifactCatalog = startArtifactCatalog(artifactCatalogFilesystem);
   const fsServer = await initFsServer({ client: conatClient });
   const editJournalService = await initProjectEditJournalService(conatClient);
 
@@ -1545,6 +1548,9 @@ export async function main(
     closed = true;
     persistServer?.close?.();
     fsServer?.close?.();
+    // Keep the catalog's exclusive lease until process exit: filesystem calls
+    // already in flight may still complete after the service stops accepting.
+    artifactCatalog.stop();
     editJournalService?.close?.();
     stopProvisionedInventoryReporter();
     projectTouchService?.close?.();

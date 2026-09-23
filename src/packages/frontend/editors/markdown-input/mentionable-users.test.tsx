@@ -5,11 +5,18 @@
 
 import { fromJS } from "immutable";
 import { renderHook } from "@testing-library/react";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
 let mockAllowAgentMentions = false;
 const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+let mockArtifactNames: any[] = [];
+
+jest.mock("@cocalc/frontend/agents/artifact-names", () => ({
+  useArtifactNames: () => ({ names: mockArtifactNames }),
+}));
 
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: () => null,
@@ -88,7 +95,9 @@ describe("mentionableUsers", () => {
   beforeEach(() => {
     mockGetStore.mockReset();
     mockAllowAgentMentions = false;
+    mockArtifactNames = [];
     mockUseNamedAgents.mockReset();
+    jest.mocked(useTypedRedux).mockReset();
     mockUseNamedAgents.mockReturnValue({
       directory: {
         enabled: true,
@@ -105,6 +114,36 @@ describe("mentionableUsers", () => {
         ],
       },
     });
+  });
+
+  it("suggests only personally named artifacts in this project", () => {
+    mockStores(jest.fn());
+    mockAllowAgentMentions = true;
+    mockArtifactNames = [
+      { name: "nb1", project_id, entry_id: "a".repeat(64), active: true },
+      {
+        name: "elsewhere",
+        project_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        entry_id: "b".repeat(64),
+        active: true,
+      },
+    ];
+    const { result } = renderHook(() => useMentionableUsers());
+    const items = result.current("nb");
+    expect(
+      items.find((item) => item.group === "Artifacts")?.label,
+    ).toBeTruthy();
+    expect(
+      parseArtifactMention(
+        items.find((item) => item.group === "Artifacts")!.value,
+      ),
+    ).toEqual({
+      version: 1,
+      project_id,
+      entry_id: "a".repeat(64),
+      name: "nb1",
+    });
+    expect(items.some((item) => item.search === "elsewhere")).toBe(false);
   });
 
   it("keeps unresolved collaborators visible while their names hydrate", () => {

@@ -15,6 +15,11 @@ export type HubApiAdmissionDecision = {
 };
 
 const LOW_PRIORITY_METHODS = new Set([
+  "artifactCatalog.writerState",
+  "artifactCatalog.registerSource",
+  "artifactCatalog.ingest",
+  "artifactCatalog.sourcePage",
+  "artifactCatalog.listProject",
   "compute.getCatalog",
   "compute.listAgentGrants",
   "compute.listVms",
@@ -26,6 +31,9 @@ const LOW_PRIORITY_METHODS = new Set([
   "purchases.getManagedEgressAdminOverview",
   "purchases.getManagedEgressHistory",
   "purchases.getMembershipDetails",
+  "personalLibrary.name",
+  "personalLibrary.setPinned",
+  "personalLibrary.movePinned",
   "system.listNews",
   "system.recordUxLatencyEvent",
   "system.removeBrowserSession",

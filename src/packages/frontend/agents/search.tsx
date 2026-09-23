@@ -240,6 +240,8 @@ export function AgentSearch({
     <>
       <Button
         block
+        type="text"
+        style={{ justifyContent: "flex-start" }}
         icon={<Icon name="search" />}
         onClick={() => store.set({ open: true })}
       >

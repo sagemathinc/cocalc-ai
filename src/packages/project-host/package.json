@@ -41,6 +41,7 @@
     "@cocalc/ai": "workspace:*",
     "@cocalc/assets": "workspace:*",
     "@cocalc/backend": "workspace:*",
+    "@cocalc/chat": "workspace:*",
     "@cocalc/chat-client": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/file-server": "workspace:*",

@@ -215,11 +215,21 @@ test.each([
       expect(frames.set_active_id).not.toHaveBeenCalled();
     }
     // Focusing a frame must not reset its revision, remount its editor, or close a terminal.
-    expect(frames.set_frame_data).not.toHaveBeenCalled();
+    if (reuse) {
+      expect(frames.set_frame_data).toHaveBeenCalledWith({
+        id: "existing-artifact",
+        sourceProject: null,
+        sourcePath: null,
+        sourceAgent: null,
+      });
+    } else {
+      expect(frames.set_frame_data).not.toHaveBeenCalled();
+    }
     expect(frames.close_frame).not.toHaveBeenCalled();
     expect(existing.version).toBeUndefined();
     frames.split_frame.mockClear();
     frames.set_active_id.mockClear();
+    frames.set_frame_data.mockClear();
     fireEvent.click(
       screen.getByRole("button", { name: "More options for Replies" }),
     );

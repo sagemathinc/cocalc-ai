@@ -3,6 +3,7 @@
 // without having to run that project.
 
 import { createHash, randomUUID } from "node:crypto";
+import { withArtifactCatalog } from "./artifact-catalog";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -4878,6 +4879,11 @@ async function getSnapshotFileText({
   return await readTextPreview({ filePath: absPath, maxBytes });
 }
 
+export async function artifactCatalogFilesystem(project_id: string) {
+  await getOrEnsureVolume(project_id);
+  return getProjectSandboxFilesystem(project_id);
+}
+
 export async function initFsServer({
   client,
   service = DEFAULT_FILE_SERVICE,
@@ -4895,15 +4901,18 @@ export async function initFsServer({
       }
       const project_id = projectIdFromSubject(subject);
       const { path } = await getOrEnsureVolume(project_id);
-      return createProjectSandboxFilesystem({
+      return withArtifactCatalog(
+        createProjectSandboxFilesystem({
+          project_id,
+          home: path,
+          rootfs: getRootfsMountpoint(project_id),
+          scratch: getScratchMountpoint(project_id),
+          sharedScratch: getSharedScratchMountpoint(),
+          deleteSnapshot: async (name: string) =>
+            await deleteSnapshot({ project_id, name }),
+        }),
         project_id,
-        home: path,
-        rootfs: getRootfsMountpoint(project_id),
-        scratch: getScratchMountpoint(project_id),
-        sharedScratch: getSharedScratchMountpoint(),
-        deleteSnapshot: async (name: string) =>
-          await deleteSnapshot({ project_id, name }),
-      });
+      );
     },
     onMutation: ({ subject, op }) => {
       const project_id = projectIdFromSubject(subject);

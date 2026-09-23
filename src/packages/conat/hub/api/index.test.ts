@@ -30,6 +30,52 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it("binds catalog reads to a human account", async () => {
+    const name = "artifactCatalog.listProject";
+    expect(
+      await transformArgs({
+        name,
+        args: [{ account_id: "forged", project_id: "target" }],
+        account_id: "actual",
+      }),
+    ).toEqual([{ account_id: "actual", project_id: "target" }]);
+    for (const actor of [
+      {},
+      { host_id: "host" },
+      { project_id: "project" },
+      { account_id: "agent", auth_actor: "agent" as const },
+    ]) {
+      await expect(
+        transformArgs({ name, args: [{}], ...actor }),
+      ).rejects.toThrow();
+    }
+  });
+  it.each([
+    "artifactCatalog.writerState",
+    "artifactCatalog.registerSource",
+    "artifactCatalog.ingest",
+    "artifactCatalog.sourcePage",
+  ])("binds %s to the authenticated host only", async (name) => {
+    expect(
+      await transformArgs({
+        name,
+        args: [
+          { host_id: "forged", account_id: "forged", project_id: "target" },
+        ],
+        host_id: "actual",
+      }),
+    ).toEqual([{ host_id: "actual", project_id: "target" }]);
+    for (const actor of [
+      {},
+      { account_id: "human" },
+      { project_id: "project" },
+      { host_id: "host", auth_actor: "agent" as const },
+    ]) {
+      await expect(
+        transformArgs({ name, args: [{}], ...actor }),
+      ).rejects.toThrow();
+    }
+  });
   it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
     "binds %s to the authenticated human without requiring fresh auth",
     async (name) => {
