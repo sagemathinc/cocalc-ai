@@ -6,6 +6,12 @@ Status: implementation in progress. The 2026-09-22 qualification record pins
 the first adapter candidate and documents the current credential/tool isolation
 blocker.
 
+Current subscription work is specified in
+`src/.agents/claude-subscription-support-plan-2026-09-23.md`. The foundation
+below is a historical implementation snapshot; the qualified API-key adapter
+is now pinned to `0.81.1`, and account API-key selection is available in the
+Claude preview. Pro/Max subscription login remains unimplemented.
+
 ### Implemented Foundation (2026-09-22)
 
 - Added a provider-neutral account credential broker with home-bay routing,
@@ -30,11 +36,10 @@ blocker.
   host/home-bay credential route, including project-host/account authorization,
   provider-profile validation, authority recheck, and fail-closed teardown.
 
-The account relay is intentionally not connected to chat selection yet. The
-next change must add an account-local credential selection that is pinned into
-the admitted turn by authenticated server code. A credential ID from shared
-thread metadata, generic ACP profile data, or a collaborator-controlled config
-must never reach relay admission.
+Account-key selection is now account-local and pinned into admitted turns by
+authenticated server code. A credential ID from shared thread metadata,
+generic ACP profile data, or a collaborator-controlled config must never reach
+relay admission.
 
 Depends on:
 
