@@ -139,6 +139,9 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
       onClick={onClick}
       style={outer_style}
       className={TOP_BAR_ELEMENT_CLASS}
+      aria-current={
+        name != null && is_active && !is_project ? "page" : undefined
+      }
       aria-label={
         ariaLabel ??
         (typeof label === "string" ? label : undefined) ??

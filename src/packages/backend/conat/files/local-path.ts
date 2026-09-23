@@ -26,6 +26,7 @@ export async function localPathFileserver({
   allowSafeModeSymlink,
   disableOpenAt2,
   onMutation,
+  wrapFilesystem,
   jupyter,
 }: {
   service?: string;
@@ -43,6 +44,11 @@ export async function localPathFileserver({
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
   disableOpenAt2?: boolean;
+  /** Service-owned instrumentation installed before any file request runs. */
+  wrapFilesystem?: (
+    fs: SandboxedFilesystem,
+    project_id: string,
+  ) => SandboxedFilesystem | Promise<SandboxedFilesystem>;
   onMutation?: (opts: {
     subject: string;
     op: string;
@@ -92,7 +98,7 @@ export async function localPathFileserver({
     fs: async (subject: string) => {
       const project_id = getProjectId(subject);
       const projectPath = await getPath(project_id);
-      return new SandboxedFilesystem(projectPath, {
+      const fs = new SandboxedFilesystem(projectPath, {
         unsafeMode,
         host: project_id,
         // In unsafe mode (e.g. lite / local dev), default to true absolute
@@ -111,6 +117,12 @@ export async function localPathFileserver({
         allowSafeModeSymlink,
         disableOpenAt2,
       });
+      try {
+        return wrapFilesystem ? await wrapFilesystem(fs, project_id) : fs;
+      } catch (err) {
+        fs.close();
+        throw err;
+      }
     },
     onMutation,
     jupyter,

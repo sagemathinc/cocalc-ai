@@ -590,6 +590,15 @@ async function codexDeviceAuthStartV2Lite(opts: {
   return await codexDeviceAuthStartLite(opts);
 }
 
+async function getCodexCredentialSelectionCapabilityLite(opts: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<{ version: 2; credentialLifecycle: true }> {
+  requireLiteAccountId(opts.account_id);
+  requireLiteProjectId(opts.project_id);
+  return { version: 2, credentialLifecycle: true };
+}
+
 async function codexDeviceAuthStatusLite(opts: {
   account_id?: string;
   project_id?: string;
@@ -1479,6 +1488,8 @@ export const hubApi: HubApi = {
     getProjectActiveOperation: getProjectActiveOperationLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStartV2: codexDeviceAuthStartV2Lite,
+    getCodexCredentialSelectionCapability:
+      getCodexCredentialSelectionCapabilityLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
     codexUploadAuthFile: codexUploadAuthFileLite,
@@ -1565,16 +1576,19 @@ export const hubApi: HubApi = {
       limit?: number;
       offset?: number;
     }) => {
-      return searchChatStore({
-        include_head: opts.include_head,
-        chat_path: opts.chat_path,
-        query: opts.query,
-        db_path: opts.db_path,
-        thread_id: opts.thread_id,
-        exclude_thread_ids: opts.exclude_thread_ids,
-        limit: opts.limit,
-        offset: opts.offset,
-      });
+      return searchChatStore(
+        {
+          include_head: opts.include_head,
+          chat_path: opts.chat_path,
+          query: opts.query,
+          db_path: opts.db_path,
+          thread_id: opts.thread_id,
+          exclude_thread_ids: opts.exclude_thread_ids,
+          limit: opts.limit,
+          offset: opts.offset,
+        },
+        "lite-local",
+      );
     },
     chatStoreDelete: (opts: {
       chat_path: string;

@@ -13,6 +13,8 @@ import { type LroApi, lro } from "./lro";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
+import { type ArtifactCatalogApi, artifactCatalog } from "./artifact-catalog";
+import { type PersonalLibraryApi, personalLibrary } from "./personal-library";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AdminDbApi, adminDb } from "./admin-db";
@@ -49,6 +51,8 @@ export interface HubApi {
   ssh: Ssh;
   reflect: ReflectApi;
   agent: AgentApi;
+  artifactCatalog: ArtifactCatalogApi;
+  personalLibrary: PersonalLibraryApi;
   notifications: Notifications;
   adminData: AdminData;
   adminDb: AdminDbApi;
@@ -85,6 +89,8 @@ const HubApiStructure = {
   ssh,
   reflect,
   agent,
+  artifactCatalog,
+  personalLibrary,
   notifications,
   adminData,
   adminDb,

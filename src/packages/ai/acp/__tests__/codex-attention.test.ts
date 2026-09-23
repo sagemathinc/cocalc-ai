@@ -175,4 +175,20 @@ describe("Codex attention protocol validation", () => {
       }),
     ).not.toThrow();
   });
+
+  it("accepts long replies and reports the exact excess above the answer limit", () => {
+    const questions = [{ id: "reply", header: "Reply", question: "Details?" }];
+    expect(() =>
+      validateAttentionAnswers({
+        questions,
+        answers: { reply: ["a".repeat(32_000)] },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateAttentionAnswers({
+        questions,
+        answers: { reply: ["a".repeat(32_001)] },
+      }),
+    ).toThrow("32001 characters; the limit is 32000 (1 over)");
+  });
 });

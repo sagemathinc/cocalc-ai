@@ -43,6 +43,10 @@ import {
   parseAgentMention,
   serializeAgentMention,
 } from "@cocalc/util/agent-mentions";
+import {
+  parseArtifactMention,
+  serializeArtifactMention,
+} from "@cocalc/util/artifact-mentions";
 
 function renderMention(tokens, idx): string {
   // TODO: we could dynamically update the username using the account-id
@@ -71,6 +75,25 @@ export function mentionPlugin(md): void {
       let tokens = blockTokens[j].children;
 
       for (let i = tokens.length - 1; i >= 2; i--) {
+        if (
+          isMentionClose(tokens[i].content) &&
+          tokens[i - 2].content?.startsWith('<span class="artifact-mention" ')
+        ) {
+          const reference = parseArtifactMention(
+            `${tokens[i - 2].content}${tokens[i - 1].content}${tokens[i].content}`,
+          );
+          if (reference) {
+            const token = new Token("artifact-mention", "", 0);
+            token.level = tokens[i].level;
+            token.reference = reference;
+            tokens = tokens
+              .slice(0, i - 2)
+              .concat([token], tokens.slice(i + 1));
+            blockTokens[j].children = tokens;
+            i -= 2;
+            continue;
+          }
+        }
         if (
           isMentionClose(tokens[i].content) &&
           tokens[i - 2].content?.startsWith('<span class="agent-mention" ')
@@ -125,4 +148,6 @@ export function mentionPlugin(md): void {
   md.renderer.rules.mention = renderMention;
   md.renderer.rules["agent-mention"] = (tokens, idx) =>
     serializeAgentMention(tokens[idx].reference);
+  md.renderer.rules["artifact-mention"] = (tokens, idx) =>
+    serializeArtifactMention(tokens[idx].reference);
 }

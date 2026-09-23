@@ -2,6 +2,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
 
 export interface AgentSearchHit {
+  catalogEntryId?: string;
   agent: NamedAgent;
   threadId: string;
   historical: boolean;
@@ -24,7 +25,7 @@ export async function boundedProjectSearch<T>(
   project: string,
   work: () => Promise<T>,
 ): Promise<T> {
-  if (occupiedProjects.size >= 3 || occupiedProjects.has(project))
+  if (occupiedProjects.size >= 1 || occupiedProjects.has(project))
     throw new Error(
       "A previous project search is still finishing; try again shortly.",
     );
@@ -158,7 +159,7 @@ export async function runAgentSearch({
         }
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await worker();
     if (pending.length) break;
   }
   progress.limited ||= progress.remaining > 0;

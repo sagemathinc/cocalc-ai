@@ -45,7 +45,9 @@ export type SiteFundedCodexConfiguration = {
 export function siteFundedCodexConfigurationFromSettings(
   settings: Settings,
 ): SiteFundedCodexConfiguration {
-  const model = `${settings.site_funded_codex_model ?? "gpt-5.6-luna"}`.trim();
+  const model = `${
+    settings.site_funded_codex_model ?? DEFAULT_SITE_FUNDED_CODEX_POLICY.model
+  }`.trim();
   // This is deliberately an eager fail-closed validation.
   getSiteFundedCodexPrice(model);
   const policy: SiteFundedCodexPolicy = {

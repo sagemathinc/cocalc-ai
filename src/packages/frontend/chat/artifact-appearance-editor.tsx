@@ -6,17 +6,20 @@ import {
 } from "@cocalc/frontend/theme/types";
 import { artifactKey, readArtifact, validateArtifactTheme } from "@cocalc/chat";
 import type { ArtifactRecord } from "@cocalc/chat";
+import type { EntityTheme } from "@cocalc/util/entity-theme";
 
 export default function ArtifactAppearanceEditor({
   artifact,
   syncdb,
   projectId,
   onClose,
+  onSaved,
 }: {
   artifact: ArtifactRecord;
   syncdb: any;
   projectId?: string;
   onClose: () => void;
+  onSaved?: (theme: EntityTheme, artifactTitle: string) => void;
 }) {
   const [draft, setDraft] = useState(() =>
     themeDraftFromTheme(artifact.theme, artifact.title),
@@ -42,12 +45,14 @@ export default function ArtifactAppearanceEditor({
             throw Error(
               "Appearance changed. Close and reopen to edit the latest theme.",
             );
+          const theme = validateArtifactTheme(themeFromDraft(draft));
           syncdb.set({
             ...artifactKey(artifact),
-            theme: validateArtifactTheme(themeFromDraft(draft)),
+            theme,
           });
           syncdb.commit();
           await syncdb.save();
+          onSaved?.(theme, artifact.title);
           onClose();
         } catch (err) {
           setError(String(err));

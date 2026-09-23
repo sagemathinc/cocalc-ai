@@ -18,9 +18,23 @@ class TrackingAgentStore extends AgentStore {
   ): Promise<T> {
     return super.transaction(async (client) => {
       this.transactionDepth++;
+      const originalQuery = client.query.bind(client);
+      const query = jest.spyOn(client, "query").mockImplementation(((
+        sql,
+        params,
+      ) => {
+        if (`${sql}`.includes("INSERT INTO agent_network_proposals")) {
+          // Match pg's wire serializer; direct PGlite accepts raw JS arrays.
+          params = params.map((value) =>
+            require("pg/lib/utils").prepareValue(value),
+          );
+        }
+        return originalQuery(sql, params);
+      }) as typeof client.query);
       try {
         return await fn(client);
       } finally {
+        query.mockRestore();
         this.transactionDepth--;
       }
     });
@@ -367,6 +381,142 @@ describeDb("account-home Agent Networks", () => {
     ).rejects.toThrow("external_identity_unavailable");
   });
 
+  test("discovery excludes removed peers and an approved re-add revives the member", async () => {
+    const member = { kind: "registered" as const, endpoint: peer };
+    const network = await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Rejoin",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: secondPeer },
+          member,
+        ],
+      },
+      8,
+    );
+    await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "remove-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      (await store.discover(account, source, run_id)).peers.map(
+        ({ member }) => member.member_id,
+      ),
+    ).toEqual([secondPeer.agent_id]);
+    await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "add-member",
+        member,
+      },
+      8,
+    );
+    expect((await store.discover(account, source, run_id)).peers).toHaveLength(
+      2,
+    );
+    await expect(
+      store.checkNetwork(
+        account,
+        network.agent_network_id,
+        source,
+        run_id,
+        peer,
+      ),
+    ).resolves.toMatchObject({ agent_network_id: network.agent_network_id });
+  });
+
+  test("external discovery is installation-scoped and new-network proposals reject external members", async () => {
+    const agent_id = randomUUID();
+    await db.query(
+      "INSERT INTO agent_external_identities(agent_id,account_id,label) VALUES($1,$2,$3)",
+      [agent_id, account, "External"],
+    );
+    const installations: string[] = [];
+    for (const endpoint of [peer, secondPeer]) {
+      const network = await store.createNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          title: endpoint.agent_id,
+          members: [
+            { kind: "registered", endpoint: source },
+            { kind: "registered", endpoint },
+          ],
+        },
+        8,
+      );
+      const installation_id = randomUUID();
+      installations.push(installation_id);
+      await db.query(
+        `INSERT INTO agent_external_installations
+        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_network_id,expires_at)
+        VALUES($1,$2,$3,'External',$4,'active',0,'[]'::jsonb,$5,now()+interval '1 hour')`,
+        [
+          installation_id,
+          account,
+          agent_id,
+          "0".repeat(64),
+          network.agent_network_id,
+        ],
+      );
+      await store.updateNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          agent_network_id: network.agent_network_id,
+          action: "add-member",
+          member: { kind: "external", agent_id, installation_id },
+        },
+        8,
+        true,
+      );
+    }
+    const external = {
+      kind: "external" as const,
+      account_id: account,
+      agent_id,
+      installation_id: installations[0],
+    };
+    const found = await store.discover(account, external);
+    expect(found.peers.map(({ member }) => member.member_id).sort()).toEqual(
+      [source.agent_id, peer.agent_id].sort(),
+    );
+    await expect(
+      store.proposeNetwork(
+        account,
+        source,
+        run_id,
+        {
+          proposal_id: randomUUID(),
+          title: "Impossible",
+          members: [
+            { kind: "registered", endpoint: source },
+            { kind: "external", agent_id, installation_id: installations[0] },
+          ],
+        },
+        8,
+      ),
+    ).rejects.toThrow("external_members_require_existing_network_enrollment");
+    expect(await store.proposals(account)).toEqual([]);
+    await db.query(
+      "UPDATE agent_external_installations SET state='revoked' WHERE installation_id=$1",
+      [installations[0]],
+    );
+    await expect(store.discover(account, external)).rejects.toThrow(
+      "agent_unavailable",
+    );
+  });
+
   test("mutation rate limits expansion but never blocks restrictive closure", async () => {
     const network = await store.createNetwork(
       account,
@@ -464,6 +614,7 @@ describeDb("account-home Agent Networks", () => {
       8,
     );
     expect(proposal.state).toBe("pending");
+    expect(proposal.members).toHaveLength(2);
     expect((await store.networks(account)).networks).toHaveLength(0);
     await expect(
       store.proposeNetwork(

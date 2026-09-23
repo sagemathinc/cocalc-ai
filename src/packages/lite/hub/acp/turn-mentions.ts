@@ -1,5 +1,7 @@
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
+import type { ArtifactCatalogApi } from "@cocalc/conat/hub/api/artifact-catalog";
+import { extractArtifactMentions } from "@cocalc/util/artifact-mentions";
 import {
   agentMentionReferenceMap,
   extractAgentMentions,
@@ -34,4 +36,49 @@ export async function resolveHumanTurnMentions(
     }
   }
   return references;
+}
+
+export async function resolveHumanTurnArtifactMentions(
+  request: AcpRequest,
+  api: Pick<ArtifactCatalogApi, "getEntry">,
+) {
+  if (request.chat?.agent_message || request.chat?.automation_id) return [];
+  const projectId = request.chat?.project_id ?? request.project_id;
+  if (!projectId) return [];
+  const references = extractArtifactMentions(
+    request.chat?.user_message_content ?? "",
+  );
+  if (references.length > 20) throw Error("Too many bound artifact references");
+  const result: Array<{
+    name: string;
+    project_id: string;
+    entry_id: string;
+    chat_path: string;
+    thread_id: string;
+    artifact_id: string;
+  }> = [];
+  for (const reference of references) {
+    if (reference.project_id !== projectId)
+      throw Error(`Artifact @${reference.name} requires a project connector`);
+    const entry = await api.getEntry({
+      account_id: request.account_id,
+      project_id: projectId,
+      entry_id: reference.entry_id,
+    });
+    if (
+      !entry ||
+      entry.project_id !== projectId ||
+      entry.entry_id !== reference.entry_id
+    )
+      throw Error(`Artifact @${reference.name} is unavailable`);
+    result.push({
+      name: reference.name,
+      project_id: projectId,
+      entry_id: entry.entry_id,
+      chat_path: entry.chat_path,
+      thread_id: entry.item.thread_id,
+      artifact_id: entry.item.artifact_id,
+    });
+  }
+  return result;
 }

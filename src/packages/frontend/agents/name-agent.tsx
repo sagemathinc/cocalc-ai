@@ -6,7 +6,11 @@ import { normalizeAgentName } from "@cocalc/conat/agents/personal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
-import { AgentNameInput, agentNameProblem } from "./agent-name-input";
+import {
+  AgentNameInput,
+  agentNameProblem,
+  isAgentNameRename,
+} from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import {
   isNamedAgentLimitError,
@@ -147,6 +151,9 @@ export function NameAgent({
             value={name}
             busy={busy}
             problem={name.trim() ? problem : undefined}
+            showRetirementWarning={
+              !problem && isAgentNameRename(name, agent?.name)
+            }
             onChange={setName}
             onEnter={() => void save()}
           />

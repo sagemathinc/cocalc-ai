@@ -4,6 +4,7 @@ import { useProject } from "./common";
 const getMyGroup = jest.fn();
 const useTypedRedux = jest.fn();
 const syncTable = jest.fn();
+let projectRecord: Map<string, string> | undefined;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -13,7 +14,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
   useEffect: jest.requireActual("react").useEffect,
   useMemo: jest.requireActual("react").useMemo,
-  useProjectFromMap: () => undefined,
+  useProjectFromMap: () => projectRecord,
   useState: jest.requireActual("react").useState,
   useTypedRedux: (...args: any[]) => useTypedRedux(...args),
 }));
@@ -39,6 +40,37 @@ function TestComponent({ project_id }: { project_id: string }) {
 describe("useProject", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    projectRecord = undefined;
+    useTypedRedux.mockReset();
+  });
+
+  it("updates unresolved membership and account changes without changing the project id", () => {
+    getMyGroup.mockReturnValue(undefined);
+    const view = render(<TestComponent project_id="project-1" />);
+    expect(screen.getByTestId("group")).toBeEmptyDOMElement();
+    projectRecord = new Map([["title", "Loaded project"]]);
+    const projectMap = new Map([["project-1", projectRecord]]);
+    useTypedRedux.mockImplementation((store, field) =>
+      field === "project_map"
+        ? projectMap
+        : field === "account_id"
+          ? "alice"
+          : undefined,
+    );
+    getMyGroup.mockReturnValue("collaborator");
+    view.rerender(<TestComponent project_id="project-1" />);
+    expect(screen.getByTestId("group")).toHaveTextContent("collaborator");
+    expect(screen.getByTestId("project")).toHaveTextContent("Loaded project");
+    useTypedRedux.mockImplementation((store, field) =>
+      field === "project_map"
+        ? projectMap
+        : field === "account_id"
+          ? "bob"
+          : undefined,
+    );
+    getMyGroup.mockReturnValue("viewer");
+    view.rerender(<TestComponent project_id="project-1" />);
+    expect(screen.getByTestId("group")).toHaveTextContent("viewer");
   });
 
   it("closes the previous admin sync table and ignores its later updates", () => {

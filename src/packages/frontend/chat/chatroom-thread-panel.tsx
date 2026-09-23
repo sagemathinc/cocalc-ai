@@ -28,7 +28,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { createPortal } from "react-dom";
+import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
@@ -54,6 +54,7 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
 import { SearchHitTime } from "./search-hit-time";
+import { ArtifactBrowserButton } from "./artifact-discovery";
 import { THREAD_SEARCH_EVENT } from "./thread-search-request";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { AgentMessageStatus } from "./agent-message-status";
@@ -2245,6 +2246,11 @@ export function ChatRoomThreadPanel({
           </Button>
         </Tooltip>
       ) : null}
+      <ArtifactBrowserButton
+        actions={actions}
+        threadId={selectedThreadId}
+        compact={compactTopRightControls && !mobile}
+      />
       <Tooltip title="Search thread (Ctrl/Cmd+F)">
         <Button
           size="small"
@@ -2268,13 +2274,13 @@ export function ChatRoomThreadPanel({
       </Tooltip>
     </div>
   );
-  const topRightControls = !showTopControls
-    ? null
-    : topRightControlsPortal === undefined
-      ? renderTopRightControls()
-      : topRightControlsPortal != null
-        ? createPortal(renderTopRightControls(), topRightControlsPortal)
-        : null;
+  const topRightControls = (
+    <ThreadPanelToolbar
+      showInline={showTopControls}
+      portal={topRightControlsPortal}
+      render={renderTopRightControls}
+    />
+  );
 
   return (
     <div

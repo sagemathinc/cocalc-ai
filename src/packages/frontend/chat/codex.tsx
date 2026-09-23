@@ -131,7 +131,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean | "summary" | "composer";
+  compact?: boolean | "summary" | "composer" | "icon";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -1609,12 +1609,17 @@ export function CodexConfigButton({
                 : undefined
             }
             icon={compact === "summary" ? undefined : <Icon name="sliders" />}
-            type={compact === "summary" ? "text" : "default"}
+            type={
+              compact === "summary" || compact === "icon" ? "text" : "default"
+            }
+            size={compact === "icon" ? "small" : undefined}
             onClick={() => setOpen(true)}
           >
             {compact === "summary"
               ? `${displayedModel} ${displayedReasoning}`
-              : "Codex settings"}
+              : compact === "icon"
+                ? null
+                : "Codex settings"}
           </Button>
         ) : controlsCollapsed ? (
           <span

@@ -37,6 +37,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
+import { searchAdmission } from "./search-admission";
 import getLogger from "@cocalc/backend/logger";
 import { chatSearchIndex, searchableChatText } from "@cocalc/util/chat-search";
 
@@ -210,6 +211,7 @@ export interface ReadArchivedHitResult {
 }
 
 export interface SearchArchivedOptions {
+  artifacts?: boolean;
   include_head?: boolean;
   chat_path: string;
   query: string;
@@ -221,6 +223,10 @@ export interface SearchArchivedOptions {
 }
 
 export interface SearchArchivedHit {
+  artifact_id?: string;
+  artifact_title?: string;
+  artifact_kind?: string;
+  operation_id?: string;
   row_id: number;
   segment_id: string;
   message_id?: string;
@@ -231,6 +237,7 @@ export interface SearchArchivedHit {
 }
 
 export interface SearchArchivedResult {
+  includes_artifacts?: boolean;
   includes_head?: boolean;
   chat_id: string;
   hits: SearchArchivedHit[];
@@ -1409,24 +1416,35 @@ export function readChatStoreArchivedHit({
 }
 
 /** Search saved recent messages as well as offloaded history without opening an editor. */
-let activeSearchWorkers = 0;
 export async function searchChatStore(
   opts: SearchArchivedOptions,
+  principal: string,
 ): Promise<SearchArchivedResult> {
-  if (!opts.include_head && !opts.thread_id)
-    return searchChatStoreArchived(opts);
   if (
-    !opts.thread_id ||
-    opts.thread_id.length > 200 ||
-    !opts.query?.trim() ||
-    opts.query.length > 256
+    ((opts.include_head || opts.artifacts) && !opts.thread_id) ||
+    (opts.artifacts !== undefined && typeof opts.artifacts !== "boolean") ||
+    (opts.thread_id !== undefined &&
+      (typeof opts.thread_id !== "string" ||
+        !opts.thread_id.length ||
+        opts.thread_id.length > 200)) ||
+    typeof opts.query !== "string" ||
+    opts.query.length > 256 ||
+    (!opts.artifacts && !opts.query.trim()) ||
+    (opts.limit !== undefined &&
+      (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) ||
+    (opts.offset !== undefined &&
+      (!Number.isInteger(opts.offset) ||
+        opts.offset < 0 ||
+        opts.offset > 10_000)) ||
+    (opts.exclude_thread_ids !== undefined &&
+      (!Array.isArray(opts.exclude_thread_ids) ||
+        opts.exclude_thread_ids.length > 100 ||
+        opts.exclude_thread_ids.some(
+          (id) => typeof id !== "string" || !id.length || id.length > 200,
+        )))
   )
-    throw new Error(
-      "Search requires a thread scope and 1-256 query characters",
-    );
-  if (activeSearchWorkers >= 3)
-    throw new Error("Project host search capacity is busy; retry shortly");
-  activeSearchWorkers++;
+    throw new Error("Invalid or oversized search request");
+  const release = searchAdmission.acquire(principal);
   let worker: Worker | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -1458,7 +1476,7 @@ export async function searchChatStore(
     try {
       await worker?.terminate();
     } finally {
-      activeSearchWorkers--;
+      release();
     }
   }
 }
@@ -1532,6 +1550,125 @@ export async function searchChatStoreCombined(
     hits: [...hits.values()]
       .sort((a, b) => (b.date_ms ?? 0) - (a.date_ms ?? 0))
       .slice(0, limit),
+  };
+}
+
+/** Artifact records remain in the saved head when messages are offloaded.
+ * Run only inside the admitted, resource-limited search worker. */
+export async function searchChatArtifacts(
+  opts: SearchArchivedOptions,
+): Promise<SearchArchivedResult> {
+  const file = await fs.open(normalizeChatPath(opts.chat_path), "r");
+  let raw: string;
+  try {
+    const max = 8 * 1024 * 1024;
+    if ((await file.stat()).size > max)
+      throw Error("Chat head exceeds artifact search size limit");
+    const buffer = Buffer.alloc(max + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > max)
+      throw Error("Chat head exceeds artifact search size limit");
+    raw = buffer.toString("utf8", 0, length);
+  } finally {
+    await file.close();
+  }
+  const current = new Map<string, Json>();
+  const publications = new Map<string, Json>();
+  for (const { obj } of parseChatFile(raw)) {
+    if (
+      !obj ||
+      obj.thread_id !== opts.thread_id ||
+      typeof obj.artifact_id !== "string" ||
+      obj.artifact_id.length > 200
+    )
+      continue;
+    if (obj.event === "chat-artifact") current.set(obj.artifact_id, obj);
+    if (
+      obj.event === "chat-artifact-publication" &&
+      obj.snapshot &&
+      typeof obj.operation_id === "string" &&
+      obj.operation_id.length <= 200
+    ) {
+      const previous = publications.get(obj.artifact_id);
+      if (
+        !previous ||
+        Date.parse(obj.published_at) > Date.parse(previous.published_at)
+      )
+        publications.set(obj.artifact_id, obj);
+    }
+  }
+  const words = opts.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hits: SearchArchivedHit[] = [];
+  for (const [id, publication] of publications) {
+    const data = current.get(id) ?? publication.snapshot;
+    const title = String(data.theme?.title || data.title || "Artifact").slice(
+      0,
+      256,
+    );
+    const text = [
+      title,
+      data.theme?.description,
+      data.input ?? data.markdown,
+      data.file?.path,
+      data.commit?.sha,
+      data.github_pr?.repository,
+    ]
+      .join("\n")
+      .toLowerCase();
+    if (!words.every((word) => text.includes(word))) continue;
+    hits.push({
+      row_id: 0,
+      segment_id: "artifact",
+      thread_id: opts.thread_id,
+      artifact_id: id,
+      artifact_title: title,
+      operation_id: publication.operation_id,
+      artifact_kind:
+        (typeof data.kind === "string" &&
+        ["markdown", "file", "commit", "github-pr", "actions"].includes(
+          data.kind,
+        )
+          ? data.kind
+          : undefined) ??
+        (data.file
+          ? "file"
+          : data.commit
+            ? "commit"
+            : data.github_pr
+              ? "github-pr"
+              : data.actions
+                ? "actions"
+                : "markdown"),
+      message_id:
+        typeof publication.message_id === "string"
+          ? publication.message_id.slice(0, 200)
+          : undefined,
+      date_ms: Date.parse(publication.published_at) || 0,
+    });
+  }
+  hits.sort(
+    (a, b) =>
+      b.date_ms! - a.date_ms! || a.artifact_id!.localeCompare(b.artifact_id!),
+  );
+  const offset = opts.offset ?? 0,
+    limit = opts.limit ?? 50;
+  return {
+    chat_id: "",
+    includes_artifacts: true,
+    hits: hits.slice(offset, offset + limit),
+    offset,
+    total_hits: hits.length,
+    ...(offset + limit < hits.length ? { next_offset: offset + limit } : {}),
   };
 }
 

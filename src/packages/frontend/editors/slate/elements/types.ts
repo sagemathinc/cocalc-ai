@@ -61,6 +61,8 @@ import "./math/editable";
 import type { Mention } from "./mention";
 import type { AgentMention } from "./agent-mention";
 import "./agent-mention";
+import type { ArtifactMention } from "./artifact-mention";
+import "./artifact-mention";
 import "./mention/editable";
 import type { Meta } from "./meta";
 import "./meta/editable";
@@ -98,6 +100,7 @@ declare module "slate" {
       | JupyterMarkdownCell
       | Mention
       | AgentMention
+      | ArtifactMention
       | Table
       | THead
       | TBody

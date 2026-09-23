@@ -6,6 +6,10 @@ import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
+import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
+import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
+import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
@@ -226,6 +230,7 @@ import {
 import {
   assertSiteFundedCodexReservationHost,
   finishSiteFundedCodexTurn,
+  getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
   heartbeatSiteFundedCodexTurn,
   recordSiteFundedCodexUsageEvent,
@@ -662,6 +667,18 @@ export async function initInterBayServices(): Promise<void> {
         parallel: true,
         impl: agentIdentityControl,
       }),
+      createInterBayArtifactCatalogHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: catalogOwnerControl,
+      }),
+      createInterBayPersonalLibraryHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: personalLibraryHomeControl,
+      }),
     );
     await startProjectSecretsService();
     await startExternalCredentialsService();
@@ -868,11 +885,14 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        accountReservations: accountId
+          ? await getSiteFundedCodexAccountReservationStatus({ accountId })
+          : undefined,
         reconciliation: reconcile
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
@@ -1482,8 +1502,14 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
-    getAccountUsageOverview: async ({ account_id }) =>
-      await getAccountUsageOverviewForAccount({ account_id }),
+    getAccountUsageOverview: async ({
+      account_id,
+      include_site_funded_codex_credits,
+    }) =>
+      await getAccountUsageOverviewForAccount({
+        account_id,
+        include_site_funded_codex_credits,
+      }),
     recordSiteFundedCodexUsage: async (opts) =>
       await recordSiteFundedCodexAccountUsage(opts),
     getVerifiedEmailAddresses: async ({ account_id }) => ({

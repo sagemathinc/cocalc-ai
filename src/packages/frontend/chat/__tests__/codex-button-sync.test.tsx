@@ -246,6 +246,42 @@ describe("CodexConfigButton", () => {
     window.localStorage.clear();
   });
 
+  it("opens the compact mobile settings button with the keyboard and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexConfigButton
+        compact="icon"
+        threadKey="thread-mobile"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-6-astra", reasoning: "medium" }}
+        actions={
+          { getCodexConfig: () => undefined, setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Codex settings",
+      exact: true,
+    });
+    expect(trigger.textContent).toBe("");
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Agent settings",
+    });
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Agent settings" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   it("shows model and thinking level in the phone summary and opens settings", async () => {
     render(
       <CodexConfigButton
@@ -282,7 +318,7 @@ describe("CodexConfigButton", () => {
         chatPath="foo.chat"
         projectId="project-1"
         threadConfig={{
-          model: "gpt-5.4",
+          model: "gpt-6-sol",
           reasoning: "medium",
           serviceTier: "fast",
           paymentSource: "subscription",
@@ -311,7 +347,7 @@ describe("CodexConfigButton", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Change model. Current model: gpt-5.4",
+        name: "Change model. Current model: gpt-6-sol",
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "gpt-6-astra" }));
@@ -429,7 +465,7 @@ describe("CodexConfigButton", () => {
     expect(
       codexModelOptionsForCatalog().find(({ default: isDefault }) => isDefault)
         ?.value,
-    ).toBe("gpt-5.6-sol");
+    ).toBe("gpt-6-astra");
     const initial = codexModelOptionsForCatalog().find(
       ({ value }) => value === "gpt-6-astra",
     );

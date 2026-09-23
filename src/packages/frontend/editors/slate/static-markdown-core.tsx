@@ -12,11 +12,13 @@ import {
   useState,
 } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
+import type { Descendant } from "slate";
 import { getStaticRender } from "./elements/register";
 import { slateCodeBlockThemeVars } from "./elements/code-block/render-theme";
 import Leaf from "./leaf";
 import { markdown_to_slate as markdownToSlate } from "./markdown-to-slate";
 import { ChangeContext } from "./use-change";
+import { registerMarkdownSelection } from "./selection-source";
 
 interface Props {
   value: string;
@@ -26,6 +28,11 @@ interface Props {
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeProjectRoot?: string;
   highlightQuery?: string;
+  serializeSelection?: (
+    root: HTMLElement,
+    nodes: Descendant[],
+    range: Range,
+  ) => string;
 }
 
 type PartialSlateEditor = any; // TODO
@@ -45,6 +52,7 @@ export default function StaticMarkdown({
   inlineCodeLinks,
   inlineCodeProjectRoot,
   highlightQuery,
+  serializeSelection,
 }: Props) {
   const didMountRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -62,7 +70,7 @@ export default function StaticMarkdown({
   const renderedChildren = useMemo(
     () =>
       editor?.children?.map((element, index) => (
-        <RenderElement key={index} element={element} />
+        <RenderElement key={index} element={element} path={[index]} />
       )) ?? null,
     [editor?.children],
   );
@@ -70,6 +78,13 @@ export default function StaticMarkdown({
     setEditor(editor);
     setChange((change) => change + 1);
   }, []);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !serializeSelection) return;
+    return registerMarkdownSelection(root, (range) =>
+      serializeSelection(root, editor.children, range),
+    );
+  }, [editor, serializeSelection]);
   const changeContext = useMemo(
     () => ({ change, editor, setEditor: replaceEditor }),
     [change, editor, replaceEditor],
@@ -451,7 +466,8 @@ function normalizePosix(value: string): string {
   return (x.startsWith("/") ? "/" : "") + out.join("/");
 }
 
-function RenderElement({ element }) {
+function RenderElement({ element, path }: { element: any; path: number[] }) {
+  const attributes = { "data-static-slate-path": path.join(".") } as any;
   if (element["type"]) {
     const C = getStaticRender(element.type);
     if (
@@ -460,20 +476,22 @@ function RenderElement({ element }) {
       element.type === "math_block" ||
       element.type === "math_block_eqno"
     ) {
-      return <C children={[]} element={element} attributes={{} as any} />;
+      return <C children={[]} element={element} attributes={attributes} />;
     }
     let children: React.JSX.Element[] = [];
     if (element["children"]) {
       let n = 0;
       for (const child of element["children"]) {
-        children.push(<RenderElement key={n} element={child} />);
+        children.push(
+          <RenderElement key={n} element={child} path={[...path, n]} />,
+        );
         n += 1;
       }
     }
-    return <C children={children} element={element} attributes={{} as any} />;
+    return <C children={children} element={element} attributes={attributes} />;
   }
   return (
-    <Leaf leaf={element} text={{} as any} attributes={{} as any}>
+    <Leaf leaf={element} text={{} as any} attributes={attributes}>
       {element["text"]}
     </Leaf>
   );

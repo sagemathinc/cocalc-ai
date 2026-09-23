@@ -372,6 +372,13 @@ export async function applyMembershipChange(opts: {
   return await api("purchases/membership-change", opts);
 }
 
+export async function linkCourseMembershipPackage(opts: {
+  package_id: string;
+  course_project_id: string;
+}): Promise<void> {
+  await (await getPurchasesHubRpc()).linkCourseMembershipPackage(opts);
+}
+
 export async function getMembershipPackageQuote(opts: {
   package_id?: string;
   kind?: MembershipPackageKind;

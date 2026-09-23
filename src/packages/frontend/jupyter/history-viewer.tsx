@@ -7,87 +7,19 @@
 History viewer for Jupyter notebooks
 */
 
-import { fromJS, List, Map } from "immutable";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay } from "@cocalc/frontend/components";
-import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
-import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
-import { path_split } from "@cocalc/util/misc";
-import { CellList } from "./cell-list";
-import { cm_options } from "./cm_options";
+import { ReadonlyNotebook, readonlyNotebookCells } from "./readonly-notebook";
+import type { ReadonlyNotebookDocument } from "./readonly-notebook";
 
-const HISTORY_ERROR_STYLE = {
-  maxHeight: "30vh",
-  overflow: "auto",
-} as const;
-
-function get_cells(doc): { cells: Map<string, any>; cell_list: List<string> } {
-  let cells = Map<string, any>();
-  const othercells = doc.get({ type: "cell" });
-  if (othercells != null) {
-    othercells.forEach(
-      (cell: any) => (cells = cells.set(cell.get("id"), cell)),
-    );
-  }
-  const cell_list = cell_utils.sorted_cell_list(cells);
-  return { cells, cell_list };
-}
-
-export function HistoryViewer({
-  project_id,
-  path,
-  doc,
-  font_size,
-  scrollPosition,
-}) {
-  const accountFontSize = useTypedRedux("account", "font_size");
-  const default_font_size = font_size ?? accountFontSize ?? DEFAULT_FONT_SIZE;
-  const { head: directory } = path_split(path);
-  const { cells, cell_list } = get_cells(doc);
-
-  const options = fromJS({
-    markdown: undefined,
-    options: cm_options(),
-  });
-
-  const kernel_error = undefined;
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        overflowY: "hidden",
-      }}
-    >
-      {kernel_error && (
-        <ErrorDisplay
-          bsStyle="warning"
-          error={kernel_error}
-          style={HISTORY_ERROR_STYLE}
-        />
-      )}
-      <CellList
-        cell_list={cell_list}
-        cells={cells}
-        font_size={font_size ?? default_font_size}
-        mode="escape"
-        cm_options={options}
-        project_id={project_id}
-        directory={directory}
-        trust={false}
-        read_only={true}
-        scrollPosition={scrollPosition}
-      />
-    </div>
-  );
+// The time-travel viewer passes generic editor props before its document loads.
+export function HistoryViewer(props) {
+  if (!props.doc) return null;
+  return <ReadonlyNotebook {...props} />;
 }
 
 // The following is just for integrating the history viewer.
 import { export_to_ipynb } from "@cocalc/jupyter/ipynb/export-to-ipynb";
 
-export function to_ipynb(doc): object {
-  const { cells, cell_list } = get_cells(doc);
+export function to_ipynb(doc: ReadonlyNotebookDocument): object {
+  const { cells, cell_list } = readonlyNotebookCells(doc);
   return export_to_ipynb({ cells: cells.toJS(), cell_list: cell_list.toJS() });
 }

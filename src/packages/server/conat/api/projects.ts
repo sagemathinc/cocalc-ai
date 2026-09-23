@@ -7196,6 +7196,7 @@ export async function chatStoreReadArchivedHit({
 }
 
 export async function chatStoreSearch({
+  artifacts,
   include_head,
   account_id,
   project_id,
@@ -7207,6 +7208,7 @@ export async function chatStoreSearch({
   limit,
   offset,
 }: {
+  artifacts?: boolean;
   include_head?: boolean;
   account_id?: string;
   project_id: string;
@@ -7219,17 +7221,21 @@ export async function chatStoreSearch({
   offset?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await workspaceChatStoreSearch({
-    include_head,
-    project_id,
-    chat_path,
-    query,
-    db_path,
-    thread_id,
-    exclude_thread_ids,
-    limit,
-    offset,
-  });
+  return await workspaceChatStoreSearch(
+    {
+      artifacts,
+      include_head,
+      project_id,
+      chat_path,
+      query,
+      db_path,
+      thread_id,
+      exclude_thread_ids,
+      limit,
+      offset,
+    },
+    account_id ?? "",
+  );
 }
 
 export async function chatStoreDelete({

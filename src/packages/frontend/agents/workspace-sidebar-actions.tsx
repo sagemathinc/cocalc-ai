@@ -1,31 +1,66 @@
 import { Button } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { Tooltip } from "@cocalc/frontend/components/tip";
+import type { ReactNode } from "react";
 
 export function WorkspaceSidebarActions({
   onProjects,
   onNewAgent,
+  children,
+  footer,
 }: {
   onProjects?: () => void;
   onNewAgent: () => void;
+  children?: ReactNode;
+  footer?: ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-      {onProjects && (
-        <Tooltip title="Your projects, courses, and files.">
-          <Button icon={<Icon name="edit" />} onClick={onProjects}>
-            Projects
-          </Button>
-        </Tooltip>
-      )}
-      <Button
-        type="primary"
-        icon={<Icon name="plus" />}
-        onClick={onNewAgent}
-        style={{ flex: 1 }}
+    <>
+      <div style={{ flex: "0 0 auto" }}>
+        <Button
+          type="text"
+          block
+          icon={<Icon name="plus" />}
+          onClick={onNewAgent}
+          style={{ justifyContent: "flex-start" }}
+        >
+          New Agent
+        </Button>
+      </div>
+      <div
+        role="region"
+        aria-label="Agent navigation and list"
+        tabIndex={0}
+        style={{
+          flex: "1 1 0",
+          minHeight: 0,
+          minWidth: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          marginTop: 10,
+        }}
       >
-        New Agent
-      </Button>
-    </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {onProjects && (
+            <Button
+              type="text"
+              block
+              icon={<Icon name="folder-open" />}
+              onClick={onProjects}
+              style={{ justifyContent: "flex-start" }}
+            >
+              Projects
+            </Button>
+          )}
+          {children}
+        </div>
+      </div>
+      {footer && <div style={{ flex: "0 0 auto" }}>{footer}</div>}
+    </>
   );
 }

@@ -14,6 +14,7 @@ import type { ChatActions } from "./actions";
 import { captureReplyContext } from "./contextual-reply-context";
 import type { ReplyContext, ReplySource } from "./contextual-reply-context";
 import { extendArtifactSelection } from "./artifact-selection";
+import { selectedMarkdown } from "@cocalc/frontend/editors/slate/selection-source";
 
 const Editor = lazyWithRetry(
   () => import("./contextual-reply-editor"),
@@ -54,9 +55,11 @@ export default function ContextualReply({
   fill?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const selectionToolbar = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{
     context: ReplyContext;
     rect: DOMRect;
+    range: Range;
   }>();
   const [opened, setOpened] = useState<{
     context: ReplyContext;
@@ -81,6 +84,9 @@ export default function ContextualReply({
         !element.contains(selected.anchorNode) ||
         !element.contains(selected.focusNode)
       ) {
+        // Keyboard focus can collapse the native selection. Keep its captured
+        // range while the user is operating the selection toolbar.
+        if (selectionToolbar.current?.contains(document.activeElement)) return;
         setSelection(undefined);
         setSelectionError("");
         return;
@@ -89,6 +95,7 @@ export default function ContextualReply({
         setSelection({
           context: captureReplyContext(source, element, selected),
           rect: selected.getRangeAt(0).getBoundingClientRect(),
+          range: selected.getRangeAt(0).cloneRange(),
         });
         setSelectionError("");
       } catch (err) {
@@ -141,6 +148,26 @@ export default function ContextualReply({
       setError(String(err));
     }
   }
+  function quote() {
+    if (!allowed || !selection || !actions?.appendToComposerDraft) return;
+    try {
+      const markdown = selectedMarkdown(selection.range).trim();
+      if (!markdown) throw Error("Select some message content to quote.");
+      actions.appendToComposerDraft({
+        threadKey: source.thread_id,
+        text: markdown
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n"),
+      });
+      setSelection(undefined);
+      window.getSelection()?.removeAllRanges();
+      root.current?.focus({ preventScroll: true });
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
   return (
     <CommentContext.Provider value={allowed ? () => void open() : undefined}>
       <div
@@ -174,25 +201,39 @@ export default function ContextualReply({
           />
         )}
         {selection && !opened && (
-          <Button
-            size="small"
+          <div
+            ref={selectionToolbar}
             style={{
               position: "fixed",
               zIndex: 1100,
               left: Math.max(
                 8,
-                Math.min(selection.rect.left, window.innerWidth - 100),
+                Math.min(selection.rect.left, window.innerWidth - 160),
               ),
               top: Math.max(
                 8,
                 Math.min(selection.rect.bottom + 4, window.innerHeight - 40),
               ),
             }}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void open()}
           >
-            {source.kind === "message" ? "Reply" : "Comment"}
-          </Button>
+            <Button
+              size="small"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void open()}
+            >
+              {source.kind === "message" ? "Reply" : "Comment"}
+            </Button>
+            {source.kind === "message" && (
+              <Button
+                size="small"
+                disabled={!actions?.appendToComposerDraft}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={quote}
+              >
+                Quote
+              </Button>
+            )}
+          </div>
         )}
         {opened && actions && allowed && (
           <Suspense

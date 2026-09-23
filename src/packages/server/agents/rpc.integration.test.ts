@@ -33,6 +33,8 @@ const identities = new Map([
 const checkNetwork = jest.fn();
 const assertHost = jest.fn(async () => {});
 const submitAgentRpc = jest.fn();
+const remoteSubmit = jest.fn();
+let remoteTarget = false;
 const query = jest.fn(async () => ({
   rows: [{ host_id: host, state: "running" }],
 }));
@@ -66,8 +68,19 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "target-bay",
 }));
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
-  resolveProjectBay: async () => ({ bay_id: "target-bay", epoch: 1 }),
+  resolveProjectBay: async () => ({
+    bay_id: remoteTarget ? "remote-bay" : "target-bay",
+    epoch: 1,
+  }),
   resolveHostBayAcrossCluster: async () => ({ bay_id: "target-bay" }),
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+jest.mock("@cocalc/conat/inter-bay/agent-rpc", () => ({
+  createAgentRpcControlClient: () => ({
+    submit: (...args) => remoteSubmit(...args),
+  }),
 }));
 jest.mock("@cocalc/server/conat/route-client", () => ({
   getExplicitHostControlClient: async () => ({}),
@@ -83,7 +96,8 @@ jest.mock("./admission-state", () => ({
   hashAgentRpcAdmissionBinding: () => "binding",
 }));
 
-import { agentRpcControl, authorizeRpcExecution } from "./rpc";
+import { acceptAgentRpc, agentRpcControl, authorizeRpcExecution } from "./rpc";
+import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
 
 const source = { project_id: sourceProject, agent_id: sourceAgent };
 const target = { project_id: targetProject, agent_id: targetAgent };
@@ -133,6 +147,8 @@ function networkAuthorization() {
 }
 
 beforeEach(() => {
+  remoteTarget = false;
+  remoteSubmit.mockReset();
   assertHost.mockClear();
   query.mockClear();
   submitAgentRpc.mockReset().mockImplementation(async (envelope) => ({
@@ -153,6 +169,41 @@ beforeEach(() => {
     source: sourceMember,
     target: targetMember,
   });
+});
+
+test("lost broadcast acknowledgment stays unknown on replay without resubmission", async () => {
+  remoteTarget = true;
+  let persisted: any;
+  checkNetwork.mockImplementation(async (_account, request) => {
+    if (request.action === "beginBroadcast")
+      return persisted
+        ? { claimed: false, binding_hash: "binding", outcome: persisted }
+        : {
+            claimed: true,
+            binding_hash: "binding",
+            authorizations: [networkAuthorization()],
+          };
+    if (request.action === "finishBroadcast")
+      persisted = request.options.outcome;
+  });
+  remoteSubmit.mockRejectedValue(new Error("ack lost after acceptance"));
+  const request = {
+    version: 3 as const,
+    action: "broadcast" as const,
+    broadcast_id: randomUUID(),
+    agent_network_id: network,
+    targets: [target],
+    body: "hello",
+  };
+  const subject = agentMessagingSubject(sourceAgent, runId);
+  const result = await acceptAgentRpc(subject, request);
+  expect(result).toMatchObject({
+    outcome: "unknown",
+    children: [{ outcome: "unknown" }],
+  });
+  expect(persisted.children[0].chat_effect).not.toBe("none");
+  expect(await acceptAgentRpc(subject, request)).toEqual(result);
+  expect(remoteSubmit).toHaveBeenCalledTimes(1);
 });
 
 test("cross-bay submission does not require the source identity in the target bay", async () => {

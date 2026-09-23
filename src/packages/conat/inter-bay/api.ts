@@ -1054,6 +1054,7 @@ export interface AccountLocalGetMembershipDetailsRequest {
 
 export interface AccountLocalGetUsageOverviewRequest {
   account_id: string;
+  include_site_funded_codex_credits?: boolean;
 }
 
 export interface AccountLocalRecordSiteFundedCodexUsageRequest {
@@ -2370,6 +2371,7 @@ export interface BayOpsFinishSiteFundedCodexTurnRequest extends BayOpsSiteFunded
 
 export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
+  accountId?: string;
 }
 
 export interface BayOpsReserveSiteFundedSpeechRequest {

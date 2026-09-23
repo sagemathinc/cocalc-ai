@@ -12,11 +12,13 @@ export {
 
 import $ from "jquery";
 import {
+  redux,
   useEffect,
   useFrameContext,
   useRef,
 } from "@cocalc/frontend/app-framework";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import processLinks from "@cocalc/frontend/misc/process-links/generic";
 import { Range } from "slate";
 import { path_split } from "@cocalc/util/misc";
 import { useSlateStatic as useSlateStatic0 } from "../slate-react";
@@ -57,10 +59,12 @@ export const useProcessLinks = (
   useEffect(() => {
     if (ref.current == null) return;
     const elt = $(ref.current);
-    (elt as any).process_smc_links({
-      project_id,
-      file_path: path ? path_split(path).head : undefined, // TODO: inefficient to compute this every time.
+    processLinks(elt, {
+      projectId: project_id,
+      filePath: path ? path_split(path).head : undefined, // TODO: inefficient to compute this every time.
       doubleClick,
+      $,
+      projectActions: redux.getActions("projects"),
     });
   }, [project_id, path, doubleClick, ...deps]);
   return ref;

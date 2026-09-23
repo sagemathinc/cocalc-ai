@@ -37,7 +37,7 @@ describe("codex new chat defaults", () => {
     });
 
     expect(saved).toEqual({
-      model: "gpt-5.6-sol",
+      model: "gpt-6-astra",
       reasoning: "extra_high",
       sessionMode: "workspace-write",
       serviceTier: "fast",
@@ -57,7 +57,7 @@ describe("codex new chat defaults", () => {
     ]);
   });
 
-  it("loads stored defaults for new thread setup", () => {
+  it("replaces retired stored model defaults for new thread setup", () => {
     jest.doMock("@cocalc/frontend/lite", () => ({
       lite: false,
     }));
@@ -100,9 +100,9 @@ describe("codex new chat defaults", () => {
     const { getDefaultNewThreadSetup } = require("../chatroom-thread-panel");
 
     expect(getDefaultNewThreadSetup()).toMatchObject({
-      model: "gpt-5.4",
+      model: "gpt-6-astra",
       codexConfig: {
-        model: "gpt-5.4",
+        model: "gpt-6-astra",
         reasoning: "high",
         sessionMode: "full-access",
         serviceTier: "fast",
@@ -147,7 +147,7 @@ describe("codex new chat defaults", () => {
         serviceTier: "fast",
       }),
     ).toMatchObject({
-      model: "gpt-5.4",
+      model: "gpt-6-astra",
       sessionMode: "full-access",
       serviceTier: "fast",
     });

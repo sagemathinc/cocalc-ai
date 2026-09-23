@@ -116,6 +116,8 @@ import "./project-archive-lifecycle-jobs";
 import "./project-collab-invites";
 import "./project-entitlement-overrides";
 import "./project-events-outbox";
+import "./artifact-catalog";
+import "./personal-library";
 import "./project-labels";
 import "./project-host-route-invalidations";
 import "./public-project-paths";

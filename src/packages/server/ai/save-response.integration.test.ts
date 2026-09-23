@@ -83,8 +83,19 @@ describe("exact account AI usage ledger", () => {
     expect(Number(rows[0].output_tokens)).toBe(456);
     expect(Number(rows[0].request_sequence)).toBe(2);
 
-    const status = await getAIUsageStatus({ account_id: accountId });
+    const status = await getAIUsageStatus({
+      account_id: accountId,
+      include_site_funded_credits: true,
+    });
     expect(status.windows.find(({ window }) => window === "5h")?.used).toBe(10);
     expect(status.windows.find(({ window }) => window === "7d")?.used).toBe(10);
+    expect(
+      status.windows.find(({ window }) => window === "5h")
+        ?.site_funded_credits_microusd,
+    ).toEqual({ [fundedTurnId]: 100_000 });
+    expect(
+      status.windows.find(({ window }) => window === "7d")
+        ?.site_funded_credits_microusd,
+    ).toEqual({ [fundedTurnId]: 100_000 });
   });
 });

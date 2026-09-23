@@ -238,7 +238,10 @@ import {
   withCurrentAutomationSettings,
 } from "./automation-settings";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
-import { resolveHumanTurnMentions } from "./turn-mentions";
+import {
+  resolveHumanTurnMentions,
+  resolveHumanTurnArtifactMentions,
+} from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
   decodeAcpInterruptCandidateIds,
@@ -7661,6 +7664,10 @@ async function executeAcpRequest({
     request,
     hubApi.agent,
   );
+  const artifactReferences = await resolveHumanTurnArtifactMentions(
+    request,
+    hubApi.artifactCatalog,
+  );
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -7791,7 +7798,9 @@ async function executeAcpRequest({
         ...request,
         mentionReferences,
         readPendingGoal: chatWriter?.readPendingGoal,
-        prompt: augmentPromptWithAgentMentions(prompt, mentionReferences),
+        prompt: artifactReferences.length
+          ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
+          : augmentPromptWithAgentMentions(prompt, mentionReferences),
         local_images,
         runtime_env: runtimeEnv,
         config: effectiveConfig,

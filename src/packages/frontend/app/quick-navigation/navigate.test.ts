@@ -69,6 +69,35 @@ import { EventEmitter } from "events";
 import { navigate } from "./navigate";
 import { FRAME_COMMIT_EVENT } from "@cocalc/frontend/frame-editors/frame-tree/commit-event";
 
+it.each(["agent", "another-agent"])(
+  "exits Library for explicit agent navigation (previous=%s)",
+  async (previousAgent) => {
+    const state = {
+      library_open: true,
+      library_project_id: "project" as string | undefined,
+      library_entry_id: "entry" as string | undefined,
+      active_agent_id: previousAgent,
+    };
+    const setState = jest.fn((update) => Object.assign(state, update));
+    const setActiveTab = jest.fn();
+    Object.assign(redux, {
+      getActions: () => ({ setState, set_active_tab: setActiveTab }),
+    });
+    await navigate(
+      { kind: "agent", agentId: "agent", agentName: "reviewer" },
+      new AbortController().signal,
+    );
+    expect(state.library_open).toBe(false);
+    expect(state.library_project_id).toBeUndefined();
+    expect(state.library_entry_id).toBeUndefined();
+    expect(state.active_agent_id).toBe("agent");
+    expect(setActiveTab).toHaveBeenCalledWith("agents", true);
+    expect(setState.mock.invocationCallOrder[0]).toBeLessThan(
+      setActiveTab.mock.invocationCallOrder[0],
+    );
+  },
+);
+
 function navigationFixture() {
   const projectStore: any = new EventEmitter();
   const editorStore: any = new EventEmitter();
@@ -322,6 +351,9 @@ it("selects a registered agent before opening My Agents", async () => {
     new AbortController().signal,
   );
   expect(setState).toHaveBeenCalledWith({
+    library_open: false,
+    library_project_id: undefined,
+    library_entry_id: undefined,
     active_agent_id: "agent-id",
     active_agent_name: "reviewer",
   });

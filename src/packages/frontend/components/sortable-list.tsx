@@ -124,6 +124,10 @@ export function SortableList({
 
   return (
     <DndContext
+      // Live announcements are not list items; keep them outside semantic lists.
+      accessibility={{
+        container: typeof document !== "undefined" ? document.body : undefined,
+      }}
       collisionDetection={closestCenter}
       sensors={sensors}
       onDragStart={(event) => {
