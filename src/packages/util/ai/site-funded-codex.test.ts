@@ -7,6 +7,7 @@ import {
   computeSiteFundedCodexRequestCost,
   DEFAULT_SITE_FUNDED_CODEX_POLICY,
   getSiteFundedCodexPrice,
+  hasSiteFundedCodexPrice,
   microusdToUsageUnits,
   SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
   siteFundedCodexFinalRequestHeadroomMicrousd,
@@ -15,6 +16,30 @@ import {
 } from "./site-funded-codex";
 
 describe("site-funded Codex accounting", () => {
+  it("uses the verified GPT-6 Luna Standard price", () => {
+    expect(getSiteFundedCodexPrice("gpt-6-luna")).toMatchObject({
+      version: "openai-2026-09-22",
+      inputUsdPerMillion: "0.10",
+      cachedInputUsdPerMillion: "0.01",
+      cacheWriteUsdPerMillion: "0.125",
+      outputUsdPerMillion: "0.50",
+      longContextThresholdTokens: 272_000,
+      longContextInputMultiplier: "2",
+      longContextOutputMultiplier: "1.5",
+    });
+    expect(hasSiteFundedCodexPrice("gpt-6-luna")).toBe(true);
+    expect(hasSiteFundedCodexPrice("gpt-6-sol")).toBe(false);
+  });
+
+  it("prices GPT-6 Luna input and output without a cent minimum", () => {
+    const cost = computeSiteFundedCodexRequestCost({
+      model: "gpt-6-luna",
+      usage: { inputTokens: 10_000, outputTokens: 500 },
+    });
+    expect(cost.costMicrousd).toBe(1_250);
+    expect(microusdToUsageUnits(cost.costMicrousd)).toBe(0.125);
+  });
+
   it("prices ordinary Luna input and output without a cent minimum", () => {
     const cost = computeSiteFundedCodexRequestCost({
       model: "gpt-5.6-luna",
@@ -108,6 +133,6 @@ describe("site-funded Codex accounting", () => {
     expect(siteFundedCodexMaxRequestBodyBytes(policy)).toBe(
       SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES,
     );
-    expect(siteFundedCodexFinalRequestHeadroomMicrousd(policy)).toBe(5_748);
+    expect(siteFundedCodexFinalRequestHeadroomMicrousd(policy)).toBe(2_774);
   });
 });

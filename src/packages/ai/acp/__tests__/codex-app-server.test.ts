@@ -6823,7 +6823,7 @@ describe("CodexAppServerAgent", () => {
     expect(
       requests.find(({ method }) => method === "thread/start")?.params,
     ).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
       serviceTier: null,
       config: {
         "agents.max_concurrent_threads_per_session": 11,
@@ -6833,7 +6833,7 @@ describe("CodexAppServerAgent", () => {
     expect(
       requests.find(({ method }) => method === "turn/start")?.params,
     ).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
       effort: "medium",
       serviceTier: null,
     });
@@ -6843,7 +6843,7 @@ describe("CodexAppServerAgent", () => {
           type: "event",
           event: expect.objectContaining({
             type: "config",
-            model: "gpt-5.6-luna",
+            model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
             reasoning: "medium",
             serviceTier: "standard",
             siteFundedReservationId: "reservation-1",
