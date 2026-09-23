@@ -35,14 +35,17 @@ test("quiet New Agent and Projects navigation work from the keyboard", async () 
   ).toBeNull();
 });
 
-test("only New Agent stays outside the single keyboard-accessible scroll area", async () => {
+test("New Agent and account footer stay outside the keyboard-accessible scroll area", async () => {
   const user = userEvent.setup();
   render(
-    <WorkspaceSidebarActions onNewAgent={() => {}} onProjects={() => {}}>
+    <WorkspaceSidebarActions
+      onNewAgent={() => {}}
+      onProjects={() => {}}
+      footer={<button>Account menu</button>}
+    >
       <button>Library</button>
       <input aria-label="Filter agents" />
       <button>Last agent</button>
-      <button>Account menu</button>
     </WorkspaceSidebarActions>,
   );
   const scroll = screen.getByRole("region", {
@@ -52,7 +55,10 @@ test("only New Agent stays outside the single keyboard-accessible scroll area", 
   expect(
     within(scroll).queryByRole("button", { name: "New Agent" }),
   ).toBeNull();
-  for (const name of ["Projects", "Library", "Last agent", "Account menu"])
+  expect(
+    within(scroll).queryByRole("button", { name: "Account menu" }),
+  ).toBeNull();
+  for (const name of ["Projects", "Library", "Last agent"])
     expect(within(scroll).getByRole("button", { name })).toBeVisible();
   expect(
     within(scroll).getByRole("textbox", { name: "Filter agents" }),

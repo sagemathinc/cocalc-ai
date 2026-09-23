@@ -6,10 +6,12 @@ export function WorkspaceSidebarActions({
   onProjects,
   onNewAgent,
   children,
+  footer,
 }: {
   onProjects?: () => void;
   onNewAgent: () => void;
   children?: ReactNode;
+  footer?: ReactNode;
 }) {
   return (
     <>
@@ -42,7 +44,6 @@ export function WorkspaceSidebarActions({
             display: "flex",
             flexDirection: "column",
             gap: 10,
-            minHeight: "100%",
           }}
         >
           {onProjects && (
@@ -59,6 +60,7 @@ export function WorkspaceSidebarActions({
           {children}
         </div>
       </div>
+      {footer && <div style={{ flex: "0 0 auto" }}>{footer}</div>}
     </>
   );
 }

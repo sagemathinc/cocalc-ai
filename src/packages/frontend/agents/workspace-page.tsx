@@ -3092,6 +3092,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <WorkspaceSidebarActions
+        footer={
+          <div
+            style={{
+              borderTop: `1px solid ${UI_COLORS.border}`,
+              paddingTop: 8,
+            }}
+          >
+            <AgentsAccountMenu />
+          </div>
+        }
         onProjects={
           lite
             ? undefined
@@ -3325,16 +3335,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               )}
             </div>
           )}
-        </div>
-        <div
-          style={{
-            borderTop: `1px solid ${UI_COLORS.border}`,
-            flex: "0 0 auto",
-            marginTop: "auto",
-            paddingTop: 8,
-          }}
-        >
-          <AgentsAccountMenu />
         </div>
       </WorkspaceSidebarActions>
     </aside>
