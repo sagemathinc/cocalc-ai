@@ -1,6 +1,8 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
 
 const isProduction = process.env.COCALC_MOBILE_VARIANT === "production";
+const microphonePermission =
+  "Allow CoCalc to record dictation and talk with your agents.";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -14,11 +16,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   newArchEnabled: true,
   ios: {
     supportsTablet: true,
+    appleTeamId: isProduction ? "BVF94G2MB4" : undefined,
     bundleIdentifier: isProduction
       ? "com.sagemath.cocalc.mobile"
       : "com.sagemath.cocalc.mobile.dev",
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
+      NSMicrophoneUsageDescription: microphonePermission,
     },
   },
   android: {
@@ -39,14 +43,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         photosPermission: "Allow CoCalc to attach photos to agent messages.",
         cameraPermission: "Allow CoCalc to take photos for agent messages.",
-        microphonePermission: false,
+        microphonePermission,
       },
     ],
     [
       "expo-audio",
       {
-        microphonePermission:
-          "Allow CoCalc to record dictation and talk with your agents.",
+        microphonePermission,
         enableBackgroundRecording: false,
         enableBackgroundPlayback: false,
       },
