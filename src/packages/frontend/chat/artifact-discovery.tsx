@@ -1,8 +1,9 @@
-import { lazy, Suspense, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ComponentRef } from "react";
 import { Button } from "antd";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { ChatActions } from "./actions";
+import { useChatEmbeddingOptions } from "./embedding-options";
 const Browser = lazy(() => import("./artifact-browser"));
 const Results = lazy(() =>
   import("./artifact-browser").then((m) => ({ default: m.ArtifactResults })),
@@ -17,7 +18,17 @@ export function ArtifactBrowserButton({
   threadId?: string;
   compact?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState<{ threadId?: string } | null>(null);
+  const { agentWorkspace = false, agentWorkspaceActive } =
+    useChatEmbeddingOptions();
+  const stale =
+    agentWorkspace &&
+    (agentWorkspaceActive === false || opened?.threadId !== threadId);
+  const open = opened !== null && !stale;
+  useEffect(() => {
+    // Hidden workspaces stay mounted. Discard their portal without stealing focus.
+    if (stale) setOpened(null);
+  }, [stale]);
   const triggerRef = useRef<ComponentRef<typeof Button>>(null);
   if (!actions?.syncdb) return null;
   return (
@@ -27,13 +38,16 @@ export function ArtifactBrowserButton({
           ref={triggerRef}
           aria-label="Browse artifacts"
           aria-haspopup="dialog"
+          aria-expanded={agentWorkspace ? open : undefined}
           size={compact ? "small" : undefined}
           type={compact ? "text" : "default"}
           icon={compact ? <Icon name="files" /> : undefined}
           style={
             compact ? { minWidth: 24, height: 22, padding: "0 4px" } : undefined
           }
-          onClick={() => setOpen(true)}
+          onClick={() =>
+            setOpened(agentWorkspace && open ? null : { threadId })
+          }
         >
           {compact ? null : "Artifacts"}
         </Button>
@@ -44,7 +58,7 @@ export function ArtifactBrowserButton({
             actions={actions}
             threadId={threadId}
             onClose={() => {
-              setOpen(false);
+              setOpened(null);
               triggerRef.current?.focus();
             }}
           />

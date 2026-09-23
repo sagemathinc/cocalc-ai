@@ -34,7 +34,7 @@ import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
 import { AgentArtifactBrowser } from "./artifact-browser";
-import { openCatalogArtifact } from "./open-catalog-artifact";
+import { useSyncExternalStore } from "react";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
@@ -1480,6 +1480,7 @@ function AgentProjectContext({
       <ChatEmbeddingOptionsProvider
         value={{
           agentWorkspace: true,
+          agentWorkspaceActive: active,
           onSearchAll: () => {
             if (accountId) agentSearchStore(accountId).set({ open: true });
           },
@@ -1487,7 +1488,6 @@ function AgentProjectContext({
             if (accountId)
               agentSearchStore(accountId).set({
                 artifactsOpen: true,
-                artifactsScope: "all",
               });
           },
           selectedNetworkId,
@@ -2199,6 +2199,27 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
+  const artifactNavigation = agentSearchStore(accountId ?? "signed-out");
+  useEffect(() => {
+    return () => {
+      searchNavigation.current++;
+    };
+  }, [active, accountId]);
+  const libraryOpen = !!useSyncExternalStore(
+    artifactNavigation.subscribe,
+    artifactNavigation.get,
+  ).artifactsOpen;
+  const libraryButton = useRef<HTMLButtonElement>(null);
+  const workspaceContent = useRef<HTMLElement>(null);
+  function closeLibrary() {
+    searchNavigation.current++;
+    artifactNavigation.set({ artifactsOpen: false });
+    setMobileList(false);
+    requestAnimationFrame(() => {
+      if (isNarrow || agentSidebarHidden) workspaceContent.current?.focus();
+      else libraryButton.current?.focus();
+    });
+  }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
     | undefined;
@@ -2265,8 +2286,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
-  const artifactDestination = useRef({ selected, active, accountId });
-  artifactDestination.current = { selected, active, accountId };
   const creatingSourceAgent =
     agents.find(
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
@@ -2408,9 +2427,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     [active],
   );
 
-  function selectAgent(agent: NamedAgent) {
+  function selectAgent(agent: NamedAgent, keepNavigation = false) {
     mountAgent(agent);
-    selectAgentId(agent.endpoint.agent_id);
+    selectAgentId(agent.endpoint.agent_id, keepNavigation);
     setMobileList(false);
   }
 
@@ -2430,7 +2449,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     });
   }
 
-  function selectAgentId(agentId: string) {
+  function selectAgentId(agentId: string, keepNavigation = false) {
+    if (!keepNavigation) searchNavigation.current++;
+    artifactNavigation.set({ artifactsOpen: false });
     const routeName = agents.find(
       ({ endpoint }) => endpoint.agent_id === agentId,
     )?.name;
@@ -2479,60 +2500,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     selectAgentId(agent.endpoint.agent_id);
   }
 
-  async function openArtifactHit(result: AgentSearchHit) {
-    const current = selected;
-    if (!current)
-      throw Error("Choose an agent to open artifacts beside its conversation.");
-    const editor = redux.getEditorActions(
-      current.endpoint.project_id,
-      current.path,
-    );
-    const destination = editor?.getChatActions?.();
-    if (!destination)
-      throw Error("Your workbench is still loading. Try again shortly.");
-    const navigation = ++searchNavigation.current;
-    await openCatalogArtifact({
-      result,
-      destination,
-      sourceIsDestination:
-        current.endpoint.project_id === result.agent.endpoint.project_id &&
-        current.path === result.agent.path &&
-        current.thread_id === result.threadId,
-      canceled: () =>
-        searchNavigation.current !== navigation ||
-        !artifactDestination.current.active ||
-        artifactDestination.current.accountId !== accountId ||
-        artifactDestination.current.selected?.thread_id !== current.thread_id ||
-        artifactDestination.current.selected?.endpoint.agent_id !==
-          current.endpoint.agent_id ||
-        redux.getEditorActions(current.endpoint.project_id, current.path) !==
-          editor,
-      getIdentity: () =>
-        personalAgentApi().getIdentity({
-          project_id: result.agent.endpoint.project_id,
-          agent_id: result.agent.endpoint.agent_id,
-        }),
-      openSource: async () => {
-        const { openForeignArtifactSource } =
-          await import("@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source");
-        return openForeignArtifactSource({
-          projectId: result.agent.endpoint.project_id,
-          path: result.agent.path,
-          threadId: result.threadId,
-          artifactId: result.hit.artifact_id!,
-        });
-      },
-    });
-  }
-
   async function openSearchHit(
     result: AgentSearchHit,
     showConversation = false,
   ) {
-    if (result.hit.artifact_id && !showConversation) {
-      await openArtifactHit(result);
-      return;
-    }
     const navigation = ++searchNavigation.current;
     const superseded = () => navigation !== searchNavigation.current;
     const { agent, threadId, hit, historical } = result;
@@ -2546,6 +2517,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         "This agent started a fresh conversation. Search again to open its current results.",
       );
     await ensureProjectReduxRuntime();
+    if (hit.artifact_id) {
+      const { openForeignArtifactSource } =
+        await import("@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source");
+      await openForeignArtifactSource({
+        projectId: agent.endpoint.project_id,
+        path: agent.path,
+        threadId,
+        artifactId: hit.artifact_id,
+      });
+      if (superseded()) return;
+    }
     if (historical) {
       await redux.getActions("projects").open_project({
         project_id: agent.endpoint.project_id,
@@ -2553,7 +2535,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         switch_to: true,
       });
     } else {
-      selectAgentId(agent.endpoint.agent_id);
+      selectAgent(agent, true);
     }
     await redux.getProjectActions(agent.endpoint.project_id).open_file({
       path: agent.path,
@@ -2579,26 +2561,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     const chat = editor.getChatActions();
     if (!chat) throw new Error("Conversation is not ready; try again shortly");
     if (hit.artifact_id) {
-      const { validateArtifactPublication } = await import("@cocalc/chat");
+      const { openSourceArtifact, sourceArtifactPublication } =
+        await import("./open-source-artifact");
       const { showConversation: showArtifactConversation } =
         await import("@cocalc/frontend/chat/artifact-browser");
-      const publications = chat.syncdb.get({
-        event: "chat-artifact-publication",
-      });
-      const rows = publications?.toJS?.() ?? publications ?? [];
-      const publication = rows.find(
-        (row) =>
-          row.thread_id === threadId &&
-          row.artifact_id === hit.artifact_id &&
-          row.operation_id === hit.operation_id,
-      );
-      if (!publication)
-        throw Error(
-          "Artifact changed or is no longer available; refresh the results.",
-        );
-      await showArtifactConversation(chat, {
-        publication: validateArtifactPublication(publication),
-      });
+      if (showConversation) {
+        await showArtifactConversation(chat, {
+          publication: sourceArtifactPublication(chat, result),
+        });
+      } else {
+        openSourceArtifact(chat, result);
+      }
       return;
     }
     if (hit.segment_id !== "head") {
@@ -2623,6 +2596,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       redux.getStore("page").get("active_agent_id") === agent.endpoint.agent_id
     ) {
       Fragment.set({ thread: threadId, chat: `${hit.date_ms}` });
+    }
+  }
+
+  async function openLibraryHit(result: AgentSearchHit, conversation = false) {
+    try {
+      await openSearchHit(result, conversation);
+    } catch (err) {
+      // Navigation may already have selected the source. Keep failures visible
+      // in the Library, where the user can retry or choose another resource.
+      artifactNavigation.set({ artifactsOpen: true });
+      throw err;
     }
   }
 
@@ -3048,7 +3032,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         overflow: "hidden",
         minWidth: 0,
         padding: 12,
-        ...(isNarrow && !mobileList ? { display: "none" } : {}),
+        ...(isNarrow && (!mobileList || libraryOpen)
+          ? { display: "none" }
+          : {}),
       }}
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
@@ -3061,6 +3047,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 }
           }
           onNewAgent={() => {
+            searchNavigation.current++;
+            artifactNavigation.set({ artifactsOpen: false });
             setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
             redux.getActions("page").setState({
@@ -3076,6 +3064,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setMobileList(false);
           }}
         />
+        <Button
+          ref={libraryButton}
+          block
+          type={libraryOpen ? "primary" : "default"}
+          icon={<Icon name="files" />}
+          aria-pressed={libraryOpen}
+          onClick={() => {
+            searchNavigation.current++;
+            artifactNavigation.set({ artifactsOpen: true });
+            setMobileList(false);
+          }}
+        >
+          Library
+        </Button>
         {accountId && (
           <AgentSearch
             accountId={accountId}
@@ -3365,7 +3367,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         </div>
       )}
       <section
-        aria-label={selected ? `Agent @${selected.name}` : "Agent workspace"}
+        ref={workspaceContent}
+        tabIndex={-1}
+        aria-label={
+          libraryOpen
+            ? "Artifact Library"
+            : selected
+              ? `Agent @${selected.name}`
+              : "Agent workspace"
+        }
         style={{
           flex: 1,
           minWidth: 0,
@@ -3373,7 +3383,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           display: "flex",
           flexDirection: "column",
           position: "relative",
-          ...(isNarrow && mobileList ? { display: "none" } : {}),
+          ...(isNarrow && mobileList && !libraryOpen
+            ? { display: "none" }
+            : {}),
         }}
       >
         {accountId && (
@@ -3382,12 +3394,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             accountId={accountId}
             agents={agents}
             activeAgent={selected}
-            active={active}
-            onSelect={openArtifactHit}
-            onShowConversation={(result) => openSearchHit(result, true)}
+            active={active && libraryOpen}
+            onClose={closeLibrary}
+            onSelect={openLibraryHit}
+            onShowConversation={(result) => openLibraryHit(result, true)}
           />
         )}
-        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            position: "relative",
+            display: libraryOpen ? "none" : undefined,
+          }}
+        >
           {active &&
             (creating ||
               !!error ||
@@ -3507,6 +3527,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     accountId={accountId}
                     active={
                       active &&
+                      !libraryOpen &&
                       !!selected &&
                       agentWorkspaceKey(selected) === workspace
                     }

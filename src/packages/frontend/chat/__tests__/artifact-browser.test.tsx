@@ -40,10 +40,14 @@ test("Agents scope cannot include unrelated chatroom threads", async () => {
     </ChatEmbeddingOptionsProvider>
   );
   const { rerender } = render(view("one"));
-  expect(
-    screen.getByRole("combobox", { name: "Artifact scope" }),
-  ).toBeDisabled();
-  await waitFor(() => expect(screen.getByText("This agent")).toBeVisible());
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open Library" })).toBeNull();
+  const dialog = screen.getByRole("dialog", { name: "Artifacts" });
+  expect(dialog.closest(".ant-drawer")).toHaveClass("ant-drawer-right");
+  expect(dialog.closest(".ant-drawer-content-wrapper")).toHaveStyle({
+    maxWidth: "100%",
+    width: "400px",
+  });
   expect(screen.queryByText("Entire chatroom")).toBeNull();
   expect(screen.getByText("Plan one")).toBeVisible();
   expect(screen.queryByText("Plan two")).toBeNull();
@@ -55,6 +59,41 @@ test("Agents scope cannot include unrelated chatroom threads", async () => {
   expect(
     screen.getByText("Select an agent to browse its artifacts."),
   ).toBeVisible();
+});
+
+test("direct browser hides its portal for an inactive agent workspace", async () => {
+  const actions = {
+    syncdb: Object.assign(new EventEmitter(), { get: () => [] }),
+  } as any;
+  const close = jest.fn();
+  const view = (active: boolean, agentWorkspace = true) => (
+    <>
+      <button>Destination</button>
+      <ChatEmbeddingOptionsProvider
+        value={{ agentWorkspace, agentWorkspaceActive: active }}
+      >
+        <ArtifactBrowser actions={actions} threadId="one" onClose={close} />
+      </ChatEmbeddingOptionsProvider>
+    </>
+  );
+  const { rerender } = render(view(false));
+  expect(screen.queryByRole("dialog", { hidden: true })).toBeNull();
+  rerender(view(true));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Filter artifacts" }),
+    ).toHaveFocus(),
+  );
+  const destination = screen.getByRole("button", { name: "Destination" });
+  destination.focus();
+  rerender(view(false));
+  expect(screen.queryByRole("dialog", { hidden: true })).toBeNull();
+  expect(destination).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  rerender(view(false, false));
+  await waitFor(() =>
+    expect(screen.getByRole("dialog", { name: "Artifacts" })).toBeVisible(),
+  );
 });
 
 test("pinning and keyboard menu actions retain custom order independently of sorting", async () => {
@@ -118,43 +157,141 @@ test("pinning and keyboard menu actions retain custom order independently of sor
   expect(screen.getByRole("button", { name: "Pin Beta" })).toHaveFocus();
 });
 
-test("compact toolbar opens the current thread browser by keyboard and restores focus", async () => {
-  const rows: any[] = [];
-  const syncdb = Object.assign(new EventEmitter(), {
-    get_one: () => undefined,
-    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
-    get: () => rows.filter((row) => row.event === "chat-artifact-publication"),
-  });
-  for (const thread_id of ["one", "two"])
-    publishArtifact(syncdb, {
-      thread_id,
-      artifact_id: "doc",
-      operation_id: "op",
-      message_id: "message",
-      title: `Plan ${thread_id}`,
-      markdown: "hello",
+test.each([false, true])(
+  "compact toolbar keyboard and focus restoration (agentWorkspace=%s)",
+  async (agentWorkspace) => {
+    const rows: any[] = [];
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: () => undefined,
+      set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+      get: () =>
+        rows.filter((row) => row.event === "chat-artifact-publication"),
     });
+    for (const thread_id of ["one", "two"])
+      publishArtifact(syncdb, {
+        thread_id,
+        artifact_id: "doc",
+        operation_id: "op",
+        message_id: "message",
+        title: `Plan ${thread_id}`,
+        markdown: "hello",
+      });
+    render(
+      <ChatEmbeddingOptionsProvider value={{ agentWorkspace }}>
+        <ArtifactBrowserButton
+          actions={{ syncdb } as any}
+          threadId="one"
+          compact
+        />
+      </ChatEmbeddingOptionsProvider>,
+    );
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "Browse artifacts" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const filter = await screen.findByRole("textbox", {
+      name: "Filter artifacts",
+    });
+    await waitFor(() => expect(filter).toHaveFocus());
+    expect(screen.getByText("Plan one")).toBeVisible();
+    expect(screen.queryByText("Plan two")).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  },
+);
+
+test("agent toolbar toggles the panel and Open Library closes it before delegating", async () => {
+  const onBrowseAllArtifacts = jest.fn(() => {
+    expect(trigger).toHaveFocus();
+  });
   render(
-    <ArtifactBrowserButton
-      actions={{ syncdb } as any}
-      threadId="one"
-      compact
-    />,
+    <ChatEmbeddingOptionsProvider
+      value={{ agentWorkspace: true, onBrowseAllArtifacts }}
+    >
+      <ArtifactBrowserButton
+        actions={
+          {
+            syncdb: Object.assign(new EventEmitter(), { get: () => [] }),
+          } as any
+        }
+        threadId="one"
+        compact
+      />
+    </ChatEmbeddingOptionsProvider>,
   );
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Browse artifacts" });
-  trigger.focus();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.click(trigger);
+  await screen.findByRole("dialog", { name: "Artifacts" });
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(document.querySelector(".ant-drawer-mask")).toBeNull();
+  await user.click(trigger);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(trigger).toHaveFocus();
   await user.keyboard("{Enter}");
-  const filter = await screen.findByRole("textbox", {
-    name: "Filter artifacts",
-  });
-  await waitFor(() => expect(filter).toHaveFocus());
-  expect(screen.getByText("Plan one")).toBeVisible();
-  expect(screen.queryByText("Plan two")).toBeNull();
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
+  const library = await screen.findByRole("button", { name: "Open Library" });
+  library.focus();
+  await user.keyboard("{Enter}");
+  expect(onBrowseAllArtifacts).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
 });
+
+test.each(["inactive", "thread change"])(
+  "agent panel closes without restoring old trigger focus on %s",
+  async (reason) => {
+    const actions = {
+      syncdb: Object.assign(new EventEmitter(), { get: () => [] }),
+    } as any;
+    const view = (active: boolean, threadId: string) => (
+      <>
+        <button>Destination</button>
+        <div hidden={!active}>
+          <ChatEmbeddingOptionsProvider
+            value={{ agentWorkspace: true, agentWorkspaceActive: active }}
+          >
+            <ArtifactBrowserButton
+              actions={actions}
+              threadId={threadId}
+              compact
+            />
+          </ChatEmbeddingOptionsProvider>
+        </div>
+      </>
+    );
+    const { rerender } = render(view(true, "one"));
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "Browse artifacts" });
+    await user.click(trigger);
+    const filter = await screen.findByRole("textbox", {
+      name: "Filter artifacts",
+    });
+    await waitFor(() => expect(filter).toHaveFocus());
+    const destination = screen.getByRole("button", { name: "Destination" });
+    destination.focus();
+    const focus = jest.spyOn(trigger, "focus");
+    rerender(
+      view(reason !== "inactive", reason === "thread change" ? "two" : "one"),
+    );
+    expect(screen.queryByRole("dialog", { hidden: true })).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(destination).toHaveFocus();
+    expect(focus).not.toHaveBeenCalled();
+    // Returning to the old workspace/thread must not resurrect its panel.
+    rerender(view(true, "one"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(destination).toHaveFocus();
+    expect(focus).not.toHaveBeenCalled();
+    focus.mockRestore();
+    await user.click(trigger);
+    expect(
+      await screen.findByRole("dialog", { name: "Artifacts" }),
+    ).toBeVisible();
+  },
+);
 
 test("filter and keyboard opening preserve the source thread and close the modal", async () => {
   const rows: any[] = [];

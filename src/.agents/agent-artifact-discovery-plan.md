@@ -1,11 +1,28 @@
 # Cross-agent artifact discovery
 
 Status: the metadata catalog and warm browser cache are operational; manual
-testing confirmed essentially instant discovery. The next UI checkpoint adds
-a compact artifact shelf and source-aware tabs in the current Workbench.
-Opening or filtering the shelf never initiates chat-file scans or starts projects.
+testing confirmed essentially instant discovery. The permanent shelf has been
+replaced by a full-page Library and a toggleable thread-local artifact panel.
+Opening or filtering the Library never initiates chat-file scans or starts projects.
 
-## Shelf and stationary tabs checkpoint (2026-09-23)
+## Library and thread panel (2026-09-23)
+
+- Library replaces the main content area, with global cached search, project
+  filtering/grouping and personal pins. Existing agent workspaces stay mounted
+  but inactive so navigation preserves drafts and open tabs.
+- A minimal right-hand panel lists only the current thread's artifacts. Its
+  toggle, close button and Escape dismiss it; Open Library goes to global discovery.
+- Library items open in the associated source agent/thread and Workbench, not
+  alongside an unrelated agent. Source project/chat identity is checked before
+  opening. Show conversation remains a separate operation.
+- The stationary-opening experiment below is superseded. Existing saved foreign
+  tabs remain readable for compatibility, but normal discovery no longer creates
+  them. The shelf and its independent opening helper have been removed.
+- User-created artifacts, standalone artifacts without an associated agent,
+  durable Library URLs, live feeds and persistent browser metadata remain future
+  work; this checkpoint does not change resource access or publication permissions.
+
+## Superseded: shelf and stationary tabs checkpoint (2026-09-23)
 
 - A compact shelf shares the expanded browser's account-scoped catalog. This
   agent / All agents changes only local filtering; pins retain personal order,

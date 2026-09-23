@@ -1,7 +1,16 @@
 import { useDeferredValue, useLayoutEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
 import type { ComponentRef } from "react";
-import { Button, Empty, Input, Modal, Select, Space, message } from "antd";
+import {
+  Button,
+  Drawer,
+  Empty,
+  Input,
+  Modal,
+  Select,
+  Space,
+  message,
+} from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ChatActions } from "./actions";
@@ -274,8 +283,11 @@ export default function ArtifactBrowser({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState(threadId ? "thread" : "room");
-  const { agentWorkspace = false, onBrowseAllArtifacts } =
-    useChatEmbeddingOptions();
+  const {
+    agentWorkspace = false,
+    agentWorkspaceActive,
+    onBrowseAllArtifacts,
+  } = useChatEmbeddingOptions();
   const organization = useArtifactPins();
   const inputRef = useRef<InputRef>(null);
   const [query, setQuery] = useState("");
@@ -283,6 +295,62 @@ export default function ArtifactBrowser({
   const [sort, setSort] = useState<"published" | "created" | "title">(
     "published",
   );
+  if (agentWorkspace && agentWorkspaceActive === false) return null;
+  if (agentWorkspace) {
+    return (
+      <Drawer
+        open
+        title="Artifacts"
+        placement="right"
+        size={400}
+        mask={false}
+        onClose={onClose}
+        styles={{ wrapper: { maxWidth: "100%" }, body: { padding: 16 } }}
+        afterOpenChange={(open) => {
+          if (open) inputRef.current?.focus();
+        }}
+      >
+        <KeyboardBoundary boundary="artifact-browser">
+          <Input
+            ref={inputRef}
+            autoFocus
+            aria-label="Filter artifacts"
+            placeholder="Search artifacts..."
+            allowClear
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {onBrowseAllArtifacts && (
+            <Button
+              type="link"
+              style={{ paddingInline: 0 }}
+              onClick={() => {
+                onClose();
+                onBrowseAllArtifacts();
+              }}
+            >
+              Open Library
+            </Button>
+          )}
+          {organization.error && <div role="alert">{organization.error}</div>}
+          <div style={{ marginTop: 12 }}>
+            {threadId ? (
+              <ArtifactResults
+                key={threadId}
+                actions={actions}
+                query={query}
+                threadId={threadId}
+                onOpen={onClose}
+                organization={organization}
+              />
+            ) : (
+              <div role="status">Select an agent to browse its artifacts.</div>
+            )}
+          </div>
+        </KeyboardBoundary>
+      </Drawer>
+    );
+  }
   return (
     <Modal
       open
@@ -308,29 +376,12 @@ export default function ArtifactBrowser({
           <Select
             aria-label="Artifact scope"
             style={{ width: 170 }}
-            value={agentWorkspace ? "thread" : scope}
-            disabled={agentWorkspace && !onBrowseAllArtifacts}
-            onChange={(value) => {
-              if (value === "agents") {
-                onClose();
-                onBrowseAllArtifacts?.();
-              } else setScope(value);
-            }}
-            options={
-              agentWorkspace
-                ? [
-                    { value: "thread", label: "This agent" },
-                    ...(onBrowseAllArtifacts
-                      ? [{ value: "agents", label: "All agents" }]
-                      : []),
-                  ]
-                : [
-                    ...(threadId
-                      ? [{ value: "thread", label: "This thread" }]
-                      : []),
-                    { value: "room", label: "Entire chatroom" },
-                  ]
-            }
+            value={scope}
+            onChange={setScope}
+            options={[
+              ...(threadId ? [{ value: "thread", label: "This thread" }] : []),
+              { value: "room", label: "Entire chatroom" },
+            ]}
           />
           <Select
             aria-label="Artifact type"
@@ -355,21 +406,15 @@ export default function ArtifactBrowser({
         </Space>
         {organization.error && <div role="alert">{organization.error}</div>}
         <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
-          {agentWorkspace && !threadId ? (
-            <div role="status">Select an agent to browse its artifacts.</div>
-          ) : (
-            <ArtifactResults
-              actions={actions}
-              query={query}
-              threadId={
-                agentWorkspace || scope === "thread" ? threadId : undefined
-              }
-              kind={kind}
-              sort={sort}
-              onOpen={onClose}
-              organization={organization}
-            />
-          )}
+          <ArtifactResults
+            actions={actions}
+            query={query}
+            threadId={scope === "thread" ? threadId : undefined}
+            kind={kind}
+            sort={sort}
+            onOpen={onClose}
+            organization={organization}
+          />
         </div>
       </KeyboardBoundary>
     </Modal>

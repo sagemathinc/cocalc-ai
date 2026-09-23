@@ -4,18 +4,13 @@ import {
   screen,
   waitFor,
   fireEvent,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { agentSearchStore } from "./search-state";
+import { CATALOG_LIMITS } from "./artifact-catalog-store";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-
-// rc-util's constant test ID otherwise collides in nested popup Escape stacks.
-jest.mock("@rc-component/util/lib/hooks/useId", () => ({
-  __esModule: true,
-  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
-  default: jest.requireActual("react").useId,
-}));
 
 const listProject = jest.fn();
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -28,13 +23,12 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 const setPinned = jest.fn();
+const move = jest.fn();
+let pinned: string[] = [];
 jest.mock("@cocalc/frontend/chat/use-artifact-pins", () => ({
-  useArtifactPins: () => ({ pins: [], error: "", setPinned }),
+  useArtifactPins: () => ({ pins: pinned, error: "", setPinned, move }),
 }));
-jest.mock("@cocalc/frontend/components", () => ({
-  Icon: () => null,
-  Tooltip: ({ children }) => children,
-}));
+jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
 const agents = ["one", "two"].map(
   (name) =>
     ({
@@ -55,59 +49,82 @@ const entry = (name: string, id = "same-id") => ({
     title: `Result ${name}`,
     kind: "file",
     description: `Description ${name}`,
-    created_at: 1,
+    created_at: name === "two" ? 2 : 1,
     publication: { operation_id: "op", message_id: "msg" },
   },
 });
 beforeEach(() => {
+  pinned = [];
   listProject.mockReset();
   setPinned.mockReset();
+  move.mockReset();
   listProject.mockImplementation(async ({ project_id }) => ({
     entries: [entry(project_id.slice(2))],
     indexed_sources: 1,
   }));
 });
 
-test("warms while closed; opening and local keyboard search never issue RPCs", async () => {
-  const accountId = "catalog-browser-local";
-  const onSelect = jest.fn(async () => {});
+test("active alone shows all agents and reuses the warm cache and search", async () => {
+  const props = {
+    accountId: "library-cache",
+    agents,
+    onSelect: jest.fn(async () => {}),
+  };
+  agentSearchStore(props.accountId).set({
+    artifactsOpen: true,
+  });
   const view = render(
-    <AgentArtifactBrowser
-      accountId={accountId}
-      agents={agents}
-      active
-      onSelect={onSelect}
-    />,
+    <AgentArtifactBrowser {...props} active={false} activeAgent={agents[0]} />,
   );
   await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
-  act(() => {
-    agentSearchStore(accountId).set({ artifactsOpen: true });
-  });
-  const input = await screen.findByRole("searchbox", {
-    name: "Search all agent artifacts",
-  });
+  expect(
+    screen.queryByRole("region", { name: "Library" }),
+  ).not.toBeInTheDocument();
+  act(() => agentSearchStore(props.accountId).set({ artifactsOpen: false }));
+  view.rerender(
+    <AgentArtifactBrowser {...props} active activeAgent={agents[0]} />,
+  );
+  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "Artifact scope" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Back to agent" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Open Result one from one" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open Result two from two" }),
+  ).toBeVisible();
   const user = userEvent.setup();
-  await user.type(input, "description two{Enter}");
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search all agent artifacts" }),
+    "description two{Enter}",
+  );
   expect(
     screen.queryByRole("button", { name: "Open Result one from one" }),
   ).not.toBeInTheDocument();
+  view.rerender(<AgentArtifactBrowser {...props} active={false} />);
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      agents={[...agents]}
+      active
+      activeAgent={agents[1]}
+    />,
+  );
+  expect(screen.getByRole("searchbox")).toHaveValue("description two");
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   const target = screen.getByRole("button", {
     name: "Open Result two from two",
   });
-  expect(listProject).toHaveBeenCalledTimes(2);
-  view.rerender(
-    <AgentArtifactBrowser
-      accountId={accountId}
-      agents={[...agents]}
-      active
-      onSelect={onSelect}
-    />,
-  );
-  expect(listProject).toHaveBeenCalledTimes(2);
-  target.focus();
+  act(() => target.focus());
   expect(target).toHaveFocus();
   await user.keyboard("{Enter}");
-  expect(onSelect).toHaveBeenCalledWith(
+  expect(props.onSelect).toHaveBeenCalledWith(
     expect.objectContaining({
       agent: agents[1],
       threadId: "t-two",
@@ -119,70 +136,203 @@ test("warms while closed; opening and local keyboard search never issue RPCs", a
       }),
     }),
   );
-  await waitFor(() =>
-    expect(agentSearchStore(accountId).get().artifactsOpen).toBe(false),
-  );
+  expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("project filter, sort, pin and Escape are keyboard operable and local", async () => {
-  const accountId = "catalog-browser-keyboard";
-  agentSearchStore(accountId).set({ artifactsOpen: true });
-  render(
-    <AgentArtifactBrowser
-      accountId={accountId}
-      agents={agents}
-      active
-      onSelect={async () => {}}
-    />,
-  );
-  await waitFor(() =>
+test("catalog continues refreshing while inactive", async () => {
+  jest.useFakeTimers();
+  try {
+    const props = {
+      accountId: "library-background",
+      agents,
+      onSelect: async () => {},
+    };
+    const view = render(<AgentArtifactBrowser {...props} active={false} />);
+    await act(async () => {});
+    expect(listProject).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      jest.advanceTimersByTime(CATALOG_LIMITS.refreshMs);
+    });
+    expect(listProject).toHaveBeenCalledTimes(4);
+    view.rerender(<AgentArtifactBrowser {...props} active />);
     expect(
       screen.getByRole("button", { name: "Open Result two from two" }),
-    ).toBeVisible(),
-  );
+    ).toBeVisible();
+    expect(listProject).toHaveBeenCalledTimes(4);
+    view.unmount();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+// rc-select uses legacy keyCode, which user-event's keyboard omits.
+function key(element: HTMLElement, key: string, keyCode: number) {
+  fireEvent.keyDown(element, { key, keyCode, which: keyCode });
+}
+
+test("keyboard sorting, grouping, filtering, pins and navigation are local", async () => {
   const user = userEvent.setup();
+  const onClose = jest.fn();
+  const onShowConversation = jest.fn(async () => {});
+  const props = {
+    accountId: "library-keyboard",
+    agents,
+    active: true,
+    onSelect: jest.fn(async () => {}),
+    onClose,
+    onShowConversation,
+  };
+  const view = render(<AgentArtifactBrowser {...props} />);
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  const titles = () =>
+    screen
+      .getAllByRole("button", { name: /^Open Result/ })
+      .map((button) => button.getAttribute("aria-label"));
+  expect(titles()[0]).toBe("Open Result two from two");
+  const sort = screen.getByRole("combobox", {
+    name: "Sort discovered artifacts",
+  });
+  act(() => sort.focus());
+  key(sort, "ArrowDown", 40);
+  await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "true"));
+  key(sort, "ArrowDown", 40);
+  key(sort, "Enter", 13);
+  expect(titles()[0]).toBe("Open Result one from one");
+  const group = screen.getByRole("checkbox", { name: "Group by project" });
+  act(() => group.focus());
+  await user.keyboard(" ");
+  expect(group).toBeChecked();
+  expect(group).toHaveFocus();
+  for (const name of ["one", "two"]) {
+    const section = screen.getByRole("region", { name: `Project ${name}` });
+    expect(
+      within(section).getByRole("heading", { name: `Project ${name}` }),
+    ).toBeVisible();
+    expect(within(section).getAllByRole("listitem")).toHaveLength(1);
+    expect(
+      within(section).getByRole("button", {
+        name: `Open Result ${name} from ${name}`,
+      }),
+    ).toHaveTextContent(`Project ${name} · @${name}`);
+  }
+  await user.keyboard(" ");
+  expect(
+    screen.queryByRole("heading", { name: "Project one" }),
+  ).not.toBeInTheDocument();
+  const pin = screen.getByRole("button", { name: "Pin Result two" });
+  pin.focus();
+  await user.keyboard("{Enter}");
+  const id = JSON.stringify(["p-two", "/two.chat", "t-two", "same-id"]);
+  expect(setPinned).toHaveBeenCalledWith(id, true);
+  pinned = [id];
+  view.rerender(<AgentArtifactBrowser {...props} />);
+  expect(titles()[0]).toBe("Open Result one from one");
+  const unpin = screen.getByRole("button", { name: "Unpin Result two" });
+  expect(unpin).toHaveAttribute("aria-pressed", "true");
+  unpin.focus();
+  await user.keyboard(" ");
+  expect(setPinned).toHaveBeenLastCalledWith(id, false);
   const filter = screen.getByRole("combobox", {
     name: "Filter artifact projects",
   });
   act(() => filter.focus());
-  expect(filter).toHaveFocus();
-  // rc-select uses legacy keyCode, which user-event's keyboard omits.
-  fireEvent.keyDown(filter, { key: "ArrowDown", keyCode: 40, which: 40 });
+  key(filter, "ArrowDown", 40);
   await waitFor(() => expect(filter).toHaveAttribute("aria-expanded", "true"));
-  fireEvent.keyDown(filter, { key: "Enter", keyCode: 13, which: 13 });
+  key(filter, "Escape", 27);
+  expect(filter).toHaveFocus();
+  expect(onClose).not.toHaveBeenCalled();
+  key(filter, "ArrowDown", 40);
+  key(filter, "ArrowUp", 38);
+  key(filter, "Enter", 13);
   await waitFor(() =>
     expect(
       screen.queryByRole("button", { name: "Open Result two from two" }),
     ).not.toBeInTheDocument(),
   );
+  const conversation = screen.getByRole("button", {
+    name: "Show conversation for Result one from one",
+  });
+  act(() => conversation.focus());
+  await user.keyboard("{Enter}");
+  expect(onShowConversation).toHaveBeenCalledWith(
+    expect.objectContaining({ agent: agents[0] }),
+  );
+  expect(props.onSelect).not.toHaveBeenCalled();
+  const back = screen.getByRole("button", { name: "Back to agent" });
+  back.focus();
+  await user.tab();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  await user.tab({ shift: true });
+  expect(back).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(listProject).toHaveBeenCalledTimes(2);
+});
+
+test("Custom exposes pinned drag handles and keyboard move menus scoped to groups", async () => {
+  const ids = agents.map((agent) =>
+    JSON.stringify([
+      agent.endpoint.project_id,
+      agent.path,
+      agent.thread_id,
+      "same-id",
+    ]),
+  );
+  pinned = [...ids];
+  const props = {
+    accountId: "library-custom",
+    agents,
+    active: true,
+    onSelect: async () => {},
+  };
+  const view = render(<AgentArtifactBrowser {...props} />);
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  const user = userEvent.setup();
   const sort = screen.getByRole("combobox", {
     name: "Sort discovered artifacts",
   });
   act(() => sort.focus());
-  fireEvent.keyDown(sort, { key: "ArrowDown", keyCode: 40, which: 40 });
+  key(sort, "ArrowDown", 40);
   await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "true"));
-  fireEvent.keyDown(sort, { key: "ArrowDown", keyCode: 40, which: 40 });
-  fireEvent.keyDown(sort, { key: "Enter", keyCode: 13, which: 13 });
-  await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "false"));
-  const pin = screen.getByRole("button", { name: "Pin Result one" });
-  pin.focus();
-  await user.keyboard("{Enter}");
-  expect(setPinned).toHaveBeenCalledWith(
-    JSON.stringify(["p-one", "/one.chat", "t-one", "same-id"]),
-    true,
-  );
-  expect(listProject).toHaveBeenCalledTimes(2);
-  const input = screen.getByRole("searchbox", {
-    name: "Search all agent artifacts",
+  key(sort, "ArrowDown", 40);
+  key(sort, "ArrowDown", 40);
+  key(sort, "Enter", 13);
+  const handle = await screen.findByRole("button", {
+    name: "Drag Result one to reorder",
   });
-  input.focus();
-  await waitFor(() =>
-    expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
+  expect(handle).toHaveAttribute("tabindex", "0");
+  const trigger = screen.getByRole("button", { name: "Reorder Result one" });
+  act(() => trigger.focus());
+  await user.keyboard("{Enter}");
+  const down = await screen.findByRole("menuitem", { name: "Move down" });
+  expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
   );
-  fireEvent.keyDown(input, { key: "Escape", keyCode: 27, which: 27 });
-  await waitFor(() =>
-    expect(agentSearchStore(accountId).get().artifactsOpen).toBe(false),
+  act(() => down.focus());
+  key(down, "Enter", 13);
+  expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
+  pinned = [...ids].reverse();
+  view.rerender(<AgentArtifactBrowser {...props} />);
+  expect(
+    screen.getAllByRole("button", { name: /^Open Result/ })[0],
+  ).toHaveAccessibleName("Open Result two from two");
+  expect(trigger).toHaveFocus();
+  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
+  await user.click(screen.getByRole("button", { name: "Reorder Result one" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
   );
+  await user.keyboard("{Escape}");
+  expect(
+    screen.getByRole("button", { name: "Reorder Result one" }),
+  ).toHaveFocus();
+  expect(listProject).toHaveBeenCalledTimes(2);
 });
 
 test("account switch clears the old view and rejects late loads", async () => {
@@ -193,22 +343,19 @@ test("account switch clears the old view and rejects late loads", async () => {
         resolve = done;
       }),
   );
-  agentSearchStore("catalog-browser-old").set({ artifactsOpen: true });
-  agentSearchStore("catalog-browser-new").set({ artifactsOpen: true });
+  const props = { active: true, onSelect: async () => {} };
   const view = render(
     <AgentArtifactBrowser
-      accountId="catalog-browser-old"
+      {...props}
+      accountId="library-old"
       agents={agents.slice(0, 1)}
-      active
-      onSelect={async () => {}}
     />,
   );
   view.rerender(
     <AgentArtifactBrowser
-      accountId="catalog-browser-new"
+      {...props}
+      accountId="library-new"
       agents={agents.slice(1)}
-      active
-      onSelect={async () => {}}
     />,
   );
   await screen.findByRole("button", { name: "Open Result two from two" });
@@ -220,172 +367,53 @@ test("account switch clears the old view and rejects late loads", async () => {
   ).not.toBeInTheDocument();
 });
 
-test("large cache renders only 200 matches with short coverage note and expandable details", async () => {
-  listProject.mockResolvedValue({
-    entries: Array.from({ length: 250 }, (_, i) => entry("one", `id-${i}`)),
+test("large cache bounds rows across groups and explains partial coverage", async () => {
+  listProject.mockImplementation(async ({ project_id }) => ({
+    entries: Array.from({ length: 125 }, (_, i) =>
+      entry(project_id.slice(2), `id-${i}`),
+    ),
     indexed_sources: 1,
-  });
-  const accountId = "catalog-browser-bound";
-  agentSearchStore(accountId).set({ artifactsOpen: true });
+  }));
   render(
     <AgentArtifactBrowser
-      accountId={accountId}
-      agents={agents.slice(0, 1)}
+      accountId="library-bound"
+      agents={agents}
       active
       onSelect={async () => {}}
     />,
   );
   await screen.findByText(/Showing the first 200 of 250 matches/);
-  expect(
-    screen.getAllByRole("button", { name: "Open Result one from one" }),
-  ).toHaveLength(200);
-  await waitFor(() =>
-    expect(
-      screen.getByText(/some sources may still be indexing/),
-    ).toBeVisible(),
-  );
-  const details = screen.getByText("Preview details");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
+  expect(screen.getAllByRole("listitem")).toHaveLength(200);
+  expect(screen.getByText(/some sources may still be indexing/)).toBeVisible();
   // JSDOM does not implement the native summary keyboard default action.
-  await userEvent.setup().click(details);
+  const details = screen.getByText("Preview details");
+  await user.click(details);
   expect(details.closest("details")).toHaveAttribute("open");
   expect(screen.getByText(/not a completeness count/)).toBeVisible();
 });
 
-test("shelf scope, modal search and conversation actions share the warm catalog", async () => {
-  const user = userEvent.setup();
-  const onSelect = jest.fn(async () => {});
-  const onShowConversation = jest.fn(async () => {});
-  const view = render(
+test("failed artifact opens remain visible in the Library", async () => {
+  render(
     <AgentArtifactBrowser
-      accountId="shelf-local"
+      accountId="library-error"
       agents={agents}
       active
-      activeAgent={agents[0]}
-      onSelect={onSelect}
-      onShowConversation={onShowConversation}
+      onSelect={async () => {
+        throw Error("Cannot open artifact");
+      }}
     />,
   );
-  await screen.findByRole("button", { name: "Open Result one from one" });
-  expect(
-    screen.queryByRole("button", { name: "Open Result two from two" }),
-  ).not.toBeInTheDocument();
-  const all = screen.getByRole("button", { name: "All agents" });
-  all.focus();
-  await user.keyboard("{Enter}");
-  expect(all).toHaveAttribute("aria-pressed", "true");
-  expect(all).toHaveFocus();
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  const browse = screen.getByRole("button", { name: "Browse all (2)" });
-  browse.focus();
-  await user.keyboard("{Enter}");
-  const search = await screen.findByRole("searchbox", {
-    name: "Search all agent artifacts",
-  });
-  await user.type(search, "two");
-  fireEvent.keyDown(search, { key: "Escape", keyCode: 27, which: 27 });
-  await waitFor(() => expect(browse).toHaveFocus());
-  await user.keyboard("{Enter}");
-  const conversation = await screen.findByRole("button", {
-    name: "Show conversation for Result two from two",
-  });
-  conversation.focus();
-  await user.keyboard("{Enter}");
-  expect(onShowConversation).toHaveBeenCalledWith(
-    expect.objectContaining({ agent: agents[1] }),
-  );
-  expect(onSelect).not.toHaveBeenCalled();
-  await waitFor(() =>
-    expect(agentSearchStore("shelf-local").get().artifactsOpen).toBe(false),
-  );
-  expect(listProject).toHaveBeenCalledTimes(2);
-  view.rerender(
-    <AgentArtifactBrowser
-      accountId="shelf-local"
-      agents={agents}
-      active={false}
-      activeAgent={agents[0]}
-      onSelect={onSelect}
-    />,
-  );
-  expect(
-    screen.queryByRole("region", { name: "Artifact shelf" }),
-  ).not.toBeInTheDocument();
-});
-
-test("This agent follows the active agent without fetching and shelf open errors are visible", async () => {
-  const onSelect = jest.fn(async () => {
-    throw Error("Cannot open artifact");
-  });
-  const props = {
-    accountId: "shelf-active-agent",
-    agents,
-    active: true,
-    onSelect,
-  };
-  const view = render(
-    <AgentArtifactBrowser {...props} activeAgent={agents[0]} />,
-  );
-  await screen.findByRole("button", { name: "Open Result one from one" });
-  await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
-  view.rerender(<AgentArtifactBrowser {...props} activeAgent={agents[1]} />);
-  expect(
-    screen.queryByRole("button", { name: "Open Result one from one" }),
-  ).not.toBeInTheDocument();
   await userEvent
     .setup()
-    .click(screen.getByRole("button", { name: "Open Result two from two" }));
+    .click(
+      await screen.findByRole("button", { name: "Open Result one from one" }),
+    );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Cannot open artifact",
   );
-  expect(listProject).toHaveBeenCalledTimes(2);
-});
-
-test("external All agents request overrides default scope and modal changes persist to shelf Browse", async () => {
-  const accountId = "shelf-external-scope";
-  const store = agentSearchStore(accountId);
-  render(
-    <AgentArtifactBrowser
-      accountId={accountId}
-      agents={agents}
-      active
-      activeAgent={agents[0]}
-      onSelect={async () => {}}
-    />,
-  );
-  await screen.findByRole("button", { name: "Open Result one from one" });
   expect(
-    screen.queryByRole("button", { name: "Open Result two from two" }),
-  ).not.toBeInTheDocument();
-  act(() => store.set({ artifactsOpen: true, artifactsScope: "all" }));
-  await screen.findByRole("dialog", { name: "Artifacts across all agents" });
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  const scope = screen.getByRole("combobox", { name: "Artifact scope" });
-  act(() => scope.focus());
-  fireEvent.keyDown(scope, { key: "ArrowDown", keyCode: 40, which: 40 });
-  await waitFor(() => expect(scope).toHaveAttribute("aria-expanded", "true"));
-  fireEvent.keyDown(scope, { key: "ArrowUp", keyCode: 38, which: 38 });
-  fireEvent.keyDown(scope, { key: "Enter", keyCode: 13, which: 13 });
-  await waitFor(() => expect(store.get().artifactsScope).toBe("agent"));
-  expect(
-    screen.getByRole("dialog", { name: "Artifacts from one" }),
-  ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Open Result two from two" }),
-  ).not.toBeInTheDocument();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "This agent" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    ),
-  );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Browse all (1)" }));
-  expect(store.get().artifactsScope).toBe("agent");
-  await screen.findByRole("dialog", { name: "Artifacts from one" });
-  // A later external request is authoritative even while the modal is open.
-  act(() => store.set({ artifactsOpen: true, artifactsScope: "all" }));
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  expect(listProject).toHaveBeenCalledTimes(2);
+    screen.getByRole("button", { name: "Open Result one from one" }),
+  ).toBeEnabled();
 });
