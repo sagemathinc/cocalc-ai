@@ -96,9 +96,13 @@ workers, a standalone Lite adapter, and an in-memory frontend catalog preview:
 - Project-owning-bay Postgres catalog/source tables. Ingestion checks
   current project owner/host under a lock; owner-issued writer epochs fence
   stale writers. Registration and delivery retries are idempotent.
-- Catalog updates commit atomically. Removals leave tombstones; original
-  creation order survives updates and reappearance. Ordinary chat writes with
-  unchanged metadata do not rewrite catalog rows.
+- Catalog updates commit atomically. Removals delete catalog rows; a later
+  reappearance is new, while edits to a live entry retain creation order.
+  Ordinary chat writes with unchanged metadata do not rewrite catalog rows.
+- Owner-bay and Lite catalogs bound project source count/path bytes, live entry
+  count/metadata bytes, and metadata-changing work per hour. Owner-bay quota
+  decisions serialize across sources and reject over-budget snapshots without
+  replacing the last valid projection.
 - Host-authenticated registration, writer-state lookup and ingestion RPCs,
   routed through the trusted fabric to the project-owning bay. The owner
   rechecks directory epochs and bounds concurrent work globally and per host.

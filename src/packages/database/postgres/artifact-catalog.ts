@@ -7,6 +7,11 @@ import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import type { CatalogEntry } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
+  ARTIFACT_CATALOG_MAX_PROJECT_BYTES,
+  ARTIFACT_CATALOG_MAX_PROJECT_ITEMS,
+  ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES,
+  ARTIFACT_CATALOG_MAX_PROJECT_SOURCES,
+  ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR,
   artifactCatalogKey,
   validateArtifactCatalogSnapshot,
   type ArtifactCatalogSnapshot,
@@ -57,6 +62,45 @@ async function assertOwner(
     throw Error(
       "artifact catalog writer is not the current project owner/host",
     );
+}
+
+async function lockProjectCatalog(db: PoolClient, project_id: string) {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+    `artifact-project:${project_id}`,
+  ]);
+}
+
+async function chargeProjectWork(
+  db: PoolClient,
+  project_id: string,
+  units: number,
+) {
+  const { rows } = await db.query(
+    `INSERT INTO artifact_catalog_project_budget(project_id,window_start,work_units)
+     VALUES($1,now(),$2)
+     ON CONFLICT(project_id) DO UPDATE SET
+       window_start=CASE WHEN artifact_catalog_project_budget.window_start <= now()-interval '1 hour'
+         THEN excluded.window_start ELSE artifact_catalog_project_budget.window_start END,
+       work_units=CASE WHEN artifact_catalog_project_budget.window_start <= now()-interval '1 hour'
+         THEN excluded.work_units ELSE artifact_catalog_project_budget.work_units+excluded.work_units END
+     RETURNING work_units`,
+    [project_id, units],
+  );
+  if (Number(rows[0].work_units) > ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR)
+    throw Error("artifact catalog project mutation budget exceeded");
+}
+
+async function assertProjectCatalogSize(db: PoolClient, project_id: string) {
+  const { rows } = await db.query(
+    `SELECT count(*) AS items,COALESCE(sum(octet_length(metadata::text)),0) AS bytes
+     FROM artifact_catalog WHERE project_id=$1`,
+    [project_id],
+  );
+  if (
+    Number(rows[0].items) > ARTIFACT_CATALOG_MAX_PROJECT_ITEMS ||
+    Number(rows[0].bytes) > ARTIFACT_CATALOG_MAX_PROJECT_BYTES
+  )
+    throw Error("artifact catalog project metadata limit exceeded");
 }
 
 export async function artifactCatalogSourcePage(
@@ -152,6 +196,7 @@ export async function registerArtifactCatalogSource(
   });
   return transaction(async (db) => {
     await assertOwner(db, source.project_id, authority);
+    await lockProjectCatalog(db, source.project_id);
     const source_id = artifactCatalogSourceId(source);
     await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
       `artifact-source:${source_id}`,
@@ -170,6 +215,20 @@ export async function registerArtifactCatalogSource(
       return previous.epoch;
     if ((previous?.epoch ?? null) !== expected_epoch)
       throw Error("artifact catalog writer epoch changed");
+    if (!previous) {
+      const { rows } = await db.query(
+        `SELECT count(*) AS sources,COALESCE(sum(octet_length(chat_path)),0) AS bytes
+         FROM artifact_catalog_sources WHERE project_id=$1`,
+        [source.project_id],
+      );
+      if (
+        Number(rows[0].sources) >= ARTIFACT_CATALOG_MAX_PROJECT_SOURCES ||
+        Number(rows[0].bytes) + Buffer.byteLength(source.chat_path) >
+          ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES
+      )
+        throw Error("artifact catalog project source limit exceeded");
+    }
+    await chargeProjectWork(db, source.project_id, 1);
     const epoch = randomUUID();
     await db.query(
       `INSERT INTO artifact_catalog_sources
@@ -234,6 +293,7 @@ export async function applyArtifactCatalogSnapshot(
   const metadata_hash = hash(JSON.stringify(snapshot.items));
   return transaction(async (db) => {
     await assertOwner(db, snapshot.project_id, authority);
+    await lockProjectCatalog(db, snapshot.project_id);
     const current = (
       await db.query(
         `SELECT * FROM artifact_catalog_sources
@@ -268,6 +328,15 @@ export async function applyArtifactCatalogSnapshot(
     const next = revision + 1;
     if (!Number.isSafeInteger(next))
       throw Error("artifact catalog revision exhausted");
+    const existing = await db.query(
+      "SELECT count(*) AS items FROM artifact_catalog WHERE source_id=$1 AND NOT deleted",
+      [source_id],
+    );
+    await chargeProjectWork(
+      db,
+      snapshot.project_id,
+      Math.max(1, snapshot.items.length + Number(existing.rows[0].items)),
+    );
     const entries = snapshot.items.map((item) => ({
       entry_id: hash(artifactCatalogKey(snapshot, item)),
       thread_id: item.thread_id,
@@ -275,8 +344,12 @@ export async function applyArtifactCatalogSnapshot(
       metadata: item,
       created_at: new Date(item.created_at).toISOString(),
     }));
-    // One bulk statement per source, not one round trip per artifact. Creation
-    // timestamps survive edits and deletion/reappearance, keeping shelf order stable.
+    // Existing entries retain their creation time; omitted entries are removed.
+    // A later reappearance is a new entry, not a retained historical row.
+    await db.query(
+      "DELETE FROM artifact_catalog WHERE project_id=$1 AND deleted",
+      [snapshot.project_id],
+    );
     await db.query(
       `INSERT INTO artifact_catalog
       (entry_id,source_id,project_id,thread_id,artifact_id,metadata,created_at,revision,deleted)
@@ -288,10 +361,11 @@ export async function applyArtifactCatalogSnapshot(
       [source_id, snapshot.project_id, next, JSON.stringify(entries)],
     );
     await db.query(
-      `UPDATE artifact_catalog SET deleted=TRUE,revision=$2
-      WHERE source_id=$1 AND NOT deleted AND NOT (entry_id=ANY($3::text[]))`,
-      [source_id, next, entries.map((entry) => entry.entry_id)],
+      `DELETE FROM artifact_catalog
+      WHERE source_id=$1 AND NOT (entry_id=ANY($2::text[]))`,
+      [source_id, entries.map((entry) => entry.entry_id)],
     );
+    await assertProjectCatalogSize(db, snapshot.project_id);
     await db.query(
       `UPDATE artifact_catalog_sources SET source_sequence=$2,
       catalog_revision=$3,payload_hash=$4,metadata_hash=$5,updated_at=now() WHERE source_id=$1`,

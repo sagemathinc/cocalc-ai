@@ -161,7 +161,7 @@ test("snapshot canonical replay, content hash, sequence gaps and stale deliverie
   expect((await catalog.writerState(source))?.source_sequence).toBe(6);
 });
 
-test("edits, removal and reappearance preserve first creation time and stable entry identity", async () => {
+test("edits retain creation time; removal and reappearance do not retain history", async () => {
   await catalog.applySnapshot(snapshot());
   const original = (await catalog.listProject(source)).entries[0];
   const request = {
@@ -191,8 +191,14 @@ test("edits, removal and reappearance preserve first creation time and stable en
     paths: [source.chat_path],
   });
   await catalog.applySnapshot(snapshot(4, [{ ...item(), created_at: 9000 }]));
-  expect((await catalog.listProject(source)).entries[0]).toEqual(original);
-  await expect(catalog.getEntry(request)).resolves.toEqual(original);
+  expect((await catalog.listProject(source)).entries[0]).toEqual({
+    ...original,
+    item: { ...original.item, created_at: 9000 },
+  });
+  await expect(catalog.getEntry(request)).resolves.toMatchObject({
+    entry_id: original.entry_id,
+    item: { created_at: 9000 },
+  });
 });
 
 test("bounded project keyset pages include separate chat and thread identities", async () => {
@@ -294,7 +300,7 @@ test("metadata validation strips content and rejects invalid, duplicate and over
   expect((await catalog.listProject(source)).entries[0].item).toEqual(item());
 });
 
-test("failed SQLite replacement rolls back tombstones, entries and sequence", async () => {
+test("failed SQLite replacement rolls back entries and sequence", async () => {
   await catalog.applySnapshot(snapshot());
   const db = new DatabaseSync(filename);
   try {

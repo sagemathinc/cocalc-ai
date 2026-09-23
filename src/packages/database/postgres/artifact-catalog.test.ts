@@ -40,7 +40,7 @@ beforeAll(async () => {
 }, 30000);
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE artifact_catalog,artifact_catalog_sources,projects CASCADE",
+    "TRUNCATE artifact_catalog,artifact_catalog_sources,artifact_catalog_project_budget,projects CASCADE",
   );
   await getPool().query(
     `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
@@ -104,7 +104,7 @@ test("catalog writes are idempotent and retries do not advance revisions", async
   expect(Number(rows[0].revision)).toBe(1);
 });
 
-test("metadata pages use stable keyset cursors and omit tombstones", async () => {
+test("metadata pages use stable keyset cursors and remove omitted entries", async () => {
   const base = snapshot();
   const items = Array.from({ length: 105 }, (_, i) => ({
     ...base.items[0],
@@ -128,6 +128,9 @@ test("metadata pages use stable keyset cursors and omit tombstones", async () =>
     authority,
   );
   expect((await readProjectArtifactCatalog(project_id)).entries).toEqual([]);
+  expect(
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
+  ).toEqual([]);
   await expect(
     readProjectArtifactCatalog(project_id, "invalid"),
   ).rejects.toThrow("cursor");
@@ -148,7 +151,7 @@ test("background source discovery includes registered sources without metadata",
   ).rejects.toThrow("owner/host");
 });
 
-test("point lookup uses existing identity, scopes by project, and excludes tombstones", async () => {
+test("point lookup uses existing identity, scopes by project, and excludes removed entries", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
   const entry = (await readProjectArtifactCatalog(project_id)).entries[0];
   await expect(
@@ -186,24 +189,54 @@ test("rejects different content at the same sequence and older deliveries", asyn
   ).rejects.toThrow("stale");
 });
 
-test("deletion/reappearance and edits preserve original creation order", async () => {
+test("edits keep creation time but removal and reappearance start a new entry", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
-  await applyArtifactCatalogSnapshot({ ...snapshot(2), items: [] }, authority);
+  const edited = snapshot(2);
+  edited.items[0].created_at = 5000;
+  edited.items[0].title = "Edited";
+  await applyArtifactCatalogSnapshot(edited, authority);
   expect(
-    (await getPool().query("SELECT deleted FROM artifact_catalog")).rows[0]
-      .deleted,
-  ).toBe(true);
-  const changed = snapshot(3);
+    (
+      await getPool().query("SELECT created_at FROM artifact_catalog")
+    ).rows[0].created_at.getTime(),
+  ).toBe(1000);
+  await applyArtifactCatalogSnapshot({ ...snapshot(3), items: [] }, authority);
+  expect(
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
+  ).toEqual([]);
+  const changed = snapshot(4);
   changed.items[0].created_at = 9999;
   changed.items[0].title = "Renamed";
   await applyArtifactCatalogSnapshot(changed, authority);
   const row = (await getPool().query("SELECT * FROM artifact_catalog")).rows[0];
   expect(row.deleted).toBe(false);
-  expect(row.created_at.getTime()).toBe(1000);
+  expect(row.created_at.getTime()).toBe(9999);
   expect(row.metadata.title).toBe("Renamed");
-  expect(row.metadata.created_at).toBe(1000);
-  expect(Number(row.revision)).toBe(3);
+  expect(row.metadata.created_at).toBe(9999);
+  expect(Number(row.revision)).toBe(4);
 });
+
+test("replacing a full source repeatedly does not retain historical identities", async () => {
+  const base = snapshot();
+  for (let sequence = 1; sequence <= 3; sequence++) {
+    await applyArtifactCatalogSnapshot(
+      {
+        ...base,
+        sequence,
+        items: Array.from({ length: 5000 }, (_, index) => ({
+          ...base.items[0],
+          artifact_id: `${sequence}-${index}`,
+        })),
+      },
+      authority,
+    );
+    const count = await getPool().query(
+      "SELECT count(*) AS n FROM artifact_catalog WHERE project_id=$1",
+      [project_id],
+    );
+    expect(Number(count.rows[0].n)).toBe(5000);
+  }
+}, 60000);
 
 test("wrong bay, reassigned host and deleted project cannot ingest", async () => {
   await expect(

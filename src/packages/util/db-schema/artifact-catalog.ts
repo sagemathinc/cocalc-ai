@@ -78,3 +78,13 @@ Table({
     deleted: { type: "boolean", pg_default: "FALSE", not_null: true },
   },
 });
+
+Table({
+  name: "artifact_catalog_project_budget",
+  rules: { primary_key: "project_id" },
+  fields: {
+    project_id: { type: "uuid", not_null: true },
+    window_start: { type: "timestamp", not_null: true },
+    work_units: { type: "integer", pg_type: "BIGINT", not_null: true },
+  },
+});
