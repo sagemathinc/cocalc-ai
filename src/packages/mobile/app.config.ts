@@ -7,6 +7,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: isProduction ? "CoCalc" : "CoCalc Dev",
   slug: "cocalc-mobile",
   version: "0.1.0",
+  icon: "./assets/icon.png",
   orientation: "default",
   scheme: "cocalc",
   userInterfaceStyle: "automatic",
