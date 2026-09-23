@@ -384,4 +384,6 @@ embedded JavaScript bundle SHA-256 is
 `c68c01b2098f136262ea9b8a99dfdf01141401282bdaf96dde303aa684e89700`.
 The internal TestFlight export remains blocked because Xcode reports no Apple
 account, iOS Distribution certificate, or provisioning profile. No IPA was
-produced or uploaded. See `src/packages/mobile/TESTFLIGHT.md`.
+produced or uploaded. The new archive installed on the paired iPhone, but a CLI
+launch attempt was denied because the device was locked, so its fresh device
+smoke test remains pending. See `src/packages/mobile/TESTFLIGHT.md`.

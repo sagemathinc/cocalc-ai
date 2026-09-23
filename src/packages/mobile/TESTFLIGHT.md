@@ -19,8 +19,10 @@ not the TestFlight candidate.
 - The preceding signed Release build passed the iPhone smoke test: cold launch
   without Metro, open chat, send a photo and PDF, and open the PDF link. The
   maintainer also confirmed agent creation and subscription settings against
-  the updated staging hub and project host. This new archive has not been
-  installed or distributed.
+  the updated staging hub and project host. This new archive was installed on
+  the paired iPhone; a CLI launch attempt was refused because the phone was
+  locked, so a fresh open-and-send smoke test remains pending. It has not been
+  distributed.
 
 The internal TestFlight export is **blocked at signing**. Xcode reported
 `No Accounts`, no `iOS Distribution` certificate, and no provisioning profile
