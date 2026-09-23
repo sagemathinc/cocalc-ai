@@ -29,6 +29,14 @@ Production was not changed.
   `20260923T205416Z-3964a200-20260923T205600Z-3964a200-home-restore-dirty`.
   Canary-first rollout `78c90a1e-8103-4811-9a86-fcf7331d885a` completed
   successfully on both online hosts.
+- Snapshot confirmation and unchanged-content reconciliation:
+  `290b79cd24d8`. Staging2 hub artifact
+  `20260923T212017Z-290b79cd-snapshot-confirmed-20260923-dirty`, project-host
+  artifact `20260923T212251Z-290b79cd-snapshot-confirmed-20260923-dirty`, and
+  static artifact `20260923T212701Z-290b79cd-snapshot-confirmed-20260923-dirty`
+  deployed in that order. Hub and static smoke checks passed; both online hosts
+  passed the canary-first rollout `292ca41e-f0bb-4513-a004-f5608fe6e6cb` and
+  host smoke checks.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -48,6 +56,8 @@ the source commits above identify the tracked code used for the builds.
 | Full Btrfs snapshot restore                                               | `mode=both` restored a marker to its pre-mutation value and restarted the project successfully.                                                                   |
 | Home-only Btrfs snapshot restore                                          | `mode=home` restored `historical-home-marker` while preserving a `preserve-current-rootfs` sentinel added after the snapshot. The project restarted successfully. |
 | Recovery health visibility                                                | After the first successful sweep, unknown snapshot and backup status counts both fell from 12 to 0.                                                               |
+| Confirmed snapshot outcome and unchanged-content reconciliation           | Focused tests passed across file-server, project-host, server, and frontend. A snapshot success now requires a confirmed recovery point; unchanged content records a schedule-aware reconciliation marker. |
+| Recovery health after new changes                                         | Staging2 operator health at 21:28 UTC reported 0 unknown snapshot and backup statuses. The health query now recomputes due times in bounded pages, so a later project edit cannot be hidden by an earlier unchanged-content report. |
 
 The scheduled-path project is
 `1b461cb0-47c3-4d58-bdc0-3bdd4af2e139`. The separate restore-test project is
@@ -79,6 +89,10 @@ projects; it did not create hundreds of live projects.
    coordinated rollout. None is established by this single-day staging test.
 5. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
+6. The 21:25 UTC project edit was observed after the host rollout. The new host
+   scheduler uses a 15-minute initial delay after restart, so that particular
+   edit had not yet reached a normal sweep at the 21:28 UTC health check. A
+   subsequent normal-cycle result still needs verification.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
