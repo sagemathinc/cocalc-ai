@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -11,7 +11,8 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Select,
+  Popover,
+  Radio,
   Typography,
 } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -23,6 +24,7 @@ import {
   type AgentFileGrant,
 } from "@cocalc/conat/agents/file-grants";
 import { fileGrantsForAgent } from "./file-grants-service";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 
 export interface FileGrantsProps {
   projectId: string;
@@ -31,28 +33,29 @@ export interface FileGrantsProps {
   open: boolean;
   onClose: () => void;
   onCountChange?: (count: number) => void;
+  summary?: boolean;
+  onEdit?: (projectId: string) => void;
+  initialTargetProjectId?: string;
 }
 
 export function FileGrants(props: FileGrantsProps) {
   const accountId = useTypedRedux("account", "account_id");
   return accountId ? (
-    <FileGrantsContents
-      key={`${accountId}:${props.threadId}`}
-      {...props}
-      accountId={accountId}
-    />
+    <FileGrantsContents key={`${accountId}:${props.threadId}`} {...props} />
   ) : null;
 }
 
 function FileGrantsContents({
-  accountId,
   projectId,
   path,
   threadId,
   open,
   onClose,
   onCountChange,
-}: FileGrantsProps & { accountId: string }) {
+  summary = false,
+  onEdit,
+  initialTargetProjectId,
+}: FileGrantsProps) {
   const projectMap: any = useTypedRedux("projects", "project_map");
   const [agentId, setAgentId] = useState<string>();
   const [grants, setGrants] = useState<AgentFileGrant[]>([]);
@@ -61,20 +64,19 @@ function FileGrantsContents({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-
-  const projects = useMemo(() => {
-    const rows: { value: string; label: string }[] = [];
-    projectMap?.forEach?.((project: any, id: string) => {
-      if (id === projectId || project?.get?.("deleted")) return;
-      const users = project?.get?.("users");
-      const membership = users?.get?.(accountId) ?? users?.[accountId];
-      const group = membership?.get?.("group") ?? membership?.group;
-      if (group !== "owner" && group !== "collaborator") return;
-      const title = `${project?.get?.("title") ?? id}`.trim() || id;
-      rows.push({ value: id, label: `${title} (${id.slice(0, 8)})` });
-    });
-    return rows.sort((a, b) => a.label.localeCompare(b.label));
-  }, [accountId, projectMap, projectId]);
+  const [wholeProject, setWholeProject] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const title = (id: string) =>
+    projectMap?.getIn([id, "title"]) || "Untitled project";
+  function selectProject(id: string) {
+    setTargetProjectId(id);
+    const existing = grants.find((grant) => grant.target_project_id === id);
+    setRoots(existing?.roots.map((root) => root || ".").join("\n") ?? "");
+    setWholeProject(
+      !existing || existing.roots.some((root) => !root || root === "."),
+    );
+    setNotice("");
+  }
 
   async function refresh(register = false) {
     let identity = await webapp_client.conat_client.hub.agent.resolveIdentity({
@@ -103,6 +105,7 @@ function FileGrantsContents({
 
   useEffect(() => {
     if (!open) return;
+    setNotice("");
     let disposed = false;
     setBusy(true);
     setError("");
@@ -111,6 +114,14 @@ function FileGrantsContents({
         if (disposed) return;
         setAgentId(agentId);
         setGrants(grants);
+        setTargetProjectId(initialTargetProjectId);
+        const selected = grants.find(
+          (grant) => grant.target_project_id === initialTargetProjectId,
+        );
+        setRoots(selected?.roots.map((root) => root || ".").join("\n") ?? "");
+        setWholeProject(
+          !selected || selected.roots.some((root) => !root || root === "."),
+        );
         onCountChange?.(grants.length);
       })
       .catch((err) => !disposed && setError(String(err)))
@@ -118,7 +129,7 @@ function FileGrantsContents({
     return () => {
       disposed = true;
     };
-  }, [open, path, projectId, threadId, onCountChange]);
+  }, [open, path, projectId, threadId, onCountChange, initialTargetProjectId]);
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
@@ -134,6 +145,46 @@ function FileGrantsContents({
     }
   }
 
+  if (summary) {
+    return (
+      <KeyboardBoundary>
+        <div
+          style={{ width: 300, maxWidth: "75vw", overflowWrap: "anywhere" }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              onClose();
+            }
+          }}
+        >
+          {error && <Alert type="error" title={error} />}
+          {busy && <div role="status">Loading...</div>}
+          {grants.map((grant) => (
+            <div key={grant.grant_id} style={{ marginBottom: 12 }}>
+              <Typography.Text strong>
+                {title(grant.target_project_id)}
+              </Typography.Text>
+              <div>
+                {grant.roots
+                  .map((root) =>
+                    root && root !== "." ? root : "Whole project",
+                  )
+                  .join(", ")}
+              </div>
+              <Button
+                icon={<Icon name="pencil" />}
+                onClick={() => {
+                  onEdit?.(grant.target_project_id);
+                }}
+              >
+                Edit
+              </Button>
+            </div>
+          ))}
+        </div>
+      </KeyboardBoundary>
+    );
+  }
   return (
     <Modal
       title="Files from another project"
@@ -158,50 +209,100 @@ function FileGrantsContents({
             <Alert type="success" showIcon title={notice} />
           </div>
         )}
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginTop: 12 }}
+        <Popover
+          trigger="click"
+          open={helpOpen}
+          onOpenChange={setHelpOpen}
           title="Read-only access for this agent"
-          description="Access is checked for every operation and ends when the agent run ends. While a run is active, processes and collaborators in the source project may be able to use its runtime credential."
-        />
+          content={
+            <KeyboardBoundary>
+              <div style={{ width: 360, maxWidth: "75vw" }}>
+                <p>
+                  Access is checked for every operation. New access ends when
+                  the agent run ends; operations already admitted may finish.
+                  While a run is active, processes and collaborators in the
+                  source project may be able to use its runtime credential.
+                </p>
+                <p>
+                  Saved access is personal to this user and agent and is
+                  available on future turns until removed.
+                </p>
+                <p>
+                  This is ordinary filesystem access within the listed roots.
+                  Project processes and collaborators can modify files
+                  concurrently. CoCalc records grant configuration and
+                  revocation, but does not provide a complete per-file activity
+                  log or identify which source-project process used the shared
+                  runtime credential.
+                </p>
+              </div>
+            </KeyboardBoundary>
+          }
+        >
+          <Button
+            aria-label="About file access"
+            icon={<Icon name="question-circle" />}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && helpOpen) {
+                event.stopPropagation();
+                setHelpOpen(false);
+              }
+            }}
+          />
+        </Popover>
         <Form layout="vertical" style={{ marginTop: 12 }}>
           <Form.Item label="Project" htmlFor="file-grant-project">
-            <Select
+            <SelectProject
               id="file-grant-project"
-              showSearch
-              optionFilterProp="label"
-              value={targetProjectId}
-              options={projects}
-              placeholder="Select another project"
-              onChange={(value) => {
-                setTargetProjectId(value);
-                const existing = grants.find(
-                  (grant) => grant.target_project_id === value,
-                );
-                setRoots(
-                  existing?.roots.map((root) => root || ".").join("\n") ?? ".",
-                );
-              }}
+              exclude={[
+                projectId,
+                ...(projectMap
+                  ?.filter((project) => project.get("deleted"))
+                  .keySeq()
+                  .toArray() ?? []),
+              ]}
+              fullCollaboratorOnly
+              disabled={busy}
+              value={
+                projectMap?.has(targetProjectId) ? targetProjectId : undefined
+              }
+              onChange={selectProject}
             />
           </Form.Item>
-          <Form.Item
-            label="Readable paths"
-            htmlFor="file-grant-roots"
-            extra="One literal project-home-relative file or directory per line. Directories include their full tree. Use . for the project home; snapshots, SSH files, and CoCalc runtime credentials always stay excluded."
-          >
-            <Input.TextArea
-              id="file-grant-roots"
-              rows={4}
-              value={roots}
-              onChange={(event) => setRoots(event.target.value)}
-              placeholder={"docs\nsrc/shared"}
-            />
+          <Form.Item>
+            <Radio.Group
+              value={wholeProject}
+              onChange={(event) => setWholeProject(event.target.value)}
+            >
+              <Radio value={true}>Share the whole project</Radio>
+              <Radio value={false}>Share specific directories</Radio>
+            </Radio.Group>
           </Form.Item>
+          {!wholeProject && (
+            <Form.Item
+              label="Readable paths"
+              htmlFor="file-grant-roots"
+              extra="One literal project-home-relative file or directory per line. Directories include their full tree."
+            >
+              <Input.TextArea
+                id="file-grant-roots"
+                rows={4}
+                value={roots}
+                onChange={(event) => setRoots(event.target.value)}
+                placeholder={"docs\nsrc/shared"}
+              />
+            </Form.Item>
+          )}
+          <Typography.Paragraph type="secondary">
+            SSH files, snapshots, and CoCalc runtime credentials are never
+            shared.
+          </Typography.Paragraph>
           <Button
             type="primary"
             icon={<Icon name="plus" />}
-            disabled={!targetProjectId || busy}
+            disabled={
+              !targetProjectId || busy || (!wholeProject && !roots.trim())
+            }
             onClick={() =>
               void run(async () => {
                 const identity =
@@ -212,7 +313,9 @@ function FileGrantsContents({
                   agent_id: identity.agent_id,
                   target_project_id: targetProjectId!,
                   roots: normalizeAgentFileGrantRoots(
-                    roots.split(/\r?\n/).filter((root) => root.trim()),
+                    wholeProject
+                      ? ["."]
+                      : roots.split(/\r?\n/).filter((root) => root.trim()),
                   ),
                 });
                 await refresh();
@@ -232,9 +335,6 @@ function FileGrantsContents({
           </Typography.Paragraph>
         ) : (
           grants.map((grant) => {
-            const project = projects.find(
-              (item) => item.value === grant.target_project_id,
-            );
             return (
               <div
                 key={grant.grant_id}
@@ -247,14 +347,23 @@ function FileGrantsContents({
               >
                 <Button
                   type="link"
-                  style={{ height: "auto", whiteSpace: "normal", flex: 1 }}
+                  style={{
+                    height: "auto",
+                    whiteSpace: "normal",
+                    flex: 1,
+                    minWidth: 0,
+                    overflowWrap: "anywhere",
+                  }}
                   onClick={() => {
-                    setTargetProjectId(grant.target_project_id);
-                    setRoots(grant.roots.map((root) => root || ".").join("\n"));
+                    selectProject(grant.target_project_id);
                   }}
                 >
-                  {project?.label ?? grant.target_project_id}:{" "}
-                  {grant.roots.map((root) => root || ".").join(", ")}
+                  {title(grant.target_project_id)}:{" "}
+                  {grant.roots
+                    .map((root) =>
+                      root && root !== "." ? root : "Whole project",
+                    )
+                    .join(", ")}
                 </Button>
                 <Popconfirm
                   title="Remove this file grant?"
@@ -273,7 +382,7 @@ function FileGrantsContents({
                   }
                 >
                   <Button
-                    aria-label={`Remove file grant for ${project?.label ?? grant.target_project_id}`}
+                    aria-label={`Remove file grant for ${title(grant.target_project_id)}`}
                     icon={<Icon name="times" />}
                     disabled={busy}
                   />
@@ -282,14 +391,6 @@ function FileGrantsContents({
             );
           })
         )}
-        <Typography.Paragraph type="secondary">
-          This is ordinary filesystem access within the listed roots. Files may
-          change concurrently because project processes and collaborators can
-          modify the target filesystem. CoCalc records grant configuration and
-          revocation, but this initial version does not provide a complete
-          per-file activity log or identify which source-project process used
-          the shared runtime credential.
-        </Typography.Paragraph>
       </KeyboardBoundary>
     </Modal>
   );

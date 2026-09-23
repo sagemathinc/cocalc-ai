@@ -4,7 +4,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Dropdown, Input, Modal, Space, Spin } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Input,
+  Modal,
+  Popover,
+  Space,
+  Spin,
+} from "antd";
 import type { MenuProps } from "antd";
 import { Buffer } from "buffer";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -48,6 +57,8 @@ export function AgentFileAttachment({
   const settings = useTypedRedux("account", "other_settings");
   const [toolboxOpen, setToolboxOpen] = useState(false);
   const [fileGrantsOpen, setFileGrantsOpen] = useState(false);
+  const [fileSummaryOpen, setFileSummaryOpen] = useState(false);
+  const [fileGrantTarget, setFileGrantTarget] = useState<string>();
   const [fileGrantCount, setFileGrantCount] = useState(0);
   const vmCount =
     readVmToolbox(settings?.get?.(VM_TOOLBOX_SETTING)).find(
@@ -214,7 +225,10 @@ export function AgentFileAttachment({
       if (key === "choose") setOpen(true);
       if (key === "goal") onSetGoal?.();
       if (key === "vm") setToolboxOpen(true);
-      if (key === "file-grants") setFileGrantsOpen(true);
+      if (key === "file-grants") {
+        setFileGrantTarget(undefined);
+        setFileGrantsOpen(true);
+      }
     },
   };
 
@@ -254,14 +268,38 @@ export function AgentFileAttachment({
             </Button>
           )}
           {fileGrantCount > 0 && (
-            <Button
-              type="text"
-              aria-label={`File grants, ${fileGrantCount} attached`}
-              icon={<Icon name="folder-open" />}
-              onClick={() => setFileGrantsOpen(true)}
+            <Popover
+              trigger="click"
+              open={fileSummaryOpen}
+              onOpenChange={setFileSummaryOpen}
+              content={
+                <FileGrants
+                  projectId={projectId}
+                  path={path}
+                  threadId={threadId}
+                  open={fileSummaryOpen}
+                  summary
+                  onEdit={(target) => {
+                    setFileSummaryOpen(false);
+                    setFileGrantTarget(target);
+                    setFileGrantsOpen(true);
+                  }}
+                  onClose={() => setFileSummaryOpen(false)}
+                  onCountChange={setFileGrantCount}
+                />
+              }
             >
-              {fileGrantCount}
-            </Button>
+              <Button
+                type="text"
+                aria-label={`File grants, ${fileGrantCount} attached`}
+                icon={<Icon name="folder-open" />}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setFileSummaryOpen(false);
+                }}
+              >
+                {fileGrantCount}
+              </Button>
+            </Popover>
           )}
           <VmToolbox
             projectId={projectId}
@@ -275,6 +313,7 @@ export function AgentFileAttachment({
             path={path}
             threadId={threadId}
             open={fileGrantsOpen}
+            initialTargetProjectId={fileGrantTarget}
             onClose={() => setFileGrantsOpen(false)}
             onCountChange={setFileGrantCount}
           />
