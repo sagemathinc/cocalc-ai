@@ -177,6 +177,7 @@ describe("snapshot-backup-maintenance", () => {
         monthly: 2,
       },
       limit: 8,
+      stage_durations_ms: {},
     });
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith({
@@ -189,6 +190,7 @@ describe("snapshot-backup-maintenance", () => {
       },
       limit: 5,
       knownLastBackupAt: undefined,
+      stage_durations_ms: {},
     });
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_snapshot",
@@ -334,7 +336,12 @@ describe("snapshot-backup-maintenance", () => {
     confirmProjectMaintenanceAssignmentMock
       .mockResolvedValueOnce({ valid: true })
       .mockResolvedValueOnce({ valid: false, reason: "assignment_changed" });
-    runScheduledBackupMaintenanceMock.mockResolvedValue({ created: true });
+    runScheduledBackupMaintenanceMock.mockResolvedValue({
+      created: true,
+      stage_durations_ms: { inventory: 40, create: 200 },
+      bytes_scanned: 1024,
+      bytes_uploaded: 256,
+    });
     const { runProjectSnapshotBackupMaintenanceSweepOnce } =
       await import("./snapshot-backup-maintenance");
 
@@ -347,6 +354,12 @@ describe("snapshot-backup-maintenance", () => {
         outcome: "deferred",
         reason: "assignment_changed",
         due_at: "2026-04-10T21:00:00.000Z",
+        stage_durations_ms: expect.objectContaining({
+          inventory: 40,
+          create: 200,
+        }),
+        bytes_scanned: 1024,
+        bytes_uploaded: 256,
       }),
     );
   });
@@ -435,6 +448,7 @@ describe("snapshot-backup-maintenance", () => {
       created_snapshot_at: "2026-04-10T22:01:00.000Z",
       changed: true,
       disabled: false,
+      stage_durations_ms: { inventory: 12, create: 3 },
     });
     const { runProjectSnapshotBackupMaintenanceSweepOnce } =
       await import("./snapshot-backup-maintenance");
@@ -448,6 +462,11 @@ describe("snapshot-backup-maintenance", () => {
         outcome: "succeeded",
         latest_snapshot_at: "2026-04-10T22:01:00.000Z",
         reconciled_change_at: null,
+        stage_durations_ms: expect.objectContaining({
+          inventory: 12,
+          create: 3,
+          queue_wait: expect.any(Number),
+        }),
       }),
     );
   });
@@ -528,6 +547,7 @@ describe("snapshot-backup-maintenance", () => {
       },
       limit: 5,
       knownLastBackupAt: undefined,
+      stage_durations_ms: {},
     });
   });
 

@@ -133,6 +133,34 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(insert?.[1][7]).toBeNull();
   });
 
+  it("bounds stage timing labels and backup byte counts in the bay projection", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordProjectMaintenanceStatus({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "backup",
+      observed_at: new Date().toISOString(),
+      outcome: "succeeded",
+      stage_durations_ms: {
+        inventory: 12.7,
+        create: 50,
+        arbitrary_project_label: 100,
+      },
+      bytes_scanned: 1024,
+      bytes_uploaded: 256,
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    expect(insert?.[1].slice(14)).toEqual([
+      { inventory: 12, create: 50 },
+      1024,
+      256,
+    ]);
+  });
+
   it("counts new changes after an unchanged-content report in health", async () => {
     const { getProjectRecoveryHealth, snapshotScheduleRevision } =
       await import("./maintenance-status");

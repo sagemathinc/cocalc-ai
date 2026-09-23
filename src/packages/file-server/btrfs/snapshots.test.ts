@@ -121,10 +121,12 @@ describe("rolling btrfs snapshot retention", () => {
       create: jest.fn(async () => undefined),
       delete: jest.fn(async () => undefined),
     };
+    const onStage = jest.fn();
 
     const result = await updateRollingSnapshots({
       snapshots: snapshots as any,
       counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      opts: { onStage },
     });
 
     expect(snapshots.readdir).toHaveBeenCalledTimes(1);
@@ -132,6 +134,12 @@ describe("rolling btrfs snapshot retention", () => {
     expect(snapshots.create).toHaveBeenCalledWith(expect.any(String), {
       existingSnapshotNames: inventory,
     });
+    expect(onStage.mock.calls.map(([stage]) => stage)).toEqual([
+      "inventory",
+      "change_detection",
+      "create",
+      "prune",
+    ]);
     expect(result).toEqual({
       changed: true,
       createdName: expect.any(String),

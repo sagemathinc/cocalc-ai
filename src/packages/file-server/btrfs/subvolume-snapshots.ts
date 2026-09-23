@@ -427,6 +427,18 @@ export class SubvolumeSnapshots {
 
   // update the rolling snapshots scheduleGener
   update = async (counts?: Partial<SnapshotCounts>, opts?) => {
+    const timed = async <T>(stage: string, run: () => Promise<T>) => {
+      const started = Date.now();
+      try {
+        return await run();
+      } finally {
+        try {
+          opts?.onStage?.(stage, Math.max(0, Date.now() - started));
+        } catch (err) {
+          logger.warn("snapshot stage observer failed", { stage, err });
+        }
+      }
+    };
     const limit = opts?.limit;
     if (limit == null) {
       return await updateRollingSnapshots({ snapshots: this, counts, opts });
@@ -437,7 +449,7 @@ export class SubvolumeSnapshots {
         code: 507,
       });
     }
-    const namedCount = (await this.readdir()).filter(
+    const namedCount = (await timed("inventory", () => this.readdir())).filter(
       (name) => !isISODate(name),
     ).length;
     if (namedCount >= normalizedLimit) {
@@ -446,21 +458,23 @@ export class SubvolumeSnapshots {
       });
     }
     const pruneToLimit = async () => {
-      const names = await this.readdir();
-      const automatic = names.filter(isISODate).sort();
-      let excess = names.length - normalizedLimit;
-      // The newest automatic recovery point and named/manual snapshots survive
-      // even when they prevent us from meeting a reduced entitlement.
-      for (const name of automatic.slice(0, -1)) {
-        if (excess <= 0) break;
-        await this.delete(name);
-        excess--;
-      }
-      if (excess > 0) {
-        throw new ConatError(`there is a limit of ${limit} snapshots`, {
-          code: 507,
-        });
-      }
+      await timed("prune", async () => {
+        const names = await this.readdir();
+        const automatic = names.filter(isISODate).sort();
+        let excess = names.length - normalizedLimit;
+        // The newest automatic recovery point and named/manual snapshots survive
+        // even when they prevent us from meeting a reduced entitlement.
+        for (const name of automatic.slice(0, -1)) {
+          if (excess <= 0) break;
+          await this.delete(name);
+          excess--;
+        }
+        if (excess > 0) {
+          throw new ConatError(`there is a limit of ${limit} snapshots`, {
+            code: 507,
+          });
+        }
+      });
     };
     await pruneToLimit();
     const result = await updateRollingSnapshots({

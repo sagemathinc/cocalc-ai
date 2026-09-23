@@ -22,6 +22,17 @@ export interface RollingSnapshotUpdateResult {
   disabled: boolean;
 }
 
+export type RollingSnapshotStage =
+  | "inventory"
+  | "change_detection"
+  | "create"
+  | "prune";
+
+export type RollingSnapshotStageObserver = (
+  stage: RollingSnapshotStage,
+  durationMs: number,
+) => void;
+
 export async function updateRollingSnapshots({
   snapshots,
   counts,
@@ -33,9 +44,25 @@ export async function updateRollingSnapshots({
   opts?: {
     beforeCreate?: () => Promise<void>;
     afterCreate?: (created: unknown) => Promise<void>;
+    onStage?: RollingSnapshotStageObserver;
     [key: string]: unknown;
   };
 }): Promise<RollingSnapshotUpdateResult> {
+  const timed = async <T>(
+    stage: RollingSnapshotStage,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const started = Date.now();
+    try {
+      return await run();
+    } finally {
+      try {
+        opts?.onStage?.(stage, Math.max(0, Date.now() - started));
+      } catch (err) {
+        logger.warn("rolling snapshot stage observer failed", { stage, err });
+      }
+    }
+  };
   if (btrfsRollingSnapshotsDisabled()) {
     if (!loggedRollingSnapshotsDisabled) {
       loggedRollingSnapshotsDisabled = true;
@@ -48,8 +75,10 @@ export async function updateRollingSnapshots({
   // Snapshot discovery can require one targeted Btrfs metadata command per
   // retained snapshot. Reuse one inventory throughout the rolling update
   // instead of listing again for change detection and the create limit.
-  const allSnapshotNames = await snapshots.readdir();
-  const changed = await snapshots.hasUnsavedChanges(allSnapshotNames);
+  const allSnapshotNames = await timed("inventory", () => snapshots.readdir());
+  const changed = await timed("change_detection", () =>
+    snapshots.hasUnsavedChanges(allSnapshotNames),
+  );
   logger.debug("updateRollingSnapshots", {
     name: snapshots.subvolume.name,
     counts,
@@ -89,13 +118,20 @@ export async function updateRollingSnapshots({
       snapshots.subvolume.name,
     );
     try {
-      const { beforeCreate, afterCreate, ...createOpts } = opts ?? {};
-      await beforeCreate?.();
-      const created = await snapshots.create(name, {
-        ...createOpts,
-        existingSnapshotNames: allSnapshotNames,
+      await timed("create", async () => {
+        const {
+          beforeCreate,
+          afterCreate,
+          onStage: _onStage,
+          ...createOpts
+        } = opts ?? {};
+        await beforeCreate?.();
+        const created = await snapshots.create(name, {
+          ...createOpts,
+          existingSnapshotNames: allSnapshotNames,
+        });
+        await afterCreate?.(created);
       });
-      await afterCreate?.(created);
       snapshotNames.push(name);
       createdName = name;
     } catch (err) {
@@ -109,19 +145,21 @@ export async function updateRollingSnapshots({
     ...tempRusticSnapshotsToDelete(allSnapshotNames),
   ];
   let deleteError: any = undefined;
-  for (const name of toDelete) {
-    try {
-      logger.debug(
-        "updateRollingSnapshots: deleting snapshot of",
-        snapshots.subvolume.name,
-        name,
-      );
-      await snapshots.delete(name);
-    } catch (err) {
-      // ONLY report this if create doesn't error, to give both delete and create a chance to run.
-      deleteError = err;
+  await timed("prune", async () => {
+    for (const name of toDelete) {
+      try {
+        logger.debug(
+          "updateRollingSnapshots: deleting snapshot of",
+          snapshots.subvolume.name,
+          name,
+        );
+        await snapshots.delete(name);
+      } catch (err) {
+        // ONLY report this if create doesn't error, to give both delete and create a chance to run.
+        deleteError = err;
+      }
     }
-  }
+  });
 
   if (createError) {
     throw createError;

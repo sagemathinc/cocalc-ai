@@ -233,7 +233,7 @@ import {
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
 import {
-  newestBackupTimeForIds,
+  confirmedBackupTimeForIds,
   parseCreatedBackupSnapshot,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
@@ -3168,16 +3168,19 @@ export async function runScheduledSnapshotMaintenance({
   project_id,
   counts,
   limit = 250,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
+  stage_durations_ms?: Record<string, number>;
 }): Promise<{
   latest_snapshot_at: string | null;
   created_snapshot_at: string | null;
   changed: boolean | null;
   disabled: boolean;
   skipped_reason?: string;
+  stage_durations_ms?: Record<string, number>;
 }> {
   const generation = currentProjectVolumeLifecycleGeneration(project_id);
   const result = await withCurrentProjectVolumeLifecycleLock(
@@ -3194,13 +3197,19 @@ export async function runScheduledSnapshotMaintenance({
       if (await isSubvolumeReadonly(vol.path)) {
         return { skipped_reason: "project_volume_archiving" };
       }
+      const stageDurations = stage_durations_ms ?? {};
       const update = await vol.snapshots.update(counts, {
         limit,
         quotaMode: "async",
+        onStage: (stage: string, durationMs: number) => {
+          stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
+        },
       });
+      const confirmationStarted = Date.now();
       const snapshots = (await vol.snapshots.readdir())
         .filter(isISODate)
         .sort();
+      stageDurations.confirmation = Date.now() - confirmationStarted;
       if (update.createdName && !snapshots.includes(update.createdName)) {
         throw new Error("new snapshot is not present after creation");
       }
@@ -3209,6 +3218,7 @@ export async function runScheduledSnapshotMaintenance({
         created_snapshot_at: update.createdName,
         changed: update.changed,
         disabled: update.disabled,
+        stage_durations_ms: stageDurations,
       };
     },
   );
@@ -4559,23 +4569,38 @@ async function updateBackupsUnlocked({
   counts,
   limit,
   knownLastBackupAt,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
-}): Promise<boolean> {
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+  stage_durations_ms: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+}> {
   if (legacyProjectArchiveRestoreActive.has(project_id)) {
     logger.info("skipping scheduled backup during legacy project restore", {
       project_id,
     });
-    return false;
+    return {
+      created: false,
+      deferred_reason: "legacy_restore_active",
+      stage_durations_ms: {},
+    };
   }
   const legacyInitialBackupOverride =
     legacyProjectInitialBackupEgressExempt.has(project_id)
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
+  const stageDurations = stage_durations_ms ?? {};
+  let bytesScanned: number | undefined;
+  let bytesUploaded: number | undefined;
   let newestCreatedBackupTime: Date | undefined;
   let newestCreatedBackupGeneration: number | undefined;
   let retentionError: unknown;
@@ -4587,6 +4612,9 @@ async function updateBackupsUnlocked({
       try {
         await refreshed.rustic.update(counts, {
           limit,
+          onStage: (stage: string, durationMs: number) => {
+            stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
+          },
           tags:
             legacyInitialBackupOverride == null
               ? undefined
@@ -4614,6 +4642,16 @@ async function updateBackupsUnlocked({
               newestCreatedBackupGeneration = backup.snapshotGeneration;
             }
             if (backup.summary) {
+              const scanned = Number(backup.summary.total_bytes_processed);
+              const uploaded = Number(
+                backup.summary.data_added_packed ?? backup.summary.data_added,
+              );
+              if (Number.isFinite(scanned) && scanned >= 0) {
+                bytesScanned = (bytesScanned ?? 0) + scanned;
+              }
+              if (Number.isFinite(uploaded) && uploaded >= 0) {
+                bytesUploaded = (bytesUploaded ?? 0) + uploaded;
+              }
               await recordManagedBackupEgressBestEffort({
                 project_id,
                 backup_id: backup.id,
@@ -4635,17 +4673,22 @@ async function updateBackupsUnlocked({
       return refreshed;
     },
   });
-  let reportTime = newestCreatedBackupTime;
+  let reportTime: Date | undefined;
   let repositoryBackups: Awaited<ReturnType<typeof vol.rustic.snapshots>> = [];
+  const confirmationStarted = Date.now();
   try {
     repositoryBackups = await vol.rustic.snapshots();
-    reportTime = newestBackupTimeForIds({
+    reportTime = confirmedBackupTimeForIds({
       backups: repositoryBackups,
       backupIds: createdBackupIds,
-      fallback: reportTime,
     });
   } catch (err) {
     logger.warn("backup snapshot refresh failed", { project_id, err });
+  } finally {
+    stageDurations.confirmation = Date.now() - confirmationStarted;
+  }
+  if (createdBackupIds.size > 0 && !reportTime) {
+    throw new Error("created backup was not confirmed in the repository");
   }
   if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
     legacyProjectInitialBackupEgressExempt.delete(project_id);
@@ -4667,14 +4710,24 @@ async function updateBackupsUnlocked({
     }
   }
   if (reportTime) {
-    await reportBackupSuccess(
-      project_id,
-      reportTime,
-      createdBackupIds.size > 0 ? newestCreatedBackupGeneration : null,
-    );
+    const reportingStarted = Date.now();
+    try {
+      await reportBackupSuccess(
+        project_id,
+        reportTime,
+        createdBackupIds.size > 0 ? newestCreatedBackupGeneration : null,
+      );
+    } finally {
+      stageDurations.reporting = Date.now() - reportingStarted;
+    }
   }
   if (retentionError) throw retentionError;
-  return createdBackupIds.size > 0;
+  return {
+    created: createdBackupIds.size > 0,
+    stage_durations_ms: stageDurations,
+    bytes_scanned: bytesScanned,
+    bytes_uploaded: bytesUploaded,
+  };
 }
 
 async function updateBackupsIfVolumeCurrent({
@@ -4683,15 +4736,20 @@ async function updateBackupsIfVolumeCurrent({
   limit,
   knownLastBackupAt,
   expectedLifecycleGeneration,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
+  stage_durations_ms?: Record<string, number>;
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
 }> {
   const result = await withCurrentProjectVolumeLifecycleLock(
     project_id,
@@ -4715,13 +4773,13 @@ async function updateBackupsIfVolumeCurrent({
         );
         return { created: false, deferred_reason: "project_volume_archiving" };
       }
-      const created = await updateBackupsUnlocked({
+      return await updateBackupsUnlocked({
         project_id,
         counts,
         limit,
         knownLastBackupAt,
+        stage_durations_ms,
       });
-      return { created };
     },
   );
   if (result === undefined) {
@@ -4772,12 +4830,20 @@ export async function runScheduledBackupMaintenance({
   counts,
   limit = 30,
   knownLastBackupAt,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
-}): Promise<{ created: boolean; deferred_reason?: string }> {
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+}> {
   const expectedLifecycleGeneration =
     currentProjectVolumeLifecycleGeneration(project_id);
   return (
@@ -4791,6 +4857,7 @@ export async function runScheduledBackupMaintenance({
           counts,
           limit,
           knownLastBackupAt,
+          stage_durations_ms,
           expectedLifecycleGeneration,
         }),
     })) ?? { created: false, deferred_reason: "backup_capacity_busy" }

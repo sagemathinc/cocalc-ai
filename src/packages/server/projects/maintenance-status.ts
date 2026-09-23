@@ -63,6 +63,9 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
         reconciled_change_at TIMESTAMP,
         reconciled_schedule_revision TEXT,
         duration_ms INTEGER,
+        stage_durations_ms JSONB,
+        bytes_scanned BIGINT,
+        bytes_uploaded BIGINT,
         retry_at TIMESTAMP,
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (project_id, kind)
@@ -87,6 +90,15 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS
           consecutive_failures INTEGER NOT NULL DEFAULT 0`,
       );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS stage_durations_ms JSONB`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS bytes_scanned BIGINT`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS bytes_uploaded BIGINT`,
+      );
     })
     .catch((err) => {
       ensurePromise = undefined;
@@ -101,6 +113,36 @@ function validDate(value: string | null | undefined): Date | null {
   if (!Number.isFinite(date.getTime()))
     throw new Error("invalid maintenance date");
   return date;
+}
+
+const MAINTENANCE_STAGES = new Set([
+  "candidate_discovery",
+  "queue_wait",
+  "inventory",
+  "change_detection",
+  "create",
+  "prune",
+  "confirmation",
+  "reporting",
+]);
+
+function boundedStageDurations(
+  value: Record<string, number> | undefined,
+): Record<string, number> | null {
+  if (!value) return null;
+  const stages: Record<string, number> = {};
+  for (const [stage, duration] of Object.entries(value)) {
+    if (!MAINTENANCE_STAGES.has(stage)) continue;
+    if (!Number.isFinite(duration) || duration < 0) continue;
+    stages[stage] = Math.min(24 * 60 * 60_000, Math.floor(duration));
+  }
+  return Object.keys(stages).length ? stages : null;
+}
+
+function boundedBytes(value: number | undefined): number | null {
+  return value != null && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 export async function recordProjectMaintenanceStatus(
@@ -138,15 +180,19 @@ export async function recordProjectMaintenanceStatus(
     report.duration_ms == null
       ? null
       : Math.max(0, Math.min(2_147_483_647, Math.floor(report.duration_ms)));
+  const stageDurations = boundedStageDurations(report.stage_durations_ms);
+  const bytesScanned = boundedBytes(report.bytes_scanned);
+  const bytesUploaded = boundedBytes(report.bytes_uploaded);
   await ensureProjectMaintenanceStatusTable();
   const result = await getPool().query(
     `INSERT INTO project_maintenance_status
        (project_id, kind, host_id, storage_service_class, observed_at, outcome,
         reason, due_at, latest_snapshot_at, reconciled_change_at,
         reconciled_schedule_revision,
-        duration_ms, retry_at, consecutive_failures)
+        duration_ms, stage_durations_ms, bytes_scanned, bytes_uploaded,
+        retry_at, consecutive_failures)
      SELECT p.project_id, $3, $2, $10, $4, $5, $6, $7, $8, $13, $14, $9,
-            $11, $12
+            $15::jsonb, $16, $17, $11, $12
        FROM projects p
       WHERE p.project_id=$1 AND p.host_id=$2
         AND p.provisioned IS TRUE AND p.deleted IS NOT TRUE
@@ -177,6 +223,9 @@ export async function recordProjectMaintenanceStatus(
            OR project_maintenance_status.host_id<>excluded.host_id THEN NULL
          ELSE project_maintenance_status.reconciled_schedule_revision END,
        duration_ms=excluded.duration_ms,
+       stage_durations_ms=excluded.stage_durations_ms,
+       bytes_scanned=excluded.bytes_scanned,
+       bytes_uploaded=excluded.bytes_uploaded,
        retry_at=excluded.retry_at,
        consecutive_failures=excluded.consecutive_failures
      WHERE project_maintenance_status.observed_at <= excluded.observed_at`,
@@ -195,6 +244,9 @@ export async function recordProjectMaintenanceStatus(
       Math.max(0, Math.min(1000, Math.floor(report.consecutive_failures ?? 0))),
       reconciledChange,
       scheduleRevision,
+      stageDurations,
+      bytesScanned,
+      bytesUploaded,
     ],
   );
   return !!result.rowCount;

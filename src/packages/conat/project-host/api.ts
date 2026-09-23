@@ -1084,6 +1084,9 @@ export interface ProjectMaintenanceReport {
   reconciled_change_at?: string | null;
   schedule_revision?: string | null;
   duration_ms?: number;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
   retry_at?: string | null;
   consecutive_failures?: number;
 }

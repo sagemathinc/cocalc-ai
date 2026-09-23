@@ -52,6 +52,26 @@ export function newestBackupTimeForIds({
   return newest;
 }
 
+// A successful upload is not a confirmed recovery point until every newly
+// created ID can be read back from the remote repository with a valid time.
+export function confirmedBackupTimeForIds({
+  backups,
+  backupIds,
+}: {
+  backups: readonly BackupSnapshotRef[];
+  backupIds: ReadonlySet<string>;
+}): Date | undefined {
+  if (backupIds.size === 0) return undefined;
+  const byId = new Map(backups.map((backup) => [backup.id, backup]));
+  let newest: Date | undefined;
+  for (const id of backupIds) {
+    const time = byId.get(id)?.time;
+    if (!time || !validDate(time)) return undefined;
+    if (!newest || time > newest) newest = time;
+  }
+  return newest;
+}
+
 function parseBackupDate(value: unknown): Date | undefined {
   if (value instanceof Date) {
     return validDate(value) ? value : undefined;

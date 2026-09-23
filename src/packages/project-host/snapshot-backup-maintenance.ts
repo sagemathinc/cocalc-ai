@@ -577,6 +577,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
     });
   }
+  const listingStartedAt = Date.now();
   const listing = projectIds
     ? statusClient.listProjectMaintenanceSchedules({
         host_id: hostId,
@@ -630,6 +631,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     });
   }
   if (!rows.length) return true;
+  const candidateDiscoveryMs = Date.now() - listingStartedAt;
   const validateAssignment = async (
     row: HostProjectMaintenanceSchedule,
     kind: "snapshot" | "backup",
@@ -713,6 +715,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     rows,
     (row) => row.backup_due_since,
   );
+  const queuedAt = Date.now();
   const snapshotLane = async () => {
     if (snapshotLaneRunning) return;
     snapshotLaneRunning = true;
@@ -736,6 +739,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         }
         inFlightSnapshots.add(project_id);
         const startedAt = Date.now();
+        let stageDurations: Record<string, number> = {};
         try {
           let latest_snapshot_at: string | null = null;
           let created_snapshot_at: string | null = null;
@@ -752,12 +756,14 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 project_id,
                 counts: scheduleToCounts(schedule),
                 limit: row.max_snapshots_per_project ?? undefined,
+                stage_durations_ms: stageDurations,
               });
               latest_snapshot_at = updated?.latest_snapshot_at ?? null;
               created_snapshot_at = updated?.created_snapshot_at ?? null;
               changed = updated?.changed ?? null;
               disabled = updated?.disabled ?? false;
               skippedReason = updated?.skipped_reason;
+              stageDurations = updated?.stage_durations_ms ?? {};
             },
           });
           const changedAt = parseTimestampMs(
@@ -824,6 +830,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 ? null
                 : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
             retry_at: nextRetry,
             consecutive_failures:
               outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
@@ -848,6 +859,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             reason: `${err}`,
             due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
             retry_at: nextRetry,
             consecutive_failures: (row.snapshot_failures ?? 0) + 1,
           }).catch(() => {});
@@ -915,6 +931,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         if (allowStarvationOverride) starvationOverrideReservations += 1;
         inFlightBackups.add(project_id);
         const startedAt = Date.now();
+        let stageDurations: Record<string, number> = {};
+        let bytesScanned: number | undefined;
+        let bytesUploaded: number | undefined;
         try {
           let created = false;
           let backupDeferredReason: string | undefined;
@@ -930,9 +949,13 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 counts: scheduleToCounts(schedule, { allowFrequent: false }),
                 limit: row.max_backups_per_project ?? undefined,
                 knownLastBackupAt: row.last_backup,
+                stage_durations_ms: stageDurations,
               });
               created = updated?.created ?? false;
               backupDeferredReason = updated?.deferred_reason;
+              stageDurations = updated?.stage_durations_ms ?? {};
+              bytesScanned = updated?.bytes_scanned;
+              bytesUploaded = updated?.bytes_uploaded;
             },
           });
           const outcome = result.ran
@@ -958,6 +981,13 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             due_at:
               outcome === "succeeded" ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            bytes_scanned: bytesScanned,
+            bytes_uploaded: bytesUploaded,
             retry_at: nextRetry,
             consecutive_failures:
               outcome === "succeeded" ? 0 : (row.backup_failures ?? 0),
@@ -982,6 +1012,13 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             reason: `${err}`,
             due_at: new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            bytes_scanned: bytesScanned,
+            bytes_uploaded: bytesUploaded,
             retry_at: nextRetry,
             consecutive_failures: (row.backup_failures ?? 0) + 1,
           }).catch(() => {});

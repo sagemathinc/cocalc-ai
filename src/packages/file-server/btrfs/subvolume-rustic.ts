@@ -556,10 +556,22 @@ export class SubvolumeRustic {
   };
 
   update = async (counts?: Partial<SnapshotCounts>, opts?) => {
+    const timed = async <T>(stage: string, run: () => Promise<T>) => {
+      const started = Date.now();
+      try {
+        return await run();
+      } finally {
+        try {
+          opts?.onStage?.(stage, Math.max(0, Date.now() - started));
+        } catch (err) {
+          logger.warn("rustic stage observer failed", { stage, err });
+        }
+      }
+    };
     const limit = opts?.limit;
     const normalizedLimit =
       limit == null ? undefined : Math.max(0, Math.floor(Number(limit)));
-    const snapshots = await this.snapshots();
+    const snapshots = await timed("inventory", () => this.snapshots());
     const automatic = (snapshot: Snapshot) =>
       snapshot.tags.length === 0 || snapshot.tags.includes("cocalc-automatic");
     const protectedCount = snapshots.filter(
@@ -577,21 +589,23 @@ export class SubvolumeRustic {
     // source tags existed. New manual and archival backups have distinct tags.
     const pruneToLimit = async (target: number) => {
       if (normalizedLimit == null) return;
-      const all = await this.listSnapshotsFresh();
-      const eligible = all.filter(automatic).sort(field_cmp("time"));
-      let excess = all.length - target;
-      // Preserve the newest automatic backup even if protected backups already
-      // consume the entitlement; a failed replacement must never remove it.
-      for (const snapshot of eligible.slice(0, -1)) {
-        if (excess <= 0) break;
-        await this.forget({ id: snapshot.id });
-        excess--;
-      }
-      if (excess > 0) {
-        throw new ConatError(`there is a limit of ${limit} backups`, {
-          code: 507,
-        });
-      }
+      await timed("prune", async () => {
+        const all = await this.listSnapshotsFresh();
+        const eligible = all.filter(automatic).sort(field_cmp("time"));
+        let excess = all.length - target;
+        // Preserve the newest automatic backup even if protected backups already
+        // consume the entitlement; a failed replacement must never remove it.
+        for (const snapshot of eligible.slice(0, -1)) {
+          if (excess <= 0) break;
+          await this.forget({ id: snapshot.id });
+          excess--;
+        }
+        if (excess > 0) {
+          throw new ConatError(`there is a limit of ${limit} backups`, {
+            code: 507,
+          });
+        }
+      });
     };
     if (normalizedLimit != null && snapshots.length > normalizedLimit) {
       await pruneToLimit(normalizedLimit);
