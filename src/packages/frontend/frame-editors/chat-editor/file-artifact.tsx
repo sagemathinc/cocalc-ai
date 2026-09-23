@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { Alert, Button, Space } from "antd";
 import { ARTIFACT_TEXT_LIMIT } from "@cocalc/chat";
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
@@ -16,6 +17,10 @@ import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
 import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
+const NotebookArtifact = lazyWithRetry(
+  () => import("./notebook-artifact"),
+  "notebook artifact",
+);
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -149,7 +154,25 @@ function BinaryPreview({
   );
 }
 
-export function FileArtifact({
+export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
+  if (
+    props.projectId &&
+    props.artifact.file?.path.toLowerCase().endsWith(".ipynb")
+  )
+    return (
+      <Suspense fallback={<div role="status">Loading notebook preview...</div>}>
+        <NotebookArtifact
+          key={`${props.projectId}:${props.artifact.file.path}`}
+          projectId={props.projectId}
+          path={props.artifact.file.path}
+          historical={props.historical}
+        />
+      </Suspense>
+    );
+  return <SavedFileArtifact {...props} />;
+}
+
+function SavedFileArtifact({
   artifact,
   historical,
   onComment,

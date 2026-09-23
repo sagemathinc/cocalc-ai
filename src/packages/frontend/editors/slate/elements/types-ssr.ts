@@ -22,6 +22,7 @@ import "./list/list-item";
 import "./math";
 import "./mention";
 import "./agent-mention";
+import "./artifact-mention";
 import "./meta";
 import "./references";
 import "./paragraph";

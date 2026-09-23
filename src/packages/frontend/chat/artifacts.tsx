@@ -74,6 +74,7 @@ export function ArtifactCards({
               current={current}
               syncdb={actions.syncdb}
               projectId={actions.store?.get("project_id")}
+              chatPath={actions.store?.get("path")}
               open={
                 actions.frameTreeActions && actions.frameId ? open : undefined
               }

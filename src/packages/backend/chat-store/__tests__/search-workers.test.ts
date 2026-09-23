@@ -22,6 +22,20 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
+test("artifact discovery shares authenticated admission with message searches", async () => {
+  const account = `artifacts-${sequence++}`;
+  const pending = searchChatStore(
+    { ...opts, query: "", artifacts: true, thread_id: "thread" },
+    account,
+  );
+  expect(workers[0].options.workerData.artifacts).toBe(true);
+  expect(workers[0].options.resourceLimits.maxOldGenerationSizeMb).toBe(128);
+  await expect(searchChatStore(opts, account)).rejects.toThrow("busy");
+  workers[0].emit("message", { value: { includes_artifacts: true, hits: [] } });
+  expect(await pending).toMatchObject({ includes_artifacts: true });
+  expect(workers[0].terminate).toHaveBeenCalledTimes(1);
+});
+
 test.each([undefined, "thread"])(
   "scoped and unscoped searches allocate workers under the same account gate (%s)",
   async (thread_id) => {

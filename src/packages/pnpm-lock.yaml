@@ -1789,6 +1789,9 @@ importers:
       '@cocalc/backend':
         specifier: workspace:*
         version: link:../backend
+      '@cocalc/chat':
+        specifier: workspace:*
+        version: link:../chat
       '@cocalc/chat-client':
         specifier: workspace:*
         version: link:../chat-client

@@ -11,6 +11,9 @@ export const PERSONAL_AGENT_STATE_TABLES = [
   "agent_network_activity",
   "agent_network_proposals",
   "agent_network_broadcasts",
+  "personal_library_controls",
+  "personal_library_aliases",
+  "personal_library_pins",
 ] as const;
 
 export const EXTERNAL_AGENT_STATE_TABLES = [

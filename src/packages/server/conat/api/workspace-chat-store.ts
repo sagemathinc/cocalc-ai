@@ -123,6 +123,7 @@ export async function workspaceChatStoreReadArchivedHit(
 
 export async function workspaceChatStoreSearch(
   opts: WorkspaceChatStorePaths & {
+    artifacts?: boolean;
     include_head?: boolean;
     query: string;
     thread_id?: string;

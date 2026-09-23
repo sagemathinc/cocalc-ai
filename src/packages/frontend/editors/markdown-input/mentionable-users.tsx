@@ -29,6 +29,8 @@ import {
 } from "@cocalc/frontend/agents/api";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
+import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
+import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
   avatarUserSize?: number;
@@ -45,6 +47,7 @@ export function useMentionableUsers(): (
     useAgentMentionContext();
   const { selectedNetworkId } = useChatEmbeddingOptions();
   const settings = useTypedRedux("account", "other_settings");
+  const { names: artifactNames } = useArtifactNames();
   const [expanded, setExpanded] = useState(false);
   const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
@@ -102,7 +105,30 @@ export function useMentionableUsers(): (
           ),
         }),
       );
+      const artifacts: Item[] =
+        enabled && project_id
+          ? artifactNames
+              .filter((item) => item.active && item.project_id === project_id)
+              .filter((item) => item.name.includes(query))
+              .slice(0, 20)
+              .map((item) => ({
+                value: serializeArtifactMention({
+                  version: 1,
+                  project_id: item.project_id,
+                  entry_id: item.entry_id,
+                  name: item.name,
+                }),
+                group: "Artifacts",
+                search: item.name,
+                label: (
+                  <span title="Reference artifact in this project">
+                    @{item.name}
+                  </span>
+                ),
+              }))
+          : [];
       return [
+        ...artifacts,
         ...agents,
         ...(enabled && !query && !expanded
           ? [
@@ -133,6 +159,7 @@ export function useMentionableUsers(): (
     source,
     selectedNetworkId,
     settings,
+    artifactNames,
     expanded,
     postOnly,
   ]);

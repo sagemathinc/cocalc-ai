@@ -10,6 +10,7 @@ const openAccountSettings = jest.fn();
 const signOut = jest.fn();
 const confirm = jest.fn();
 let membershipClass = "admin";
+let hasName = true;
 
 jest.mock("antd", () => ({
   Button: ({ children, onClick, "aria-label": ariaLabel }: any) => (
@@ -74,9 +75,9 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useTypedRedux: (_store: string, field: string) =>
       ({
         account_id: "account-1",
-        display_name: "Ada Lovelace",
-        first_name: "Ada",
-        last_name: "Lovelace",
+        display_name: hasName ? "Ada Lovelace" : "",
+        first_name: hasName ? "Ada" : "",
+        last_name: hasName ? "Lovelace" : "",
         email_address: "ada@example.com",
       })[field],
   };
@@ -88,6 +89,7 @@ describe("Agents account menu", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     membershipClass = "admin";
+    hasName = true;
     api.mockImplementation(async () => ({ class: membershipClass }));
   });
 
@@ -97,7 +99,7 @@ describe("Agents account menu", () => {
     expect(
       screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
     ).toBeTruthy();
-    expect(screen.getByText("ada@example.com")).toBeTruthy();
+    expect(screen.queryByText("ada@example.com")).toBeNull();
     await waitFor(() => expect(api).toHaveBeenCalled());
     expect(screen.queryByText("Admin")).toBeNull();
     expect(screen.queryByText("Upgrade")).toBeNull();
@@ -108,6 +110,16 @@ describe("Agents account menu", () => {
     render(<AgentsAccountMenu />);
 
     expect(await screen.findByText("Upgrade")).toBeTruthy();
+  });
+
+  it("does not fall back to email when the account has no name", async () => {
+    hasName = false;
+    render(<AgentsAccountMenu />);
+    expect(
+      screen.getByRole("button", { name: "Account menu for Account" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("ada@example.com")).toBeNull();
+    await waitFor(() => expect(api).toHaveBeenCalled());
   });
 
   it("routes account actions and confirms sign out", async () => {
@@ -125,6 +137,7 @@ describe("Agents account menu", () => {
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
     expect(confirm).toHaveBeenCalled();
+    expect(confirm.mock.calls[0][0].title).toBe("Sign out Ada Lovelace?");
     await waitFor(() => expect(signOut).toHaveBeenCalledWith(false));
   });
 

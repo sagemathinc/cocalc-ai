@@ -2,6 +2,45 @@
   "version": 1,
   "pages": [
     {
+      "id": "agent-artifact-library",
+      "title": "Agent artifact Library navigation",
+      "path": "/agents",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "button:has-text('Library')",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "selector": "button:has-text('Library')"
+        },
+        {
+          "type": "focus",
+          "selector": "button:has-text('Library')"
+        },
+        { "type": "press", "key": "Enter" },
+        {
+          "type": "wait",
+          "selector": "[aria-label='Search library']"
+        },
+        {
+          "type": "assertFocusWithin",
+          "selector": "[aria-label='Artifact Library']"
+        },
+        {
+          "type": "focus",
+          "selector": "aside .cocalc-agent-sidebar-row button[aria-label^='More actions for']"
+        },
+        {
+          "type": "assertFocusWithin",
+          "selector": "aside .cocalc-agent-sidebar-row"
+        }
+      ],
+      "cleanupActions": []
+    },
+    {
       "id": "account-running-gpu-dialog",
       "title": "Account running GPU reminder",
       "path": "/hosts?tab=vms",
