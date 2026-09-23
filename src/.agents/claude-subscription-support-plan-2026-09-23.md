@@ -2,7 +2,9 @@
 
 Date: 2026-09-23
 
-Status: proposed. No Pro/Max authentication is implemented in CoCalc.
+Status: offline auth-contract qualification completed; Pro/Max login, billing,
+and credential isolation are not implemented or verified in CoCalc. See
+`src/.agents/claude-subscription-offline-qualification-2026-09-23.md`.
 
 ## Goal
 
@@ -37,6 +39,11 @@ make Claude impractical for many individual users.
 - The generic ACP session, streaming, cancellation, and reconnect stack has
   already been exercised with the Claude API-key path. Do not rewrite it for
   this feature.
+- The pinned adapter advertises a subscription-specific terminal login only
+  without `--hide-claude-auth` in a local-browser environment. In remote mode
+  it advertises a generic TUI login. CoCalc currently advertises no ACP
+  terminal-auth capability and sends no Claude session options. These are
+  implementation gaps, not proof that subscription login is impossible.
 
 ## Provider And Cost Gate: Prove Before Product Work
 

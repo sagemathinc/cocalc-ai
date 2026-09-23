@@ -3,7 +3,11 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
+const { realpathSync } = require("node:fs");
+const { mkdtemp, rm } = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { AcpHarnessClient } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
@@ -11,6 +15,142 @@ const { harnessPrompt } = require("../../dist/acp/harness-context.js");
 const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
 
 const claudeAgentAcpBin = process.env.CLAUDE_AGENT_ACP_BIN;
+
+async function probeClaudeAuthMethods(args, remote) {
+  const home = await mkdtemp(path.join(os.tmpdir(), "cocalc-claude-auth-"));
+  const child = spawn(claudeAgentAcpBin, args, {
+    detached: process.platform !== "win32",
+    env: {
+      HOME: home,
+      XDG_CONFIG_HOME: home,
+      CLAUDE_CONFIG_DIR: home,
+      PATH: process.env.PATH,
+      LANG: "C.UTF-8",
+      ...(remote ? { NO_BROWSER: "1" } : {}),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.resume();
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  try {
+    const response = await new Promise((resolve, reject) => {
+      let buffer = "";
+      const timeout = setTimeout(
+        () => reject(Error("ACP auth probe timed out")),
+        15000,
+      );
+      child.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.stdin.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once("close", () => {
+        clearTimeout(timeout);
+        reject(Error("ACP auth probe exited before initialize"));
+      });
+      child.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        for (let end; (end = buffer.indexOf("\n")) >= 0; ) {
+          const line = buffer.slice(0, end);
+          buffer = buffer.slice(end + 1);
+          let message;
+          try {
+            message = JSON.parse(line);
+          } catch {
+            clearTimeout(timeout);
+            reject(Error("ACP auth probe returned malformed JSON"));
+            return;
+          }
+          if (message.id !== 1) continue;
+          clearTimeout(timeout);
+          if (message.error) reject(Error("ACP initialize failed"));
+          else resolve(message.result);
+        }
+      });
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: 1,
+            clientInfo: { name: "cocalc-qualification", version: "1" },
+            clientCapabilities: { auth: { terminal: true } },
+          },
+        })}\n`,
+      );
+    });
+    return response.authMethods;
+  } finally {
+    if (child.pid) {
+      try {
+        process.kill(
+          process.platform === "win32" ? child.pid : -child.pid,
+          "SIGKILL",
+        );
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    await closed;
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+test(
+  "qualified Claude adapter advertises subscription login only without the API-key guard",
+  { skip: !claudeAgentAcpBin },
+  async () => {
+    const local = await probeClaudeAuthMethods([], false);
+    assert.deepEqual(
+      local.map(({ id }) => id),
+      ["claude-ai-login", "console-login"],
+    );
+    assert.ok(local.every(({ type }) => type === "terminal"));
+    assert.deepEqual(local[0].args, ["--cli", "auth", "login", "--claudeai"]);
+    const guarded = await probeClaudeAuthMethods(["--hide-claude-auth"], false);
+    assert.deepEqual(
+      guarded.map(({ id }) => id),
+      ["console-login"],
+    );
+    const remote = await probeClaudeAuthMethods([], true);
+    assert.deepEqual(
+      remote.map(({ id }) => id),
+      ["claude-login"],
+    );
+    assert.deepEqual(remote[0].args, ["--cli"]);
+  },
+);
+
+test(
+  "qualified Claude adapter reports API-key billing ahead of a stored subscription",
+  { skip: !claudeAgentAcpBin },
+  async () => {
+    const adapterDirectory = path.dirname(realpathSync(claudeAgentAcpBin));
+    const { fromCliStatus } = await import(
+      pathToFileURL(path.join(adapterDirectory, "auth-status.js")).href
+    );
+    const subscription = {
+      loggedIn: true,
+      apiProvider: "firstParty",
+      subscriptionType: "max",
+    };
+    assert.equal(fromCliStatus(JSON.stringify(subscription)).kind, "account");
+    assert.equal(
+      fromCliStatus(
+        JSON.stringify({
+          ...subscription,
+          apiKeySource: "ANTHROPIC_API_KEY",
+        }),
+      ).kind,
+      "api_key",
+    );
+    assert.equal(fromCliStatus("not-json"), undefined);
+  },
+);
 
 test(
   "qualified Claude adapter negotiates ACP v1 without subscription auth",
