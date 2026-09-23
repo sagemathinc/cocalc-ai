@@ -159,6 +159,123 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       1024,
       256,
     ]);
+    const attempt = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_attempts"),
+    );
+    expect(attempt?.[1].slice(10, 13)).toEqual([
+      { inventory: 12, create: 50 },
+      1024,
+      256,
+    ]);
+  });
+
+  it("does not record an attempt from a stale project host", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => ({
+      rows: [],
+      rowCount: sql.includes("INSERT INTO project_maintenance_status") ? 0 : 1,
+    }));
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id: "old-host",
+        project_id: "project-1",
+        kind: "backup",
+        observed_at: new Date().toISOString(),
+        outcome: "failed",
+      }),
+    ).toBe(false);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.includes("INSERT INTO project_maintenance_attempts"),
+      ),
+    ).toBe(false);
+  });
+
+  it("summarizes attempts and bounded stages for operator health", async () => {
+    const { getProjectRecoveryAttemptHealth } =
+      await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("COUNT(*) FILTER (WHERE outcome='succeeded')")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              storage_service_class: "paying",
+              kind: "backup",
+              succeeded: 2,
+              deferred: 1,
+              failed: 0,
+              skipped: 0,
+              bytes_scanned: "1024",
+              bytes_uploaded: "128",
+            },
+          ],
+        };
+      }
+      if (sql.includes("percentile_cont(0.95)")) {
+        if (sql.includes("attempt_due_at")) {
+          return {
+            rows: [
+              {
+                storage_service_class: "paying",
+                kind: "backup",
+                samples: 2,
+                p95_seconds: 120,
+                p99_seconds: 140,
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              storage_service_class: "paying",
+              kind: "backup",
+              stage: "create",
+              samples: 3,
+              p95_ms: 900,
+              p99_ms: 950,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    expect(await getProjectRecoveryAttemptHealth()).toEqual({
+      by_host: [
+        {
+          host_id: "host-1",
+          storage_service_class: "paying",
+          kind: "backup",
+          succeeded: 2,
+          deferred: 1,
+          failed: 0,
+          skipped: 0,
+          bytes_scanned: 1024,
+          bytes_uploaded: 128,
+        },
+      ],
+      stages: [
+        {
+          storage_service_class: "paying",
+          kind: "backup",
+          stage: "create",
+          samples: 3,
+          p95_ms: 900,
+          p99_ms: 950,
+        },
+      ],
+      due_to_success: [
+        {
+          storage_service_class: "paying",
+          kind: "backup",
+          samples: 2,
+          p95_seconds: 120,
+          p99_seconds: 140,
+        },
+      ],
+    });
   });
 
   it("counts new changes after an unchanged-content report in health", async () => {

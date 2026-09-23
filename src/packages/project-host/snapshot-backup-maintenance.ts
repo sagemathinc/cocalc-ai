@@ -829,6 +829,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               : dueAt == null
                 ? null
                 : new Date(dueAt).toISOString(),
+            attempt_due_at:
+              dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
             stage_durations_ms: {
               candidate_discovery: candidateDiscoveryMs,
@@ -858,6 +860,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             outcome: "failed",
             reason: `${err}`,
             due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+            attempt_due_at:
+              dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
             stage_durations_ms: {
               candidate_discovery: candidateDiscoveryMs,
@@ -980,6 +984,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               (created ? undefined : "backup_not_created"),
             due_at:
               outcome === "succeeded" ? null : new Date(dueAt).toISOString(),
+            attempt_due_at: new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
             stage_durations_ms: {
               candidate_discovery: candidateDiscoveryMs,
@@ -1011,6 +1016,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             outcome: "failed",
             reason: `${err}`,
             due_at: new Date(dueAt).toISOString(),
+            attempt_due_at: new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
             stage_durations_ms: {
               candidate_discovery: candidateDiscoveryMs,

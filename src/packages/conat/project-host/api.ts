@@ -1080,6 +1080,7 @@ export interface ProjectMaintenanceReport {
   outcome: "succeeded" | "deferred" | "failed" | "skipped";
   reason?: string;
   due_at?: string | null;
+  attempt_due_at?: string | null;
   latest_snapshot_at?: string | null;
   reconciled_change_at?: string | null;
   schedule_revision?: string | null;

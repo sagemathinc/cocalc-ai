@@ -205,6 +205,33 @@ describe("snapshot-backup-maintenance", () => {
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves the original due time on a successful backup attempt", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-1",
+        last_edited: "2026-04-10T21:00:00.000Z",
+        backup_due_since: "2026-04-10T21:00:00.000Z",
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    runScheduledBackupMaintenanceMock.mockResolvedValue({ created: true });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "backup",
+        outcome: "succeeded",
+        due_at: null,
+        attempt_due_at: "2026-04-10T21:00:00.000Z",
+      }),
+    );
+  });
+
   it("does not mutate a project after its host assignment changes", async () => {
     confirmProjectMaintenanceAssignmentMock.mockImplementation(
       async ({ project_id }: { project_id: string }) =>

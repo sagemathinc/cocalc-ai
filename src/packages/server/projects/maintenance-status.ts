@@ -73,6 +73,33 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
     `,
     )
     .then(async () => {
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS project_maintenance_attempts (
+          project_id UUID NOT NULL,
+          kind TEXT NOT NULL,
+          host_id UUID NOT NULL,
+          storage_service_class TEXT NOT NULL,
+          observed_at TIMESTAMP NOT NULL,
+          outcome TEXT NOT NULL,
+          reason TEXT,
+          due_at TIMESTAMP,
+          attempt_due_at TIMESTAMP,
+          duration_ms INTEGER,
+          stage_durations_ms JSONB,
+          bytes_scanned BIGINT,
+          bytes_uploaded BIGINT,
+          retry_at TIMESTAMP,
+          PRIMARY KEY (project_id, kind, observed_at)
+        )
+      `);
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS project_maintenance_attempts_observed_idx
+           ON project_maintenance_attempts(observed_at)`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_attempts ADD COLUMN IF NOT EXISTS
+           attempt_due_at TIMESTAMP`,
+      );
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS
           storage_service_class TEXT NOT NULL DEFAULT 'free'`,
@@ -161,6 +188,7 @@ export async function recordProjectMaintenanceStatus(
     throw new Error("invalid maintenance observation time");
   }
   const dueAt = validDate(report.due_at);
+  const attemptDueAt = validDate(report.attempt_due_at);
   const latestSnapshot = validDate(report.latest_snapshot_at);
   if (
     report.kind === "snapshot" &&
@@ -249,7 +277,44 @@ export async function recordProjectMaintenanceStatus(
       bytesUploaded,
     ],
   );
-  return !!result.rowCount;
+  if (!result.rowCount) return false;
+  await getPool().query(
+    `INSERT INTO project_maintenance_attempts
+       (project_id, kind, host_id, storage_service_class, observed_at,
+        outcome, reason, due_at, attempt_due_at, duration_ms,
+        stage_durations_ms, bytes_scanned, bytes_uploaded, retry_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+             $12, $13, $14)
+     ON CONFLICT (project_id, kind, observed_at) DO NOTHING`,
+    [
+      report.project_id,
+      report.kind,
+      report.host_id,
+      report.storage_service_class === "paying" ? "paying" : "free",
+      observedAt,
+      report.outcome,
+      report.reason?.slice(0, 500) ?? null,
+      dueAt,
+      attemptDueAt,
+      duration,
+      stageDurations,
+      bytesScanned,
+      bytesUploaded,
+      retryAt,
+    ],
+  );
+  await getPool().query(
+    `DELETE FROM project_maintenance_attempts
+      WHERE project_id=$1 AND kind=$2
+        AND (observed_at < NOW() - INTERVAL '30 days'
+          OR ctid IN (
+            SELECT ctid FROM project_maintenance_attempts
+            WHERE project_id=$1 AND kind=$2
+            ORDER BY observed_at DESC OFFSET 128
+          ))`,
+    [report.project_id, report.kind],
+  );
+  return true;
 }
 
 export async function getProjectRecoveryStatusLocal(
@@ -359,6 +424,105 @@ export interface ProjectRecoveryHealth {
   unknown_backup_status: number;
   oldest_snapshot_delay_seconds: number;
   oldest_backup_delay_seconds: number;
+}
+
+export interface ProjectRecoveryAttemptAggregate {
+  host_id: string;
+  storage_service_class: "paying" | "free";
+  kind: "snapshot" | "backup";
+  succeeded: number;
+  deferred: number;
+  failed: number;
+  skipped: number;
+  bytes_scanned: number;
+  bytes_uploaded: number;
+}
+
+export interface ProjectRecoveryStageAggregate {
+  storage_service_class: "paying" | "free";
+  kind: "snapshot" | "backup";
+  stage: string;
+  samples: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface ProjectRecoveryDelayAggregate {
+  storage_service_class: "paying" | "free";
+  kind: "snapshot" | "backup";
+  samples: number;
+  p95_seconds: number;
+  p99_seconds: number;
+}
+
+export async function getProjectRecoveryAttemptHealth(): Promise<{
+  by_host: ProjectRecoveryAttemptAggregate[];
+  stages: ProjectRecoveryStageAggregate[];
+  due_to_success: ProjectRecoveryDelayAggregate[];
+}> {
+  await ensureProjectMaintenanceStatusTable();
+  const [outcomes, stages, delays] = await Promise.all([
+    getPool().query<{
+      host_id: string;
+      storage_service_class: "paying" | "free";
+      kind: "snapshot" | "backup";
+      succeeded: number;
+      deferred: number;
+      failed: number;
+      skipped: number;
+      bytes_scanned: string;
+      bytes_uploaded: string;
+    }>(
+      `SELECT host_id, storage_service_class, kind,
+              COUNT(*) FILTER (WHERE outcome='succeeded')::int AS succeeded,
+              COUNT(*) FILTER (WHERE outcome='deferred')::int AS deferred,
+              COUNT(*) FILTER (WHERE outcome='failed')::int AS failed,
+              COUNT(*) FILTER (WHERE outcome='skipped')::int AS skipped,
+              COALESCE(SUM(bytes_scanned), 0)::text AS bytes_scanned,
+              COALESCE(SUM(bytes_uploaded), 0)::text AS bytes_uploaded
+         FROM project_maintenance_attempts
+        WHERE observed_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY host_id, storage_service_class, kind
+        ORDER BY host_id, storage_service_class, kind`,
+    ),
+    getPool().query<ProjectRecoveryStageAggregate>(
+      `SELECT storage_service_class, kind, stage.key AS stage,
+              COUNT(*)::int AS samples,
+              percentile_cont(0.95) WITHIN GROUP
+                (ORDER BY stage.value::double precision) AS p95_ms,
+              percentile_cont(0.99) WITHIN GROUP
+                (ORDER BY stage.value::double precision) AS p99_ms
+         FROM project_maintenance_attempts,
+              LATERAL jsonb_each_text(stage_durations_ms) AS stage(key, value)
+        WHERE observed_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY storage_service_class, kind, stage.key
+        ORDER BY storage_service_class, kind, stage.key`,
+    ),
+    getPool().query<ProjectRecoveryDelayAggregate>(
+      `SELECT storage_service_class, kind, COUNT(*)::int AS samples,
+              percentile_cont(0.95) WITHIN GROUP
+                (ORDER BY EXTRACT(EPOCH FROM (observed_at-attempt_due_at)))
+                AS p95_seconds,
+              percentile_cont(0.99) WITHIN GROUP
+                (ORDER BY EXTRACT(EPOCH FROM (observed_at-attempt_due_at)))
+                AS p99_seconds
+         FROM project_maintenance_attempts
+        WHERE observed_at >= NOW() - INTERVAL '24 hours'
+          AND outcome='succeeded' AND attempt_due_at IS NOT NULL
+          AND observed_at >= attempt_due_at
+        GROUP BY storage_service_class, kind
+        ORDER BY storage_service_class, kind`,
+    ),
+  ]);
+  return {
+    by_host: outcomes.rows.map((row) => ({
+      ...row,
+      bytes_scanned: Number(row.bytes_scanned),
+      bytes_uploaded: Number(row.bytes_uploaded),
+    })),
+    stages: stages.rows,
+    due_to_success: delays.rows,
+  };
 }
 
 export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth> {

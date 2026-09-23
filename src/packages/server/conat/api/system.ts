@@ -193,7 +193,10 @@ import {
   getProjectBackupInfrastructureStatus,
   getProjectBackupShardAdminStatus,
 } from "@cocalc/server/project-backup";
-import { getProjectRecoveryHealth } from "@cocalc/server/projects/maintenance-status";
+import {
+  getProjectRecoveryAttemptHealth,
+  getProjectRecoveryHealth,
+} from "@cocalc/server/projects/maintenance-status";
 import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
@@ -2061,6 +2064,7 @@ export async function getLaunchHealth({
     loadResult,
     backupsResult,
     projectRecoveryResult,
+    projectRecoveryAttemptsResult,
     latencyResult,
     setupResult,
     configResult,
@@ -2072,6 +2076,7 @@ export async function getLaunchHealth({
     getBayLoad({ account_id, bay_id: currentBay.bay_id }),
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
     getProjectRecoveryHealth(),
+    getProjectRecoveryAttemptHealth(),
     getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
     getSiteSetupStatus({ account_id }),
     getGlobalConfigPropagationStatus({
@@ -2092,6 +2097,10 @@ export async function getLaunchHealth({
   const projectRecovery =
     projectRecoveryResult.status === "fulfilled"
       ? projectRecoveryResult.value
+      : undefined;
+  const projectRecoveryAttempts =
+    projectRecoveryAttemptsResult.status === "fulfilled"
+      ? projectRecoveryAttemptsResult.value
       : undefined;
   const latency =
     latencyResult.status === "fulfilled" ? latencyResult.value : undefined;
@@ -2336,7 +2345,8 @@ export async function getLaunchHealth({
             : projectRecovery.paying_snapshot_overdue > 0 ||
                 projectRecovery.paying_backup_overdue > 0
               ? "critical"
-              : projectRecovery.unknown_snapshot_status > 0 ||
+              : projectRecoveryAttemptsResult.status === "rejected" ||
+                  projectRecovery.unknown_snapshot_status > 0 ||
                   projectRecovery.unknown_backup_status > 0 ||
                   projectRecovery.oldest_snapshot_delay_seconds > 0 ||
                   projectRecovery.oldest_backup_delay_seconds > 0
@@ -2352,6 +2362,39 @@ export async function getLaunchHealth({
             ? [
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
+                ...(projectRecoveryAttemptsResult.status === "rejected"
+                  ? [
+                      `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,
+                    ]
+                  : []),
+                ...(projectRecoveryAttempts
+                  ? [
+                      `24-hour attempts: ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.succeeded, 0)} succeeded, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.deferred, 0)} deferred, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.failed, 0)} failed`,
+                      ...projectRecoveryAttempts.by_host
+                        .filter((item) => item.failed > 0 || item.deferred > 0)
+                        .sort(
+                          (a, b) =>
+                            b.failed + b.deferred - (a.failed + a.deferred),
+                        )
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind}: ${item.succeeded} succeeded, ${item.deferred} deferred, ${item.failed} failed`,
+                        ),
+                      ...projectRecoveryAttempts.stages
+                        .filter((item) => item.samples >= 5)
+                        .sort((a, b) => b.p99_ms - a.p99_ms)
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.storage_service_class} ${item.kind} ${item.stage}: p95 ${Math.round(item.p95_ms)}ms, p99 ${Math.round(item.p99_ms)}ms (${item.samples} attempts)`,
+                        ),
+                      ...projectRecoveryAttempts.due_to_success.map(
+                        (item) =>
+                          `${item.storage_service_class} ${item.kind} due-to-success: p95 ${Math.round(item.p95_seconds)}s, p99 ${Math.round(item.p99_seconds)}s (${item.samples} completions)`,
+                      ),
+                    ]
+                  : []),
               ]
             : [],
     }),
