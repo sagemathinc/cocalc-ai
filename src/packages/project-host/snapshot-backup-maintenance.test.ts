@@ -240,6 +240,57 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("retains backup debt and retries when backup capacity is busy", async () => {
+    runScheduledBackupMaintenanceMock.mockResolvedValue({
+      created: false,
+      deferred_reason: "backup_capacity_busy",
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-2",
+        kind: "backup",
+        outcome: "deferred",
+        reason: "backup_capacity_busy",
+        retry_at: expect.any(String),
+      }),
+    );
+  });
+
+  it("keeps backup due after its assignment changes during upload", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-2",
+        last_edited: "2026-04-10T21:00:00.000Z",
+        backup_due_since: "2026-04-10T21:00:00.000Z",
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    confirmProjectMaintenanceAssignmentMock
+      .mockResolvedValueOnce({ valid: true })
+      .mockResolvedValueOnce({ valid: false, reason: "assignment_changed" });
+    runScheduledBackupMaintenanceMock.mockResolvedValue({ created: true });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-2",
+        kind: "backup",
+        outcome: "deferred",
+        reason: "assignment_changed",
+        due_at: "2026-04-10T21:00:00.000Z",
+      }),
+    );
+  });
+
   it("does not report success if the schedule changes during a snapshot", async () => {
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
@@ -743,8 +794,8 @@ describe("snapshot-backup-maintenance", () => {
   });
 
   it("starts a newly due snapshot while a previous backup is still running", async () => {
-    let finishBackup!: (value: boolean) => void;
-    const backupRunning = new Promise<boolean>((resolve) => {
+    let finishBackup!: (value: { created: boolean }) => void;
+    const backupRunning = new Promise<{ created: boolean }>((resolve) => {
       finishBackup = resolve;
     });
     listProjectMaintenanceSchedulesMock
@@ -777,7 +828,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({ project_id: "snapshot-project" }),
     );
-    finishBackup(true);
+    finishBackup({ created: true });
     await first;
   });
 });

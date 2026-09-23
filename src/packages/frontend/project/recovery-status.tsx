@@ -32,6 +32,16 @@ function reasonText(reason: string | null | undefined): string | null {
   if (text.includes("io_pressure"))
     return "The host is under storage pressure.";
   if (text.includes("memory")) return "The host is under memory pressure.";
+  if (text.includes("backup_capacity_busy"))
+    return "Backup workers are busy. This backup remains due and will retry.";
+  if (text.includes("project_volume_unavailable"))
+    return "Project data is temporarily unavailable. Maintenance will retry.";
+  if (text.includes("project_volume_archiving"))
+    return "Project archival is in progress. Maintenance will retry.";
+  if (text.includes("assignment_") || text.includes("schedule_changed"))
+    return "Project storage settings changed. Maintenance will retry.";
+  if (text.includes("backup_not_created"))
+    return "A new backup has not been confirmed yet. Maintenance will retry.";
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";
@@ -128,7 +138,7 @@ export function ProjectRecoveryStatus({
       report?.reason === "no_content_change" ||
       report?.reason === "no_change_due"
         ? "The last check found no changed content to protect."
-        : "A confirmed recovery point has not been recorded yet.";
+        : (reason ?? "A confirmed recovery point has not been recorded yet.");
     type = "warning";
   } else if (report?.reason === "no_content_change") {
     description = "The last check found no changed content to protect.";

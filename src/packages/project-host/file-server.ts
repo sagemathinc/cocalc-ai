@@ -4689,7 +4689,10 @@ async function updateBackupsIfVolumeCurrent({
   limit?: number;
   knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
-}): Promise<boolean> {
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+}> {
   const result = await withCurrentProjectVolumeLifecycleLock(
     project_id,
     expectedLifecycleGeneration,
@@ -4700,21 +4703,25 @@ async function updateBackupsIfVolumeCurrent({
           "skipping backup maintenance because project data is unavailable",
           { project_id },
         );
-        return false;
+        return {
+          created: false,
+          deferred_reason: "project_volume_unavailable",
+        };
       }
       if (await isSubvolumeReadonly(volume.path)) {
         logger.info(
           "skipping backup maintenance because project archival is in progress",
           { project_id },
         );
-        return false;
+        return { created: false, deferred_reason: "project_volume_archiving" };
       }
-      return await updateBackupsUnlocked({
+      const created = await updateBackupsUnlocked({
         project_id,
         counts,
         limit,
         knownLastBackupAt,
       });
+      return { created };
     },
   );
   if (result === undefined) {
@@ -4728,7 +4735,12 @@ async function updateBackupsIfVolumeCurrent({
       },
     );
   }
-  return result ?? false;
+  return (
+    result ?? {
+      created: false,
+      deferred_reason: "project_volume_lifecycle_changed",
+    }
+  );
 }
 
 async function updateBackups({
@@ -4765,7 +4777,7 @@ export async function runScheduledBackupMaintenance({
   counts: Partial<SnapshotCounts>;
   limit?: number;
   knownLastBackupAt?: string | null;
-}): Promise<boolean> {
+}): Promise<{ created: boolean; deferred_reason?: string }> {
   const expectedLifecycleGeneration =
     currentProjectVolumeLifecycleGeneration(project_id);
   return (
@@ -4781,7 +4793,7 @@ export async function runScheduledBackupMaintenance({
           knownLastBackupAt,
           expectedLifecycleGeneration,
         }),
-    })) ?? false
+    })) ?? { created: false, deferred_reason: "backup_capacity_busy" }
   );
 }
 

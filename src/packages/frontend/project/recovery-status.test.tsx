@@ -128,3 +128,32 @@ it("does not claim protection when unchanged content has no recovery point", asy
     screen.getByText("The last check found no changed content to protect."),
   ).toBeVisible();
 });
+
+it("explains a busy backup queue while keeping the due time visible", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: "2026-09-22T00:00:00.000Z",
+    last_backup: null,
+    snapshot_due_at: null,
+    backup_due_at: "2026-09-22T00:00:00.000Z",
+    snapshot_disabled: false,
+    backup_disabled: false,
+    backup: {
+      observed_at: current(),
+      outcome: "deferred",
+      reason: "backup_capacity_busy",
+      due_at: "2026-09-22T00:00:00.000Z",
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="backup" />);
+  expect(
+    await screen.findByText(
+      "Off-host backups: scheduled recovery point overdue",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/Backup workers are busy. This backup remains due/),
+  ).toBeVisible();
+});

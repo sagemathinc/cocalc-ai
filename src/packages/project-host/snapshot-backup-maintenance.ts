@@ -877,6 +877,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const startedAt = Date.now();
         try {
           let created = false;
+          let backupDeferredReason: string | undefined;
           const result = await runScheduledStorageOperation({
             hostId,
             project_id,
@@ -884,18 +885,22 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             validate: () => validateAssignment(row, "backup"),
             allowStarvationOverride,
             run: async () => {
-              created = await runScheduledBackupMaintenance({
+              const updated = await runScheduledBackupMaintenance({
                 project_id,
                 counts: scheduleToCounts(schedule, { allowFrequent: false }),
                 limit: row.max_backups_per_project ?? undefined,
                 knownLastBackupAt: row.last_backup,
               });
+              created = updated?.created ?? false;
+              backupDeferredReason = updated?.deferred_reason;
             },
           });
           const outcome = result.ran
-            ? created
-              ? "succeeded"
-              : "skipped"
+            ? backupDeferredReason
+              ? "deferred"
+              : created
+                ? "succeeded"
+                : "deferred"
             : "deferred";
           const nextRetry = retryAt(outcome, row.backup_failures ?? 0);
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
@@ -906,8 +911,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             storage_service_class: row.storage_service_class,
             observed_at: new Date().toISOString(),
             outcome,
-            reason: result.reason,
-            due_at: created ? null : new Date(dueAt).toISOString(),
+            reason:
+              result.reason ??
+              backupDeferredReason ??
+              (created ? undefined : "backup_not_created"),
+            due_at:
+              outcome === "succeeded" ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
             retry_at: nextRetry,
             consecutive_failures:
