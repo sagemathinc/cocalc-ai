@@ -168,6 +168,9 @@ function userFromBearerToken({
     account_id: claims.sub,
     auth_iat_s: claims.iat,
     auth_actor: claims.auth_actor,
+    ...(claims.auth_actor === "agent"
+      ? { auth_project_id: claims.project_id }
+      : {}),
   } satisfies CoCalcUser;
 }
 
@@ -410,6 +413,19 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     }
 
     const userId = getCoCalcUserId(user);
+    if (user.auth_actor === "agent") {
+      if (!user.auth_project_id) return false;
+      const projectSubject = extractProjectSubject(subject);
+      const viewerSubject = extractViewerFileSubject(subject);
+      const shareSubject = extractShareFileSubject(subject);
+      if (
+        (projectSubject && projectSubject !== user.auth_project_id) ||
+        (viewerSubject && viewerSubject.project_id !== user.auth_project_id) ||
+        (shareSubject && shareSubject.project_id !== user.auth_project_id)
+      ) {
+        return false;
+      }
+    }
     const examProjectId =
       userType === "account" ? getLocalExamAccountProjectId(userId) : undefined;
     if (
@@ -427,6 +443,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         userType === "account" &&
         examProjectId == null &&
         type === "pub" &&
+        (user.auth_actor !== "agent" ||
+          presence?.project_id === user.auth_project_id) &&
         presence?.account_id === userId &&
         user.auth_scopes?.includes(BROWSER_RUNTIME_PRESENCE_AUTH_SCOPE) ===
           true &&
@@ -449,6 +467,8 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         examProjectId != null ||
         type !== "pub" ||
         parsed == null ||
+        (user.auth_actor === "agent" &&
+          parsed.project_id !== user.auth_project_id) ||
         (parsed.operation === "automation" && user.auth_actor !== "account") ||
         (parsed.version === "account-project" && parsed.account_id !== userId)
       ) {

@@ -60,6 +60,8 @@ export interface ProjectHostAuthClaims {
   // Signed credential provenance. Absent on pre-cutover tokens, which must
   // not authorize human-only automation settings changes.
   auth_actor?: "account" | "agent";
+  // Required for agent credentials; the host audience alone is not a project boundary.
+  project_id?: string;
   sid?: string;
   browser_session_exp_s?: number;
   api_key?: ProjectHostApiKeyBinding;
@@ -323,6 +325,7 @@ export interface IssueProjectHostTokenOptions {
   now_ms?: number;
   actor?: ProjectHostAuthActor;
   auth_actor?: "account" | "agent";
+  project_id?: string;
   account_id?: string;
   hub_id?: string;
   session_id?: string;
@@ -414,6 +417,7 @@ export function issueProjectHostAuthToken({
   now_ms = Date.now(),
   actor,
   auth_actor,
+  project_id,
   account_id,
   hub_id,
   session_id,
@@ -427,6 +431,9 @@ export function issueProjectHostAuthToken({
   const identity = getActorAndSubject({ actor, account_id, hub_id });
   if (session_id != null && !isValidUUID(session_id)) {
     throw new Error("invalid session_id");
+  }
+  if (auth_actor === "agent" && !isValidUUID(project_id)) {
+    throw new Error("agent token requires project_id");
   }
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
@@ -455,6 +462,7 @@ export function issueProjectHostAuthToken({
         : RESTRICTED_BROWSER_SESSION_TOKEN_VERSION,
     act: identity.actor,
     ...(auth_actor ? { auth_actor } : {}),
+    ...(auth_actor === "agent" ? { project_id } : {}),
     ...(session_id ? { sid: session_id } : {}),
     ...(browserSessionExp == null
       ? {}
@@ -574,6 +582,9 @@ function verifyHostToken(
     claims.auth_actor !== "agent"
   ) {
     throw new Error("invalid token credential actor");
+  }
+  if (claims.auth_actor === "agent" && !isValidUUID(claims.project_id)) {
+    throw new Error("agent token missing project binding");
   }
   if (actor !== "account" && actor !== "hub") {
     throw new Error("invalid token actor");

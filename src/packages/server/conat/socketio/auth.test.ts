@@ -599,6 +599,8 @@ describe("project-host bearer account auth", () => {
       jti: "00000000-0000-4000-8000-000000000099",
       iss: "cocalc-hub",
       v: "phat-v1",
+      auth_actor: "agent",
+      project_id,
     });
   });
 
@@ -647,6 +649,28 @@ describe("project-host bearer account auth", () => {
     );
   });
 
+  it("does not let a handshake retarget a signed agent token", async () => {
+    await expect(
+      getUser({
+        handshake: {
+          auth: {
+            bearer: projectHostBearerToken(),
+            project_id: project_id2,
+          },
+          headers: {},
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      getUser({
+        handshake: {
+          auth: { bearer: projectHostBearerToken() },
+          headers: {},
+        },
+      }),
+    ).resolves.toMatchObject({ auth_project_id: project_id });
+  });
+
   it("keeps one agent identity across signed turn-token refreshes", async () => {
     const sessionId = "00000000-0000-4000-8000-000000000098";
     verifyProjectHostAuthTokenMock
@@ -657,6 +681,8 @@ describe("project-host bearer account auth", () => {
         iat: 100,
         exp: 1_000,
         sid: sessionId,
+        auth_actor: "agent",
+        project_id,
       })
       .mockReturnValueOnce({
         act: "account",
@@ -665,6 +691,8 @@ describe("project-host bearer account auth", () => {
         iat: 500,
         exp: 1_400,
         sid: sessionId,
+        auth_actor: "agent",
+        project_id,
       });
     const makeSocket = (nonce: string) => ({
       handshake: {

@@ -16,6 +16,7 @@ import { isProjectHostApiKeySubjectAllowed } from "./project-host-api-key-policy
 const hostId = "00000000-0000-4000-8000-000000000001";
 const accountId = "00000000-0000-4000-8000-000000000002";
 const sessionId = "00000000-0000-4000-8000-000000000003";
+const projectId = "00000000-0000-4000-8000-000000000004";
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const privateKeyPem = privateKey
   .export({
@@ -133,6 +134,7 @@ describe("project-host agent session tokens", () => {
         account_id: accountId,
         private_key: privateKeyPem,
         auth_actor,
+        ...(auth_actor === "agent" ? { project_id: projectId } : {}),
       });
       const verify = (token: string) =>
         verifyProjectHostAuthToken({
@@ -141,6 +143,9 @@ describe("project-host agent session tokens", () => {
           public_key: publicKeyPem,
         });
       expect(verify(issued.token).auth_actor).toBe(auth_actor);
+      expect(verify(issued.token).project_id).toBe(
+        auth_actor === "agent" ? projectId : undefined,
+      );
       const parts = issued.token.split(".");
       const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
       claims.auth_actor = auth_actor === "agent" ? "account" : "agent";
@@ -148,6 +153,16 @@ describe("project-host agent session tokens", () => {
       expect(() => verify(parts.join("."))).toThrow("invalid token signature");
     },
   );
+  it("requires a signed project for agent credentials", () => {
+    expect(() =>
+      issueProjectHostAuthToken({
+        host_id: hostId,
+        account_id: accountId,
+        private_key: privateKeyPem,
+        auth_actor: "agent",
+      }),
+    ).toThrow("agent token requires project_id");
+  });
   it("signs and verifies the stable session id", () => {
     const issued = issueProjectHostAuthToken({
       host_id: hostId,

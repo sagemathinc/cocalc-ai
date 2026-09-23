@@ -200,20 +200,26 @@ function verifyAgentScopedProjectHostBearer(
     if (claims.api_key != null) {
       return;
     }
-    if (claims.act !== "account" || !isValidUUID(claims.sub)) {
+    if (
+      claims.act !== "account" ||
+      claims.auth_actor !== "agent" ||
+      !isValidUUID(claims.sub)
+    ) {
       return;
     }
     const authProjectId = readAgentProjectId(socket);
+    if (authProjectId && authProjectId !== claims.project_id) {
+      throw new Error("agent token project mismatch");
+    }
+    if (!claims.project_id) return;
     const credentialIdentity = claims.sid
-      ? ["agent-session", claims.sub, authProjectId ?? "", claims.sid].join(
-          "\0",
-        )
+      ? ["agent-session", claims.sub, claims.project_id, claims.sid].join("\0")
       : bearerToken;
     return {
       account_id: claims.sub,
       auth_actor: "agent",
       auth_scopes: [...DEFAULT_AGENT_SCOPES],
-      auth_project_id: authProjectId,
+      auth_project_id: claims.project_id,
       auth_iat_s: claims.iat,
       auth_exp_s: claims.exp,
       auth_token_fingerprint: createHash("sha256")

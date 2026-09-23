@@ -197,6 +197,39 @@ describe("project-host Conat auth", () => {
     ).rejects.toThrow("no longer valid");
   });
 
+  it("keeps agent bearer access inside its signed project on the same host", async () => {
+    const otherProjectId = "00000000-1000-4000-8000-000000000002";
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "agent",
+      project_id,
+    });
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    const user = await getUser({
+      handshake: { auth: { bearer: "signed-agent-token" }, headers: {} },
+    } as any);
+
+    await expect(
+      isAllowed({ user, type: "pub", subject: `fs.project-${project_id}` }),
+    ).resolves.toBe(true);
+    for (const subject of [
+      `fs.project-${otherProjectId}`,
+      `project.${otherProjectId}.terminal.run`,
+      `fs-viewer.project-${otherProjectId}.account-${account_id}`,
+      `fs-share.project-${otherProjectId}.share-${project_id}.account-${account_id}`,
+      `acp.project-${otherProjectId}.account-${account_id}.api`,
+    ]) {
+      await expect(isAllowed({ user, type: "pub", subject })).resolves.toBe(
+        false,
+      );
+    }
+  });
+
   it("rejects a direct account bearer after its browser session expires", async () => {
     mockVerifyProjectHostAuthToken.mockReturnValue({
       act: "account",
@@ -610,6 +643,7 @@ describe("project-host Conat auth", () => {
           sub: account_id,
           iat: 1000,
           auth_actor,
+          ...(auth_actor === "agent" ? { project_id } : {}),
         });
         mockGetRow.mockReturnValue({
           users: { [account_id]: { group: "collaborator" } },
