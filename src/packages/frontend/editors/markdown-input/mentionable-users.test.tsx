@@ -5,6 +5,9 @@
 
 import { fromJS } from "immutable";
 import { renderHook } from "@testing-library/react";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
+import { ARTIFACT_NAMES_SETTING } from "@cocalc/frontend/agents/artifact-names";
 
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
@@ -89,6 +92,7 @@ describe("mentionableUsers", () => {
     mockGetStore.mockReset();
     mockAllowAgentMentions = false;
     mockUseNamedAgents.mockReset();
+    jest.mocked(useTypedRedux).mockReset();
     mockUseNamedAgents.mockReturnValue({
       directory: {
         enabled: true,
@@ -105,6 +109,47 @@ describe("mentionableUsers", () => {
         ],
       },
     });
+  });
+
+  it("suggests only personally named artifacts in this project", () => {
+    mockStores(jest.fn());
+    mockAllowAgentMentions = true;
+    jest.mocked(useTypedRedux).mockImplementation((store, key) =>
+      store === "account" && key === "other_settings"
+        ? (fromJS({
+            [ARTIFACT_NAMES_SETTING]: JSON.stringify([
+              {
+                name: "nb1",
+                project_id,
+                entry_id: "a".repeat(64),
+                active: true,
+              },
+              {
+                name: "elsewhere",
+                project_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                entry_id: "b".repeat(64),
+                active: true,
+              },
+            ]),
+          }) as any)
+        : undefined,
+    );
+    const { result } = renderHook(() => useMentionableUsers());
+    const items = result.current("nb");
+    expect(
+      items.find((item) => item.group === "Artifacts")?.label,
+    ).toBeTruthy();
+    expect(
+      parseArtifactMention(
+        items.find((item) => item.group === "Artifacts")!.value,
+      ),
+    ).toEqual({
+      version: 1,
+      project_id,
+      entry_id: "a".repeat(64),
+      name: "nb1",
+    });
+    expect(items.some((item) => item.search === "elsewhere")).toBe(false);
   });
 
   it("keeps unresolved collaborators visible while their names hydrate", () => {

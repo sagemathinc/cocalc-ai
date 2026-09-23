@@ -55,7 +55,7 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
-  it.each(["library", "library/project-123/entry-456"])(
+  it.each(["library", "library/nb1", "library/project-123/entry-456"])(
     "roundtrips %s through the agents top tab",
     (target) => {
       const parsed = parsePageTarget(target);
@@ -80,7 +80,6 @@ describe("page-routing", () => {
   });
 
   it.each([
-    "library/project-only",
     "library//entry",
     "library/project/",
     "library/project/entry/extra",

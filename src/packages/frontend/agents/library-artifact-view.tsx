@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Alert, Button } from "antd";
+import { Alert, Button, Input, Modal } from "antd";
 import { readArtifact } from "@cocalc/chat";
 import type { ArtifactRecord } from "@cocalc/chat";
 import { useArtifactChanges } from "@cocalc/frontend/chat/artifacts";
@@ -23,9 +23,12 @@ import { GitHubPRArtifact } from "@cocalc/frontend/frame-editors/chat-editor/git
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { normalizeArtifactName } from "./artifact-names";
 
 export interface LibraryArtifactViewProps {
   target: ForeignArtifactTarget;
+  artifactName?: string;
+  onName?: (name: string) => Promise<void>;
   onBack: () => void;
   onShowConversation?: (target: ForeignArtifactTarget) => Promise<void> | void;
   navigation?: ReactNode;
@@ -46,6 +49,8 @@ export default LibraryArtifactView;
 
 function LibraryArtifactPage({
   target,
+  artifactName,
+  onName,
   onBack,
   onShowConversation,
   navigation,
@@ -54,6 +59,10 @@ function LibraryArtifactPage({
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [naming, setNaming] = useState(false);
   const header = useRef<HTMLElement>(null);
   useEffect(() => {
     // Route entry owns initial focus; source loading/live updates must not steal it.
@@ -80,6 +89,19 @@ function LibraryArtifactPage({
       setCopied(true);
     } catch (err) {
       setError(`Unable to copy link: ${err}`);
+    }
+  };
+  const saveName = async () => {
+    if (!onName || naming) return;
+    setNaming(true);
+    setNameError("");
+    try {
+      await onName(normalizeArtifactName(nameDraft));
+      setNameOpen(false);
+    } catch (err) {
+      setNameError(`${err}`);
+    } finally {
+      setNaming(false);
     }
   };
   return (
@@ -151,11 +173,54 @@ function LibraryArtifactPage({
               Open source conversation
             </Button>
           )}
+          {onName && (
+            <Button
+              onClick={() => {
+                setNameDraft(artifactName ?? "");
+                setNameError("");
+                setNameOpen(true);
+              }}
+            >
+              {artifactName ? `@${artifactName}` : "Name artifact"}
+            </Button>
+          )}
           <Button onClick={() => void copyLink()}>Copy link</Button>
         </div>
         <span role="status">{copied ? "Link copied" : ""}</span>
       </header>
       {error && <Alert type="error" title={error} />}
+      <Modal
+        open={nameOpen}
+        title="Name artifact"
+        okText="Save name"
+        confirmLoading={naming}
+        onOk={() => void saveName()}
+        onCancel={() => {
+          if (!naming) setNameOpen(false);
+        }}
+        modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
+      >
+        <p>
+          This name is personal to your account. Renaming keeps old links valid.
+        </p>
+        <label htmlFor="library-artifact-name">Artifact name</label>
+        <Input
+          id="library-artifact-name"
+          value={nameDraft}
+          maxLength={32}
+          autoComplete="off"
+          onChange={(event) => setNameDraft(event.target.value)}
+          onPressEnter={() => void saveName()}
+        />
+        {nameError && (
+          <Alert
+            role="alert"
+            type="error"
+            title={nameError}
+            style={{ marginTop: 12 }}
+          />
+        )}
+      </Modal>
       <ForeignArtifactSource target={target} showForeignContextWarning={false}>
         {(source) => (
           <LibraryArtifactContent

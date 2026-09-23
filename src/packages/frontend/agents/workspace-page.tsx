@@ -36,6 +36,7 @@ import { AgentSearch } from "./search";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
 import { closedLibraryState, openLibrary } from "./library-navigation";
+import { useArtifactNames } from "./artifact-names";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
@@ -2203,6 +2204,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const libraryOpen = !!useTypedRedux("page", "library_open");
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
+  const { names: artifactNames } = useArtifactNames();
   const artifactOpen =
     libraryOpen && (libraryProjectId != null || libraryEntryId != null);
   const libraryButton = useRef<HTMLButtonElement>(null);
@@ -2621,7 +2623,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     if (!result.catalogEntryId)
       throw Error("Artifact catalog identity missing");
     searchNavigation.current++;
-    openLibrary(result.agent.endpoint.project_id, result.catalogEntryId);
+    const artifactName = artifactNames.find(
+      (item) =>
+        item.active &&
+        item.project_id === result.agent.endpoint.project_id &&
+        item.entry_id === result.catalogEntryId,
+    )?.name;
+    if (artifactName) openLibrary(artifactName);
+    else openLibrary(result.agent.endpoint.project_id, result.catalogEntryId);
     setMobileList(false);
   }
 

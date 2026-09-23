@@ -29,6 +29,11 @@ import {
 } from "@cocalc/frontend/agents/api";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
+import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
+import {
+  ARTIFACT_NAMES_SETTING,
+  readArtifactNames,
+} from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
   avatarUserSize?: number;
@@ -102,7 +107,30 @@ export function useMentionableUsers(): (
           ),
         }),
       );
+      const artifacts: Item[] =
+        enabled && project_id
+          ? readArtifactNames(settings?.get?.(ARTIFACT_NAMES_SETTING))
+              .filter((item) => item.active && item.project_id === project_id)
+              .filter((item) => item.name.includes(query))
+              .slice(0, 20)
+              .map((item) => ({
+                value: serializeArtifactMention({
+                  version: 1,
+                  project_id: item.project_id,
+                  entry_id: item.entry_id,
+                  name: item.name,
+                }),
+                group: "Artifacts",
+                search: item.name,
+                label: (
+                  <span title="Reference artifact in this project">
+                    @{item.name}
+                  </span>
+                ),
+              }))
+          : [];
       return [
+        ...artifacts,
         ...agents,
         ...(enabled && !query && !expanded
           ? [

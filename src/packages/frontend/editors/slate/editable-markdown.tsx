@@ -29,8 +29,10 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { parseAgentMention } from "@cocalc/util/agent-mentions";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { createAgentMention } from "./elements/agent-mention";
+import { createArtifactMention } from "./elements/artifact-mention";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
 import {
   EditorFunctions,
@@ -1063,6 +1065,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     isVisible,
     editor,
     insertMention: (editor, account_id) => {
+      const artifactReference = parseArtifactMention(account_id);
+      if (artifactReference) {
+        Transforms.insertNodes(editor, [
+          createArtifactMention(artifactReference),
+          { text: " " },
+        ]);
+        return;
+      }
       const agentReference = parseAgentMention(account_id);
       if (agentReference) {
         Transforms.insertNodes(editor, [

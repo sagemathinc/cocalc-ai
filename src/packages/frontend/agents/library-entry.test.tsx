@@ -4,6 +4,10 @@ import { LibraryEntry } from "./library-entry";
 
 const getEntry = jest.fn();
 const view = jest.fn();
+let artifactNames: any[] = [];
+jest.mock("./artifact-names", () => ({
+  useArtifactNames: () => ({ names: artifactNames, setName: jest.fn() }),
+}));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -46,7 +50,21 @@ const props = {
 };
 beforeEach(() => {
   jest.clearAllMocks();
+  artifactNames = [];
   getEntry.mockResolvedValue(entry);
+});
+
+test("personal short URL resolves through the same authorized catalog lookup", async () => {
+  artifactNames = [
+    { name: "nb1", project_id: "project", entry_id: "entry", active: true },
+  ];
+  render(<LibraryEntry {...props} projectId="nb1" entryId="" />);
+  await screen.findByText("artifact");
+  expect(getEntry).toHaveBeenCalledWith({
+    project_id: "project",
+    entry_id: "entry",
+  });
+  expect(view.mock.calls.at(-1)[0].artifactName).toBe("nb1");
 });
 
 test("direct links resolve without an agent; source navigation is explicit", async () => {

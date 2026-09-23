@@ -379,6 +379,23 @@ test("Copy link reads the parent's current URL at activation and reports clipboa
   }
 });
 
+test("name control saves an account alias through a keyboard-accessible dialog", async () => {
+  const user = userEvent.setup();
+  const onName = jest.fn().mockResolvedValue(undefined);
+  render(
+    <LibraryArtifactView target={target} onBack={() => {}} onName={onName} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Name artifact" }));
+  const dialog = screen.getByRole("dialog", { name: "Name artifact" });
+  const input = within(dialog).getByRole("textbox", { name: "Artifact name" });
+  await user.type(input, "NB1");
+  await user.click(within(dialog).getByRole("button", { name: "Save name" }));
+  await waitFor(() => expect(onName).toHaveBeenCalledWith("nb1"));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Name artifact" })).toBeNull(),
+  );
+});
+
 test.each(["throw", "reject"])(
   "source navigation handles %s and allows keyboard retry without selecting an agent",
   async (failure) => {

@@ -6,6 +6,8 @@ import type { CatalogEntry } from "@cocalc/conat/hub/api/artifact-catalog";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { LibraryArtifactView } from "./library-artifact-view";
+import { useArtifactNames } from "./artifact-names";
+import { openLibrary } from "./library-navigation";
 
 interface Props {
   accountId: string;
@@ -35,6 +37,12 @@ function ResolvedLibraryEntry({
   onShowConversation,
   navigation,
 }: Props) {
+  const { names, setName } = useArtifactNames();
+  const alias = !entryId
+    ? names.find((item) => item.name === projectId)
+    : undefined;
+  const resolvedProjectId = alias?.project_id ?? projectId;
+  const resolvedEntryId = alias?.entry_id ?? entryId;
   const [entry, setEntry] = useState<CatalogEntry>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -42,12 +50,19 @@ function ResolvedLibraryEntry({
     let disposed = false;
     setEntry(undefined);
     setError("");
+    if (!resolvedEntryId) {
+      setError("This artifact name was not found in your account.");
+      return;
+    }
     void webapp_client.conat_client.hub.artifactCatalog
-      .getEntry({ project_id: projectId, entry_id: entryId })
+      .getEntry({ project_id: resolvedProjectId, entry_id: resolvedEntryId })
       .then((value) => {
         if (disposed) return;
         if (!value) throw Error("This artifact is no longer in the catalog.");
-        if (value.project_id !== projectId || value.entry_id !== entryId)
+        if (
+          value.project_id !== resolvedProjectId ||
+          value.entry_id !== resolvedEntryId
+        )
           throw Error("The catalog returned a different artifact.");
         setEntry(value);
       })
@@ -57,7 +72,7 @@ function ResolvedLibraryEntry({
     return () => {
       disposed = true;
     };
-  }, [projectId, entryId, retry]);
+  }, [resolvedProjectId, resolvedEntryId, retry]);
 
   if (!entry) {
     return (
@@ -98,6 +113,21 @@ function ResolvedLibraryEntry({
     <LibraryArtifactView
       navigation={navigation}
       target={target}
+      artifactName={
+        names.find(
+          (item) =>
+            item.active &&
+            item.project_id === entry.project_id &&
+            item.entry_id === entry.entry_id,
+        )?.name
+      }
+      onName={async (name) => {
+        await setName(
+          { project_id: entry.project_id, entry_id: entry.entry_id },
+          name,
+        );
+        openLibrary(name);
+      }}
       onBack={onBack}
       onShowConversation={() => onShowConversation(target)}
     />
