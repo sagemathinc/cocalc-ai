@@ -25,8 +25,13 @@ import {
 const HARNESS_LIMITATIONS =
   "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
 
-export const CLAUDE_FULL_PROJECT_TRUST_WARNING =
-  "Full-project-trust preview: project collaborators and code running here may use the selected Anthropic credential while Claude is active. Project secrets can also be read directly. Anthropic bills the key owner. Use only with trusted collaborators and code.";
+export function claudeCredentialTrustWarning(
+  mode: "project-secret" | "account-api-key",
+): string {
+  return mode === "account-api-key"
+    ? "Full-project-trust preview: CoCalc does not expose the account-stored key value to project code for reading or copying. However, project code can use the key through Claude's active relay and incur Anthropic charges. Use only with trusted collaborators and code."
+    : "Full-project-trust preview: the project secret can be read, copied, or used by project collaborators and code Claude runs. Anthropic bills the key owner. Use only with trusted collaborators and code.";
+}
 
 interface HarnessRuntimeSummaryProps {
   runtime: unknown;
@@ -139,7 +144,11 @@ function ClaudeCredentialControl({
         This account-local choice is applied when the next turn is admitted.
       </Typography.Text>
       <Typography.Text type="warning">
-        {CLAUDE_FULL_PROJECT_TRUST_WARNING}
+        {claudeCredentialTrustWarning(
+          value.startsWith("account-api-key:")
+            ? "account-api-key"
+            : "project-secret",
+        )}
       </Typography.Text>
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>

@@ -64,7 +64,7 @@ import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
 import {
-  CLAUDE_FULL_PROJECT_TRUST_WARNING,
+  claudeCredentialTrustWarning,
   HarnessProfileFields,
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
@@ -1869,7 +1869,13 @@ function NewAgentPanel({
           </Space>
         )}
         {runtimeKind === "claude-code" && (
-          <Text type="warning">{CLAUDE_FULL_PROJECT_TRUST_WARNING}</Text>
+          <Text type="warning">
+            {claudeCredentialTrustWarning(
+              claudeCredential.mode === "account-api-key"
+                ? "account-api-key"
+                : "project-secret",
+            )}
+          </Text>
         )}
         {runtimeKind === "claude-code" &&
           claudeCredential.mode === "project-secret" &&

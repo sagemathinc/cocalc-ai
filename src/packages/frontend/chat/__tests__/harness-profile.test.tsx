@@ -8,8 +8,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { redux } from "@cocalc/frontend/app-framework";
 import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import {
+  claudeCredentialTrustWarning,
   HarnessProfileFields,
   HarnessRuntimeSummary,
   HarnessRuntimeControl,
@@ -38,7 +40,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
   expect(runtime.profile).not.toHaveProperty("executable");
 });
 
-test("Claude settings warn that project code may use either credential mode", () => {
+test("Claude settings distinguish account-key usage from readable project secrets", () => {
   render(
     <HarnessRuntimeSummary
       runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
@@ -47,12 +49,43 @@ test("Claude settings warn that project code may use either credential mode", ()
     />,
   );
   expect(
-    screen.getByText(/Full-project-trust preview: project collaborators/),
+    screen.getByText(/project secret can be read, copied, or used/),
   ).toBeTruthy();
-  expect(screen.getByText(/Anthropic bills the key owner/)).toBeTruthy();
+  expect(claudeCredentialTrustWarning("account-api-key")).toMatch(
+    /does not expose the account-stored key value.*reading or copying/,
+  );
+  expect(claudeCredentialTrustWarning("account-api-key")).toMatch(
+    /project code can use the key through Claude's active relay/,
+  );
   expect(
     screen.getByRole("combobox", { name: "Claude credential" }),
   ).toBeTruthy();
+});
+
+test("Claude account-key selection says its value is not copied into the project", () => {
+  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
+    get: () => "account-a",
+  } as any);
+  localStorage.setItem(
+    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
+    "account-api-key:00000000-0000-4000-8000-000000000001",
+  );
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-a"
+      />,
+    );
+    expect(
+      screen.getByText(/does not expose the account-stored key value/),
+    ).toBeTruthy();
+    expect(screen.getByText(/project code can use the key/)).toBeTruthy();
+  } finally {
+    getStore.mockRestore();
+    localStorage.clear();
+  }
 });
 
 test("existing harness settings explain limitations before capability discovery", async () => {
