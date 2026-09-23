@@ -3,6 +3,7 @@ import { Alert } from "antd";
 import { readArtifact } from "@cocalc/chat";
 import ForeignArtifactSource from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
+import type { EntityTheme } from "@cocalc/util/entity-theme";
 
 const Appearance = lazy(
   () => import("@cocalc/frontend/chat/artifact-appearance-editor"),
@@ -11,9 +12,11 @@ const Appearance = lazy(
 export function LibraryAppearanceEditor({
   target,
   onClose,
+  onSaved,
 }: {
   target: ForeignArtifactTarget;
   onClose: () => void;
+  onSaved?: (theme: EntityTheme, artifactTitle: string) => void;
 }) {
   return (
     <ForeignArtifactSource target={target} showForeignContextWarning={false}>
@@ -54,6 +57,7 @@ export function LibraryAppearanceEditor({
               syncdb={source.syncdb}
               projectId={target.projectId}
               onClose={onClose}
+              onSaved={onSaved}
             />
           </Suspense>
         );

@@ -36,10 +36,28 @@ jest.mock("@cocalc/frontend/components", () => ({
   isIconName: () => false,
 }));
 jest.mock("./library-appearance-editor", () => ({
-  LibraryAppearanceEditor: ({ target, onClose }) => (
+  LibraryAppearanceEditor: ({ target, onClose, onSaved }) => (
     <div role="dialog" aria-label="Edit appearance">
       {target.artifactId}
       <button onClick={onClose}>Close appearance</button>
+      <button
+        onClick={() => {
+          onSaved(
+            {
+              title: "Updated appearance",
+              description: "Updated description",
+              color: "#654321",
+              accent_color: null,
+              icon: null,
+              image_blob: null,
+            },
+            "Original title",
+          );
+          onClose();
+        }}
+      >
+        Save appearance
+      </button>
     </div>
   ),
 }));
@@ -250,6 +268,28 @@ test("grid and list views retain the same artifact actions", async () => {
   );
 });
 
+test("Library view choice survives a remount for the same account", async () => {
+  const user = userEvent.setup();
+  const key = "cocalc:agent-library:view:library-persist";
+  localStorage.removeItem(key);
+  const props = {
+    accountId: "library-persist",
+    agents,
+    active: true,
+    onSelect: async () => {},
+  };
+  const mounted = render(<AgentArtifactBrowser {...props} />);
+  await user.click(screen.getByRole("button", { name: "Grid view" }));
+  expect(localStorage.getItem(key)).toBe("grid");
+  mounted.unmount();
+  render(<AgentArtifactBrowser {...props} />);
+  expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  localStorage.removeItem(key);
+});
+
 test("a personal artifact name is visible and searchable in grid view", async () => {
   artifactNames = [
     {
@@ -317,7 +357,7 @@ test("grid tiles use catalog appearance and open the real appearance action", as
       .closest("[role=listitem]"),
   ).toHaveStyle({
     border: "1px solid #123456",
-    minHeight: "136px",
+    minHeight: "116px",
   });
   expect(
     screen
@@ -348,7 +388,12 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   expect(
     await screen.findByRole("dialog", { name: "Edit appearance" }),
   ).toHaveTextContent("same-id");
-  await user.click(screen.getByRole("button", { name: "Close appearance" }));
+  await user.click(screen.getByRole("button", { name: "Save appearance" }));
+  expect(
+    await screen.findByRole("button", {
+      name: "Open Updated appearance from one",
+    }),
+  ).toBeInTheDocument();
   expect(
     screen.queryByRole("dialog", { name: "Edit appearance" }),
   ).not.toBeInTheDocument();

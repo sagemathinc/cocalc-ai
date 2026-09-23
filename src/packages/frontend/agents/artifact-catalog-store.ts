@@ -57,6 +57,15 @@ export class ArtifactCatalogStore {
   private running = false;
   private interval?: ReturnType<typeof setInterval>;
   private timeout?: ReturnType<typeof setTimeout>;
+  private appearanceUpdates = new Map<
+    string,
+    {
+      title: string;
+      description: string;
+      appearance: ArtifactCatalogItem["appearance"];
+      expires: number;
+    }
+  >();
 
   constructor(
     readonly accountId: string,
@@ -93,8 +102,34 @@ export class ArtifactCatalogStore {
     clearInterval(this.interval);
     clearTimeout(this.timeout);
     this.projects = [];
+    this.appearanceUpdates.clear();
     this.publish(empty());
   };
+
+  updateAppearance(
+    projectId: string,
+    entryId: string,
+    update: {
+      title: string;
+      description: string;
+      appearance: ArtifactCatalogItem["appearance"];
+    },
+  ) {
+    const key = JSON.stringify([projectId, entryId]);
+    this.appearanceUpdates.set(key, {
+      ...update,
+      expires: Date.now() + 120_000,
+    });
+    this.publish({
+      ...this.state,
+      entries: this.state.entries.map((entry) =>
+        entry.project_id === projectId && entry.entry_id === entryId
+          ? { ...entry, item: { ...entry.item, ...update } }
+          : entry,
+      ),
+    });
+    void this.refresh();
+  }
 
   refresh = async () => {
     if (!this.mounted || this.running) return;
@@ -166,24 +201,42 @@ export class ArtifactCatalogStore {
           else checkedProjects++;
         } while (after);
       }
-      if (current())
+      if (current()) {
+        const updatedEntries = [...entries.values()].map((entry) => {
+          const key = JSON.stringify([entry.project_id, entry.entry_id]);
+          const update = this.appearanceUpdates.get(key);
+          if (!update) return entry;
+          const matches =
+            entry.item.title === update.title &&
+            entry.item.description === update.description &&
+            JSON.stringify(entry.item.appearance ?? {}) ===
+              JSON.stringify(update.appearance ?? {});
+          if (matches || Date.now() >= update.expires) {
+            this.appearanceUpdates.delete(key);
+            return entry;
+          }
+          return { ...entry, item: { ...entry.item, ...update } };
+        });
         this.publish({
-          entries: [...entries.values()],
+          entries: updatedEntries,
           loading: false,
           incomplete,
           limited: incomplete,
           indexedSources: [...sources.values()].reduce((a, b) => a + b, 0),
           checkedProjects,
         });
+      }
     } catch {
       // Fail closed on all errors, including auth/access errors, without relying
       // on unstable RPC error strings. The next poll rechecks authorization.
-      if (current())
+      if (current()) {
+        this.appearanceUpdates.clear();
         this.publish({
           ...empty(),
           error:
             "Catalog unavailable or access changed. Cached metadata cleared; retrying periodically.",
         });
+      }
     } finally {
       if (current()) clearTimeout(this.timeout);
       this.running = false;

@@ -70,6 +70,38 @@ test("sequential pages, deduplicated projects, atomic background refresh and rem
   expect(store.get().entries).toEqual([]);
 });
 
+test("saved appearance is immediate and survives stale catalog responses", async () => {
+  const original = entry("a");
+  const list = jest.fn().mockResolvedValue(page([original]));
+  const store = new ArtifactCatalogStore("a", list);
+  store.start(["p"]);
+  await flush();
+  store.updateAppearance("p", "a", {
+    title: "New title",
+    description: "New description",
+    appearance: { color: "#123456" },
+  });
+  expect(store.get().entries[0].item.title).toBe("New title");
+  await flush();
+  expect(store.get().entries[0].item.title).toBe("New title");
+  list.mockResolvedValue(
+    page([
+      {
+        ...original,
+        item: {
+          ...original.item,
+          title: "New title",
+          description: "New description",
+          appearance: { color: "#123456" },
+        },
+      },
+    ]),
+  );
+  await store.refresh();
+  expect(store.get().entries[0].item.appearance).toEqual({ color: "#123456" });
+  store.stop();
+});
+
 test("page and entry caps are explicit; supports ten thousand metadata entries", async () => {
   let calls = 0;
   const list = jest.fn(async () => {

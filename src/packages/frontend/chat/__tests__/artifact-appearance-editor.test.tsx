@@ -43,7 +43,15 @@ function fixture() {
 }
 test("appearance save writes only the theme, preserving content", async () => {
   const { record, syncdb } = fixture();
-  render(<Editor artifact={record} syncdb={syncdb} onClose={() => {}} />);
+  const onSaved = jest.fn();
+  render(
+    <Editor
+      artifact={record}
+      syncdb={syncdb}
+      onClose={() => {}}
+      onSaved={onSaved}
+    />,
+  );
   fireEvent.change(screen.getByRole("textbox", { name: "Theme title" }), {
     target: { value: "Chosen title" },
   });
@@ -53,6 +61,12 @@ test("appearance save writes only the theme, preserving content", async () => {
     ...artifactKey(record),
     theme: { ...theme, title: "Chosen title" },
   });
+  await waitFor(() =>
+    expect(onSaved).toHaveBeenCalledWith(
+      { ...theme, title: "Chosen title" },
+      "Content title",
+    ),
+  );
 });
 test("a remote theme change cannot be overwritten by a stale modal", async () => {
   const { record, syncdb } = fixture();

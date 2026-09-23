@@ -39,6 +39,19 @@ const LibraryAppearanceEditor = lazy(() =>
   })),
 );
 
+const viewStorageKey = (accountId: string) =>
+  `cocalc:agent-library:view:${accountId}`;
+
+function initialView(accountId: string): "list" | "grid" {
+  try {
+    return localStorage.getItem(viewStorageKey(accountId)) === "grid"
+      ? "grid"
+      : "list";
+  } catch {
+    return "list";
+  }
+}
+
 interface Props {
   accountId: string;
   agents: NamedAgent[];
@@ -70,7 +83,9 @@ function AccountArtifactBrowser({
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
-  const [view, setView] = useState<"list" | "grid">("list");
+  const [view, setView] = useState<"list" | "grid">(() =>
+    initialView(accountId),
+  );
   const [groupByProject, setGroupByProject] = useState(false);
   const [organizationOpen, setOrganizationOpen] = useState(false);
   const organizationId = useId();
@@ -90,9 +105,17 @@ function AccountArtifactBrowser({
   );
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const [openError, setOpenError] = useState("");
-  const [appearanceTarget, setAppearanceTarget] =
-    useState<ForeignArtifactTarget>();
+  const [appearanceTarget, setAppearanceTarget] = useState<
+    ForeignArtifactTarget & { entryId: string }
+  >();
   const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    try {
+      localStorage.setItem(viewStorageKey(accountId), view);
+    } catch {
+      // The in-memory view still works if storage is unavailable.
+    }
+  }, [accountId, view]);
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -244,7 +267,7 @@ function AccountArtifactBrowser({
               type={view === "grid" ? "primary" : "text"}
               aria-label="Grid view"
               aria-pressed={view === "grid"}
-              icon={<Icon name="dashboard" />}
+              icon={<Icon name="overview" />}
               onClick={() => setView("grid")}
             />
             <Button
@@ -460,7 +483,7 @@ function AccountArtifactBrowser({
                       ? {
                           display: "grid",
                           gridTemplateColumns:
-                            "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
+                            "repeat(auto-fill, minmax(min(100%, 190px), 1fr))",
                           gap: 8,
                         }
                       : undefined
@@ -495,11 +518,11 @@ function AccountArtifactBrowser({
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 8,
+                            gap: view === "grid" ? 4 : 8,
                             flexWrap: view === "grid" ? "nowrap" : "wrap",
                             flexDirection: view === "grid" ? "column" : "row",
-                            minHeight: view === "grid" ? 136 : undefined,
-                            padding: view === "grid" ? 10 : "12px 8px",
+                            minHeight: view === "grid" ? 116 : undefined,
+                            padding: view === "grid" ? 8 : "12px 8px",
                             border:
                               view === "grid"
                                 ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
@@ -547,7 +570,10 @@ function AccountArtifactBrowser({
                             <span
                               style={{
                                 minWidth: 0,
-                                overflowWrap: "anywhere",
+                                width: view === "grid" ? "100%" : undefined,
+                                overflow: "hidden",
+                                overflowWrap:
+                                  view === "grid" ? "normal" : "anywhere",
                                 display: view === "list" ? "flex" : undefined,
                                 alignItems: "center",
                                 gap: 12,
@@ -559,13 +585,13 @@ function AccountArtifactBrowser({
                                   alt=""
                                   style={{
                                     display: "block",
-                                    width: view === "grid" ? 32 : 36,
-                                    height: view === "grid" ? 32 : 36,
+                                    width: view === "grid" ? 24 : 36,
+                                    height: view === "grid" ? 24 : 36,
                                     objectFit: "cover",
                                     borderRadius: 6,
                                     margin:
                                       view === "grid"
-                                        ? "0 auto 8px"
+                                        ? "0 auto 4px"
                                         : undefined,
                                     flexShrink: 0,
                                   }}
@@ -579,9 +605,9 @@ function AccountArtifactBrowser({
                                   }
                                   style={{
                                     display: "block",
-                                    fontSize: view === "grid" ? 30 : 28,
+                                    fontSize: view === "grid" ? 24 : 28,
                                     marginBottom:
-                                      view === "grid" ? 8 : undefined,
+                                      view === "grid" ? 4 : undefined,
                                     color: appearance?.color ?? UI_COLORS.text,
                                     flexShrink: 0,
                                   }}
@@ -590,8 +616,17 @@ function AccountArtifactBrowser({
                               <span style={{ minWidth: 0 }}>
                                 <strong
                                   style={{
-                                    display: "block",
+                                    display:
+                                      view === "grid" ? "-webkit-box" : "block",
+                                    WebkitBoxOrient:
+                                      view === "grid" ? "vertical" : undefined,
+                                    WebkitLineClamp:
+                                      view === "grid" ? 2 : undefined,
+                                    overflow:
+                                      view === "grid" ? "hidden" : undefined,
+                                    lineHeight: 1.3,
                                   }}
+                                  title={result.hit.artifact_title}
                                 >
                                   {result.hit.artifact_title}
                                 </strong>
@@ -610,7 +645,15 @@ function AccountArtifactBrowser({
                                   style={{
                                     color: UI_COLORS.secondary,
                                     fontSize: 12,
+                                    display: "block",
+                                    overflow:
+                                      view === "grid" ? "hidden" : undefined,
+                                    textOverflow:
+                                      view === "grid" ? "ellipsis" : undefined,
+                                    whiteSpace:
+                                      view === "grid" ? "nowrap" : undefined,
                                   }}
+                                  title={`${projectTitle(result.agent.endpoint.project_id)} · @${result.agent.name} · ${result.hit.artifact_kind}`}
                                 >
                                   {projectTitle(
                                     result.agent.endpoint.project_id,
@@ -683,12 +726,17 @@ function AccountArtifactBrowser({
                                   },
                                 ],
                                 onClick: () => {
-                                  if (!result.hit.artifact_id) return;
+                                  if (
+                                    !result.hit.artifact_id ||
+                                    !result.catalogEntryId
+                                  )
+                                    return;
                                   setAppearanceTarget({
                                     projectId: result.agent.endpoint.project_id,
                                     path: result.agent.path,
                                     threadId: result.threadId,
                                     artifactId: result.hit.artifact_id,
+                                    entryId: result.catalogEntryId,
                                   });
                                 },
                               }}
@@ -729,6 +777,26 @@ function AccountArtifactBrowser({
             <LibraryAppearanceEditor
               target={appearanceTarget}
               onClose={() => setAppearanceTarget(undefined)}
+              onSaved={(theme, artifactTitle) =>
+                catalog.updateAppearance(
+                  appearanceTarget.projectId,
+                  appearanceTarget.entryId,
+                  {
+                    title: theme.title || artifactTitle,
+                    description: theme.description,
+                    appearance: {
+                      ...(theme.color ? { color: theme.color } : {}),
+                      ...(theme.accent_color
+                        ? { accent_color: theme.accent_color }
+                        : {}),
+                      ...(theme.icon ? { icon: theme.icon } : {}),
+                      ...(theme.image_blob
+                        ? { image_blob: theme.image_blob }
+                        : {}),
+                    },
+                  },
+                )
+              }
             />
           </Suspense>
         )}
