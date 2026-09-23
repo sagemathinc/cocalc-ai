@@ -353,3 +353,25 @@ override while the host desires `a1802de2e487`, so future repair can retrieve
 the same artifact. Before restoring the redirect, publish the artifact to the
 shared store or roll the host back to a version available there. No production
 site or host was changed.
+
+## September 23 merged staging hub rollout
+
+Merged `origin/main` at `de9a62c731` into the mobile branch as `b520222413`.
+The sole conflict was the Markdown mention plugin: the shared native/web parser
+now handles the artifact mentions added on main, while the frontend entrypoint
+continues to re-export it. A clean Linux worktree produced the hub bundle
+`cocalc-bay-hub-linux-x64.tar.xz` (SHA-256
+`361c7838c8ff651d0e77de81dd225207f2d330336a876488adb85468262ee69e`).
+The TypeScript package build succeeded; the unrelated final Python helper step
+of `build:dev` could not run because `make` is absent on the build VM. The
+focused chat-client settings regression passed (4 tests), and the hub bundle
+validated with a clean `b520222413` manifest.
+
+Deployed hub-only to staging as `/opt/cocalc/bay/releases/20260923231116-hub`.
+Schema migration, rolling restart of all four workers, and bay health passed.
+The project host remains on the settings-fixed `a1802de2e487` software. The
+staging account's registered-agent list works after the hub rollout. Mainline's
+`agentMessagingEnabled()` now returns true by default; an iPhone agent-creation
+retest is still needed to confirm the reported error is gone end to end. The
+staging-only local `/software` override remains necessary for project-host
+repair. Production was not deployed.
