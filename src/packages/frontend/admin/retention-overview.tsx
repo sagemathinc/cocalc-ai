@@ -33,6 +33,10 @@ import { COLORS } from "@cocalc/util/theme";
 const { Paragraph, Text, Title } = Typography;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RPC_TIMEOUT_MS = 5_000;
+const FIRST_RECORDED_WORK_DEFINITION =
+  "Accounts whose first observed project-work, AI-prompt-submission, or " +
+  "self-directed-work event occurred within 24 hours of signup. This is an " +
+  "early activity signal, not proof of completion, usefulness, or retention.";
 
 function defaultRange(): { start: string; end: string } {
   const now = new Date();
@@ -105,19 +109,19 @@ function healthAlert(dashboard: GrowthDashboard) {
   );
 }
 
-function HeadlineCards({ dashboard }: { dashboard: GrowthDashboard }) {
+export function HeadlineCards({ dashboard }: { dashboard: GrowthDashboard }) {
   const signups = sumMetric(dashboard, "eligible_signups");
   const verified = sumMetric(dashboard, "verified_accounts");
   const activated = sumMetric(dashboard, "activated_24h");
   const active = latestMetric(dashboard, dashboard.summary.activity_signal);
   return (
     <Row gutter={[12, 12]}>
-      <Col xs={12} lg={6}>
+      <Col xs={24} sm={12} lg={6}>
         <Card size="small">
           <Statistic title="Eligible signups (range total)" value={signups} />
         </Card>
       </Col>
-      <Col xs={12} lg={6}>
+      <Col xs={24} sm={12} lg={6}>
         <Card size="small">
           <Statistic
             title="Verified signups (range)"
@@ -126,19 +130,24 @@ function HeadlineCards({ dashboard }: { dashboard: GrowthDashboard }) {
           />
         </Card>
       </Col>
-      <Col xs={12} lg={6}>
+      <Col xs={24} sm={12} lg={6}>
         <Card size="small">
           <Statistic
-            title="Activated in 24h (range)"
+            title="First recorded work within 24h"
             value={ratio(activated, signups)}
             suffix="%"
           />
         </Card>
       </Col>
-      <Col xs={12} lg={6}>
+      <Col xs={24} sm={12} lg={6}>
         <Card size="small">
           <Statistic title="Latest UTC-day active" value={active} />
         </Card>
+      </Col>
+      <Col xs={24}>
+        <Text type="secondary">
+          <Text strong>Definition:</Text> {FIRST_RECORDED_WORK_DEFINITION}
+        </Text>
       </Col>
     </Row>
   );
@@ -383,7 +392,7 @@ export function RetentionAdminOverview() {
             value={signal}
             options={[
               { label: "Project engaged", value: "project_engaged_v1" },
-              { label: "Meaningful work", value: "project_work_v1" },
+              { label: "Recorded work", value: "project_work_v1" },
               { label: "App foreground", value: "app_foreground_v1" },
               { label: "AI engaged", value: "ai_engaged_v1" },
               {
