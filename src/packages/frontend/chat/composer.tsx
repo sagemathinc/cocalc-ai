@@ -152,7 +152,6 @@ export function ChatRoomComposer({
   const embeddingOptions = useChatEmbeddingOptions();
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
-  const postOnly = delivery === "post" && on_post != null;
   const visualViewport = useChatVisualViewport(mobile);
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -175,6 +174,13 @@ export function ChatRoomComposer({
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
+  const canChooseDelivery =
+    on_post != null &&
+    (selectedThread
+      ? threadMetadata?.agent_kind !== "none" &&
+        (isSelectedThreadAI || showGoal)
+      : isNewThreadCodex);
+  const postOnly = canChooseDelivery && delivery === "post";
   const showComposerCodexConfig =
     isSelectedThreadAI ||
     showGoal ||
@@ -986,16 +992,15 @@ export function ChatRoomComposer({
                 </Button>
               </Tooltip>
             ) : null}
-            {on_post &&
-              (isSelectedThreadAI || showGoal || isNewThreadCodex) && (
-                <ComposerDeliverySelector
-                  value={delivery}
-                  onChange={(value) => {
-                    setDelivery(value);
-                    refocusComposerInput();
-                  }}
-                />
-              )}
+            {canChooseDelivery && (
+              <ComposerDeliverySelector
+                value={delivery}
+                onChange={(value) => {
+                  setDelivery(value);
+                  refocusComposerInput();
+                }}
+              />
+            )}
           </div>
           <Tooltip
             title={

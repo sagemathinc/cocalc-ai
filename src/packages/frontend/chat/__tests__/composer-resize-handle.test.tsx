@@ -100,14 +100,86 @@ function renderComposer(
     onComposerFocusChange: jest.fn(),
     ...overrides,
   };
-  return render(
+  const view = render(
     <ChatEmbeddingOptionsProvider value={embeddingOptions}>
       <ChatRoomComposer {...props} />
     </ChatEmbeddingOptionsProvider>,
   );
+  return { ...view, props };
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it.each([false, true])(
+    "offers agent delivery for a new thread only when Codex is selected (%s)",
+    (isNewThreadCodex) => {
+      renderComposer({ isNewThreadCodex, on_post: jest.fn() });
+      if (isNewThreadCodex) {
+        expect(
+          screen.getByRole("button", { name: "Message delivery: To Agent" }),
+        ).toBeEnabled();
+      } else {
+        expect(
+          screen.queryByRole("button", { name: /Message delivery:/ }),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("only offers agent delivery for the selected agent or a new Codex thread", async () => {
+    const humanThread = { key: "human", label: "Human", isAI: false } as any;
+    const agentThread = { key: "agent", label: "Agent", isAI: true } as any;
+    const onSend = jest.fn();
+    const view = renderComposer({
+      actions: {
+        syncdb: {},
+        getThreadMetadata: (key: string) => ({
+          agent_kind: key === "agent" ? "acp" : "none",
+        }),
+        isCodexThread: () => false,
+      } as any,
+      selectedThread: humanThread,
+      isNewThreadCodex: true,
+      on_post: jest.fn(),
+      on_send: onSend,
+      hasInput: true,
+      input: "hello",
+    });
+    const rerenderThread = (selectedThread: any, isSelectedThreadAI: boolean) =>
+      view.rerender(
+        <ChatEmbeddingOptionsProvider value={{}}>
+          <ChatRoomComposer
+            {...view.props}
+            selectedThread={selectedThread}
+            isSelectedThreadAI={isSelectedThreadAI}
+          />
+        </ChatEmbeddingOptionsProvider>,
+      );
+
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+
+    rerenderThread(agentThread, true);
+    expect(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    ).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Post/ }));
+    expect(screen.getByRole("button", { name: "Post message" })).toBeEnabled();
+
+    rerenderThread(humanThread, false);
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Post message" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+
   it.each([false, true])(
     "uses compact settings only on mobile (%s)",
     (mobile) => {
@@ -636,6 +708,11 @@ describe("ChatRoomComposer resize handle", () => {
         acpPrompt: "Full agent prompt",
         isSelectedThreadAI: true,
         selectedThread: { key: "thread-layout", label: "Agent" } as any,
+        actions: {
+          syncdb: {},
+          getThreadMetadata: () => ({ agent_kind: "acp" }),
+          isCodexThread: () => true,
+        } as any,
         on_send: send,
         on_send_immediately: steer,
         on_post: jest.fn(),

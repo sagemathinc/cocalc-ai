@@ -3100,7 +3100,9 @@ function ChatPanelContent({
             submitMentionsRef={submitMentionsRef}
             hasInput={hasInput}
             isSelectedThreadAI={isSelectedThreadAI}
-            isNewThreadCodex={newThreadSetup.agentMode === "codex"}
+            isNewThreadCodex={
+              !selectedThread && newThreadSetup.agentMode === "codex"
+            }
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
