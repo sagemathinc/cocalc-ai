@@ -1,6 +1,7 @@
 /* CoCalc: Copyright © 2026 SageMath, Inc. License: MS-RSL. */
 import { Buffer } from "buffer";
 import { posix } from "path-browserify";
+import { isValidUUID } from "@cocalc/util/misc";
 import type { ImageResolver } from "../chat/markdown-image";
 import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import { getActiveSiteSession } from "./session-registry";
@@ -25,13 +26,27 @@ export function createMarkdownImageResolver(
       return require("../../assets/preview-plot.png");
     if (/^[a-z][a-z\d+.-]*:/i.test(src) || src.startsWith("//"))
       throw Error("Unsupported image URL");
+    if (isPreviewProfile(profile)) throw Error("Unsupported image");
+    const session = await getActiveSiteSession(profile);
+    const siteUrl = new URL(session.profile.canonical_app_url);
+    const basePath = siteUrl.pathname.replace(/\/+$/, "");
+    if (src.startsWith("/blobs/") || src.startsWith(`${basePath}/blobs/`)) {
+      const blobPath = src.startsWith("/blobs/") ? `${basePath}${src}` : src;
+      const blobUrl = new URL(blobPath, siteUrl.origin);
+      if (!blobUrl.pathname.startsWith(`${basePath}/blobs/`)) {
+        throw Error("Invalid blob image URL");
+      }
+      if (!isValidUUID(blobUrl.searchParams.get("uuid") ?? "")) {
+        throw Error("Invalid blob image URL");
+      }
+      return { uri: blobUrl.toString() };
+    }
     const path = posix.resolve(
       posix.dirname(chatPath),
       decodeURIComponent(src),
     );
     const mime = TYPES[posix.extname(path).slice(1).toLowerCase()];
-    if (!mime || isPreviewProfile(profile)) throw Error("Unsupported image");
-    const session = await getActiveSiteSession(profile);
+    if (!mime) throw Error("Unsupported image");
     const host = await resolveNamedAgentHost(
       session.hubApi,
       session.profile.account_id,

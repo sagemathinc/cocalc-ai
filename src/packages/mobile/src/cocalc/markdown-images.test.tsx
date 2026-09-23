@@ -14,12 +14,13 @@ it("loads relative images on the owning host, with bounded sizes and no external
     readFile: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
   };
   const call = jest.fn().mockReturnValue(files);
-  jest
-    .mocked(getActiveSiteSession)
-    .mockResolvedValue({
-      profile: { account_id: "account" },
-      hubApi: {},
-    } as any);
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    profile: {
+      account_id: "account",
+      canonical_app_url: "https://cocalc.ai",
+    },
+    hubApi: {},
+  } as any);
   jest.mocked(resolveNamedAgentHost).mockResolvedValue("host");
   jest.mocked(openProjectHost).mockResolvedValue({ client: { call } } as any);
   const resolve = createMarkdownImageResolver(
@@ -36,6 +37,15 @@ it("loads relative images on the owning host, with bounded sizes and no external
     project_id: "project",
     host_id: "host",
   });
+  jest.mocked(openProjectHost).mockClear();
+  const uuid = "2b0ef75b-c04c-4cbe-b5e6-8cfbadff4b9f";
+  expect(await resolve(`/blobs/paste.png?uuid=${uuid}`)).toEqual({
+    uri: `https://cocalc.ai/blobs/paste.png?uuid=${uuid}`,
+  });
+  expect(openProjectHost).not.toHaveBeenCalled();
+  await expect(resolve("/blobs/paste.png?uuid=invalid")).rejects.toThrow(
+    "Invalid blob",
+  );
   await expect(resolve("file:///private/key.png")).rejects.toThrow(
     "Unsupported",
   );
@@ -46,4 +56,25 @@ it("loads relative images on the owning host, with bounded sizes and no external
   files.readFile.mockClear();
   await expect(resolve("big.png")).rejects.toThrow("too large");
   expect(files.readFile).not.toHaveBeenCalled();
+});
+
+it("keeps a site's app base path when displaying pasted blobs", async () => {
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    profile: { canonical_app_url: "https://example.org/cocalc" },
+  } as any);
+  const resolve = createMarkdownImageResolver(
+    "profile",
+    "project",
+    "/home/user/chat.chat",
+  );
+  const uuid = "2b0ef75b-c04c-4cbe-b5e6-8cfbadff4b9f";
+  expect(await resolve(`/blobs/paste.png?uuid=${uuid}`)).toEqual({
+    uri: `https://example.org/cocalc/blobs/paste.png?uuid=${uuid}`,
+  });
+  expect(await resolve(`/cocalc/blobs/paste.png?uuid=${uuid}`)).toEqual({
+    uri: `https://example.org/cocalc/blobs/paste.png?uuid=${uuid}`,
+  });
+  await expect(
+    resolve(`/cocalc/blobs/../private?uuid=${uuid}`),
+  ).rejects.toThrow("Invalid blob");
 });
