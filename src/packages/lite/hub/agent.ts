@@ -91,7 +91,7 @@ function getPlannerCodexModel(explicit?: string): string {
   if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
     return explicit.trim();
   }
-  return "gpt-5.4-mini";
+  return "gpt-6-luna";
 }
 
 let plannerCodexAgent: Promise<AcpAgent> | undefined;

@@ -56,7 +56,7 @@ import * as system from "./system";
 import { assertCollab } from "./util";
 import { assertAiLaunchAllowed } from "@cocalc/server/launch/kill-switches";
 
-const DEFAULT_PLANNER_MODEL = "gpt-5.4-mini";
+const DEFAULT_PLANNER_MODEL = "gpt-6-luna";
 const PLANNER_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
 
 function createBridge({

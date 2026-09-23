@@ -82,7 +82,7 @@ export function resolveCodexSessionMode(
   return "auto";
 }
 
-export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.6-sol";
+export const DEFAULT_CODEX_MODEL_NAME = "gpt-6-astra";
 export const CODEX_FAST_SERVICE_TIER_REQUEST_VALUE = "fast";
 // These 0.151 features are disabled by default upstream. Keep every CoCalc
 // app-server launch path on the same rollout format and maintenance policy.
@@ -192,67 +192,20 @@ const GPT_5_6_LUNA_REASONING_LEVELS: CodexReasoningLevel[] = [
   },
 ];
 
-const DEFAULT_REASONING_LEVELS: CodexReasoningLevel[] = [
-  {
-    id: "low",
-    label: "Low",
-    description: "Fast responses with lighter reasoning.",
-  },
-  {
-    id: "medium",
-    label: "Medium",
-    description: "Balances speed and reasoning depth for everyday tasks.",
-    default: true,
-  },
-  {
-    id: "high",
-    label: "High",
-    description: "Greater reasoning depth for complex problems.",
-  },
-  {
-    id: "extra_high",
-    label: "Extra high",
-    description: "Extra high reasoning depth for complex problems.",
-  },
-];
-
-const GPT_5_2_REASONING_LEVELS: CodexReasoningLevel[] = [
-  {
-    id: "low",
-    label: "Low",
-    description:
-      "Balances speed with some reasoning; useful for straightforward queries and short explanations.",
-  },
-  {
-    id: "medium",
-    label: "Medium",
-    description:
-      "Provides a solid balance of reasoning depth and latency for general-purpose tasks.",
-    default: true,
-  },
-  {
-    id: "high",
-    label: "High",
-    description: "Maximizes reasoning depth for complex or ambiguous problems.",
-  },
-  {
-    id: "extra_high",
-    label: "Extra high",
-    description: "Extra high reasoning depth for complex problems.",
-  },
-];
-
 const FAST_SERVICE_TIER: CodexServiceTierInfo = {
   id: "fast",
   label: "Fast",
   description: "1.5x speed with higher Codex credit usage.",
 };
 
+// Credential-specific model/list responses override these fallback capabilities.
+// The 0.156.0 bundled catalog supplies Astra/5.6; GPT-6 Sol/Luna use the
+// published API reasoning levels that are supported by the Codex UI.
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
-    name: "gpt-6-astra",
-    description: "Frontier model for complex, demanding work.",
-    reasoning: GPT_5_6_REASONING_LEVELS,
+    name: DEFAULT_CODEX_MODEL_NAME,
+    description: "Frontier intelligence for the most demanding work.",
+    reasoning: GPT_5_6_SOL_REASONING_LEVELS,
     serviceTiers: [
       {
         ...FAST_SERVICE_TIER,
@@ -261,46 +214,44 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
   {
-    name: DEFAULT_CODEX_MODEL_NAME,
-    description: "Frontier agentic coding model.",
+    name: "gpt-6-sol",
+    description: "Workhorse model for coding and everyday work.",
+    reasoning: GPT_5_6_LUNA_REASONING_LEVELS,
+    serviceTiers: [
+      {
+        ...FAST_SERVICE_TIER,
+        description: "Lower latency with higher Codex credit usage.",
+      },
+    ],
+  },
+  {
+    name: "gpt-6-luna",
+    description: "Fast and affordable model for easier tasks.",
+    reasoning: GPT_5_6_LUNA_REASONING_LEVELS,
+    serviceTiers: [
+      {
+        ...FAST_SERVICE_TIER,
+        description: "Lower latency with higher Codex credit usage.",
+      },
+    ],
+  },
+  {
+    name: "gpt-5.6-sol",
+    description: "Older coding model for complex work.",
     reasoning: GPT_5_6_SOL_REASONING_LEVELS,
     serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.6-terra",
-    description: "Balanced agentic coding model for everyday work.",
+    description: "Older balanced model for straightforward work.",
     reasoning: GPT_5_6_REASONING_LEVELS,
     serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.6-luna",
-    description: "Fast and affordable agentic coding model.",
+    description: "Older fast and efficient model.",
     reasoning: GPT_5_6_LUNA_REASONING_LEVELS,
     serviceTiers: [FAST_SERVICE_TIER],
-  },
-  {
-    name: "gpt-5.5",
-    description:
-      "Frontier model for complex coding, research, and real-world work.",
-    reasoning: DEFAULT_REASONING_LEVELS,
-    serviceTiers: [FAST_SERVICE_TIER],
-  },
-  {
-    name: "gpt-5.4",
-    description: "Strong model for everyday coding.",
-    reasoning: DEFAULT_REASONING_LEVELS,
-    serviceTiers: [FAST_SERVICE_TIER],
-  },
-  {
-    name: "gpt-5.4-mini",
-    description:
-      "Small, fast, and cost-efficient model for simpler coding tasks.",
-    reasoning: DEFAULT_REASONING_LEVELS,
-  },
-  {
-    name: "gpt-5.2",
-    description: "Optimized for professional work and long-running agents.",
-    reasoning: GPT_5_2_REASONING_LEVELS,
   },
 ];
 
@@ -317,6 +268,11 @@ const CODEX_MODEL_ALIASES = new Set([
   "codex-agent",
   "gpt-5.6",
   "openai-codex-agent",
+  // Recognize historical thread metadata without offering retired models.
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.2",
 ]);
 
 const CODEX_MODEL_CANONICAL_ALIASES = new Map([["gpt-5.6", "gpt-5.6-sol"]]);
