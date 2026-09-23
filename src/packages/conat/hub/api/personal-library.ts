@@ -39,11 +39,6 @@ export interface PersonalLibraryMoveRequest extends PersonalLibraryRequest {
   index: number;
 }
 
-export interface PersonalLibraryImportRequest extends PersonalLibraryRequest {
-  aliases: PersonalLibraryAlias[];
-  pins: string[];
-}
-
 export interface PersonalLibraryApi {
   list(opts: PersonalLibraryRequest): Promise<PersonalLibrarySnapshot>;
   resolve(
@@ -54,9 +49,6 @@ export interface PersonalLibraryApi {
   movePinned(
     opts: PersonalLibraryMoveRequest,
   ): Promise<PersonalLibrarySnapshot>;
-  importLegacy(
-    opts: PersonalLibraryImportRequest,
-  ): Promise<PersonalLibrarySnapshot>;
 }
 
 export const personalLibrary = {
@@ -65,5 +57,4 @@ export const personalLibrary = {
   name: authFirstRequireAccount,
   setPinned: authFirstRequireAccount,
   movePinned: authFirstRequireAccount,
-  importLegacy: authFirstRequireAccount,
 };

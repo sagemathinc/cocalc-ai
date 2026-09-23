@@ -5,6 +5,10 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ReadonlyNotebook } from "@cocalc/frontend/jupyter/readonly-notebook";
 import type { ReadonlyNotebookDocument } from "@cocalc/frontend/jupyter/readonly-notebook";
+import type { SyncDB } from "@cocalc/sync/editor/db/sync";
+import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
+import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
+import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 
 export default function NotebookArtifact({
   projectId,
@@ -16,17 +20,21 @@ export default function NotebookArtifact({
   historical?: boolean;
 }) {
   const { actions } = useProjectContext();
+  const fileContext = useFileContext();
+  const [syncdb, setSyncdb] = useState<SyncDB>();
   const [doc, setDoc] = useState<ReadonlyNotebookDocument>();
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
   const [retry, setRetry] = useState(0);
   const scrollPosition = useRef(0);
   useEffect(() => {
-    let disposed = false;
-    let detach = () => {};
+    setSyncdb(undefined);
     setDoc(undefined);
-    setError("");
     setConnected(false);
+  }, [actions, projectId, path]);
+  useEffect(() => {
+    let disposed = false;
+    setError("");
     void (async () => {
       if (!actions) throw Error("Project unavailable");
       // Check existence before opening: an absent artifact must not create a notebook.
@@ -44,36 +52,40 @@ export default function NotebookArtifact({
       const notebook = redux.getEditorActions(projectId, path)?.jupyter_actions;
       const syncdb = notebook?.syncdb;
       if (!syncdb) throw Error("Notebook session unavailable");
-      const refresh = () => {
-        if (disposed) return;
-        if (syncdb.isReady()) setDoc(syncdb.get_doc());
-        setConnected(syncdb.is_live_connected?.() ?? syncdb.isReady());
-      };
-      const closed = () => {
-        if (disposed) return;
-        setConnected(false);
-        setError(
-          "The notebook session closed. Reconnect to continue viewing it.",
-        );
-      };
-      for (const event of ["change", "ready", "connected", "disconnected"])
-        syncdb.on(event, refresh);
-      syncdb.on("close", closed);
-      detach = () => {
-        for (const event of ["change", "ready", "connected", "disconnected"])
-          syncdb.removeListener(event, refresh);
-        syncdb.removeListener("close", closed);
-      };
-      refresh();
+      setSyncdb(syncdb);
     })().catch((err) => {
       if (!disposed) setError(String(err));
     });
     return () => {
       disposed = true;
-      detach();
-      // The project owns this runtime; never close another view's session.
     };
   }, [actions, projectId, path, retry]);
+  // Keep observing the last session until a retry successfully replaces it.
+  useEffect(() => {
+    if (!syncdb) return;
+    const refresh = () => {
+      if (syncdb.isReady()) setDoc(syncdb.get_doc());
+      const live = syncdb.is_live_connected?.() ?? syncdb.isReady();
+      setConnected(live);
+      if (live) setError("");
+    };
+    const closed = () => {
+      setConnected(false);
+      setError(
+        "The notebook session closed. Reconnect to continue viewing it.",
+      );
+    };
+    for (const event of ["change", "ready", "connected", "disconnected"])
+      syncdb.on(event, refresh);
+    syncdb.on("close", closed);
+    refresh();
+    return () => {
+      for (const event of ["change", "ready", "connected", "disconnected"])
+        syncdb.removeListener(event, refresh);
+      syncdb.removeListener("close", closed);
+      // The project owns this runtime; never close another view's session.
+    };
+  }, [syncdb]);
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -115,12 +127,27 @@ export default function NotebookArtifact({
       </div>
       {error && <Alert type="warning" title={error} />}
       {doc && (
-        <ReadonlyNotebook
-          project_id={projectId}
-          path={path}
-          doc={doc}
-          scrollPosition={scrollPosition}
-        />
+        <FileContext.Provider
+          value={{
+            ...fileContext,
+            project_id: projectId,
+            path,
+            noSanitize: false,
+            anchorTagAction: undefined,
+            AnchorTagComponent: getAnchorTagComponent({
+              project_id: projectId,
+              path,
+            }),
+            urlTransform: getUrlTransform({ project_id: projectId, path }),
+          }}
+        >
+          <ReadonlyNotebook
+            project_id={projectId}
+            path={path}
+            doc={doc}
+            scrollPosition={scrollPosition}
+          />
+        </FileContext.Provider>
       )}
     </KeyboardBoundary>
   );

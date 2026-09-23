@@ -1326,6 +1326,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin bulk membership tier catalog mutation",
   },
+  "purchases.linkCourseMembershipPackage": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "owner-only course association with collaborator authorization; does not purchase, assign, revoke, or change paid seat terms",
+  },
   "purchases.purchaseMembershipPackage": {
     decision: "fresh-auth-required",
     reason: "browser purchase action",

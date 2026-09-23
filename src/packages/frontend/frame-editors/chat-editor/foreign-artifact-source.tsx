@@ -119,11 +119,14 @@ export async function openForeignArtifactSource(
     !target.artifactId
   )
     throw Error("Incomplete artifact source descriptor");
+  if (signal?.aborted) throw Error("Source artifact loading cancelled");
   await ensureProjectReduxRuntime();
+  if (signal?.aborted) throw Error("Source artifact loading cancelled");
   const project = redux.getProjectActions(target.projectId);
   if (!project) throw Error("Source project unavailable");
   // A stale catalog entry must not create an empty source conversation.
   await project.fs().stat(target.path);
+  if (signal?.aborted) throw Error("Source artifact loading cancelled");
   // Use the normal authorized project/host path. Do not navigate, focus a
   // composer, or pass a fragment (even for a different thread in this chat).
   await project.open_file({

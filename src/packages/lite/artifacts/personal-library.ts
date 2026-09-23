@@ -3,18 +3,22 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { chmodSync, closeSync, openSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type {
   PersonalLibraryApi,
   PersonalLibrarySnapshot,
 } from "@cocalc/conat/hub/api/personal-library";
 import {
+  PERSONAL_LIBRARY_MAX_PIN_BYTES,
+  PERSONAL_LIBRARY_MAX_PINS,
   movePersonalLibraryPin,
-  normalizeLegacyPersonalLibraryAliases,
   normalizePersonalLibraryName,
+  parsePersonalLibraryPinKey,
   validatePersonalLibraryPinKey,
   validatePersonalLibraryTarget,
 } from "@cocalc/util/personal-library";
+import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
 
 export class LitePersonalLibrary implements PersonalLibraryApi {
   private readonly db: DatabaseSync;
@@ -47,9 +51,6 @@ export class LitePersonalLibrary implements PersonalLibraryApi {
         ON personal_library_aliases(project_id,entry_id) WHERE active=1;
       CREATE TABLE IF NOT EXISTS personal_library_pins (
         pin_key TEXT PRIMARY KEY, rank INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS personal_library_import (
-        singleton INTEGER PRIMARY KEY CHECK(singleton=1)
       );
     `);
     this.db
@@ -175,15 +176,35 @@ export class LitePersonalLibrary implements PersonalLibraryApi {
   ): Promise<PersonalLibrarySnapshot> {
     this.assertAccount(opts.account_id);
     const key = validatePersonalLibraryPinKey(opts.pin_key);
+    const locator = parsePersonalLibraryPinKey(key);
     if (
-      JSON.parse(key)[0] !== this.options.project_id ||
+      locator.project_id !== this.options.project_id ||
       typeof opts.pinned !== "boolean"
     )
       throw Error("Invalid artifact pin");
+    if (
+      opts.pinned &&
+      !(await this.options.artifactExists(
+        locator.project_id,
+        createHash("sha256")
+          .update(artifactCatalogKey(locator, locator))
+          .digest("hex"),
+      ))
+    )
+      throw Error("Artifact unavailable");
     return this.transaction(() => {
-      const pins = this.snapshot().pins.filter((pin) => pin !== key);
-      if (opts.pinned) pins.push(key);
-      if (pins.length > 1000) throw Error("Artifact pin limit reached");
+      const current = this.snapshot().pins;
+      const pins = opts.pinned
+        ? current.includes(key)
+          ? current
+          : [...current, key]
+        : current.filter((pin) => pin !== key);
+      if (
+        pins.length > PERSONAL_LIBRARY_MAX_PINS ||
+        pins.reduce((bytes, pin) => bytes + Buffer.byteLength(pin), 0) >
+          PERSONAL_LIBRARY_MAX_PIN_BYTES
+      )
+        throw Error("Artifact pin limit reached");
       if (opts.pinned)
         this.db
           .prepare(
@@ -206,74 +227,20 @@ export class LitePersonalLibrary implements PersonalLibraryApi {
     const key = validatePersonalLibraryPinKey(opts.pin_key);
     if (
       !Array.isArray(opts.visible) ||
-      opts.visible.length > 1000 ||
+      opts.visible.length > PERSONAL_LIBRARY_MAX_PINS ||
       !Number.isInteger(opts.index)
     )
       throw Error("Invalid artifact pin order");
     const visible = opts.visible.map(validatePersonalLibraryPinKey);
+    if (
+      visible.reduce((bytes, pin) => bytes + Buffer.byteLength(pin), 0) >
+      PERSONAL_LIBRARY_MAX_PIN_BYTES
+    )
+      throw Error("Invalid pin order");
     return this.transaction(() => {
       this.replacePins(
         movePersonalLibraryPin(this.snapshot().pins, visible, key, opts.index),
       );
-      return this.snapshot();
-    });
-  }
-
-  async importLegacy(
-    opts: Parameters<PersonalLibraryApi["importLegacy"]>[0],
-  ): Promise<PersonalLibrarySnapshot> {
-    this.assertAccount(opts.account_id);
-    if (
-      !Array.isArray(opts.aliases) ||
-      !Array.isArray(opts.pins) ||
-      opts.aliases.length > 1000 ||
-      opts.pins.length > 1000
-    )
-      throw Error("Invalid legacy library data");
-    const aliases = normalizeLegacyPersonalLibraryAliases(opts.aliases).filter(
-      (alias) => alias.project_id === this.options.project_id,
-    );
-    const pins = [
-      ...new Set(opts.pins.map(validatePersonalLibraryPinKey)),
-    ].filter((pin) => JSON.parse(pin)[0] === this.options.project_id);
-    return this.transaction(() => {
-      const inserted = this.db
-        .prepare("INSERT OR IGNORE INTO personal_library_import VALUES(1)")
-        .run();
-      if (inserted.changes) {
-        for (const alias of aliases) {
-          if (
-            alias.active &&
-            this.snapshot().aliases.some(
-              (item) =>
-                item.active &&
-                item.project_id === alias.project_id &&
-                item.entry_id === alias.entry_id,
-            )
-          )
-            continue;
-          this.db
-            .prepare(
-              "INSERT OR IGNORE INTO personal_library_aliases(name,project_id,entry_id,active) VALUES(?,?,?,?)",
-            )
-            .run(
-              alias.name,
-              alias.project_id,
-              alias.entry_id,
-              alias.active ? 1 : 0,
-            );
-        }
-        const existing = this.snapshot().pins;
-        for (const pin of pins) {
-          if (existing.includes(pin)) continue;
-          this.db
-            .prepare(
-              "INSERT OR IGNORE INTO personal_library_pins(pin_key,rank) VALUES(?,?)",
-            )
-            .run(pin, existing.length);
-          existing.push(pin);
-        }
-      }
       return this.snapshot();
     });
   }

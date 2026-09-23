@@ -37,6 +37,12 @@ export interface ArtifactCatalogSnapshot extends ArtifactCatalogSource {
 
 export const ARTIFACT_CATALOG_MAX_ITEMS = 5000;
 export const ARTIFACT_CATALOG_MAX_BYTES = 2 * 1024 * 1024;
+export const ARTIFACT_CATALOG_MAX_PROJECT_SOURCES = 10_000;
+export const ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES = 16 * 1024 * 1024;
+export const ARTIFACT_CATALOG_MAX_PROJECT_ITEMS = 10_000;
+export const ARTIFACT_CATALOG_MAX_PROJECT_BYTES = 16 * 1024 * 1024;
+// Counts rows touched by metadata-changing snapshots in a fixed one-hour window.
+export const ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR = 100_000;
 
 export function artifactCatalogKey(
   source: ArtifactCatalogSource,

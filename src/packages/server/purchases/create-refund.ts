@@ -123,6 +123,9 @@ export default async function createRefund(opts: {
   if (service === "refund") {
     throw Error("Refund transactions cannot themselves be refunded");
   }
+  if (service === "membership" && description?.type === "team-license-change") {
+    return await refundInitialTeamLicense({ purchase_id, reason, notes });
+  }
   if (service === "membership") {
     throw Error(
       `Membership transaction ${purchase_id} is neither a subscription nor a membership package`,
@@ -536,6 +539,143 @@ async function refundMembershipPackage({
     details: expiredPackage
       ? `Membership package ${packageId} was expired and its active seat assignments were revoked. The purchase amount was restored to the account balance. Any related credit transaction must be refunded separately.`
       : `${refundedSeats} seat(s) were removed from membership package ${packageId}. The purchase amount was restored to the account balance. Any related credit transaction must be refunded separately.`,
+  });
+  return refundPurchaseId;
+}
+
+// Only unwind a pristine first purchase. Reversing a later expansion/renewal
+// requires an explicit allocation policy rather than revoking unrelated seats.
+async function refundInitialTeamLicense({
+  purchase_id,
+  reason,
+  notes,
+}: {
+  purchase_id: number;
+  reason: Reason;
+  notes: string;
+}): Promise<number> {
+  const client = await getTransactionClient();
+  let purchase!: PurchaseRow;
+  let refundPurchaseId!: number;
+  try {
+    purchase = await getPurchaseForLocalRefund(purchase_id, client);
+    const existing = getExistingRefundPurchaseId(purchase.description);
+    if (existing != null) {
+      await client.query("COMMIT");
+      return existing;
+    }
+    const licenseId = nonemptyString(purchase.description?.team_license_id);
+    if (
+      purchase.service !== "membership" ||
+      purchase.description?.type !== "team-license-change" ||
+      purchase.description?.lifecycle !== "first_paid" ||
+      !licenseId ||
+      purchase.cost == null ||
+      !toDecimal(purchase.cost).gt(0)
+    ) {
+      throw Error(
+        "Only the initial paid Team license purchase can be reversed",
+      );
+    }
+    const { rows: licenses } = await client.query(
+      "SELECT * FROM team_licenses WHERE id=$1 AND owner_account_id=$2 FOR UPDATE",
+      [licenseId, purchase.account_id],
+    );
+    const license = licenses[0];
+    if (!license || Number(license.latest_purchase_id) !== purchase_id) {
+      throw Error(
+        "Team license has subsequent purchases; manual reconciliation required",
+      );
+    }
+    if (license.payment?.status === "active") {
+      throw Error("Resolve the pending Team renewal payment before refunding");
+    }
+    const { rows: lines } = await client.query(
+      "SELECT * FROM team_license_seat_lines WHERE team_license_id=$1 ORDER BY id FOR UPDATE",
+      [licenseId],
+    );
+    if (!lines.length) throw Error("Team license has no seat lines");
+    for (const line of lines) {
+      // Seat assignment takes this same row lock. Hold it before enumerating
+      // assignments so no new reservation can appear between revoke and expiry.
+      await client.query(
+        "SELECT id FROM membership_packages WHERE id=$1 FOR UPDATE",
+        [line.package_id],
+      );
+      const pkg = await getMembershipPackage({
+        package_id: line.package_id,
+        client,
+      });
+      if (
+        !pkg ||
+        pkg.kind !== "team" ||
+        pkg.owner_account_id !== purchase.account_id ||
+        line.owner_account_id !== purchase.account_id ||
+        Number(pkg.purchase_id) !== purchase_id ||
+        pkg.metadata?.team_license_id !== licenseId
+      ) {
+        throw Error("Team package does not match original purchase");
+      }
+      const assignments = await listMembershipPackageAssignments({
+        package_id: pkg.id,
+        client,
+      });
+      for (const assignment of assignments) {
+        if (
+          !(await revokeMembershipPackageSeat(
+            {
+              package_id: pkg.id,
+              account_id: assignment.account_id ?? undefined,
+              email_address: assignment.account_id
+                ? undefined
+                : (assignment.email_address ?? undefined),
+            },
+            client,
+          ))
+        )
+          throw Error("Unable to revoke Team seat");
+      }
+      await updateMembershipPackage({
+        package_id: pkg.id,
+        expires_at: new Date(),
+        client,
+      });
+    }
+    await client.query(
+      "UPDATE team_licenses SET status='canceled', current_period_end=LEAST(current_period_end,NOW()), updated=NOW() WHERE id=$1",
+      [licenseId],
+    );
+    refundPurchaseId = await createPurchase({
+      account_id: purchase.account_id,
+      service: "refund",
+      cost: toDecimal(purchase.cost).neg(),
+      description: { type: "refund", purchase_id, reason, notes },
+      client,
+    });
+    await markPurchaseRefunded({ client, purchase, refundPurchaseId });
+    await recordMembershipAllocationRefund({
+      original_purchase_id: purchase_id,
+      refund_purchase_id: refundPurchaseId,
+      client,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  await refreshAccountBalanceAndPublishBestEffort({
+    account_id: purchase.account_id,
+  });
+  await sendRefundMessage({
+    account_id: purchase.account_id,
+    purchase_id,
+    amount: purchase.cost,
+    reason,
+    notes,
+    details:
+      "The Team license was canceled and expired, and its seats revoked. The purchase amount was restored to the account balance. Any related credit transaction must be refunded separately.",
   });
   return refundPurchaseId;
 }

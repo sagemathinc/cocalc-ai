@@ -4,6 +4,7 @@
  */
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { closedLibraryState } from "@cocalc/frontend/agents/library-navigation";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import type { Destination } from "./model";
@@ -105,6 +106,7 @@ export async function navigate(
   if (destination.kind === "agent") {
     const page = redux.getActions("page");
     page.setState({
+      ...closedLibraryState,
       active_agent_id: destination.agentId,
       active_agent_name: destination.agentName,
     });

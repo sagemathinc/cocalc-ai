@@ -17,15 +17,27 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import type { ArtifactCatalogApi } from "@cocalc/conat/hub/api/artifact-catalog";
 import { getMasterConatClient } from "./master-conat-client";
 import { getLocalHostId } from "./sqlite/hosts";
-import { listProjects } from "./sqlite/projects";
+import { getProject, listProjects } from "./sqlite/projects";
+import {
+  assertProjectVolumeLifecycleGeneration,
+  currentProjectVolumeLifecycleGeneration,
+  withProjectVolumeLifecycleLock,
+} from "./project-volume-lifecycle";
 
 const logger = getLogger("project-host:artifact-catalog");
 let service: ArtifactCatalogService | undefined;
+
+function assertLocalProject(project_id: string) {
+  const project = getProject(project_id);
+  if (!project || project.local_only)
+    throw Error("artifact catalog project is not available locally");
+}
 
 async function call<K extends keyof ArtifactCatalogApi>(
   name: K,
   opts: Parameters<ArtifactCatalogApi[K]>[0],
 ): Promise<Awaited<ReturnType<ArtifactCatalogApi[K]>>> {
+  assertLocalProject(opts.project_id);
   const client = getMasterConatClient(),
     host_id = getLocalHostId();
   if (!client || !host_id) throw Error("catalog owner connection unavailable");
@@ -54,20 +66,37 @@ export function startArtifactCatalog(
     filename: join(directory, "journal.sqlite"),
     discoveryIntervalMs: 2000,
     writerState: (source) => call("writerState", source),
+    recoverWriter: async (source, expectedEpoch) => {
+      const current = await call("writerState", source);
+      if (
+        (current?.epoch ?? null) === expectedEpoch ||
+        (current != null && current.writer_host_id === getLocalHostId())
+      )
+        return undefined;
+      return { epoch: current?.epoch ?? null };
+    },
     register: (request) => call("registerSource", request),
     send: async (snapshot) => {
       await call("ingest", { ...snapshot, snapshot });
     },
-    read: async (source) => {
-      const fs = await getFilesystem(source.project_id);
-      try {
-        return extractArtifactCatalog(
-          await readArtifactSource(fs, source.chat_path),
+    read: async (source) =>
+      withProjectVolumeLifecycleLock(source.project_id, async () => {
+        // A deleted/archived project can still have dirty journal entries.
+        // Defer them rather than recreating storage or publishing removals.
+        assertLocalProject(source.project_id);
+        const generation = currentProjectVolumeLifecycleGeneration(
+          source.project_id,
         );
-      } finally {
-        fs.close();
-      }
-    },
+        const fs = await getFilesystem(source.project_id);
+        try {
+          const rows = await readArtifactSource(fs, source.chat_path);
+          assertProjectVolumeLifecycleGeneration(source.project_id, generation);
+          assertLocalProject(source.project_id);
+          return extractArtifactCatalog(rows);
+        } finally {
+          fs.close();
+        }
+      }),
     discover: async () => {
       if (Date.now() < nextRoundAt) return [];
       if (completedRound) {

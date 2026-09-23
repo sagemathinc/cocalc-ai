@@ -17,6 +17,11 @@ import type {
   CatalogWriterState,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
+  ARTIFACT_CATALOG_MAX_PROJECT_BYTES,
+  ARTIFACT_CATALOG_MAX_PROJECT_ITEMS,
+  ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES,
+  ARTIFACT_CATALOG_MAX_PROJECT_SOURCES,
+  ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR,
   artifactCatalogKey,
   validateArtifactCatalogSnapshot,
 } from "@cocalc/util/artifact-catalog";
@@ -88,6 +93,10 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
           catalog_revision INTEGER NOT NULL DEFAULT 0,
           payload_hash TEXT, metadata_hash TEXT
         );
+        CREATE TABLE IF NOT EXISTS lite_artifact_budget (
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          window_start INTEGER NOT NULL, work_units INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS lite_artifact_entries (
           entry_id TEXT PRIMARY KEY, chat_path TEXT NOT NULL, metadata TEXT NOT NULL,
           created_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0
@@ -108,6 +117,9 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
           .get();
         if (row?.project_id !== options.project_id)
           throw Error("artifact catalog belongs to another Lite project");
+        this.db
+          .prepare("DELETE FROM lite_artifact_entries WHERE deleted=1")
+          .run();
       });
     } catch (err) {
       this.db.close();
@@ -155,6 +167,46 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
       .get(chat_path) as unknown as SourceRow | undefined;
   }
 
+  private chargeProjectWork(units: number): void {
+    const now = Date.now();
+    const current = this.db
+      .prepare(
+        "SELECT window_start,work_units FROM lite_artifact_budget WHERE singleton=1",
+      )
+      .get();
+    const used =
+      current && now - Number(current.window_start) < 3_600_000
+        ? Number(current.work_units) + units
+        : units;
+    if (used > ARTIFACT_CATALOG_MAX_PROJECT_WORK_PER_HOUR)
+      throw Error("artifact catalog project mutation budget exceeded");
+    this.db
+      .prepare(
+        `INSERT INTO lite_artifact_budget(singleton,window_start,work_units) VALUES(1,?,?)
+         ON CONFLICT(singleton) DO UPDATE SET window_start=excluded.window_start,work_units=excluded.work_units`,
+      )
+      .run(
+        current && now - Number(current.window_start) < 3_600_000
+          ? Number(current.window_start)
+          : now,
+        used,
+      );
+  }
+
+  private assertProjectSize(): void {
+    const row = this.db
+      .prepare(
+        `SELECT count(*) AS items,COALESCE(sum(length(CAST(metadata AS BLOB))),0) AS bytes
+         FROM lite_artifact_entries`,
+      )
+      .get();
+    if (
+      Number(row?.items) > ARTIFACT_CATALOG_MAX_PROJECT_ITEMS ||
+      Number(row?.bytes) > ARTIFACT_CATALOG_MAX_PROJECT_BYTES
+    )
+      throw Error("artifact catalog project metadata limit exceeded");
+  }
+
   async writerState(
     source: ArtifactCatalogSource,
   ): Promise<CatalogWriterState | null> {
@@ -183,6 +235,21 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
         return { epoch: current.epoch };
       if ((current?.epoch ?? null) !== request.expected_epoch)
         throw Error("artifact catalog writer epoch changed");
+      if (!current) {
+        const row = this.db
+          .prepare(
+            `SELECT count(*) AS sources,COALESCE(sum(length(CAST(chat_path AS BLOB))),0) AS bytes
+             FROM lite_artifact_sources`,
+          )
+          .get();
+        if (
+          Number(row?.sources) >= ARTIFACT_CATALOG_MAX_PROJECT_SOURCES ||
+          Number(row?.bytes) + Buffer.byteLength(request.chat_path) >
+            ARTIFACT_CATALOG_MAX_PROJECT_SOURCE_BYTES
+        )
+          throw Error("artifact catalog project source limit exceeded");
+      }
+      this.chargeProjectWork(1);
       const epoch = randomUUID();
       this.db
         .prepare(
@@ -235,8 +302,16 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
       if (!Number.isSafeInteger(revision))
         throw Error("artifact catalog revision exhausted");
       if (!replayed) {
-        // Tombstones retain the first creation timestamp across removal and
-        // reappearance. Mark then upsert avoids SQLite parameter-count limits.
+        const existing = this.db
+          .prepare(
+            "SELECT count(*) AS items FROM lite_artifact_entries WHERE chat_path=? AND deleted=0",
+          )
+          .get(snapshot.chat_path);
+        this.chargeProjectWork(
+          Math.max(1, snapshot.items.length + Number(existing?.items)),
+        );
+        // Mark-then-upsert avoids SQLite parameter-count limits. The final
+        // delete makes omission permanent while retaining time for live edits.
         this.db
           .prepare(
             "UPDATE lite_artifact_entries SET deleted=1 WHERE chat_path=? AND deleted=0",
@@ -260,6 +335,10 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
             created_at,
           );
         }
+        this.db
+          .prepare("DELETE FROM lite_artifact_entries WHERE deleted=1")
+          .run();
+        this.assertProjectSize();
       }
       this.db
         .prepare(

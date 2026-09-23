@@ -40,7 +40,7 @@ describe("applyEffectiveCodexPolicyToAgentSession", () => {
         MEMBERSHIP_PAYMENT_SOURCE,
       ),
     ).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
       reasoning: "medium",
       serviceTier: "standard",
     });

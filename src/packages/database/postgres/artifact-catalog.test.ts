@@ -40,7 +40,7 @@ beforeAll(async () => {
 }, 30000);
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE artifact_catalog_outbox,artifact_catalog,artifact_catalog_sources,projects CASCADE",
+    "TRUNCATE artifact_catalog,artifact_catalog_sources,artifact_catalog_project_budget,projects CASCADE",
   );
   await getPool().query(
     `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
@@ -89,7 +89,7 @@ test("writer recovery lookup is owner/host checked and reports committed sequenc
   ).rejects.toThrow("owner/host");
 });
 
-test("catalog writes and projection outbox are atomic and retries do not duplicate events", async () => {
+test("catalog writes are idempotent and retries do not advance revisions", async () => {
   expect(await applyArtifactCatalogSnapshot(snapshot(), authority)).toEqual({
     revision: 1,
     replayed: false,
@@ -98,15 +98,13 @@ test("catalog writes and projection outbox are atomic and retries do not duplica
     revision: 1,
     replayed: true,
   });
-  const events = (
-    await getPool().query("SELECT * FROM artifact_catalog_outbox")
-  ).rows;
-  expect(events).toHaveLength(1);
-  expect(events[0].payload.entries[0].metadata.title).toBe("Notes");
-  expect(events[0].published_at).toBeNull();
+  const rows = (await getPool().query("SELECT * FROM artifact_catalog")).rows;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].metadata.title).toBe("Notes");
+  expect(Number(rows[0].revision)).toBe(1);
 });
 
-test("metadata pages use stable keyset cursors and omit tombstones", async () => {
+test("metadata pages use stable keyset cursors and remove omitted entries", async () => {
   const base = snapshot();
   const items = Array.from({ length: 105 }, (_, i) => ({
     ...base.items[0],
@@ -130,6 +128,9 @@ test("metadata pages use stable keyset cursors and omit tombstones", async () =>
     authority,
   );
   expect((await readProjectArtifactCatalog(project_id)).entries).toEqual([]);
+  expect(
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
+  ).toEqual([]);
   await expect(
     readProjectArtifactCatalog(project_id, "invalid"),
   ).rejects.toThrow("cursor");
@@ -150,7 +151,7 @@ test("background source discovery includes registered sources without metadata",
   ).rejects.toThrow("owner/host");
 });
 
-test("point lookup uses existing identity, scopes by project, and excludes tombstones", async () => {
+test("point lookup uses existing identity, scopes by project, and excludes removed entries", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
   const entry = (await readProjectArtifactCatalog(project_id)).entries[0];
   await expect(
@@ -188,30 +189,54 @@ test("rejects different content at the same sequence and older deliveries", asyn
   ).rejects.toThrow("stale");
 });
 
-test("deletion/reappearance and edits preserve original creation order", async () => {
+test("edits keep creation time but removal and reappearance start a new entry", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
-  await applyArtifactCatalogSnapshot({ ...snapshot(2), items: [] }, authority);
+  const edited = snapshot(2);
+  edited.items[0].created_at = 5000;
+  edited.items[0].title = "Edited";
+  await applyArtifactCatalogSnapshot(edited, authority);
   expect(
-    (await getPool().query("SELECT deleted FROM artifact_catalog")).rows[0]
-      .deleted,
-  ).toBe(true);
-  const changed = snapshot(3);
+    (
+      await getPool().query("SELECT created_at FROM artifact_catalog")
+    ).rows[0].created_at.getTime(),
+  ).toBe(1000);
+  await applyArtifactCatalogSnapshot({ ...snapshot(3), items: [] }, authority);
+  expect(
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
+  ).toEqual([]);
+  const changed = snapshot(4);
   changed.items[0].created_at = 9999;
   changed.items[0].title = "Renamed";
   await applyArtifactCatalogSnapshot(changed, authority);
   const row = (await getPool().query("SELECT * FROM artifact_catalog")).rows[0];
   expect(row.deleted).toBe(false);
-  expect(row.created_at.getTime()).toBe(1000);
+  expect(row.created_at.getTime()).toBe(9999);
   expect(row.metadata.title).toBe("Renamed");
-  expect(row.metadata.created_at).toBe(1000);
-  const events = (
-    await getPool().query(
-      "SELECT payload FROM artifact_catalog_outbox ORDER BY revision",
-    )
-  ).rows;
-  expect(events[1].payload.entries).toEqual([]);
-  expect(Date.parse(events[2].payload.entries[0].created_at)).toBe(1000);
+  expect(row.metadata.created_at).toBe(9999);
+  expect(Number(row.revision)).toBe(4);
 });
+
+test("replacing a full source repeatedly does not retain historical identities", async () => {
+  const base = snapshot();
+  for (let sequence = 1; sequence <= 3; sequence++) {
+    await applyArtifactCatalogSnapshot(
+      {
+        ...base,
+        sequence,
+        items: Array.from({ length: 5000 }, (_, index) => ({
+          ...base.items[0],
+          artifact_id: `${sequence}-${index}`,
+        })),
+      },
+      authority,
+    );
+    const count = await getPool().query(
+      "SELECT count(*) AS n FROM artifact_catalog WHERE project_id=$1",
+      [project_id],
+    );
+    expect(Number(count.rows[0].n)).toBe(5000);
+  }
+}, 60000);
 
 test("wrong bay, reassigned host and deleted project cannot ingest", async () => {
   await expect(
@@ -261,10 +286,67 @@ test("epoch registration supports lost-response retry but fences stale registrat
   ).toEqual({ revision: 1, replayed: true });
 });
 
-test("outbox failure rolls back metadata and sequence advancement", async () => {
+test("A to B to A host reassignment permits recovery only by the current host", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(), authority);
+  const secondHost = { ...authority, host_id: randomUUID() };
+  await getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+    project_id,
+    secondHost.host_id,
+  ]);
+  await expect(
+    getArtifactCatalogWriterState(source, authority),
+  ).rejects.toThrow("owner/host");
+  await expect(
+    registerArtifactCatalogSource(source, authority, epoch, randomUUID()),
+  ).rejects.toThrow("owner/host");
+  const secondEpoch = await registerArtifactCatalogSource(
+    source,
+    secondHost,
+    epoch,
+    randomUUID(),
+  );
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(), epoch: secondEpoch, items: [] },
+    secondHost,
+  );
+  await getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+    project_id,
+    host_id,
+  ]);
+  expect(await getArtifactCatalogWriterState(source, authority)).toMatchObject({
+    epoch: secondEpoch,
+    writer_host_id: secondHost.host_id,
+  });
+  await expect(
+    applyArtifactCatalogSnapshot(snapshot(2), authority),
+  ).rejects.toThrow("stale");
+  const recoveredEpoch = await registerArtifactCatalogSource(
+    source,
+    authority,
+    secondEpoch,
+    randomUUID(),
+  );
+  await expect(
+    registerArtifactCatalogSource(
+      source,
+      secondHost,
+      recoveredEpoch,
+      randomUUID(),
+    ),
+  ).rejects.toThrow("owner/host");
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(), epoch: recoveredEpoch },
+    authority,
+  );
+  expect((await readProjectArtifactCatalog(project_id)).entries).toHaveLength(
+    1,
+  );
+});
+
+test("source update failure rolls back metadata and sequence advancement", async () => {
   const pool = getPool();
   await pool.query(
-    `ALTER TABLE artifact_catalog_outbox ADD CONSTRAINT catalog_test_fail CHECK (revision < 0)`,
+    `ALTER TABLE artifact_catalog_sources ADD CONSTRAINT catalog_test_fail CHECK (source_sequence < 1)`,
   );
   try {
     await expect(
@@ -284,7 +366,7 @@ test("outbox failure rolls back metadata and sequence advancement", async () => 
     ).toBe(0);
   } finally {
     await pool.query(
-      "ALTER TABLE artifact_catalog_outbox DROP CONSTRAINT catalog_test_fail",
+      "ALTER TABLE artifact_catalog_sources DROP CONSTRAINT catalog_test_fail",
     );
   }
   expect(await applyArtifactCatalogSnapshot(snapshot(), authority)).toEqual({
@@ -300,19 +382,20 @@ test("concurrent duplicate delivery produces only one revision", async () => {
   ]);
   expect(results.filter((x) => !x.replayed)).toHaveLength(1);
   expect(
-    (await getPool().query("SELECT * FROM artifact_catalog_outbox")).rows,
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
   ).toHaveLength(1);
 });
 
-test("ordinary chat writes do not produce artifact feed churn", async () => {
+test("ordinary chat writes do not advance the catalog revision", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
   expect(await applyArtifactCatalogSnapshot(snapshot(2), authority)).toEqual({
     revision: 1,
     replayed: true,
   });
-  expect(
-    (await getPool().query("SELECT * FROM artifact_catalog_outbox")).rows,
-  ).toHaveLength(1);
+  const row = (await getPool().query("SELECT * FROM artifact_catalog_sources"))
+    .rows[0];
+  expect(Number(row.catalog_revision)).toBe(1);
+  expect(Number(row.source_sequence)).toBe(2);
   const changed = snapshot(2);
   changed.items[0].title = "Conflicting retry";
   await expect(

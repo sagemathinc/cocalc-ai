@@ -8,6 +8,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { LibraryArtifactView } from "./library-artifact-view";
 import { useArtifactNames } from "./artifact-names";
 import { openLibrary } from "./library-navigation";
+import { useNavigationIntent } from "./use-navigation-intent";
 
 interface Props {
   accountId: string;
@@ -30,6 +31,7 @@ export function LibraryEntry(props: Props) {
 }
 
 function ResolvedLibraryEntry({
+  accountId,
   projectId,
   entryId,
   agents,
@@ -37,6 +39,11 @@ function ResolvedLibraryEntry({
   onShowConversation,
   navigation,
 }: Props) {
+  const navigationIntent = useNavigationIntent(true, accountId);
+  const back = () => {
+    navigationIntent.current++;
+    onBack();
+  };
   const { names, setName, resolve } = useArtifactNames();
   const [entry, setEntry] = useState<CatalogEntry>();
   const [error, setError] = useState("");
@@ -81,7 +88,7 @@ function ResolvedLibraryEntry({
   if (!entry) {
     return (
       <section aria-label="Library artifact" style={{ padding: 16 }}>
-        <Button type="text" onClick={onBack}>
+        <Button type="text" onClick={back}>
           Back to Library
         </Button>
         {error ? (
@@ -126,14 +133,22 @@ function ResolvedLibraryEntry({
         )?.name
       }
       onName={async (name) => {
+        const intent = ++navigationIntent.current;
         await setName(
           { project_id: entry.project_id, entry_id: entry.entry_id },
           name,
         );
-        openLibrary(name);
+        if (intent !== navigationIntent.current) return;
+        await openLibrary(name);
       }}
-      onBack={onBack}
-      onShowConversation={() => onShowConversation(target)}
+      onBack={back}
+      onShowConversation={() => {
+        navigationIntent.current++;
+        return onShowConversation({
+          ...target,
+          publicationId: entry.item.publication.operation_id,
+        });
+      }}
     />
   );
 }

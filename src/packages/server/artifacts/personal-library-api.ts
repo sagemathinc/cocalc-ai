@@ -3,12 +3,18 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { PersonalLibraryApi } from "@cocalc/conat/hub/api/personal-library";
+import { createHash } from "node:crypto";
 import { createInterBayPersonalLibraryClient } from "@cocalc/conat/inter-bay/personal-library";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { getEntry } from "@cocalc/server/artifacts/catalog-api";
+import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
+import {
+  parsePersonalLibraryPinKey,
+  validatePersonalLibraryPinKey,
+} from "@cocalc/util/personal-library";
 import { personalLibraryStore } from "./personal-library-store";
 
 async function home(accountId: string): Promise<PersonalLibraryApi> {
@@ -33,13 +39,29 @@ export const personalLibraryApi: PersonalLibraryApi = {
     return (await home(opts.account_id!)).resolve(opts);
   },
   async setPinned(opts) {
+    if (opts.pinned) {
+      const locator = parsePersonalLibraryPinKey(
+        validatePersonalLibraryPinKey(opts.pin_key),
+      );
+      const entry = await getEntry({
+        account_id: opts.account_id,
+        project_id: locator.project_id,
+        entry_id: createHash("sha256")
+          .update(artifactCatalogKey(locator, locator))
+          .digest("hex"),
+      });
+      if (
+        !entry ||
+        entry.chat_path !== locator.chat_path ||
+        entry.item.thread_id !== locator.thread_id ||
+        entry.item.artifact_id !== locator.artifact_id
+      )
+        throw Error("Artifact unavailable");
+    }
     return (await home(opts.account_id!)).setPinned(opts);
   },
   async movePinned(opts) {
     return (await home(opts.account_id!)).movePinned(opts);
-  },
-  async importLegacy(opts) {
-    return (await home(opts.account_id!)).importLegacy(opts);
   },
   async name(opts) {
     const entry = await getEntry({
@@ -68,9 +90,6 @@ export const personalLibraryHomeControl: PersonalLibraryApi = {
   },
   async movePinned(opts) {
     return checked(opts.account_id!, (api) => api.movePinned(opts));
-  },
-  async importLegacy(opts) {
-    return checked(opts.account_id!, (api) => api.importLegacy(opts));
   },
 };
 

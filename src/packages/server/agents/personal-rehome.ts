@@ -14,7 +14,6 @@ export const PERSONAL_AGENT_STATE_TABLES = [
   "personal_library_controls",
   "personal_library_aliases",
   "personal_library_pins",
-  "personal_library_imports",
 ] as const;
 
 export const EXTERNAL_AGENT_STATE_TABLES = [

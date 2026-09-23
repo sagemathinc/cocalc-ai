@@ -29,8 +29,6 @@ const LEGACY_DUAL_SCHEMA_OWNERSHIP: Record<string, string> = {
     "packages/server/accounts/resource-quarantine-audit.ts",
   deleted_projects: "packages/server/projects/hard-delete.ts",
   email_auth_challenges: "packages/server/auth/email/challenge-store.ts",
-  financial_approval_identities: "packages/server/compute/funding/approvals.ts",
-  financial_approval_sessions: "packages/server/compute/funding/approvals.ts",
   legacy_migration_account_link_events:
     "packages/server/legacy-migration/index.ts",
   legacy_migration_financial_claims:

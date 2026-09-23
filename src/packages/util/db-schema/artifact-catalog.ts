@@ -4,8 +4,7 @@
  */
 import { Table } from "./types";
 
-// Internal tables only. Browser reads go through authorized catalog APIs;
-// account-home feed projections remain the target for steady-state discovery.
+// Internal tables only. Browser reads go through authorized catalog APIs.
 Table({
   name: "artifact_catalog_sources",
   rules: {
@@ -44,7 +43,7 @@ Table({
     payload_hash: { type: "string" },
     metadata_hash: {
       type: "string",
-      desc: "Suppresses feed churn when chat writes do not change artifact metadata.",
+      desc: "Skips catalog writes when chat changes leave artifact metadata unchanged.",
     },
     updated_at: { type: "timestamp" },
   },
@@ -81,21 +80,11 @@ Table({
 });
 
 Table({
-  name: "artifact_catalog_outbox",
-  rules: {
-    primary_key: "event_id",
-    pg_indexes: ["project_id", "source_id", "created_at", "published_at"],
-  },
+  name: "artifact_catalog_project_budget",
+  rules: { primary_key: "project_id" },
   fields: {
-    event_id: { type: "uuid" },
-    project_id: { type: "uuid" },
-    source_id: { type: "string" },
-    revision: { type: "integer", pg_type: "BIGINT" },
-    payload: {
-      type: "map",
-      desc: "Complete source projection at this catalog revision, including removal by omission.",
-    },
-    created_at: { type: "timestamp" },
-    published_at: { type: "timestamp" },
+    project_id: { type: "uuid", not_null: true },
+    window_start: { type: "timestamp", not_null: true },
+    work_units: { type: "integer", pg_type: "BIGINT", not_null: true },
   },
 });

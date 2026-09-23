@@ -105,6 +105,35 @@ test("identical source registration does not requeue acknowledged sources", () =
   expect(journal.scans()).toEqual([]);
 });
 
+test("assignment recovery persists a fresh CAS and ignores late failures from old writers", () => {
+  journal.prepare(journal.scans()[0], []);
+  const old = journal.deliveries()[0];
+  const token = journal.beginWrite(source);
+  expect(journal.requeueRegistration(old, "foreign-host-epoch")).toBe(true);
+  const pending = journal.pendingRegistrations()[0];
+  expect(journal.registrationBase(pending)).toEqual({
+    expected_epoch: "foreign-host-epoch",
+  });
+  expect(journal.deliveries()).toEqual([]);
+  expect(() => journal.register(source, "returned-host-epoch")).toThrow(
+    "being written",
+  );
+  journal.finishWrite(token);
+  journal.close();
+  journal = new ArtifactCatalogJournal(join(directory, "journal.sqlite"));
+  expect(journal.pendingRegistrations()).toEqual([pending]);
+  expect(journal.registrationBase(pending)).toEqual({
+    expected_epoch: "foreign-host-epoch",
+  });
+  journal.register(source, "returned-host-epoch");
+  expect(journal.requeueRegistration(old, "late-epoch")).toBe(false);
+  expect(journal.requeueRegistration(pending, "late-epoch")).toBe(false);
+  journal.acknowledge(old);
+  expect(journal.scans()[0].epoch).toBe("returned-host-epoch");
+  expect(journal.prepare(journal.scans()[0], [])).toBe(true);
+  expect(journal.deliveries()[0].sequence).toBe(1);
+});
+
 test("first writes need no hub; registration retry identity survives restart", () => {
   const next = { ...source, chat_path: "/home/user/new.chat" };
   const token = journal.beginWrite(next);

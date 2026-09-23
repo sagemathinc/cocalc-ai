@@ -89,7 +89,8 @@ export async function readArtifactSource(
   try {
     stream = await fs.createReadStream(path, { end: maxBytes });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
     throw err;
   }
   const chunks: Buffer[] = [];

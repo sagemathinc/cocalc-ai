@@ -21,7 +21,7 @@ import type {
   AgentRunStep,
 } from "@cocalc/conat/hub/api/agent";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { resolveCurrentCodexModel } from "@cocalc/util/ai/codex";
 import { getLiteConatClient } from "./runtime-client";
 
 function getProjectId(): string {
@@ -88,10 +88,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getPlannerCodexModel(explicit?: string): string {
-  if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
-    return explicit.trim();
-  }
-  return "gpt-5.4-mini";
+  return resolveCurrentCodexModel(explicit) ?? "gpt-6-luna";
 }
 
 let plannerCodexAgent: Promise<AcpAgent> | undefined;

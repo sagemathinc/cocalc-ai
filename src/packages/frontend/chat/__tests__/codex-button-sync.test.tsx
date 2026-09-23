@@ -318,7 +318,7 @@ describe("CodexConfigButton", () => {
         chatPath="foo.chat"
         projectId="project-1"
         threadConfig={{
-          model: "gpt-5.4",
+          model: "gpt-6-sol",
           reasoning: "medium",
           serviceTier: "fast",
           paymentSource: "subscription",
@@ -347,7 +347,7 @@ describe("CodexConfigButton", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Change model. Current model: gpt-5.4",
+        name: "Change model. Current model: gpt-6-sol",
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "gpt-6-astra" }));
@@ -465,7 +465,7 @@ describe("CodexConfigButton", () => {
     expect(
       codexModelOptionsForCatalog().find(({ default: isDefault }) => isDefault)
         ?.value,
-    ).toBe("gpt-5.6-sol");
+    ).toBe("gpt-6-astra");
     const initial = codexModelOptionsForCatalog().find(
       ({ value }) => value === "gpt-6-astra",
     );

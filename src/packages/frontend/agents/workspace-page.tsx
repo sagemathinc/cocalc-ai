@@ -35,7 +35,11 @@ import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request
 import { AgentSearch } from "./search";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
-import { closedLibraryState, openLibrary } from "./library-navigation";
+import {
+  closedLibraryState,
+  libraryConversationHit,
+  openLibrary,
+} from "./library-navigation";
 import { useArtifactNames } from "./artifact-names";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { agentSearchStore } from "./search-state";
@@ -2642,21 +2646,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         candidate.thread_id === target.threadId,
     );
     if (agent) {
-      await openSearchHit(
-        {
-          agent,
-          threadId: target.threadId,
-          historical: false,
-          hit: {
-            row_id: 0,
-            segment_id: "head",
-            thread_id: target.threadId,
-            artifact_id: target.artifactId,
-            excerpt: "",
-          },
-        },
-        true,
-      );
+      await openSearchHit(libraryConversationHit(agent, target), true);
       return;
     }
     // A link remains useful after an agent is retired or starts a new thread.
@@ -2824,6 +2814,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               setCreatingSourceAgentId(undefined);
               setCreating(true);
               redux.getActions("page").setState({
+                ...closedLibraryState,
                 active_agent_id: "new",
                 active_agent_name: undefined,
               });
@@ -3513,6 +3504,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   selectAgentId(selected.endpoint.agent_id);
                 } else {
                   redux.getActions("page").setState({
+                    ...closedLibraryState,
                     active_agent_id: undefined,
                     active_agent_name: undefined,
                   });

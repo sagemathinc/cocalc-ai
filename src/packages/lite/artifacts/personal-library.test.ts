@@ -1,4 +1,5 @@
 import { LitePersonalLibrary } from "./personal-library";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,8 @@ const entryA = "a".repeat(64);
 const entryB = "b".repeat(64);
 const pinA = JSON.stringify([project_id, "/chat.chat", "thread", "artifact-a"]);
 const pinB = JSON.stringify([project_id, "/chat.chat", "thread", "artifact-b"]);
+const pinEntry = (pin: string) =>
+  createHash("sha256").update(pin).digest("hex");
 
 function open() {
   return new LitePersonalLibrary({
@@ -16,7 +19,7 @@ function open() {
     account_id,
     project_id,
     artifactExists: async (_, entryId) =>
-      entryId === entryA || entryId === entryB,
+      [entryA, entryB, pinEntry(pinA), pinEntry(pinB)].includes(entryId),
   });
 }
 
@@ -69,15 +72,25 @@ test("names are unique per account and previous names remain redirects", async (
   }
 });
 
-test("pins reorder and legacy import cannot overwrite later changes", async () => {
+test("pins require a known artifact and preserve ordering", async () => {
   const library = open();
   try {
-    await library.importLegacy({
-      account_id,
-      aliases: [{ project_id, entry_id: entryA, name: "old", active: true }],
-      pins: [pinA],
-    });
+    await expect(
+      library.setPinned({
+        account_id,
+        pin_key: JSON.stringify([
+          project_id,
+          "/chat.chat",
+          "thread",
+          "missing",
+        ]),
+        pinned: true,
+      }),
+    ).rejects.toThrow("Artifact unavailable");
+    await library.setPinned({ account_id, pin_key: pinA, pinned: true });
     await library.setPinned({ account_id, pin_key: pinB, pinned: true });
+    expect((await library.list({ account_id })).pins).toEqual([pinA, pinB]);
+    await library.setPinned({ account_id, pin_key: pinA, pinned: true });
     expect((await library.list({ account_id })).pins).toEqual([pinA, pinB]);
     await library.movePinned({
       account_id,
@@ -85,7 +98,6 @@ test("pins reorder and legacy import cannot overwrite later changes", async () =
       pin_key: pinB,
       index: 0,
     });
-    await library.importLegacy({ account_id, aliases: [], pins: [pinA] });
     expect((await library.list({ account_id })).pins).toEqual([pinB, pinA]);
     await library.setPinned({ account_id, pin_key: pinA, pinned: false });
     expect((await library.list({ account_id })).pins).toEqual([pinB]);
