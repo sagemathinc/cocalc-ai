@@ -167,6 +167,18 @@ describe("Codex onboarding availability", () => {
   });
 
   it.each([
+    "Use an API to analyze these results",
+    "Use this script to summarize the data",
+  ])("treats the tool in %s as input, not requested software", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request, {
+      kind: "jupyter-python",
+      artifact: "/home/user/Welcome.ipynb",
+    });
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).not.toContain("Create the appropriate source files");
+  });
+
+  it.each([
     "Build a TypeScript app",
     "Build me a simple interactive TypeScript app",
     "Create a website",

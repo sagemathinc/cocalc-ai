@@ -107,6 +107,12 @@ function explicitOutputFormat(goal: string): ExplicitOutputFormat | undefined {
             continue;
           }
         }
+        // An API, script, or app being used is an input/tool, not a request
+        // to build a new one. An explicit notebook tool still selects its format.
+        if (outputFormatFromObject(object) === "notebook") {
+          result = "notebook";
+        }
+        continue;
       }
       result = outputFormatFromObject(object) ?? result;
     }
