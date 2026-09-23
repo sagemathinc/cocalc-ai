@@ -64,11 +64,13 @@ describe("parseRusticSnapshotsOutput", () => {
         id: "snap-old",
         time: new Date("2026-04-30T20:00:00.000Z"),
         summary: { files_new: 1 },
+        tags: [],
       },
       {
         id: "snap-new",
         time: new Date("2026-04-30T21:00:00.000Z"),
         summary: { files_new: 2 },
+        tags: [],
       },
     ]);
   });
@@ -83,6 +85,83 @@ describe("parseRusticSnapshotsOutput", () => {
     ).toThrow(
       "rustic snapshots output truncated while listing backups for project-1",
     );
+  });
+});
+
+describe("scheduled backup replacement", () => {
+  const oldEnv = process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (oldEnv == null)
+      delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    else process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS = oldEnv;
+  });
+
+  function volume() {
+    delete process.env.COCALC_DISABLE_BTRFS_ROLLING_SNAPSHOTS;
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const snapshots: any[] = [
+      {
+        id: "old",
+        time: new Date("2026-09-20T00:00:00.000Z"),
+        tags: [],
+        summary: {},
+      },
+    ];
+    (rustic as any).snapshots = jest.fn(async () => snapshots);
+    (rustic as any).listSnapshotsFresh = jest.fn(async () => snapshots);
+    (rustic as any).snapshotExists = jest.fn(async ({ id }) =>
+      snapshots.some((item) => item.id === id),
+    );
+    (rustic as any).forget = jest.fn(async ({ id }) => {
+      const index = snapshots.findIndex((item) => item.id === id);
+      if (index >= 0) snapshots.splice(index, 1);
+    });
+    return { rustic, snapshots };
+  }
+
+  it("confirms a new backup before removing the old copy at limit one", async () => {
+    const { rustic, snapshots } = volume();
+    const backup = jest.fn(async ({ limit, tags }) => {
+      expect(limit).toBe(2);
+      expect(tags).toEqual(["cocalc-automatic"]);
+      expect(snapshots.map((item) => item.id)).toEqual(["old"]);
+      const created = {
+        id: "new",
+        time: new Date("2026-09-23T00:00:00.000Z"),
+        tags,
+        summary: {},
+        snapshotGeneration: 1,
+      };
+      snapshots.push(created);
+      return created;
+    });
+    (rustic as any).backup = backup;
+    await rustic.update(
+      { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+      { limit: 1 },
+    );
+    expect(snapshots.map((item) => item.id)).toEqual(["new"]);
+  });
+
+  it("retains the old copy when uploading the replacement fails", async () => {
+    const { rustic, snapshots } = volume();
+    (rustic as any).backup = jest.fn(async () => {
+      throw new Error("upload failed");
+    });
+    await expect(
+      rustic.update(
+        { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+        { limit: 1 },
+      ),
+    ).rejects.toThrow("upload failed");
+    expect(snapshots.map((item) => item.id)).toEqual(["old"]);
   });
 });
 

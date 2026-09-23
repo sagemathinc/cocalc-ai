@@ -245,6 +245,49 @@ describe("SubvolumeSnapshots simple-quota snapshot policy", () => {
     expect(subvolume.quota.set).toHaveBeenNthCalledWith(2, 100);
   });
 
+  it("creates a replacement before pruning at a one-snapshot limit", async () => {
+    const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
+    const names = [old];
+    const operations: string[] = [];
+    snapshots.readdir = jest.fn(async () => [...names]);
+    snapshots.hasUnsavedChanges = jest.fn(async () => true);
+    snapshots.create = jest.fn(async (name?: string) => {
+      operations.push("create");
+      names.push(name!);
+    });
+    snapshots.delete = jest.fn(async (name: string) => {
+      operations.push("delete");
+      names.splice(names.indexOf(name), 1);
+    });
+
+    await snapshots.update({ daily: 1 }, { limit: 1 });
+
+    expect(operations).toEqual(["create", "delete"]);
+    expect(names).toHaveLength(1);
+    expect(names[0]).not.toBe(old);
+    expect(snapshots.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ limit: 2 }),
+    );
+  });
+
+  it("preserves the old snapshot when replacement creation fails", async () => {
+    const snapshots = new SubvolumeSnapshots(createSubvolume() as any);
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
+    snapshots.readdir = jest.fn(async () => [old]);
+    snapshots.hasUnsavedChanges = jest.fn(async () => true);
+    snapshots.create = jest.fn(async () => {
+      throw new Error("quota blocked");
+    });
+    snapshots.delete = jest.fn();
+
+    await expect(snapshots.update({ daily: 1 }, { limit: 1 })).rejects.toThrow(
+      "quota blocked",
+    );
+    expect(snapshots.delete).not.toHaveBeenCalled();
+  });
+
   it("rejects pruning the snapshots directory", async () => {
     const snapshots = new SubvolumeSnapshots(
       createSubvolumeWithSnapshots(["snap1"]) as any,

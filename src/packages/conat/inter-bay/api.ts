@@ -4,6 +4,7 @@
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
 
 import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
@@ -279,6 +280,7 @@ export interface ProjectDetails {
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
   course: ProjectCourseInfo;
+  recovery_status?: ProjectRecoveryStatus;
 }
 
 export interface ResolveProjectBayRequest {
@@ -533,6 +535,7 @@ export interface GetProjectDetailsRequest {
   account_id: string;
   // Only inter-bay callers that already verified admin authority may set this.
   trusted_admin?: boolean;
+  include_recovery_status?: boolean;
 }
 
 export interface GetHostConnectionRequest {

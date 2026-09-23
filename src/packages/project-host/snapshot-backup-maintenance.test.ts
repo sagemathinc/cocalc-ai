@@ -5,6 +5,18 @@ const runScheduledBackupMaintenanceMock = jest.fn();
 const admitStorageOperationMock = jest.fn();
 const getStorageAdmissionStatusMock = jest.fn();
 const releaseStorageOperationMock = jest.fn();
+const reportProjectMaintenanceMock = jest.fn();
+const listPendingMaintenanceReportsMock = jest.fn();
+const saveMaintenanceReportMock = jest.fn();
+const markMaintenanceReportDeliveredMock = jest.fn();
+
+jest.mock("./sqlite/maintenance-ledger", () => ({
+  listPendingMaintenanceReports: (...args: any[]) =>
+    listPendingMaintenanceReportsMock(...args),
+  saveMaintenanceReport: (...args: any[]) => saveMaintenanceReportMock(...args),
+  markMaintenanceReportDelivered: (...args: any[]) =>
+    markMaintenanceReportDeliveredMock(...args),
+}));
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -21,6 +33,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostStatusClient: jest.fn(() => ({
     listProjectMaintenanceSchedules: (...args: any[]) =>
       listProjectMaintenanceSchedulesMock(...args),
+    reportProjectMaintenance: (...args: any[]) =>
+      reportProjectMaintenanceMock(...args),
   })),
 }));
 
@@ -73,6 +87,7 @@ describe("snapshot-backup-maintenance", () => {
       {
         project_id: "proj-2",
         last_edited: "2026-04-10T21:00:00.000Z",
+        backup_due_since: "2026-04-10T21:00:00.000Z",
         snapshots: { disabled: true },
         backups: { frequent: 12 },
         max_snapshots_per_project: 8,
@@ -81,6 +96,8 @@ describe("snapshot-backup-maintenance", () => {
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
+    reportProjectMaintenanceMock.mockResolvedValue(undefined);
+    listPendingMaintenanceReportsMock.mockReturnValue([]);
     releaseStorageOperationMock.mockReset();
     admitStorageOperationMock.mockImplementation(
       ({ operation_kind, project_id, allow_starvation_override }) => ({
@@ -107,7 +124,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
       host_id: "host-1",
       active_days: 2,
-      limit: 32,
+      limit: 250,
     });
     expect(admitStorageOperationMock).not.toHaveBeenCalled();
   });
@@ -129,7 +146,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith({
       host_id: "host-1",
       active_days: 2,
-      limit: 32,
+      limit: 250,
     });
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith({
@@ -152,6 +169,7 @@ describe("snapshot-backup-maintenance", () => {
         monthly: 4,
       },
       limit: 5,
+      knownLastBackupAt: undefined,
     });
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_snapshot",
@@ -161,7 +179,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_backup",
       project_id: "proj-2",
-      allow_starvation_override: false,
+      allow_starvation_override: true,
     });
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(2);
   });
@@ -171,6 +189,7 @@ describe("snapshot-backup-maintenance", () => {
       {
         project_id: "proj-1",
         last_edited: "2026-04-10T22:00:00.000Z",
+        backup_due_since: "2026-04-10T22:00:00.000Z",
         snapshots: {},
         backups: {},
         max_snapshots_per_project: 8,
@@ -198,6 +217,7 @@ describe("snapshot-backup-maintenance", () => {
         monthly: 4,
       },
       limit: 5,
+      knownLastBackupAt: undefined,
     });
   });
 
@@ -345,6 +365,7 @@ describe("snapshot-backup-maintenance", () => {
         project_id: "proj-1",
         snapshots: {},
         backups: {},
+        backup_due_since: "2026-04-10T22:00:00.000Z",
       },
     ]);
     admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
@@ -431,5 +452,71 @@ describe("snapshot-backup-maintenance", () => {
 
     releaseRows([]);
     await Promise.all([first, second]);
+  });
+
+  it("walks past two full pages and reaches the final project", async () => {
+    const rows = Array.from({ length: 1003 }, (_, index) => ({
+      project_id: `project-${String(index).padStart(4, "0")}`,
+      last_changed: "2026-04-01T00:00:00.000Z",
+      snapshots: { daily: 1 },
+      backups: { disabled: true },
+    }));
+    listProjectMaintenanceSchedulesMock.mockImplementation(
+      async ({ cursor_project_id, limit }) => {
+        const start = cursor_project_id
+          ? rows.findIndex((row) => row.project_id === cursor_project_id) + 1
+          : 0;
+        return rows.slice(start, start + limit);
+      },
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(5);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1003);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "project-1002" }),
+    );
+  });
+
+  it("starts a newly due snapshot while a previous backup is still running", async () => {
+    let finishBackup!: (value: boolean) => void;
+    const backupRunning = new Promise<boolean>((resolve) => {
+      finishBackup = resolve;
+    });
+    listProjectMaintenanceSchedulesMock
+      .mockResolvedValueOnce([
+        {
+          project_id: "backup-project",
+          backup_due_since: "2026-04-01T00:00:00.000Z",
+          snapshots: { disabled: true },
+          backups: { daily: 1 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          project_id: "snapshot-project",
+          last_changed: "2026-04-01T00:00:00.000Z",
+          snapshots: { daily: 1 },
+          backups: { disabled: true },
+        },
+      ]);
+    runScheduledBackupMaintenanceMock.mockReturnValue(backupRunning);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    const first = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "snapshot-project" }),
+    );
+    finishBackup(true);
+    await first;
   });
 });

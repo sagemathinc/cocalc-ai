@@ -51,6 +51,31 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
+export interface ProjectRecoveryStatus {
+  project_id: string;
+  host_id: string | null;
+  last_backup: string | null;
+  last_changed: string | null;
+  host_last_seen: string | null;
+  snapshot_due_at: string | null;
+  backup_due_at: string | null;
+  snapshot_disabled: boolean;
+  backup_disabled: boolean;
+  snapshot?: {
+    observed_at: string;
+    outcome: string;
+    reason: string | null;
+    due_at: string | null;
+    latest_snapshot_at: string | null;
+  };
+  backup?: {
+    observed_at: string;
+    outcome: string;
+    reason: string | null;
+    due_at: string | null;
+  };
+}
+
 export type ProjectCopyState =
   | "queued"
   | "applying"
@@ -1231,6 +1256,7 @@ export const projects = {
   findBackupFiles: authFirstRequireAccount,
   getBackupFileText: authFirstRequireAccount,
   getBackupQuota: authFirstRequireAccount,
+  getRecoveryStatus: authFirstRequireAccount,
 
   createSnapshot: authFirstRequireAccount,
   deleteSnapshot: authFirstRequireAccount,
@@ -2091,6 +2117,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<{ limit: number }>;
+
+  getRecoveryStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRecoveryStatus>;
 
   /////////////
   // SNAPSHOTS

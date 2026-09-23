@@ -8,6 +8,7 @@ describe("parseCreatedBackupSnapshot", () => {
     const parsed = parseCreatedBackupSnapshot({
       id: "backup-1",
       time: "2026-05-22T12:34:56.000Z",
+      snapshotGeneration: 1234,
       summary: { total_bytes_processed: 123, ignored: true },
     });
 
@@ -15,6 +16,7 @@ describe("parseCreatedBackupSnapshot", () => {
       id: "backup-1",
       time: new Date("2026-05-22T12:34:56.000Z"),
       summary: { total_bytes_processed: 123 },
+      snapshotGeneration: 1234,
     });
   });
 

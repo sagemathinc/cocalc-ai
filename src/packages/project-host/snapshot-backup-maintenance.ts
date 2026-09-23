@@ -1,7 +1,11 @@
 import * as fs from "node:fs";
 
 import getLogger from "@cocalc/backend/logger";
-import { createHostStatusClient } from "@cocalc/conat/project-host/api";
+import {
+  createHostStatusClient,
+  type HostProjectMaintenanceSchedule,
+  type ProjectMaintenanceReport,
+} from "@cocalc/conat/project-host/api";
 import {
   BtrfsMutationDeferredError,
   withBtrfsMutationContext,
@@ -9,6 +13,7 @@ import {
 import {
   DEFAULT_BACKUP_COUNTS,
   DEFAULT_SNAPSHOT_COUNTS,
+  SNAPSHOT_INTERVALS_MS,
   type SnapshotCounts,
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
@@ -22,6 +27,12 @@ import {
   getStorageAdmissionStatus,
 } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
+import { orderProjectMaintenance } from "./maintenance-priority";
+import {
+  listPendingMaintenanceReports,
+  markMaintenanceReportDelivered,
+  saveMaintenanceReport,
+} from "./sqlite/maintenance-ledger";
 
 const logger = getLogger("project-host:snapshot-backup-maintenance");
 
@@ -32,7 +43,7 @@ const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 // mutation lock is global). Operators can raise this only after qualification.
 const DEFAULT_PARALLELISM = 1;
 const DEFAULT_INITIAL_DELAY_MS = DEFAULT_SWEEP_MS;
-const DEFAULT_CANDIDATE_LIMIT = 32;
+const DEFAULT_CANDIDATE_LIMIT = 250;
 const MAX_CANDIDATE_LIMIT = 500;
 const DEFAULT_STARVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARVATION_OVERRIDES_PER_SWEEP = 1;
@@ -44,8 +55,11 @@ const DEFAULT_MEMORY_AVAILABLE_MAX_BYTES = 16 * GIB;
 const DEFAULT_MEMORY_AVAILABLE_HARD_MIN_BYTES = 4 * GIB;
 const DEFAULT_MEMORY_PSI_FULL_AVG10_MAX = 5;
 
-const inFlightProjects = new Set<string>();
-let sweepRunning = false;
+const inFlightSnapshots = new Set<string>();
+const inFlightBackups = new Set<string>();
+let snapshotLaneRunning = false;
+let backupLaneRunning = false;
+let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
@@ -281,7 +295,7 @@ async function runScheduledStorageOperation({
   >;
   allowStarvationOverride?: boolean;
   run: () => Promise<void>;
-}): Promise<{ ran: boolean; starvationOverride: boolean }> {
+}): Promise<{ ran: boolean; starvationOverride: boolean; reason?: string }> {
   const ticket = admitStorageOperation({
     operation_kind,
     project_id,
@@ -294,7 +308,7 @@ async function runScheduledStorageOperation({
       operation_kind,
       reason: ticket.reason,
     });
-    return { ran: false, starvationOverride: false };
+    return { ran: false, starvationOverride: false, reason: ticket.reason };
   }
   if (ticket.starvation_override) {
     logger.info("admitting overdue backup maintenance at low priority", {
@@ -339,7 +353,7 @@ async function runScheduledStorageOperation({
         operation_kind,
         reason: err.reason,
       });
-      return { ran: false, starvationOverride: false };
+      return { ran: false, starvationOverride: false, reason: err.reason };
     }
   } finally {
     ticket.release();
@@ -364,6 +378,57 @@ function backupIsStarved({
 }): boolean {
   const dueSinceMs = parseTimestampMs(backupDueSince);
   return dueSinceMs != null && nowMs - dueSinceMs >= starvationAgeMs;
+}
+
+function backupDueAt(
+  row: { backup_due_since?: string | null; last_backup?: string | null },
+  schedule: SnapshotSchedule,
+): number | undefined {
+  const changedAt = parseTimestampMs(row.backup_due_since);
+  if (changedAt == null) return undefined;
+  const intervals = (
+    Object.keys(SNAPSHOT_INTERVALS_MS) as Array<keyof SnapshotCounts>
+  )
+    .filter((kind) => kind !== "frequent" && schedule[kind] > 0)
+    .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
+  if (!intervals.length) return undefined;
+  const lastBackup = parseTimestampMs(row.last_backup);
+  return lastBackup == null
+    ? changedAt
+    : Math.max(changedAt, lastBackup + Math.min(...intervals));
+}
+
+function snapshotDueAt(
+  row: HostProjectMaintenanceSchedule,
+  schedule: SnapshotSchedule,
+): number | undefined {
+  const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
+  if (changedAt == null) return undefined;
+  const lastSnapshot = parseTimestampMs(row.last_snapshot);
+  if (lastSnapshot != null && changedAt <= lastSnapshot) return undefined;
+  const intervals = (
+    Object.keys(SNAPSHOT_INTERVALS_MS) as Array<keyof SnapshotCounts>
+  )
+    .filter((kind) => schedule[kind] > 0)
+    .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
+  if (!intervals.length) return undefined;
+  return lastSnapshot == null
+    ? changedAt
+    : Math.max(changedAt, lastSnapshot + Math.min(...intervals));
+}
+
+function retryAt(
+  outcome: "succeeded" | "deferred" | "failed" | "skipped",
+  failures: number,
+): string | null {
+  if (outcome === "succeeded" || outcome === "skipped") return null;
+  const base =
+    outcome === "deferred"
+      ? 60_000
+      : Math.min(6 * 60 * 60_000, 5 * 60_000 * 2 ** Math.min(failures, 7));
+  return new Date(
+    Date.now() + Math.floor(base * (0.8 + Math.random() * 0.4)),
+  ).toISOString();
 }
 
 async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
@@ -411,6 +476,20 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     client,
     timeout: 60_000,
   });
+  const report = async (value: ProjectMaintenanceReport) => {
+    saveMaintenanceReport(value);
+    await statusClient.reportProjectMaintenance(value);
+    markMaintenanceReportDelivered(value);
+  };
+  for (const pending of listPendingMaintenanceReports()) {
+    try {
+      await statusClient.reportProjectMaintenance(pending);
+      markMaintenanceReportDelivered(pending);
+    } catch (err) {
+      logger.warn("maintenance status replay paused", { hostId, err });
+      break;
+    }
+  }
   const activeDays = parseNonNegativeInteger(
     process.env.COCALC_PROJECT_HOST_MAINTENANCE_ACTIVE_DAYS,
     DEFAULT_ACTIVE_DAYS,
@@ -445,101 +524,261 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
     });
   }
-  const rows = await statusClient.listProjectMaintenanceSchedules({
-    host_id: hostId,
-    active_days: activeDays,
-    limit: candidateLimit,
-  });
-  if (!rows.length) {
-    logger.debug("no active projects eligible for maintenance", { hostId });
-    return;
+  const listing =
+    scheduleListing ??
+    (async () => {
+      const rows: HostProjectMaintenanceSchedule[] = [];
+      let cursor_project_id: string | undefined;
+      while (true) {
+        const page = await statusClient.listProjectMaintenanceSchedules({
+          host_id: hostId,
+          active_days: activeDays,
+          limit: candidateLimit,
+          ...(cursor_project_id ? { cursor_project_id } : {}),
+        });
+        rows.push(...page);
+        if (page.length < candidateLimit) break;
+        const next = page[page.length - 1]?.project_id;
+        if (!next || next <= (cursor_project_id ?? "")) {
+          throw new Error("maintenance project cursor did not advance");
+        }
+        cursor_project_id = next;
+      }
+      return rows;
+    })();
+  scheduleListing = listing;
+  let rows: HostProjectMaintenanceSchedule[];
+  try {
+    rows = await listing;
+  } finally {
+    if (scheduleListing === listing) scheduleListing = undefined;
   }
-  let starvationOverrideReservations = 0;
-  await runWithParallelism(rows, parallelism, async (row) => {
-    const project_id = `${row.project_id ?? ""}`.trim();
-    if (!project_id) {
-      return;
-    }
-    if (inFlightProjects.has(project_id)) {
-      logger.debug("skipping overlapping maintenance sweep", { project_id });
-      return;
-    }
-    inFlightProjects.add(project_id);
+  if (!rows.length) return;
+  const snapshotRows = orderProjectMaintenance(rows, (row) => {
+    const due = snapshotDueAt(
+      row,
+      mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots),
+    );
+    return due == null ? null : new Date(due).toISOString();
+  });
+  const backupRows = orderProjectMaintenance(
+    rows,
+    (row) => row.backup_due_since,
+  );
+  const snapshotLane = async () => {
+    if (snapshotLaneRunning) return;
+    snapshotLaneRunning = true;
     try {
-      const snapshotSchedule = mergeSchedule(
-        DEFAULT_SNAPSHOT_COUNTS,
-        row.snapshots,
-      );
-      if (!snapshotSchedule.disabled && !sweepRestricted) {
+      await runWithParallelism(snapshotRows, parallelism, async (row) => {
+        const project_id = row.project_id;
+        const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+        const dueAt = snapshotDueAt(row, schedule);
+        const lastObserved = parseTimestampMs(row.last_snapshot_observed_at);
+        const reconciliationDue =
+          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
+        if (
+          !project_id ||
+          schedule.disabled ||
+          sweepRestricted ||
+          (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
+          ((dueAt == null || dueAt > Date.now()) && !reconciliationDue) ||
+          inFlightSnapshots.has(project_id)
+        ) {
+          return;
+        }
+        inFlightSnapshots.add(project_id);
+        const startedAt = Date.now();
         try {
-          await runScheduledStorageOperation({
+          let latest_snapshot_at: string | null = null;
+          const result = await runScheduledStorageOperation({
             hostId,
             project_id,
             operation_kind: "scheduled_snapshot",
-            run: async () =>
-              await runScheduledSnapshotMaintenance({
+            run: async () => {
+              const updated = await runScheduledSnapshotMaintenance({
                 project_id,
-                counts: scheduleToCounts(snapshotSchedule),
+                counts: scheduleToCounts(schedule),
                 limit: row.max_snapshots_per_project ?? undefined,
-              }),
+              });
+              latest_snapshot_at = updated?.latest_snapshot_at ?? null;
+            },
           });
+          const outcome = result.ran ? "succeeded" : "deferred";
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "snapshot",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome,
+            reason: result.reason,
+            latest_snapshot_at,
+            due_at: result.ran
+              ? (() => {
+                  const next = snapshotDueAt(
+                    { ...row, last_snapshot: latest_snapshot_at },
+                    schedule,
+                  );
+                  return next == null ? null : new Date(next).toISOString();
+                })()
+              : dueAt == null
+                ? null
+                : new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            retry_at: retryAt(outcome, row.snapshot_failures ?? 0),
+            consecutive_failures:
+              outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
+          }).catch((err) =>
+            logger.warn("snapshot status report failed", { project_id, err }),
+          );
         } catch (err) {
           logger.warn("scheduled snapshot maintenance failed", {
             hostId,
             project_id,
             err: `${err}`,
           });
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "snapshot",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "failed",
+            reason: `${err}`,
+            due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            retry_at: retryAt("failed", (row.snapshot_failures ?? 0) + 1),
+            consecutive_failures: (row.snapshot_failures ?? 0) + 1,
+          }).catch(() => {});
+        } finally {
+          inFlightSnapshots.delete(project_id);
         }
-      }
-      const backupSchedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
-      if (!backupSchedule.disabled) {
+      });
+    } finally {
+      snapshotLaneRunning = false;
+    }
+  };
+  const backupLane = async () => {
+    if (backupLaneRunning) return;
+    backupLaneRunning = true;
+    let starvationOverrideReservations = 0;
+    try {
+      await runWithParallelism(backupRows, parallelism, async (row) => {
+        const project_id = row.project_id;
+        const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
+        const dueAt = backupDueAt(row, schedule);
+        const lastObserved = parseTimestampMs(row.last_backup_observed_at);
+        const reconciliationDue =
+          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
+        if (
+          project_id &&
+          !schedule.disabled &&
+          (dueAt == null || dueAt > Date.now()) &&
+          reconciliationDue
+        ) {
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "skipped",
+            reason: dueAt == null ? "no_change_due" : "interval_not_due",
+            due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+            retry_at: null,
+            consecutive_failures: 0,
+          }).catch((err) =>
+            logger.warn("backup status report failed", { project_id, err }),
+          );
+          return;
+        }
+        if (
+          !project_id ||
+          schedule.disabled ||
+          dueAt == null ||
+          dueAt > Date.now() ||
+          (parseTimestampMs(row.backup_retry_at) ?? 0) > Date.now() ||
+          inFlightBackups.has(project_id)
+        ) {
+          return;
+        }
         const starved = backupIsStarved({
-          backupDueSince: row.backup_due_since,
+          backupDueSince: new Date(dueAt).toISOString(),
           starvationAgeMs,
         });
         const allowStarvationOverride =
           starved &&
           starvationOverrideEligible &&
           starvationOverrideReservations < starvationOverrideLimit;
-        if (sweepRestricted && !allowStarvationOverride) {
-          return;
-        }
-        if (allowStarvationOverride) {
-          starvationOverrideReservations += 1;
-        }
+        if (sweepRestricted && !allowStarvationOverride) return;
+        if (allowStarvationOverride) starvationOverrideReservations += 1;
+        inFlightBackups.add(project_id);
+        const startedAt = Date.now();
         try {
-          await runScheduledStorageOperation({
+          let created = false;
+          const result = await runScheduledStorageOperation({
             hostId,
             project_id,
             operation_kind: "scheduled_backup",
             allowStarvationOverride,
-            run: async () =>
-              await runScheduledBackupMaintenance({
+            run: async () => {
+              created = await runScheduledBackupMaintenance({
                 project_id,
-                counts: scheduleToCounts(backupSchedule, {
-                  allowFrequent: false,
-                }),
+                counts: scheduleToCounts(schedule, { allowFrequent: false }),
                 limit: row.max_backups_per_project ?? undefined,
-              }),
+                knownLastBackupAt: row.last_backup,
+              });
+            },
           });
+          const outcome = result.ran
+            ? created
+              ? "succeeded"
+              : "skipped"
+            : "deferred";
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome,
+            reason: result.reason,
+            due_at: created ? null : new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            retry_at: retryAt(outcome, row.backup_failures ?? 0),
+            consecutive_failures:
+              outcome === "succeeded" ? 0 : (row.backup_failures ?? 0),
+          }).catch((err) =>
+            logger.warn("backup status report failed", { project_id, err }),
+          );
         } catch (err) {
           logger.warn("scheduled backup maintenance failed", {
             hostId,
             project_id,
             err: `${err}`,
           });
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "failed",
+            reason: `${err}`,
+            due_at: new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            retry_at: retryAt("failed", (row.backup_failures ?? 0) + 1),
+            consecutive_failures: (row.backup_failures ?? 0) + 1,
+          }).catch(() => {});
+        } finally {
+          inFlightBackups.delete(project_id);
         }
-      }
-    } catch (err) {
-      logger.warn("snapshot/backup maintenance failed", {
-        hostId,
-        project_id,
-        err: `${err}`,
       });
     } finally {
-      inFlightProjects.delete(project_id);
+      backupLaneRunning = false;
     }
-  });
+  };
+  await Promise.all([snapshotLane(), backupLane()]);
 }
 
 export async function runProjectSnapshotBackupMaintenanceSweepOnce({
@@ -547,18 +786,7 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
 }: {
   hostId: string;
 }) {
-  if (sweepRunning) {
-    logger.debug("skipping overlapping snapshot/backup maintenance sweep", {
-      hostId,
-    });
-    return;
-  }
-  sweepRunning = true;
-  try {
-    await runProjectSnapshotBackupMaintenanceSweepUnlocked({ hostId });
-  } finally {
-    sweepRunning = false;
-  }
+  await runProjectSnapshotBackupMaintenanceSweepUnlocked({ hostId });
 }
 
 export function startProjectSnapshotBackupMaintenance({
@@ -628,5 +856,7 @@ export const _test = {
   parsePressureFullAvg10,
   maintenanceMemoryDecision,
   backupIsStarved,
+  backupDueAt,
+  snapshotDueAt,
   runScheduledStorageOperation,
 };

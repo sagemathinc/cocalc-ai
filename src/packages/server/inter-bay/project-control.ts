@@ -45,6 +45,7 @@ import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
+import { getProjectRecoveryStatusLocal } from "@cocalc/server/projects/maintenance-status";
 import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
 import { assignProjectHost as assignProjectHostLocal } from "@cocalc/server/conat/api/projects";
 import { PROJECT_DANGEROUS_INTERNAL_AUTH } from "@cocalc/server/conat/api/project-dangerous-auth";
@@ -827,6 +828,12 @@ export async function handleProjectDetailsGet(
   const details = await loadProjectReadDetailsDirect(req.project_id);
   if (details == null) {
     throw new Error(`project ${req.project_id} not found`);
+  }
+  if (req.include_recovery_status) {
+    return {
+      ...details,
+      recovery_status: await getProjectRecoveryStatusLocal(req.project_id),
+    };
   }
   return details;
 }

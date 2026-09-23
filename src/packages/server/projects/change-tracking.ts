@@ -115,7 +115,10 @@ export async function markProjectBackedUp({
   await getPool().query(
     `
       UPDATE projects
-         SET last_backup = $2::TIMESTAMP,
+         SET last_backup = GREATEST(
+               COALESCE(last_backup, to_timestamp(0)),
+               $2::TIMESTAMP
+             ),
              last_backup_generation = CASE
                WHEN $3::BIGINT IS NULL THEN last_backup_generation
                ELSE GREATEST(COALESCE(last_backup_generation, 0), $3::BIGINT)

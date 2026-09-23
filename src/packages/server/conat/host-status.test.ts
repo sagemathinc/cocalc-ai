@@ -90,6 +90,12 @@ jest.mock("@cocalc/server/membership/effective-limits", () => ({
     getEffectiveMembershipUsageLimitsMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/maintenance-status", () => ({
+  __esModule: true,
+  ensureProjectMaintenanceStatusTable: jest.fn(async () => undefined),
+  recordProjectMaintenanceStatus: jest.fn(async () => true),
+}));
+
 jest.mock("./host-project-ownership", () => ({
   __esModule: true,
   classifyHostProvisionedInventory: jest.fn(),
@@ -131,7 +137,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
-  it("lists active and backup-due provisioned projects for the host", async () => {
+  it("pages provisioned projects in stable project-id order", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
       .mockResolvedValueOnce({
@@ -155,12 +161,23 @@ describe("listHostProjectMaintenanceSchedules", () => {
       listHostProjectMaintenanceSchedules({
         host_id: "host-1",
         active_days: 2,
+        cursor_project_id: "proj-0",
       }),
     ).resolves.toEqual([
       {
         project_id: "proj-1",
+        storage_account_id: "owner-1",
+        storage_service_class: "free",
+        storage_priority: 0,
         last_edited: "2026-04-10T22:00:00.000Z",
         last_backup: null,
+        last_snapshot: null,
+        last_snapshot_observed_at: null,
+        last_backup_observed_at: null,
+        snapshot_retry_at: null,
+        backup_retry_at: null,
+        snapshot_failures: 0,
+        backup_failures: 0,
         backup_due_since: "2026-04-10T22:00:00.000Z",
         snapshots: { daily: 5 },
         backups: { weekly: 2, disabled: true },
@@ -177,17 +194,63 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("provisioned IS TRUE"),
-      ["host-1", 2, 100],
+      ["host-1", "proj-0", 100],
     );
     const maintenanceSql = queryMock.mock.calls[1][0];
     expect(maintenanceSql).toContain("last_backup IS NULL");
     expect(maintenanceSql).toContain("> last_backup");
     expect(maintenanceSql).toContain("backups->>'disabled'");
-    expect(maintenanceSql).toContain("INTERVAL '1 day'");
-    expect(maintenanceSql).toContain(
-      "ORDER BY backup_due_since ASC NULLS LAST",
-    );
+    expect(maintenanceSql).toContain("project_id > $2");
+    expect(maintenanceSql).toContain("ORDER BY project_id ASC");
     expect(maintenanceSql).toContain("LIMIT $3");
+  });
+
+  it("uses the storage payer for priority and the owner for existing limits", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-1",
+            owner_account_id: "owner-1",
+            usage_account_id: "sponsor-1",
+            users: {
+              "owner-1": { group: "owner" },
+              "sponsor-1": { group: "collaborator" },
+            },
+          },
+        ],
+      });
+    resolveMembershipForAccountMock.mockImplementation(async (account_id) =>
+      account_id === "sponsor-1"
+        ? { source: "subscription", subscription_cost: 10 }
+        : { source: "free" },
+    );
+    getEffectiveMembershipUsageLimitsMock.mockImplementation((resolution) =>
+      resolution.source === "subscription"
+        ? {
+            max_snapshots_per_project: 30,
+            max_backups_per_project: 10,
+            shared_compute_priority: 5,
+          }
+        : { max_snapshots_per_project: 8, max_backups_per_project: 4 },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    const rows = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+
+    expect(rows[0]).toMatchObject({
+      storage_account_id: "sponsor-1",
+      storage_service_class: "paying",
+      storage_priority: 5,
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 4,
+    });
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("owner-1");
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("sponsor-1");
   });
 });
 

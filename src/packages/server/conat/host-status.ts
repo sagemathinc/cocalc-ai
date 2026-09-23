@@ -27,17 +27,22 @@ import {
   shouldDeleteHostProjectUpdate,
 } from "./host-project-ownership";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import {
+  ensureProjectMaintenanceStatusTable,
+  recordProjectMaintenanceStatus,
+} from "@cocalc/server/projects/maintenance-status";
 
 const logger = getLogger("server:conat:host-status");
 
 export async function listHostProjectMaintenanceSchedules({
   host_id,
-  active_days,
   limit,
+  cursor_project_id,
 }: {
   host_id: string;
   active_days?: number;
   limit?: number;
+  cursor_project_id?: string;
 }): Promise<HostProjectMaintenanceSchedule[]> {
   if (!host_id) {
     throw Error("host_id is required");
@@ -49,26 +54,11 @@ export async function listHostProjectMaintenanceSchedules({
   if (!hostRows.length) {
     throw Error("host not found");
   }
+  await ensureProjectMaintenanceStatusTable();
 
-  const normalizedActiveDays = Math.max(
-    0,
-    Math.floor(Number(active_days ?? 0) || 0),
-  );
-  const params: any[] = [host_id];
-  let activeWhere = "";
-  if (normalizedActiveDays > 0) {
-    params.push(normalizedActiveDays);
-    activeWhere = ` AND (
-      COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) >= NOW() - ($2::int * INTERVAL '1 day')
-      OR (
-        COALESCE(backups->>'disabled', 'false') <> 'true'
-        AND (
-          last_backup IS NULL
-          OR COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) > last_backup
-        )
-      )
-    )`;
-  }
+  // Walk a stable project-id cursor. An activity cutoff or debt-ordered LIMIT
+  // can hide projects behind the first page forever.
+  const params: any[] = [host_id, cursor_project_id ?? ""];
   const normalizedLimit = Math.max(
     1,
     Math.min(500, Math.floor(Number(limit ?? 100) || 100)),
@@ -80,16 +70,46 @@ export async function listHostProjectMaintenanceSchedules({
     last_edited: Date | string | null;
     last_changed: Date | string | null;
     last_backup: Date | string | null;
+    last_snapshot: Date | string | null;
+    last_snapshot_observed_at: Date | string | null;
+    last_backup_observed_at: Date | string | null;
+    snapshot_retry_at: Date | string | null;
+    backup_retry_at: Date | string | null;
+    snapshot_failures: number | null;
+    backup_failures: number | null;
     backup_due_since: Date | string | null;
     snapshots: HostProjectMaintenanceSchedule["snapshots"];
     backups: HostProjectMaintenanceSchedule["backups"];
     owner_account_id: string | null;
+    usage_account_id: string | null;
+    users: Record<string, { group?: string }> | null;
   }>(
     `SELECT
        project_id,
        last_edited,
        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
        last_backup,
+       (SELECT latest_snapshot_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS last_snapshot,
+       (SELECT observed_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS last_snapshot_observed_at,
+       (SELECT observed_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS last_backup_observed_at,
+       (SELECT retry_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_retry_at,
+       (SELECT retry_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_retry_at,
+       (SELECT consecutive_failures FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_failures,
+       (SELECT consecutive_failures FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_failures,
        CASE
          WHEN COALESCE(backups->>'disabled', 'false') <> 'true'
            AND (
@@ -105,6 +125,8 @@ export async function listHostProjectMaintenanceSchedules({
        END AS backup_due_since,
        snapshots,
        backups,
+       usage_account_id::text AS usage_account_id,
+       users,
        (
          SELECT account_id_text::text
          FROM jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
@@ -114,10 +136,9 @@ export async function listHostProjectMaintenanceSchedules({
      FROM projects
      WHERE host_id=$1
        AND provisioned IS TRUE
-       AND deleted IS NOT TRUE${activeWhere}
-     ORDER BY backup_due_since ASC NULLS LAST,
-              last_edited ASC NULLS LAST,
-              project_id ASC
+       AND deleted IS NOT TRUE
+       AND project_id > $2
+     ORDER BY project_id ASC
      LIMIT ${limitParam}`,
     params,
   );
@@ -128,32 +149,68 @@ export async function listHostProjectMaintenanceSchedules({
       max_backups_per_project: number;
     }
   >();
-  const ownerIds = Array.from(
+  const accountIds = Array.from(
     new Set(
       rows
-        .map((row) => `${row.owner_account_id ?? ""}`.trim())
-        .filter((owner_account_id) => owner_account_id.length > 0),
+        .flatMap((row) => {
+          const usageId = `${row.usage_account_id ?? ""}`.trim();
+          const ownerId = `${row.owner_account_id ?? ""}`.trim();
+          return [
+            ownerId,
+            usageId && row.users?.[usageId]?.group ? usageId : ownerId,
+          ];
+        })
+        .filter((account_id) => account_id.length > 0),
     ),
   );
-  await Promise.all(
-    ownerIds.map(async (owner_account_id) => {
-      const resolution = await resolveMembershipForAccount(owner_account_id);
-      const limits = getEffectiveMembershipUsageLimits(resolution);
-      limitsByOwner.set(owner_account_id, {
-        max_snapshots_per_project:
-          limits.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
-        max_backups_per_project:
-          limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
-      });
-    }),
-  );
+  const serviceByAccount = new Map<
+    string,
+    { service_class: "paying" | "free"; priority: number }
+  >();
+  for (let offset = 0; offset < accountIds.length; offset += 16) {
+    await Promise.all(
+      accountIds.slice(offset, offset + 16).map(async (account_id) => {
+        const resolution = await resolveMembershipForAccount(account_id);
+        const limits = getEffectiveMembershipUsageLimits(resolution);
+        limitsByOwner.set(account_id, {
+          max_snapshots_per_project:
+            limits.max_snapshots_per_project ??
+            DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+          max_backups_per_project:
+            limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+        });
+        serviceByAccount.set(account_id, {
+          service_class:
+            (resolution.source === "subscription" &&
+              Number(resolution.subscription_cost) > 0) ||
+            (resolution.source === "grant" &&
+              (resolution.grant_purchase_id != null ||
+                resolution.site_license_id != null ||
+                resolution.team_license_id != null))
+              ? "paying"
+              : "free",
+          priority: limits.shared_compute_priority ?? 0,
+        });
+      }),
+    );
+  }
   return rows.map((row) => {
-    const owner_account_id = `${row.owner_account_id ?? ""}`.trim();
-    const limits = owner_account_id
-      ? limitsByOwner.get(owner_account_id)
-      : undefined;
+    const usageId = `${row.usage_account_id ?? ""}`.trim();
+    const storage_account_id =
+      usageId && row.users?.[usageId]?.group
+        ? usageId
+        : `${row.owner_account_id ?? ""}`.trim();
+    // Existing snapshot and backup entitlements belong to the project owner.
+    // Funding priority may follow a different usage account; changing limits
+    // here would silently alter the product's storage entitlement policy.
+    const ownerId = `${row.owner_account_id ?? ""}`.trim();
+    const limits = ownerId ? limitsByOwner.get(ownerId) : undefined;
+    const service = serviceByAccount.get(storage_account_id);
     const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
+      storage_account_id: storage_account_id || null,
+      storage_service_class: service?.service_class ?? "free",
+      storage_priority: service?.priority ?? 0,
       last_edited:
         row.last_edited == null
           ? null
@@ -179,6 +236,38 @@ export async function listHostProjectMaintenanceSchedules({
         : row.last_backup instanceof Date
           ? row.last_backup.toISOString()
           : `${row.last_backup}`;
+    schedule.last_snapshot =
+      row.last_snapshot == null
+        ? null
+        : row.last_snapshot instanceof Date
+          ? row.last_snapshot.toISOString()
+          : `${row.last_snapshot}`;
+    schedule.last_snapshot_observed_at =
+      row.last_snapshot_observed_at == null
+        ? null
+        : row.last_snapshot_observed_at instanceof Date
+          ? row.last_snapshot_observed_at.toISOString()
+          : `${row.last_snapshot_observed_at}`;
+    schedule.last_backup_observed_at =
+      row.last_backup_observed_at == null
+        ? null
+        : row.last_backup_observed_at instanceof Date
+          ? row.last_backup_observed_at.toISOString()
+          : `${row.last_backup_observed_at}`;
+    schedule.snapshot_retry_at =
+      row.snapshot_retry_at == null
+        ? null
+        : row.snapshot_retry_at instanceof Date
+          ? row.snapshot_retry_at.toISOString()
+          : `${row.snapshot_retry_at}`;
+    schedule.backup_retry_at =
+      row.backup_retry_at == null
+        ? null
+        : row.backup_retry_at instanceof Date
+          ? row.backup_retry_at.toISOString()
+          : `${row.backup_retry_at}`;
+    schedule.snapshot_failures = row.snapshot_failures ?? 0;
+    schedule.backup_failures = row.backup_failures ?? 0;
     schedule.backup_due_since =
       row.backup_due_since == null
         ? null
@@ -482,12 +571,21 @@ export async function initHostStatusService() {
           next_cursor_account_id: last?.account_id,
         };
       },
-      async listProjectMaintenanceSchedules({ host_id, active_days, limit }) {
+      async listProjectMaintenanceSchedules({
+        host_id,
+        active_days,
+        limit,
+        cursor_project_id,
+      }) {
         return await listHostProjectMaintenanceSchedules({
           host_id,
           active_days,
           limit,
+          cursor_project_id,
         });
+      },
+      async reportProjectMaintenance(report) {
+        await recordProjectMaintenanceStatus(report);
       },
     },
   });

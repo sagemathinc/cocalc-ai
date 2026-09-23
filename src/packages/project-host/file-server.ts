@@ -1924,13 +1924,10 @@ async function reportBackupSuccess(
 ): Promise<void> {
   const client = getMasterConatClient();
   if (!client) {
-    logger.warn("backup success not reported: master conat client missing", {
-      project_id,
-    });
-    return;
+    throw new Error("backup success not reported: master conat client missing");
   }
   const hostId = getLocalHostId();
-  if (!hostId) return;
+  if (!hostId) throw new Error("backup success not reported: host id missing");
   await callHub({
     client,
     host_id: hostId,
@@ -3151,13 +3148,20 @@ export async function runScheduledSnapshotMaintenance({
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
+}): Promise<{ latest_snapshot_at: string | null }> {
   await updateSnapshots({
     project_id,
     counts,
     limit,
     quotaMode: "async",
   });
+  const vol = await getVolume(project_id);
+  const latest_snapshot_at =
+    (await vol.snapshots.readdir())
+      .filter((name) => !Number.isNaN(Date.parse(name)))
+      .sort()
+      .at(-1) ?? null;
+  return { latest_snapshot_at };
 }
 
 async function allSnapshotUsage({
@@ -4118,7 +4122,7 @@ async function createBackup({
               : undefined;
             try {
               backupResult = await vol.rustic.backup({
-                tags,
+                tags: tags ?? ["cocalc-manual"],
                 parent,
                 progress,
                 runner: async ({ src, host, timeout, tags, progress }) =>
@@ -4518,16 +4522,18 @@ async function updateBackupsUnlocked({
   project_id,
   counts,
   limit,
+  knownLastBackupAt,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
+  knownLastBackupAt?: string | null;
+}): Promise<boolean> {
   if (legacyProjectArchiveRestoreActive.has(project_id)) {
     logger.info("skipping scheduled backup during legacy project restore", {
       project_id,
     });
-    return;
+    return false;
   }
   const legacyInitialBackupOverride =
     legacyProjectInitialBackupEgressExempt.has(project_id)
@@ -4535,61 +4541,70 @@ async function updateBackupsUnlocked({
       : undefined;
   const createdBackupIds = new Set<string>();
   let newestCreatedBackupTime: Date | undefined;
+  let newestCreatedBackupGeneration: number | undefined;
+  let retentionError: unknown;
   const vol = await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
     run: async () => {
       const refreshed = await getVolumeForBackup(project_id);
-      await refreshed.rustic.update(counts, {
-        limit,
-        tags:
-          legacyInitialBackupOverride == null
-            ? undefined
-            : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-        beforeCreate: async () => {
-          const managedBackupPolicy = await checkManagedBackupAllowedBestEffort(
-            {
-              project_id,
-              managed_egress_override: legacyInitialBackupOverride,
-            },
-          );
-          if (!managedBackupPolicy.allowed) {
-            throw new Error(managedBackupPolicy.message);
-          }
-        },
-        afterCreate: async (created) => {
-          const backup = parseCreatedBackupSnapshot(created);
-          if (!backup?.id) return;
-          createdBackupIds.add(backup.id);
-          if (
-            backup.time &&
-            (!newestCreatedBackupTime || backup.time > newestCreatedBackupTime)
-          ) {
-            newestCreatedBackupTime = backup.time;
-          }
-          if (backup.summary) {
-            await recordManagedBackupEgressBestEffort({
-              project_id,
-              backup_id: backup.id,
-              tags:
-                legacyInitialBackupOverride == null
-                  ? undefined
-                  : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-              summary: backup.summary,
-              managed_egress_override: legacyInitialBackupOverride,
-            });
-          }
-        },
-      });
+      try {
+        await refreshed.rustic.update(counts, {
+          limit,
+          tags:
+            legacyInitialBackupOverride == null
+              ? undefined
+              : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+          beforeCreate: async () => {
+            const managedBackupPolicy =
+              await checkManagedBackupAllowedBestEffort({
+                project_id,
+                managed_egress_override: legacyInitialBackupOverride,
+              });
+            if (!managedBackupPolicy.allowed) {
+              throw new Error(managedBackupPolicy.message);
+            }
+          },
+          afterCreate: async (created) => {
+            const backup = parseCreatedBackupSnapshot(created);
+            if (!backup?.id) return;
+            createdBackupIds.add(backup.id);
+            if (
+              backup.time &&
+              (!newestCreatedBackupTime ||
+                backup.time > newestCreatedBackupTime)
+            ) {
+              newestCreatedBackupTime = backup.time;
+              newestCreatedBackupGeneration = backup.snapshotGeneration;
+            }
+            if (backup.summary) {
+              await recordManagedBackupEgressBestEffort({
+                project_id,
+                backup_id: backup.id,
+                tags:
+                  legacyInitialBackupOverride == null
+                    ? undefined
+                    : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+                summary: backup.summary,
+                managed_egress_override: legacyInitialBackupOverride,
+              });
+            }
+          },
+        });
+      } catch (err) {
+        if (createdBackupIds.size === 0) throw err;
+        retentionError = err;
+      }
       await rusticBackupBrowser.markStale(refreshed.fs.rusticRepo);
       return refreshed;
     },
   });
   let reportTime = newestCreatedBackupTime;
+  let repositoryBackups: Awaited<ReturnType<typeof vol.rustic.snapshots>> = [];
   try {
-    const backups = await vol.rustic.snapshots();
+    repositoryBackups = await vol.rustic.snapshots();
     reportTime = newestBackupTimeForIds({
-      backups,
+      backups: repositoryBackups,
       backupIds: createdBackupIds,
       fallback: reportTime,
     });
@@ -4599,32 +4614,46 @@ async function updateBackupsUnlocked({
   if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
     legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
-  if (createdBackupIds.size > 0 && reportTime) {
-    try {
-      const generation = await getGeneration(
-        projectMountpoint(project_id),
-      ).catch(() => null);
-      await reportBackupSuccess(project_id, reportTime, generation);
-    } catch (err) {
-      logger.warn("scheduled backup success report failed", {
-        project_id,
-        err,
-      });
+  if (createdBackupIds.size === 0 && knownLastBackupAt !== undefined) {
+    const knownTime =
+      knownLastBackupAt == null
+        ? Number.NEGATIVE_INFINITY
+        : Date.parse(knownLastBackupAt);
+    const latest = repositoryBackups.at(-1);
+    if (
+      latest?.time &&
+      (knownLastBackupAt == null || Number.isFinite(knownTime)) &&
+      latest.time.getTime() > knownTime
+    ) {
+      // The previous upload committed but its bay report may have been lost.
+      // Do not claim the current volume generation for that older copy.
+      reportTime = latest.time;
     }
   }
+  if (reportTime) {
+    await reportBackupSuccess(
+      project_id,
+      reportTime,
+      createdBackupIds.size > 0 ? newestCreatedBackupGeneration : null,
+    );
+  }
+  if (retentionError) throw retentionError;
+  return createdBackupIds.size > 0;
 }
 
 async function updateBackupsIfVolumeCurrent({
   project_id,
   counts,
   limit,
+  knownLastBackupAt,
   expectedLifecycleGeneration,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
+  knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
-}): Promise<void> {
+}): Promise<boolean> {
   const result = await withCurrentProjectVolumeLifecycleLock(
     project_id,
     expectedLifecycleGeneration,
@@ -4635,21 +4664,21 @@ async function updateBackupsIfVolumeCurrent({
           "skipping backup maintenance because project data is unavailable",
           { project_id },
         );
-        return true;
+        return false;
       }
       if (await isSubvolumeReadonly(volume.path)) {
         logger.info(
           "skipping backup maintenance because project archival is in progress",
           { project_id },
         );
-        return true;
+        return false;
       }
-      await updateBackupsUnlocked({
+      return await updateBackupsUnlocked({
         project_id,
         counts,
         limit,
+        knownLastBackupAt,
       });
-      return true;
     },
   );
   if (result === undefined) {
@@ -4663,6 +4692,7 @@ async function updateBackupsIfVolumeCurrent({
       },
     );
   }
+  return result ?? false;
 }
 
 async function updateBackups({
@@ -4693,25 +4723,30 @@ export async function runScheduledBackupMaintenance({
   project_id,
   counts,
   limit = 30,
+  knownLastBackupAt,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
+  knownLastBackupAt?: string | null;
+}): Promise<boolean> {
   const expectedLifecycleGeneration =
     currentProjectVolumeLifecycleGeneration(project_id);
-  await withBackupParallelLimit({
-    project_id,
-    op: "runScheduledBackupMaintenance",
-    queue_if_busy: false,
-    run: async () =>
-      await updateBackupsIfVolumeCurrent({
-        project_id,
-        counts,
-        limit,
-        expectedLifecycleGeneration,
-      }),
-  });
+  return (
+    (await withBackupParallelLimit({
+      project_id,
+      op: "runScheduledBackupMaintenance",
+      queue_if_busy: false,
+      run: async () =>
+        await updateBackupsIfVolumeCurrent({
+          project_id,
+          counts,
+          limit,
+          knownLastBackupAt,
+          expectedLifecycleGeneration,
+        }),
+    })) ?? false
+  );
 }
 
 export async function getBackups({

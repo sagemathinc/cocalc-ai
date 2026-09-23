@@ -80,6 +80,7 @@ interface Snapshot {
   id: string;
   time: Date;
   summary: { [key: string]: string | number };
+  tags: string[];
 }
 
 interface CreatedSnapshot extends Snapshot {
@@ -132,9 +133,16 @@ export function parseRusticSnapshotsOutput({
     );
   }
   const result = flattenSnapshotGroups(parsed)
-    .map(({ time, id, summary }) => {
+    .map(({ time, id, summary, tags }) => {
       if (!time || !id) return null;
-      return { time: new Date(time), id, summary: summary ?? {} };
+      return {
+        time: new Date(time),
+        id,
+        summary: summary ?? {},
+        tags: Array.isArray(tags)
+          ? tags.filter((tag) => typeof tag === "string")
+          : [],
+      };
     })
     .filter((snapshot): snapshot is Snapshot => snapshot != null);
   result.sort(field_cmp("time"));
@@ -393,6 +401,7 @@ export class SubvolumeRustic {
         time: backupTime,
         id,
         summary,
+        tags: tags ?? [],
         snapshotGeneration,
       };
     } finally {
@@ -547,11 +556,63 @@ export class SubvolumeRustic {
   };
 
   update = async (counts?: Partial<SnapshotCounts>, opts?) => {
-    return await updateRollingSnapshots({
+    const limit = opts?.limit;
+    const normalizedLimit =
+      limit == null ? undefined : Math.max(0, Math.floor(Number(limit)));
+    const snapshots = await this.snapshots();
+    const automatic = (snapshot: Snapshot) =>
+      snapshot.tags.length === 0 || snapshot.tags.includes("cocalc-automatic");
+    const protectedCount = snapshots.filter(
+      (snapshot) => !automatic(snapshot),
+    ).length;
+    if (
+      normalizedLimit === 0 ||
+      (normalizedLimit != null && protectedCount >= normalizedLimit)
+    ) {
+      throw new ConatError(`there is a limit of ${limit} backups`, {
+        code: 507,
+      });
+    }
+    // Existing untagged backups followed the automatic retention policy before
+    // source tags existed. New manual and archival backups have distinct tags.
+    const pruneToLimit = async (target: number) => {
+      if (normalizedLimit == null) return;
+      const all = await this.listSnapshotsFresh();
+      const eligible = all.filter(automatic).sort(field_cmp("time"));
+      let excess = all.length - target;
+      // Preserve the newest automatic backup even if protected backups already
+      // consume the entitlement; a failed replacement must never remove it.
+      for (const snapshot of eligible.slice(0, -1)) {
+        if (excess <= 0) break;
+        await this.forget({ id: snapshot.id });
+        excess--;
+      }
+      if (excess > 0) {
+        throw new ConatError(`there is a limit of ${limit} backups`, {
+          code: 507,
+        });
+      }
+    };
+    if (normalizedLimit != null && snapshots.length > normalizedLimit) {
+      await pruneToLimit(normalizedLimit);
+    }
+    await updateRollingSnapshots({
       snapshots: this,
       counts: { ...DEFAULT_BACKUP_COUNTS, ...counts },
-      opts,
+      opts: {
+        ...opts,
+        tags: ["cocalc-automatic", ...(opts?.tags ?? [])],
+        limit: normalizedLimit == null ? undefined : normalizedLimit + 1,
+        afterCreate: async (created: unknown) => {
+          const id = (created as CreatedSnapshot | undefined)?.id;
+          if (!id || !(await this.snapshotExists({ id }))) {
+            throw new Error("new backup is not confirmed in the repository");
+          }
+          await opts?.afterCreate?.(created);
+        },
+      },
     });
+    if (normalizedLimit != null) await pruneToLimit(normalizedLimit);
   };
 
   // Snapshot compat api, which is useful for rolling backups.
@@ -576,7 +637,13 @@ export class SubvolumeRustic {
   };
 
   readdir = async (): Promise<string[]> => {
-    return (await this.snapshots()).map(({ time }) => time.toISOString());
+    return (await this.snapshots())
+      .filter(
+        (snapshot) =>
+          snapshot.tags.length === 0 ||
+          snapshot.tags.includes("cocalc-automatic"),
+      )
+      .map(({ time }) => time.toISOString());
   };
 
   // TODO -- for now just always assume we do...

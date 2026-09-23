@@ -193,6 +193,7 @@ import {
   getProjectBackupInfrastructureStatus,
   getProjectBackupShardAdminStatus,
 } from "@cocalc/server/project-backup";
+import { getProjectRecoveryHealth } from "@cocalc/server/projects/maintenance-status";
 import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
@@ -2059,6 +2060,7 @@ export async function getLaunchHealth({
     settingsResult,
     loadResult,
     backupsResult,
+    projectRecoveryResult,
     latencyResult,
     setupResult,
     configResult,
@@ -2069,6 +2071,7 @@ export async function getLaunchHealth({
     getServerSettings(),
     getBayLoad({ account_id, bay_id: currentBay.bay_id }),
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
+    getProjectRecoveryHealth(),
     getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
     getSiteSetupStatus({ account_id }),
     getGlobalConfigPropagationStatus({
@@ -2086,6 +2089,10 @@ export async function getLaunchHealth({
   const load = loadResult.status === "fulfilled" ? loadResult.value : undefined;
   const backups =
     backupsResult.status === "fulfilled" ? backupsResult.value : undefined;
+  const projectRecovery =
+    projectRecoveryResult.status === "fulfilled"
+      ? projectRecoveryResult.value
+      : undefined;
   const latency =
     latencyResult.status === "fulfilled" ? latencyResult.value : undefined;
   const setup =
@@ -2317,6 +2324,36 @@ export async function getLaunchHealth({
             : "Bay backup is not enabled.",
       details:
         backupsResult.status === "rejected" ? [`${backupsResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "project-recovery",
+      label: "Project snapshots and backups",
+      level:
+        projectRecoveryResult.status === "rejected"
+          ? "critical"
+          : !projectRecovery
+            ? "unknown"
+            : projectRecovery.paying_snapshot_overdue > 0 ||
+                projectRecovery.paying_backup_overdue > 0
+              ? "critical"
+              : projectRecovery.unknown_snapshot_status > 0 ||
+                  projectRecovery.unknown_backup_status > 0 ||
+                  projectRecovery.oldest_snapshot_delay_seconds > 0 ||
+                  projectRecovery.oldest_backup_delay_seconds > 0
+                ? "warning"
+                : "healthy",
+      summary: !projectRecovery
+        ? "Unable to read project recovery status."
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown.`,
+      details:
+        projectRecoveryResult.status === "rejected"
+          ? [`${projectRecoveryResult.reason}`]
+          : projectRecovery
+            ? [
+                `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
+                `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
+              ]
+            : [],
     }),
     launchHealthCheck({
       id: "site-setup",

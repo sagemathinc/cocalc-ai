@@ -1040,14 +1040,39 @@ export interface HostRegisterOnPremTunnelResponse {
 
 export interface HostProjectMaintenanceSchedule {
   project_id: string;
+  storage_account_id?: string | null;
+  storage_service_class?: "paying" | "free";
+  storage_priority?: number;
   last_edited: string | null;
   last_changed?: string | null;
   last_backup?: string | null;
+  last_snapshot?: string | null;
+  last_snapshot_observed_at?: string | null;
+  last_backup_observed_at?: string | null;
+  snapshot_retry_at?: string | null;
+  backup_retry_at?: string | null;
+  snapshot_failures?: number;
+  backup_failures?: number;
   backup_due_since?: string | null;
   snapshots: SnapshotSchedule | null;
   backups: SnapshotSchedule | null;
   max_snapshots_per_project?: number | null;
   max_backups_per_project?: number | null;
+}
+
+export interface ProjectMaintenanceReport {
+  host_id: string;
+  project_id: string;
+  kind: "snapshot" | "backup";
+  storage_service_class?: "paying" | "free";
+  observed_at: string;
+  outcome: "succeeded" | "deferred" | "failed" | "skipped";
+  reason?: string;
+  due_at?: string | null;
+  latest_snapshot_at?: string | null;
+  duration_ms?: number;
+  retry_at?: string | null;
+  consecutive_failures?: number;
 }
 
 export interface HostRegistryRegistration {
@@ -1159,7 +1184,9 @@ export interface HostStatusApi {
     host_id: string;
     active_days?: number;
     limit?: number;
+    cursor_project_id?: string;
   }) => Promise<HostProjectMaintenanceSchedule[]>;
+  reportProjectMaintenance: (report: ProjectMaintenanceReport) => Promise<void>;
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;

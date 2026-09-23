@@ -7,6 +7,7 @@ export type BackupSnapshotRef = {
   id: string;
   time?: Date;
   summary?: Record<string, string | number>;
+  snapshotGeneration?: number;
 };
 
 export function parseCreatedBackupSnapshot(
@@ -23,6 +24,12 @@ export function parseCreatedBackupSnapshot(
     id: record.id,
     time: parseBackupDate(record.time),
     summary: parseBackupSummary(record.summary),
+    snapshotGeneration:
+      typeof record.snapshotGeneration === "number" &&
+      Number.isSafeInteger(record.snapshotGeneration) &&
+      record.snapshotGeneration > 0
+        ? record.snapshotGeneration
+        : undefined,
   };
 }
 

@@ -12,6 +12,7 @@ import { getSubvolumeField, invalidateSubvolumeMetadata } from "./subvolume";
 import { parsePlainQgroupShow } from "./subvolume-quota";
 import { btrfsQuotasDisabled } from "./config";
 import { assertValidSnapshotName } from "@cocalc/util/snapshot-name";
+import { isISODate } from "@cocalc/util/misc";
 import {
   invalidateBtrfsQgroupShowRaw,
   withBtrfsMutationLock,
@@ -426,7 +427,48 @@ export class SubvolumeSnapshots {
 
   // update the rolling snapshots scheduleGener
   update = async (counts?: Partial<SnapshotCounts>, opts?) => {
-    return await updateRollingSnapshots({ snapshots: this, counts, opts });
+    const limit = opts?.limit;
+    if (limit == null) {
+      return await updateRollingSnapshots({ snapshots: this, counts, opts });
+    }
+    const normalizedLimit = Math.max(0, Math.floor(Number(limit)));
+    if (!Number.isFinite(normalizedLimit) || normalizedLimit === 0) {
+      throw new ConatError(`there is a limit of ${limit} snapshots`, {
+        code: 507,
+      });
+    }
+    const namedCount = (await this.readdir()).filter(
+      (name) => !isISODate(name),
+    ).length;
+    if (namedCount >= normalizedLimit) {
+      throw new ConatError(`there is a limit of ${limit} snapshots`, {
+        code: 507,
+      });
+    }
+    const pruneToLimit = async () => {
+      const names = await this.readdir();
+      const automatic = names.filter(isISODate).sort();
+      let excess = names.length - normalizedLimit;
+      // The newest automatic recovery point and named/manual snapshots survive
+      // even when they prevent us from meeting a reduced entitlement.
+      for (const name of automatic.slice(0, -1)) {
+        if (excess <= 0) break;
+        await this.delete(name);
+        excess--;
+      }
+      if (excess > 0) {
+        throw new ConatError(`there is a limit of ${limit} snapshots`, {
+          code: 507,
+        });
+      }
+    };
+    await pruneToLimit();
+    await updateRollingSnapshots({
+      snapshots: this,
+      counts,
+      opts: { ...opts, limit: normalizedLimit + 1 },
+    });
+    await pruneToLimit();
   };
 
   // has newly written changes since last snapshot
