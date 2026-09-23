@@ -14,6 +14,18 @@ import ArtifactBrowser, { ArtifactResults } from "../artifact-browser";
 import { ArtifactBrowserButton } from "../artifact-discovery";
 import { ChatEmbeddingOptionsProvider } from "../embedding-options";
 
+// rc-util returns "test-id" for every generated ID under Jest. A hovered
+// tooltip can then steal the drawer's aria-labelledby target. Use production
+// React ID semantics while retaining explicit IDs supplied by components.
+jest.mock("@rc-component/util/lib/hooks/useId", () => ({
+  __esModule: true,
+  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
+  default: (id?: string) => {
+    const generated = jest.requireActual("react").useId();
+    return id || generated;
+  },
+}));
+
 test("Agents scope cannot include unrelated chatroom threads", async () => {
   const rows: any[] = [];
   const syncdb = Object.assign(new EventEmitter(), {
@@ -238,6 +250,31 @@ test("agent toolbar toggles the panel and Open Library closes it before delegati
   expect(onBrowseAllArtifacts).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+test("an open toolbar tooltip does not replace the artifact dialog's accessible name", async () => {
+  render(
+    <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+      <ArtifactBrowserButton
+        actions={
+          {
+            syncdb: Object.assign(new EventEmitter(), { get: () => [] }),
+          } as any
+        }
+        threadId="one"
+        compact
+      />
+    </ChatEmbeddingOptionsProvider>,
+  );
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Browse artifacts" });
+  await user.hover(trigger);
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip).toHaveTextContent("Browse artifacts");
+  await user.click(trigger);
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveAccessibleName("Artifacts");
+  expect(dialog.getAttribute("aria-labelledby")).not.toBe(tooltip.id);
 });
 
 test.each(["inactive", "thread change"])(

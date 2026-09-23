@@ -4880,7 +4880,9 @@ async function getSnapshotFileText({
 }
 
 export async function artifactCatalogFilesystem(project_id: string) {
-  await getOrEnsureVolume(project_id);
+  // Catalog reconciliation must not provision storage or turn an unavailable
+  // project volume into an empty source snapshot.
+  await getVolume(project_id);
   return getProjectSandboxFilesystem(project_id);
 }
 

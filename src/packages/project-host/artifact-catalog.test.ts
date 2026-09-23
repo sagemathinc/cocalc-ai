@@ -49,7 +49,9 @@ let wrap: jest.Mock;
 let callHub: jest.Mock;
 let getClient: jest.Mock;
 let getHostId: jest.Mock;
+let getProject: jest.Mock;
 let listProjects: jest.Mock;
+let lifecycle: typeof import("./project-volume-lifecycle");
 let warn: jest.Mock;
 let now: number;
 
@@ -67,6 +69,7 @@ beforeEach(async () => {
   callHub = jest.fn().mockResolvedValue({ paths: [] });
   getClient = jest.fn().mockReturnValue({ connection: "master" });
   getHostId = jest.fn().mockReturnValue("authenticated-host");
+  getProject = jest.fn((project_id: string) => ({ project_id }));
   listProjects = jest.fn().mockReturnValue([{ project_id: projectA }]);
   warn = jest.fn();
   instance = {
@@ -100,8 +103,9 @@ beforeEach(async () => {
     getMasterConatClient: getClient,
   }));
   jest.doMock("./sqlite/hosts", () => ({ getLocalHostId: getHostId }));
-  jest.doMock("./sqlite/projects", () => ({ listProjects }));
+  jest.doMock("./sqlite/projects", () => ({ getProject, listProjects }));
   adapter = require("./artifact-catalog");
+  lifecycle = require("./project-volume-lifecycle");
 });
 
 afterEach(async () => {
@@ -220,6 +224,56 @@ test("transport errors retain their identity rather than becoming successful ing
   await expect(options.send(snapshot)).rejects.toBe(failure);
 });
 
+test.each([
+  {
+    current: { epoch: "foreign", writer_host_id: "previous-host" },
+    expectedEpoch: "local",
+    recovery: { epoch: "foreign" },
+  },
+  { current: null, expectedEpoch: "local", recovery: { epoch: null } },
+  {
+    current: { epoch: "local", writer_host_id: "previous-host" },
+    expectedEpoch: "local",
+    recovery: undefined,
+  },
+  { current: null, expectedEpoch: null, recovery: undefined },
+  {
+    current: { epoch: "newer", writer_host_id: "authenticated-host" },
+    expectedEpoch: "local",
+    recovery: undefined,
+  },
+  {
+    current: { epoch: "newer", writer_host_id: "authenticated-host" },
+    expectedEpoch: null,
+    recovery: undefined,
+  },
+])(
+  "writer recovery preserves assignment and same-host fencing: %j",
+  async ({ current, expectedEpoch, recovery }) => {
+    start();
+    callHub.mockResolvedValueOnce(current);
+    await expect(
+      options.recoverWriter!(source, expectedEpoch),
+    ).resolves.toEqual(recovery);
+    expect(callHub).toHaveBeenCalledTimes(1);
+    expect(callHub).toHaveBeenCalledWith(rpc("writerState", source));
+    expect(getFilesystem).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["host is not the current project owner", "connection lost"])(
+  "writer recovery does not rotate after a failed authority lookup: %s",
+  async (message) => {
+    start();
+    const failure = Error(message);
+    callHub.mockRejectedValueOnce(failure);
+    await expect(options.recoverWriter!(source, "local")).rejects.toBe(failure);
+    expect(callHub).toHaveBeenCalledTimes(1);
+    expect(callHub).toHaveBeenCalledWith(rpc("writerState", source));
+    expect(getFilesystem).not.toHaveBeenCalled();
+  },
+);
+
 test("reads the requested canonical source through the sandbox, extracts it, and closes the sandbox", async () => {
   start();
   const rows = [{ event: "chat-event" }];
@@ -259,15 +313,151 @@ test("filesystem acquisition errors propagate without reading or closing an unac
   expect(closeFilesystem).not.toHaveBeenCalled();
 });
 
-test("an in-flight read keeps its filesystem open until the reader settles", async () => {
+test.each([undefined, { project_id: projectA, local_only: true }])(
+  "defers stale journal work for an unavailable local project: %j",
+  async (project) => {
+    start();
+    getProject.mockReturnValue(project);
+    await expect(options.read(source)).rejects.toThrow("not available locally");
+    await expect(options.writerState(source)).rejects.toThrow(
+      "not available locally",
+    );
+    await expect(options.recoverWriter!(source, "epoch")).rejects.toThrow(
+      "not available locally",
+    );
+    await expect(options.register(registration)).rejects.toThrow(
+      "not available locally",
+    );
+    await expect(options.send(snapshot)).rejects.toThrow(
+      "not available locally",
+    );
+    expect(getFilesystem).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(callHub).not.toHaveBeenCalled();
+  },
+);
+
+test("missing volumes defer projection without sending an empty snapshot", async () => {
+  const { ArtifactCatalogJournal } = jest.requireActual(
+    "@cocalc/backend/artifacts/journal",
+  ) as typeof import("@cocalc/backend/artifacts/journal");
+  const { ArtifactCatalogProjector } = jest.requireActual(
+    "@cocalc/backend/artifacts/projector",
+  ) as typeof import("@cocalc/backend/artifacts/projector");
+  start();
+  getFilesystem.mockRejectedValue(Error("project volume does not exist"));
+  const journal = new ArtifactCatalogJournal(join(directory, "replay.sqlite"));
+  try {
+    journal.register(source, "epoch");
+    const projector = new ArtifactCatalogProjector({
+      journal,
+      read: options.read,
+      send: options.send,
+      onError: options.onError,
+    });
+    expect(await projector.runOnce()).toEqual({ scanned: 0, delivered: 0 });
+    expect(read).not.toHaveBeenCalled();
+    expect(callHub).not.toHaveBeenCalled();
+    expect(journal.deliveries()).toEqual([]);
+    expect(journal.scans(16, now + 60_000)).toHaveLength(1);
+  } finally {
+    journal.close();
+  }
+});
+
+test("a read queued behind deletion or archival cannot recreate the removed volume", async () => {
+  start();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let volumePresent = true;
+  const ensureVolume = jest.fn(() => {
+    volumePresent = true;
+  });
+  getFilesystem.mockImplementation(async () => {
+    if (!volumePresent) ensureVolume();
+    return fs;
+  });
+  lifecycle.invalidateProjectVolumeLifecycle(projectA);
+  const cleanup = lifecycle.withProjectVolumeLifecycleLock(
+    projectA,
+    async () => {
+      await gate;
+      volumePresent = false;
+      getProject.mockReturnValue(undefined);
+    },
+  );
+  const pending = options.read(source);
+  const rejection = expect(pending).rejects.toThrow("not available locally");
+  release();
+  await cleanup;
+  await rejection;
+  expect(volumePresent).toBe(false);
+  expect(ensureVolume).not.toHaveBeenCalled();
+  expect(getFilesystem).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+  expect(extract).not.toHaveBeenCalled();
+});
+
+test("cleanup invalidates an in-flight read and waits for its sandbox to close", async () => {
   start();
   let release!: (rows: unknown[]) => void;
+  let entered!: () => void;
+  const inside = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
   const gate = new Promise<unknown[]>((resolve) => {
     release = resolve;
   });
-  read.mockReturnValueOnce(gate);
+  read.mockImplementationOnce(() => {
+    entered();
+    return gate;
+  });
   const pending = options.read(source);
-  await Promise.resolve();
+  const rejection = expect(pending).rejects.toThrow(
+    "project volume lifecycle changed",
+  );
+  await inside;
+  lifecycle.invalidateProjectVolumeLifecycle(projectA);
+  const removeVolume = jest.fn(() => {
+    expect(closeFilesystem).toHaveBeenCalledTimes(1);
+    getProject.mockReturnValue(undefined);
+  });
+  const cleanup = lifecycle.withProjectVolumeLifecycleLock(
+    projectA,
+    async () => {
+      removeVolume();
+    },
+  );
+  try {
+    await Promise.resolve();
+    expect(removeVolume).not.toHaveBeenCalled();
+  } finally {
+    release([]);
+    await rejection;
+    await cleanup;
+  }
+  expect(removeVolume).toHaveBeenCalledTimes(1);
+  expect(extract).not.toHaveBeenCalled();
+});
+
+test("an in-flight read keeps its filesystem open until the reader settles", async () => {
+  start();
+  let release!: (rows: unknown[]) => void;
+  let entered!: () => void;
+  const inside = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<unknown[]>((resolve) => {
+    release = resolve;
+  });
+  read.mockImplementationOnce(() => {
+    entered();
+    return gate;
+  });
+  const pending = options.read(source);
+  await inside;
   try {
     expect(read).toHaveBeenCalledTimes(1);
     expect(closeFilesystem).not.toHaveBeenCalled();

@@ -8,7 +8,7 @@ import type {
   ArtifactCatalogSnapshot,
   ArtifactCatalogSource,
 } from "@cocalc/util/artifact-catalog";
-import { ArtifactCatalogJournal } from "./journal";
+import { ArtifactCatalogJournal, type CatalogRegistration } from "./journal";
 import { ArtifactCatalogRegistrar } from "./registrar";
 import { ArtifactCatalogProjector } from "./projector";
 
@@ -34,6 +34,11 @@ export class ArtifactCatalogService {
         typeof ArtifactCatalogRegistrar
       >[0]["register"];
       send: (snapshot: ArtifactCatalogSnapshot) => Promise<void>;
+      /** Authenticated current-host lookup; never replace another same-host writer. */
+      recoverWriter?: (
+        source: ArtifactCatalogSource,
+        expectedEpoch: string | null,
+      ) => Promise<{ epoch: string | null } | undefined>;
       /** One bounded background page, never called by opening an artifact browser. */
       discover: () => Promise<ArtifactCatalogSource[]>;
       discoveryIntervalMs?: number;
@@ -59,15 +64,39 @@ export class ArtifactCatalogService {
     this.registrar = new ArtifactCatalogRegistrar({
       journal: this.journal,
       writerState: options.writerState,
-      register: options.register,
+      register: async (request) => {
+        try {
+          return await options.register(request);
+        } catch (err) {
+          await this.recoverWriter(request, request.expected_epoch);
+          throw err;
+        }
+      },
       onError: options.onError,
     });
     this.projector = new ArtifactCatalogProjector({
       journal: this.journal,
       read: options.read,
-      send: options.send,
+      send: async (snapshot) => {
+        try {
+          await options.send(snapshot);
+        } catch (err) {
+          await this.recoverWriter(snapshot, snapshot.epoch);
+          throw err;
+        }
+      },
       onError: options.onError,
     });
+  }
+
+  private async recoverWriter(
+    source: CatalogRegistration | ArtifactCatalogSnapshot,
+    expectedEpoch: string | null,
+  ) {
+    if (this.stopped || !this.options.recoverWriter) return;
+    const current = await this.options.recoverWriter(source, expectedEpoch);
+    if (this.stopped || !current || current.epoch === expectedEpoch) return;
+    this.journal.requeueRegistration(source, current.epoch);
   }
 
   start() {

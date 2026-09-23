@@ -4,12 +4,15 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ForeignArtifactSource, {
   FOREIGN_ARTIFACT_CONVERSATION_EVENT,
+  openForeignArtifactSource,
   waitForArtifactSourceReady,
 } from "./foreign-artifact-source";
 import { ProjectContext } from "@cocalc/frontend/project/context";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
+import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 
 const mockOpen = jest.fn();
+const mockStat = jest.fn();
 let mockActions: any;
 let mockReadOnly = false;
 let mockAllowed = true;
@@ -18,7 +21,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: () => ({
       open_file: mockOpen,
-      fs: () => ({ stat: jest.fn().mockResolvedValue({}) }),
+      fs: () => ({ stat: mockStat }),
     }),
     getEditorActions: () => mockActions,
     getActions: () => mockActions,
@@ -72,6 +75,11 @@ const target = {
 let db: any;
 beforeEach(() => {
   mockOpen.mockReset().mockResolvedValue(undefined);
+  mockStat.mockReset().mockResolvedValue({});
+  jest
+    .mocked(ensureProjectReduxRuntime)
+    .mockReset()
+    .mockResolvedValue(undefined);
   mockReadOnly = false;
   mockAllowed = true;
   mockComponent = {
@@ -153,6 +161,40 @@ test("unmount cancels a pending source readiness wait", async () => {
   expect(db.listenerCount("ready")).toBe(0);
   expect(db.listenerCount("error")).toBe(0);
 });
+
+test("an already cancelled source request does not initialize or open a runtime", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    openForeignArtifactSource(target, controller.signal),
+  ).rejects.toThrow("cancelled");
+  expect(ensureProjectReduxRuntime).not.toHaveBeenCalled();
+  expect(mockStat).not.toHaveBeenCalled();
+  expect(mockOpen).not.toHaveBeenCalled();
+});
+
+test.each(["runtime", "stat"])(
+  "unmount during %s loading prevents opening the source conversation",
+  async (stage) => {
+    let resolve!: () => void;
+    const pending = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const blocked =
+      stage === "runtime" ? jest.mocked(ensureProjectReduxRuntime) : mockStat;
+    blocked.mockReturnValueOnce(pending);
+    const mounted = render(view());
+    await waitFor(() => expect(blocked).toHaveBeenCalledTimes(1));
+    mounted.unmount();
+    await act(async () => {
+      resolve();
+      await pending;
+    });
+    expect(mockOpen).not.toHaveBeenCalled();
+    if (stage === "runtime") expect(mockStat).not.toHaveBeenCalled();
+    expect(db.listenerCount("ready")).toBe(0);
+  },
+);
 
 function ContextProbe() {
   const project = useContext(ProjectContext);

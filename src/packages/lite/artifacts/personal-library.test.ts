@@ -90,6 +90,8 @@ test("pins require a known artifact and preserve ordering", async () => {
     await library.setPinned({ account_id, pin_key: pinA, pinned: true });
     await library.setPinned({ account_id, pin_key: pinB, pinned: true });
     expect((await library.list({ account_id })).pins).toEqual([pinA, pinB]);
+    await library.setPinned({ account_id, pin_key: pinA, pinned: true });
+    expect((await library.list({ account_id })).pins).toEqual([pinA, pinB]);
     await library.movePinned({
       account_id,
       visible: [pinA, pinB],

@@ -200,6 +200,35 @@ test("unlink reconciles a missing source as an empty snapshot", async () => {
   expect(await readArtifactSource(fs, "a.chat")).toEqual([]);
 });
 
+test("replacing a source directory with a file sends an empty removal snapshot", async () => {
+  await fs.mkdir("tree");
+  await fs.writeFile("tree/a.chat", "{}\n");
+  clean("tree/a.chat");
+  journalArtifactFilesystem(fs, project_id, journal);
+  await fs.rm("tree", { recursive: true });
+  await fs.writeFile("tree", "now a regular file");
+  expect(journal.scans()).toHaveLength(1);
+  await expect(readArtifactSource(fs, "tree/a.chat")).resolves.toEqual([]);
+
+  const send = jest.fn();
+  const onError = jest.fn();
+  await new ArtifactCatalogProjector({
+    journal,
+    read: async () => {
+      await readArtifactSource(fs, "tree/a.chat");
+      return [];
+    },
+    send,
+    onError,
+  }).runOnce();
+  expect(onError).not.toHaveBeenCalled();
+  expect(send).toHaveBeenCalledWith(
+    expect.objectContaining({ ...source("tree/a.chat"), items: [] }),
+  );
+  expect(journal.scans()).toEqual([]);
+  expect(journal.deliveries()).toEqual([]);
+});
+
 test("reads JSON lines and accepts exactly the byte limit, including multibyte text", async () => {
   const content = '\n {"value":"\u00e9"}\n\t\n{"second":2}\n';
   await fs.writeFile("a.chat", content);
@@ -237,9 +266,12 @@ test.each([
   },
 );
 
-test("missing sources return [] but non-ENOENT errors retain their identity", async () => {
-  expect(await readArtifactSource(fs, "missing.chat")).toEqual([]);
-  const failure = Object.assign(Error("denied"), { code: "EACCES" });
-  jest.spyOn(fs, "createReadStream").mockRejectedValueOnce(failure);
-  await expect(readArtifactSource(fs, "a.chat")).rejects.toBe(failure);
-});
+test.each(["EACCES", "EPERM", "EIO", "EISDIR"])(
+  "missing sources return [] but %s errors retain their identity",
+  async (code) => {
+    expect(await readArtifactSource(fs, "missing.chat")).toEqual([]);
+    const failure = Object.assign(Error("read failed"), { code });
+    jest.spyOn(fs, "createReadStream").mockRejectedValueOnce(failure);
+    await expect(readArtifactSource(fs, "a.chat")).rejects.toBe(failure);
+  },
+);

@@ -1,15 +1,18 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LibraryEntry } from "./library-entry";
+import { openLibrary } from "./library-navigation";
 
 const getEntry = jest.fn();
 const view = jest.fn();
 let artifactNames: any[] = [];
 const resolveName = jest.fn();
+const setName = jest.fn();
+jest.mock("./library-navigation", () => ({ openLibrary: jest.fn() }));
 jest.mock("./artifact-names", () => ({
   useArtifactNames: () => ({
     names: artifactNames,
-    setName: jest.fn(),
+    setName,
     resolve: resolveName,
   }),
 }));
@@ -30,6 +33,7 @@ jest.mock("./library-artifact-view", () => ({
         <button onClick={props.onShowConversation}>
           Open source conversation
         </button>
+        <button onClick={() => void props.onName("renamed")}>Save name</button>
       </div>
     );
   },
@@ -57,6 +61,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   artifactNames = [];
   resolveName.mockReset();
+  setName.mockReset().mockResolvedValue(undefined);
   getEntry.mockResolvedValue(entry);
 });
 
@@ -96,10 +101,72 @@ test("direct links resolve without an agent; source navigation is explicit", asy
   await user.click(
     screen.getByRole("button", { name: "Open source conversation" }),
   );
-  expect(props.onShowConversation).toHaveBeenCalledWith(target);
+  expect(props.onShowConversation).toHaveBeenCalledWith({
+    ...target,
+    publicationId: "old-publication",
+  });
   await user.click(screen.getByRole("button", { name: "Back to Library" }));
   expect(props.onBack).toHaveBeenCalled();
 });
+
+test("keyboard naming navigates to the saved name while the entry is current", async () => {
+  const user = userEvent.setup();
+  render(<LibraryEntry {...props} />);
+  const save = await screen.findByRole("button", { name: "Save name" });
+  save.focus();
+  await user.keyboard("{Enter}");
+  expect(setName).toHaveBeenCalledWith(
+    { project_id: "project", entry_id: "entry" },
+    "renamed",
+  );
+  await waitFor(() => expect(openLibrary).toHaveBeenCalledWith("renamed"));
+});
+
+test.each(["history", "unmount", "route", "account", "back", "conversation"])(
+  "a delayed rename cannot override newer %s navigation",
+  async (navigation) => {
+    let finish!: () => void;
+    setName.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    const rendered = render(<LibraryEntry {...props} />);
+    await user.click(await screen.findByRole("button", { name: "Save name" }));
+    expect(setName).toHaveBeenCalledTimes(1);
+    switch (navigation) {
+      case "history":
+        act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+        break;
+      case "unmount":
+        rendered.unmount();
+        break;
+      case "route":
+        rendered.rerender(
+          <LibraryEntry {...props} projectId="other-project" />,
+        );
+        break;
+      case "account":
+        rendered.rerender(
+          <LibraryEntry {...props} accountId="other-account" />,
+        );
+        break;
+      case "back":
+        await user.click(
+          screen.getByRole("button", { name: "Back to Library" }),
+        );
+        break;
+      case "conversation":
+        await user.click(
+          screen.getByRole("button", { name: "Open source conversation" }),
+        );
+        break;
+    }
+    await act(async () => finish());
+    expect(openLibrary).not.toHaveBeenCalled();
+  },
+);
 
 test("account and route changes discard stale content and late responses", async () => {
   let resolve: (value: unknown) => void = () => {};

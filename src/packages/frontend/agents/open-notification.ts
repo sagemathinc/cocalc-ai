@@ -1,5 +1,6 @@
 import { redux } from "@cocalc/frontend/app-framework";
 import { personalAgentApi } from "./api";
+import { closedLibraryState } from "./library-navigation";
 
 // Only notifications opened from the Agents surface should stay in that surface.
 export async function openAgentNotification(
@@ -20,6 +21,7 @@ export async function openAgentNotification(
   if (redux.getStore("page")?.get("active_top_tab") !== "agents") return false;
   const page = redux.getActions("page");
   page.setState({
+    ...closedLibraryState,
     active_agent_id: agent.endpoint.agent_id,
     active_agent_name: agent.name,
   });

@@ -286,6 +286,63 @@ test("epoch registration supports lost-response retry but fences stale registrat
   ).toEqual({ revision: 1, replayed: true });
 });
 
+test("A to B to A host reassignment permits recovery only by the current host", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(), authority);
+  const secondHost = { ...authority, host_id: randomUUID() };
+  await getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+    project_id,
+    secondHost.host_id,
+  ]);
+  await expect(
+    getArtifactCatalogWriterState(source, authority),
+  ).rejects.toThrow("owner/host");
+  await expect(
+    registerArtifactCatalogSource(source, authority, epoch, randomUUID()),
+  ).rejects.toThrow("owner/host");
+  const secondEpoch = await registerArtifactCatalogSource(
+    source,
+    secondHost,
+    epoch,
+    randomUUID(),
+  );
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(), epoch: secondEpoch, items: [] },
+    secondHost,
+  );
+  await getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+    project_id,
+    host_id,
+  ]);
+  expect(await getArtifactCatalogWriterState(source, authority)).toMatchObject({
+    epoch: secondEpoch,
+    writer_host_id: secondHost.host_id,
+  });
+  await expect(
+    applyArtifactCatalogSnapshot(snapshot(2), authority),
+  ).rejects.toThrow("stale");
+  const recoveredEpoch = await registerArtifactCatalogSource(
+    source,
+    authority,
+    secondEpoch,
+    randomUUID(),
+  );
+  await expect(
+    registerArtifactCatalogSource(
+      source,
+      secondHost,
+      recoveredEpoch,
+      randomUUID(),
+    ),
+  ).rejects.toThrow("owner/host");
+  await applyArtifactCatalogSnapshot(
+    { ...snapshot(), epoch: recoveredEpoch },
+    authority,
+  );
+  expect((await readProjectArtifactCatalog(project_id)).entries).toHaveLength(
+    1,
+  );
+});
+
 test("source update failure rolls back metadata and sequence advancement", async () => {
   const pool = getPool();
   await pool.query(

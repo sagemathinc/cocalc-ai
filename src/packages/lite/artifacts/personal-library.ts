@@ -193,8 +193,12 @@ export class LitePersonalLibrary implements PersonalLibraryApi {
     )
       throw Error("Artifact unavailable");
     return this.transaction(() => {
-      const pins = this.snapshot().pins.filter((pin) => pin !== key);
-      if (opts.pinned) pins.push(key);
+      const current = this.snapshot().pins;
+      const pins = opts.pinned
+        ? current.includes(key)
+          ? current
+          : [...current, key]
+        : current.filter((pin) => pin !== key);
       if (
         pins.length > PERSONAL_LIBRARY_MAX_PINS ||
         pins.reduce((bytes, pin) => bytes + Buffer.byteLength(pin), 0) >

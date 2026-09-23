@@ -223,6 +223,47 @@ export class ArtifactCatalogJournal {
       : undefined;
   }
 
+  /** Start a new fenced registration only after the adapter confirms reassignment. */
+  requeueRegistration(
+    source: CatalogRegistration | ArtifactCatalogSnapshot,
+    expected_epoch: string | null,
+  ): boolean {
+    return this.transaction(() => {
+      const current = this.db
+        .prepare(
+          "SELECT epoch,registration_id FROM artifact_sources WHERE project_id=? AND chat_path=?",
+        )
+        .get(source.project_id, source.chat_path);
+      if (
+        !current ||
+        ("registration_id" in source
+          ? current.epoch !== "" ||
+            current.registration_id !== source.registration_id
+          : current.epoch !== source.epoch)
+      )
+        return false;
+      const registration_id = randomUUID();
+      this.db
+        .prepare(
+          `UPDATE artifact_sources SET epoch='',registration_id=?,sequence=0,
+          generation=generation+1,dirty=1,retry_at=0,failures=0
+          WHERE project_id=? AND chat_path=?`,
+        )
+        .run(registration_id, source.project_id, source.chat_path);
+      this.db
+        .prepare(
+          "DELETE FROM artifact_deliveries WHERE project_id=? AND chat_path=?",
+        )
+        .run(source.project_id, source.chat_path);
+      this.db
+        .prepare("DELETE FROM artifact_registrations WHERE registration_id=?")
+        .run(current.registration_id!);
+      // Freeze the newly authorized CAS base before issuing any network request.
+      this.prepareRegistration({ ...source, registration_id }, expected_epoch);
+      return true;
+    });
+  }
+
   /** Freeze the CAS base before sending; retries must never steal a newer writer. */
   prepareRegistration(
     source: CatalogRegistration,
