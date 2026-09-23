@@ -5,9 +5,17 @@
 
 import Decimal from "decimal.js-light";
 
+import { getSiteFundedCodexPrice } from "./site-funded-codex-prices";
+
+export {
+  getSiteFundedCodexPrice,
+  hasSiteFundedCodexPrice,
+  SITE_FUNDED_CODEX_PRICE_VERSION,
+} from "./site-funded-codex-prices";
+export type { SiteFundedCodexPrice } from "./site-funded-codex-prices";
+
 export const MICROUSD_PER_USD = 1_000_000;
 export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
-export const SITE_FUNDED_CODEX_PRICE_VERSION = "openai-2026-09-22";
 // Provider requests can contain base64 images, so HTTP bytes do not map to
 // context tokens. Keep an independent host-memory safety limit instead.
 export const SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
@@ -48,63 +56,6 @@ export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   allowUltraOrMultiAgent: false,
   allowedProviderTools: [],
 };
-
-export type SiteFundedCodexPrice = {
-  version: string;
-  provider: "openai";
-  model: string;
-  effectiveAt: string;
-  sourceUrl: string;
-  verifiedAt: string;
-  inputUsdPerMillion: string;
-  cachedInputUsdPerMillion: string;
-  cacheWriteUsdPerMillion: string;
-  outputUsdPerMillion: string;
-  longContextThresholdTokens: number;
-  longContextInputMultiplier: string;
-  longContextOutputMultiplier: string;
-};
-
-const GPT_5_6_LUNA_PRICE: SiteFundedCodexPrice = {
-  version: "openai-2026-07-30",
-  provider: "openai",
-  model: "gpt-5.6-luna",
-  effectiveAt: "2026-07-30T00:00:00.000Z",
-  sourceUrl: "https://openai.com/business/pricing/#api",
-  verifiedAt: "2026-08-02T00:00:00.000Z",
-  inputUsdPerMillion: "0.20",
-  cachedInputUsdPerMillion: "0.02",
-  cacheWriteUsdPerMillion: "0.25",
-  outputUsdPerMillion: "1.20",
-  longContextThresholdTokens: 272_000,
-  longContextInputMultiplier: "2",
-  longContextOutputMultiplier: "1.5",
-};
-
-const GPT_6_LUNA_PRICE: SiteFundedCodexPrice = {
-  version: SITE_FUNDED_CODEX_PRICE_VERSION,
-  provider: "openai",
-  model: "gpt-6-luna",
-  effectiveAt: "2026-09-22T00:00:00.000Z",
-  sourceUrl: "https://developers.openai.com/api/docs/models/gpt-6-luna",
-  verifiedAt: "2026-09-23T00:00:00.000Z",
-  inputUsdPerMillion: "0.10",
-  cachedInputUsdPerMillion: "0.01",
-  cacheWriteUsdPerMillion: "0.125",
-  outputUsdPerMillion: "0.50",
-  longContextThresholdTokens: 272_000,
-  longContextInputMultiplier: "2",
-  longContextOutputMultiplier: "1.5",
-};
-
-const PRICE_CATALOG = new Map<string, SiteFundedCodexPrice>([
-  [GPT_5_6_LUNA_PRICE.model, GPT_5_6_LUNA_PRICE],
-  [GPT_6_LUNA_PRICE.model, GPT_6_LUNA_PRICE],
-]);
-
-export function hasSiteFundedCodexPrice(model: string): boolean {
-  return PRICE_CATALOG.has(`${model ?? ""}`.trim());
-}
 
 export type SiteFundedCodexRequestUsage = {
   inputTokens: number;
@@ -271,16 +222,6 @@ function ceilMicrousd(value: Decimal): number {
     throw new Error("computed cost is outside the supported microusd range");
   }
   return rounded;
-}
-
-export function getSiteFundedCodexPrice(model: string): SiteFundedCodexPrice {
-  const price = PRICE_CATALOG.get(`${model ?? ""}`.trim());
-  if (!price) {
-    throw new Error(
-      `no exact site-funded Codex price is configured for model '${model}'`,
-    );
-  }
-  return price;
 }
 
 export function computeSiteFundedCodexRequestCost({

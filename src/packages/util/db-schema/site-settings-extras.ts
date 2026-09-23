@@ -11,7 +11,7 @@
 
 import { isEmpty } from "lodash";
 
-import { hasSiteFundedCodexPrice } from "@cocalc/util/ai/site-funded-codex";
+import { hasSiteFundedCodexPrice } from "@cocalc/util/ai/site-funded-codex-prices";
 import { EMAIL_LANE_BACKENDS } from "@cocalc/util/notification-email";
 import {
   expire_time,
