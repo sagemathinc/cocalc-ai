@@ -60,7 +60,7 @@ describe("Codex onboarding availability", () => {
     "Analyze the statistics from an experiment",
     "Benchmark number theory algorithms",
   ])("keeps the output choice open for %s", (request) => {
-    const prompt = buildCodexOnboardingPrompt(request);
+    const prompt = buildCodexOnboardingPrompt(request, { kind: "codex" });
     expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
     expect(prompt).toContain(
       "Finish with the useful result in the conversation",
@@ -126,7 +126,77 @@ describe("Codex onboarding availability", () => {
     });
     expect(prompt).toContain("/home/user/Welcome.ipynb");
     expect(prompt).toContain("opening and improving that artifact");
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
     expect(prompt).toContain("Only the onboarding artifact named above");
+  });
+
+  it.each(["jupyter-python", "jupyter-r", "jupyter-julia", "sage"])(
+    "retains the selected %s notebook path for a generic first request",
+    (kind) => {
+      const prompt = buildCodexOnboardingPrompt("Summarize these results", {
+        kind,
+        artifact: "/home/user/Welcome.ipynb",
+      });
+      expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+      expect(prompt).toContain("opening and improving that artifact");
+    },
+  );
+
+  it("retains a trusted notebook starter when the path kind is omitted", () => {
+    const prompt = buildCodexOnboardingPrompt("Summarize these results", {
+      artifact: "Welcome.ipynb",
+    });
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain("/home/user/Welcome.ipynb");
+  });
+
+  it("keeps a selected notebook path when starter-file creation failed", () => {
+    const prompt = buildCodexOnboardingPrompt("Summarize these results", {
+      kind: "jupyter-r",
+    });
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain("project was just created");
+  });
+
+  it("keeps a selected notebook for analysis with a named language or library", () => {
+    const prompt = buildCodexOnboardingPrompt(
+      "Use Python and pandas to compare the results",
+      { kind: "jupyter-python", artifact: "/home/user/Welcome.ipynb" },
+    );
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+  });
+
+  it.each([
+    "Build a TypeScript app",
+    "Create a website",
+    "Write a Python script",
+  ])("lets a concrete %s request override a notebook starter", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request, {
+      kind: "jupyter-python",
+      artifact: "/home/user/Welcome.ipynb",
+    });
+    expect(prompt).toContain("appropriate source files");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+  });
+
+  it("honors an explicit notebook prohibition even on a notebook path", () => {
+    const prompt = buildCodexOnboardingPrompt(
+      "Do not use a notebook; return an HTML report",
+      { kind: "jupyter-python", artifact: "/home/user/Welcome.ipynb" },
+    );
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain(
+      "The user's requested output and constraints take priority",
+    );
+  });
+
+  it("keeps an explicit LaTeX request above a notebook starter", () => {
+    const prompt = buildCodexOnboardingPrompt("Write a LaTeX paper", {
+      kind: "jupyter-python",
+      artifact: "/home/user/Welcome.ipynb",
+    });
+    expect(prompt).toContain("compile-ready LaTeX");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
   });
 
   it("requires both a positive allowance and enabled site funding", () => {

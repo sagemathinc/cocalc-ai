@@ -12,7 +12,10 @@ type CodexOnboardingMode =
   | "software"
   | "terminal";
 
-function detectCodexOnboardingMode(request: string): CodexOnboardingMode {
+function detectCodexOnboardingMode(
+  request: string,
+  context?: { kind?: string; artifact?: string },
+): CodexOnboardingMode {
   const goal = request.toLowerCase();
   if (/\b(latex|tex|bibtex|biblatex|beamer|tikz|typeset)\b/.test(goal)) {
     return "latex";
@@ -41,7 +44,25 @@ function detectCodexOnboardingMode(request: string): CodexOnboardingMode {
     new RegExp(
       String.raw`${notebookTerm}\s+(?:(?:(?:is|are|was|were)\s+)?(?:not\s+(?:allowed|permitted|available|supported|wanted|used|created)|prohibited|forbidden|disallowed|unavailable|unsupported)|(?:should|must|can|could|may)\s+not\s+be\s+(?:used|created|opened|included)|(?:can't|cannot)\s+be\s+(?:used|created|opened|included)|(?:isn't|aren't)\s+(?:allowed|permitted|available|supported))\b`,
     ).test(goal);
+  // The selected onboarding path is also user intent. A generic first request
+  // must not discard the notebook that path already created.
+  const selectedNotebook =
+    ["jupyter-python", "jupyter-r", "jupyter-julia", "sage"].includes(
+      context?.kind ?? "",
+    ) || /\.ipynb$/i.test(`${context?.artifact ?? ""}`.trim());
   if (mentionsNotebook && !rulesOutNotebook) {
+    return "notebook";
+  }
+  // A later request for a concrete software deliverable takes precedence over
+  // the notebook starter. A language or library mention alone does not.
+  if (
+    /\b(?:build|create|write|develop|implement|make)\s+(?:(?!about\b|for\b|using\b|with\b|in\b|from\b)[\w+-]+\s+){0,4}(?:app|application|website|api|script|package|library|software)\b/.test(
+      goal,
+    )
+  ) {
+    return "software";
+  }
+  if (selectedNotebook && !rulesOutNotebook) {
     return "notebook";
   }
   if (
@@ -74,7 +95,9 @@ export function buildCodexOnboardingPrompt(
   context?: { kind?: string; artifact?: string },
 ): string {
   const goal = userRequest.trim();
-  const formatGuidance = modeInstructions(detectCodexOnboardingMode(goal));
+  const formatGuidance = modeInstructions(
+    detectCodexOnboardingMode(goal, context),
+  );
   const artifact = `${context?.artifact ?? ""}`.trim();
   const artifactPath = artifact.startsWith("/")
     ? artifact
