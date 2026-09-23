@@ -318,3 +318,38 @@ process running. The maintainer then confirmed this specific Release build
 opened a chat, sent a photo and PDF, and opened the PDF link on the iPhone.
 The local signed build is still a device-test artifact, not a TestFlight or
 store distribution build.
+
+## September 23 settings retest rollout
+
+The payment/settings fix in `b1e939334d` resets reasoning and speed to model
+defaults when switching funding sources. A settings save now writes only the
+thread configuration fields, leaving unrelated goal metadata intact. Mobile
+typecheck and all 71 UI tests passed; the focused chat-client regression passed.
+The full chat-client suite has an unrelated pre-existing dependency-boundary
+failure involving a comment in `speech-text.ts`.
+
+A signed standalone `CoCalc` Release build from `b1e939334d` was installed and
+launched on the paired iPhone 17 Pro. Its embedded `main.jsbundle` SHA-256 is
+`5ae69b3d071bbcf664ea17c4e3ff72d8c385e7c7da991981bcc5f801ab2666f3`.
+It is a device-test build, not the earlier TestFlight archive; phone acceptance
+of the settings flow remains pending.
+
+Staging's single project host was upgraded from
+`20260922T010158Z-02f308fc-agent-first-20260921-02f308fc` to
+`20260923T221631Z-a1802de2e487` using a clean isolated build of the host
+baseline plus only the chat-client fix (`a1802de2e487`). The project-host
+software bundle SHA-256 is
+`759f893dddffdfc9a0ffc7ba187ff16bbde62ae84300aba2ade3bb219613a1e4`.
+The typed CLI upgrade operation `c27d0d71-04cf-4c58-a830-05e1e5486165`
+succeeded; project-host, router, persist, and ACP worker report the new version
+running and healthy. All four hub workers and bay health passed afterward.
+
+Staging's `/software` endpoint normally redirects to the shared software store,
+which does not contain this isolated artifact. The artifact is staged in the
+current hub release, and
+`/etc/systemd/system/cocalc-bay-hub@.service.d/mobile-settings-local-software.conf`
+sets `COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE=local`. Keep this staging-only
+override while the host desires `a1802de2e487`, so future repair can retrieve
+the same artifact. Before restoring the redirect, publish the artifact to the
+shared store or roll the host back to a version available there. No production
+site or host was changed.
