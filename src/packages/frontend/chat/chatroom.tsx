@@ -3078,7 +3078,11 @@ function ChatPanelContent({
         <>
           {artifactFeedback.control}
           <ChatRoomComposer
-            isActive={isVisible && tabIsVisible}
+            isActive={
+              embeddingOptions.agentWorkspace
+                ? embeddingOptions.agentWorkspaceActive === true
+                : isVisible && tabIsVisible
+            }
             actions={actions}
             project_id={project_id}
             path={path}
