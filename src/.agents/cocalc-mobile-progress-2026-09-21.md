@@ -299,3 +299,22 @@ frontend lint, dependency consistency, and an iOS production bundle export
 passed. Actual camera/library/document selection, authenticated uploads on a
 physical iPhone, and viewing a resulting project-file link on mobile still
 need device acceptance.
+
+## Physical attachment and standalone build follow-up
+
+The maintainer confirmed on an iPhone 17 Pro that selecting an image, taking a
+photo, and uploading a PDF all worked in the development app. Physical testing
+first exposed a startup error because a Jest test lived under Expo Router's
+`src/app` route directory, and a photo-upload error because Expo's fetch
+implementation does not accept URI-only multipart parts. Both were fixed;
+the rebuilt development app was installed and the maintainer confirmed the
+attachment flows. Focused and full mobile UI tests (71), typecheck, frontend
+lint, and iOS bundle export passed.
+
+A fresh `CoCalc` Release build containing those fixes was signed and installed
+on the same phone. Its 7.1 MB JavaScript bundle is embedded in the app. With
+Metro stopped, CoreDevice launched the regular CoCalc app and reported its
+process running. Screen-level acceptance of this specific Release build,
+including opening the PDF link, remains pending maintainer confirmation. The
+local signed build is still a device-test artifact, not a TestFlight or store
+distribution build.
