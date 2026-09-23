@@ -180,6 +180,47 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSend).toHaveBeenCalledWith("hello");
   });
 
+  it("unmounts the inactive editor without resetting delivery or its draft", async () => {
+    const onSend = jest.fn();
+    const onPost = jest.fn();
+    const view = renderComposer({
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({ agent_kind: "acp" }),
+      } as any,
+      selectedThread: { key: "agent", label: "Agent", isAI: true } as any,
+      isSelectedThreadAI: true,
+      input: "unsent draft",
+      hasInput: true,
+      on_send: onSend,
+      on_post: onPost,
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Post/ }));
+
+    const rerenderActive = (isActive: boolean) =>
+      view.rerender(
+        <ChatEmbeddingOptionsProvider value={{}}>
+          <ChatRoomComposer {...view.props} isActive={isActive} />
+        </ChatEmbeddingOptionsProvider>,
+      );
+    rerenderActive(false);
+    expect(screen.queryByTestId("chat-input-focus-probe")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Message delivery: Post" }),
+    ).toBeEnabled();
+
+    rerenderActive(true);
+    expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
+    expect(lastChatInputProps.input).toBe("unsent draft");
+    fireEvent.click(screen.getByRole("button", { name: "Post message" }));
+    expect(onPost).toHaveBeenCalledTimes(1);
+    expect(onPost).toHaveBeenCalledWith("unsent draft");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "uses compact settings only on mobile (%s)",
     (mobile) => {

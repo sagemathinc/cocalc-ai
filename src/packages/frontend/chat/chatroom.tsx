@@ -3078,6 +3078,7 @@ function ChatPanelContent({
         <>
           {artifactFeedback.control}
           <ChatRoomComposer
+            isActive={isVisible && tabIsVisible}
             actions={actions}
             project_id={project_id}
             path={path}

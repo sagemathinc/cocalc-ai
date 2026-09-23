@@ -54,6 +54,7 @@ import { ComposerDeliverySelector } from "./composer-delivery";
 import type { ComposerDelivery } from "./composer-delivery";
 
 export interface ChatRoomComposerProps {
+  isActive?: boolean;
   actions: ChatActions;
   project_id: string;
   path: string;
@@ -117,6 +118,7 @@ export function approvedDraftIsCurrent({
 }
 
 export function ChatRoomComposer({
+  isActive = true,
   actions,
   project_id,
   path,
@@ -809,65 +811,67 @@ export function ChatRoomComposer({
                 </Button>
               ))}
           <div ref={inputContainerRef} data-testid="chat-composer-input">
-            <ChatInput
-              key={`${path}${project_id}-draft-${composerDraftKey}`}
-              inputControlRef={chatInputControlRef}
-              onControlReady={(control) =>
-                onComposerReady?.(control, inputContainerRef.current)
-              }
-              fontSize={mobile ? Math.max(16, fontSize) : fontSize}
-              autoFocus={!mobile}
-              isFocused={isInputFocused}
-              cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
-              input={input}
-              presenceThreadKey={presenceThreadKey}
-              on_send={handlePrimarySend}
-              on_post={on_post ? handlePost : undefined}
-              on_font_size_change={handleFontSizeChange}
-              height={chatInputHeight}
-              autoGrowMaxHeight={autoGrowMaxHeight}
-              onChange={(value) => {
-                setInput(value, composerSession);
-              }}
-              onFocus={() => {
-                setIsInputFocused(true);
-                onComposerFocusChange(true);
-              }}
-              onBlur={() => {
-                setIsInputFocused(false);
-                onComposerFocusChange(false);
-              }}
-              submitMentionsRef={submitMentionsRef}
-              syncdb={actions.syncdb}
-              date={composerDraftKey}
-              sessionToken={composerSession}
-              editBarStyle={{ overflow: "hidden" }}
-              placeholder={
-                postOnly
-                  ? "Post a note; @mention people to notify them..."
-                  : composerPlaceholder
-              }
-              externalMultilinePasteAsCodeBlock
-              toolbarRightContent={
-                hasInput ? (
-                  <Tooltip
-                    title={
-                      isZenMode
-                        ? "Exit zen mode"
-                        : "Expand composer for focused writing"
-                    }
-                  >
-                    <Button
-                      aria-label={isZenMode ? "Exit Zen" : "Zen"}
-                      icon={<Icon name="expand-arrows" />}
-                      onClick={toggleZenMode}
-                      size="small"
-                      type="text"
-                    />
-                  </Tooltip>
-                ) : null
-              }
-            />
+            {isActive && (
+              <ChatInput
+                key={`${path}${project_id}-draft-${composerDraftKey}`}
+                inputControlRef={chatInputControlRef}
+                onControlReady={(control) =>
+                  onComposerReady?.(control, inputContainerRef.current)
+                }
+                fontSize={mobile ? Math.max(16, fontSize) : fontSize}
+                autoFocus={!mobile}
+                isFocused={isInputFocused}
+                cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
+                input={input}
+                presenceThreadKey={presenceThreadKey}
+                on_send={handlePrimarySend}
+                on_post={on_post ? handlePost : undefined}
+                on_font_size_change={handleFontSizeChange}
+                height={chatInputHeight}
+                autoGrowMaxHeight={autoGrowMaxHeight}
+                onChange={(value) => {
+                  setInput(value, composerSession);
+                }}
+                onFocus={() => {
+                  setIsInputFocused(true);
+                  onComposerFocusChange(true);
+                }}
+                onBlur={() => {
+                  setIsInputFocused(false);
+                  onComposerFocusChange(false);
+                }}
+                submitMentionsRef={submitMentionsRef}
+                syncdb={actions.syncdb}
+                date={composerDraftKey}
+                sessionToken={composerSession}
+                editBarStyle={{ overflow: "hidden" }}
+                placeholder={
+                  postOnly
+                    ? "Post a note; @mention people to notify them..."
+                    : composerPlaceholder
+                }
+                externalMultilinePasteAsCodeBlock
+                toolbarRightContent={
+                  hasInput ? (
+                    <Tooltip
+                      title={
+                        isZenMode
+                          ? "Exit zen mode"
+                          : "Expand composer for focused writing"
+                      }
+                    >
+                      <Button
+                        aria-label={isZenMode ? "Exit Zen" : "Zen"}
+                        icon={<Icon name="expand-arrows" />}
+                        onClick={toggleZenMode}
+                        size="small"
+                        type="text"
+                      />
+                    </Tooltip>
+                  ) : null
+                }
+              />
+            )}
           </div>
           {showGoal && selectedThread && (
             <CodexGoalControl
