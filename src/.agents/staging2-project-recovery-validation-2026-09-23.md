@@ -37,6 +37,10 @@ Production was not changed.
   deployed in that order. Hub and static smoke checks passed; both online hosts
   passed the canary-first rollout `292ca41e-f0bb-4513-a004-f5608fe6e6cb` and
   host smoke checks.
+- Unknown-host overdue status follow-up: `12360e885ba4`. The staging2 static
+  artifact `20260923T213343Z-12360e88-recovery-unknown-debt-20260923-dirty`
+  passed static smoke. The project UI now shows a known missed due time even
+  while host or report freshness is unknown.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
