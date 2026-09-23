@@ -12,6 +12,61 @@ type CodexOnboardingMode =
   | "software"
   | "terminal";
 
+function explicitOutputFormat(
+  goal: string,
+): "notebook" | "software" | undefined {
+  for (const rawClause of goal.split(/[.!?;\n]+/)) {
+    let clause = rawClause.trim();
+    if (
+      /^(?:do not|don't|never|i (?:do not|don't) want to|explain|describe|show how to)\b/.test(
+        clause,
+      )
+    ) {
+      continue;
+    }
+    clause = clause
+      .replace(/^(?:(?:please|can you|could you|would you)\s+)+/, "")
+      .replace(/^i (?:want|need) (?:you )?to\s+/, "");
+    const action = clause.match(
+      /^(?:build|create|write|develop|implement|make|update|edit|use|open|start)\s+(.+)$/,
+    );
+    if (!action) continue;
+    const object = action[1].replace(/^(?:for me|me)\s+/, "");
+    const words = object.match(/[\w+.-]+/g) ?? [];
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index];
+      if (
+        /^(?:about|for|of|on|to|with|using|from|in|by|without|instead)$/.test(
+          word,
+        )
+      ) {
+        break;
+      }
+      if (
+        /^(?:jupyter|jupyterlab|notebook|notebooks)$/.test(word) ||
+        word.endsWith(".ipynb")
+      ) {
+        return "notebook";
+      }
+      if (
+        /^(?:app|application|website|api|script|package|library|software)$/.test(
+          word,
+        )
+      ) {
+        if (
+          /^(?:report|summary|review|plan|guide|comparison|reference|docs|documentation)$/.test(
+            words[index + 1] ?? "",
+          )
+        ) {
+          continue;
+        }
+        return "software";
+      }
+    }
+  }
+  return;
+}
+
 function detectCodexOnboardingMode(
   request: string,
   context?: { kind?: string; artifact?: string },
@@ -50,17 +105,17 @@ function detectCodexOnboardingMode(
     ["jupyter-python", "jupyter-r", "jupyter-julia", "sage"].includes(
       context?.kind ?? "",
     ) || /\.ipynb$/i.test(`${context?.artifact ?? ""}`.trim());
-  if (mentionsNotebook && !rulesOutNotebook) {
+  const explicitOutput = explicitOutputFormat(goal);
+  if (explicitOutput === "notebook" && !rulesOutNotebook) {
     return "notebook";
   }
-  // A later request for a concrete software deliverable takes precedence over
-  // the notebook starter. A language or library mention alone does not.
-  if (
-    /\b(?:build|create|write|develop|implement|make)\s+(?:(?!about\b|for\b|using\b|with\b|in\b|from\b)[\w+-]+\s+){0,4}(?:app|application|website|api|script|package|library|software)\b/.test(
-      goal,
-    )
-  ) {
+  // A requested software output takes precedence over the notebook starter;
+  // explanation, negation, and incidental tool mentions do not.
+  if (explicitOutput === "software") {
     return "software";
+  }
+  if (mentionsNotebook && !rulesOutNotebook) {
+    return "notebook";
   }
   if (selectedNotebook && !rulesOutNotebook) {
     return "notebook";

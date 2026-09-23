@@ -168,13 +168,40 @@ describe("Codex onboarding availability", () => {
 
   it.each([
     "Build a TypeScript app",
+    "Build me a simple interactive TypeScript app",
     "Create a website",
+    "Create for me a website",
     "Write a Python script",
   ])("lets a concrete %s request override a notebook starter", (request) => {
     const prompt = buildCodexOnboardingPrompt(request, {
       kind: "jupyter-python",
       artifact: "/home/user/Welcome.ipynb",
     });
+    expect(prompt).toContain("appropriate source files");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+  });
+
+  it.each([
+    "Do not build an app; summarize the data instead",
+    "I do not want to create a website; analyze the results",
+    "Explain how to build a website",
+    "Create a guide to an API",
+    "Make notes on a library",
+    "Create a comparison of software packages",
+    "Create an API reference",
+  ])("does not treat %s as a software deliverable", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request, {
+      kind: "jupyter-python",
+      artifact: "/home/user/Welcome.ipynb",
+    });
+    expect(prompt).not.toContain("Create the appropriate source files");
+  });
+
+  it("uses the first direct output when a software task mentions notebooks", () => {
+    const prompt = buildCodexOnboardingPrompt(
+      "Build an app to analyze Jupyter notebooks",
+      { kind: "jupyter-python", artifact: "/home/user/Welcome.ipynb" },
+    );
     expect(prompt).toContain("appropriate source files");
     expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
   });
