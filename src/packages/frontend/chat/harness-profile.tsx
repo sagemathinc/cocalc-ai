@@ -1,5 +1,5 @@
 import { Button, Input, Modal, Select, Space, Typography } from "antd";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
   HarnessSessionControls,
@@ -10,7 +10,17 @@ import {
   parseAcpHarnessRuntime,
 } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { redux } from "@cocalc/frontend/app-framework";
+import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
+import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
+import {
+  HARNESS_CREDENTIAL_SELECTION_EVENT,
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "./harness-credential-selection";
 
 const HARNESS_LIMITATIONS =
   "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
@@ -18,8 +28,123 @@ const HARNESS_LIMITATIONS =
 interface HarnessRuntimeSummaryProps {
   runtime: unknown;
   reported?: unknown;
+  projectId?: string;
+  threadKey?: string;
   onSettings?: (settings: HarnessSessionSettings) => void;
   onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
+}
+
+function ClaudeCredentialControl({
+  projectId,
+  threadKey,
+}: {
+  projectId: string;
+  threadKey: string;
+}) {
+  const accountId = redux.getStore("account")?.get("account_id") as
+    | string
+    | undefined;
+  const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
+  const [secretsOpen, setSecretsOpen] = useState(false);
+  const [error, setError] = useState("");
+  const selection = readHarnessCredentialSelection({
+    accountId,
+    projectId,
+    threadKey,
+  });
+  const [value, setValue] = useState(
+    selection?.mode === "account-api-key"
+      ? `account-api-key:${selection.credentialId}`
+      : "project-secret",
+  );
+  useEffect(() => {
+    let disposed = false;
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({
+        provider: "anthropic",
+        kind: "anthropic-api-key",
+        scope: "account",
+      })
+      .then((rows) => {
+        if (!disposed) setCredentials(rows.filter((row) => !row.revoked));
+      })
+      .catch((err) => {
+        if (!disposed) setError(`${err}`);
+      });
+    const refresh = () => {
+      const current = readHarnessCredentialSelection({
+        accountId,
+        projectId,
+        threadKey,
+      });
+      setValue(
+        current?.mode === "account-api-key"
+          ? `account-api-key:${current.credentialId}`
+          : "project-secret",
+      );
+    };
+    window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
+    return () => {
+      disposed = true;
+      window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
+    };
+  }, [accountId, projectId, threadKey]);
+  return (
+    <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+      <Select
+        aria-label="Claude credential"
+        value={value}
+        options={[
+          {
+            value: "project-secret",
+            label: "Project secret: ANTHROPIC_API_KEY",
+          },
+          ...credentials.map((row) => ({
+            value: `account-api-key:${row.id}`,
+            label: `${row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
+          })),
+        ]}
+        onChange={(next) => {
+          const credential = next.startsWith("account-api-key:")
+            ? {
+                version: 1 as const,
+                provider: "anthropic" as const,
+                mode: "account-api-key" as const,
+                credentialId: next.slice("account-api-key:".length),
+              }
+            : {
+                version: 1 as const,
+                provider: "anthropic" as const,
+                mode: "project-secret" as const,
+              };
+          writeHarnessCredentialSelection({
+            accountId,
+            projectId,
+            threadKey,
+            credential,
+          });
+          setValue(next);
+        }}
+        style={{ width: "100%" }}
+      />
+      {value === "project-secret" && (
+        <Button onClick={() => setSecretsOpen(true)}>
+          Manage project secret
+        </Button>
+      )}
+      <Typography.Text type="secondary">
+        This account-local choice is applied when the next turn is admitted.
+      </Typography.Text>
+      {error && (
+        <div role="alert">Unable to load account credentials: {error}</div>
+      )}
+      <ProjectSecretsModal
+        open={secretsOpen}
+        project_id={projectId}
+        onClose={() => setSecretsOpen(false)}
+      />
+    </Space>
+  );
 }
 
 /** Composer toolbars cannot contain the full, wrapping runtime form. */
@@ -82,6 +207,29 @@ export interface HarnessProfileDraft {
   args: string;
 }
 
+export function qualifiedHarnessRuntime(
+  id: string,
+  cwd: string,
+): AcpHarnessRuntime {
+  const candidate = getQualifiedHarnessCandidate(id);
+  if (!candidate || candidate.status === "disabled") {
+    throw Error("This qualified ACP harness is unavailable");
+  }
+  return parseAcpHarnessRuntime({
+    version: 1,
+    kind: "acp",
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: candidate.id,
+      revision: candidate.package.version,
+      cwd,
+      executionPolicy: "full-access",
+      credentialMode: "project-managed",
+    },
+  });
+}
+
 export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
   let runtime: AcpHarnessRuntime;
   try {
@@ -106,6 +254,8 @@ export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
 function HarnessRuntimeSummaryContent({
   runtime,
   reported,
+  projectId,
+  threadKey,
   onSettings,
   onDiscover,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
@@ -182,6 +332,15 @@ function HarnessRuntimeSummaryContent({
         </dl>
       </details>
       <Typography.Text type="secondary">{HARNESS_LIMITATIONS}</Typography.Text>
+      {profile.version === 2 &&
+        profile.id === "claude-code" &&
+        projectId &&
+        threadKey && (
+          <ClaudeCredentialControl
+            projectId={projectId}
+            threadKey={threadKey}
+          />
+        )}
       {onDiscover && (
         <Button
           loading={loading}

@@ -518,6 +518,8 @@ export function CodexConfigButton(
       key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
       compact={!!props.compact}
       runtime={runtime}
+      projectId={props.projectId}
+      threadKey={props.threadKey}
       reported={metadata?.agent_runtime_controls}
       onDiscover={
         props.actions && props.threadKey && !props.turnRunning

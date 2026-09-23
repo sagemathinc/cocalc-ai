@@ -23,9 +23,13 @@ import { Suspense } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAppContext } from "@cocalc/frontend/app/context";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexModelCapabilityInfo,
+  ExternalCredentialInfo,
+} from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
@@ -62,9 +66,16 @@ import type { AgentSearchHit } from "./search-runner";
 import {
   HarnessProfileFields,
   harnessRuntimeFromDraft,
+  qualifiedHarnessRuntime,
 } from "@cocalc/frontend/chat/harness-profile";
 import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "@cocalc/frontend/chat/harness-credential-selection";
+import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -521,9 +532,19 @@ function NewAgentPanel({
       ?.getThreadMetadata?.(sourceAgent.thread_id)?.agent_runtime;
     return raw == null ? undefined : raw;
   });
-  const [runtimeKind, setRuntimeKind] = useState<"codex-native" | "acp">(
-    sourceRuntime == null ? "codex-native" : "acp",
-  );
+  const [runtimeKind, setRuntimeKind] = useState<
+    "codex-native" | "claude-code" | "acp"
+  >(() => {
+    if (sourceRuntime == null) return "codex-native";
+    try {
+      const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
+      return profile.version === 2 && profile.id === "claude-code"
+        ? "claude-code"
+        : "acp";
+    } catch {
+      return "acp";
+    }
+  });
   const [harnessDraft, setHarnessDraft] = useState<HarnessProfileDraft>(() => {
     try {
       const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
@@ -618,6 +639,25 @@ function NewAgentPanel({
   const createProjectMounted = useRef(false);
   if (createProjectOpen) createProjectMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
+  const [projectSecretsOpen, setProjectSecretsOpen] = useState(false);
+  const [anthropicCredentials, setAnthropicCredentials] = useState<
+    ExternalCredentialInfo[]
+  >([]);
+  const [claudeCredential, setClaudeCredential] =
+    useState<AcpHarnessCredential>(
+      () =>
+        (sourceAgent
+          ? readHarnessCredentialSelection({
+              accountId: boundAccount.accountId,
+              projectId: sourceAgent.endpoint.project_id,
+              threadKey: sourceAgent.thread_id,
+            })
+          : undefined) ?? {
+          version: 1,
+          provider: "anthropic",
+          mode: "project-secret",
+        },
+    );
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
@@ -737,6 +777,27 @@ function NewAgentPanel({
   }, [projectId, projectMap]);
 
   useEffect(() => {
+    if (runtimeKind !== "claude-code") return;
+    let disposed = false;
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({
+        provider: "anthropic",
+        kind: "anthropic-api-key",
+        scope: "account",
+      })
+      .then((rows) => {
+        if (!disposed)
+          setAnthropicCredentials(rows.filter((row) => !row.revoked));
+      })
+      .catch((err) => {
+        if (!disposed) setError(`${err}`);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [runtimeKind]);
+
+  useEffect(() => {
     let disposed = false;
     setModelCatalog(undefined);
     if (
@@ -832,9 +893,9 @@ function NewAgentPanel({
         boundAccount.assertCurrent();
         const threadId = chatActions.createEmptyThread({
           name: agentName.trim(),
-          threadAgent: runtimeKind === "acp" ? {
+          threadAgent: runtimeKind !== "codex-native" ? {
             mode: "acp",
-            runtime: harnessRuntimeFromDraft(harnessDraft, workingDirectory),
+            runtime: runtimeKind === "claude-code" ? qualifiedHarnessRuntime("claude-code", workingDirectory) : harnessRuntimeFromDraft(harnessDraft, workingDirectory),
           } : {
             mode: "codex",
             model: executionConfig.model,
@@ -869,6 +930,9 @@ function NewAgentPanel({
             ? executionConfig.credentialId
             : undefined,
       });
+      if (runtimeKind === "claude-code") {
+        writeHarnessCredentialSelection({ accountId: boundAccount.accountId, projectId: targetProjectId, threadKey: threadId, credential: claudeCredential });
+      }
       return created;
     });
   }
@@ -1583,6 +1647,7 @@ function NewAgentPanel({
                   disabled={busy || !!pending}
                   options={[
                     { value: "codex-native", label: "Codex" },
+                    { value: "claude-code", label: "Claude Code (preview)" },
                     { value: "acp", label: "Custom ACP harness (experimental)" },
                   ]}
                   onChange={setRuntimeKind}
@@ -1723,6 +1788,47 @@ function NewAgentPanel({
                 <span style={{ flex: 1 }} />
               </div>
             )}
+            {runtimeKind === "claude-code" && (
+              <Select
+                aria-label="Claude credential"
+                value={
+                  claudeCredential.mode === "account-api-key"
+                    ? `account-api-key:${claudeCredential.credentialId}`
+                    : "project-secret"
+                }
+                disabled={busy || !!pending}
+                options={[
+                  {
+                    value: "project-secret",
+                    label: "Project secret",
+                  },
+                  ...anthropicCredentials.map((row) => ({
+                    value: `account-api-key:${row.id}`,
+                    label:
+                      row.metadata?.label ||
+                      `Anthropic key ${row.id.slice(0, 8)}`,
+                  })),
+                ]}
+                onChange={(value) =>
+                  setClaudeCredential(
+                    value.startsWith("account-api-key:")
+                      ? {
+                          version: 1,
+                          provider: "anthropic",
+                          mode: "account-api-key",
+                          credentialId: value.slice("account-api-key:".length),
+                        }
+                      : {
+                          version: 1,
+                          provider: "anthropic",
+                          mode: "project-secret",
+                        },
+                  )
+                }
+                style={{ minWidth: 180 }}
+              />
+            )}
+            <span style={{ flex: 1 }} />
             <Button
               type="primary"
               shape="circle"
@@ -1761,6 +1867,24 @@ function NewAgentPanel({
             </Text>
           </Space>
         )}
+        {runtimeKind === "claude-code" &&
+          claudeCredential.mode === "project-secret" &&
+          projectId && (
+            <Space orientation="vertical" size={4}>
+              <Button onClick={() => setProjectSecretsOpen(true)}>
+                Set ANTHROPIC_API_KEY project secret
+              </Button>
+              <Text type="secondary">
+                The key is mounted read-only at runtime and is not stored in
+                this chat. Claude Code has full access to this project.
+              </Text>
+              <ProjectSecretsModal
+                open={projectSecretsOpen}
+                project_id={projectId}
+                onClose={() => setProjectSecretsOpen(false)}
+              />
+            </Space>
+          )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />
         )}

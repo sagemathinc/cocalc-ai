@@ -14,6 +14,7 @@ import {
   HarnessRuntimeSummary,
   HarnessRuntimeControl,
   harnessRuntimeFromDraft,
+  qualifiedHarnessRuntime,
 } from "../harness-profile";
 
 const draft = {
@@ -22,6 +23,20 @@ const draft = {
   executable: "/home/user/bin/pi-acp",
   args: "--flag\nvalue with spaces",
 };
+
+test("qualified Claude profiles contain only trusted catalog identity", () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  expect(runtime.profile).toEqual({
+    version: 2,
+    kind: "acp",
+    id: "claude-code",
+    revision: "0.79.0",
+    cwd: "/home/user",
+    executionPolicy: "full-access",
+    credentialMode: "project-managed",
+  });
+  expect(runtime.profile).not.toHaveProperty("executable");
+});
 
 test("existing harness settings explain limitations before capability discovery", async () => {
   render(
