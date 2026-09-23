@@ -2,7 +2,10 @@ import type {
   CodexPaymentSourcePreference,
   CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
-import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type {
+  AcpHarnessCredential,
+  AcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
 import type { HarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
@@ -146,6 +149,8 @@ export type AcpRequest = {
   request_kind?: "codex";
   // Omitted for legacy/native Codex. A profile is snapshotted at admission.
   runtime?: AcpHarnessRuntime;
+  // Private admission snapshot. Never source this from shared chat config.
+  harness_credential?: AcpHarnessCredential;
   project_id: string;
   account_id: string;
   prompt: string;

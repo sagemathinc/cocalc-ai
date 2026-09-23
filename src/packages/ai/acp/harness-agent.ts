@@ -5,7 +5,10 @@ import {
 } from "./harness-client";
 import type { HarnessBinding, HarnessLauncher } from "./harness-client";
 import type { AcpAgent, AcpEvaluateRequest } from "./types";
-import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import {
+  parseAcpHarnessCredential,
+  parseAcpHarnessProfile,
+} from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
 import { harnessPrompt } from "./harness-context";
 import type {
@@ -28,10 +31,17 @@ export class HarnessAgent implements AcpAgent {
     conversation: { path: string; threadId: string },
     private readonly launch: HarnessLauncher,
     private readonly attention?: CodexAttentionHandler,
+    private readonly validateAuthority?: (
+      binding: HarnessBinding,
+    ) => Promise<void>,
   ) {
     this.binding = {
       ...binding,
       profile: parseAcpHarnessProfile(binding.profile),
+      credential: parseAcpHarnessCredential(
+        binding.credential,
+        binding.profile,
+      ),
     };
     this.conversation = { ...conversation };
     if (!conversation.path || !conversation.threadId)
@@ -48,6 +58,12 @@ export class HarnessAgent implements AcpAgent {
     )
       throw Error("ACP conversation binding mismatch");
     if (this.closed || this.busy) throw Error("ACP conversation is not idle");
+    const credential = parseAcpHarnessCredential(
+      request.harness_credential,
+      this.binding.profile,
+    );
+    if (JSON.stringify(credential) !== JSON.stringify(this.binding.credential))
+      throw Error("ACP credential binding mismatch");
     if (
       request.local_images?.length ||
       (request.config && Object.keys(request.config).length) ||
@@ -69,6 +85,7 @@ export class HarnessAgent implements AcpAgent {
     this.busy = true;
     this.interrupted = false;
     try {
+      await this.validateAuthority?.(this.binding);
       if (!this.client) {
         const client = await AcpHarnessClient.start(
           this.binding,

@@ -22,8 +22,12 @@ import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/
 import { initConatClient as initProjectRunnerConatClient } from "@cocalc/project-runner/run/conat-client";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
-import { setHarnessLauncher } from "@cocalc/lite/hub/acp/harness-runtime";
+import {
+  setHarnessAuthorityValidator,
+  setHarnessLauncher,
+} from "@cocalc/lite/hub/acp/harness-runtime";
 import { launchHarnessInProject } from "./acp/harness-launcher";
+import { validateHarnessAuthority } from "./acp/harness-authority";
 import {
   initCodexAttachmentBlobReader,
   initCodexGeneratedImageBlobWriter,
@@ -139,6 +143,7 @@ function configureProjectHostAcpRuntime(): void {
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   setHarnessLauncher(launchHarnessInProject);
+  setHarnessAuthorityValidator(validateHarnessAuthority);
   initCodexSiteKeyGovernor();
   initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();

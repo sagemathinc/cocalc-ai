@@ -78,6 +78,11 @@ test("discovery opens a temporary session without a prompt or existing session I
     {
       projectId: "project",
       accountId: "account",
+      credential: {
+        version: 1,
+        provider: "project",
+        mode: "project-managed",
+      },
       profile: request.runtime!.profile,
     },
     { path: "a.chat", threadId: "thread" },

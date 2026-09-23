@@ -16,11 +16,23 @@ const mockStart = jest.fn();
 const mockLease = jest.fn();
 const mockCloseLease = jest.fn();
 const mockForceKill = jest.fn();
+const mockRelayClose = jest.fn();
+const mockCreateRelay = jest.fn();
+const mockWriteFile = jest.fn();
+const mockRm = jest.fn();
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
   spawn: (...args) => mockSpawn(...args),
 }));
-jest.mock("node:fs/promises", () => ({ readFile: async () => "image" }));
+jest.mock("node:fs/promises", () => ({
+  mkdtemp: async () => "/host-relay",
+  readFile: async () => "image",
+  rm: (...args) => mockRm(...args),
+  writeFile: (...args) => mockWriteFile(...args),
+}));
+jest.mock("./anthropic-credential-relay", () => ({
+  createAnthropicAccountCredentialRelay: (...args) => mockCreateRelay(...args),
+}));
 jest.mock("./harness-reaper", () => ({
   harnessOwner: async () => "123:00000000-0000-0000-0000-000000000000:100",
   HARNESS_OWNER_LABEL: "cocalc.acp.owner",
@@ -85,6 +97,11 @@ const binding = {
     credentialMode: "project-managed" as const,
     executionPolicy: "full-access" as const,
   },
+  credential: {
+    version: 1 as const,
+    provider: "project" as const,
+    mode: "project-managed" as const,
+  },
 };
 let proc: any;
 beforeEach(() => {
@@ -102,10 +119,60 @@ beforeEach(() => {
   mockUnmount.mockResolvedValue(undefined);
   mockStart.mockResolvedValue(undefined);
   mockCloseLease.mockResolvedValue(undefined);
+  mockRelayClose.mockResolvedValue(undefined);
+  mockCreateRelay.mockResolvedValue({
+    token: "short-lived-token",
+    close: mockRelayClose,
+  });
+  mockWriteFile.mockResolvedValue(undefined);
+  mockRm.mockResolvedValue(undefined);
   mockLease.mockResolvedValue({
     containerPath: "/tmp/scoped/token",
     identityContainerPath: "/tmp/scoped/identity",
     close: mockCloseLease,
+  });
+});
+
+test("account credentials are exposed only through a revocable relay mount", async () => {
+  const credentialId = "13ba1a66-881b-4fe1-b732-15088f82434f";
+  const handle = await launchHarnessInProject({
+    ...binding,
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.79.0",
+      cwd: "/home/user",
+      credentialMode: "project-managed",
+      executionPolicy: "full-access",
+    },
+    credential: {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-api-key",
+      credentialId,
+    },
+  });
+  expect(mockCreateRelay).toHaveBeenCalledWith({
+    projectId: binding.projectId,
+    accountId: binding.accountId,
+    credentialId,
+    socketPath: "/host-relay/relay.sock",
+  });
+  expect(mockWriteFile).toHaveBeenCalledWith(
+    "/host-relay/token",
+    "short-lived-token",
+    { encoding: "utf8", mode: 0o600 },
+  );
+  const args = mockExec.mock.calls[0][1];
+  expect(args).toContain("mount:/host-relay:/run/cocalc/credential-relay:true");
+  expect(args).not.toContain("short-lived-token");
+  expect(args.slice(-3)).toEqual(["claude-code", "0.79.0", "account-api-key"]);
+  await handle.stop();
+  expect(mockRelayClose).toHaveBeenCalledTimes(1);
+  expect(mockRm).toHaveBeenCalledWith("/host-relay", {
+    recursive: true,
+    force: true,
   });
 });
 
@@ -161,6 +228,7 @@ test("qualified profiles resolve only through the trusted entry point", () => {
     "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js",
     "claude-code",
     "0.79.0",
+    "project-secret",
   ]);
   expect(command.args.join(" ")).not.toContain("ANTHROPIC_API_KEY");
 });

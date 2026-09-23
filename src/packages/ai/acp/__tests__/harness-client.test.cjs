@@ -177,7 +177,13 @@ const profile = {
   executionPolicy: "full-access",
 };
 
-function adapter(t, flags = [], attention, cleanupFails = false) {
+function adapter(
+  t,
+  flags = [],
+  attention,
+  cleanupFails = false,
+  validateAuthority,
+) {
   let launches = 0;
   let stops = 0;
   const agent = new HarnessAgent(
@@ -211,6 +217,7 @@ function adapter(t, flags = [], attention, cleanupFails = false) {
       };
     },
     attention,
+    validateAuthority,
   );
   t.after(() =>
     agent.dispose().catch((error) => {
@@ -239,6 +246,25 @@ function adapter(t, flags = [], attention, cleanupFails = false) {
     stops: () => stops,
   };
 }
+
+test("retained harnesses revalidate credential authority before every turn", async (t) => {
+  let checks = 0;
+  const { agent, request, launches, stops } = adapter(
+    t,
+    [],
+    undefined,
+    false,
+    async () => {
+      checks++;
+      if (checks === 2) throw Error("credential revoked");
+    },
+  );
+  await agent.evaluate(request);
+  await assert.rejects(() => agent.evaluate(request), /credential revoked/);
+  assert.equal(checks, 2);
+  assert.equal(launches(), 1);
+  assert.equal(stops(), 1);
+});
 
 test("harness adapter binds durable questions to the current account, chat and execution", async (t) => {
   const asked = [],

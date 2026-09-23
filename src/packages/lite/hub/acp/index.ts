@@ -325,7 +325,10 @@ import {
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
-export { setHarnessLauncher } from "./harness-runtime";
+export {
+  setHarnessAuthorityValidator,
+  setHarnessLauncher,
+} from "./harness-runtime";
 
 export {
   pinCodexCredentialAtAdmission,

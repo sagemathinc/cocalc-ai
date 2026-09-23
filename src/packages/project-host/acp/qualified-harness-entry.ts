@@ -8,13 +8,22 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
+import { createCredentialRelayBridge } from "./credential-relay-bridge";
+import type { CredentialRelayBridge } from "./credential-relay-bridge";
 
 const MAX_SECRET_BYTES = 16 * 1024;
+const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
 export async function qualifiedHarnessLaunch(
   id: string,
   revision: string,
-): Promise<{ executable: string; args: string[]; env: NodeJS.ProcessEnv }> {
+  credentialMode: "project-secret" | "account-api-key" = "project-secret",
+): Promise<{
+  executable: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  close(): Promise<void>;
+}> {
   const candidate = getQualifiedHarnessCandidate(id);
   if (
     !candidate ||
@@ -25,7 +34,8 @@ export async function qualifiedHarnessLaunch(
   }
   const env = { ...process.env };
   const credential = candidate.launch.projectSecret;
-  if (credential) {
+  let bridge: CredentialRelayBridge | undefined;
+  if (credential && credentialMode === "project-secret") {
     const value = await readFile(
       join(PROJECT_SECRETS_MOUNT_PATH, credential.name),
       { encoding: "utf8", flag: "r" },
@@ -34,20 +44,42 @@ export async function qualifiedHarnessLaunch(
       throw Error(`Project secret ${credential.name} is invalid`);
     }
     env[credential.environmentVariable] = value.trim();
+  } else if (credential && credentialMode === "account-api-key") {
+    const token = (
+      await readFile(join(CREDENTIAL_RELAY_MOUNT, "token"), {
+        encoding: "utf8",
+        flag: "r",
+      })
+    ).trim();
+    bridge = await createCredentialRelayBridge({
+      socketPath: join(CREDENTIAL_RELAY_MOUNT, "relay.sock"),
+      token,
+    });
+    env.ANTHROPIC_BASE_URL = bridge.baseUrl;
+    env[credential.environmentVariable] = "cocalc-credential-relay";
   }
   return {
     executable: candidate.launch.executable,
     args: [...candidate.launch.requiredArgs],
     env,
+    close: async () => {
+      await bridge?.close();
+    },
   };
 }
 
 async function main(): Promise<void> {
-  const [, , id, revision, ...unexpected] = process.argv;
-  if (!id || !revision || unexpected.length) {
+  const [, , id, revision, credentialMode, ...unexpected] = process.argv;
+  if (
+    !id ||
+    !revision ||
+    (credentialMode !== "project-secret" &&
+      credentialMode !== "account-api-key") ||
+    unexpected.length
+  ) {
     throw Error("Invalid qualified ACP launch request");
   }
-  const launch = await qualifiedHarnessLaunch(id, revision);
+  const launch = await qualifiedHarnessLaunch(id, revision, credentialMode);
   const child = spawn(launch.executable, launch.args, {
     env: launch.env,
     stdio: "inherit",
@@ -55,14 +87,18 @@ async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => child.kill(signal));
   }
-  const code = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal) return resolve(128);
-      resolve(code ?? 1);
+  try {
+    const code = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (signal) return resolve(128);
+        resolve(code ?? 1);
+      });
     });
-  });
-  process.exitCode = code;
+    process.exitCode = code;
+  } finally {
+    await launch.close();
+  }
 }
 
 if (require.main === module) {

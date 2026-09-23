@@ -51,6 +51,23 @@ function request(): AcpRequest {
     },
   };
 }
+function claudeRequest(): AcpRequest {
+  const value = request();
+  value.runtime = {
+    version: 1,
+    kind: "acp",
+    profile: {
+      version: 2,
+      kind: "acp",
+      id: "claude-code",
+      revision: "0.79.0",
+      cwd: "/home/user",
+      executionPolicy: "full-access",
+      credentialMode: "project-managed",
+    },
+  };
+  return value;
+}
 const original = process.env.COCALC_ACP_HARNESSES;
 // SQLite table modules initialize once per process; share one isolated database.
 beforeAll(() => initAcpDatabase({ filename: ":memory:" }));
@@ -106,6 +123,52 @@ test("generic admission snapshots profile and bypasses Codex credentials through
     },
   });
   expect(resolver).not.toHaveBeenCalled();
+});
+
+test("Claude admission pins the exact private credential choice through SQLite", async () => {
+  const projectSecret = prepareHarnessRequest(claudeRequest());
+  expect(projectSecret.harness_credential).toEqual({
+    version: 1,
+    provider: "anthropic",
+    mode: "project-secret",
+  });
+  const source = claudeRequest();
+  const credentialId = randomUUID();
+  source.harness_credential = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-api-key",
+    credentialId,
+  };
+  const admitted = await pinCodexCredentialAtAdmission(source);
+  const job = enqueueAcpJob(admitted);
+  source.harness_credential.credentialId = randomUUID();
+  expect(decodeAcpJobRequest(job).harness_credential).toEqual({
+    version: 1,
+    provider: "anthropic",
+    mode: "account-api-key",
+    credentialId,
+  });
+  expect(harnessRuntimeKey(admitted)).not.toBe(
+    harnessRuntimeKey(projectSecret),
+  );
+});
+
+test("account credentials cannot be injected without a qualified human turn", () => {
+  const source = claudeRequest();
+  source.harness_credential = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-api-key",
+    credentialId: randomUUID(),
+  };
+  source.chat!.agent_message = true;
+  source.chat!.agent_rpc_execution = { guidance: false } as any;
+  expect(() => prepareHarnessRequest(source)).toThrow(/Agent-authored/);
+  const native = { ...source, runtime: undefined, chat: request().chat };
+  expect(() => prepareHarnessRequest(native)).toThrow(
+    /requires an ACP harness/,
+  );
 });
 
 test("unconfigured or disabled hosts reject instead of choosing native Codex", () => {

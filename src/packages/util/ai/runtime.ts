@@ -2,6 +2,7 @@ import type { CodexSessionConfig } from "./codex";
 import { parseHarnessSessionSettings } from "./harness-controls";
 import type { HarnessSessionSettings } from "./harness-controls";
 import { getQualifiedHarnessCandidate } from "./qualified-harnesses";
+import { isValidUUID } from "../misc";
 
 /** Project-managed configuration only. Never store credential values here. */
 export interface CustomAcpHarnessProfile {
@@ -41,6 +42,87 @@ export type AgentRuntimeConfig =
     };
 
 export type AcpHarnessRuntime = Extract<AgentRuntimeConfig, { kind: "acp" }>;
+
+/** Request-local credential choice. Never persist this in shared chat config. */
+export type AcpHarnessCredential =
+  | {
+      version: 1;
+      provider: "project";
+      mode: "project-managed";
+    }
+  | {
+      version: 1;
+      provider: "anthropic";
+      mode: "project-secret";
+    }
+  | {
+      version: 1;
+      provider: "anthropic";
+      mode: "account-api-key";
+      credentialId: string;
+    };
+
+export function parseAcpHarnessCredential(
+  value: unknown,
+  profile: AcpHarnessProfile,
+): AcpHarnessCredential {
+  if (profile.version !== 2 || profile.id !== "claude-code") {
+    if (value === undefined)
+      return { version: 1, provider: "project", mode: "project-managed" };
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw Error("This ACP harness does not support account credentials");
+    const project = value as Record<string, unknown>;
+    if (
+      project.version !== 1 ||
+      project.provider !== "project" ||
+      project.mode !== "project-managed" ||
+      Object.keys(project).some(
+        (key) => !["version", "provider", "mode"].includes(key),
+      )
+    )
+      throw Error("This ACP harness does not support account credentials");
+    return { version: 1, provider: "project", mode: "project-managed" };
+  }
+  if (value === undefined) {
+    return { version: 1, provider: "anthropic", mode: "project-secret" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw Error("Invalid ACP harness credential selection");
+  }
+  const obj = value as Record<string, unknown>;
+  if (
+    obj.version !== 1 ||
+    obj.provider !== "anthropic" ||
+    (obj.mode !== "project-secret" && obj.mode !== "account-api-key")
+  ) {
+    throw Error("Unsupported ACP harness credential selection");
+  }
+  if (obj.mode === "project-secret") {
+    if (
+      Object.keys(obj).some(
+        (key) => !["version", "provider", "mode"].includes(key),
+      )
+    ) {
+      throw Error("Unsupported ACP harness credential field");
+    }
+    return { version: 1, provider: "anthropic", mode: "project-secret" };
+  }
+  if (
+    Object.keys(obj).some(
+      (key) => !["version", "provider", "mode", "credentialId"].includes(key),
+    ) ||
+    typeof obj.credentialId !== "string" ||
+    !isValidUUID(obj.credentialId)
+  ) {
+    throw Error("Invalid Anthropic account credential selection");
+  }
+  return {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-api-key",
+    credentialId: obj.credentialId,
+  };
+}
 
 export function parseAcpHarnessRuntime(value: unknown): AcpHarnessRuntime {
   if (!value || typeof value !== "object" || Array.isArray(value))

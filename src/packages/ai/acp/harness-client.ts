@@ -15,8 +15,14 @@ import type {
 import type { AcpAttentionQuestion } from "@cocalc/conat/ai/acp/types";
 import { harnessQuestionForm } from "./harness-questions";
 import type { Readable, Writable } from "node:stream";
-import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
-import type { AcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import {
+  parseAcpHarnessCredential,
+  parseAcpHarnessProfile,
+} from "@cocalc/util/ai/runtime";
+import type {
+  AcpHarnessCredential,
+  AcpHarnessProfile,
+} from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
   harnessSessionControls,
@@ -47,6 +53,7 @@ export interface HarnessBinding {
   projectId: string;
   accountId: string;
   profile: AcpHarnessProfile;
+  credential: AcpHarnessCredential;
 }
 
 export type HarnessLauncher = (
@@ -124,6 +131,10 @@ export class AcpHarnessClient {
     this.binding = {
       ...binding,
       profile: parseAcpHarnessProfile(binding.profile),
+      credential: parseAcpHarnessCredential(
+        binding.credential,
+        binding.profile,
+      ),
     };
     this.timeoutMs = timeoutMs;
     // Drain stderr, but never copy untrusted process output into chat or logs.
@@ -162,11 +173,12 @@ export class AcpHarnessClient {
     questionHandler?: HarnessQuestionHandler,
   ): Promise<AcpHarnessClient> {
     const profile = parseAcpHarnessProfile(binding.profile);
+    const credential = parseAcpHarnessCredential(binding.credential, profile);
     if (!binding.projectId || !binding.accountId)
       throw Error("ACP principal binding is required");
     const client = new AcpHarnessClient(
-      { ...binding, profile },
-      await launch({ ...binding, profile }),
+      { ...binding, profile, credential },
+      await launch({ ...binding, profile, credential }),
       timeoutMs,
       questionHandler,
     );

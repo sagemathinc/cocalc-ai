@@ -1,6 +1,8 @@
 import { spawn, execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
@@ -36,14 +38,18 @@ import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constan
 import { getProject } from "../sqlite/projects";
 import getLogger from "@cocalc/backend/logger";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
+import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
+import type { CredentialHttpRelay } from "./credential-http-relay";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
 const QUALIFIED_HARNESS_ENTRY =
   "/opt/cocalc/src/packages/project-host/dist/acp/qualified-harness-entry.js";
+const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
 export function resolveHarnessCommand(
   profile: ReturnType<typeof parseAcpHarnessProfile>,
+  credentialMode?: "project-secret" | "account-api-key",
 ): { executable: string; args: string[] } {
   if (profile.version === 1) {
     return { executable: profile.executable, args: [...profile.args] };
@@ -58,7 +64,12 @@ export function resolveHarnessCommand(
   }
   return {
     executable: "/opt/cocalc/bin/node",
-    args: [QUALIFIED_HARNESS_ENTRY, candidate.id, candidate.package.version],
+    args: [
+      QUALIFIED_HARNESS_ENTRY,
+      candidate.id,
+      candidate.package.version,
+      credentialMode ?? "project-secret",
+    ],
   };
 }
 
@@ -71,7 +82,11 @@ export async function launchHarnessInProject(
   const path = conversation?.path;
   const threadId = conversation?.threadId;
   const profile = parseAcpHarnessProfile(binding.profile);
-  const harnessCommand = resolveHarnessCommand(profile);
+  const credential = binding.credential;
+  const harnessCommand = resolveHarnessCommand(
+    profile,
+    credential.mode === "account-api-key" ? credential.mode : undefined,
+  );
   if (
     !isValidUUID(projectId) ||
     !isValidUUID(accountId) ||
@@ -130,6 +145,8 @@ export async function launchHarnessInProject(
   let created = false;
   let stopped: Promise<void> | undefined;
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
+  let credentialRelay: CredentialHttpRelay | undefined;
+  let credentialRelayDirectory: string | undefined;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
@@ -154,6 +171,9 @@ export async function launchHarnessInProject(
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
         await cliLease?.close();
+        await credentialRelay?.close();
+        if (credentialRelayDirectory)
+          await rm(credentialRelayDirectory, { recursive: true, force: true });
       }
       await unmount(projectId);
     })().catch((error) => {
@@ -197,6 +217,29 @@ export async function launchHarnessInProject(
     if (cliLease.identityContainerPath)
       env.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
     applyProjectRuntimeCliEnv(env, accountId);
+    if (credential.mode === "account-api-key") {
+      if (
+        profile.version !== 2 ||
+        profile.id !== "claude-code" ||
+        credential.provider !== "anthropic"
+      ) {
+        throw Error("Unsupported account credential binding");
+      }
+      credentialRelayDirectory = await mkdtemp(
+        join(tmpdir(), "cocalc-acp-credential-"),
+      );
+      credentialRelay = await createAnthropicAccountCredentialRelay({
+        projectId,
+        accountId,
+        credentialId: credential.credentialId,
+        socketPath: join(credentialRelayDirectory, "relay.sock"),
+      });
+      await writeFile(
+        join(credentialRelayDirectory, "token"),
+        credentialRelay.token,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    }
     const args = [
       "create",
       ...(await podmanRuntimeArgs()),
@@ -225,6 +268,15 @@ export async function launchHarnessInProject(
       }),
     ];
     if (scratch) args.push(mountArg({ source: scratch, target: "/tmp" }));
+    if (credentialRelayDirectory) {
+      args.push(
+        mountArg({
+          source: credentialRelayDirectory,
+          target: CREDENTIAL_RELAY_MOUNT,
+          readOnly: true,
+        }),
+      );
+    }
     for (const [source, target] of Object.entries(getCoCalcMounts()))
       args.push(mountArg({ source, target, readOnly: true }));
     for (const [key, value] of Object.entries(env))

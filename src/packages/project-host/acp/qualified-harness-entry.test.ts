@@ -6,6 +6,13 @@
 import { readFile } from "node:fs/promises";
 import { qualifiedHarnessLaunch } from "./qualified-harness-entry";
 
+const mockCloseBridge = jest.fn();
+const mockCreateBridge = jest.fn();
+
+jest.mock("./credential-relay-bridge", () => ({
+  createCredentialRelayBridge: (...args) => mockCreateBridge(...args),
+}));
+
 jest.mock("node:fs/promises", () => ({ readFile: jest.fn() }));
 
 const mockReadFile = readFile as jest.MockedFunction<typeof readFile>;
@@ -13,6 +20,32 @@ const mockReadFile = readFile as jest.MockedFunction<typeof readFile>;
 beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.ANTHROPIC_API_KEY;
+  mockCloseBridge.mockResolvedValue(undefined);
+  mockCreateBridge.mockResolvedValue({
+    baseUrl: "http://127.0.0.1:12345",
+    close: mockCloseBridge,
+  });
+});
+
+test("materializes only an ephemeral relay capability for account keys", async () => {
+  mockReadFile.mockResolvedValue(" relay-token \n");
+  const launch = await qualifiedHarnessLaunch(
+    "claude-code",
+    "0.79.0",
+    "account-api-key",
+  );
+  expect(mockReadFile).toHaveBeenCalledWith(
+    "/run/cocalc/credential-relay/token",
+    { encoding: "utf8", flag: "r" },
+  );
+  expect(mockCreateBridge).toHaveBeenCalledWith({
+    socketPath: "/run/cocalc/credential-relay/relay.sock",
+    token: "relay-token",
+  });
+  expect(launch.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:12345");
+  expect(launch.env.ANTHROPIC_API_KEY).toBe("cocalc-credential-relay");
+  await launch.close();
+  expect(mockCloseBridge).toHaveBeenCalledTimes(1);
 });
 
 test("materializes a project-owned key only in the child environment", async () => {

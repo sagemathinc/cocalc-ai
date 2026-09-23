@@ -90,8 +90,12 @@ import {
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
-import { setHarnessLauncher } from "@cocalc/lite/hub/acp/harness-runtime";
+import {
+  setHarnessAuthorityValidator,
+  setHarnessLauncher,
+} from "@cocalc/lite/hub/acp/harness-runtime";
 import { launchHarnessInProject } from "./acp/harness-launcher";
+import { validateHarnessAuthority } from "./acp/harness-authority";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { startHarnessReaper } from "./acp/harness-reaper";
@@ -531,6 +535,7 @@ export async function main(
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   setHarnessLauncher(launchHarnessInProject);
+  setHarnessAuthorityValidator(validateHarnessAuthority);
   initCodexSiteKeyGovernor();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
     const accountId = `${account_id ?? ""}`.trim();

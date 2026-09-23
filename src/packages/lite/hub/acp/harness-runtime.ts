@@ -2,7 +2,10 @@ import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AcpAgent } from "@cocalc/ai/acp";
 import type { CodexAttentionHandler } from "@cocalc/ai/acp";
 import type { HarnessBinding, HarnessLauncher } from "@cocalc/ai/acp/harness";
-import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import {
+  parseAcpHarnessCredential,
+  parseAcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
 import { createHash } from "node:crypto";
 
 type Conversation = { path: string; threadId: string };
@@ -11,6 +14,9 @@ type Factory = (
   conversation: Conversation,
 ) => ReturnType<HarnessLauncher>;
 let launcher: Factory | undefined;
+let authorityValidator:
+  | ((binding: HarnessBinding) => Promise<void>)
+  | undefined;
 const discovering = new Map<
   string,
   { projectId: string; finished: Promise<void> }
@@ -43,6 +49,12 @@ export function setHarnessLauncher(next?: Factory): void {
   launcher = next;
 }
 
+export function setHarnessAuthorityValidator(
+  next?: (binding: HarnessBinding) => Promise<void>,
+): void {
+  authorityValidator = next;
+}
+
 /** A temporary session for controls only; never load or mutate a chat session. */
 export async function discoverHarnessControls(request: AcpRequest) {
   if (discoveryPauses.has(request.project_id))
@@ -72,6 +84,7 @@ export async function discoverHarnessControls(request: AcpRequest) {
         projectId: prepared.project_id,
         accountId: prepared.account_id,
         profile: prepared.runtime.profile,
+        credential: prepared.harness_credential!,
       },
       (binding) => factory(binding, conversation),
     );
@@ -92,8 +105,16 @@ export async function discoverHarnessControls(request: AcpRequest) {
 }
 
 export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
-  if (request.runtime === undefined) return request;
+  if (request.runtime === undefined) {
+    if (request.harness_credential !== undefined)
+      throw Error("ACP credential selection requires an ACP harness");
+    return request;
+  }
   const runtime = parseAcpHarnessRuntime(request.runtime);
+  const credential = parseAcpHarnessCredential(
+    request.harness_credential,
+    runtime.profile,
+  );
   if (!launcher || process.env.COCALC_ACP_HARNESSES !== "1")
     throw Error("ACP harness execution is not enabled on this host");
   if (
@@ -113,10 +134,17 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     (request.chat.agent_message && !request.chat.agent_rpc_execution)
   )
     throw Error("Unsupported ACP harness request options");
+  if (
+    credential.mode === "account-api-key" &&
+    (request.chat.agent_message || request.chat.agent_rpc_execution)
+  ) {
+    throw Error("Agent-authored ACP turns cannot select account credentials");
+  }
   return {
     ...request,
     chat: { ...request.chat },
     runtime,
+    harness_credential: credential,
   };
 }
 
@@ -171,6 +199,7 @@ export function harnessRuntimeKey(request: AcpRequest): string {
     createHash("sha256")
       .update(JSON.stringify(request.runtime.profile))
       .digest("hex"),
+    request.harness_credential,
   ]);
 }
 
@@ -190,9 +219,11 @@ export async function createHarnessAgent(
       projectId: prepared.project_id,
       accountId: prepared.account_id,
       profile: prepared.runtime!.profile,
+      credential: prepared.harness_credential!,
     },
     conversation,
     (binding) => factory(binding, conversation),
     attention,
+    authorityValidator,
   );
 }

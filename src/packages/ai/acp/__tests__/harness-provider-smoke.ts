@@ -268,6 +268,11 @@ async function main() {
           executionPolicy: "full-access",
           credentialMode: "project-managed",
         },
+        credential: {
+          version: 1,
+          provider: "project",
+          mode: "project-managed",
+        },
       },
       async ({ profile }) => {
         const child = spawn(profile.executable, profile.args, {
