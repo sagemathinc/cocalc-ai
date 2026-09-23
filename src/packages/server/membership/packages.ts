@@ -25,6 +25,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
+import { membershipPackageCoversCourseProject } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import {
   is_valid_email_address as isValidEmailAddress,
@@ -1422,11 +1423,7 @@ async function assertValidCourseSeatProject({
   if (!isValidUUID(project_id)) {
     throw Error("course seat project_id must be a valid UUID");
   }
-  const course_project_id = `${pkg.metadata?.course_project_id ?? ""}`.trim();
-  if (!isValidUUID(course_project_id)) {
-    throw Error("course package is missing a valid course_project_id");
-  }
-  if (project_id === course_project_id) {
+  if (membershipPackageCoversCourseProject(pkg.metadata, project_id)) {
     throw Error(
       "course seat must target a student project, not the instructor course project",
     );
@@ -1437,9 +1434,18 @@ async function assertValidCourseSeatProject({
     trusted_admin,
     client,
   });
-  if (course?.type !== "student" || course.project_id !== course_project_id) {
+  // Validate the requested course against both the authoritative student
+  // project and the package's full set of links, not just its legacy first link.
+  const course_project_id =
+    `${assignment_metadata?.course_project_id ?? course?.project_id ?? ""}`.trim();
+  if (
+    course?.type !== "student" ||
+    !isValidUUID(course_project_id) ||
+    course.project_id !== course_project_id ||
+    !membershipPackageCoversCourseProject(pkg.metadata, course_project_id)
+  ) {
     throw Error(
-      `course seat project must be a student project linked to course ${course_project_id}`,
+      `course seat project must be a student project linked to course ${pkg.metadata?.course_project_id ?? "covered by this package"}`,
     );
   }
   const courseAccountId = `${course.account_id ?? ""}`.trim() || undefined;
