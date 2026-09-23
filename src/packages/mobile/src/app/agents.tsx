@@ -290,6 +290,18 @@ export default function AgentsScreen() {
       <View style={[styles.row, { borderColor: colors.border }]}>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="New Agent"
+          onPress={() =>
+            router.push({ pathname: "/new-agent", params: { profile } })
+          }
+          style={styles.button}
+        >
+          <Text style={{ color: colors.link, fontWeight: "700" }}>
+            + New Agent
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
           accessibilityLabel={
             showHidden ? "Show active agents" : "Show hidden agents"
           }
@@ -441,7 +453,7 @@ export default function AgentsScreen() {
                 ? "Agents are not enabled for this account."
                 : search
                   ? "No agents match your search."
-                  : "No visible named agents yet. Create or restore an agent in the web Agents workspace."}
+                  : "No visible named agents yet. Tap New Agent to create one."}
             </Text>
           )
         }

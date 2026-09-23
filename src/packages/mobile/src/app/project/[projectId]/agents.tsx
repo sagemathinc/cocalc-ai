@@ -154,20 +154,39 @@ export default function ProjectAgentsScreen() {
           />
         }
         ListHeaderComponent={
-          error ? (
-            <View style={styles.notice}>
-              <Text accessibilityRole="alert" style={styles.error}>
-                {error}
-              </Text>
-              <Pressable
-                accessibilityLabel="Retry loading agent sessions"
-                accessibilityRole="button"
-                onPress={() => void load()}
-              >
-                <Text style={styles.link}>Retry</Text>
-              </Pressable>
-            </View>
-          ) : null
+          <View style={styles.notice}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New Agent in this project"
+              onPress={() =>
+                router.push({
+                  pathname: "/new-agent",
+                  params: {
+                    profile: profileId,
+                    projectId,
+                    host: hostId,
+                    title: `${params.title || "Project"}`,
+                  },
+                })
+              }
+            >
+              <Text style={styles.link}>+ New Agent</Text>
+            </Pressable>
+            {error ? (
+              <View style={styles.notice}>
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {error}
+                </Text>
+                <Pressable
+                  accessibilityLabel="Retry loading agent sessions"
+                  accessibilityRole="button"
+                  onPress={() => void load()}
+                >
+                  <Text style={styles.link}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
         }
         ListEmptyComponent={
           loading ? (
@@ -178,8 +197,7 @@ export default function ProjectAgentsScreen() {
                 No indexed agent sessions
               </Text>
               <Text style={styles.secondary}>
-                This first mobile slice opens existing Codex sessions. Create
-                the first one in the web app, then pull to refresh.
+                Create an agent in this project, or pull to refresh.
               </Text>
               <Pressable
                 accessibilityLabel="Open project in browser"
