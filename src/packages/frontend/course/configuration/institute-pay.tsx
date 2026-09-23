@@ -173,6 +173,7 @@ export function InstitutePaySection({
                   onClick={async () => {
                     setLinking(true);
                     setError("");
+                    setLinkedNotice("");
                     try {
                       await linkCourseMembershipPackage({
                         package_id: pkg.id,

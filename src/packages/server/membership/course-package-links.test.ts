@@ -62,6 +62,7 @@ describe("course package linking", () => {
     expect(mockAccess).toHaveBeenCalledWith({
       account_id,
       project_id: course_project_id,
+      warmRoute: false,
     });
   });
   it("rejects nonowners and project access denial without changes", async () => {
@@ -96,6 +97,28 @@ describe("course package linking", () => {
         course_project_id: uuid(),
       }),
     ).rejects.toThrow("only course");
+  });
+  it("checks project access without holding the package row lock", async () => {
+    mockAccess.mockImplementation(async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT id FROM membership_packages WHERE id=$1 FOR UPDATE NOWAIT",
+          [package_id],
+        );
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+    await expect(
+      linkCourseMembershipPackage({
+        account_id,
+        package_id,
+        course_project_id: uuid(),
+      }),
+    ).resolves.toBeUndefined();
   });
   it("rejects malformed identifiers before authorization", async () => {
     await expect(

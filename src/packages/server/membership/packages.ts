@@ -2142,20 +2142,29 @@ export async function linkCourseMembershipPackage({
   if (!isValidUUID(package_id) || !isValidUUID(course_project_id)) {
     throw Error("valid package_id and course_project_id required");
   }
+  const assertOwnerAndKind = (pkg: MembershipPackageRecord) => {
+    if (pkg.owner_account_id !== account_id) {
+      throw Error("must own membership package");
+    }
+    if (pkg.kind !== "course") {
+      throw Error("only course packages can be linked to courses");
+    }
+  };
+  const pkg = await getMembershipPackage({ package_id });
+  if (!pkg) throw Error("membership package not found");
+  assertOwnerAndKind(pkg);
+  // Project authorization can use another pool connection or a remote bay.
+  // Finish it before holding a transaction, then recheck ownership under lock.
+  await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id: course_project_id,
+    warmRoute: false,
+  });
   await withPackageOwnerWriteFence({
     package_id,
     action: "link course membership package",
     fn: async ({ client, pkg }) => {
-      if (pkg.owner_account_id !== account_id) {
-        throw Error("must own membership package");
-      }
-      if (pkg.kind !== "course") {
-        throw Error("only course packages can be linked to courses");
-      }
-      await assertProjectCollaboratorAccessAllowRemote({
-        account_id,
-        project_id: course_project_id,
-      });
+      assertOwnerAndKind(pkg);
       const metadata = pkg.metadata ?? {};
       const ids = new Set<string>(
         [

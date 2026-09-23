@@ -38,6 +38,48 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => () => null);
 jest.mock("@cocalc/frontend/purchases/money-statistic", () => () => null);
 
 describe("InstitutePaySection", () => {
+  it("restores focus after each of two package links", async () => {
+    const packages = ["pool-a", "pool-b"].map((id) => ({
+      id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 100,
+      available_seat_count: 100,
+      metadata: { course_project_id: "old-course" },
+      assignments: [],
+    }));
+    (getMembershipPackages as jest.Mock)
+      .mockResolvedValueOnce(packages)
+      .mockResolvedValueOnce([
+        { ...packages[0], metadata: { course_project_id: "new-course" } },
+        packages[1],
+      ])
+      .mockResolvedValueOnce(
+        packages.map((pkg) => ({
+          ...pkg,
+          metadata: { course_project_id: "new-course" },
+        })),
+      );
+    render(
+      <InstitutePaySection
+        project_id="new-course"
+        enabled
+        selectedTier={{ id: "student" }}
+        onToggle={jest.fn()}
+      />,
+    );
+    for (const pkg of packages) {
+      const button = await screen.findByRole("button", {
+        name: `Use existing package ${pkg.id}`,
+      });
+      button.focus();
+      await userEvent.keyboard("{Enter}");
+      await screen.findByRole("status");
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: /refresh seats/i }),
+      );
+    }
+  });
   it("links an existing pool using the keyboard without buying seats", async () => {
     const pkg = {
       id: "pool-1",
