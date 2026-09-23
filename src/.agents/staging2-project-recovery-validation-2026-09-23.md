@@ -37,6 +37,7 @@ the source commits above identify the tracked code used for the builds.
 | First production-timed scheduler sweep                                    | Found an empty-string UUID cursor error. Fixed in `426994cc`, deployed to staging2, and verified on the next normal sweep.                                     |
 | Scheduled backup on a newly provisioned project                           | Rustic backup `e034db1fa34b9994f20eecf606de470f003965bf70b8d4a2078f352bf21de4b9` created at 20:43:24 UTC; `projects.last_backup` advanced to 20:43:24.645 UTC. |
 | Scheduled backup restore                                                  | Restored `recovery-canary/marker.txt` to a second file and read back `new scheduled worker 2026-09-23`.                                                        |
+| Bay backup file index                                                     | The Rustic catalog and file restore worked, but admin `backup-health` still reports `latest_index_backup_at: null` for this backup.                            |
 | Independent snapshot lane                                                 | Local snapshot `2026-09-23T20:45:17.464Z` created after the backup completed, with the host still responsive to project commands.                              |
 | Manual backup and restore                                                 | Passed on a separate disposable project after the new project-host deployment.                                                                                 |
 | Full Btrfs snapshot restore                                               | `mode=both` restored a marker to its pre-mutation value and restarted the project successfully.                                                                |
@@ -64,16 +65,20 @@ projects; it did not create hundreds of live projects.
 2. Browser UI testing is pending the staging2 CLI fresh-auth approval. Frontend
    automated checks and static smoke passed, but the actual project status UI
    has not yet been exercised in a browser.
-3. The plan's full observability and scheduler contract remains broader than
+3. The bay backup file index was not produced by the scheduled path. The
+   recoverable Rustic snapshot and `last_backup` report were confirmed, but
+   any release criterion requiring a bay file index for each backup remains
+   open until its indexing policy and writer are confirmed and tested.
+4. The plan's full observability and scheduler contract remains broader than
    the current code: stage-specific timing and bytes, event-triggered due work,
    ownership/schedule revision tracking, pressure debt and capacity reports,
    operator drill reporting, and gated automatic rollout are not yet present.
    The current scheduler still reconciles on a 15-minute timer.
-4. The requested seven-day canary, 30-day due-to-success objectives, paid/free
+5. The requested seven-day canary, 30-day due-to-success objectives, paid/free
    production distributions, interactive latency comparison, and restore
    drills across repository shards require observation after code review and
    coordinated rollout. None is established by this single-day staging test.
-5. Staging2's overall health has a separate pre-existing bay-backup restore
+6. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
 
 Do not promote this change to production until the open code and UI findings
