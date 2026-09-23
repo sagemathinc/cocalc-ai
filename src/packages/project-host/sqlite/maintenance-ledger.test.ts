@@ -6,10 +6,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
+import { closeDatabase, getDatabase } from "@cocalc/lite/hub/sqlite/database";
 import {
   listLeasedMaintenanceSchedules,
   listPendingMaintenanceReports,
+  listRecentMaintenanceAttempts,
   MAX_MAINTENANCE_OWNERSHIP_LEASE_MS,
   markMaintenanceReportDelivered,
   saveMaintenanceReport,
@@ -17,6 +18,75 @@ import {
 } from "./maintenance-ledger";
 
 describe("project maintenance report ledger", () => {
+  it("replays each distinct attempt in order and retains bounded history", () => {
+    const oldFilename = process.env.COCALC_LITE_SQLITE_FILENAME;
+    process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
+    closeDatabase();
+    try {
+      const first = {
+        project_id: "project-1",
+        host_id: "host-1",
+        kind: "backup" as const,
+        observed_at: "2026-09-23T10:00:00.000Z",
+        outcome: "failed" as const,
+        stage_durations_ms: { inventory: 25 },
+      };
+      const second = {
+        ...first,
+        observed_at: "2026-09-23T10:01:00.000Z",
+        outcome: "succeeded" as const,
+      };
+      saveMaintenanceReport(first);
+      saveMaintenanceReport(second);
+      expect(listPendingMaintenanceReports()).toEqual([first, second]);
+      markMaintenanceReportDelivered(first);
+      expect(listPendingMaintenanceReports()).toEqual([second]);
+      expect(listRecentMaintenanceAttempts({ projectId: "project-1" })).toEqual(
+        [second, first],
+      );
+    } finally {
+      closeDatabase();
+      if (oldFilename == null) delete process.env.COCALC_LITE_SQLITE_FILENAME;
+      else process.env.COCALC_LITE_SQLITE_FILENAME = oldFilename;
+    }
+  });
+
+  it("bounds delivered attempts without deleting pending attempts", () => {
+    const oldFilename = process.env.COCALC_LITE_SQLITE_FILENAME;
+    process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
+    closeDatabase();
+    try {
+      for (let i = 0; i < 140; i++) {
+        const report = {
+          project_id: "project-1",
+          host_id: "host-1",
+          kind: "snapshot" as const,
+          observed_at: new Date(Date.UTC(2026, 8, 23, 10, 0, i)).toISOString(),
+          outcome: "succeeded" as const,
+          latest_snapshot_at: new Date(
+            Date.UTC(2026, 8, 23, 10, 0, i),
+          ).toISOString(),
+        };
+        saveMaintenanceReport(report);
+        if (i !== 0) markMaintenanceReportDelivered(report);
+      }
+      const count = getDatabase()
+        .prepare(
+          "SELECT COUNT(*) AS count FROM project_maintenance_attempts WHERE project_id=?",
+        )
+        .get("project-1") as { count: number };
+      expect(count.count).toBeLessThanOrEqual(130);
+      expect(listPendingMaintenanceReports()).toHaveLength(1);
+      expect(listPendingMaintenanceReports()[0].observed_at).toBe(
+        "2026-09-23T10:00:00.000Z",
+      );
+    } finally {
+      closeDatabase();
+      if (oldFilename == null) delete process.env.COCALC_LITE_SQLITE_FILENAME;
+      else process.env.COCALC_LITE_SQLITE_FILENAME = oldFilename;
+    }
+  });
+
   it("keeps the newest report pending until that exact report is delivered", () => {
     const oldFilename = process.env.COCALC_LITE_SQLITE_FILENAME;
     process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
@@ -128,6 +198,14 @@ describe("project maintenance report ledger", () => {
         rows: [row],
         verifiedAtMs,
       });
+      const report = {
+        project_id: row.project_id,
+        host_id: "host-1",
+        kind: "snapshot" as const,
+        observed_at: row.last_edited,
+        outcome: "failed" as const,
+      };
+      saveMaintenanceReport(report);
       closeDatabase();
       expect(
         listLeasedMaintenanceSchedules({
@@ -135,6 +213,10 @@ describe("project maintenance report ledger", () => {
           nowMs: verifiedAtMs + 1,
         }),
       ).toEqual([row]);
+      expect(listPendingMaintenanceReports()).toEqual([report]);
+      expect(
+        listRecentMaintenanceAttempts({ projectId: row.project_id }),
+      ).toEqual([report]);
     } finally {
       closeDatabase();
       if (oldFilename == null) delete process.env.COCALC_LITE_SQLITE_FILENAME;
