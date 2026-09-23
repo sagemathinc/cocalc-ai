@@ -32,7 +32,6 @@ export function AgentsAccountMenu() {
     | string
     | undefined;
   const lastName = useTypedRedux("account", "last_name") as string | undefined;
-  const email = useTypedRedux("account", "email_address") as string | undefined;
   const [membershipClass, setMembershipClass] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
@@ -74,10 +73,7 @@ export function AgentsAccountMenu() {
       display_name: displayName,
       first_name: firstName,
       last_name: lastName,
-    }) ||
-    email ||
-    "Account";
-  const secondary = email && email !== name ? email : "Account";
+    }) || "Account";
   const items: MenuProps["items"] = [
     { key: "account", icon: <Icon name="cog" />, label: "Account settings" },
     { key: "membership", icon: <Icon name="star" />, label: "Membership" },
@@ -95,7 +91,7 @@ export function AgentsAccountMenu() {
   function onMenuClick({ key }: { key: string }) {
     if (key === "sign-out") {
       Modal.confirm({
-        title: `Sign out ${email || "of this account"}?`,
+        title: `Sign out ${name}?`,
         content: "You will be signed out on this browser.",
         okText: "Sign out",
         okButtonProps: { danger: true },
@@ -157,18 +153,6 @@ export function AgentsAccountMenu() {
               }}
             >
               {name}
-            </span>
-            <span
-              style={{
-                color: UI_COLORS.muted,
-                display: "block",
-                fontSize: 12,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {secondary}
             </span>
           </span>
           {membershipClass === "free" && (

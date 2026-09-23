@@ -37,7 +37,14 @@ export function WorkspaceSidebarActions({
           marginTop: 10,
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            minHeight: "100%",
+          }}
+        >
           {onProjects && (
             <Button
               type="text"

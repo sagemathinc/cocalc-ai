@@ -3330,6 +3330,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           style={{
             borderTop: `1px solid ${UI_COLORS.border}`,
             flex: "0 0 auto",
+            marginTop: "auto",
             paddingTop: 8,
           }}
         >
