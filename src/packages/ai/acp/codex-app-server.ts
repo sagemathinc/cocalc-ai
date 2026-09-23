@@ -2559,9 +2559,22 @@ export class CodexAppServerAgent implements AcpAgent {
         );
       }
       if (backgroundTerminalCount > 0 || activeDescendantCount > 0) {
-        throw new Error(
-          "This Codex thread still has subagents or background commands running. Wait for them to finish or stop them before changing its runtime settings.",
-        );
+        if (
+          runtime.accountId !== request.account_id ||
+          runtime.projectId !== (request.chat?.project_id ?? request.project_id)
+        ) {
+          throw new Error(
+            "This Codex thread still has subagents or background commands running. Wait for them to finish or stop them before changing its runtime settings.",
+          );
+        }
+        try {
+          await this.interruptOutstanding(session.sessionId);
+        } catch (err) {
+          logger.warn("codex app-server: failed stopping retained work", {
+            threadId: runtime.threadId,
+            err: `${err}`,
+          });
+        }
       }
       await this.disposeRuntime(runtime, "runtime configuration changed");
       runtime = undefined;

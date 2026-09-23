@@ -3337,7 +3337,9 @@ describe("CodexAppServerAgent", () => {
     async (scopedIdentity) => {
       const requests: Array<{ method: string; params: any }> = [];
       const outstandingWorkChanged = jest.fn();
-      const proc = new FakeCodexAppServerProc((fake, message) => {
+      const handleRequest: ConstructorParameters<
+        typeof FakeCodexAppServerProc
+      >[0] = (fake, message) => {
         requests.push({ method: message.method, params: message.params });
         switch (message.method) {
           case "initialize":
@@ -3391,20 +3393,28 @@ describe("CodexAppServerAgent", () => {
             if (typeof message.id === "number")
               fake.sendResponse(message.id, {});
         }
-      });
+      };
+      const proc = new FakeCodexAppServerProc(handleRequest);
+      const processes = [proc];
+      let spawnCount = 0;
       setCodexProjectSpawner({
         spawnCodexExec: async () => {
           throw new Error("unexpected codex exec spawn");
         },
-        spawnCodexAppServer: async () => ({
-          proc: proc as any,
-          cmd: "fake-codex",
-          args: ["app-server"],
-          cwd: "/tmp/project",
-          runtimeEnv: scopedIdentity
-            ? { COCALC_AGENT_IDENTITY_FILE: "/tmp/retained/identity.json" }
-            : undefined,
-        }),
+        spawnCodexAppServer: async () => {
+          if (spawnCount++ > 0) {
+            processes.push(new FakeCodexAppServerProc(handleRequest));
+          }
+          return {
+            proc: processes[processes.length - 1] as any,
+            cmd: "fake-codex",
+            args: ["app-server"],
+            cwd: "/tmp/project",
+            runtimeEnv: scopedIdentity
+              ? { COCALC_AGENT_IDENTITY_FILE: "/tmp/retained/identity.json" }
+              : undefined,
+          };
+        },
       });
       const agent = new CodexAppServerAgent({
         onOutstandingWorkChanged: outstandingWorkChanged,
@@ -3470,26 +3480,18 @@ describe("CodexAppServerAgent", () => {
           maxConcurrentSubagents: 10,
         },
       });
-      if (scopedIdentity) {
-        await nextTurn;
-        expect(nextEvents).toEqual([
-          {
-            type: "error",
-            error: expect.stringContaining(
-              "still has subagents or background commands running",
-            ),
-          },
-        ]);
-      } else {
-        await expect(nextTurn).resolves.toBeUndefined();
-      }
+      await expect(nextTurn).resolves.toBeUndefined();
+      expect(nextEvents).not.toContainEqual({
+        type: "error",
+        error: expect.any(String),
+      });
       expect(
         requests.filter(({ method }) => method === "initialize"),
-      ).toHaveLength(1);
+      ).toHaveLength(scopedIdentity ? 2 : 1);
       expect(
         requests.filter(({ method }) => method === "turn/start"),
-      ).toHaveLength(scopedIdentity ? 1 : 2);
-      expect(proc.killed).toBe(false);
+      ).toHaveLength(2);
+      expect(proc.killed).toBe(scopedIdentity);
       await expect(agent.interruptOutstanding("chat-background")).resolves.toBe(
         true,
       );
@@ -3512,9 +3514,9 @@ describe("CodexAppServerAgent", () => {
           },
         ]),
       );
-      expect(proc.killed).toBe(false);
+      expect(processes[processes.length - 1].killed).toBe(false);
       await agent.dispose();
-      expect(proc.killed).toBe(true);
+      expect(processes.every((process) => process.killed)).toBe(true);
     },
   );
 
@@ -5436,42 +5438,50 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("refuses A-to-B replacement while the retained runtime has background work", async () => {
-    const proc = new FakeCodexAppServerProc((fake, message) => {
-      switch (message.method) {
-        case "thread/start":
-          fake.sendResponse(message.id, { thread: { id: "subscription-A" } });
-          break;
-        case "turn/start":
-          fake.sendResponse(message.id, { turn: { id: "turn-A" } });
-          setImmediate(() =>
-            fake.sendNotification("turn/completed", {
-              turn: { id: "turn-A", status: "completed" },
-            }),
-          );
-          break;
-        case "thread/backgroundTerminals/list":
-          fake.sendResponse(message.id, {
-            data: [{ itemId: "build", command: "pnpm build" }],
-            nextCursor: null,
-          });
-          break;
-        case "thread/list":
-          fake.sendResponse(message.id, { data: [], nextCursor: null });
-          break;
-        default:
-          if (typeof message.id === "number") fake.sendResponse(message.id, {});
-      }
+  it("stops same-account retained work when changing subscription credentials", async () => {
+    const processes: FakeCodexAppServerProc[] = [];
+    const spawnCodexAppServer = jest.fn(async () => {
+      const isFirstRuntime = processes.length === 0;
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "thread/start":
+            fake.sendResponse(message.id, { thread: { id: "subscription-A" } });
+            break;
+          case "turn/start":
+            fake.sendResponse(message.id, { turn: { id: "turn-A" } });
+            setImmediate(() =>
+              fake.sendNotification("turn/completed", {
+                turn: { id: "turn-A", status: "completed" },
+              }),
+            );
+            break;
+          case "thread/backgroundTerminals/list":
+            fake.sendResponse(message.id, {
+              data: isFirstRuntime
+                ? [{ itemId: "build", command: "pnpm build" }]
+                : [],
+              nextCursor: null,
+            });
+            break;
+          case "thread/list":
+            fake.sendResponse(message.id, { data: [], nextCursor: null });
+            break;
+          default:
+            if (typeof message.id === "number")
+              fake.sendResponse(message.id, {});
+        }
+      });
+      processes.push(proc);
+      return {
+        proc: proc as any,
+        cmd: "fake",
+        args: [],
+        authSource: "subscription" as const,
+        runtimeEnv: {},
+        credentialId: isFirstRuntime ? "credential-A" : "credential-B",
+        validateSubscriptionCredential: async () => {},
+      };
     });
-    const spawnCodexAppServer = jest.fn(async () => ({
-      proc: proc as any,
-      cmd: "fake",
-      args: [],
-      authSource: "subscription",
-      runtimeEnv: {},
-      credentialId: "credential-A",
-      validateSubscriptionCredential: async () => {},
-    }));
     setCodexProjectSpawner({
       spawnCodexExec: async () => {
         throw new Error("unexpected");
@@ -5504,11 +5514,11 @@ describe("CodexAppServerAgent", () => {
         },
         stream: async (event) => events.push(event),
       });
-      expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
-      expect(proc.killed).toBe(false);
-      expect(events).toContainEqual({
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(2);
+      expect(processes[0].killed).toBe(true);
+      expect(events).not.toContainEqual({
         type: "error",
-        error: expect.stringContaining("background commands running"),
+        error: expect.any(String),
       });
     } finally {
       await agent.dispose();
