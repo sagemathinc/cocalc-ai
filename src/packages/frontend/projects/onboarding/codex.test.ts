@@ -172,6 +172,15 @@ describe("Codex onboarding availability", () => {
     "Create a website",
     "Create for me a website",
     "Write a Python script",
+    "Use Python to build an app",
+    "Use React to create a website",
+    "Use Jupyter notebooks to build an app",
+    "Help me build a website",
+    "Could you help me write a Python script",
+    "I would like to create an app",
+    "We need to build an API",
+    "I need an app",
+    "Analyze Jupyter notebooks and build an app",
   ])("lets a concrete %s request override a notebook starter", (request) => {
     const prompt = buildCodexOnboardingPrompt(request, {
       kind: "jupyter-python",
@@ -189,12 +198,28 @@ describe("Codex onboarding availability", () => {
     "Make notes on a library",
     "Create a comparison of software packages",
     "Create an API reference",
+    "Create a software architecture plan",
+    "Create a software requirements document",
+    "Create a report comparing software packages",
   ])("does not treat %s as a software deliverable", (request) => {
     const prompt = buildCodexOnboardingPrompt(request, {
       kind: "jupyter-python",
       artifact: "/home/user/Welcome.ipynb",
     });
     expect(prompt).not.toContain("Create the appropriate source files");
+  });
+
+  it.each([
+    "Create a guide to an API",
+    "Create a software architecture plan",
+    "Create a report comparing software packages",
+  ])("does not force a notebook for a requested %s output", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request, {
+      kind: "jupyter-python",
+      artifact: "/home/user/Welcome.ipynb",
+    });
+    expect(prompt).toContain("Choose the format that best fits");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
   });
 
   it("uses the first direct output when a software task mentions notebooks", () => {

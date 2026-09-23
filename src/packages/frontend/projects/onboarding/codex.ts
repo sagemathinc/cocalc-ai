@@ -12,59 +12,106 @@ type CodexOnboardingMode =
   | "software"
   | "terminal";
 
-function explicitOutputFormat(
-  goal: string,
-): "notebook" | "software" | undefined {
-  for (const rawClause of goal.split(/[.!?;\n]+/)) {
-    let clause = rawClause.trim();
+type ExplicitOutputFormat = "notebook" | "software" | "other";
+
+function outputFormatFromObject(
+  object: string,
+): ExplicitOutputFormat | undefined {
+  const words = object.match(/[\w+.-]+/g) ?? [];
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index];
+    // A report about software is still a report, not a software build.
     if (
-      /^(?:do not|don't|never|i (?:do not|don't) want to|explain|describe|show how to)\b/.test(
-        clause,
+      /^(?:report|summary|review|plan|guide|comparison|reference|docs|documentation|document|presentation|notes)$/.test(
+        word,
       )
     ) {
-      continue;
+      return "other";
     }
-    clause = clause
-      .replace(/^(?:(?:please|can you|could you|would you)\s+)+/, "")
-      .replace(/^i (?:want|need) (?:you )?to\s+/, "");
-    const action = clause.match(
-      /^(?:build|create|write|develop|implement|make|update|edit|use|open|start)\s+(.+)$/,
-    );
-    if (!action) continue;
-    const object = action[1].replace(/^(?:for me|me)\s+/, "");
-    const words = object.match(/[\w+.-]+/g) ?? [];
-    for (let index = 0; index < words.length; index++) {
-      const word = words[index];
+    if (
+      /^(?:about|for|of|on|to|with|using|from|in|by|without|instead)$/.test(
+        word,
+      )
+    ) {
+      break;
+    }
+    if (
+      /^(?:jupyter|jupyterlab|notebook|notebooks)$/.test(word) ||
+      word.endsWith(".ipynb")
+    ) {
+      return "notebook";
+    }
+    if (
+      /^(?:app|application|website|api|script|package|library|software)$/.test(
+        word,
+      )
+    ) {
       if (
-        /^(?:about|for|of|on|to|with|using|from|in|by|without|instead)$/.test(
-          word,
-        )
+        /^(?:report|summary|review|plan|guide|comparison|reference|docs|documentation)$/.test(
+          words[index + 1] ?? "",
+        ) ||
+        (/^(?:architecture|requirements|design)$/.test(
+          words[index + 1] ?? "",
+        ) &&
+          /^(?:plan|document|specification|spec)$/.test(words[index + 2] ?? ""))
       ) {
-        break;
+        continue;
       }
-      if (
-        /^(?:jupyter|jupyterlab|notebook|notebooks)$/.test(word) ||
-        word.endsWith(".ipynb")
-      ) {
-        return "notebook";
-      }
-      if (
-        /^(?:app|application|website|api|script|package|library|software)$/.test(
-          word,
-        )
-      ) {
-        if (
-          /^(?:report|summary|review|plan|guide|comparison|reference|docs|documentation)$/.test(
-            words[index + 1] ?? "",
-          )
-        ) {
-          continue;
-        }
-        return "software";
-      }
+      return "software";
     }
   }
   return;
+}
+
+function explicitOutputFormat(goal: string): ExplicitOutputFormat | undefined {
+  let result: ExplicitOutputFormat | undefined;
+  for (const rawClause of goal.split(/[.!?;\n]+/)) {
+    // A goal may first describe its input, then ask for a different output.
+    for (const rawAction of rawClause.split(
+      /\band\s+(?=(?:build|create|write|develop|implement|make|update|edit|start)\b)/,
+    )) {
+      let clause = rawAction.trim();
+      if (
+        /^(?:do not|don't|never|i (?:do not|don't) want to|explain|describe|show how to)\b/.test(
+          clause,
+        )
+      ) {
+        continue;
+      }
+      clause = clause
+        .replace(/^(?:(?:please|can you|could you|would you)\s+)+/, "")
+        .replace(
+          /^(?:(?:i|we) (?:would like|want|need) (?:you )?to|help me(?: to)?)\s+/,
+          "",
+        );
+      const needed = clause.match(/^(?:i|we) need (.+)$/);
+      if (needed) {
+        result = outputFormatFromObject(needed[1]) ?? result;
+        continue;
+      }
+      const action = clause.match(
+        /^(build|create|write|develop|implement|make|update|edit|use|open|start)\s+(.+)$/,
+      );
+      if (!action) continue;
+      const object = action[2].replace(/^(?:for me|me)\s+/, "");
+      // In "Use Python to build an app", the app is the requested output;
+      // Python is only the tool. Classify that affirmative purpose first.
+      if (/^(?:use|open)$/.test(action[1])) {
+        const purpose = object.match(
+          /\bto\s+(?:build|create|write|develop|implement|make|update|edit|start)\s+(.+)$/,
+        );
+        if (purpose) {
+          const format = outputFormatFromObject(purpose[1]);
+          if (format) {
+            result = format;
+            continue;
+          }
+        }
+      }
+      result = outputFormatFromObject(object) ?? result;
+    }
+  }
+  return result;
 }
 
 function detectCodexOnboardingMode(
@@ -113,6 +160,9 @@ function detectCodexOnboardingMode(
   // explanation, negation, and incidental tool mentions do not.
   if (explicitOutput === "software") {
     return "software";
+  }
+  if (explicitOutput === "other") {
+    return "general";
   }
   if (mentionsNotebook && !rulesOutNotebook) {
     return "notebook";
