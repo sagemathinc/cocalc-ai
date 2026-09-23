@@ -25,8 +25,8 @@ describe("createChat", () => {
   });
 
   it("defaults legacy assistant models to the current Codex default", () => {
-    expect(resolveAssistantCodexModel("gpt-4o")).toBe("gpt-5.6-sol");
-    expect(resolveAssistantCodexModel("gpt-5.4")).toBe("gpt-5.4");
+    expect(resolveAssistantCodexModel("gpt-4o")).toBe("gpt-6-astra");
+    expect(resolveAssistantCodexModel("gpt-6-sol")).toBe("gpt-6-sol");
   });
 
   it("routes editor assistant requests through navigator Codex intents", async () => {
@@ -100,7 +100,7 @@ describe("createChat", () => {
       frameId: "frame-1",
       options: {
         command: "List large files",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         tag: "custom",
       },
       input: "",
@@ -150,7 +150,7 @@ describe("createChat", () => {
     const { message } = await createChatMessage(
       actions,
       "frame-1",
-      { command: "Explain this", model: "gpt-5.4", tag: "custom" },
+      { command: "Explain this", model: "gpt-6-sol", tag: "custom" },
       undefined,
     );
 
@@ -191,7 +191,7 @@ describe("createChat", () => {
     const { message } = await createChatMessage(
       actions,
       "frame-1",
-      { command: "Explain this", model: "gpt-5.4", tag: "custom" },
+      { command: "Explain this", model: "gpt-6-sol", tag: "custom" },
       undefined,
     );
 
@@ -219,7 +219,7 @@ describe("createChat", () => {
       "frame-1",
       {
         command: "List large files",
-        model: "gpt-5.4",
+        model: "gpt-6-sol",
         tag: "custom",
         frameType: "terminal",
       },
@@ -250,7 +250,7 @@ describe("createChat", () => {
       await createChatMessage(
         actions,
         "frame-1",
-        { command: "Summarize", model: "gpt-5.4", tag: "custom" },
+        { command: "Summarize", model: "gpt-6-sol", tag: "custom" },
         undefined,
       );
 
@@ -284,7 +284,7 @@ describe("createChat", () => {
       await createChatMessage(
         actions,
         "frame-1",
-        { command: "Summarize", model: "gpt-5.4", tag: "custom" },
+        { command: "Summarize", model: "gpt-6-sol", tag: "custom" },
         undefined,
       );
 
