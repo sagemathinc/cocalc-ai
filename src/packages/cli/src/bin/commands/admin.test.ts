@@ -1565,6 +1565,44 @@ test("admin db lro forwards diagnostic filters", async () => {
   });
 });
 
+test("admin db project-recovery scopes an audited diagnostic to one project", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        diagnostic: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-recovery", rows: [] };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-recovery",
+    "--project-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--limit",
+    "20",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    limit: 20,
+    statement_timeout_ms: 15000,
+    lock_timeout_ms: 1000,
+    max_bytes: 2097152,
+    diagnostic: "project-recovery",
+    params: { project_id: "11111111-1111-4111-8111-111111111111" },
+  });
+});
+
 test("admin db host-query forwards audited project-host SQLite options", async () => {
   let capturedArgs: any;
   const program = new Command();

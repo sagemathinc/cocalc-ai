@@ -3041,6 +3041,22 @@ Merge comments are private unless their corresponding --*-comment-public flag is
 
   adminDbCommonOptions(
     adminDb
+      .command("project-recovery")
+      .description("show one project's recent snapshot and backup attempts")
+      .requiredOption("--project-id <uuid>", "project id"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(command, "admin db project-recovery", async (ctx) => {
+      return await runAdminDbDiagnostic({
+        ctx,
+        diagnostic: "project-recovery",
+        opts,
+        params: { project_id: opts.projectId },
+      });
+    });
+  });
+
+  adminDbCommonOptions(
+    adminDb
       .command("migration-health")
       .description("show legacy migration aggregate health"),
   ).action(async (opts: any, command: Command) => {

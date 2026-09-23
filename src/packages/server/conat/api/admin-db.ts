@@ -12,6 +12,7 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { ensureProjectMaintenanceStatusTable } from "@cocalc/server/projects/maintenance-status";
 import type {
   AdminDbDiagnostic,
   AdminDbExecuteRequest,
@@ -136,6 +137,20 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
            last_edited, created
     FROM projects
     WHERE project_id = $1::uuid
+  `,
+  "project-recovery": `
+    SELECT p.project_id, p.title, p.host_id AS current_host_id,
+           p.last_changed, p.last_backup,
+           a.kind, a.host_id AS reporting_host_id,
+           a.storage_service_class, a.observed_at, a.outcome,
+           a.reason, a.attempt_due_at, a.duration_ms,
+           a.stage_durations_ms, a.bytes_scanned, a.bytes_uploaded,
+           a.retry_at
+    FROM projects p
+    LEFT JOIN project_maintenance_attempts a
+      ON a.project_id = p.project_id
+    WHERE p.project_id = $1::uuid
+    ORDER BY a.observed_at DESC NULLS LAST
   `,
   "migration-health": `
     SELECT 'projects_by_artifact_status' AS section,
@@ -341,7 +356,11 @@ function diagnosticParams({
       Number(p.window_seconds ?? 24 * 60 * 60),
     ];
   }
-  if (diagnostic === "backup-health" || diagnostic === "project") {
+  if (
+    diagnostic === "backup-health" ||
+    diagnostic === "project" ||
+    diagnostic === "project-recovery"
+  ) {
     return [p.project_id ?? null];
   }
   if (diagnostic === "host-health") {
@@ -519,6 +538,9 @@ async function executeReadOnly({
       : sql;
   if (!rawSql) {
     throw new Error("unknown or missing admin DB SQL");
+  }
+  if (diagnostic === "project-recovery") {
+    await ensureProjectMaintenanceStatusTable();
   }
   const normalizedSql = trimTrailingSemicolon(rawSql);
   rejectClearlyUnsafeSql(normalizedSql);
