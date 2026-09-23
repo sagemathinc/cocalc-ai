@@ -14,6 +14,12 @@ export interface CatalogProjectRequest {
   account_id?: string;
   after?: string;
 }
+export interface CatalogEntryRequest {
+  project_id: string;
+  /** Existing lowercase SHA-256 catalog entry identity, not an artifact UUID. */
+  entry_id: string;
+  account_id?: string;
+}
 export interface CatalogSourcePageRequest {
   project_id: string;
   host_id?: string;
@@ -51,6 +57,8 @@ export interface ArtifactCatalogApi {
     opts: CatalogSourcePageRequest,
   ): Promise<{ paths: string[]; next?: string }>;
   listProject(opts: CatalogProjectRequest): Promise<CatalogPage>;
+  /** Metadata-only lookup; absent or tombstoned entries return null. */
+  getEntry(opts: CatalogEntryRequest): Promise<CatalogEntry | null>;
   writerState(opts: CatalogSourceRequest): Promise<CatalogWriterState | null>;
   registerSource(opts: CatalogRegistrationRequest): Promise<{ epoch: string }>;
   ingest(
@@ -60,6 +68,7 @@ export interface ArtifactCatalogApi {
 export const artifactCatalog = {
   sourcePage: authFirstRequireHost,
   listProject: authFirstRequireAccount,
+  getEntry: authFirstRequireAccount,
   writerState: authFirstRequireHost,
   registerSource: authFirstRequireHost,
   ingest: authFirstRequireHost,

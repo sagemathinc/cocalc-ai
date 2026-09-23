@@ -160,9 +160,11 @@ export async function openForeignArtifactSource(
 export default function ForeignArtifactSource({
   target,
   children,
+  showForeignContextWarning = true,
 }: {
   target: ForeignArtifactTarget;
   children: (source: ArtifactSourceData) => ReactNode;
+  showForeignContextWarning?: boolean;
 }) {
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
@@ -351,13 +353,15 @@ export default function ForeignArtifactSource({
         }}
       >
         <div className="smc-vfill" style={{ minHeight: 0 }}>
-          <div role="note">
-            This artifact belongs to another conversation. Comments, action
-            review, and agent requests are disabled here.
-            <Button onClick={() => void showConversation()}>
-              Show in conversation
-            </Button>
-          </div>
+          {showForeignContextWarning && (
+            <div role="note">
+              This artifact belongs to another conversation. Comments, action
+              review, and agent requests are disabled here.
+              <Button onClick={() => void showConversation()}>
+                Show in conversation
+              </Button>
+            </div>
+          )}
           <Fragment
             key={`${component?.runtime_generation}:${guarded.current!.generation}`}
           >

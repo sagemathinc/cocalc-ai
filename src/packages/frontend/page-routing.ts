@@ -35,7 +35,13 @@ export type PageTopTab =
 
 export type ParsedPageTarget =
   | { page: "projects" }
-  | { page: "agents"; agent_id?: string }
+  | {
+      page: "agents";
+      agent_id?: string;
+      library?: boolean;
+      artifact_project_id?: string;
+      artifact_entry_id?: string;
+    }
   | { page: "project"; target: string }
   | {
       page: "account";
@@ -80,6 +86,17 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "library":
+      return {
+        page: "agents",
+        library: true,
+        // Keep malformed suffixes intact for the Library's not-found UI.
+        // In particular, never truncate extra segments to a valid entry.
+        artifact_project_id:
+          cleanTarget === "library/" ? undefined : segments[1],
+        artifact_entry_id:
+          segments.length > 2 ? segments.slice(2).join("/") : undefined,
+      };
     case "agents":
       return {
         page: "agents",
@@ -168,6 +185,17 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
     case "agents":
+      if (parsed.library) {
+        if (parsed.artifact_project_id == null) return "library";
+        const suffix =
+          parsed.artifact_entry_id == null
+            ? [parsed.artifact_project_id]
+            : [
+                parsed.artifact_project_id,
+                ...parsed.artifact_entry_id.split("/"),
+              ];
+        return `library/${suffix.map(encodeURIComponent).join("/")}`;
+      }
       return parsed.agent_id
         ? `agents/${encodeURIComponent(parsed.agent_id)}`
         : "agents";

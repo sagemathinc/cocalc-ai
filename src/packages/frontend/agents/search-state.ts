@@ -2,7 +2,6 @@ import type { AgentSearchProgress } from "./search-runner";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
 export interface AgentSearchState {
-  artifactsOpen?: boolean;
   open: boolean;
   query: string;
   projectId?: string;

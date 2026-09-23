@@ -5,6 +5,7 @@
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type {
   ArtifactCatalogApi,
+  CatalogProjectRequest,
   CatalogSourceRequest,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
@@ -21,6 +22,7 @@ import {
   getArtifactCatalogWriterState,
   artifactCatalogSourcePage,
   readProjectArtifactCatalog,
+  readArtifactCatalogEntry,
 } from "@cocalc/database/postgres/artifact-catalog";
 import { validateArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
 import { assertActor } from "@cocalc/server/agents/access";
@@ -76,7 +78,13 @@ export const sourcePage: ArtifactCatalogApi["sourcePage"] = async (opts) => {
   return route(request, (api, route) => api.sourcePage({ ...request, route }));
 };
 
-export const listProject: ArtifactCatalogApi["listProject"] = async (opts) => {
+async function readRoute<T>(
+  opts: CatalogProjectRequest,
+  invoke: (
+    api: InterBayArtifactCatalogApi,
+    route: CatalogOwnerRoute,
+  ) => Promise<T>,
+): Promise<T> {
   requireUuid(opts.account_id, "account_id");
   requireUuid(opts.project_id, "project_id");
   const owner = await resolveProjectBay(opts.project_id);
@@ -88,13 +96,35 @@ export const listProject: ArtifactCatalogApi["listProject"] = async (opts) => {
           client: getInterBayFabricClient(),
           bay_id: owner.bay_id,
         });
-  return api.listProject({
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    after: opts.after,
-    route: { bay_id: owner.bay_id, epoch: owner.epoch },
-  });
+  return invoke(api, { bay_id: owner.bay_id, epoch: owner.epoch });
+}
+
+export const listProject: ArtifactCatalogApi["listProject"] = async (opts) =>
+  readRoute(opts, (api, route) =>
+    api.listProject({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      after: opts.after,
+      route,
+    }),
+  );
+
+export const getEntry: ArtifactCatalogApi["getEntry"] = async (opts) => {
+  validateEntryId(opts.entry_id);
+  return readRoute(opts, (api, route) =>
+    api.getEntry({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      entry_id: opts.entry_id,
+      route,
+    }),
+  );
 };
+
+function validateEntryId(entry_id: unknown): void {
+  if (typeof entry_id !== "string" || !/^[a-f0-9]{64}$/.test(entry_id))
+    throw Error("invalid catalog entry_id");
+}
 export const registerSource: ArtifactCatalogApi["registerSource"] = async (
   opts,
 ) => {
@@ -155,29 +185,41 @@ async function owned<T>(
   }
 }
 
+async function ownedRead<T>(
+  opts: CatalogProjectRequest & { route: CatalogOwnerRoute },
+  read: () => Promise<T>,
+): Promise<T> {
+  requireUuid(opts.account_id, "account_id");
+  requireUuid(opts.project_id, "project_id");
+  const owner = await resolveProjectBay(opts.project_id);
+  if (
+    !owner ||
+    owner.bay_id !== getConfiguredBayId() ||
+    opts.route?.bay_id !== owner.bay_id ||
+    opts.route?.epoch !== owner.epoch
+  )
+    throw Error("stale artifact catalog project routing");
+  await assertActor(opts.account_id!, opts.project_id);
+  const result = await read();
+  await assertActor(opts.account_id!, opts.project_id);
+  return result;
+}
+
 /** Trusted fabric only. Database checks the current host assignment under lock. */
 export const catalogOwnerControl: InterBayArtifactCatalogApi = {
   sourcePage: (opts) =>
     owned({ ...opts, chat_path: "/home/user/.catalog.chat" }, (authority) =>
       artifactCatalogSourcePage(opts.project_id, authority, opts.after),
     ),
-  listProject: async (opts) => {
-    requireUuid(opts.account_id, "account_id");
-    const owner = await resolveProjectBay(opts.project_id);
-    if (
-      !owner ||
-      owner.bay_id !== getConfiguredBayId() ||
-      opts.route.bay_id !== owner.bay_id ||
-      opts.route.epoch !== owner.epoch
-    )
-      throw Error("stale artifact catalog project routing");
-    await assertActor(opts.account_id!, opts.project_id);
-    const result = await readProjectArtifactCatalog(
-      opts.project_id,
-      opts.after,
+  listProject: (opts) =>
+    ownedRead(opts, () =>
+      readProjectArtifactCatalog(opts.project_id, opts.after),
+    ),
+  getEntry: async (opts) => {
+    validateEntryId(opts.entry_id);
+    return ownedRead(opts, () =>
+      readArtifactCatalogEntry(opts.project_id, opts.entry_id),
     );
-    await assertActor(opts.account_id!, opts.project_id);
-    return result;
   },
   writerState: (opts) =>
     owned(opts, (authority) =>

@@ -5,6 +5,7 @@ import {
   ingest,
   catalogOwnerControl,
   listProject,
+  getEntry,
   sourcePage,
 } from "./catalog-api";
 
@@ -13,6 +14,7 @@ const state = jest.fn();
 const register = jest.fn();
 const apply = jest.fn();
 const read = jest.fn();
+const readEntry = jest.fn();
 const sources = jest.fn();
 const actor = jest.fn();
 jest.mock("@cocalc/server/agents/access", () => ({
@@ -23,6 +25,7 @@ const remote = {
   registerSource: jest.fn(),
   ingest: jest.fn(),
   listProject: jest.fn(),
+  getEntry: jest.fn(),
   sourcePage: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
@@ -44,6 +47,7 @@ jest.mock("@cocalc/database/postgres/artifact-catalog", () => ({
   registerArtifactCatalogSource: (...a) => register(...a),
   applyArtifactCatalogSnapshot: (...a) => apply(...a),
   readProjectArtifactCatalog: (...a) => read(...a),
+  readArtifactCatalogEntry: (...a) => readEntry(...a),
   artifactCatalogSourcePage: (...a) => sources(...a),
 }));
 const source = {
@@ -70,8 +74,136 @@ beforeEach(() => {
   apply.mockReset().mockResolvedValue({ revision: 1, replayed: false });
   actor.mockReset().mockResolvedValue(undefined);
   read.mockReset().mockResolvedValue({ entries: [], indexed_sources: 0 });
+  readEntry.mockReset().mockResolvedValue(null);
+  remote.getEntry.mockReset().mockResolvedValue(null);
   sources.mockReset().mockResolvedValue({ paths: [] });
 });
+
+const entryRequest = {
+  project_id: source.project_id,
+  account_id: randomUUID(),
+  entry_id: "a".repeat(64),
+};
+
+test("entry lookup returns metadata or null with authorization before and after the point read", async () => {
+  const entry = {
+    ...source,
+    entry_id: entryRequest.entry_id,
+    item: { title: "Notes" },
+  };
+  readEntry.mockResolvedValueOnce(entry);
+  await expect(getEntry(entryRequest)).resolves.toEqual(entry);
+  expect(readEntry).toHaveBeenCalledWith(
+    source.project_id,
+    entryRequest.entry_id,
+  );
+  expect(actor).toHaveBeenCalledTimes(2);
+  expect(actor).toHaveBeenCalledWith(
+    entryRequest.account_id,
+    source.project_id,
+  );
+  expect(actor.mock.invocationCallOrder[0]).toBeLessThan(
+    readEntry.mock.invocationCallOrder[0],
+  );
+  expect(actor.mock.invocationCallOrder[1]).toBeGreaterThan(
+    readEntry.mock.invocationCallOrder[0],
+  );
+  await expect(getEntry(entryRequest)).resolves.toBeNull();
+  expect(actor).toHaveBeenCalledTimes(4);
+  expect(read).not.toHaveBeenCalled();
+  expect(sources).not.toHaveBeenCalled();
+});
+
+test("entry access denial and access revoked during lookup do not return metadata", async () => {
+  actor.mockRejectedValueOnce(Error("not a collaborator"));
+  await expect(getEntry(entryRequest)).rejects.toThrow("collaborator");
+  expect(readEntry).not.toHaveBeenCalled();
+  actor
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(Error("revoked"));
+  await expect(getEntry(entryRequest)).rejects.toThrow("revoked");
+  expect(readEntry).toHaveBeenCalledTimes(1);
+});
+
+test("entry lookup routes to the authoritative bay over trusted fabric and strips extras", async () => {
+  bay = "entry";
+  const entry = { entry_id: entryRequest.entry_id };
+  remote.getEntry.mockResolvedValueOnce(entry);
+  await expect(
+    getEntry({
+      ...entryRequest,
+      route: { bay_id: "forged", epoch: 99 },
+      after: "forged",
+    } as any),
+  ).resolves.toEqual(entry);
+  expect(remoteClient).toHaveBeenCalledWith({
+    client: "trusted-fabric",
+    bay_id: "owner",
+  });
+  expect(remote.getEntry).toHaveBeenCalledWith({ ...entryRequest, route });
+  expect(readEntry).not.toHaveBeenCalled();
+  expect(actor).not.toHaveBeenCalled();
+  await expect(
+    catalogOwnerControl.getEntry({ ...entryRequest, route }),
+  ).rejects.toThrow("stale");
+  remote.getEntry.mockImplementation((opts) => {
+    bay = "owner";
+    return catalogOwnerControl.getEntry(opts);
+  });
+  actor.mockRejectedValueOnce(Error("not a collaborator"));
+  await expect(getEntry(entryRequest)).rejects.toThrow("collaborator");
+  expect(readEntry).not.toHaveBeenCalled();
+});
+
+test.each([
+  { bay_id: "owner", epoch: 2 },
+  { bay_id: "wrong", epoch: 3 },
+  undefined,
+])(
+  "entry owner rejects stale or missing route %p before reading",
+  async (staleRoute) => {
+    await expect(
+      catalogOwnerControl.getEntry({ ...entryRequest, route: staleRoute! }),
+    ).rejects.toThrow("stale");
+    expect(readEntry).not.toHaveBeenCalled();
+    expect(actor).not.toHaveBeenCalled();
+  },
+);
+
+test("missing project ownership fails without reading a local catalog", async () => {
+  owner.mockResolvedValue(null);
+  await expect(getEntry(entryRequest)).rejects.toThrow("owner unavailable");
+  await expect(
+    catalogOwnerControl.getEntry({ ...entryRequest, route }),
+  ).rejects.toThrow("stale");
+  expect(readEntry).not.toHaveBeenCalled();
+  expect(remote.getEntry).not.toHaveBeenCalled();
+});
+
+test.each([
+  { entry_id: undefined },
+  { entry_id: "" },
+  { entry_id: "wrong" },
+  { entry_id: "A".repeat(64) },
+  { entry_id: "a".repeat(65) },
+  { entry_id: 123 },
+  { project_id: undefined },
+  { project_id: "wrong" },
+  { account_id: undefined },
+  { account_id: "wrong" },
+])(
+  "entry lookup rejects malformed or missing IDs %p before dispatch",
+  async (invalid) => {
+    const request = { ...entryRequest, ...invalid } as any;
+    await expect(getEntry(request)).rejects.toThrow();
+    await expect(
+      catalogOwnerControl.getEntry({ ...request, route }),
+    ).rejects.toThrow();
+    expect(owner).not.toHaveBeenCalled();
+    expect(readEntry).not.toHaveBeenCalled();
+    expect(remoteClient).not.toHaveBeenCalled();
+  },
+);
 
 test("project reads check collaboration before and after the bounded query", async () => {
   const account_id = randomUUID();

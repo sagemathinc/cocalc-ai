@@ -250,6 +250,7 @@ export function catalogResults(
     )
       continue;
     results.push({
+      catalogEntryId: entry.entry_id,
       agent,
       threadId: item.thread_id,
       historical: false,

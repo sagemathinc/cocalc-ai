@@ -7,6 +7,8 @@ import { chmodSync, closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type {
   ArtifactCatalogApi,
+  CatalogEntry,
+  CatalogEntryRequest,
   CatalogIngestRequest,
   CatalogPage,
   CatalogProjectRequest,
@@ -275,6 +277,29 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
     });
   }
 
+  async getEntry({
+    project_id,
+    entry_id,
+  }: CatalogEntryRequest): Promise<CatalogEntry | null> {
+    this.assertProject(project_id);
+    if (typeof entry_id !== "string" || !/^[a-f0-9]{64}$/.test(entry_id))
+      throw Error("invalid catalog entry_id");
+    const row = this.db
+      .prepare(
+        `SELECT entry_id,chat_path,metadata FROM lite_artifact_entries
+        WHERE entry_id=? AND deleted=0`,
+      )
+      .get(entry_id);
+    return row
+      ? {
+          entry_id: row.entry_id as string,
+          project_id,
+          chat_path: row.chat_path as string,
+          item: JSON.parse(row.metadata as string) as ArtifactCatalogItem,
+        }
+      : null;
+  }
+
   async listProject({
     project_id,
     after = "",
@@ -330,13 +355,18 @@ export class LiteArtifactCatalog implements ArtifactCatalogApi {
   }
 }
 
-/** Only listProject belongs on the Lite browser API; local writers bypass RPC. */
+/** Only metadata reads belong on the Lite browser API; local writers bypass RPC. */
 export function liteArtifactCatalogReadApi(
   catalog: LiteArtifactCatalog,
   account_id: string,
-): Pick<ArtifactCatalogApi, "listProject"> {
+): Pick<ArtifactCatalogApi, "listProject" | "getEntry"> {
   if (!account_id) throw Error("Lite catalog account is required");
   return {
+    async getEntry(request) {
+      if (request.account_id !== account_id)
+        throw Error("artifact catalog requires the local Lite account");
+      return catalog.getEntry(request);
+    },
     async listProject(request) {
       if (request.account_id !== account_id)
         throw Error("artifact catalog requires the local Lite account");

@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import type { CatalogEntry } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
   artifactCatalogKey,
   validateArtifactCatalogSnapshot,
@@ -94,14 +95,12 @@ export async function readProjectArtifactCatalog(
     ORDER BY c.entry_id LIMIT 101`,
     [project_id, after],
   );
-  const entries = rows
-    .slice(0, 100)
-    .map((row) => ({
-      entry_id: row.entry_id as string,
-      project_id,
-      chat_path: row.chat_path as string,
-      item: row.metadata,
-    }));
+  const entries = rows.slice(0, 100).map((row) => ({
+    entry_id: row.entry_id as string,
+    project_id,
+    chat_path: row.chat_path as string,
+    item: row.metadata,
+  }));
   const count = await db.query(
     `SELECT count(*) AS n FROM artifact_catalog_sources WHERE project_id=$1 AND source_sequence>0`,
     [project_id],
@@ -111,6 +110,30 @@ export async function readProjectArtifactCatalog(
     indexed_sources: Number(count.rows[0].n),
     ...(rows.length > 100 ? { next: entries[99].entry_id } : {}),
   };
+}
+
+/** Internal point lookup; caller must resolve ownership and check collaboration. */
+export async function readArtifactCatalogEntry(
+  project_id: string,
+  entry_id: string,
+): Promise<CatalogEntry | null> {
+  if (typeof entry_id !== "string" || !/^[a-f0-9]{64}$/.test(entry_id))
+    throw Error("invalid catalog entry_id");
+  const { rows } = await getPool().query(
+    `SELECT c.entry_id,s.chat_path,c.metadata
+    FROM artifact_catalog c JOIN artifact_catalog_sources s USING(source_id)
+    WHERE c.project_id=$1 AND c.entry_id=$2 AND NOT c.deleted`,
+    [project_id, entry_id],
+  );
+  const row = rows[0];
+  return row
+    ? {
+        entry_id: row.entry_id,
+        project_id,
+        chat_path: row.chat_path,
+        item: row.metadata,
+      }
+    : null;
 }
 
 /** Compare-and-swap rotation prevents a delayed registration fencing a newer writer. */

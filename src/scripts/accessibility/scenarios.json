@@ -23,22 +23,14 @@
         { "type": "press", "key": "Enter" },
         {
           "type": "wait",
-          "selector": "[aria-label='Search all agent artifacts']"
+          "selector": "[aria-label='Search library']"
         },
         {
           "type": "assertFocusWithin",
           "selector": "[aria-label='Artifact Library']"
         }
       ],
-      "cleanupActions": [
-        { "type": "click", "role": "button", "name": "Back to agent" },
-        {
-          "type": "assertHidden",
-          "selector": "[aria-label='Search all agent artifacts']"
-        },
-        { "type": "waitForTimeout", "timeoutMs": 250 },
-        { "type": "assertFocus", "key": "trigger" }
-      ]
+      "cleanupActions": []
     },
     {
       "id": "account-running-gpu-dialog",

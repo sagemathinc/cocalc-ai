@@ -2,6 +2,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
 
 export interface AgentSearchHit {
+  catalogEntryId?: string;
   agent: NamedAgent;
   threadId: string;
   historical: boolean;

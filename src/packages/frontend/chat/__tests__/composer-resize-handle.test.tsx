@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   allowAgentMentionsInComposer,
@@ -598,8 +598,11 @@ describe("ChatRoomComposer resize handle", () => {
         screen.getByTestId("chat-composer-actions").style.flexDirection,
       ).toBe("row");
       expect(screen.getByTestId("chat-composer-actions").style.flexWrap).toBe(
-        "wrap",
+        "nowrap",
       );
+      expect(
+        screen.getByRole("group", { name: "Message options" }),
+      ).toHaveStyle({ flexWrap: "wrap", minWidth: 0 });
       expect(
         screen.getByTestId("chat-composer-input").parentElement?.style.order,
       ).toBe("");
@@ -619,4 +622,67 @@ describe("ChatRoomComposer resize handle", () => {
       HTMLElement.prototype.requestFullscreen = original;
     }
   });
+
+  it.each([false, true])(
+    "reserves the right-hand submit column while desktop/mobile options wrap (%s)",
+    async (mobile) => {
+      const send = jest.fn();
+      const steer = jest.fn();
+      renderComposer({
+        mobile,
+        hasActiveAcpTurn: true,
+        hasInput: true,
+        input: "guidance",
+        acpPrompt: "Full agent prompt",
+        isSelectedThreadAI: true,
+        selectedThread: { key: "thread-layout", label: "Agent" } as any,
+        on_send: send,
+        on_send_immediately: steer,
+        on_post: jest.fn(),
+      });
+      const row = screen.getByRole("group", { name: "Message actions" });
+      const options = within(row).getByRole("group", {
+        name: "Message options",
+      });
+      const submit = within(row).getByRole("button", { name: "Steer" });
+      expect(row).toHaveStyle({
+        display: "flex",
+        flexWrap: "nowrap",
+        alignItems: "flex-end",
+      });
+      expect(options).toHaveStyle({
+        flex: "1 1 0",
+        minWidth: 0,
+        flexWrap: "wrap",
+      });
+      expect(submit).toHaveStyle({ flex: "0 0 32px", width: "32px" });
+      expect(submit.parentElement).toBe(row);
+      expect(options).not.toContainElement(submit);
+      for (const name of [
+        "Add files and more",
+        "Codex settings",
+        "Agent Prompt",
+        "Queue",
+        "Message delivery: To Agent",
+      ]) {
+        expect(within(options).getByRole("button", { name })).toBeEnabled();
+      }
+      const user = userEvent.setup();
+      const queue = within(options).getByRole("button", { name: "Queue" });
+      const delivery = within(options).getByRole("button", {
+        name: "Message delivery: To Agent",
+      });
+      queue.focus();
+      await user.keyboard("{Enter}");
+      expect(send).toHaveBeenCalledWith("guidance");
+      await user.tab();
+      expect(delivery).toHaveFocus();
+      await user.tab();
+      expect(submit).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(steer).toHaveBeenCalledWith("guidance");
+      await user.tab({ shift: true });
+      expect(delivery).toHaveFocus();
+    },
+  );
 });

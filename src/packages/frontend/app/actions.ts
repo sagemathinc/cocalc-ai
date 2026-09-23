@@ -23,7 +23,7 @@ import { disconnect_from_project } from "@cocalc/frontend/project/websocket/conn
 import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
-import { PageState } from "./store";
+import type { PageState } from "./store";
 import { lite, project_id } from "@cocalc/frontend/lite";
 import {
   getAdminTargetPath,
@@ -249,17 +249,21 @@ export class PageActions extends Actions<PageState> {
 
     switch (key) {
       case "agents": {
-        const agent_id = this.redux.getStore("page").get("active_agent_id");
-        const agent_name = this.redux.getStore("page").get("active_agent_name");
+        const page = this.redux.getStore("page");
+        const agent_id = page.get("active_agent_id");
+        const agent_name = page.get("active_agent_name");
         if (change_history) {
           set_url(
             getPageUrlPath({
               page: "agents",
               agent_id: agent_name ?? agent_id,
+              library: page.get("library_open"),
+              artifact_project_id: page.get("library_project_id"),
+              artifact_entry_id: page.get("library_entry_id"),
             }),
           );
         }
-        set_window_title("Agents");
+        set_window_title(page.get("library_open") ? "Library" : "Agents");
         return;
       }
       case "projects":

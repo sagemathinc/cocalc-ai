@@ -34,7 +34,9 @@ import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
 import { AgentArtifactBrowser } from "./artifact-browser";
-import { useSyncExternalStore } from "react";
+import { LibraryEntry } from "./library-entry";
+import { closedLibraryState, openLibrary } from "./library-navigation";
+import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
@@ -48,6 +50,7 @@ import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import { useNavigationIntent } from "./use-navigation-intent";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   ProjectContext,
@@ -60,8 +63,9 @@ import {
   type ProjectDocsOpenDetail,
 } from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
-import { lite } from "@cocalc/frontend/lite";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
+import { AgentOrganizationControls } from "./organization-controls";
+import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
   DragHandle,
   SortableItem,
@@ -87,10 +91,8 @@ import {
   Input,
   Modal,
   Popover,
-  Segmented,
   Select,
   Space,
-  Switch,
   Tag,
   Typography,
   message as antdMessage,
@@ -1485,10 +1487,7 @@ function AgentProjectContext({
             if (accountId) agentSearchStore(accountId).set({ open: true });
           },
           onBrowseAllArtifacts: () => {
-            if (accountId)
-              agentSearchStore(accountId).set({
-                artifactsOpen: true,
-              });
+            if (accountId) openLibrary();
           },
           selectedNetworkId,
           disableConversationFocus: true,
@@ -2190,7 +2189,6 @@ function AgentWorkspace({
 }
 
 export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
-  const searchNavigation = useRef(0);
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -2199,26 +2197,18 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
-  const artifactNavigation = agentSearchStore(accountId ?? "signed-out");
-  useEffect(() => {
-    return () => {
-      searchNavigation.current++;
-    };
-  }, [active, accountId]);
-  const libraryOpen = !!useSyncExternalStore(
-    artifactNavigation.subscribe,
-    artifactNavigation.get,
-  ).artifactsOpen;
+  const searchNavigation = useNavigationIntent(active, accountId);
+  const libraryOpen = !!useTypedRedux("page", "library_open");
+  const libraryProjectId = useTypedRedux("page", "library_project_id");
+  const libraryEntryId = useTypedRedux("page", "library_entry_id");
+  const artifactOpen =
+    libraryOpen && (libraryProjectId != null || libraryEntryId != null);
   const libraryButton = useRef<HTMLButtonElement>(null);
   const workspaceContent = useRef<HTMLElement>(null);
-  function closeLibrary() {
+  function showLibrary() {
     searchNavigation.current++;
-    artifactNavigation.set({ artifactsOpen: false });
+    openLibrary();
     setMobileList(false);
-    requestAnimationFrame(() => {
-      if (isNarrow || agentSidebarHidden) workspaceContent.current?.focus();
-      else libraryButton.current?.focus();
-    });
   }
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
@@ -2236,7 +2226,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
-  const [mobileList, setMobileList] = useState(true);
+  const [mobileList, setMobileList] = useState(!libraryOpen);
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     initialAgentSidebarWidth,
@@ -2255,6 +2245,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
   const boundAccount = useBoundAgentAccount();
+
+  useEffect(() => {
+    if (libraryOpen) setMobileList(false);
+  }, [libraryOpen, libraryProjectId, libraryEntryId]);
+
+  function libraryNavigationControl() {
+    return isNarrow ? (
+      <Button
+        type="text"
+        aria-label="Show agents"
+        icon={<Icon name="bars" />}
+        onClick={() => setMobileList(true)}
+      />
+    ) : (
+      <AgentsSidebarToggle
+        hidden={agentSidebarHidden}
+        onToggle={toggleAgentSidebar}
+      />
+    );
+  }
 
   const toggleAgentSidebar = useCallback(() => {
     setAgentSidebarHidden((hidden) => {
@@ -2310,7 +2320,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : undefined;
   useWorkspaceRoute({
-    active,
+    active: active && !libraryOpen,
     activeAgentId,
     selected,
     networkFallback,
@@ -2336,7 +2346,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   );
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || libraryOpen || !active) return;
     const workspace = agentWorkspaceKey(selected);
     setMountedWorkspaces((old) => {
       if (old.has(workspace)) return old;
@@ -2350,7 +2360,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       next.set(workspace, selected.endpoint.agent_id);
       return next;
     });
-  }, [selected?.endpoint.agent_id]);
+  }, [selected?.endpoint.agent_id, libraryOpen, active]);
 
   const visibleGroups = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -2404,7 +2414,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
-      if (!active) return;
+      if (!active || libraryOpen) return;
       setWorkspaceAgentIds((old) => {
         if (old.get(workspace) === nextAgent.endpoint.agent_id) return old;
         const next = new Map(old);
@@ -2424,7 +2434,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         }),
       );
     },
-    [active],
+    [active, libraryOpen],
   );
 
   function selectAgent(agent: NamedAgent, keepNavigation = false) {
@@ -2451,11 +2461,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function selectAgentId(agentId: string, keepNavigation = false) {
     if (!keepNavigation) searchNavigation.current++;
-    artifactNavigation.set({ artifactsOpen: false });
     const routeName = agents.find(
       ({ endpoint }) => endpoint.agent_id === agentId,
     )?.name;
     redux.getActions("page").setState({
+      ...closedLibraryState,
       active_agent_id: agentId,
       active_agent_name: routeName,
     });
@@ -2517,9 +2527,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         "This agent started a fresh conversation. Search again to open its current results.",
       );
     await ensureProjectReduxRuntime();
+    if (superseded()) return;
     if (hit.artifact_id) {
       const { openForeignArtifactSource } =
         await import("@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source");
+      if (superseded()) return;
       await openForeignArtifactSource({
         projectId: agent.endpoint.project_id,
         path: agent.path,
@@ -2534,6 +2546,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         target: "files/",
         switch_to: true,
       });
+      if (superseded()) return;
     } else {
       selectAgent(agent, true);
     }
@@ -2565,6 +2578,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         await import("./open-source-artifact");
       const { showConversation: showArtifactConversation } =
         await import("@cocalc/frontend/chat/artifact-browser");
+      if (superseded()) return;
       if (showConversation) {
         await showArtifactConversation(chat, {
           publication: sourceArtifactPublication(chat, result),
@@ -2576,6 +2590,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     }
     if (hit.segment_id !== "head") {
       const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+      if (superseded()) return;
       const archived =
         await webapp_client.conat_client.hub.projects.chatStoreReadArchivedHit({
           project_id: agent.endpoint.project_id,
@@ -2600,14 +2615,53 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   async function openLibraryHit(result: AgentSearchHit, conversation = false) {
-    try {
-      await openSearchHit(result, conversation);
-    } catch (err) {
-      // Navigation may already have selected the source. Keep failures visible
-      // in the Library, where the user can retry or choose another resource.
-      artifactNavigation.set({ artifactsOpen: true });
-      throw err;
+    if (conversation) return openSearchHit(result, true);
+    if (!result.catalogEntryId)
+      throw Error("Artifact catalog identity missing");
+    searchNavigation.current++;
+    openLibrary(result.agent.endpoint.project_id, result.catalogEntryId);
+    setMobileList(false);
+  }
+
+  async function showLibraryConversation(target: ForeignArtifactTarget) {
+    const agent = agents.find(
+      (candidate) =>
+        candidate.endpoint.project_id === target.projectId &&
+        candidate.path === target.path &&
+        candidate.thread_id === target.threadId,
+    );
+    if (agent) {
+      await openSearchHit(
+        {
+          agent,
+          threadId: target.threadId,
+          historical: false,
+          hit: {
+            row_id: 0,
+            segment_id: "head",
+            thread_id: target.threadId,
+            artifact_id: target.artifactId,
+            excerpt: "",
+          },
+        },
+        true,
+      );
+      return;
     }
+    // A link remains useful after an agent is retired or starts a new thread.
+    const navigation = ++searchNavigation.current;
+    await ensureProjectReduxRuntime();
+    if (navigation !== searchNavigation.current) return;
+    const project = redux.getProjectActions(target.projectId);
+    await project.fs().stat(target.path);
+    if (navigation !== searchNavigation.current) return;
+    await project.open_file({
+      path: target.path,
+      foreground: true,
+      foreground_project: true,
+      change_history: true,
+      fragmentId: { thread: target.threadId },
+    });
   }
 
   useEffect(() => {
@@ -2789,7 +2843,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     hidden = false,
     showProjectTitle = true,
   ) {
-    const active = agent.endpoint.agent_id === selected?.endpoint.agent_id;
+    const active =
+      !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
     const appearance = agentAppearances.get(id);
     const theme = resolveNamedAgentTheme(agent, appearance);
@@ -3016,7 +3071,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     );
   }
 
-  if (loading && !directory) return <Loading theme="medium" />;
+  if (loading && !directory && !libraryOpen) return <Loading theme="medium" />;
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3032,26 +3087,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         overflow: "hidden",
         minWidth: 0,
         padding: 12,
-        ...(isNarrow && (!mobileList || libraryOpen)
-          ? { display: "none" }
-          : {}),
+        ...(isNarrow && !mobileList ? { display: "none" } : {}),
       }}
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
         <WorkspaceSidebarActions
-          onProjects={
-            lite
-              ? undefined
-              : () => {
-                  void redux.getActions("page").set_active_tab("projects");
-                }
-          }
           onNewAgent={() => {
             searchNavigation.current++;
-            artifactNavigation.set({ artifactsOpen: false });
             setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
             redux.getActions("page").setState({
+              ...closedLibraryState,
               active_agent_id: "new",
               active_agent_name: undefined,
             });
@@ -3067,14 +3113,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         <Button
           ref={libraryButton}
           block
-          type={libraryOpen ? "primary" : "default"}
+          type="text"
+          style={{
+            justifyContent: "flex-start",
+            background: libraryOpen ? UI_COLORS.selected : undefined,
+          }}
           icon={<Icon name="files" />}
           aria-pressed={libraryOpen}
-          onClick={() => {
-            searchNavigation.current++;
-            artifactNavigation.set({ artifactsOpen: true });
-            setMobileList(false);
-          }}
+          aria-current={libraryOpen ? "page" : undefined}
+          onClick={showLibrary}
         >
           Library
         </Button>
@@ -3088,6 +3135,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             available={(agent) => agent.available}
           />
         )}
+        <AgentOrganizationControls
+          mode={agentOrganization.organization.mode}
+          groupByProject={agentOrganization.organization.groupByProject}
+          onMode={agentOrganization.setMode}
+          onGroupByProject={agentOrganization.setGroupByProject}
+        />
         <Input
           allowClear
           aria-label="Filter agents by name"
@@ -3111,34 +3164,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             description={networkError}
           />
         )}
-        <Segmented
-          block
-          aria-label="Agent ordering"
-          options={[
-            { label: "Recent", value: "recent" },
-            { label: "Custom", value: "custom" },
-          ]}
-          value={agentOrganization.organization.mode}
-          onChange={(value) =>
-            agentOrganization.setMode(value as "recent" | "custom")
-          }
-        />
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            justifyContent: "space-between",
-            minHeight: 24,
-          }}
-        >
-          <Text>Group by project</Text>
-          <Switch
-            size="small"
-            aria-label="Group agents by project"
-            checked={agentOrganization.organization.groupByProject}
-            onChange={(checked) => agentOrganization.setGroupByProject(checked)}
-          />
-        </div>
         {agentOrganization.saveError && (
           <Alert
             role="alert"
@@ -3341,9 +3366,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             }}
             handleComponent={{
               right: (
-                <div
-                  aria-label="Resize Agents panel"
-                  style={{ width: "100%", height: "100%" }}
+                <AgentsSidebarResizeHandle
+                  width={agentSidebarWidth}
+                  minWidth={MIN_AGENT_SIDEBAR_WIDTH}
+                  maxWidth={MAX_AGENT_SIDEBAR_WIDTH}
+                  onResize={(width) => {
+                    setAgentSidebarWidth(width);
+                    window.localStorage.setItem(
+                      AGENT_SIDEBAR_WIDTH_STORAGE_KEY,
+                      `${width}`,
+                    );
+                  }}
                 />
               ),
             }}
@@ -3383,9 +3416,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           display: "flex",
           flexDirection: "column",
           position: "relative",
-          ...(isNarrow && mobileList && !libraryOpen
-            ? { display: "none" }
-            : {}),
+          ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
         {accountId && (
@@ -3394,10 +3425,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             accountId={accountId}
             agents={agents}
             activeAgent={selected}
-            active={active && libraryOpen}
-            onClose={closeLibrary}
+            active={
+              active &&
+              libraryOpen &&
+              !artifactOpen &&
+              (!isNarrow || !mobileList)
+            }
+            navigation={libraryNavigationControl()}
             onSelect={openLibraryHit}
             onShowConversation={(result) => openLibraryHit(result, true)}
+          />
+        )}
+        {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
+          <LibraryEntry
+            navigation={libraryNavigationControl()}
+            accountId={accountId}
+            projectId={libraryProjectId ?? ""}
+            entryId={libraryEntryId ?? ""}
+            agents={agents}
+            onBack={showLibrary}
+            onShowConversation={showLibraryConversation}
           />
         )}
         <div

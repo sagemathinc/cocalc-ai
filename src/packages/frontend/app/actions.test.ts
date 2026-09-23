@@ -130,6 +130,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.requireMock("@cocalc/frontend/client/handle-target").default =
+    "projects";
   for (const name of names) {
     redux.removeActions(name);
     redux.removeStore(name);
@@ -198,6 +200,55 @@ describe("project context across global navigation", () => {
     await actions.set_active_tab("agents");
     expect(set_url).toHaveBeenLastCalledWith("/agents/reviewer");
   });
+
+  it.each([false, true])(
+    "retains the Library URL when selecting Agents (detail=%s)",
+    async (detail) => {
+      actions.setState({
+        active_agent_id: "agent-123",
+        active_agent_name: "reviewer",
+        library_open: true,
+        library_project_id: detail ? A : undefined,
+        library_entry_id: detail ? B : undefined,
+      });
+      await actions.set_active_tab("account");
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        detail ? `/library/${A}/${B}` : "/library",
+      );
+      expect(page().get("active_agent_id")).toBe("agent-123");
+      expect(page().get("active_agent_name")).toBe("reviewer");
+      jest.mocked(set_url).mockClear();
+      await actions.set_active_tab("agents", false);
+      expect(set_url).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["library", `library/${A}/${B}`, "agents/reviewer"])(
+    "initializes scalar route state on reload of %s",
+    (target) => {
+      jest.requireMock("@cocalc/frontend/client/handle-target").default =
+        target;
+      redux.removeStore("page");
+      init_store();
+      const library = target.startsWith("library");
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("library_open")).toBe(library);
+      expect(page().get("library_project_id")).toBe(
+        target.includes(A) ? A : undefined,
+      );
+      expect(page().get("library_entry_id")).toBe(
+        target.includes(B) ? B : undefined,
+      );
+      expect(page().get("active_agent_id")).toBe(
+        library ? undefined : "reviewer",
+      );
+      expect(page().get("active_agent_name")).toBe(
+        library ? undefined : "reviewer",
+      );
+      expect(page().get("last_project_tab")).toBeUndefined();
+    },
+  );
 
   it("retains context across repeated Account/Admin visits and updates on explicit project navigation", async () => {
     await actions.set_active_tab(B);

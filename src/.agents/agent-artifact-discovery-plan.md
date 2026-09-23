@@ -5,7 +5,40 @@ testing confirmed essentially instant discovery. The permanent shelf has been
 replaced by a full-page Library and a toggleable thread-local artifact panel.
 Opening or filtering the Library never initiates chat-file scans or starts projects.
 
-## Library and thread panel (2026-09-23)
+## Standalone Library foundation (2026-09-23)
+
+- The existing top-left logo, Agents, Projects and Hosts navigation stays in
+  place, with Agents selected; other full-view navbar controls are hidden.
+  Quiet sidebar navigation separates New Agent, Library and Search conversations,
+  without a duplicate Projects button. Agent sorting/grouping lives behind an
+  organization disclosure.
+- `/library` is a real browser route. `/library/{project_id}/{entry_id}` opens
+  an artifact directly, including on reload, without selecting its source agent.
+  A permission-checked, owner-routed catalog point lookup resolves the entry in
+  Postgres and standalone Lite; the agent directory is not a prerequisite.
+- The main area displays Library / title navigation and the existing artifact
+  renderer in its source project's context. The URL resolves the latest artifact,
+  not a pinned publication revision. Copy link copies this permission-bound URL;
+  it does not publish content or grant access.
+- Open source conversation is an explicit secondary action. If the original
+  agent is absent or has moved to a new thread, the original chat/thread can be
+  opened in the project view instead. File artifacts also expose Open in project.
+- Returning to Library preserves its filter, ordering, scroll and keyboard focus.
+  Agent workspaces retain drafts while inactive. The sidebar can be hidden and
+  restored on both desktop and narrow screens.
+- Existing feedback and review operations that require a conversation remain
+  there; Library viewing does not silently attach content to an unrelated agent.
+
+Remaining: personal names/URL aliases, user-created artifacts, terminal artifacts
+with per-terminal appearance and command settings, artifact-aware composers and
+explicit user-specific connectors. These are not part of this checkpoint.
+Stable catalog IDs survive title/content changes, but currently incorporate the
+source locator: relocating a source chat needs additional redirect/identity work.
+Global discovery still covers known agent sources; a direct entry link does not
+need an agent directory match. Live feeds, IndexedDB caching and broader
+historical discovery remain separate catalog work.
+
+## Earlier Library and thread panel checkpoint (2026-09-23)
 
 - Library replaces the main content area, with global cached search, project
   filtering/grouping and personal pins. Existing agent workspaces stay mounted
@@ -114,8 +147,8 @@ to 16 MiB and failures retain prior metadata rather than implying deletion.
   project metadata; every open rechecks service authorization independently.
 - Artifacts are independent of agents. Optional agent association is a filter,
   not their owner or lifecycle. File contents and stateful sessions remain in
-  the project data plane. Opening must eventually support source-aware tabs in
-  the current workbench without changing the user's composing conversation.
+  the project data plane. Library opens resources in their own source context;
+  discussing them with an agent is a separate, project-aware operation.
 
 ## Catalog stages (first two now integrated)
 
@@ -144,10 +177,9 @@ to 16 MiB and failures retain prior metadata rather than implying deletion.
 5. Maintain one account-scoped frontend catalog store, warmed independently of
    the modal, then persist metadata in IndexedDB. Switch scopes/search/order
    locally. Replace the scanning browser only after this path is verified.
-6. Add the compact artifact shelf and source-aware tabs. Preserve pin ordering
-   across scopes; other artifacts use creation order with an identity tie-break.
-   Virtualize large lists and lazy-load thumbnails. Keep a searchable expanded
-   browser for large collections.
+6. Use a full-page Library and optional thread-local panel, not a permanent
+   shelf. Preserve personal pin ordering and deterministic sort tie-breaks.
+   Virtualize large lists and lazy-load thumbnails as collections grow.
 
 Performance acceptance: a warmed shelf and scope toggle must render without a
 network round trip (target under 50 ms local interaction at 1,000 entries).

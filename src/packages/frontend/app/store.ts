@@ -27,6 +27,9 @@ export interface PageState {
   active_top_tab: TopTab; // key of the active tab
   active_agent_id?: string;
   active_agent_name?: string;
+  library_open?: boolean;
+  library_project_id?: string;
+  library_entry_id?: string;
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -77,6 +80,11 @@ export function init_store() {
     parsed.page === "project" ? parsed.target.split("/")[0] : undefined;
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    library_open: parsed.page === "agents" && parsed.library === true,
+    library_project_id:
+      parsed.page === "agents" ? parsed.artifact_project_id : undefined,
+    library_entry_id:
+      parsed.page === "agents" ? parsed.artifact_entry_id : undefined,
     active_agent_id: parsed.page === "agents" ? parsed.agent_id : undefined,
     active_agent_name:
       parsed.page === "agents" &&

@@ -8,7 +8,6 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentArtifactBrowser } from "./artifact-browser";
-import { agentSearchStore } from "./search-state";
 import { CATALOG_LIMITS } from "./artifact-catalog-store";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
@@ -70,9 +69,6 @@ test("active alone shows all agents and reuses the warm cache and search", async
     agents,
     onSelect: jest.fn(async () => {}),
   };
-  agentSearchStore(props.accountId).set({
-    artifactsOpen: true,
-  });
   const view = render(
     <AgentArtifactBrowser {...props} active={false} activeAgent={agents[0]} />,
   );
@@ -80,7 +76,6 @@ test("active alone shows all agents and reuses the warm cache and search", async
   expect(
     screen.queryByRole("region", { name: "Library" }),
   ).not.toBeInTheDocument();
-  act(() => agentSearchStore(props.accountId).set({ artifactsOpen: false }));
   view.rerender(
     <AgentArtifactBrowser {...props} active activeAgent={agents[0]} />,
   );
@@ -101,12 +96,14 @@ test("active alone shows all agents and reuses the warm cache and search", async
   ).toBeVisible();
   const user = userEvent.setup();
   await user.type(
-    screen.getByRole("searchbox", { name: "Search all agent artifacts" }),
+    screen.getByRole("searchbox", { name: "Search library" }),
     "description two{Enter}",
   );
   expect(
     screen.queryByRole("button", { name: "Open Result one from one" }),
   ).not.toBeInTheDocument();
+  const search = screen.getByRole("searchbox") as HTMLInputElement;
+  search.setSelectionRange(3, 8);
   view.rerender(<AgentArtifactBrowser {...props} active={false} />);
   view.rerender(
     <AgentArtifactBrowser
@@ -118,6 +115,9 @@ test("active alone shows all agents and reuses the warm cache and search", async
   );
   expect(screen.getByRole("searchbox")).toHaveValue("description two");
   expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(screen.getByRole("searchbox")).toBe(search);
+  expect(search.selectionStart).toBe(3);
+  expect(search.selectionEnd).toBe(8);
   const target = screen.getByRole("button", {
     name: "Open Result two from two",
   });
@@ -129,6 +129,7 @@ test("active alone shows all agents and reuses the warm cache and search", async
       agent: agents[1],
       threadId: "t-two",
       historical: false,
+      catalogEntryId: "same-id",
       hit: expect.objectContaining({
         artifact_id: "same-id",
         operation_id: "op",
@@ -166,6 +167,230 @@ test("catalog continues refreshing while inactive", async () => {
   }
 });
 
+test("navigation shares the heading and participates in keyboard order", async () => {
+  const toggle = jest.fn();
+  render(
+    <AgentArtifactBrowser
+      accountId="library-navigation"
+      agents={agents}
+      active
+      onSelect={async () => {}}
+      navigation={<button onClick={toggle}>Toggle sidebar</button>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  const navigation = screen.getByRole("button", { name: "Toggle sidebar" });
+  expect(
+    screen.getByRole("heading", { name: "Library" }).parentElement,
+  ).toContainElement(navigation);
+  const user = userEvent.setup();
+  await user.tab({ shift: true });
+  expect(navigation).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(toggle).toHaveBeenCalledTimes(1);
+  await user.tab();
+  expect(
+    screen.getByRole("searchbox", { name: "Search library" }),
+  ).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: /Return to agent|Back to agent/ }),
+  ).not.toBeInTheDocument();
+});
+
+test("returning retains result DOM, search, organization, scroll and opening-row focus", async () => {
+  const user = userEvent.setup();
+  const props = {
+    accountId: "library-return",
+    agents,
+    onSelect: jest.fn(async () => {}),
+  };
+  const view = render(<AgentArtifactBrowser {...props} active />);
+  const row = await screen.findByRole("button", {
+    name: "Open Result two from two",
+  });
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search library" }),
+    "description",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
+  const viewport = screen.getByRole("region", { name: "Library" });
+  fireEvent.scroll(viewport, { target: { scrollTop: 480 } });
+  const groupedRow = screen.getByRole("button", {
+    name: "Open Result two from two",
+  });
+  act(() => groupedRow.focus());
+  await user.keyboard("{Enter}");
+  expect(props.onSelect).toHaveBeenCalledTimes(1);
+  view.rerender(<AgentArtifactBrowser {...props} active={false} />);
+  expect(viewport).not.toBeVisible();
+  expect(groupedRow).toBeInTheDocument();
+  expect(groupedRow).not.toHaveFocus();
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  // Simulate a browser resetting the hidden scroll box.
+  fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
+  view.rerender(<AgentArtifactBrowser {...props} active />);
+  expect(screen.getByRole("button", { name: "Open Result two from two" })).toBe(
+    groupedRow,
+  );
+  expect(groupedRow).toHaveFocus();
+  expect(viewport.scrollTop).toBe(480);
+  expect(screen.getByRole("searchbox")).toHaveValue("description");
+  expect(
+    screen.getByRole("checkbox", { name: "Group by project" }),
+  ).toBeChecked();
+  expect(
+    screen.getByRole("button", { name: "Filters & organization (active)" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(listProject).toHaveBeenCalledTimes(2);
+  // Grouping intentionally changes the row's parent, unlike a hide/show cycle.
+  expect(row).not.toBeInTheDocument();
+});
+
+test("parent-selected identity restores a row without stealing focus on active updates", async () => {
+  const props = {
+    accountId: "library-selected",
+    agents,
+    onSelect: async () => {},
+  };
+  const view = render(<AgentArtifactBrowser {...props} active />);
+  const row = await screen.findByRole("button", {
+    name: "Open Result one from one",
+  });
+  const selectedArtifactIdentity = JSON.stringify([
+    "p-one",
+    "/one.chat",
+    "t-one",
+    "same-id",
+  ]);
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      active
+      selectedArtifactIdentity={selectedArtifactIdentity}
+    />,
+  );
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      active={false}
+      selectedArtifactIdentity={selectedArtifactIdentity}
+    />,
+  );
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      active
+      selectedArtifactIdentity={selectedArtifactIdentity}
+    />,
+  );
+  expect(row).toHaveFocus();
+  await userEvent.setup().type(screen.getByRole("searchbox"), "two");
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      active={false}
+      selectedArtifactIdentity={selectedArtifactIdentity}
+    />,
+  );
+  view.rerender(
+    <AgentArtifactBrowser
+      {...props}
+      active
+      selectedArtifactIdentity={selectedArtifactIdentity}
+    />,
+  );
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(screen.getByRole("searchbox")).toHaveValue("two");
+  expect(
+    screen.queryByRole("button", { name: "Open Result one from one" }),
+  ).not.toBeInTheDocument();
+});
+
+test("returning before navigation settles restores focus when the row is enabled", async () => {
+  let finish!: () => void;
+  const props = {
+    accountId: "library-pending-open",
+    agents,
+    onSelect: jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  };
+  const view = render(<AgentArtifactBrowser {...props} active />);
+  const row = await screen.findByRole("button", {
+    name: "Open Result two from two",
+  });
+  await userEvent.setup().click(row);
+  expect(row).toBeDisabled();
+  view.rerender(<AgentArtifactBrowser {...props} active={false} />);
+  view.rerender(<AgentArtifactBrowser {...props} active />);
+  await act(async () => finish());
+  expect(row).toBeEnabled();
+  expect(row).toHaveFocus();
+});
+
+test("organization popups cannot escape the inactive library", async () => {
+  const props = {
+    accountId: "library-hidden-popup",
+    agents,
+    onSelect: async () => {},
+  };
+  const view = render(<AgentArtifactBrowser {...props} active />);
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Filters & organization" }));
+  const filter = screen.getByRole("combobox", { name: "Project" });
+  act(() => filter.focus());
+  key(filter, "ArrowDown", 40);
+  expect(await screen.findByRole("listbox")).toBeInTheDocument();
+  view.rerender(<AgentArtifactBrowser {...props} active={false} />);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(filter).not.toHaveFocus();
+  view.rerender(<AgentArtifactBrowser {...props} active />);
+  expect(filter).toHaveFocus();
+});
+
+test("loading and metadata failures are announced, with retry in organization", async () => {
+  let reject!: (error: Error) => void;
+  listProject.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = fail;
+      }),
+  );
+  render(
+    <AgentArtifactBrowser
+      accountId="library-metadata"
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Loading library...");
+  await act(async () => reject(Error("unavailable")));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Library metadata unavailable",
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("retrying periodically");
+  expect(screen.queryByText(/No artifacts yet/)).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  act(() => refresh.focus());
+  await user.keyboard("{Enter}");
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 // rc-select uses legacy keyCode, which user-event's keyboard omits.
 function key(element: HTMLElement, key: string, keyCode: number) {
   fireEvent.keyDown(element, { key, keyCode, which: keyCode });
@@ -190,8 +415,21 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
       .getAllByRole("button", { name: /^Open Result/ })
       .map((button) => button.getAttribute("aria-label"));
   expect(titles()[0]).toBe("Open Result two from two");
+  const organization = screen.getByRole("button", {
+    name: "Filters & organization",
+  });
+  expect(organization).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
+  act(() => organization.focus());
+  await user.keyboard("{Enter}");
+  expect(organization).toHaveAttribute("aria-expanded", "true");
+  await user.tab();
+  expect(screen.getByRole("combobox", { name: "Project" })).toHaveFocus();
   const sort = screen.getByRole("combobox", {
-    name: "Sort discovered artifacts",
+    name: "Sort",
   });
   act(() => sort.focus());
   key(sort, "ArrowDown", 40);
@@ -234,13 +472,14 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   await user.keyboard(" ");
   expect(setPinned).toHaveBeenLastCalledWith(id, false);
   const filter = screen.getByRole("combobox", {
-    name: "Filter artifact projects",
+    name: "Project",
   });
   act(() => filter.focus());
   key(filter, "ArrowDown", 40);
   await waitFor(() => expect(filter).toHaveAttribute("aria-expanded", "true"));
   key(filter, "Escape", 27);
   expect(filter).toHaveFocus();
+  expect(organization).toHaveAttribute("aria-expanded", "true");
   expect(onClose).not.toHaveBeenCalled();
   key(filter, "ArrowDown", 40);
   key(filter, "ArrowUp", 38);
@@ -259,7 +498,12 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
     expect.objectContaining({ agent: agents[0] }),
   );
   expect(props.onSelect).not.toHaveBeenCalled();
-  const back = screen.getByRole("button", { name: "Back to agent" });
+  act(() => group.focus());
+  await user.keyboard("{Escape}");
+  expect(organization).toHaveFocus();
+  expect(organization).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  const back = screen.getByRole("button", { name: "Return to agent" });
   back.focus();
   await user.tab();
   expect(screen.getByRole("searchbox")).toHaveFocus();
@@ -289,8 +533,11 @@ test("Custom exposes pinned drag handles and keyboard move menus scoped to group
   const view = render(<AgentArtifactBrowser {...props} />);
   await screen.findByRole("button", { name: "Open Result two from two" });
   const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
   const sort = screen.getByRole("combobox", {
-    name: "Sort discovered artifacts",
+    name: "Sort",
   });
   act(() => sort.focus());
   key(sort, "ArrowDown", 40);
@@ -384,11 +631,14 @@ test("large cache bounds rows across groups and explains partial coverage", asyn
   );
   await screen.findByText(/Showing the first 200 of 250 matches/);
   const user = userEvent.setup();
+  expect(screen.getByText(/sources may still be indexing/)).not.toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Filters & organization" }),
+  );
   await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
   expect(screen.getAllByRole("listitem")).toHaveLength(200);
-  expect(screen.getByText(/some sources may still be indexing/)).toBeVisible();
   // JSDOM does not implement the native summary keyboard default action.
-  const details = screen.getByText("Preview details");
+  const details = screen.getByText("About this library");
   await user.click(details);
   expect(details.closest("details")).toHaveAttribute("open");
   expect(screen.getByText(/not a completeness count/)).toBeVisible();

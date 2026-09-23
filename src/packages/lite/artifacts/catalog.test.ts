@@ -164,6 +164,11 @@ test("snapshot canonical replay, content hash, sequence gaps and stale deliverie
 test("edits, removal and reappearance preserve first creation time and stable entry identity", async () => {
   await catalog.applySnapshot(snapshot());
   const original = (await catalog.listProject(source)).entries[0];
+  const request = {
+    project_id: source.project_id,
+    entry_id: original.entry_id,
+  };
+  await expect(catalog.getEntry(request)).resolves.toEqual(original);
   expect(original.entry_id).toBe(
     createHash("sha256")
       .update(artifactCatalogKey(source, item()))
@@ -177,6 +182,7 @@ test("edits, removal and reappearance preserve first creation time and stable en
     title: "Edited",
   });
   await catalog.applySnapshot(snapshot(3, []));
+  await expect(catalog.getEntry(request)).resolves.toBeNull();
   expect(await catalog.listProject(source)).toEqual({
     entries: [],
     indexed_sources: 1,
@@ -186,6 +192,7 @@ test("edits, removal and reappearance preserve first creation time and stable en
   });
   await catalog.applySnapshot(snapshot(4, [{ ...item(), created_at: 9000 }]));
   expect((await catalog.listProject(source)).entries[0]).toEqual(original);
+  await expect(catalog.getEntry(request)).resolves.toEqual(original);
 });
 
 test("bounded project keyset pages include separate chat and thread identities", async () => {
@@ -212,6 +219,12 @@ test("bounded project keyset pages include separate chat and thread identities",
   expect(first.next).toBe(first.entries[99].entry_id);
   const second = await catalog.listProject({ ...source, after: first.next });
   expect(second.entries).toHaveLength(2);
+  await expect(
+    catalog.getEntry({
+      project_id: source.project_id,
+      entry_id: second.entries[1].entry_id,
+    }),
+  ).resolves.toEqual(second.entries[1]);
   expect(second.next).toBeUndefined();
   const ids = [...first.entries, ...second.entries].map(
     (entry) => entry.entry_id,
@@ -346,7 +359,7 @@ test("single-project isolation, canonical source validation, API envelope and pr
     for (const suffix of ["-wal", "-shm"])
       expect(statSync(filename + suffix).mode & 0o077).toBe(0);
   const api = liteArtifactCatalogReadApi(catalog, "local-account");
-  expect(Object.keys(api)).toEqual(["listProject"]);
+  expect(Object.keys(api).sort()).toEqual(["getEntry", "listProject"]);
   await expect(api.listProject(source)).rejects.toThrow("local Lite account");
   await expect(
     api.listProject({ ...source, account_id: "other" }),
@@ -354,4 +367,39 @@ test("single-project isolation, canonical source validation, API envelope and pr
   expect(
     await api.listProject({ ...source, account_id: "local-account" }),
   ).toEqual({ entries: [], indexed_sources: 0 });
+});
+
+test("direct Lite reads validate IDs and use the same account and project boundary as listing", async () => {
+  await catalog.applySnapshot(snapshot());
+  const entry = (await catalog.listProject(source)).entries[0];
+  const request = { project_id: source.project_id, entry_id: entry.entry_id };
+  const api = liteArtifactCatalogReadApi(catalog, "local-account");
+  const read = jest.spyOn(catalog, "getEntry");
+  for (const account_id of [undefined, "other"])
+    await expect(api.getEntry({ ...request, account_id })).rejects.toThrow(
+      "local Lite account",
+    );
+  expect(read).not.toHaveBeenCalled();
+  const list = jest.spyOn(catalog, "listProject");
+  await expect(
+    api.getEntry({ ...request, account_id: "local-account" }),
+  ).resolves.toEqual(entry);
+  expect(list).not.toHaveBeenCalled();
+  await expect(
+    api.getEntry({
+      ...request,
+      account_id: "local-account",
+      project_id: otherProject,
+    }),
+  ).rejects.toThrow("not available");
+  await expect(
+    catalog.getEntry({ ...request, entry_id: "0".repeat(64) }),
+  ).resolves.toBeNull();
+  for (const entry_id of [undefined, "", "bad", "A".repeat(64), "a".repeat(65)])
+    await expect(
+      catalog.getEntry({ ...request, entry_id: entry_id! }),
+    ).rejects.toThrow("entry_id");
+  await expect(
+    catalog.getEntry({ ...request, project_id: undefined! }),
+  ).rejects.toThrow("not available");
 });

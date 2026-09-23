@@ -9,6 +9,7 @@ import {
   useMemo,
   useProjectFromMap,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SCHEMA } from "@cocalc/util/db-schema";
@@ -26,10 +27,15 @@ export const FIX_BORDERS: React.CSSProperties = {
 export function useProject(project_id) {
   const projectRecord = useProjectFromMap(project_id);
   const [project, setProject] = useState<any>(null);
+  const projectMap = useTypedRedux("projects", "project_map");
+  const accountId = useTypedRedux("account", "account_id");
+  const userType = useTypedRedux("account", "user_type");
+  const isAdmin = useTypedRedux("account", "is_admin");
 
+  // Direct resource routes can mount before account and membership hydration.
   const group = useMemo(
     () => redux.getStore("projects").get_my_group(project_id),
-    [project_id],
+    [project_id, projectMap, accountId, userType, isAdmin],
   );
 
   useEffect(() => {

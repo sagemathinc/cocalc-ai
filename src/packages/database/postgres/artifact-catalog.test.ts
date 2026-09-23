@@ -7,6 +7,7 @@ import {
   registerArtifactCatalogSource,
   getArtifactCatalogWriterState,
   readProjectArtifactCatalog,
+  readArtifactCatalogEntry,
   artifactCatalogSourcePage,
 } from "./artifact-catalog";
 
@@ -117,6 +118,9 @@ test("metadata pages use stable keyset cursors and omit tombstones", async () =>
   expect(first.indexed_sources).toBe(1);
   const second = await readProjectArtifactCatalog(project_id, first.next);
   expect(second.entries).toHaveLength(5);
+  await expect(
+    readArtifactCatalogEntry(project_id, second.entries[4].entry_id),
+  ).resolves.toEqual(second.entries[4]);
   expect(second.next).toBeUndefined();
   expect(
     new Set([...first.entries, ...second.entries].map((e) => e.entry_id)).size,
@@ -144,6 +148,32 @@ test("background source discovery includes registered sources without metadata",
       host_id: randomUUID(),
     }),
   ).rejects.toThrow("owner/host");
+});
+
+test("point lookup uses existing identity, scopes by project, and excludes tombstones", async () => {
+  await applyArtifactCatalogSnapshot(snapshot(), authority);
+  const entry = (await readProjectArtifactCatalog(project_id)).entries[0];
+  await expect(
+    readArtifactCatalogEntry(project_id, entry.entry_id),
+  ).resolves.toEqual(entry);
+  await expect(
+    readArtifactCatalogEntry(randomUUID(), entry.entry_id),
+  ).resolves.toBeNull();
+  await expect(
+    readArtifactCatalogEntry(project_id, "0".repeat(64)),
+  ).resolves.toBeNull();
+  await applyArtifactCatalogSnapshot({ ...snapshot(2), items: [] }, authority);
+  await expect(
+    readArtifactCatalogEntry(project_id, entry.entry_id),
+  ).resolves.toBeNull();
+  await applyArtifactCatalogSnapshot(snapshot(3), authority);
+  await expect(
+    readArtifactCatalogEntry(project_id, entry.entry_id),
+  ).resolves.toEqual(entry);
+  for (const invalid of [undefined, "", "bad", "A".repeat(64), "a".repeat(65)])
+    await expect(
+      readArtifactCatalogEntry(project_id, invalid!),
+    ).rejects.toThrow("entry_id");
 });
 
 test("rejects different content at the same sequence and older deliveries", async () => {

@@ -57,6 +57,17 @@ test("real Lite filesystem writes, retries, rename, deletion and service lease",
     expect(page.entries).toHaveLength(1);
     expect(page.entries[0].chat_path).toBe(join(root, "test.chat"));
     expect(page.entries[0].item.title).toBe("Notes");
+    const entryRequest = {
+      project_id,
+      account_id,
+      entry_id: page.entries[0].entry_id,
+    };
+    await expect(runtime.api.getEntry(entryRequest)).resolves.toEqual(
+      page.entries[0],
+    );
+    await expect(
+      runtime.api.getEntry({ ...entryRequest, account_id: "other" }),
+    ).rejects.toThrow("local Lite account");
     expect(JSON.stringify(page)).not.toContain("private body");
     await expect(runtime.api.ingest()).rejects.toThrow("service-local");
     await fs.writeFile("test.chat", "{invalid json");
@@ -70,8 +81,15 @@ test("real Lite filesystem writes, retries, rename, deletion and service lease",
     page = await runtime.api.listProject({ project_id, account_id });
     expect(page.entries).toHaveLength(1);
     expect(page.entries[0].chat_path).toBe(join(root, "renamed.chat"));
+    await expect(runtime.api.getEntry(entryRequest)).resolves.toBeNull();
     await fs.unlink("renamed.chat");
     await tick();
+    await expect(
+      runtime.api.getEntry({
+        ...entryRequest,
+        entry_id: page.entries[0].entry_id,
+      }),
+    ).resolves.toBeNull();
     expect(
       (await runtime.api.listProject({ project_id, account_id })).entries,
     ).toEqual([]);
