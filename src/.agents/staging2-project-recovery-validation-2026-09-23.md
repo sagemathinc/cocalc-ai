@@ -45,6 +45,13 @@ Production was not changed.
   `20260923T213641Z-674689d3-snapshot-inventory-20260923-dirty` deployed
   and passed hub smoke. A confirmed empty host inventory now clears a stale
   latest-snapshot value from the bay projection.
+- Change-triggered and due-time dispatch: `8f47da2d6789`. Hub artifact
+  `20260923T215211Z-8f47da2d-event-recovery-20260923-dirty` passed smoke.
+  Project-host artifact
+  `20260923T215441Z-8f47da2d-event-recovery-20260923-dirty` passed the
+  canary-first rollout `85cbd49e-b0e3-4f15-af60-690f4c5df725` and smoke on
+  both online hosts. Confirmed host change events now fetch bounded project
+  batches; the host also arms a timer for known due and retry times.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -67,6 +74,7 @@ the source commits above identify the tracked code used for the builds.
 | Confirmed snapshot outcome and unchanged-content reconciliation           | Focused tests passed across file-server, project-host, server, and frontend. A snapshot success now requires a confirmed recovery point; unchanged content records a schedule-aware reconciliation marker. |
 | Recovery health after new changes                                         | Staging2 operator health at 21:28 UTC reported 0 unknown snapshot and backup statuses. The health query now recomputes due times in bounded pages, so a later project edit cannot be hidden by an earlier unchanged-content report. |
 | First normal scheduler cycle after host rollout                           | At 21:41:39 UTC, the scheduled host worker created Btrfs snapshot `2026-09-23T21:41:39.414Z` for project `1b461cb0-47c3-4d58-bdc0-3bdd4af2e139`. Project recovery health then reported healthy, 0 snapshot delay, and 0 unknown statuses. |
+| Event dispatch after a canary file edit                                   | A file edit at 21:58 UTC reached the bay change timestamp at 22:02:12.811 UTC. The host created snapshot `2026-09-23T22:03:49.447Z`, about 97 seconds after bay confirmation and before its first 15-minute full sweep. Host smoke checks remained healthy. |
 
 The scheduled-path project is
 `1b461cb0-47c3-4d58-bdc0-3bdd4af2e139`. The separate restore-test project is
@@ -98,9 +106,12 @@ projects; it did not create hundreds of live projects.
    coordinated rollout. None is established by this single-day staging test.
 5. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
-6. The host scheduler still uses a 15-minute initial delay and sweep. The first
-   normal post-rollout sweep succeeded, but the plan's event-driven due dispatch
-   and measured responsiveness under large inventories remain open.
+6. The host scheduler still uses a 15-minute initial delay and full
+   reconciliation sweep. The canary event path completed in about 97 seconds
+   after bay confirmation, but due timers, retry recovery, and responsiveness
+   under large live inventories remain to be validated. The host's generation
+   check cached this project's prior observation for about five minutes, so
+   the edit-to-bay change detection interval was longer than dispatch itself.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
