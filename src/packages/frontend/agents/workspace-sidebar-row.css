@@ -9,7 +9,7 @@
   opacity: 1;
 }
 
-@media (hover: none), (any-pointer: coarse) {
+@media (hover: none) {
   .cocalc-agent-sidebar-row .cocalc-agent-sidebar-row-reveal {
     opacity: 1;
   }
