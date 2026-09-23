@@ -1622,12 +1622,21 @@ importers:
       fast-text-encoding:
         specifier: 1.0.6
         version: 1.0.6
+      htmlparser2:
+        specifier: ^8.0.2
+        version: 8.0.2
       markdown-it:
         specifier: ^14.2.0
         version: 14.2.0
       path-browserify:
         specifier: ^1.0.1
         version: 1.0.1
+      prismjs:
+        specifier: ^1.30.0
+        version: 1.30.0
+      ratex-react-native:
+        specifier: 0.1.14
+        version: 0.1.14(react-native@0.86.0(patch_hash=7a73a9785b90e176a0e035352f7afbe1b06140626aa3fbdf0f237f1c87740f33)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3)
       react:
         specifier: 19.2.3
         version: 19.2.3
@@ -1671,6 +1680,12 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.20.1
+      '@types/path-browserify':
+        specifier: ^1.0.3
+        version: 1.0.3
+      '@types/prismjs':
+        specifier: ^1.26.2
+        version: 1.26.5
       '@types/react':
         specifier: ^19.2.7
         version: 19.2.7
@@ -5818,6 +5833,9 @@ packages:
 
   '@types/passport@1.0.17':
     resolution: {integrity: sha512-aciLyx+wDwT2t2/kJGJR2AEeBz0nJU4WuRX04Wu9Dqc5lSUtwu0WERPHYsLhF9PtseiAMPBGNUOtFjxZ56prsg==}
+
+  '@types/path-browserify@1.0.3':
+    resolution: {integrity: sha512-ZmHivEbNCBtAfcrFeBCiTjdIc2dey0l7oCGNGpSuRTy8jP6UVND7oUowlvDujBy8r2Hoa8bfFUOCiPWfmtkfxw==}
 
   '@types/pg@8.16.0':
     resolution: {integrity: sha512-RmhMd/wD+CF8Dfo+cVIy3RR5cl8CyfXQ0tGgW6XBL8L4LM/UTEbNXYRbLwU6w+CgrKBNbrQWt4FUtTfaU5jSYQ==}
@@ -10225,6 +10243,12 @@ packages:
   range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
+
+  ratex-react-native@0.1.14:
+    resolution: {integrity: sha512-EGLM4tb7OTGWjUexGUDHEDqXtYvQ6VR0Joo4AEz/W6qoGaA7yKRwSfBz0GpaHE+dx1W+sfD6X83DdIjqPudthQ==}
+    peerDependencies:
+      react: '>=19.2.0'
+      react-native: '>=0.84.0'
 
   raw-body@3.0.2:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
@@ -16018,6 +16042,8 @@ snapshots:
     dependencies:
       '@types/express': 5.0.6
 
+  '@types/path-browserify@1.0.3': {}
+
   '@types/pg@8.16.0':
     dependencies:
       '@types/node': 22.20.1
@@ -21147,6 +21173,11 @@ snapshots:
   random-key@0.3.2: {}
 
   range-parser@1.2.1: {}
+
+  ratex-react-native@0.1.14(react-native@0.86.0(patch_hash=7a73a9785b90e176a0e035352f7afbe1b06140626aa3fbdf0f237f1c87740f33)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-native: 0.86.0(patch_hash=7a73a9785b90e176a0e035352f7afbe1b06140626aa3fbdf0f237f1c87740f33)(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7)(bufferutil@4.0.9))(@types/react@19.2.7)(bufferutil@4.0.9)(react@19.2.3)
 
   raw-body@3.0.2:
     dependencies:

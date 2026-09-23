@@ -2,6 +2,8 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
+import { MarkdownImageContext } from "../../../chat/markdown-image";
+import { createMarkdownImageResolver } from "../../../cocalc/markdown-images";
 import { PaymentSummary } from "../../../chat/payment-summary";
 import { ChatSettings } from "../../../chat/settings";
 
@@ -204,6 +206,10 @@ export default function ChatScreen() {
   const projectId = `${params.projectId ?? ""}`;
   const profileId = `${params.profile ?? ""}`;
   const chatPath = `${params.chatPath ?? ""}`;
+  const resolveImage = useMemo(
+    () => createMarkdownImageResolver(profileId, projectId, chatPath),
+    [profileId, projectId, chatPath],
+  );
   const threadId = `${params.thread ?? ""}`;
   const [client, setClient] = useState<ConversationClient>();
   const clientRef = useRef<ConversationClient | undefined>(undefined);
@@ -591,13 +597,15 @@ export default function ChatScreen() {
           }
           ref={listRef}
           renderItem={({ item }) => (
-            <Message
-              item={item}
-              speechBusy={speechBusy}
-              read={(item) =>
-                void speech.controller.read(item.content, item.message_id)
-              }
-            />
+            <MarkdownImageContext.Provider value={resolveImage}>
+              <Message
+                item={item}
+                speechBusy={speechBusy}
+                read={(item) =>
+                  void speech.controller.read(item.content, item.message_id)
+                }
+              />
+            </MarkdownImageContext.Provider>
           )}
         />
         <View style={styles.composer}>

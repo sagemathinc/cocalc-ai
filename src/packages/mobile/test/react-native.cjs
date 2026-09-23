@@ -1,5 +1,12 @@
 const React = require("react");
 module.exports = {
+  TurboModuleRegistry: { get: () => null },
+  useWindowDimensions: () => ({
+    width: 390,
+    height: 844,
+    fontScale: 1,
+    scale: 3,
+  }),
   Keyboard: { dismiss: jest.fn() },
   Platform: { OS: "ios" },
   PlatformColor: (name) => name,

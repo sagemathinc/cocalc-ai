@@ -6,3 +6,6 @@ magick -density 1536 -background white ../assets/cocalc-icon.svg -resize 800x800
 ```
 
 Changing the home-screen icon requires rebuilding and installing the native app.
+
+`preview-plot.png` is a bundled, offline sine-curve fixture. Regenerate it with
+`python3 scripts/generate-preview-plot.py` (requires matplotlib and numpy).

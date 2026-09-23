@@ -112,3 +112,60 @@ it("renders the full phone preview corpus", async () => {
   ).toHaveLength(2);
   await act(async () => view.unmount());
 });
+
+it("renders inline HTML formatting around Markdown without exposing tags", async () => {
+  let view: any;
+  await act(async () => {
+    view = create(
+      <Markdown
+        value={
+          '<u>**underlined bold**</u> and <a href="https://cocalc.ai">CoCalc</a> <script>bad()</script>'
+        }
+      />,
+    );
+  });
+  const json = JSON.stringify(view.toJSON());
+  expect(json).toContain("underlined bold");
+  expect(json).toContain('"textDecorationLine":"underline"');
+  expect(json).not.toContain("bad()");
+  expect(json).not.toContain("<u>");
+  expect(view.root.findAllByProps({ accessibilityRole: "link" })).toHaveLength(
+    1,
+  );
+  await act(async () => view.unmount());
+});
+it("expands and collapses details while preserving Markdown content", async () => {
+  let view: any;
+  await act(async () => {
+    view = create(
+      <Markdown
+        value={
+          "<details>\n<summary>More results</summary>\n\n**Hidden result**\n\n</details>"
+        }
+      />,
+    );
+  });
+  const button = () => view.root.findByProps({ accessibilityRole: "button" });
+  expect(button().props.accessibilityState.expanded).toBe(false);
+  expect(JSON.stringify(view.toJSON())).not.toContain("Hidden result");
+  await act(async () => button().props.onPress());
+  expect(button().props.accessibilityState.expanded).toBe(true);
+  expect(JSON.stringify(view.toJSON())).toContain("Hidden result");
+  await act(async () => button().props.onPress());
+  expect(JSON.stringify(view.toJSON())).not.toContain("Hidden result");
+  await act(async () => view.unmount());
+});
+it("loads an image and preserves its description if loading fails", async () => {
+  let view: any;
+  await act(async () => {
+    view = create(
+      <Markdown value="![A graph](https://example.com/plot.png)" />,
+    );
+  });
+  const image = view.root.findByType("Image");
+  expect(image.props.accessibilityLabel).toBe("A graph");
+  await act(async () => image.props.onError());
+  expect(JSON.stringify(view.toJSON())).toContain("Image unavailable: ");
+  expect(JSON.stringify(view.toJSON())).toContain("A graph");
+  await act(async () => view.unmount());
+});

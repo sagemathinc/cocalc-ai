@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { parse_markdown } from "@cocalc/util/markdown/parse";
 import type Token from "markdown-it/lib/token";
 import {
@@ -16,6 +16,10 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import type { AppearancePalette } from "@cocalc/util/appearance-palette";
+import { HighlightedCode } from "./code-highlight";
+import { Details, MarkdownHtml } from "./markdown-html";
+import { MarkdownImage } from "./markdown-image";
+import { MathFormula } from "./math";
 import { usePalette } from "../ui/palette";
 
 interface Node {
@@ -37,26 +41,100 @@ function tree(tokens: Token[]): Node[] {
     stack.at(-1)!.push(node);
     if (token.nesting === 1) stack.push(node.children);
   }
-  return root;
+  return groupDetails(root);
 }
-export function Markdown({ value }: { value: string }) {
+function groupDetails(nodes: Node[]): Node[] {
+  const result: Node[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (
+      node.token.type === "html_block" &&
+      /^<details(?:\s[^>]*)?>\s*(?:<summary>[\s\S]*?<\/summary>\s*)?$/i.test(
+        node.token.content.trim(),
+      )
+    ) {
+      let depth = 1,
+        end = i + 1;
+      for (; end < nodes.length; end++) {
+        if (nodes[end].token.type !== "html_block") continue;
+        if (/^<details[\s>]/i.test(nodes[end].token.content.trim())) depth++;
+        if (/<\/details>/i.test(nodes[end].token.content)) depth--;
+        if (!depth) break;
+      }
+      if (!depth && /^\s*<\/details>\s*$/i.test(nodes[end].token.content)) {
+        result.push({
+          token: {
+            ...node.token,
+            type: "details",
+            content:
+              node.token.content.match(
+                /<summary>([\s\S]*?)<\/summary>/i,
+              )?.[1] ?? "Details",
+          } as Token,
+          children: groupDetails(nodes.slice(i + 1, end)),
+        });
+        i = end;
+        continue;
+      }
+    }
+    result.push(node);
+  }
+  return result;
+}
+export const Markdown = memo(function Markdown({ value }: { value: string }) {
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const nodes = useMemo(() => tree(parse_markdown(value).tokens), [value]);
   function render(nodes: Node[]): ReactNode {
+    // Inline HTML can wrap Markdown tokens (e.g. <u>**bold**</u>).
+    if (nodes.some((node) => node.token.type === "html_inline")) {
+      const slots: ReactNode[] = [];
+      const source = nodes
+        .map((node) => {
+          if (node.token.type === "html_inline") return node.token.content;
+          const index = slots.push(render([node])) - 1;
+          return `<cocalc-slot index="${index}"></cocalc-slot>`;
+        })
+        .join("");
+      return <MarkdownHtml source={source} slots={slots} />;
+    }
     return nodes.map(({ token: t, children }, index) => {
       const body = () => render(children);
       switch (t.type) {
+        case "html_block":
+          return (
+            <Text key={index} selectable style={styles.text}>
+              <MarkdownHtml source={t.content} />
+            </Text>
+          );
+        case "details":
+          return (
+            <Details key={index} title={t.content || "Details"}>
+              {body()}
+            </Details>
+          );
         case "emoji":
         case "html_inline":
         case "text":
           return t.content;
         case "hashtag":
-          return `#${t.content}`;
+          return (
+            <Text key={index} style={styles.tag}>
+              {`#${t.content}`}
+            </Text>
+          );
         case "mention":
-          return `@${(t as Token & { name: string }).name}`;
+          return (
+            <Text key={index} style={styles.tag}>
+              {`@${(t as Token & { name: string }).name}`}
+            </Text>
+          );
         case "agent-mention":
-          return `@${(t as Token & { reference: { name: string } }).reference.name}`;
+          return (
+            <Text key={index} style={styles.tag}>
+              {`@${(t as Token & { reference: { name: string } }).reference.name}`}
+            </Text>
+          );
         case "checkbox_input": {
           const checked = t.attrGet("checked") === "true";
           return (
@@ -70,18 +148,16 @@ export function Markdown({ value }: { value: string }) {
         }
         case "math_inline":
         case "math_inline_double":
-          // Preserve the complete formula until a native math renderer is connected.
           return (
-            <Text key={index} style={styles.inlineCode}>
-              {t.content}
-            </Text>
+            <MathFormula
+              key={index}
+              latex={t.content}
+              inline
+              display={t.type === "math_inline_double"}
+            />
           );
         case "math_block":
-          return (
-            <Text key={index} selectable style={styles.codeText}>
-              {t.content}
-            </Text>
-          );
+          return <MathFormula key={index} latex={t.content} display />;
         case "blank_line":
           return <View key={index} style={{ height: 8 }} />;
         case "softbreak":
@@ -114,7 +190,7 @@ export function Markdown({ value }: { value: string }) {
           );
         case "link_open": {
           const href = t.attrGet("href") ?? "";
-          const allowed = /^https?:\/\//i.test(href);
+          const allowed = /^(https?:\/\/|mailto:)/i.test(href);
           return (
             <Text
               key={index}
@@ -134,9 +210,11 @@ export function Markdown({ value }: { value: string }) {
         }
         case "image":
           return (
-            <Text key={index} style={styles.italic}>
-              [Image: {t.content || "attachment"}]
-            </Text>
+            <MarkdownImage
+              key={index}
+              src={t.attrGet("src") ?? ""}
+              alt={t.content}
+            />
           );
         case "inline":
           return (
@@ -261,7 +339,7 @@ export function Markdown({ value }: { value: string }) {
     });
   }
   return <View style={styles.container}>{render(nodes)}</View>;
-}
+});
 function CodeBlock({
   content,
   language,
@@ -275,7 +353,10 @@ function CodeBlock({
   const [copyStatus, setCopyStatus] = useState("");
   const code = (
     <Text selectable style={styles.codeText}>
-      {content.replace(/\n$/, "")}
+      <HighlightedCode
+        content={content.replace(/\n$/, "")}
+        language={language}
+      />
     </Text>
   );
   return (
@@ -338,6 +419,11 @@ const makeStyles = (colors: AppearancePalette) =>
     heading: { fontWeight: "700", marginTop: 8, lineHeight: undefined },
     bold: { fontWeight: "700" },
     italic: { fontStyle: "italic" },
+    tag: {
+      color: colors.link,
+      backgroundColor: colors.page,
+      fontWeight: "600",
+    },
     strike: { textDecorationLine: "line-through" },
     inlineCode: {
       fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
