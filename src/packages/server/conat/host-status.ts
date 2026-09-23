@@ -58,7 +58,7 @@ export async function listHostProjectMaintenanceSchedules({
 
   // Walk a stable project-id cursor. An activity cutoff or debt-ordered LIMIT
   // can hide projects behind the first page forever.
-  const params: any[] = [host_id, cursor_project_id ?? ""];
+  const params: any[] = [host_id, cursor_project_id ?? null];
   const normalizedLimit = Math.max(
     1,
     Math.min(500, Math.floor(Number(limit ?? 100) || 100)),
@@ -137,7 +137,7 @@ export async function listHostProjectMaintenanceSchedules({
      WHERE host_id=$1
        AND provisioned IS TRUE
        AND deleted IS NOT TRUE
-       AND project_id > $2
+       AND ($2::uuid IS NULL OR project_id > $2::uuid)
      ORDER BY project_id ASC
      LIMIT ${limitParam}`,
     params,

@@ -200,9 +200,26 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(maintenanceSql).toContain("last_backup IS NULL");
     expect(maintenanceSql).toContain("> last_backup");
     expect(maintenanceSql).toContain("backups->>'disabled'");
-    expect(maintenanceSql).toContain("project_id > $2");
+    expect(maintenanceSql).toContain("project_id > $2::uuid");
     expect(maintenanceSql).toContain("ORDER BY project_id ASC");
     expect(maintenanceSql).toContain("LIMIT $3");
+  });
+
+  it("starts the first page with a null UUID cursor", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    await expect(
+      listHostProjectMaintenanceSchedules({ host_id: "host-1" }),
+    ).resolves.toEqual([]);
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("$2::uuid IS NULL"),
+      ["host-1", null, 100],
+    );
   });
 
   it("uses the storage payer for priority and the owner for existing limits", async () => {
