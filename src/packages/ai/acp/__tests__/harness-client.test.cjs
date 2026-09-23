@@ -20,7 +20,7 @@ test(
       version: 1,
       kind: "acp",
       id: "claude-code",
-      revision: "0.79.0",
+      revision: "0.81.1",
       executable: claudeAgentAcpBin,
       args: ["--hide-claude-auth"],
       cwd: "/tmp",
@@ -68,7 +68,7 @@ test(
     assert.deepEqual(info.agentInfo, {
       name: "@agentclientprotocol/claude-agent-acp",
       title: "Claude Agent",
-      version: "0.79.0",
+      version: "0.81.1",
     });
     assert.deepEqual(info.authMethods, []);
     assert.equal(info.agentCapabilities.loadSession, true);
@@ -1191,7 +1191,7 @@ test("qualified profiles accept only pinned catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.79.0",
+    revision: "0.81.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",

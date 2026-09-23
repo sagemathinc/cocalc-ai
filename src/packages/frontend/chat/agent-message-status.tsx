@@ -788,7 +788,7 @@ export function AgentMessageStatus({
         }}
       >
         <AgentActivityChip
-          agentLabel={runtimeKind === "acp" ? "ACP" : "Codex"}
+          agentLabel="Agent"
           generating={generating}
           durationLabel={liveDurationLabel}
           lastActivityAtMs={lastActivityAtMs}
@@ -846,7 +846,7 @@ export function AgentMessageStatus({
               gap: 8,
             }}
           >
-            <span>{runtimeKind === "acp" ? "ACP" : "Codex"} activity</span>
+            <span>Agent activity</span>
             {onOpenGitBrowser ? (
               <Button
                 size="small"

@@ -27,11 +27,10 @@ describe("reconcileAvailableSubagentEvents", () => {
       }),
     );
     const chip = screen.getByRole("button", {
-      name: "Open ACP activity details",
+      name: "Open Agent activity details",
     });
     fireEvent.keyDown(chip, { key: "Enter" });
-    expect(screen.getByText("ACP activity")).toBeTruthy();
-    expect(screen.queryByText("Codex activity")).toBeNull();
+    expect(screen.getByText("Agent activity")).toBeTruthy();
   });
   it("preserves missing events so the activity panel can load its persisted log", () => {
     expect(reconcileAvailableSubagentEvents(undefined, [])).toBeUndefined();
@@ -324,7 +323,7 @@ describe("AgentMessageStatus", () => {
 
     fireEvent.click(screen.getByRole("button"));
 
-    expect(screen.getByText("Codex activity")).toBeTruthy();
+    expect(screen.getByText("Agent activity")).toBeTruthy();
     expect(screen.getByText("use the smaller API")).toBeTruthy();
   });
 

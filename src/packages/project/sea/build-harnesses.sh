@@ -10,8 +10,8 @@ OUT_DIR="${1:-$ROOT/packages/project/build}"
 WORK_ROOT="$OUT_DIR/managed-harnesses"
 OS="linux"
 ARCHES=("amd64" "arm64")
-CLAUDE_VERSION="0.79.0"
-CLAUDE_INTEGRITY="sha512-/liYDBHElfzgbeijv8EZzvDUUAC8wUi1WSCZ+bw/DIKHQ3t3DLid+LS+6lszuQamHAWijjaZl1i5xZVRTnNPoA=="
+CLAUDE_VERSION="0.81.1"
+CLAUDE_INTEGRITY="sha512-I+7tUPsrYnI0nBmdUonoRmdCi7ohyzZ0SeCpeIUFuVZ7a8ZxDyUNO6zBJpaeAIwuPXCk8aw+7t+QiwXS6FwskQ=="
 
 mkdir -p "$OUT_DIR"
 rm -rf "$WORK_ROOT"

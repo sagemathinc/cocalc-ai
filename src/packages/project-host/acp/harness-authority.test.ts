@@ -24,7 +24,7 @@ test("revalidates the exact account credential on every request", async () => {
       version: 2,
       kind: "acp",
       id: "claude-code",
-      revision: "0.79.0",
+      revision: "0.81.1",
       cwd: "/home/user",
       credentialMode: "project-managed",
       executionPolicy: "full-access",

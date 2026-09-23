@@ -30,7 +30,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
     version: 2,
     kind: "acp",
     id: "claude-code",
-    revision: "0.79.0",
+    revision: "0.81.1",
     cwd: "/home/user",
     executionPolicy: "full-access",
     credentialMode: "project-managed",

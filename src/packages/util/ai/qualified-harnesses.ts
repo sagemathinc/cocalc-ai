@@ -44,15 +44,15 @@ export const CLAUDE_CODE_QUALIFICATION: QualifiedHarnessCandidate = {
   protocolVersion: 1,
   package: {
     name: "@agentclientprotocol/claude-agent-acp",
-    version: "0.79.0",
+    version: "0.81.1",
     integrity:
-      "sha512-/liYDBHElfzgbeijv8EZzvDUUAC8wUi1WSCZ+bw/DIKHQ3t3DLid+LS+6lszuQamHAWijjaZl1i5xZVRTnNPoA==",
-    gitHead: "d421f56a6c43cde16d9a7531d08a750a5ef2f04a",
+      "sha512-I+7tUPsrYnI0nBmdUonoRmdCi7ohyzZ0SeCpeIUFuVZ7a8ZxDyUNO6zBJpaeAIwuPXCk8aw+7t+QiwXS6FwskQ==",
+    gitHead: "b264b52bee80e49f20caf1941f7d7cb89edb80c4",
     node: ">=22",
   },
   launch: {
     binary: "claude-agent-acp",
-    executable: "/opt/cocalc/harnesses/claude-code/0.79.0/bin/claude-agent-acp",
+    executable: "/opt/cocalc/harnesses/claude-code/0.81.1/bin/claude-agent-acp",
     requiredArgs: ["--hide-claude-auth"],
     projectSecret: {
       name: "ANTHROPIC_API_KEY",
