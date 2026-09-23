@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { usePersonalLibrary } from "./personal-library";
 
 export const ARTIFACT_NAMES_SETTING = "artifact_names_v1";
 const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -72,74 +71,22 @@ export function nameArtifact(
   return next;
 }
 
-let saveQueue: Promise<void> = Promise.resolve();
-
 export function useArtifactNames() {
-  const accountId = useTypedRedux("account", "account_id");
-  const settings = useTypedRedux("account", "other_settings");
-  const persisted = readArtifactNames(settings?.get?.(ARTIFACT_NAMES_SETTING));
-  const [optimistic, setOptimistic] = useState<{
-    accountId: string;
-    names: NamedArtifact[];
-  }>();
-  const [error, setError] = useState("");
-  const pending = useRef(0);
-  const generation = useRef(0);
-  useEffect(() => {
-    generation.current++;
-    setOptimistic(undefined);
-    setError("");
-  }, [accountId]);
-  const names =
-    optimistic && optimistic.accountId === accountId
-      ? optimistic.names
-      : persisted;
-  const latest = useRef(names);
-  latest.current = names;
-
-  async function setName(
-    target: Pick<NamedArtifact, "project_id" | "entry_id">,
-    input: string,
-  ) {
-    if (!accountId) throw Error("Sign in to name an artifact.");
-    const next = nameArtifact(latest.current, target, input);
-    const started = generation.current;
-    latest.current = next;
-    setOptimistic({ accountId, names: next });
-    setError("");
-    pending.current++;
-    const save = saveQueue
-      .catch(() => {})
-      .then(async () => {
-        const store = redux.getStore("account");
-        if (
-          generation.current !== started ||
-          store?.get("account_id") !== accountId
-        )
-          throw Error("Account changed");
-        const current = readArtifactNames(
-          store.get("other_settings")?.get(ARTIFACT_NAMES_SETTING),
-        );
-        await redux
-          .getActions("account")
-          .set_other_settings_and_wait(
-            ARTIFACT_NAMES_SETTING,
-            JSON.stringify(nameArtifact(current, target, input)),
-          );
-      });
-    saveQueue = save.then(
-      () => {},
-      () => {},
-    );
-    try {
-      await save;
-    } catch (err) {
-      if (generation.current === started) setError(String(err));
-      throw err;
-    } finally {
-      pending.current--;
-      if (!pending.current) setOptimistic(undefined);
-    }
-  }
-  return { names, error, setName };
+  const library = usePersonalLibrary();
+  return {
+    names: library.aliases,
+    error: library.error,
+    loading: library.loading,
+    resolve: library.resolve,
+    setName(
+      target: Pick<NamedArtifact, "project_id" | "entry_id">,
+      input: string,
+    ) {
+      return library.setName(
+        target.project_id,
+        target.entry_id,
+        normalizeArtifactName(input),
+      );
+    },
+  };
 }

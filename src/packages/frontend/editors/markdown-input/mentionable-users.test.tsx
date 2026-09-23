@@ -7,12 +7,16 @@ import { fromJS } from "immutable";
 import { renderHook } from "@testing-library/react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
-import { ARTIFACT_NAMES_SETTING } from "@cocalc/frontend/agents/artifact-names";
 
 const mockGetStore = jest.fn();
 const mockUseNamedAgents = jest.fn();
 let mockAllowAgentMentions = false;
 const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+let mockArtifactNames: any[] = [];
+
+jest.mock("@cocalc/frontend/agents/artifact-names", () => ({
+  useArtifactNames: () => ({ names: mockArtifactNames }),
+}));
 
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: () => null,
@@ -91,6 +95,7 @@ describe("mentionableUsers", () => {
   beforeEach(() => {
     mockGetStore.mockReset();
     mockAllowAgentMentions = false;
+    mockArtifactNames = [];
     mockUseNamedAgents.mockReset();
     jest.mocked(useTypedRedux).mockReset();
     mockUseNamedAgents.mockReturnValue({
@@ -114,26 +119,15 @@ describe("mentionableUsers", () => {
   it("suggests only personally named artifacts in this project", () => {
     mockStores(jest.fn());
     mockAllowAgentMentions = true;
-    jest.mocked(useTypedRedux).mockImplementation((store, key) =>
-      store === "account" && key === "other_settings"
-        ? (fromJS({
-            [ARTIFACT_NAMES_SETTING]: JSON.stringify([
-              {
-                name: "nb1",
-                project_id,
-                entry_id: "a".repeat(64),
-                active: true,
-              },
-              {
-                name: "elsewhere",
-                project_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                entry_id: "b".repeat(64),
-                active: true,
-              },
-            ]),
-          }) as any)
-        : undefined,
-    );
+    mockArtifactNames = [
+      { name: "nb1", project_id, entry_id: "a".repeat(64), active: true },
+      {
+        name: "elsewhere",
+        project_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        entry_id: "b".repeat(64),
+        active: true,
+      },
+    ];
     const { result } = renderHook(() => useMentionableUsers());
     const items = result.current("nb");
     expect(

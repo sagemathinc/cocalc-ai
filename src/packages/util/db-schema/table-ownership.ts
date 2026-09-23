@@ -313,6 +313,26 @@ export const TABLE_OWNERSHIP = {
 
   ...entries(
     [
+      "personal_library_controls",
+      "personal_library_aliases",
+      "personal_library_pins",
+      "personal_library_imports",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Artifact locator only; project ownership remains on its owning bay.",
+      },
+      notes:
+        "Private artifact names and ordering. Account rehome requires migrating these records.",
+    },
+  ),
+
+  ...entries(
+    [
       "agent_personal_controls",
       "agent_personal_names",
       "agent_networks",

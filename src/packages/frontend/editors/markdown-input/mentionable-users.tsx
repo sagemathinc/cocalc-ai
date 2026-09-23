@@ -30,10 +30,7 @@ import {
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
-import {
-  ARTIFACT_NAMES_SETTING,
-  readArtifactNames,
-} from "@cocalc/frontend/agents/artifact-names";
+import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 
 interface Opts {
   avatarUserSize?: number;
@@ -50,6 +47,7 @@ export function useMentionableUsers(): (
     useAgentMentionContext();
   const { selectedNetworkId } = useChatEmbeddingOptions();
   const settings = useTypedRedux("account", "other_settings");
+  const { names: artifactNames } = useArtifactNames();
   const [expanded, setExpanded] = useState(false);
   const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
@@ -109,7 +107,7 @@ export function useMentionableUsers(): (
       );
       const artifacts: Item[] =
         enabled && project_id
-          ? readArtifactNames(settings?.get?.(ARTIFACT_NAMES_SETTING))
+          ? artifactNames
               .filter((item) => item.active && item.project_id === project_id)
               .filter((item) => item.name.includes(query))
               .slice(0, 20)
@@ -161,6 +159,7 @@ export function useMentionableUsers(): (
     source,
     selectedNetworkId,
     settings,
+    artifactNames,
     expanded,
     postOnly,
   ]);

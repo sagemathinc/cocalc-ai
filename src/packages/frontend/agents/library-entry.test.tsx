@@ -5,8 +5,13 @@ import { LibraryEntry } from "./library-entry";
 const getEntry = jest.fn();
 const view = jest.fn();
 let artifactNames: any[] = [];
+const resolveName = jest.fn();
 jest.mock("./artifact-names", () => ({
-  useArtifactNames: () => ({ names: artifactNames, setName: jest.fn() }),
+  useArtifactNames: () => ({
+    names: artifactNames,
+    setName: jest.fn(),
+    resolve: resolveName,
+  }),
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -51,6 +56,7 @@ const props = {
 beforeEach(() => {
   jest.clearAllMocks();
   artifactNames = [];
+  resolveName.mockReset();
   getEntry.mockResolvedValue(entry);
 });
 
@@ -58,12 +64,14 @@ test("personal short URL resolves through the same authorized catalog lookup", a
   artifactNames = [
     { name: "nb1", project_id: "project", entry_id: "entry", active: true },
   ];
+  resolveName.mockResolvedValue(artifactNames[0]);
   render(<LibraryEntry {...props} projectId="nb1" entryId="" />);
   await screen.findByText("artifact");
   expect(getEntry).toHaveBeenCalledWith({
     project_id: "project",
     entry_id: "entry",
   });
+  expect(resolveName).toHaveBeenCalledWith("nb1");
   expect(view.mock.calls.at(-1)[0].artifactName).toBe("nb1");
 });
 

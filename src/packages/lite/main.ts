@@ -25,6 +25,7 @@ import { init as initBugCounter } from "@cocalc/project/bug-counter";
 import { init as initChangefeeds } from "./hub/changefeeds";
 import { hubApi, init as initHubApi } from "./hub/api";
 import { createLiteArtifactCatalog } from "./artifacts/service";
+import { LitePersonalLibrary } from "./artifacts/personal-library";
 import { init as initAcp } from "./hub/acp";
 import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
@@ -232,6 +233,19 @@ export async function main(opts?: {
     account_id,
   });
   hubApi.artifactCatalog = artifactCatalog.api;
+  const personalLibrary = new LitePersonalLibrary({
+    filename: join(data, "personal-library.sqlite"),
+    account_id,
+    project_id,
+    artifactExists: async (projectId, entryId) =>
+      !!(await artifactCatalog.api.getEntry({
+        account_id,
+        project_id: projectId,
+        entry_id: entryId,
+      })),
+  });
+  hubApi.personalLibrary = personalLibrary;
+  process.once("exit", () => personalLibrary.close());
   await localPathFileserver({
     client: conatClient,
     path,

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { usePersonalLibrary } from "@cocalc/frontend/agents/personal-library";
 
 export const ARTIFACT_PINS_SETTING = "artifact_pins_v1";
 
@@ -35,89 +35,19 @@ export function moveVisibleArtifactPin(
   return pins.map((pin) => (visible.includes(pin) ? ordered[cursor++] : pin));
 }
 
-// Serialize writes across simultaneously mounted chat surfaces. Read the latest
-// account setting inside the queue so one room cannot overwrite another's pins.
-let saveQueue: Promise<void> = Promise.resolve();
-
 export function useArtifactPins() {
   const accountId = useTypedRedux("account", "account_id");
-  const settings = useTypedRedux("account", "other_settings");
-  const persisted = normalizeArtifactPins(
-    settings?.get?.(ARTIFACT_PINS_SETTING),
-  );
-  const [optimistic, setOptimistic] = useState<{
-    accountId: string;
-    pins: string[];
-  }>();
-  const [error, setError] = useState("");
-  const pending = useRef(0);
-  const generation = useRef(0);
-  useEffect(() => {
-    generation.current++;
-    setOptimistic(undefined);
-    setError("");
-  }, [accountId]);
-  const latest = useRef(persisted);
-  const pins =
-    optimistic && optimistic.accountId === accountId
-      ? optimistic.pins
-      : persisted;
-  latest.current = pins;
-
-  function change(update: (pins: string[]) => string[]) {
-    if (!accountId) return;
-    const started = generation.current;
-    const next = update(latest.current);
-    latest.current = next;
-    setOptimistic({ accountId, pins: next });
-    setError("");
-    pending.current++;
-    saveQueue = saveQueue
-      .catch(() => {})
-      .then(async () => {
-        const store = redux.getStore("account");
-        if (
-          generation.current !== started ||
-          store?.get("account_id") !== accountId
-        )
-          throw Error("Account changed");
-        const current = normalizeArtifactPins(
-          store.get("other_settings")?.get(ARTIFACT_PINS_SETTING),
-        );
-        // JSON is a scalar: recursive account-setting merges must not retain unpinned entries.
-        await redux
-          .getActions("account")
-          .set_other_settings_and_wait(
-            ARTIFACT_PINS_SETTING,
-            JSON.stringify(update(current)),
-          );
-      })
-      .catch(() => {
-        if (
-          generation.current === started &&
-          redux.getStore("account")?.get("account_id") === accountId
-        )
-          setError("Unable to save artifact pins. Please try again.");
-      })
-      .finally(() => {
-        pending.current--;
-        if (!pending.current) setOptimistic(undefined);
-      });
-  }
+  const library = usePersonalLibrary();
 
   return {
-    pins,
-    error,
+    pins: library.pins,
+    error: library.error,
     canPin: !!accountId,
     setPinned(id: string, pinned: boolean) {
-      change((pins) =>
-        pinned
-          ? [...pins.filter((pin) => pin !== id), id]
-          : pins.filter((pin) => pin !== id),
-      );
+      void library.setPinned(id, pinned).catch(() => {});
     },
     move(visible: string[], id: string, index: number) {
-      change((pins) => moveVisibleArtifactPin(pins, visible, id, index));
+      void library.movePinned(visible, id, index).catch(() => {});
     },
   };
 }

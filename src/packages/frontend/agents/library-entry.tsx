@@ -37,12 +37,7 @@ function ResolvedLibraryEntry({
   onShowConversation,
   navigation,
 }: Props) {
-  const { names, setName } = useArtifactNames();
-  const alias = !entryId
-    ? names.find((item) => item.name === projectId)
-    : undefined;
-  const resolvedProjectId = alias?.project_id ?? projectId;
-  const resolvedEntryId = alias?.entry_id ?? entryId;
+  const { names, setName, resolve } = useArtifactNames();
   const [entry, setEntry] = useState<CatalogEntry>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -50,20 +45,29 @@ function ResolvedLibraryEntry({
     let disposed = false;
     setEntry(undefined);
     setError("");
-    if (!resolvedEntryId) {
-      setError("This artifact name was not found in your account.");
-      return;
-    }
-    void webapp_client.conat_client.hub.artifactCatalog
-      .getEntry({ project_id: resolvedProjectId, entry_id: resolvedEntryId })
+    void (async () => {
+      const alias = entryId ? undefined : await resolve(projectId);
+      if (!entryId && !alias)
+        throw Error("This artifact name was not found in your account.");
+      const resolvedProjectId = alias?.project_id ?? projectId;
+      const resolvedEntryId = alias?.entry_id ?? entryId;
+      if (!resolvedEntryId) throw Error("Missing artifact identity.");
+      const value =
+        await webapp_client.conat_client.hub.artifactCatalog.getEntry({
+          project_id: resolvedProjectId,
+          entry_id: resolvedEntryId,
+        });
+      if (
+        value &&
+        (value.project_id !== resolvedProjectId ||
+          value.entry_id !== resolvedEntryId)
+      )
+        throw Error("The catalog returned a different artifact.");
+      return value;
+    })()
       .then((value) => {
         if (disposed) return;
         if (!value) throw Error("This artifact is no longer in the catalog.");
-        if (
-          value.project_id !== resolvedProjectId ||
-          value.entry_id !== resolvedEntryId
-        )
-          throw Error("The catalog returned a different artifact.");
         setEntry(value);
       })
       .catch((err) => {
@@ -72,7 +76,7 @@ function ResolvedLibraryEntry({
     return () => {
       disposed = true;
     };
-  }, [resolvedProjectId, resolvedEntryId, retry]);
+  }, [projectId, entryId, retry]);
 
   if (!entry) {
     return (

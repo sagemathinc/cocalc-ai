@@ -1,10 +1,6 @@
 import type { ArtifactMentionReference } from "@cocalc/util/artifact-mentions";
 import { serializeArtifactMention } from "@cocalc/util/artifact-mentions";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import {
-  ARTIFACT_NAMES_SETTING,
-  readArtifactNames,
-} from "@cocalc/frontend/agents/artifact-names";
+import { useArtifactNames } from "@cocalc/frontend/agents/artifact-names";
 import { openLibrary } from "@cocalc/frontend/agents/library-navigation";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { register } from "./register";
@@ -34,17 +30,17 @@ function ArtifactMentionElement({
   element,
   children,
 }: RenderElementProps) {
-  const settings = useTypedRedux("account", "other_settings");
+  const { names } = useArtifactNames();
   if (element.type !== "artifact-mention")
     throw Error("Expected artifact mention");
   const reference = element.reference;
-  const name =
-    readArtifactNames(settings?.get?.(ARTIFACT_NAMES_SETTING)).find(
-      (item) =>
-        item.active &&
-        item.project_id === reference.project_id &&
-        item.entry_id === reference.entry_id,
-    )?.name ?? reference.name;
+  const alias = names.find(
+    (item) =>
+      item.active &&
+      item.project_id === reference.project_id &&
+      item.entry_id === reference.entry_id,
+  );
+  const name = alias?.name ?? reference.name;
   return (
     <span {...attributes}>
       <span contentEditable={false}>
@@ -52,7 +48,11 @@ function ArtifactMentionElement({
           type="button"
           aria-label={`Open artifact @${name}`}
           title="Open this artifact in Library"
-          onClick={() => openLibrary(reference.project_id, reference.entry_id)}
+          onClick={() =>
+            alias
+              ? openLibrary(alias.name)
+              : openLibrary(reference.project_id, reference.entry_id)
+          }
           style={{
             color: UI_COLORS.link,
             background: UI_COLORS.elevated,
