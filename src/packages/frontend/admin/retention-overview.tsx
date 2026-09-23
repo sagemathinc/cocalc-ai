@@ -34,9 +34,11 @@ const { Paragraph, Text, Title } = Typography;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RPC_TIMEOUT_MS = 5_000;
 const FIRST_RECORDED_WORK_DEFINITION =
-  "Accounts whose first observed project-work, AI-prompt-submission, or " +
-  "self-directed-work event occurred within 24 hours of signup. This is an " +
-  "early activity signal, not proof of completion, usefulness, or retention.";
+  "Share of eligible signups in the selected range whose first observed " +
+  "project-work, AI-prompt-submission, or self-directed-work event occurred " +
+  "within 24 hours of signup. This is an early activity signal, not proof of " +
+  "completion, usefulness, or retention.";
+export const NEW_ACCOUNT_FUNNEL_TITLE = "New-account journey funnel";
 
 function defaultRange(): { start: string; end: string } {
   const now = new Date();
@@ -442,7 +444,7 @@ export function RetentionAdminOverview() {
           </Card>
           <Row gutter={[16, 16]}>
             <Col xs={24} xl={12}>
-              <Card title="New-account activation funnel">
+              <Card title={NEW_ACCOUNT_FUNNEL_TITLE}>
                 <Funnel dashboard={dashboard} />
               </Card>
             </Col>

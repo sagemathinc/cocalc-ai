@@ -7,7 +7,7 @@ import { render, screen } from "@testing-library/react";
 
 import type { GrowthDashboard } from "@cocalc/conat/hub/api/growth-analytics";
 
-import { HeadlineCards } from "./retention-overview";
+import { HeadlineCards, NEW_ACCOUNT_FUNNEL_TITLE } from "./retention-overview";
 
 describe("growth and retention headline cards", () => {
   it("labels recorded work without claiming user activation or value", () => {
@@ -38,14 +38,16 @@ describe("growth and retention headline cards", () => {
     render(<HeadlineCards dashboard={dashboard} />);
 
     expect(screen.getByText("First recorded work within 24h")).toBeVisible();
+    expect(screen.getByText("40")).toBeVisible();
     expect(
       screen.getByText(
-        /first observed project-work, AI-prompt-submission, or self-directed-work event/,
+        /Share of eligible signups in the selected range whose first observed project-work/,
       ),
     ).toBeVisible();
     expect(
       screen.getByText(/not proof of completion, usefulness, or retention/),
     ).toBeVisible();
     expect(screen.queryByText(/Activated in 24h/i)).not.toBeInTheDocument();
+    expect(NEW_ACCOUNT_FUNNEL_TITLE).toBe("New-account journey funnel");
   });
 });
