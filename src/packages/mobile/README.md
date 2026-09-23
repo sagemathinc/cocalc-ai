@@ -59,6 +59,8 @@ CoCalc icon directly, then restore them for development. A local Release build
 signed for a paired device is a device-test artifact, not a TestFlight or App
 Store distribution build. Store distribution and wider device qualification
 remain separate release steps.
+The prepared internal-beta candidate and signing handoff are recorded in
+[TESTFLIGHT.md](TESTFLIGHT.md).
 
 Implementation status and remaining device/release qualification are tracked in
 [the mobile progress document](../../.agents/cocalc-mobile-progress-2026-09-21.md).
