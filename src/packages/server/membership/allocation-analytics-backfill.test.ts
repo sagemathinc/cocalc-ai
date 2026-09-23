@@ -326,6 +326,79 @@ describe("membership allocation analytics backfill", () => {
     ]);
     expect(directStudentPurchase).toBeGreaterThan(0);
   }, 30_000);
+
+  it.each([
+    ["unique active", false, "active", undefined],
+    ["unique canceled", false, "canceled", undefined],
+    ["ambiguous missing", true, "active", undefined],
+    ["ambiguous empty", true, "active", ""],
+    ["explicit current", true, "active", "current"],
+    ["explicit historical", true, "active", "historical"],
+  ] as const)(
+    "backfills Team purchases with %s license identity safely",
+    async (_name, addHistory, status, identity) => {
+      const account_id = uuid();
+      const membership_class = `backfill-team-${uuid()}`;
+      await client.query(
+        `INSERT INTO membership_tiers (id, label)
+         VALUES ($1,$1)`,
+        [membership_class],
+      );
+      const purchase_id = await insertTeamLicensePurchase(client, {
+        account_id,
+        membership_class,
+      });
+      const { rows: licenses } = await client.query<{ id: string }>(
+        `UPDATE team_licenses SET status=$2
+          WHERE owner_account_id=$1 RETURNING id`,
+        [account_id, status],
+      );
+      const currentId = licenses[0].id;
+      const historicalId = uuid();
+      if (addHistory) {
+        await client.query(
+          `INSERT INTO team_licenses (id, owner_account_id, status)
+           VALUES ($1,$2,'canceled')`,
+          [historicalId, account_id],
+        );
+      }
+      const explicitId =
+        identity === "current"
+          ? currentId
+          : identity === "historical"
+            ? historicalId
+            : identity;
+      if (explicitId !== undefined) {
+        await client.query(
+          `UPDATE purchases SET description=description || $2::jsonb
+            WHERE id=$1`,
+          [purchase_id, JSON.stringify({ team_license_id: explicitId })],
+        );
+      }
+      const expectedId = explicitId || (addHistory ? undefined : currentId);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await backfillMembershipAllocationFacts({ limit: 100, client });
+        const { rows } = await client.query(
+          `SELECT fact_key, purchased_capacity, revenue_cents::int AS revenue_cents
+             FROM membership_allocation_facts
+            WHERE purchase_id=$1 AND channel='team'`,
+          [purchase_id],
+        );
+        expect(rows).toEqual(
+          expectedId
+            ? [
+                {
+                  fact_key: `team-license:${expectedId}:${purchase_id}:${membership_class}`,
+                  purchased_capacity: 4,
+                  revenue_cents: 48000,
+                },
+              ]
+            : [],
+        );
+      }
+    },
+    30_000,
+  );
 });
 
 async function insertSubscription(

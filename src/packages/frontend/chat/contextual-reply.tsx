@@ -55,6 +55,7 @@ export default function ContextualReply({
   fill?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const selectionToolbar = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{
     context: ReplyContext;
     rect: DOMRect;
@@ -83,6 +84,9 @@ export default function ContextualReply({
         !element.contains(selected.anchorNode) ||
         !element.contains(selected.focusNode)
       ) {
+        // Keyboard focus can collapse the native selection. Keep its captured
+        // range while the user is operating the selection toolbar.
+        if (selectionToolbar.current?.contains(document.activeElement)) return;
         setSelection(undefined);
         setSelectionError("");
         return;
@@ -198,6 +202,7 @@ export default function ContextualReply({
         )}
         {selection && !opened && (
           <div
+            ref={selectionToolbar}
             style={{
               position: "fixed",
               zIndex: 1100,

@@ -485,6 +485,61 @@ describe("host-create-draft", () => {
     expect(payload.machine.metadata.platform).toBe("gpu-h200-sxm");
   });
 
+  it("does not submit hidden create-similar shared scratch", () => {
+    const context = providerContext("gcp");
+    const canonical = normalizeDraft(
+      {
+        ...buildDefaultDraft(context),
+        provider: "gcp",
+        shared_disk_gb: 500,
+        shared_disk_type: "balanced",
+        shared_scratch_auto_grow_enabled: true,
+        shared_scratch_auto_grow_max_disk_gb: 600,
+      },
+      context,
+    ).draft;
+
+    const submitDraft = buildSubmitDraft(
+      { name: "Visible form values" },
+      canonical,
+      context,
+    );
+    const payload = buildCreateHostPayloadFromDraft(submitDraft, context);
+
+    expect(submitDraft.shared_disk_gb).toBeUndefined();
+    expect(submitDraft.shared_disk_type).toBeUndefined();
+    expect(submitDraft.shared_scratch_auto_grow_enabled).toBe(false);
+    expect(payload.machine.shared_disk_gb).toBeUndefined();
+    expect(payload.machine.shared_disk_type).toBeUndefined();
+  });
+
+  it("submits visible create-similar shared scratch", () => {
+    const context = providerContext("gcp");
+    const canonical = normalizeDraft(
+      {
+        ...buildDefaultDraft(context),
+        provider: "gcp",
+        shared_disk_gb: 500,
+        shared_disk_type: "balanced",
+      },
+      context,
+    ).draft;
+
+    const submitDraft = buildSubmitDraft(
+      {
+        name: "Visible form values",
+        shared_disk_gb: 500,
+        shared_disk_type: "balanced",
+      },
+      canonical,
+      context,
+    );
+    const payload = buildCreateHostPayloadFromDraft(submitDraft, context);
+
+    expect(payload.machine.shared_disk_gb).toBe(500);
+    expect(payload.machine.shared_disk_type).toBe("balanced");
+  });
+
   it("normalizes Nebius disks to the provider-required 93 GB increments", () => {
     const draft = normalizeDraft(
       {

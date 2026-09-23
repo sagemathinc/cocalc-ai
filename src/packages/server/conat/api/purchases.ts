@@ -1804,6 +1804,24 @@ export async function purchaseTeamLicenseChange({
   });
 }
 
+export async function linkCourseMembershipPackage({
+  account_id,
+  package_id,
+  course_project_id,
+}: {
+  account_id?: string;
+  package_id: string;
+  course_project_id: string;
+}): Promise<void> {
+  const actor = requireAccount(account_id);
+  await assertAccountTrustedForProductAccess(actor, "link course packages");
+  const { linkCourseMembershipPackage: link } =
+    await import("@cocalc/server/membership/packages");
+  // Account RPC dispatch routes the package owner to their home bay. The
+  // package write fence rejects stale ownership during account rehoming.
+  await link({ account_id: actor, package_id, course_project_id });
+}
+
 export async function getMembershipPackages({
   account_id,
   user_account_id,

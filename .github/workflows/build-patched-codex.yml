@@ -8,12 +8,20 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Check out pinned upstream release
-        run: git clone --depth 1 --branch rust-v0.153.4 https://github.com/openai/codex.git "$RUNNER_TEMP/codex-upstream"
+        run: git clone --depth 1 --branch rust-v0.156.0 https://github.com/openai/codex.git "$RUNNER_TEMP/codex-upstream"
       - name: Install Rust
         run: rustup toolchain install 1.95.0 --profile minimal
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
@@ -28,10 +36,10 @@ jobs:
         run: bash src/scripts/build-local-codex-binaries.sh
       - name: Verify startup and archive executable modes
         run: |
-          "$RUNNER_TEMP/codex-binaries/0.153.4/linux-arm64/codex" --version
-          tar -C "$RUNNER_TEMP/codex-binaries" -czf "$RUNNER_TEMP/codex-musl-arm64.tar.gz" 0.153.4
+          "$RUNNER_TEMP/codex-binaries/0.156.0/linux-${{ matrix.arch }}/codex" --version
+          tar -C "$RUNNER_TEMP/codex-binaries" -czf "$RUNNER_TEMP/codex-musl-${{ matrix.arch }}.tar.gz" 0.156.0
       - uses: actions/upload-artifact@v4
         with:
-          name: codex-musl-arm64
-          path: ${{ runner.temp }}/codex-musl-arm64.tar.gz
+          name: codex-musl-${{ matrix.arch }}
+          path: ${{ runner.temp }}/codex-musl-${{ matrix.arch }}.tar.gz
           retention-days: 7
