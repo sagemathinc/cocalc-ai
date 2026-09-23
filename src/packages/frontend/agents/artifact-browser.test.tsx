@@ -31,7 +31,10 @@ const setPinned = jest.fn();
 jest.mock("@cocalc/frontend/chat/use-artifact-pins", () => ({
   useArtifactPins: () => ({ pins: [], error: "", setPinned }),
 }));
-jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+  Tooltip: ({ children }) => children,
+}));
 const agents = ["one", "two"].map(
   (name) =>
     ({
@@ -246,4 +249,143 @@ test("large cache renders only 200 matches with short coverage note and expandab
   await userEvent.setup().click(details);
   expect(details.closest("details")).toHaveAttribute("open");
   expect(screen.getByText(/not a completeness count/)).toBeVisible();
+});
+
+test("shelf scope, modal search and conversation actions share the warm catalog", async () => {
+  const user = userEvent.setup();
+  const onSelect = jest.fn(async () => {});
+  const onShowConversation = jest.fn(async () => {});
+  const view = render(
+    <AgentArtifactBrowser
+      accountId="shelf-local"
+      agents={agents}
+      active
+      activeAgent={agents[0]}
+      onSelect={onSelect}
+      onShowConversation={onShowConversation}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  expect(
+    screen.queryByRole("button", { name: "Open Result two from two" }),
+  ).not.toBeInTheDocument();
+  const all = screen.getByRole("button", { name: "All agents" });
+  all.focus();
+  await user.keyboard("{Enter}");
+  expect(all).toHaveAttribute("aria-pressed", "true");
+  expect(all).toHaveFocus();
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  const browse = screen.getByRole("button", { name: "Browse all (2)" });
+  browse.focus();
+  await user.keyboard("{Enter}");
+  const search = await screen.findByRole("searchbox", {
+    name: "Search all agent artifacts",
+  });
+  await user.type(search, "two");
+  fireEvent.keyDown(search, { key: "Escape", keyCode: 27, which: 27 });
+  await waitFor(() => expect(browse).toHaveFocus());
+  await user.keyboard("{Enter}");
+  const conversation = await screen.findByRole("button", {
+    name: "Show conversation for Result two from two",
+  });
+  conversation.focus();
+  await user.keyboard("{Enter}");
+  expect(onShowConversation).toHaveBeenCalledWith(
+    expect.objectContaining({ agent: agents[1] }),
+  );
+  expect(onSelect).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(agentSearchStore("shelf-local").get().artifactsOpen).toBe(false),
+  );
+  expect(listProject).toHaveBeenCalledTimes(2);
+  view.rerender(
+    <AgentArtifactBrowser
+      accountId="shelf-local"
+      agents={agents}
+      active={false}
+      activeAgent={agents[0]}
+      onSelect={onSelect}
+    />,
+  );
+  expect(
+    screen.queryByRole("region", { name: "Artifact shelf" }),
+  ).not.toBeInTheDocument();
+});
+
+test("This agent follows the active agent without fetching and shelf open errors are visible", async () => {
+  const onSelect = jest.fn(async () => {
+    throw Error("Cannot open artifact");
+  });
+  const props = {
+    accountId: "shelf-active-agent",
+    agents,
+    active: true,
+    onSelect,
+  };
+  const view = render(
+    <AgentArtifactBrowser {...props} activeAgent={agents[0]} />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  await waitFor(() => expect(listProject).toHaveBeenCalledTimes(2));
+  view.rerender(<AgentArtifactBrowser {...props} activeAgent={agents[1]} />);
+  expect(
+    screen.queryByRole("button", { name: "Open Result one from one" }),
+  ).not.toBeInTheDocument();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Open Result two from two" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Cannot open artifact",
+  );
+  expect(listProject).toHaveBeenCalledTimes(2);
+});
+
+test("external All agents request overrides default scope and modal changes persist to shelf Browse", async () => {
+  const accountId = "shelf-external-scope";
+  const store = agentSearchStore(accountId);
+  render(
+    <AgentArtifactBrowser
+      accountId={accountId}
+      agents={agents}
+      active
+      activeAgent={agents[0]}
+      onSelect={async () => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  expect(
+    screen.queryByRole("button", { name: "Open Result two from two" }),
+  ).not.toBeInTheDocument();
+  act(() => store.set({ artifactsOpen: true, artifactsScope: "all" }));
+  await screen.findByRole("dialog", { name: "Artifacts across all agents" });
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  const scope = screen.getByRole("combobox", { name: "Artifact scope" });
+  act(() => scope.focus());
+  fireEvent.keyDown(scope, { key: "ArrowDown", keyCode: 40, which: 40 });
+  await waitFor(() => expect(scope).toHaveAttribute("aria-expanded", "true"));
+  fireEvent.keyDown(scope, { key: "ArrowUp", keyCode: 38, which: 38 });
+  fireEvent.keyDown(scope, { key: "Enter", keyCode: 13, which: 13 });
+  await waitFor(() => expect(store.get().artifactsScope).toBe("agent"));
+  expect(
+    screen.getByRole("dialog", { name: "Artifacts from one" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open Result two from two" }),
+  ).not.toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "This agent" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    ),
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Browse all (1)" }));
+  expect(store.get().artifactsScope).toBe("agent");
+  await screen.findByRole("dialog", { name: "Artifacts from one" });
+  // A later external request is authoritative even while the modal is open.
+  act(() => store.set({ artifactsOpen: true, artifactsScope: "all" }));
+  await screen.findByRole("button", { name: "Open Result two from two" });
+  expect(listProject).toHaveBeenCalledTimes(2);
 });

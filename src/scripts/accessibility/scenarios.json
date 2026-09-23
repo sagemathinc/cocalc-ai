@@ -2,6 +2,36 @@
   "version": 1,
   "pages": [
     {
+      "id": "agent-artifact-shelf-browser",
+      "title": "Agent artifact shelf and expanded browser",
+      "path": "/agents",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "[aria-label='Artifact shelf']",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "selector": "[aria-label='Artifact shelf'] button:has-text('Browse all')"
+        },
+        {
+          "type": "focus",
+          "selector": "[aria-label='Artifact shelf'] button:has-text('Browse all')"
+        },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog" },
+        { "type": "assertFocusWithin", "role": "dialog" }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        { "type": "assertHidden", "role": "dialog" },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
       "id": "account-running-gpu-dialog",
       "title": "Account running GPU reminder",
       "path": "/hosts?tab=vms",

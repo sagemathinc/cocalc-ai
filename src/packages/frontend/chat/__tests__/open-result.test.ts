@@ -6,6 +6,38 @@ jest.mock("@cocalc/chat", () => ({
 }));
 
 describe("openProjectFileResult", () => {
+  it("does not reuse a foreign artifact with the same file path", () => {
+    const frames: any = {
+      get_frame_ids_in_order: () => ["foreign"],
+      _get_frame_type: () => "workbench",
+      _get_frame_data: (_id, key) =>
+        ({
+          origin: "chat",
+          artifact: "doc",
+          thread: "thread",
+          sourceProject: "other-project",
+          sourcePath: "/other.chat",
+        })[key],
+      set_active_id: jest.fn(),
+      set_frame_full: jest.fn(),
+      split_frame: jest.fn(() => "new"),
+      move_frame: jest.fn(),
+    };
+    openProjectFileResult(
+      {
+        frameId: "chat",
+        frameTreeActions: frames,
+        store: {
+          get: (key) =>
+            ({ project_id: "this-project", path: "/this.chat" })[key],
+        },
+        syncdb: {},
+      } as any,
+      { kind: "file", path: "/same-file.md" },
+    );
+    expect(frames.set_active_id).not.toHaveBeenCalled();
+    expect(frames.split_frame).toHaveBeenCalled();
+  });
   it("focuses an existing pane for the same chat, path, and revision", () => {
     const setActive = jest.fn();
     const split = jest.fn();

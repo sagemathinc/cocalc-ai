@@ -53,6 +53,29 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { sendArtifactReviewToThread } from "@cocalc/frontend/chat/artifact-review-agent";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
+import type { ArtifactSourceData } from "./foreign-artifact-source";
+
+const ForeignArtifactSource = lazyWithRetry(
+  () => import("./foreign-artifact-source"),
+  "artifact source",
+);
+
+type WorkbenchProps = EditorComponentProps & { source?: ArtifactSourceData };
+
+function sourceDescriptor(props: EditorComponentProps) {
+  const projectId = props.desc.get("data-sourceProject");
+  const path = props.desc.get("data-sourcePath");
+  return projectId || path
+    ? {
+        projectId,
+        path,
+        agentId: props.desc.get("data-sourceAgent"),
+        threadId: props.desc.get("data-thread"),
+        artifactId: props.desc.get("data-artifact"),
+        publicationId: props.desc.get("data-publication"),
+      }
+    : undefined;
+}
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -69,9 +92,25 @@ export const workbench: EditorDescription = {
   component: (props) => <WorkbenchSurface {...props} />,
 };
 
-export function WorkbenchSurface(props: EditorComponentProps) {
+export function WorkbenchSurface(props: WorkbenchProps) {
+  const target = sourceDescriptor(props);
+  if (target && !props.source)
+    return (
+      <Suspense fallback={<div role="status">Loading artifact source...</div>}>
+        <ForeignArtifactSource key={JSON.stringify(target)} target={target}>
+          {(source) => <ResolvedWorkbenchSurface {...props} source={source} />}
+        </ForeignArtifactSource>
+      </Suspense>
+    );
+  return <ResolvedWorkbenchSurface {...props} />;
+}
+
+function ResolvedWorkbenchSurface(props: WorkbenchProps) {
   const actions = props.actions as Actions;
-  const syncdb = actions.getArtifactSyncdb();
+  const syncdb = props.source
+    ? props.source.syncdb
+    : actions.getArtifactSyncdb();
+  const readOnly = props.source ? props.source.readOnly : props.read_only;
   useArtifactChanges(syncdb);
   const [edit, setEdit] = useState(false);
   let record: ArtifactRecord | undefined;
@@ -124,7 +163,7 @@ export function WorkbenchSurface(props: EditorComponentProps) {
               <strong>{title}</strong>
             )}
           </div>
-          {!props.read_only && record && (
+          {!readOnly && record && (
             <Button
               size="small"
               onClick={() => setEdit(true)}
@@ -144,12 +183,12 @@ export function WorkbenchSurface(props: EditorComponentProps) {
       ) : (
         <Workbench {...props} />
       )}
-      {edit && record && (
+      {edit && record && !readOnly && (
         <Suspense fallback={<div role="status">Loading appearance...</div>}>
           <AppearanceEditor
             artifact={record}
             syncdb={syncdb}
-            projectId={props.project_id}
+            projectId={props.source?.projectId ?? props.project_id}
             onClose={() => setEdit(false)}
           />
         </Suspense>
@@ -186,18 +225,50 @@ function DirectFileWorkbench({
   );
 }
 
-export function Workbench({
+export function Workbench(props: WorkbenchProps) {
+  const target = sourceDescriptor(props);
+  if (target && !props.source)
+    return (
+      <Suspense fallback={<div role="status">Loading artifact source...</div>}>
+        <ForeignArtifactSource key={JSON.stringify(target)} target={target}>
+          {(source) => <WorkbenchDocument {...props} source={source} />}
+        </ForeignArtifactSource>
+      </Suspense>
+    );
+  return (
+    <WorkbenchDocument
+      key={JSON.stringify([
+        props.source?.projectId,
+        props.source?.path,
+        props.desc.get("data-thread"),
+        props.desc.get("data-artifact"),
+      ])}
+      {...props}
+    />
+  );
+}
+
+function WorkbenchDocument({
   actions: frameActions,
   desc,
-  read_only,
+  read_only: destinationReadOnly,
   font_size,
-  project_id,
-  path,
+  project_id: destinationProjectId,
+  path: destinationPath,
   id,
-}: EditorComponentProps) {
+  source,
+}: WorkbenchProps) {
   const actions = frameActions as Actions;
-  const chat = actions.getChatActions(desc.get("data-origin"));
-  const syncdb = actions.getArtifactSyncdb() ?? chat?.syncdb;
+  const destinationChat = actions.getChatActions(desc.get("data-origin"));
+  // A foreign descriptor is explicit even within the same chat or project.
+  // Never use the destination composer for source feedback.
+  const chat = source ? undefined : destinationChat;
+  const syncdb = source
+    ? source.syncdb
+    : (actions.getArtifactSyncdb() ?? chat?.syncdb);
+  const project_id = source?.projectId ?? destinationProjectId;
+  const path = source?.path ?? destinationPath;
+  const read_only = source ? source.readOnly : destinationReadOnly;
   useArtifactChanges(syncdb);
   const context = useFileContext();
   const accountId = useTypedRedux("account", "account_id");
@@ -205,6 +276,10 @@ export function Workbench({
   const [version, setVersion] = useState<string | undefined>(
     desc.get("data-version") ?? undefined,
   );
+  const descriptorVersion = desc.get("data-version");
+  useEffect(() => {
+    setVersion(descriptorVersion ?? undefined);
+  }, [descriptorVersion]);
   const historical = version !== undefined;
   const [showChanges, setShowChanges] = useState(false);
   const [error, setError] = useState("");
@@ -302,6 +377,8 @@ export function Workbench({
       ];
   displayed.current = value;
   const saveInput = (input: string, explicit = false) => {
+    if (read_only) throw Error("Artifact is read-only");
+    source?.assertWritable();
     const current = readArtifact(syncdb, target).artifact;
     const next = validateArtifact({ ...current, input });
     if (next.input === current.input) {
@@ -362,7 +439,7 @@ export function Workbench({
         actions={chat}
         projectId={project_id}
         path={path}
-        disabled={read_only}
+        disabled={read_only || !!source}
         source={{
           kind: "artifact",
           thread_id: artifact.thread_id,
@@ -377,7 +454,7 @@ export function Workbench({
           key={`${artifact.thread_id}:${artifact.artifact_id}`}
           artifact={artifact}
           historical={historical}
-          localComments
+          localComments={!source}
         />
       </ContextualReply>
     );
@@ -427,6 +504,7 @@ export function Workbench({
           read_only || historical
             ? undefined
             : async (next, expected) => {
+                source?.assertWritable();
                 const current = readArtifact(syncdb, target).artifact;
                 if (artifactBase(current) !== artifactBase(expected))
                   throw Error(
@@ -452,7 +530,7 @@ export function Workbench({
         artifact={artifact}
         historical={historical}
         storageKey={
-          accountId && !read_only
+          accountId && !read_only && !source
             ? `chat-action-review:${JSON.stringify([accountId, project_id, path, artifact.thread_id, artifact.artifact_id])}`
             : undefined
         }
@@ -472,7 +550,7 @@ export function Workbench({
       actions={chat}
       projectId={project_id}
       path={path}
-      disabled={read_only || editing || showChanges}
+      disabled={read_only || !!source || editing || showChanges}
       source={{
         kind: "artifact",
         thread_id: value.thread_id,
@@ -505,7 +583,7 @@ export function Workbench({
           <Space wrap style={{ marginBottom: 12, flexShrink: 0 }}>
             <Button
               size="small"
-              disabled={!chat}
+              disabled={!destinationChat}
               onClick={(event) => {
                 event.stopPropagation();
                 try {
@@ -590,7 +668,7 @@ export function Workbench({
                   : "Live document"}
             </span>
           </Space>
-          {!chat && (
+          {!chat && !source && (
             <div role="status">
               The originating chat frame is closed. Reopen this artifact from
               its thread to comment; you can still read and edit it here.

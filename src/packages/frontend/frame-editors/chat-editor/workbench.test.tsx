@@ -9,6 +9,18 @@ import { refreshPR } from "./github-pr-operations";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import userEvent from "@testing-library/user-event";
+import {
+  ProjectContext,
+  emptyProjectContext,
+} from "@cocalc/frontend/project/context";
+const mockForeignSource = jest.fn();
+jest.mock("./foreign-artifact-source", () => ({
+  __esModule: true,
+  default: (props) => {
+    mockForeignSource(props.target);
+    return <div role="status">Source loader selected</div>;
+  },
+}));
 jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
   writeChatComposerDraft: jest.fn().mockResolvedValue(""),
 }));
@@ -54,6 +66,272 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
     />
   ),
 }));
+
+test.each([
+  ["other-project", "other.chat", "thread"],
+  ["destination", "other.chat", "thread"],
+  ["destination", "destination.chat", "other-thread"],
+])(
+  "descriptor restores source loader for %s/%s/%s",
+  async (projectId, path, threadId) => {
+    mockForeignSource.mockClear();
+    const getArtifactSyncdb = jest.fn();
+    render(
+      <Workbench
+        {...({
+          project_id: "destination",
+          path: "destination.chat",
+          actions: { getArtifactSyncdb },
+          desc: fromJS({
+            "data-origin": "destination-origin",
+            "data-sourceProject": projectId,
+            "data-sourcePath": path,
+            "data-sourceAgent": "source-agent",
+            "data-thread": threadId,
+            "data-artifact": "artifact",
+            "data-publication": "publication",
+          }),
+        } as any)}
+      />,
+    );
+    await screen.findByText("Source loader selected");
+    expect(mockForeignSource).toHaveBeenCalledWith({
+      projectId,
+      path,
+      threadId,
+      agentId: "source-agent",
+      artifactId: "artifact",
+      publicationId: "publication",
+    });
+    expect(getArtifactSyncdb).not.toHaveBeenCalled();
+  },
+);
+
+test.each([
+  ["other-project", "other.chat", "other-thread"],
+  ["destination", "other.chat", "thread"],
+  ["destination", "destination.chat", "other-thread"],
+])(
+  "foreign %s/%s/%s edits only its source syncdb and returns to destination frame",
+  async (projectId, sourcePath, threadId) => {
+    const record = {
+      ...artifactKey({ thread_id: threadId, artifact_id: "shared-id" }),
+      thread_id: threadId,
+      artifact_id: "shared-id",
+      schema_version: 1,
+      kind: "markdown",
+      title: "Source artifact",
+      input: "Source contents",
+    };
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: jest.fn(() => record),
+      get: () => [],
+      set: jest.fn(),
+      commit: jest.fn(),
+      save: jest.fn().mockResolvedValue(undefined),
+    });
+    const destinationSyncdb = { set: jest.fn() };
+    const destinationChat = {
+      syncdb: destinationSyncdb,
+      setSelectedThread: jest.fn(),
+      stageArtifactFeedback: jest.fn(),
+    };
+    const actions = {
+      getArtifactSyncdb: jest.fn(() => destinationSyncdb),
+      getChatActions: () => destinationChat,
+      set_active_id: jest.fn(),
+      set_frame_full: jest.fn(),
+    };
+    const assertWritable = jest.fn();
+    render(
+      <Workbench
+        {...({
+          id: "workbench",
+          actions,
+          desc: fromJS({
+            "data-origin": "destination-origin",
+            "data-thread": threadId,
+            "data-artifact": "shared-id",
+          }),
+          // Destination readonly must not control a writable source.
+          read_only: true,
+          font_size: 14,
+          project_id: "destination",
+          path: "destination.chat",
+          source: {
+            projectId,
+            path: sourcePath,
+            syncdb,
+            readOnly: false,
+            assertWritable,
+          },
+        } as any)}
+      />,
+    );
+    expect(screen.getByText("Source contents")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+    const user = userEvent.setup();
+    screen.getByRole("button", { name: "Edit" }).focus();
+    await user.keyboard("{Enter}");
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit artifact" }), {
+      target: { value: "Edited source" },
+    });
+    await user.click(screen.getByRole("button", { name: "Read" }));
+    expect(syncdb.set).toHaveBeenCalledWith({
+      ...artifactKey({ thread_id: threadId, artifact_id: "shared-id" }),
+      input: "Edited source",
+    });
+    expect(assertWritable).toHaveBeenCalled();
+    expect(actions.getArtifactSyncdb).not.toHaveBeenCalled();
+    expect(destinationSyncdb.set).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Back to chat" }));
+    expect(actions.set_active_id).toHaveBeenCalledWith("destination-origin");
+    expect(destinationChat.setSelectedThread).not.toHaveBeenCalled();
+    expect(destinationChat.stageArtifactFeedback).not.toHaveBeenCalled();
+  },
+);
+
+test("readonly source disables edits even when destination is writable", () => {
+  const target = { thread_id: "source-thread", artifact_id: "artifact" };
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => ({
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "markdown",
+      title: "Readonly source",
+      input: "Source",
+    }),
+    get: () => [],
+  });
+  render(
+    <Workbench
+      {...({
+        actions: { getChatActions: () => ({}) },
+        desc: fromJS({
+          "data-origin": "destination",
+          "data-thread": target.thread_id,
+          "data-artifact": target.artifact_id,
+        }),
+        project_id: "destination",
+        path: "destination.chat",
+        read_only: false,
+        source: {
+          projectId: "source",
+          path: "source.chat",
+          syncdb,
+          readOnly: true,
+          assertWritable: jest.fn(),
+        },
+      } as any)}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+});
+
+test("foreign file preview reads source filesystem and disables contextual comments", async () => {
+  const target = { thread_id: "source-thread", artifact_id: "artifact" };
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => ({
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "file",
+      title: "Source file",
+      input: "",
+      file: { path: "/source/report.txt" },
+    }),
+    get: () => [],
+  });
+  const sourceFs = {
+    stat: jest.fn().mockResolvedValue({ size: 20 }),
+    readFile: jest.fn().mockResolvedValue("Foreign saved contents"),
+  };
+  const destinationSyncdb = { get_one: jest.fn() };
+  render(
+    <ProjectContext.Provider
+      value={{
+        ...emptyProjectContext,
+        project_id: "source-project",
+        actions: { fs: () => sourceFs } as any,
+      }}
+    >
+      <Workbench
+        {...({
+          actions: {
+            getChatActions: () => ({ syncdb: destinationSyncdb }),
+            getArtifactSyncdb: () => destinationSyncdb,
+          },
+          desc: fromJS({
+            "data-origin": "destination",
+            "data-thread": target.thread_id,
+            "data-artifact": target.artifact_id,
+          }),
+          project_id: "destination",
+          path: "destination.chat",
+          read_only: false,
+          source: {
+            projectId: "source-project",
+            path: "source.chat",
+            syncdb,
+            readOnly: false,
+            assertWritable: jest.fn(),
+          },
+        } as any)}
+      />
+    </ProjectContext.Provider>,
+  );
+  await screen.findByText("Foreign saved contents");
+  expect(sourceFs.readFile).toHaveBeenCalledWith("/source/report.txt", "utf8");
+  expect(destinationSyncdb.get_one).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+});
+
+test("foreign action review cannot submit through destination chat", () => {
+  const target = { thread_id: "source-thread", artifact_id: "artifact" };
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => ({
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "actions",
+      title: "Source actions",
+      input: "",
+      actions: [
+        { id: "reply", title: "Reply", target: "Ticket", draft: "Draft reply" },
+      ],
+    }),
+    get: () => [],
+  });
+  const stageArtifactFeedback = jest.fn();
+  render(
+    <Workbench
+      {...({
+        actions: { getChatActions: () => ({ stageArtifactFeedback }) },
+        desc: fromJS({
+          "data-origin": "destination",
+          "data-thread": target.thread_id,
+          "data-artifact": target.artifact_id,
+        }),
+        project_id: "destination",
+        path: "destination.chat",
+        read_only: false,
+        source: {
+          projectId: "source",
+          path: "source.chat",
+          syncdb,
+          readOnly: false,
+          assertWritable: jest.fn(),
+        },
+      } as any)}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Return decisions to agent" }),
+  ).toBeDisabled();
+  expect(stageArtifactFeedback).not.toHaveBeenCalled();
+});
 
 test("maximized action review stages a draft while the composer hook is unmounted", async () => {
   jest.mocked(writeChatComposerDraft).mockClear();

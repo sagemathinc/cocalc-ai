@@ -34,6 +34,7 @@ import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
 import { AgentArtifactBrowser } from "./artifact-browser";
+import { openCatalogArtifact } from "./open-catalog-artifact";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
@@ -1484,7 +1485,10 @@ function AgentProjectContext({
           },
           onBrowseAllArtifacts: () => {
             if (accountId)
-              agentSearchStore(accountId).set({ artifactsOpen: true });
+              agentSearchStore(accountId).set({
+                artifactsOpen: true,
+                artifactsScope: "all",
+              });
           },
           selectedNetworkId,
           disableConversationFocus: true,
@@ -2261,6 +2265,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  const artifactDestination = useRef({ selected, active, accountId });
+  artifactDestination.current = { selected, active, accountId };
   const creatingSourceAgent =
     agents.find(
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
@@ -2473,7 +2479,60 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     selectAgentId(agent.endpoint.agent_id);
   }
 
-  async function openSearchHit(result: AgentSearchHit) {
+  async function openArtifactHit(result: AgentSearchHit) {
+    const current = selected;
+    if (!current)
+      throw Error("Choose an agent to open artifacts beside its conversation.");
+    const editor = redux.getEditorActions(
+      current.endpoint.project_id,
+      current.path,
+    );
+    const destination = editor?.getChatActions?.();
+    if (!destination)
+      throw Error("Your workbench is still loading. Try again shortly.");
+    const navigation = ++searchNavigation.current;
+    await openCatalogArtifact({
+      result,
+      destination,
+      sourceIsDestination:
+        current.endpoint.project_id === result.agent.endpoint.project_id &&
+        current.path === result.agent.path &&
+        current.thread_id === result.threadId,
+      canceled: () =>
+        searchNavigation.current !== navigation ||
+        !artifactDestination.current.active ||
+        artifactDestination.current.accountId !== accountId ||
+        artifactDestination.current.selected?.thread_id !== current.thread_id ||
+        artifactDestination.current.selected?.endpoint.agent_id !==
+          current.endpoint.agent_id ||
+        redux.getEditorActions(current.endpoint.project_id, current.path) !==
+          editor,
+      getIdentity: () =>
+        personalAgentApi().getIdentity({
+          project_id: result.agent.endpoint.project_id,
+          agent_id: result.agent.endpoint.agent_id,
+        }),
+      openSource: async () => {
+        const { openForeignArtifactSource } =
+          await import("@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source");
+        return openForeignArtifactSource({
+          projectId: result.agent.endpoint.project_id,
+          path: result.agent.path,
+          threadId: result.threadId,
+          artifactId: result.hit.artifact_id!,
+        });
+      },
+    });
+  }
+
+  async function openSearchHit(
+    result: AgentSearchHit,
+    showConversation = false,
+  ) {
+    if (result.hit.artifact_id && !showConversation) {
+      await openArtifactHit(result);
+      return;
+    }
     const navigation = ++searchNavigation.current;
     const superseded = () => navigation !== searchNavigation.current;
     const { agent, threadId, hit, historical } = result;
@@ -2520,16 +2579,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     const chat = editor.getChatActions();
     if (!chat) throw new Error("Conversation is not ready; try again shortly");
     if (hit.artifact_id) {
-      if (!chat.frameTreeActions || !chat.frameId)
-        throw Error("Source Workbench is not ready; try again shortly");
-      const { readArtifact, validateArtifactPublication } =
-        await import("@cocalc/chat");
-      const { openArtifact } =
-        await import("@cocalc/frontend/chat/open-artifact");
-      const result = readArtifact(chat.syncdb, {
-        thread_id: threadId,
-        artifact_id: hit.artifact_id,
-      });
+      const { validateArtifactPublication } = await import("@cocalc/chat");
+      const { showConversation: showArtifactConversation } =
+        await import("@cocalc/frontend/chat/artifact-browser");
       const publications = chat.syncdb.get({
         event: "chat-artifact-publication",
       });
@@ -2540,11 +2592,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           row.artifact_id === hit.artifact_id &&
           row.operation_id === hit.operation_id,
       );
-      if (!publication || !result.artifact)
+      if (!publication)
         throw Error(
           "Artifact changed or is no longer available; refresh the results.",
         );
-      openArtifact(chat, validateArtifactPublication(publication));
+      await showArtifactConversation(chat, {
+        publication: validateArtifactPublication(publication),
+      });
       return;
     }
     if (hit.segment_id !== "head") {
@@ -2571,6 +2625,46 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       Fragment.set({ thread: threadId, chat: `${hit.date_ms}` });
     }
   }
+
+  useEffect(() => {
+    if (!active) return;
+    const show = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail || typeof detail !== "object") return;
+      const agent = agents.find(
+        (agent) =>
+          agent.endpoint.agent_id === detail.agent_id &&
+          agent.endpoint.project_id === detail.project_id &&
+          agent.path === detail.path &&
+          agent.thread_id === detail.thread_id,
+      );
+      if (!agent) {
+        antdMessage.error(
+          "The source conversation is no longer in your agent directory.",
+        );
+        return;
+      }
+      void openSearchHit(
+        {
+          agent,
+          threadId: detail.thread_id,
+          historical: false,
+          hit: {
+            row_id: 0,
+            segment_id: "head",
+            thread_id: detail.thread_id,
+            artifact_id: detail.artifact_id,
+            operation_id: detail.operation_id,
+            excerpt: "",
+          },
+        },
+        true,
+      ).catch((err) => antdMessage.error(`${err}`));
+    };
+    window.addEventListener("cocalc:artifact-show-conversation", show);
+    return () =>
+      window.removeEventListener("cocalc:artifact-show-conversation", show);
+  }, [active, agents, openSearchHit]);
 
   async function copyAgent(copyName: string) {
     if (!copyingAgent || copyBusy) return;
@@ -2983,15 +3077,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           }}
         />
         {accountId && (
-          <AgentArtifactBrowser
-            key={accountId}
-            accountId={accountId}
-            agents={agents}
-            active={active}
-            onSelect={openSearchHit}
-          />
-        )}
-        {accountId && (
           <AgentSearch
             accountId={accountId}
             agents={agents}
@@ -3284,170 +3369,190 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         style={{
           flex: 1,
           minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
           position: "relative",
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
-        {active &&
-          (creating ||
-            !!error ||
-            agents.length === 0 ||
-            !selected ||
-            !mountedWorkspaces.has(agentWorkspaceKey(selected))) && (
-            <div
-              style={{
-                alignItems: "center",
-                display: "flex",
-                justifyContent: "space-between",
-                left: 8,
-                position: "absolute",
-                right: 12,
-                top: 6,
-                zIndex: 3,
-              }}
-            >
-              {!isNarrow ? (
-                <AgentsSidebarToggle
-                  hidden={agentSidebarHidden}
-                  onToggle={toggleAgentSidebar}
-                />
-              ) : (
-                <span />
-              )}
-              <AgentsWorkspaceNavigation />
-            </div>
-          )}
-        {creating || agents.length === 0 ? (
-          <NewAgentPanel
+        {accountId && (
+          <AgentArtifactBrowser
+            key={accountId}
+            accountId={accountId}
             agents={agents}
-            namedAgentDirectory={directory}
-            sourceAgent={creatingSourceAgent}
-            onCancel={() => {
-              setCreating(false);
-              setCreatingSourceAgentId(undefined);
-              if (selected) {
-                selectAgentId(selected.endpoint.agent_id);
-              } else {
-                redux.getActions("page").setState({
-                  active_agent_id: undefined,
-                  active_agent_name: undefined,
-                });
-                set_url(
-                  getPageUrlPath({
-                    page: "agents",
-                  }),
-                );
-              }
-              setMobileList(true);
-            }}
-            onCreated={(agentId) => {
-              const agent = agents.find(
-                ({ endpoint }) => endpoint.agent_id === agentId,
-              );
-              if (agent) mountAgent(agent);
-              selectAgentId(agentId);
-              setCreating(false);
-              setCreatingSourceAgentId(undefined);
-            }}
+            activeAgent={selected}
+            active={active}
+            onSelect={openArtifactHit}
+            onShowConversation={(result) => openSearchHit(result, true)}
           />
-        ) : error ? (
-          <Alert
-            type="error"
-            showIcon
-            title="Unable to load agents"
-            description={error}
-            action={
-              <Button onClick={refreshNamedAgents}>Retry directory</Button>
-            }
-          />
-        ) : agents.length === 0 ? (
-          <Empty
-            style={{ marginTop: 80 }}
-            description="Name an agent chat to make it available here."
-          >
-            <Button
-              type="link"
-              onClick={() => openAccountSettings({ page: "my-agents" })}
-            >
-              Manage named agents
-            </Button>
-          </Empty>
-        ) : !selected ? (
-          <Empty
-            style={{ marginTop: 80 }}
-            description="This registered agent is not available in your directory."
-          >
-            <Space>
-              <Button onClick={refreshNamedAgents}>Refresh directory</Button>
-              <Button onClick={() => setMobileList(true)}>
-                Choose an agent
-              </Button>
-            </Space>
-          </Empty>
-        ) : (
-          <>
-            {[...mountedWorkspaces].map((workspace) => {
-              const workspaceAgents = agents.filter(
-                (agent) => agentWorkspaceKey(agent) === workspace,
-              );
-              const agent =
-                workspaceAgents.find(
-                  ({ endpoint }) =>
-                    endpoint.agent_id === workspaceAgentIds.get(workspace),
-                ) ?? workspaceAgents[0];
-              if (!agent) return null;
-              return (
-                <AgentWorkspace
-                  onCopy={openCopyAgent}
-                  onFresh={startFresh}
-                  key={workspace}
-                  workspaceKey={workspace}
-                  agent={agent}
-                  workspaceAgents={workspaceAgents}
-                  accountId={accountId}
-                  active={
-                    active &&
-                    !!selected &&
-                    agentWorkspaceKey(selected) === workspace
-                  }
-                  onRegisteredThreadSelected={handleRegisteredThreadSelected}
-                  onShowList={isNarrow ? () => setMobileList(true) : undefined}
-                  agentSidebarHidden={isNarrow ? undefined : agentSidebarHidden}
-                  onToggleAgentSidebar={
-                    isNarrow ? undefined : toggleAgentSidebar
-                  }
-                  onAgentActivity={agentOrganization.recordActivity}
-                  agentAppearances={agentAppearances}
-                  onAgentAppearance={handleAgentAppearance}
-                  networks={networksForAgent(networks, agent)}
-                  selectedNetworkId={networkFilterId}
-                  onSelectNetwork={selectNetwork}
-                  onOpenNetwork={(network) =>
-                    setNetworkDetailsId(network.agent_network_id)
-                  }
-                  onClose={() => {
-                    setMountedWorkspaces((old) => {
-                      const next = new Set(old);
-                      next.delete(workspace);
-                      return next;
-                    });
-                    if (isNarrow) setMobileList(true);
-                  }}
-                />
-              );
-            })}
-            {!mountedWorkspaces.has(agentWorkspaceKey(selected)) && (
-              <Empty
-                style={{ marginTop: 80 }}
-                description={`Workbench for @${selected.name} is closed.`}
-              >
-                <Button type="primary" onClick={() => mountAgent(selected)}>
-                  Open workbench
-                </Button>
-              </Empty>
-            )}
-          </>
         )}
+        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+          {active &&
+            (creating ||
+              !!error ||
+              agents.length === 0 ||
+              !selected ||
+              !mountedWorkspaces.has(agentWorkspaceKey(selected))) && (
+              <div
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  left: 8,
+                  position: "absolute",
+                  right: 12,
+                  top: 6,
+                  zIndex: 3,
+                }}
+              >
+                {!isNarrow ? (
+                  <AgentsSidebarToggle
+                    hidden={agentSidebarHidden}
+                    onToggle={toggleAgentSidebar}
+                  />
+                ) : (
+                  <span />
+                )}
+                <AgentsWorkspaceNavigation />
+              </div>
+            )}
+          {creating || agents.length === 0 ? (
+            <NewAgentPanel
+              agents={agents}
+              namedAgentDirectory={directory}
+              sourceAgent={creatingSourceAgent}
+              onCancel={() => {
+                setCreating(false);
+                setCreatingSourceAgentId(undefined);
+                if (selected) {
+                  selectAgentId(selected.endpoint.agent_id);
+                } else {
+                  redux.getActions("page").setState({
+                    active_agent_id: undefined,
+                    active_agent_name: undefined,
+                  });
+                  set_url(
+                    getPageUrlPath({
+                      page: "agents",
+                    }),
+                  );
+                }
+                setMobileList(true);
+              }}
+              onCreated={(agentId) => {
+                const agent = agents.find(
+                  ({ endpoint }) => endpoint.agent_id === agentId,
+                );
+                if (agent) mountAgent(agent);
+                selectAgentId(agentId);
+                setCreating(false);
+                setCreatingSourceAgentId(undefined);
+              }}
+            />
+          ) : error ? (
+            <Alert
+              type="error"
+              showIcon
+              title="Unable to load agents"
+              description={error}
+              action={
+                <Button onClick={refreshNamedAgents}>Retry directory</Button>
+              }
+            />
+          ) : agents.length === 0 ? (
+            <Empty
+              style={{ marginTop: 80 }}
+              description="Name an agent chat to make it available here."
+            >
+              <Button
+                type="link"
+                onClick={() => openAccountSettings({ page: "my-agents" })}
+              >
+                Manage named agents
+              </Button>
+            </Empty>
+          ) : !selected ? (
+            <Empty
+              style={{ marginTop: 80 }}
+              description="This registered agent is not available in your directory."
+            >
+              <Space>
+                <Button onClick={refreshNamedAgents}>Refresh directory</Button>
+                <Button onClick={() => setMobileList(true)}>
+                  Choose an agent
+                </Button>
+              </Space>
+            </Empty>
+          ) : (
+            <>
+              {[...mountedWorkspaces].map((workspace) => {
+                const workspaceAgents = agents.filter(
+                  (agent) => agentWorkspaceKey(agent) === workspace,
+                );
+                const agent =
+                  workspaceAgents.find(
+                    ({ endpoint }) =>
+                      endpoint.agent_id === workspaceAgentIds.get(workspace),
+                  ) ?? workspaceAgents[0];
+                if (!agent) return null;
+                return (
+                  <AgentWorkspace
+                    onCopy={openCopyAgent}
+                    onFresh={startFresh}
+                    key={workspace}
+                    workspaceKey={workspace}
+                    agent={agent}
+                    workspaceAgents={workspaceAgents}
+                    accountId={accountId}
+                    active={
+                      active &&
+                      !!selected &&
+                      agentWorkspaceKey(selected) === workspace
+                    }
+                    onRegisteredThreadSelected={handleRegisteredThreadSelected}
+                    onShowList={
+                      isNarrow ? () => setMobileList(true) : undefined
+                    }
+                    agentSidebarHidden={
+                      isNarrow ? undefined : agentSidebarHidden
+                    }
+                    onToggleAgentSidebar={
+                      isNarrow ? undefined : toggleAgentSidebar
+                    }
+                    onAgentActivity={agentOrganization.recordActivity}
+                    agentAppearances={agentAppearances}
+                    onAgentAppearance={handleAgentAppearance}
+                    networks={networksForAgent(networks, agent)}
+                    selectedNetworkId={networkFilterId}
+                    onSelectNetwork={selectNetwork}
+                    onOpenNetwork={(network) =>
+                      setNetworkDetailsId(network.agent_network_id)
+                    }
+                    onClose={() => {
+                      setMountedWorkspaces((old) => {
+                        const next = new Set(old);
+                        next.delete(workspace);
+                        return next;
+                      });
+                      if (isNarrow) setMobileList(true);
+                    }}
+                  />
+                );
+              })}
+              {!mountedWorkspaces.has(agentWorkspaceKey(selected)) && (
+                <Empty
+                  style={{ marginTop: 80 }}
+                  description={`Workbench for @${selected.name} is closed.`}
+                >
+                  <Button type="primary" onClick={() => mountAgent(selected)}>
+                    Open workbench
+                  </Button>
+                </Empty>
+              )}
+            </>
+          )}
+        </div>
       </section>
       {copyingAgent && (
         <CopyAgentModal

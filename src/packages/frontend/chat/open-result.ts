@@ -20,6 +20,13 @@ export interface ArtifactResult {
   kind: "artifact";
   publication: ArtifactPublication;
   version?: string;
+  source?: ArtifactSource;
+}
+
+export interface ArtifactSource {
+  project_id: string;
+  path: string;
+  agent_id?: string;
 }
 
 export type ChatResult = ProjectFileResult | ArtifactResult;
@@ -35,16 +42,30 @@ export function openResult(actions: ChatActions, result: ChatResult) {
 function openArtifactResult(actions: ChatActions, result: ArtifactResult) {
   const frames = actions.frameTreeActions;
   if (!frames || !actions.frameId) return;
-  const { publication, version } = result;
+  const { publication, version, source } = result;
+  const project = actions.store?.get("project_id");
+  const path = actions.store?.get("path");
   const ids = frames.get_frame_ids_in_order();
   const existing = ids.find(
     (id) =>
       frames._get_frame_data(id, "artifact") === publication.artifact_id &&
       frames._get_frame_data(id, "thread") === publication.thread_id &&
+      (frames._get_frame_data(id, "sourceProject") ?? project) ===
+        (source?.project_id ?? project) &&
+      (frames._get_frame_data(id, "sourcePath") ?? path) ===
+        (source?.path ?? path) &&
       frames._get_frame_data(id, "origin") === actions.frameId &&
       frames._get_frame_data(id, "version") === version,
   );
   if (existing) {
+    // A shared chat can host several agents. Reusing a tab after changing
+    // threads must also update whether feedback is local or source-scoped.
+    frames.set_frame_data?.({
+      id: existing,
+      sourceProject: source?.project_id ?? null,
+      sourcePath: source?.path ?? null,
+      sourceAgent: source?.agent_id ?? null,
+    });
     focusResultFrame(frames, existing);
     return;
   }
@@ -56,6 +77,13 @@ function openArtifactResult(actions: ChatActions, result: ArtifactResult) {
     "data-thread": publication.thread_id,
     "data-origin": actions.frameId,
     "data-publication": publication.operation_id,
+    ...(source
+      ? {
+          "data-sourceProject": source.project_id,
+          "data-sourcePath": source.path,
+          "data-sourceAgent": source.agent_id,
+        }
+      : {}),
     "data-tabLabel":
       publication.snapshot.title + (version ? " (message version)" : ""),
     ...(version === undefined ? {} : { "data-version": version }),
@@ -78,6 +106,14 @@ export function openProjectFileResult(
   if (!frames || !actions.frameId || !result.path) return;
   const ids = frames.get_frame_ids_in_order();
   const existing = ids.find((id) => {
+    // A same-named file in a foreign project is not this project's file.
+    if (
+      frames._get_frame_data(id, "sourceProject") &&
+      (frames._get_frame_data(id, "sourceProject") !==
+        actions.store?.get("project_id") ||
+        frames._get_frame_data(id, "sourcePath") !== actions.store?.get("path"))
+    )
+      return false;
     if (
       frames._get_frame_type?.(id) !== "workbench" ||
       frames._get_frame_data(id, "origin") !== actions.frameId

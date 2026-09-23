@@ -1,9 +1,33 @@
 # Cross-agent artifact discovery
 
-Status: the bounded All agents scan works but is rejected as everyday UX.
-Replace it with a project-owned Postgres metadata catalog, account-home
-projections/feed, a browser cache, and an artifact shelf. Opening or filtering
-the shelf must never initiate chat-file scans or require starting projects.
+Status: the metadata catalog and warm browser cache are operational; manual
+testing confirmed essentially instant discovery. The next UI checkpoint adds
+a compact artifact shelf and source-aware tabs in the current Workbench.
+Opening or filtering the shelf never initiates chat-file scans or starts projects.
+
+## Shelf and stationary tabs checkpoint (2026-09-23)
+
+- A compact shelf shares the expanded browser's account-scoped catalog. This
+  agent / All agents changes only local filtering; pins retain personal order,
+  followed by stable creation order. The shelf bounds rendered items to 40 and
+  keeps the searchable browser for additional results.
+- Artifact opening validates the source and opens a source-aware tab alongside
+  the current conversation, without selecting the source agent/thread or
+  changing the destination draft. Tab identity includes source project/chat,
+  thread, artifact and revision.
+- Foreign tabs restore from source descriptors and use the source project's
+  context and live document for rendering/editing. Closed/replaced source
+  runtimes block writes and expose retry instead of using stale handles.
+- Show in conversation is explicit and resolves the producing publication's
+  message, including archived messages. Local artifacts retain feedback controls.
+  Foreign comments, action-review submission and agent requests remain disabled;
+  use Show in conversation for those operations. Opening notebooks does not run
+  their cells.
+
+Remaining UI work: persistent IndexedDB cache, live updates instead of polling,
+larger virtualized collections, broader historical coverage, shelf reordering,
+and safe cross-source feedback. Personal names and optional URL aliases remain
+deferred; stable artifact identity must stay independent of naming.
 
 ## Catalog implementation checkpoint (2026-09-22)
 
@@ -55,9 +79,9 @@ pipeline and frontend preview. Live Postgres ingestion has been verified.
 Standalone Lite is covered by tests/typecheck, not a live deployment test.
 
 Not implemented yet: account-home projections/outbox delivery, live feed,
-IndexedDB cache, floating shelf, or stationary cross-source Workbench tabs.
+or IndexedDB cache. The shelf/stationary-tab checkpoint above builds on this.
 Initial page loading still fetches metadata; only a warm cache is instant.
-Opening a result still switches to its source agent. Host backfill discovers
+Host backfill discovers
 known agent/registered chats, not arbitrary previously unseen chat files; raw
 shell edits reconcile only after the source is known. Source parsing is bounded
 to 16 MiB and failures retain prior metadata rather than implying deletion.

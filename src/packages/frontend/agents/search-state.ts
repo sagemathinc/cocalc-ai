@@ -3,6 +3,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
 export interface AgentSearchState {
   artifactsOpen?: boolean;
+  artifactsScope?: "agent" | "all";
   open: boolean;
   query: string;
   projectId?: string;

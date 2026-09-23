@@ -20,9 +20,9 @@ import {
 import { useArtifactPins } from "./use-artifact-pins";
 import { useChatEmbeddingOptions } from "./embedding-options";
 
-async function showConversation(
+export async function showConversation(
   actions: ChatActions,
-  entry: ArtifactCatalogEntry,
+  entry: Pick<ArtifactCatalogEntry, "publication">,
 ) {
   const { thread_id, message_id } = entry.publication;
   try {
