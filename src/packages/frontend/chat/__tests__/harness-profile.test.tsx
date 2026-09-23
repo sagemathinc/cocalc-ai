@@ -38,6 +38,23 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
   expect(runtime.profile).not.toHaveProperty("executable");
 });
 
+test("Claude settings warn that project code may use either credential mode", () => {
+  render(
+    <HarnessRuntimeSummary
+      runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+      projectId="project-a"
+      threadKey="thread-a"
+    />,
+  );
+  expect(
+    screen.getByText(/Full-project-trust preview: project collaborators/),
+  ).toBeTruthy();
+  expect(screen.getByText(/Anthropic bills the key owner/)).toBeTruthy();
+  expect(
+    screen.getByRole("combobox", { name: "Claude credential" }),
+  ).toBeTruthy();
+});
+
 test("existing harness settings explain limitations before capability discovery", async () => {
   render(
     <HarnessRuntimeControl

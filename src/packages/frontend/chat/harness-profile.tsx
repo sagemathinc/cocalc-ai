@@ -25,6 +25,9 @@ import {
 const HARNESS_LIMITATIONS =
   "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
 
+export const CLAUDE_FULL_PROJECT_TRUST_WARNING =
+  "Full-project-trust preview: project collaborators and code running here may use the selected Anthropic credential while Claude is active. Project secrets can also be read directly. Anthropic bills the key owner. Use only with trusted collaborators and code.";
+
 interface HarnessRuntimeSummaryProps {
   runtime: unknown;
   reported?: unknown;
@@ -134,6 +137,9 @@ function ClaudeCredentialControl({
       )}
       <Typography.Text type="secondary">
         This account-local choice is applied when the next turn is admitted.
+      </Typography.Text>
+      <Typography.Text type="warning">
+        {CLAUDE_FULL_PROJECT_TRUST_WARNING}
       </Typography.Text>
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>
