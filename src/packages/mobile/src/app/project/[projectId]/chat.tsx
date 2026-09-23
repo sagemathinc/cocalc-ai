@@ -16,7 +16,6 @@ import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import type { AppearancePalette } from "@cocalc/util/appearance-palette";
 import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
-import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useLiveVoice } from "../../../live/use-live";
 import { LiveVoiceControls } from "../../../live/controls";
@@ -46,6 +45,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Markdown } from "../../../chat/markdown";
+import {
+  inlineGuidance,
+  type ConversationMessage,
+} from "../../../chat/guidance";
 import {
   clearChatDraftIfUnchanged,
   loadChatDraft,
@@ -114,12 +117,35 @@ function useChatSnapshot(
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
+function GuidanceCard({ item }: { item: ProjectedChatMessage }) {
+  const colors = usePalette();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const label =
+    item.state === "sending"
+      ? "Sending guidance"
+      : item.state === "queued"
+        ? "Guidance queued"
+        : item.state === "error"
+          ? "Guidance not sent"
+          : "Guidance sent";
+  return (
+    <View style={styles.guidanceCard}>
+      <Text accessibilityRole="header" style={styles.guidanceLabel}>
+        {label}
+      </Text>
+      <Markdown value={item.content} />
+    </View>
+  );
+}
+
 function Message({
   item,
+  guidance,
   read,
   speechBusy,
 }: {
   item: ProjectedChatMessage;
+  guidance: ProjectedChatMessage[];
   read: (item: ProjectedChatMessage) => void;
   speechBusy: boolean;
 }) {
@@ -129,6 +155,8 @@ function Message({
   const thinkingPlaceholder =
     !human &&
     /^\s*(?::robot:|🤖)?\s*Thinking(?:\.{3}|…)\s*$/.test(item.content);
+
+  if (item.guidance) return <GuidanceCard item={item} />;
 
   return (
     <View
@@ -161,6 +189,9 @@ function Message({
       {thinkingPlaceholder || (item.generating && !item.content) ? null : (
         <Markdown value={item.content} />
       )}
+      {guidance.map((item) => (
+        <GuidanceCard key={item.message_id} item={item} />
+      ))}
       {item.generating ? (
         <View
           accessibilityLabel="Codex running"
@@ -177,8 +208,8 @@ function Message({
           <Text style={styles.runningText}>Running</Text>
         </View>
       ) : null}
-      <View style={styles.messageActions}>
-        {item.role === "agent" && !item.generating && !!item.content && (
+      {item.role === "agent" && !item.generating && !!item.content ? (
+        <View style={styles.messageActions}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Read response aloud"
@@ -190,17 +221,8 @@ function Message({
           >
             <Text style={styles.smallLink}>Read aloud</Text>
           </Pressable>
-        )}
-        <Pressable
-          style={styles.messageAction}
-          accessibilityLabel={`Copy ${human ? "your" : "Codex"} message`}
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => void Clipboard.setStringAsync(item.content)}
-        >
-          <Text style={styles.smallLink}>Copy</Text>
-        </Pressable>
-      </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -228,7 +250,7 @@ export default function ChatScreen() {
   const [client, setClient] = useState<ConversationClient>();
   const clientRef = useRef<ConversationClient | undefined>(undefined);
   const generation = useRef(0);
-  const listRef = useRef<FlatList<ProjectedChatMessage>>(null);
+  const listRef = useRef<FlatList<ConversationMessage>>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const draftRef = useRef(draft);
@@ -335,7 +357,7 @@ export default function ChatScreen() {
   // Inverted layout starts at the newest message without measuring or scrolling
   // through older Markdown. Never mutate the shared chronological snapshot.
   const newestFirstMessages = useMemo(
-    () => [...snapshot.messages].reverse(),
+    () => inlineGuidance(snapshot.messages).reverse(),
     [snapshot.messages],
   );
 
@@ -587,7 +609,7 @@ export default function ChatScreen() {
             autoscrollToTopThreshold: 80,
           }}
           data={newestFirstMessages}
-          keyExtractor={(item) => item.message_id}
+          keyExtractor={({ item }) => item.message_id}
           ListFooterComponent={
             snapshot.message_window?.has_older ? (
               <Pressable
@@ -610,10 +632,11 @@ export default function ChatScreen() {
             ) : null
           }
           ref={listRef}
-          renderItem={({ item }) => (
+          renderItem={({ item: row }) => (
             <MarkdownImageContext.Provider value={resolveImage}>
               <Message
-                item={item}
+                item={row.item}
+                guidance={row.guidance}
                 speechBusy={speechBusy}
                 read={(item) =>
                   void speech.controller.read(item.content, item.message_id)
@@ -776,6 +799,18 @@ const makeStyles = (colors: AppearancePalette) =>
     },
     agentMessage: {
       alignSelf: "flex-start",
+    },
+    guidanceCard: {
+      alignSelf: "stretch",
+      backgroundColor: colors.infoBg,
+      borderRadius: 10,
+      gap: 6,
+      padding: 10,
+    },
+    guidanceLabel: {
+      color: colors.info,
+      fontSize: 12,
+      fontWeight: "700",
     },
     messageActions: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
     messageAction: {

@@ -263,8 +263,8 @@ it("opens at recent messages without imperative scrolling during streamed update
     expect.objectContaining({ initial_message_limit: 8 }),
   );
   const list = () => renderer.root.findByType("FlatList");
-  expect(list().props.data[0].message_id).toBe("99");
-  expect(list().props.data[99].message_id).toBe("0");
+  expect(list().props.data[0].item.message_id).toBe("99");
+  expect(list().props.data[99].item.message_id).toBe("0");
   expect(original.messages).toEqual(chronological);
   expect(list().props.inverted).toBe(true);
   expect(list().props.onContentSizeChange).toBeUndefined();
@@ -283,7 +283,7 @@ it("opens at recent messages without imperative scrolling during streamed update
     },
   ];
   await act(async () => renderer.update(<ChatScreen />));
-  expect(list().props.data[0].message_id).toBe("100");
+  expect(list().props.data[0].item.message_id).toBe("100");
   await act(async () => button("Load earlier messages").props.onPress());
   expect(client.loadOlderMessages).toHaveBeenCalledWith(60);
 });
@@ -329,4 +329,46 @@ it("keeps the running status below streamed agent output", async () => {
   expect(status.parent.children.indexOf(output)).toBeLessThan(
     status.parent.children.indexOf(status),
   );
+});
+
+it("shows guidance inside the running Codex turn without a separate message", async () => {
+  client.getSnapshot().messages = [
+    {
+      message_id: "agent",
+      thread_id: "thread",
+      role: "agent",
+      content: "Working through the task",
+      generating: true,
+    },
+    {
+      message_id: "guidance",
+      thread_id: "thread",
+      parent_message_id: "agent",
+      role: "human",
+      content: "Please check the layout",
+      guidance: true,
+      state: "sent",
+      date: "2026-09-22T00:00:00.000Z",
+      generating: false,
+    },
+  ];
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  const rows = renderer.root.findByType("FlatList").props.data;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].guidance[0].message_id).toBe("guidance");
+  const status = renderer.root.findByProps({
+    accessibilityLabel: "Codex running",
+  });
+  const guidance = renderer.root.findByProps({
+    value: "Please check the layout",
+  });
+  expect(status.parent.children.indexOf(guidance.parent)).toBeLessThan(
+    status.parent.children.indexOf(status),
+  );
+  expect(
+    renderer.root.findAllByProps({ children: "Guidance sent" }),
+  ).toHaveLength(1);
+  expect(button("Copy Codex message")).toBeUndefined();
 });
