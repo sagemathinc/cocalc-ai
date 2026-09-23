@@ -30,6 +30,7 @@ import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/pr
 import {
   ensureProjectMaintenanceStatusTable,
   recordProjectMaintenanceStatus,
+  snapshotScheduleRevision,
 } from "@cocalc/server/projects/maintenance-status";
 
 const logger = getLogger("server:conat:host-status");
@@ -72,6 +73,8 @@ export async function listHostProjectMaintenanceSchedules({
     last_backup: Date | string | null;
     last_snapshot: Date | string | null;
     last_snapshot_observed_at: Date | string | null;
+    snapshot_reconciled_change_at: Date | string | null;
+    snapshot_reconciled_schedule_revision: string | null;
     last_backup_observed_at: Date | string | null;
     snapshot_retry_at: Date | string | null;
     backup_retry_at: Date | string | null;
@@ -95,6 +98,12 @@ export async function listHostProjectMaintenanceSchedules({
        (SELECT observed_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='snapshot'
            AND host_id=projects.host_id) AS last_snapshot_observed_at,
+       (SELECT reconciled_change_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_reconciled_change_at,
+       (SELECT reconciled_schedule_revision FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_reconciled_schedule_revision,
        (SELECT observed_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='backup'
            AND host_id=projects.host_id) AS last_backup_observed_at,
@@ -218,6 +227,7 @@ export async function listHostProjectMaintenanceSchedules({
             ? row.last_edited.toISOString()
             : `${row.last_edited}`,
       snapshots: row.snapshots ?? null,
+      snapshot_schedule_revision: snapshotScheduleRevision(row.snapshots),
       backups: row.backups ?? null,
       max_snapshots_per_project:
         limits?.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
@@ -248,6 +258,14 @@ export async function listHostProjectMaintenanceSchedules({
         : row.last_snapshot_observed_at instanceof Date
           ? row.last_snapshot_observed_at.toISOString()
           : `${row.last_snapshot_observed_at}`;
+    schedule.snapshot_reconciled_change_at =
+      row.snapshot_reconciled_change_at == null
+        ? null
+        : row.snapshot_reconciled_change_at instanceof Date
+          ? row.snapshot_reconciled_change_at.toISOString()
+          : `${row.snapshot_reconciled_change_at}`;
+    schedule.snapshot_reconciled_schedule_revision =
+      row.snapshot_reconciled_schedule_revision ?? null;
     schedule.last_backup_observed_at =
       row.last_backup_observed_at == null
         ? null

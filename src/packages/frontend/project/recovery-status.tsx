@@ -122,6 +122,17 @@ export function ProjectRecoveryStatus({
     title = `${label}: scheduled recovery point overdue`;
     description = `Due ${formatted(dueAt)}. Latest confirmed: ${formatted(latest)}.${reason ? ` ${reason}` : ""}`;
     type = critical ? "error" : "warning";
+  } else if (!latest) {
+    title = `${label}: no confirmed recovery point`;
+    description =
+      report?.reason === "no_content_change" ||
+      report?.reason === "no_change_due"
+        ? "The last check found no changed content to protect."
+        : "A confirmed recovery point has not been recorded yet.";
+    type = "warning";
+  } else if (report?.reason === "no_content_change") {
+    description = "The last check found no changed content to protect.";
+    type = "info";
   } else if (report?.outcome === "failed" || report?.outcome === "deferred") {
     description = reason ?? "The last scheduled attempt did not complete.";
     type = "warning";

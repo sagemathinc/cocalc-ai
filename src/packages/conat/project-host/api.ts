@@ -1048,6 +1048,9 @@ export interface HostProjectMaintenanceSchedule {
   last_backup?: string | null;
   last_snapshot?: string | null;
   last_snapshot_observed_at?: string | null;
+  snapshot_reconciled_change_at?: string | null;
+  snapshot_schedule_revision?: string | null;
+  snapshot_reconciled_schedule_revision?: string | null;
   last_backup_observed_at?: string | null;
   snapshot_retry_at?: string | null;
   backup_retry_at?: string | null;
@@ -1070,6 +1073,8 @@ export interface ProjectMaintenanceReport {
   reason?: string;
   due_at?: string | null;
   latest_snapshot_at?: string | null;
+  reconciled_change_at?: string | null;
+  schedule_revision?: string | null;
   duration_ms?: number;
   retry_at?: string | null;
   consecutive_failures?: number;

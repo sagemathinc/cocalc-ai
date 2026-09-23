@@ -463,12 +463,13 @@ export class SubvolumeSnapshots {
       }
     };
     await pruneToLimit();
-    await updateRollingSnapshots({
+    const result = await updateRollingSnapshots({
       snapshots: this,
       counts,
       opts: { ...opts, limit: normalizedLimit + 1 },
     });
     await pruneToLimit();
+    return result;
   };
 
   // has newly written changes since last snapshot

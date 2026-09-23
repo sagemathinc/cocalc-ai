@@ -184,6 +184,111 @@ describe("snapshot-backup-maintenance", () => {
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(2);
   });
 
+  it("does not claim a snapshot when the host finds no changed content", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-unchanged",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+    ]);
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: false,
+      disabled: false,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-unchanged",
+        kind: "snapshot",
+        outcome: "skipped",
+        reason: "no_content_change",
+        due_at: null,
+        reconciled_change_at: "2026-04-10T22:00:00.000Z",
+      }),
+    );
+  });
+
+  it("reports success only after the new snapshot is confirmed", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-created",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+    ]);
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: "2026-04-10T22:01:00.000Z",
+      created_snapshot_at: "2026-04-10T22:01:00.000Z",
+      changed: true,
+      disabled: false,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-created",
+        kind: "snapshot",
+        outcome: "succeeded",
+        latest_snapshot_at: "2026-04-10T22:01:00.000Z",
+        reconciled_change_at: null,
+      }),
+    );
+  });
+
+  it("skips recently reconciled unchanged content until it changes again", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-unchanged",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        snapshot_reconciled_change_at: "2026-04-10T22:00:00.000Z",
+        snapshot_schedule_revision: "revision-1",
+        snapshot_reconciled_schedule_revision: "revision-1",
+        last_snapshot_observed_at: new Date().toISOString(),
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+  });
+
+  it("rechecks content when the snapshot schedule changes", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-unchanged",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        snapshot_reconciled_change_at: "2026-04-10T22:00:00.000Z",
+        snapshot_schedule_revision: "revision-2",
+        snapshot_reconciled_schedule_revision: "revision-1",
+        last_snapshot_observed_at: new Date().toISOString(),
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+  });
+
   it("runs backup maintenance even when snapshot maintenance fails", async () => {
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {

@@ -122,7 +122,7 @@ import rustic, {
   getHost as getRusticSnapshotHost,
 } from "@cocalc/backend/sandbox/rustic";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
-import { isValidUUID } from "@cocalc/util/misc";
+import { isISODate, isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import {
   acceptProjectVolumeQuotaDesired,
@@ -3172,20 +3172,27 @@ export async function runScheduledSnapshotMaintenance({
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<{ latest_snapshot_at: string | null }> {
-  await updateSnapshots({
-    project_id,
-    counts,
+}): Promise<{
+  latest_snapshot_at: string | null;
+  created_snapshot_at: string | null;
+  changed: boolean | null;
+  disabled: boolean;
+}> {
+  const vol = await getVolume(project_id);
+  const result = await vol.snapshots.update(counts, {
     limit,
     quotaMode: "async",
   });
-  const vol = await getVolume(project_id);
-  const latest_snapshot_at =
-    (await vol.snapshots.readdir())
-      .filter((name) => !Number.isNaN(Date.parse(name)))
-      .sort()
-      .at(-1) ?? null;
-  return { latest_snapshot_at };
+  const snapshots = (await vol.snapshots.readdir()).filter(isISODate).sort();
+  if (result.createdName && !snapshots.includes(result.createdName)) {
+    throw new Error("new snapshot is not present after creation");
+  }
+  return {
+    latest_snapshot_at: snapshots.at(-1) ?? null,
+    created_snapshot_at: result.createdName,
+    changed: result.changed,
+    disabled: result.disabled,
+  };
 }
 
 async function allSnapshotUsage({

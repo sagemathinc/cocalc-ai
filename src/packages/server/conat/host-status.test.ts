@@ -94,6 +94,7 @@ jest.mock("@cocalc/server/projects/maintenance-status", () => ({
   __esModule: true,
   ensureProjectMaintenanceStatusTable: jest.fn(async () => undefined),
   recordProjectMaintenanceStatus: jest.fn(async () => true),
+  snapshotScheduleRevision: jest.fn(() => "schedule-revision"),
 }));
 
 jest.mock("./host-project-ownership", () => ({
@@ -173,6 +174,9 @@ describe("listHostProjectMaintenanceSchedules", () => {
         last_backup: null,
         last_snapshot: null,
         last_snapshot_observed_at: null,
+        snapshot_reconciled_change_at: null,
+        snapshot_schedule_revision: "schedule-revision",
+        snapshot_reconciled_schedule_revision: null,
         last_backup_observed_at: null,
         snapshot_retry_at: null,
         backup_retry_at: null,

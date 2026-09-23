@@ -16,6 +16,12 @@ let loggedRollingSnapshotsDisabled = false;
 export const TEMP_RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
+export interface RollingSnapshotUpdateResult {
+  changed: boolean | null;
+  createdName: string | null;
+  disabled: boolean;
+}
+
 export async function updateRollingSnapshots({
   snapshots,
   counts,
@@ -29,13 +35,13 @@ export async function updateRollingSnapshots({
     afterCreate?: (created: unknown) => Promise<void>;
     [key: string]: unknown;
   };
-}) {
+}): Promise<RollingSnapshotUpdateResult> {
   if (btrfsRollingSnapshotsDisabled()) {
     if (!loggedRollingSnapshotsDisabled) {
       loggedRollingSnapshotsDisabled = true;
       logger.warn("rolling btrfs snapshots disabled by configuration");
     }
-    return;
+    return { changed: null, createdName: null, disabled: true };
   }
   counts = { ...DEFAULT_SNAPSHOT_COUNTS, ...counts };
 
@@ -73,6 +79,7 @@ export async function updateRollingSnapshots({
   // create error or last delete error...
 
   let createError: any = undefined;
+  let createdName: string | null = null;
   if (changed && needNewSnapshot) {
     // make a new snapshot -- but only bother
     // definitely no data written since most recent snapshot, so nothing to do
@@ -90,6 +97,7 @@ export async function updateRollingSnapshots({
       });
       await afterCreate?.(created);
       snapshotNames.push(name);
+      createdName = name;
     } catch (err) {
       createError = err;
     }
@@ -121,6 +129,7 @@ export async function updateRollingSnapshots({
   if (deleteError) {
     throw deleteError;
   }
+  return { changed, createdName, disabled: false };
 }
 
 export function snapshotsToDelete({

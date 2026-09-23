@@ -404,6 +404,17 @@ function snapshotDueAt(
 ): number | undefined {
   const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
   if (changedAt == null) return undefined;
+  const reconciledChangeAt = parseTimestampMs(
+    row.snapshot_reconciled_change_at,
+  );
+  if (
+    reconciledChangeAt != null &&
+    changedAt <= reconciledChangeAt &&
+    row.snapshot_schedule_revision != null &&
+    row.snapshot_schedule_revision === row.snapshot_reconciled_schedule_revision
+  ) {
+    return undefined;
+  }
   const lastSnapshot = parseTimestampMs(row.last_snapshot);
   if (lastSnapshot != null && changedAt <= lastSnapshot) return undefined;
   const intervals = (
@@ -590,6 +601,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const startedAt = Date.now();
         try {
           let latest_snapshot_at: string | null = null;
+          let created_snapshot_at: string | null = null;
+          let changed: boolean | null = null;
+          let disabled = false;
           const result = await runScheduledStorageOperation({
             hostId,
             project_id,
@@ -601,9 +615,38 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 limit: row.max_snapshots_per_project ?? undefined,
               });
               latest_snapshot_at = updated?.latest_snapshot_at ?? null;
+              created_snapshot_at = updated?.created_snapshot_at ?? null;
+              changed = updated?.changed ?? null;
+              disabled = updated?.disabled ?? false;
             },
           });
-          const outcome = result.ran ? "succeeded" : "deferred";
+          const changedAt = parseTimestampMs(
+            row.last_changed ?? row.last_edited,
+          );
+          const latestSnapshotAt = parseTimestampMs(latest_snapshot_at);
+          const confirmedRecoveryPoint =
+            created_snapshot_at != null ||
+            (changed === false &&
+              latestSnapshotAt != null &&
+              (changedAt == null || latestSnapshotAt >= changedAt));
+          const outcome = !result.ran
+            ? "deferred"
+            : disabled
+              ? "deferred"
+              : confirmedRecoveryPoint
+                ? "succeeded"
+                : changed === false
+                  ? "skipped"
+                  : "deferred";
+          const reason =
+            result.reason ??
+            (disabled
+              ? "snapshot_maintenance_disabled"
+              : outcome === "skipped"
+                ? "no_content_change"
+                : outcome === "deferred"
+                  ? "snapshot_not_created"
+                  : undefined);
           await report({
             host_id: hostId,
             project_id,
@@ -611,16 +654,26 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             storage_service_class: row.storage_service_class,
             observed_at: new Date().toISOString(),
             outcome,
-            reason: result.reason,
+            reason,
             latest_snapshot_at,
+            reconciled_change_at:
+              reason === "no_content_change"
+                ? (row.last_changed ?? row.last_edited)
+                : null,
+            schedule_revision:
+              reason === "no_content_change"
+                ? row.snapshot_schedule_revision
+                : null,
             due_at: result.ran
-              ? (() => {
-                  const next = snapshotDueAt(
-                    { ...row, last_snapshot: latest_snapshot_at },
-                    schedule,
-                  );
-                  return next == null ? null : new Date(next).toISOString();
-                })()
+              ? reason === "no_content_change"
+                ? null
+                : (() => {
+                    const next = snapshotDueAt(
+                      { ...row, last_snapshot: latest_snapshot_at },
+                      schedule,
+                    );
+                    return next == null ? null : new Date(next).toISOString();
+                  })()
               : dueAt == null
                 ? null
                 : new Date(dueAt).toISOString(),

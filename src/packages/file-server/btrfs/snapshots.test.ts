@@ -24,7 +24,9 @@ describe("rolling btrfs snapshots kill switch", () => {
     };
 
     const { updateRollingSnapshots } = await import("./snapshots");
-    await updateRollingSnapshots({ snapshots: snapshots as any });
+    await expect(
+      updateRollingSnapshots({ snapshots: snapshots as any }),
+    ).resolves.toEqual({ changed: null, createdName: null, disabled: true });
 
     expect(snapshots.hasUnsavedChanges).not.toHaveBeenCalled();
     expect(snapshots.readdir).not.toHaveBeenCalled();
@@ -120,7 +122,7 @@ describe("rolling btrfs snapshot retention", () => {
       delete: jest.fn(async () => undefined),
     };
 
-    await updateRollingSnapshots({
+    const result = await updateRollingSnapshots({
       snapshots: snapshots as any,
       counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
     });
@@ -129,6 +131,11 @@ describe("rolling btrfs snapshot retention", () => {
     expect(snapshots.hasUnsavedChanges).toHaveBeenCalledWith(inventory);
     expect(snapshots.create).toHaveBeenCalledWith(expect.any(String), {
       existingSnapshotNames: inventory,
+    });
+    expect(result).toEqual({
+      changed: true,
+      createdName: expect.any(String),
+      disabled: false,
     });
   });
 });
