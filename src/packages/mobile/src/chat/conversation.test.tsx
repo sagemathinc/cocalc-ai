@@ -309,3 +309,24 @@ it("renders the thinking placeholder as a compact running status", async () => {
     renderer.root.findAllByProps({ value: ":robot: Thinking..." }),
   ).toHaveLength(0);
 });
+
+it("keeps the running status below streamed agent output", async () => {
+  client.getSnapshot().messages = [
+    {
+      message_id: "streaming",
+      role: "agent",
+      content: "Streaming response",
+      generating: true,
+    },
+  ];
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  const status = renderer.root.findByProps({
+    accessibilityLabel: "Codex running",
+  });
+  const output = renderer.root.findByProps({ value: "Streaming response" });
+  expect(status.parent.children.indexOf(output)).toBeLessThan(
+    status.parent.children.indexOf(status),
+  );
+});

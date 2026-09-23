@@ -141,22 +141,7 @@ function Message({
         <Text style={styles.messageRole}>
           {human ? "You" : item.role === "agent" ? "Codex" : "System"}
         </Text>
-        {item.generating ? (
-          <View
-            accessibilityLabel="Codex running"
-            accessibilityLiveRegion="polite"
-            accessibilityRole="text"
-            style={styles.runningBadge}
-          >
-            <ActivityIndicator
-              accessibilityElementsHidden
-              color={colors.secondary}
-              size="small"
-              style={styles.runningSpinner}
-            />
-            <Text style={styles.runningText}>Running</Text>
-          </View>
-        ) : item.state ? (
+        {!item.generating && item.state ? (
           <Text style={styles.messageState}>{item.state}</Text>
         ) : null}
       </View>
@@ -176,6 +161,22 @@ function Message({
       {thinkingPlaceholder || (item.generating && !item.content) ? null : (
         <Markdown value={item.content} />
       )}
+      {item.generating ? (
+        <View
+          accessibilityLabel="Codex running"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="text"
+          style={styles.runningBadge}
+        >
+          <ActivityIndicator
+            accessibilityElementsHidden
+            color={colors.secondary}
+            size="small"
+            style={styles.runningSpinner}
+          />
+          <Text style={styles.runningText}>Running</Text>
+        </View>
+      ) : null}
       <View style={styles.messageActions}>
         {item.role === "agent" && !item.generating && !!item.content && (
           <Pressable
