@@ -5,25 +5,28 @@ The first iOS beta is for internal testers only. Use the production variant,
 does not depend on Metro. The development app has a separate bundle ID and is
 not the TestFlight candidate.
 
-## Candidate prepared on 2026-09-23
+## Candidate rebuilt on 2026-09-23
 
-- Source: `feature/cocalc-mobile` at `0d0bda6dfa`.
+- Source: `feature/cocalc-mobile` at `655ac91c4b`, including the merge of
+  `origin/main` at `de9a62c731` and the mobile payment-settings fix.
 - Bundle ID: `com.sagemath.cocalc.mobile`; version/build: `0.1.0 (1)`.
-- Local archive: `/tmp/CoCalc-0.1.0-1-beta.xcarchive` (408 MB).
+- Local archive: `/tmp/CoCalc-0.1.0-1-merged-beta.xcarchive`.
 - Embedded `main.jsbundle` SHA-256:
-  `92dd0e7c24a08d0b79f84568035794b36cf3355c0f8fd651b896edc2901e6385`.
+  `c68c01b2098f136262ea9b8a99dfdf01141401282bdaf96dde303aa684e89700`.
 - `xcodebuild archive` and `codesign --verify --deep --strict` passed. The
   packaged app includes camera, photo-library, and microphone permission
   strings, and the clean prebuild assigns the production Apple team.
 - The preceding signed Release build passed the iPhone smoke test: cold launch
-  without Metro, open chat, send a photo and PDF, and open the PDF link. This
-  corrected archive adds the missing microphone permission and has not been
+  without Metro, open chat, send a photo and PDF, and open the PDF link. The
+  maintainer also confirmed agent creation and subscription settings against
+  the updated staging hub and project host. This new archive has not been
   installed or distributed.
 
 The internal TestFlight export is **blocked at signing**. Xcode reported
 `No Accounts`, no `iOS Distribution` certificate, and no provisioning profile
-for this bundle ID. The machine has an Apple Development certificate, which
-is sufficient for a paired-device build but not this distribution export.
+for this bundle ID when the rebuilt archive was exported. The machine has an
+Apple Development certificate, which is sufficient for a paired-device build
+but not this distribution export.
 No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
 ## Finish the candidate
@@ -48,7 +51,7 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
    ```bash
    xcodebuild -exportArchive \
-     -archivePath /tmp/CoCalc-0.1.0-1-beta.xcarchive \
+     -archivePath /tmp/CoCalc-0.1.0-1-merged-beta.xcarchive \
      -exportOptionsPlist testflight-internal-export-options.plist \
      -exportPath /tmp/CoCalc-TestFlight-internal \
      -allowProvisioningUpdates

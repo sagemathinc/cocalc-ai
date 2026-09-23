@@ -375,3 +375,13 @@ staging account's registered-agent list works after the hub rollout. Mainline's
 retest is still needed to confirm the reported error is gone end to end. The
 staging-only local `/software` override remains necessary for project-host
 repair. Production was not deployed.
+
+The maintainer subsequently confirmed that the staging phone flow works after
+the merged hub rollout. On the merged branch, all 71 mobile UI tests, mobile
+typecheck, and frontend lint passed. A fresh signed iOS archive from
+`655ac91c4b` succeeded and passed strict code-signature verification; its
+embedded JavaScript bundle SHA-256 is
+`c68c01b2098f136262ea9b8a99dfdf01141401282bdaf96dde303aa684e89700`.
+The internal TestFlight export remains blocked because Xcode reports no Apple
+account, iOS Distribution certificate, or provisioning profile. No IPA was
+produced or uploaded. See `src/packages/mobile/TESTFLIGHT.md`.
