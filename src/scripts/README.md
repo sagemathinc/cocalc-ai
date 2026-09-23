@@ -22,7 +22,7 @@ architecture natively by setting `CODEX_BUILD_PLATFORM=linux-x64` or
 built with `CODEX_BUILD_PLATFORM=all`. The upstream musl setup helper installs
 its build prerequisites, so run this only on a disposable build machine with
 passwordless sudo and Zig 0.14.0 on PATH. The local build defaults to Codex
-0.153.4 with the version-specific Linux TCP user-timeout patch and a
+0.156.0 with the version-specific Linux TCP user-timeout patch and a
 workspace-version-only lockfile correction in `patches/`. It removes the
 patches on exit and can recover an interrupted prior run when those patches
 are the only tracked changes. This restores the shared HTTP client's 300-second socket
@@ -40,18 +40,25 @@ generation and compaction before promoting a candidate; normal installs
 continue using the assets explicitly pinned in `backend/sandbox/install.ts`.
 
 Collect both native output directories and their `manifest-linux-*.json`
-files beneath the same version directory, then run:
+files beneath the same version directory. The manually dispatched
+`build-patched-codex.yml` workflow builds these on native x64 and ARM64 runners
+and uploads `codex-musl-x64` and `codex-musl-arm64` artifacts. Extract both
+archives into the same binaries directory, then run:
 
 ```sh
-node src/scripts/assemble-local-codex-manifest.cjs /path/to/binaries/0.153.4
-COCALC_CODEX_LOCAL_BIN_DIR=/path/to/binaries bash src/scripts/publish-local-codex-binaries.sh
+node src/scripts/assemble-local-codex-manifest.cjs /path/to/binaries/0.156.0
+CODEX_RELEASE_TARGET=cocalc-v0.156.0 COCALC_CODEX_LOCAL_BIN_DIR=/path/to/binaries bash src/scripts/publish-local-codex-binaries.sh
 ```
 
 Assembly rejects differing upstream commits, patches, toolchains, or libc
 targets and records hashes of all four binaries. `CODEX_PUBLISH_RELEASE=1`
 performs this assembly after a native build when both architectures have
 already been collected. The default release tag is
-`v0.153.4-cocalc-musl-1`; it preserves the earlier GNU release assets.
+`v0.156.0-cocalc-musl-1`; it preserves the earlier GNU release assets.
+Publish the matching patched source branch to `sagemathinc/codex` before using
+it as `CODEX_RELEASE_TARGET`, so the release source archive contains the fix.
+After publication, update both archive and executable SHA-256 pins in
+`backend/sandbox/install.ts` from the verified release artifacts.
 
 ## Active Product And Release Workflows
 

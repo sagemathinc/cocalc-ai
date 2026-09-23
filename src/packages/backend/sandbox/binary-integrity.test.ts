@@ -25,10 +25,10 @@ describe("binary content identity", () => {
 
   it("rejects a same-version stock replacement and does not cache identity", async () => {
     const path = join(dir, "codex");
-    const patched = "codex-cli 0.153.4 patched";
+    const patched = "codex-cli 0.156.0 patched";
     await writeFile(path, patched);
     expect(await matchesBinarySha256(path, digest(patched))).toBe(true);
-    await writeFile(path, "codex-cli 0.153.4 stock");
+    await writeFile(path, "codex-cli 0.156.0 stock");
     expect(await matchesBinarySha256(path, digest(patched))).toBe(false);
   });
 

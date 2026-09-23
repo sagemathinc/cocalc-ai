@@ -1,5 +1,8 @@
 import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
+import {
+  isCodexModelName,
+  resolveCurrentCodexModel,
+} from "@cocalc/util/ai/codex";
 import {
   dispatchNavigatorPromptIntent,
   stageNavigatorPromptInWorkspaceChat,
@@ -79,10 +82,9 @@ interface TerminalAssistantContext {
 }
 
 export function resolveAssistantCodexModel(model?: string): string {
-  const normalized = `${model ?? ""}`.trim();
-  return isCodexModelName(normalized)
-    ? normalized
-    : getDefaultCodexNewChatDefaults().model;
+  return (
+    resolveCurrentCodexModel(model) ?? getDefaultCodexNewChatDefaults().model
+  );
 }
 
 export function getAssistantMaxTokens(model?: string): number {
