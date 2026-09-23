@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import { createNamedAgent } from "../agents/create";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { openProjectHost } from "../cocalc/site-session";
+import { fsClient } from "@cocalc/conat/files/fs";
 
 jest.mock("expo-router", () => ({
   router: { replace: jest.fn() },
@@ -20,6 +21,7 @@ jest.mock("../cocalc/session-registry", () => ({
   getActiveSiteSession: jest.fn(),
 }));
 jest.mock("../cocalc/site-session", () => ({ openProjectHost: jest.fn() }));
+jest.mock("@cocalc/conat/files/fs", () => ({ fsClient: jest.fn(() => ({})) }));
 jest.mock("../ui/palette", () => ({
   usePalette: () => ({
     page: "white",
@@ -86,6 +88,9 @@ it("lets a user name an agent, choose a project, and open its new chat", async (
   });
   expect(createNamedAgent).toHaveBeenCalledWith(
     expect.objectContaining({ name: "research", projectTitle: "Math notes" }),
+  );
+  expect(fsClient).toHaveBeenCalledWith(
+    expect.objectContaining({ subject: "fs.project-project-id" }),
   );
   expect(router.replace).toHaveBeenCalledWith(
     expect.objectContaining({

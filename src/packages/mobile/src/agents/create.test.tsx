@@ -1,4 +1,5 @@
 import { createNamedAgent, type PendingAgentCreation } from "./create";
+import { fsClient } from "@cocalc/conat/files/fs";
 
 const pending: PendingAgentCreation = {
   projectId: "project-id",
@@ -82,4 +83,35 @@ it("does not create anything when the working directory is invalid", async () =>
   expect(files.mkdir).not.toHaveBeenCalled();
   expect(chat.createCodexThread).not.toHaveBeenCalled();
   expect(agentApi.registerIdentity).not.toHaveBeenCalled();
+});
+
+it("uses the project filesystem client to restore directory checks after RPC", async () => {
+  const fixture = fixtures();
+  const stat = jest.fn(async () => ({ mode: 0o040755 }));
+  const raw = {
+    readdir: jest.fn(),
+    stat,
+    lstat: jest.fn(),
+    watch: jest.fn(),
+    constants: jest.fn(async () => ({ S_IFMT: 0o170000, S_IFDIR: 0o040000 })),
+    mkdir: fixture.files.mkdir,
+    exists: fixture.files.exists,
+    writeFile: fixture.files.writeFile,
+  };
+  const files = fsClient({
+    client: { call: () => raw } as any,
+    subject: "fs.project-project-id",
+  });
+  await createNamedAgent({
+    agentApi: fixture.agentApi as any,
+    files,
+    chat: fixture.chat as any,
+    pending,
+    name: "Research",
+    description: "",
+    projectTitle: "Project",
+    workingDirectory: "/home/user",
+  });
+  expect(stat).toHaveBeenCalledWith("/home/user");
+  expect(fixture.agentApi.registerIdentity).toHaveBeenCalledTimes(1);
 });

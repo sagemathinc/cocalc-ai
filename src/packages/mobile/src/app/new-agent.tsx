@@ -5,7 +5,7 @@
 
 import { createRemoteHeadlessChatClient } from "@cocalc/chat-client";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
-import type { FilesystemClient } from "@cocalc/conat/files/fs";
+import { fsClient } from "@cocalc/conat/files/fs";
 import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import * as Crypto from "expo-crypto";
@@ -151,9 +151,11 @@ export default function NewAgentScreen() {
         path: `${DEFAULT_PROJECT_RUNTIME_HOME}/.local/share/cocalc/agents/${Crypto.randomUUID()}.chat`,
         threadId: Crypto.randomUUID(),
       };
-      const files = lease.client.call<
-        Pick<FilesystemClient, "exists" | "mkdir" | "stat" | "writeFile">
-      >(`fs.project-${target.project_id}`, { timeout: 30000 });
+      const files = fsClient({
+        client: lease.client,
+        subject: `fs.project-${target.project_id}`,
+        timeout: 30000,
+      });
       const chat = createRemoteHeadlessChatClient({
         account_id: session.profile.account_id,
         project_id: target.project_id,
