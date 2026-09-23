@@ -942,13 +942,13 @@ export function ChatRoomComposer({
               <div
                 style={{
                   display: "flex",
-                  flex: mobile ? "0 0 auto" : "1 1 auto",
+                  flex: "1 1 auto",
                   minWidth: 0,
                   overflow: "hidden",
                 }}
               >
                 <CodexConfigButton
-                  compact={mobile ? "icon" : "composer"}
+                  compact={mobile ? "mobile-composer" : "composer"}
                   threadKey={selectedThread.key}
                   chatPath={path}
                   projectId={project_id}

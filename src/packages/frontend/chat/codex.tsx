@@ -131,7 +131,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean | "summary" | "composer" | "icon";
+  compact?: boolean | "summary" | "composer" | "mobile-composer" | "icon";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -551,6 +551,7 @@ export function CodexConfigButton({
   const [selectedCredentialId, setSelectedCredentialId] = useState<
     string | undefined
   >();
+  const [draftPaymentChoice, setDraftPaymentChoice] = useState("auto");
   const [credentialSelectionLoaded, setCredentialSelectionLoaded] =
     useState(false);
   useEffect(() => {
@@ -859,6 +860,34 @@ export function CodexConfigButton({
       return option;
     },
   );
+  const dialogPaymentOptions = paymentSourceOptions.flatMap<{
+    value: string;
+    label: string;
+    description: string;
+    disabled?: boolean;
+  }>((option) =>
+    option.value === "subscription" && paymentSource?.subscriptions?.length
+      ? paymentSource.subscriptions.map((credential) => ({
+          value: `subscription:${credential.id}`,
+          label: getCodexSubscriptionDisplayName(
+            credential,
+            paymentSource.subscriptions ?? [],
+          ),
+          description: credential.plan
+            ? `ChatGPT ${credential.plan} subscription`
+            : option.description,
+          disabled: option.disabled,
+        }))
+      : [option],
+  );
+  useEffect(() => {
+    if (!open) return;
+    setDraftPaymentChoice(
+      selectedPaymentSource === "subscription" && selectedSubscription
+        ? `subscription:${selectedSubscription.id}`
+        : selectedPaymentSource,
+    );
+  }, [open]);
 
   useEffect(() => {
     const wantsModels = open || codexModelRequestNonce > 0;
@@ -1113,8 +1142,25 @@ export function CodexConfigButton({
   };
 
   const saveConfig = () => {
-    const finalValues = normalizeConfigForSave(form.getFieldsValue());
+    const finalValues = normalizeConfigForSave({
+      ...form.getFieldsValue(),
+      paymentSource: draftPaymentChoice.startsWith("subscription:")
+        ? "subscription"
+        : (draftPaymentChoice as CodexPaymentSourcePreference),
+    });
     actions?.setCodexConfig?.(threadKey, finalValues);
+    if (accountId && projectId) {
+      const credentialId = draftPaymentChoice.startsWith("subscription:")
+        ? draftPaymentChoice.slice("subscription:".length)
+        : undefined;
+      writeCodexSubscriptionSelection({
+        accountId,
+        projectId,
+        threadKey,
+        credentialId,
+      });
+      setSelectedCredentialId(credentialId);
+    }
     setTimeout(() => {
       setOpen(false);
     }, 1);
@@ -1592,6 +1638,33 @@ export function CodexConfigButton({
               ></Button>
             </Tooltip>
           </>
+        ) : compact === "mobile-composer" ? (
+          <Button
+            aria-label={`Agent settings: ${displayedModel}, ${displayedReasoning}, ${sourceShortLabel}`}
+            aria-haspopup="dialog"
+            size="small"
+            title={`${displayedModel} · ${displayedReasoning} · ${sourceShortLabel}`}
+            type="text"
+            onClick={() => setOpen(true)}
+            style={{
+              color: paymentNeedsAttention ? UI_COLORS.danger : undefined,
+              minWidth: 0,
+              maxWidth: "100%",
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {displayedModel} · {displayedReasoning} · {sourceShortLabel}
+            </span>
+          </Button>
         ) : compact ? (
           <Button
             className={
@@ -1924,7 +1997,14 @@ export function CodexConfigButton({
         onOk={onSave}
         onCancel={() => setOpen(false)}
         width={680}
-        styles={{ body: { background: UI_COLORS.surface, paddingTop: 8 } }}
+        styles={{
+          body: {
+            background: UI_COLORS.surface,
+            maxHeight: "calc(100dvh - 220px)",
+            overflowY: "auto",
+            paddingTop: 8,
+          },
+        }}
       >
         <Form form={form} layout="vertical">
           <Space orientation="vertical" style={{ width: "100%" }} size={10}>
@@ -1996,20 +2076,27 @@ export function CodexConfigButton({
                       Payment source
                     </SectionTitle>
                   }
-                  name="paymentSource"
                   style={formItemStyle}
                 >
                   <Select
                     aria-label="Payment source"
-                    options={paymentSourceOptions}
+                    value={draftPaymentChoice}
+                    options={dialogPaymentOptions}
                     optionRender={(option) =>
                       renderOptionWithDescription({
                         title: `${option.data.label}`,
                         description: option.data.description,
                       })
                     }
-                    onChange={(next: CodexPaymentSourcePreference) => {
-                      form.setFieldsValue(paymentSourcePatch(next));
+                    onChange={(next: string) => {
+                      setDraftPaymentChoice(next);
+                      form.setFieldsValue(
+                        paymentSourcePatch(
+                          next.startsWith("subscription:")
+                            ? "subscription"
+                            : (next as CodexPaymentSourcePreference),
+                        ),
+                      );
                     }}
                   />
                 </Form.Item>

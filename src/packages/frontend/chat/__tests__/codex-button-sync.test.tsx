@@ -118,6 +118,7 @@ jest.mock("antd", () => {
     Radio,
     Select: ({
       onChange,
+      options,
       placeholder,
       value,
       "aria-label": ariaLabel,
@@ -126,8 +127,20 @@ jest.mock("antd", () => {
         mockModelSelectOnChange = onChange;
       }
       return ariaLabel ? (
-        <select aria-label={ariaLabel} defaultValue="">
-          <option value="">{String(value ?? "")}</option>
+        <select
+          aria-label={ariaLabel}
+          value={String(value ?? "")}
+          onChange={(event) => onChange?.(event.target.value)}
+        >
+          {options?.map((option: any) => (
+            <option
+              key={option.value}
+              value={option.value}
+              disabled={option.disabled}
+            >
+              {option.label}
+            </option>
+          ))}
         </select>
       ) : (
         <div>{String(value ?? "")}</div>
@@ -304,6 +317,58 @@ describe("CodexConfigButton", () => {
     expect(
       screen.getByRole("combobox", { name: "Payment source" }),
     ).toBeTruthy();
+  });
+
+  it("shows payment on the mobile composer and saves a specific subscription", async () => {
+    const user = userEvent.setup();
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+    render(
+      <CodexConfigButton
+        compact="mobile-composer"
+        threadKey="thread-mobile"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={actions}
+        threadConfig={{ model: "gpt-6-astra", reasoning: "medium" }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          credentialId: "credential-one",
+          subscriptions: [
+            { id: "credential-one", label: "Personal" },
+            { id: "credential-two", label: "Work" },
+          ],
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+    const trigger = await screen.findByRole("button", {
+      name: /Agent settings: gpt-6-astra, medium, Personal/i,
+    });
+    await user.click(trigger);
+    const payment = screen.getByRole("combobox", { name: "Payment source" });
+    expect(screen.getByRole("option", { name: "Personal" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Work" })).toBeTruthy();
+    await user.selectOptions(payment, "subscription:credential-two");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(actions.setCodexConfig).not.toHaveBeenCalled();
+
+    await user.click(trigger);
+    expect((payment as HTMLSelectElement).value).not.toBe(
+      "subscription:credential-two",
+    );
+    await user.selectOptions(payment, "subscription:credential-two");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(actions.setCodexConfig).toHaveBeenCalledWith(
+      "thread-mobile",
+      expect.objectContaining({ paymentSource: "subscription" }),
+    );
   });
 
   it("offers direct runtime controls in the composer rail", async () => {
