@@ -11,6 +11,7 @@
 
 import { isEmpty } from "lodash";
 
+import { hasSiteFundedCodexPrice } from "@cocalc/util/ai/site-funded-codex";
 import { EMAIL_LANE_BACKENDS } from "@cocalc/util/notification-email";
 import {
   expire_time,
@@ -1030,8 +1031,8 @@ export const EXTRAS: SettingsExtras = {
   site_funded_codex_model: {
     name: "Funded Codex Model",
     desc: "Exact model permitted for site-funded turns. Models without a verified funded price fail closed.",
-    default: "gpt-5.6-luna",
-    valid: (value) => value === "gpt-5.6-luna",
+    default: "gpt-6-luna",
+    valid: hasSiteFundedCodexPrice,
     to_val: to_trimmed_str,
     tags: ["AI", "OpenAI", "Commercialization"],
     group: "AI & Agents",

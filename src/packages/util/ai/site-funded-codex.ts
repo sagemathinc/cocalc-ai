@@ -7,7 +7,7 @@ import Decimal from "decimal.js-light";
 
 export const MICROUSD_PER_USD = 1_000_000;
 export const SITE_FUNDED_CODEX_POLICY_VERSION = 7;
-export const SITE_FUNDED_CODEX_PRICE_VERSION = "openai-2026-07-30";
+export const SITE_FUNDED_CODEX_PRICE_VERSION = "openai-2026-09-22";
 // Provider requests can contain base64 images, so HTTP bytes do not map to
 // context tokens. Keep an independent host-memory safety limit instead.
 export const SITE_FUNDED_CODEX_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
@@ -32,7 +32,7 @@ export type SiteFundedCodexPolicy = {
 
 export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   version: SITE_FUNDED_CODEX_POLICY_VERSION,
-  model: "gpt-5.6-luna",
+  model: "gpt-6-luna",
   reasoning: "medium",
   serviceTier: "standard",
   // Explicit membership entitlements may raise this. Keep the site-funded
@@ -65,8 +65,8 @@ export type SiteFundedCodexPrice = {
   longContextOutputMultiplier: string;
 };
 
-const LUNA_PRICE: SiteFundedCodexPrice = {
-  version: SITE_FUNDED_CODEX_PRICE_VERSION,
+const GPT_5_6_LUNA_PRICE: SiteFundedCodexPrice = {
+  version: "openai-2026-07-30",
   provider: "openai",
   model: "gpt-5.6-luna",
   effectiveAt: "2026-07-30T00:00:00.000Z",
@@ -81,9 +81,30 @@ const LUNA_PRICE: SiteFundedCodexPrice = {
   longContextOutputMultiplier: "1.5",
 };
 
+const GPT_6_LUNA_PRICE: SiteFundedCodexPrice = {
+  version: SITE_FUNDED_CODEX_PRICE_VERSION,
+  provider: "openai",
+  model: "gpt-6-luna",
+  effectiveAt: "2026-09-22T00:00:00.000Z",
+  sourceUrl: "https://developers.openai.com/api/docs/models/gpt-6-luna",
+  verifiedAt: "2026-09-23T00:00:00.000Z",
+  inputUsdPerMillion: "0.10",
+  cachedInputUsdPerMillion: "0.01",
+  cacheWriteUsdPerMillion: "0.125",
+  outputUsdPerMillion: "0.50",
+  longContextThresholdTokens: 272_000,
+  longContextInputMultiplier: "2",
+  longContextOutputMultiplier: "1.5",
+};
+
 const PRICE_CATALOG = new Map<string, SiteFundedCodexPrice>([
-  [LUNA_PRICE.model, LUNA_PRICE],
+  [GPT_5_6_LUNA_PRICE.model, GPT_5_6_LUNA_PRICE],
+  [GPT_6_LUNA_PRICE.model, GPT_6_LUNA_PRICE],
 ]);
+
+export function hasSiteFundedCodexPrice(model: string): boolean {
+  return PRICE_CATALOG.has(`${model ?? ""}`.trim());
+}
 
 export type SiteFundedCodexRequestUsage = {
   inputTokens: number;
