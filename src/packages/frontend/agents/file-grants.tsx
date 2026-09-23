@@ -188,7 +188,7 @@ function FileGrantsContents({
           <Form.Item
             label="Readable paths"
             htmlFor="file-grant-roots"
-            extra="One project-home-relative file or directory per line. Use . for the entire project home."
+            extra="One literal project-home-relative file or directory per line. Directories include their full tree. Use . for the project home; snapshots, SSH files, and CoCalc runtime credentials always stay excluded."
           >
             <Input.TextArea
               id="file-grant-roots"
@@ -285,7 +285,10 @@ function FileGrantsContents({
         <Typography.Paragraph type="secondary">
           This is ordinary filesystem access within the listed roots. Files may
           change concurrently because project processes and collaborators can
-          modify the target filesystem.
+          modify the target filesystem. CoCalc records grant configuration and
+          revocation, but this initial version does not provide a complete
+          per-file activity log or identify which source-project process used
+          the shared runtime credential.
         </Typography.Paragraph>
       </KeyboardBoundary>
     </Modal>

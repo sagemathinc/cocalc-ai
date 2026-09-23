@@ -111,6 +111,45 @@ describe("viewer read policy path matching", () => {
     );
   });
 
+  it("supports literal prefix rules without interpreting path metacharacters", () => {
+    const policy = {
+      rules: [
+        {
+          action: "include" as const,
+          path: "data/*/raw",
+          match: "prefix" as const,
+        },
+      ],
+    };
+    expect(
+      viewerReadPolicyAllowsPath({ policy, path: "data/*/raw/a.csv" }),
+    ).toBe(true);
+    expect(
+      viewerReadPolicyAllowsPath({ policy, path: "data/run/raw/a.csv" }),
+    ).toBe(false);
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "data" })).toBe(
+      true,
+    );
+  });
+
+  it("lets literal prefix exclusions override whole-home access", () => {
+    const policy = {
+      rules: [
+        { action: "include" as const, path: ".", match: "prefix" as const },
+        {
+          action: "exclude" as const,
+          path: ".ssh",
+          match: "prefix" as const,
+        },
+      ],
+    };
+    expect(viewerReadPolicyAllowsPath({ policy, path: "docs/a" })).toBe(true);
+    expect(viewerReadPolicyAllowsPath({ policy, path: ".ssh" })).toBe(false);
+    expect(
+      viewerReadPolicyAllowsPath({ policy, path: ".ssh/id_ed25519" }),
+    ).toBe(false);
+  });
+
   it("rejects paths that normalize above the project root", () => {
     const policy = {
       rules: [{ action: "include" as const, path: "." }],

@@ -34,11 +34,25 @@ describe("agent file grant protocol", () => {
       normalizeAgentFileGrantRoots(["docs", "/home/user/docs/api/", "src"]),
     ).toEqual(["docs", "src"]);
     expect(normalizeAgentFileGrantRoots([".", "private"])).toEqual([""]);
+    expect(normalizeAgentFileGrantRoots(["data/*/raw"])).toEqual([
+      "data/*/raw",
+    ]);
   });
 
   it.each(["../secret", "/tmp/secret", "docs/../../secret"])(
     "rejects escaping root %s",
     (root) => expect(() => normalizeAgentFileGrantRoots([root])).toThrow(),
+  );
+
+  it.each([
+    ".snapshots",
+    ".snapshots/old/secret",
+    "/home/user/.ssh/id_ed25519",
+    ".local/share/cocalc/runtime/token",
+  ])("rejects protected project namespace root %s", (root) =>
+    expect(() => normalizeAgentFileGrantRoots([root])).toThrow(
+      "protected project namespace",
+    ),
   );
 
   it("requires prepared grant metadata to match every subject binding", () => {

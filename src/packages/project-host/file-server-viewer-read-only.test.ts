@@ -267,6 +267,28 @@ describe("viewer read-only filesystem boundary", () => {
     ).rejects.toMatchObject({ code: "EACCES" });
   });
 
+  it("enforces mandatory prefix exclusions through canonical aliases", async () => {
+    const fs = mockFilesystem({
+      canonicalSyncIdentityPath: jest.fn(async (path: string) =>
+        path === "docs/credential-link" ? "/home/user/.ssh/id_ed25519" : path,
+      ),
+    });
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: {
+        rules: [
+          { action: "include", path: ".", match: "prefix" },
+          { action: "exclude", path: ".ssh", match: "prefix" },
+        ],
+      },
+    });
+
+    await expect(
+      viewerFs.readFile("docs/credential-link"),
+    ).rejects.toMatchObject({ code: "EACCES" });
+    expect(fs.readFile).not.toHaveBeenCalled();
+  });
+
   it("rejects recursive directory listings", async () => {
     const fs = mockFilesystem();
     const viewerFs = createViewerReadOnlyFilesystem({

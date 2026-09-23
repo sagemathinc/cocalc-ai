@@ -5,6 +5,7 @@
 
 import { isValidUUID } from "@cocalc/util/misc";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import { PROJECT_VIEWER_SENSITIVE_PATHS } from "@cocalc/util/project-access";
 
 export const AGENT_FILE_SERVICE = "fs-agent";
 export const AGENT_FILE_GRANT_MODE = "read" as const;
@@ -64,6 +65,14 @@ export function normalizeAgentFileGrantRoot(value: unknown): string {
     relative.length > 1024
   ) {
     throw new Error("grant root must be a path inside the project home");
+  }
+  if (
+    PROJECT_VIEWER_SENSITIVE_PATHS.some(
+      (sensitive) =>
+        relative === sensitive || relative.startsWith(`${sensitive}/`),
+    )
+  ) {
+    throw new Error("grant root is inside a protected project namespace");
   }
   return relative;
 }

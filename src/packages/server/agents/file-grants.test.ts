@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { viewerReadPolicyAllowsPath } from "@cocalc/util/project-access";
 
 const mockStore = {
   get: jest.fn(),
@@ -105,7 +106,7 @@ describe("agent file grants", () => {
       issued_at: new Date(),
     });
     mockStore.query.mockResolvedValue({
-      rows: [{ roots: ["docs", "README.md"] }],
+      rows: [{ roots: ["docs/*", "README.md"] }],
     });
 
     await expect(
@@ -121,10 +122,15 @@ describe("agent file grants", () => {
     ).resolves.toEqual({
       read_policy: {
         rules: [
-          { action: "include", path: "docs" },
-          { action: "include", path: "docs/**" },
-          { action: "include", path: "README.md" },
-          { action: "include", path: "README.md/**" },
+          { action: "include", path: "docs/*", match: "prefix" },
+          { action: "include", path: "README.md", match: "prefix" },
+          { action: "exclude", path: ".snapshots", match: "prefix" },
+          { action: "exclude", path: ".ssh", match: "prefix" },
+          {
+            action: "exclude",
+            path: ".local/share/cocalc",
+            match: "prefix",
+          },
         ],
       },
     });
@@ -155,6 +161,38 @@ describe("agent file grants", () => {
         run_id,
       }),
     ).rejects.toThrow("unavailable or revoked");
+  });
+
+  test("whole-home grants retain mandatory sensitive namespace exclusions", async () => {
+    mockStore.activeRun.mockResolvedValue({
+      account_id,
+      project_id: source_project_id,
+      issued_at: new Date(),
+    });
+    mockStore.query.mockResolvedValue({ rows: [{ roots: [""] }] });
+
+    const { read_policy } = await authorizeFileGrantReadLocal({
+      account_id,
+      host_id,
+      source_project_id,
+      target_project_id,
+      grant_id: randomUUID(),
+      agent_id,
+      run_id,
+    });
+
+    expect(
+      viewerReadPolicyAllowsPath({ policy: read_policy, path: "README.md" }),
+    ).toBe(true);
+    for (const path of [
+      ".snapshots/old/secret",
+      ".ssh/id_ed25519",
+      ".local/share/cocalc/runtime/token",
+    ]) {
+      expect(viewerReadPolicyAllowsPath({ policy: read_policy, path })).toBe(
+        false,
+      );
+    }
   });
 
   test("rejects a run bound to another account or source project", async () => {

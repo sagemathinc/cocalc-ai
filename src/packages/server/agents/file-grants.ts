@@ -12,7 +12,10 @@ import {
   type AgentFileGrant,
 } from "@cocalc/conat/agents/file-grants";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
-import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
+import {
+  PROJECT_VIEWER_SENSITIVE_PATHS,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 import { withAgentIdentityOwner } from "./identity-routing";
 import { agentStore } from "./store";
 import { assertActor, assertAgent, assertRun } from "./access";
@@ -181,14 +184,18 @@ export async function authorizeFileGrantReadLocal(opts: {
   const roots = normalizeAgentFileGrantRoots(rows[0].roots);
   return {
     read_policy: {
-      rules: roots.flatMap((root) =>
-        root
-          ? [
-              { action: "include" as const, path: root },
-              { action: "include" as const, path: `${root}/**` },
-            ]
-          : [{ action: "include" as const, path: "." }],
-      ),
+      rules: [
+        ...roots.map((root) => ({
+          action: "include" as const,
+          path: root || ".",
+          match: "prefix" as const,
+        })),
+        ...PROJECT_VIEWER_SENSITIVE_PATHS.map((path) => ({
+          action: "exclude" as const,
+          path,
+          match: "prefix" as const,
+        })),
+      ],
     },
   };
 }

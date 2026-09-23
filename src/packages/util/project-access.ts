@@ -8,10 +8,14 @@ export const PROJECT_USER_ROLES = ["owner", "collaborator", "viewer"] as const;
 export type ProjectUserRole = (typeof PROJECT_USER_ROLES)[number];
 export type ProjectAccessRole = ProjectUserRole | "admin" | "none";
 export type ProjectViewerReadRuleAction = "include" | "exclude";
+export type ProjectViewerReadRuleMatch = "glob" | "prefix";
 
 export interface ProjectViewerReadRule {
   action: ProjectViewerReadRuleAction;
   path: string;
+  // Existing policies default to glob matching. Prefix rules treat the path
+  // literally and match that path plus its descendants.
+  match?: ProjectViewerReadRuleMatch;
 }
 
 export interface ProjectViewerReadPolicy {
@@ -44,16 +48,20 @@ export interface ProjectAccess {
   capabilities: ProjectAccessCapabilities;
 }
 
+export const PROJECT_VIEWER_SENSITIVE_PATHS = [
+  ".snapshots",
+  ".ssh",
+  ".local/share/cocalc",
+] as const;
+
 export const DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY: ProjectViewerReadPolicy =
   {
     rules: [
       { action: "include", path: "." },
-      { action: "exclude", path: ".snapshots" },
-      { action: "exclude", path: ".snapshots/**" },
-      { action: "exclude", path: ".ssh" },
-      { action: "exclude", path: ".ssh/**" },
-      { action: "exclude", path: ".local/share/cocalc" },
-      { action: "exclude", path: ".local/share/cocalc/**" },
+      ...PROJECT_VIEWER_SENSITIVE_PATHS.flatMap((path) => [
+        { action: "exclude" as const, path },
+        { action: "exclude" as const, path: `${path}/**` },
+      ]),
     ],
   };
 
@@ -213,13 +221,13 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 function viewerReadRuleMatches({
-  rulePath,
+  rule,
   path,
 }: {
-  rulePath: string;
+  rule: ProjectViewerReadRule;
   path: string;
 }): boolean {
-  const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
+  const normalizedRulePath = normalizeProjectViewerPolicyPath(rule.path);
   if (normalizedRulePath == null) {
     return false;
   }
@@ -228,6 +236,9 @@ function viewerReadRuleMatches({
   }
   if (path === normalizedRulePath) {
     return true;
+  }
+  if (rule.match === "prefix") {
+    return path.startsWith(`${normalizedRulePath}/`);
   }
   if (normalizedRulePath.endsWith("/**")) {
     const directory = normalizedRulePath.slice(0, -3);
@@ -252,7 +263,7 @@ export function viewerReadPolicyAllowsPath({
     if (rule?.action !== "include" && rule?.action !== "exclude") {
       continue;
     }
-    if (!viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+    if (!viewerReadRuleMatches({ rule, path: normalizedPath })) {
       continue;
     }
     if (rule.action === "exclude") {
@@ -271,13 +282,13 @@ function firstGlobIndex(path: string): number {
 }
 
 function viewerIncludeRuleMayMatchDescendant({
-  rulePath,
+  rule,
   path,
 }: {
-  rulePath: string;
+  rule: ProjectViewerReadRule;
   path: string;
 }): boolean {
-  const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
+  const normalizedRulePath = normalizeProjectViewerPolicyPath(rule.path);
   if (normalizedRulePath == null) {
     return false;
   }
@@ -292,6 +303,9 @@ function viewerIncludeRuleMayMatchDescendant({
     normalizedRulePath.startsWith(`${path}/`)
   ) {
     return true;
+  }
+  if (rule.match === "prefix") {
+    return false;
   }
   const globIndex = firstGlobIndex(normalizedRulePath);
   if (globIndex < 0) {
@@ -318,7 +332,7 @@ export function viewerReadPolicyMayAllowDescendant({
     if (rule?.action !== "exclude") {
       continue;
     }
-    if (viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+    if (viewerReadRuleMatches({ rule, path: normalizedPath })) {
       return false;
     }
   }
@@ -326,7 +340,7 @@ export function viewerReadPolicyMayAllowDescendant({
     (rule) =>
       rule?.action === "include" &&
       viewerIncludeRuleMayMatchDescendant({
-        rulePath: rule.path,
+        rule,
         path: normalizedPath,
       }),
   );

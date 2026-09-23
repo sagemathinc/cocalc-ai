@@ -939,12 +939,23 @@ may finish.
 
 Path enforcement reuses the project-host viewer filesystem sandbox and read-policy
 implementation, including realpath/symlink checks and read-only method exposure.
-This slice intentionally has no write, execution, watch, archive, history or
-snapshot operations. The configuration is persistent, but usable authority exists
-only during a matching active run. Because the identity credential is present in
-the source project runtime, source-project processes and collaborators may use the
-grant while that run is active. The UI states this directly; this is useful
-shared-project authority, not per-process isolation.
+Selected roots use literal-prefix semantics: a directory grants its tree, while
+characters such as `*` in a legal filename are not interpreted as policy syntax.
+Mandatory canonical-path exclusions keep `.snapshots`, `.ssh`, and
+`.local/share/cocalc` unavailable even under a whole-home grant, and roots inside
+those namespaces are rejected. This slice intentionally has no write, execution,
+watch, archive, history or snapshot operations. The configuration is persistent,
+but usable authority exists only during a matching active run. Because the identity
+credential is present in the source project runtime, source-project processes and
+collaborators may use the grant while that run is active. The UI states this
+directly; this is useful shared-project authority, not per-process isolation.
+Attribution identifies the human, stable agent and run capability, not the specific
+same-UID process or collaborator that exercised it.
+
+The initial slice records grant configuration and revocation, but does not claim a
+complete durable per-file access log or per-process attribution. Add privacy-aware
+allow/deny and aggregate byte accounting before presenting detailed activity as an
+audit trail; never log file contents or bearer credentials.
 
 The current implementation is a native-agent slice. External agent installations
 cannot request these project-run grants. A future ACP adapter should consume the
@@ -957,7 +968,7 @@ currently has appropriate collaborator access to. Select whole project files or
 explicit roots, then read or read/write. No automatic access to all current or
 future projects; no discovery of inaccessible project names.
 
-Read includes bounded listing, stat, file reads and explicitly supported search.
+Read includes listing, stat, file reads and explicitly supported search.
 Read/write includes create/update, mkdir, rename/move and delete within the roots;
 make deletion visible in the summary. It excludes execution, terminals, secrets
 APIs, project settings, collaborators, public sharing and lifecycle administration.
