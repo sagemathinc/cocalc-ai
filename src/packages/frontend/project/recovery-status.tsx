@@ -116,8 +116,8 @@ export function ProjectRecoveryStatus({
     type = "info";
   } else if (unknown) {
     title = `${label}: current protection status unknown`;
-    description = `Latest confirmed recovery point: ${formatted(latest)}. Host or maintenance reporting is stale.`;
-    type = "warning";
+    description = `Latest confirmed recovery point: ${formatted(latest)}. Host or maintenance reporting is stale.${overdue ? ` Scheduled recovery point was due ${formatted(dueAt)}.` : ""}`;
+    type = critical ? "error" : "warning";
   } else if (overdue) {
     title = `${label}: scheduled recovery point overdue`;
     description = `Due ${formatted(dueAt)}. Latest confirmed: ${formatted(latest)}.${reason ? ` ${reason}` : ""}`;

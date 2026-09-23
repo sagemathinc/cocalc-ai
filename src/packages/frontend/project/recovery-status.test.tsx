@@ -77,6 +77,30 @@ it("shows unknown status when the host has stopped reporting", async () => {
   ).toBeVisible();
 });
 
+it("shows overdue recovery debt even when the host status is unknown", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: "2026-09-20T00:00:00.000Z",
+    last_changed: "2026-09-22T00:00:00.000Z",
+    last_backup: null,
+    snapshot_due_at: "2026-09-22T00:00:00.000Z",
+    backup_due_at: null,
+    snapshot_disabled: false,
+    backup_disabled: false,
+  });
+  const { container } = render(
+    <ProjectRecoveryStatus project_id="project-1" kind="snapshot" />,
+  );
+  expect(
+    await screen.findByText(
+      "Local snapshots: current protection status unknown",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/Scheduled recovery point was due/)).toBeVisible();
+  expect(container.querySelector('[aria-live="assertive"]')).not.toBeNull();
+});
+
 it("does not claim protection when unchanged content has no recovery point", async () => {
   getRecoveryStatus.mockResolvedValue({
     project_id: "project-1",
