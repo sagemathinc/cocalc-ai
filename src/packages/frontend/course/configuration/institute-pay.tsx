@@ -29,6 +29,7 @@ import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import {
   getMembershipPackageQuote,
   getMembershipPackages,
+  linkCourseMembershipPackage,
   isPurchaseAllowed,
   processPaymentIntents,
   purchaseMembershipPackage,
@@ -45,6 +46,7 @@ import type { LineItem } from "@cocalc/util/stripe/types";
 import {
   getCourseMembershipPackage,
   isCourseMembershipPackageForProject,
+  isMembershipPackageCurrentlyActive,
 } from "../membership-packages";
 
 const { Paragraph, Text } = Typography;
@@ -75,17 +77,19 @@ export function InstitutePaySection({
   const [error, setError] = useState<string>("");
   const [packages, setPackages] = useState<MembershipPackageDetails[]>([]);
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
+  const [linking, setLinking] = useState(false);
+  const [linkedNotice, setLinkedNotice] = useState("");
+  const refreshButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (linkedNotice) refreshButton.current?.focus();
+  }, [linkedNotice]);
 
   async function refreshPackages() {
     setLoading(true);
     setError("");
     try {
       const next = await getMembershipPackages();
-      setPackages(
-        next.filter((membershipPackage) =>
-          isCourseMembershipPackageForProject(membershipPackage, project_id),
-        ),
-      );
+      setPackages(next);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -136,7 +140,11 @@ export function InstitutePaySection({
               <Icon name="shopping-cart" />{" "}
               {membershipPackage ? "Add seats..." : "Buy seats..."}
             </Button>
-            <Button onClick={refreshPackages} disabled={loading}>
+            <Button
+              ref={refreshButton}
+              onClick={refreshPackages}
+              disabled={loading}
+            >
               <Icon name="refresh" /> Refresh seats
             </Button>
             {onManageSeats && (
@@ -146,6 +154,51 @@ export function InstitutePaySection({
             )}
           </Space>
           {loading && <Spin />}
+          {linkedNotice && <Paragraph role="status">{linkedNotice}</Paragraph>}
+          {packages
+            .filter(
+              (pkg) =>
+                pkg.kind === "course" &&
+                isMembershipPackageCurrentlyActive(pkg) &&
+                pkg.membership_class === selectedTier?.id &&
+                !isCourseMembershipPackageForProject(pkg, project_id),
+            )
+            .map((pkg) => (
+              <Paragraph key={pkg.id}>
+                Existing package <Text code>{pkg.id}</Text>:{" "}
+                {pkg.available_seat_count} of {pkg.seat_count} seats available.
+                <Button
+                  disabled={loading || linking}
+                  aria-label={`Use existing package ${pkg.id}`}
+                  onClick={async () => {
+                    setLinking(true);
+                    setError("");
+                    try {
+                      await linkCourseMembershipPackage({
+                        package_id: pkg.id,
+                        course_project_id: project_id,
+                      });
+                      await refreshPackages();
+                      setLinkedNotice(
+                        "Package linked. Its seats and expiry are shared with the other linked courses.",
+                      );
+                    } catch (err) {
+                      setError(String(err));
+                    } finally {
+                      setLinking(false);
+                    }
+                  }}
+                >
+                  Use existing package
+                </Button>
+                <Text type="secondary">
+                  {" "}
+                  Shares the existing seat pool and expiry with its other
+                  courses; does not buy more seats or remove any existing course
+                  link.
+                </Text>
+              </Paragraph>
+            ))}
           {membershipPackage ? (
             <>
               <Space wrap style={{ marginBottom: "10px" }}>
