@@ -1,0 +1,9 @@
+{
+  "name": "@cocalc/managed-acp-harnesses",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned runtime dependencies for CoCalc managed ACP harness artifacts",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.79.0"
+  }
+}

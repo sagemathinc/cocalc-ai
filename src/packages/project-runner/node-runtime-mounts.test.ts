@@ -4,9 +4,11 @@ import {
   COCALC_LIB,
   COCALC_SRC,
   DEFAULT_PROJECT_TOOLS,
+  DEFAULT_MANAGED_HARNESSES,
   PROJECT_BUNDLE_BIN_PATH,
   PROJECT_BUNDLES_CURRENT_BIN_PATH,
   getCoCalcMounts,
+  MANAGED_HARNESSES_MOUNT_POINT,
   getNodeRuntimeMounts,
   projectBundleBinPathPrefix,
 } from "./run/mounts";
@@ -37,6 +39,14 @@ describe("getNodeRuntimeMounts", () => {
 });
 
 describe("getCoCalcMounts", () => {
+  it("mounts managed harnesses read-only through the caller", () => {
+    const mounts = getCoCalcMounts({}, (path) =>
+      [DEFAULT_MANAGED_HARNESSES].includes(path),
+    );
+    expect(mounts[DEFAULT_MANAGED_HARNESSES]).toBe(
+      MANAGED_HARNESSES_MOUNT_POINT,
+    );
+  });
   it("falls back to the canonical host tools path when env is absent", () => {
     const mounts = getCoCalcMounts(
       {},
