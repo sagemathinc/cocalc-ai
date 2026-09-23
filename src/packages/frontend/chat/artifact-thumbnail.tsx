@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
@@ -90,11 +90,7 @@ export default function ArtifactThumbnail({
 }) {
   if (imageBlob)
     return (
-      <ThumbnailImage
-        src={`${appBasePath}/blobs/theme-image.png?uuid=${encodeURIComponent(imageBlob)}`}
-        title={title}
-        size={size}
-      />
+      <ThumbnailImage src={blobImageUrl(imageBlob)} title={title} size={size} />
     );
   if (path && projectId)
     return (

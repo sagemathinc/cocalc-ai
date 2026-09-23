@@ -4,7 +4,7 @@ import { Button, Dropdown } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
 import type {
   ArtifactPublication,
@@ -41,7 +41,7 @@ export function ArtifactIdentity({
       >
         {theme?.image_blob ? (
           <img
-            src={`${appBasePath}/blobs/theme-image.png?uuid=${encodeURIComponent(theme.image_blob)}`}
+            src={blobImageUrl(theme.image_blob)}
             alt=""
             style={{
               width: 38,

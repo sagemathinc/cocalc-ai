@@ -290,7 +290,11 @@ test("grid tiles use catalog appearance and open the real appearance action", as
         ...entry(project_id.slice(2)),
         item: {
           ...entry(project_id.slice(2)).item,
-          appearance: { color: "#123456", accent_color: "#abcdef" },
+          appearance: {
+            color: "#123456",
+            accent_color: "#abcdef",
+            image_blob: "11111111-1111-4111-8111-111111111111",
+          },
         },
       },
     ],
@@ -315,6 +319,28 @@ test("grid tiles use catalog appearance and open the real appearance action", as
     border: "1px solid #123456",
     minHeight: "136px",
   });
+  expect(
+    screen
+      .getByRole("button", { name: "Open Result one from one" })
+      .querySelector("img"),
+  ).toHaveAttribute(
+    "src",
+    "/blobs/theme-image.png?uuid=11111111-1111-4111-8111-111111111111",
+  );
+  await user.click(screen.getByRole("button", { name: "List view" }));
+  expect(
+    screen
+      .getByRole("button", { name: "Open Result one from one" })
+      .closest("[role=listitem]"),
+  ).toHaveStyle({ borderLeft: "3px solid #123456" });
+  expect(
+    screen
+      .getByRole("button", { name: "Open Result one from one" })
+      .querySelector("img"),
+  ).toHaveAttribute(
+    "src",
+    "/blobs/theme-image.png?uuid=11111111-1111-4111-8111-111111111111",
+  );
   await user.click(
     screen.getByRole("button", { name: "More options for Result one" }),
   );

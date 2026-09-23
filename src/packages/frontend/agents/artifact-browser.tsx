@@ -13,7 +13,7 @@ import { Alert, Button, Checkbox, Dropdown, Empty, Input, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon, isIconName } from "@cocalc/frontend/components";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { blobImageUrl } from "@cocalc/frontend/components/theme-image-url";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -499,7 +499,7 @@ function AccountArtifactBrowser({
                             flexWrap: view === "grid" ? "nowrap" : "wrap",
                             flexDirection: view === "grid" ? "column" : "row",
                             minHeight: view === "grid" ? 136 : undefined,
-                            padding: view === "grid" ? 10 : "12px 0",
+                            padding: view === "grid" ? 10 : "12px 8px",
                             border:
                               view === "grid"
                                 ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
@@ -508,12 +508,15 @@ function AccountArtifactBrowser({
                               view === "grid"
                                 ? undefined
                                 : `1px solid ${UI_COLORS.border}`,
+                            borderLeft:
+                              view === "list" && appearance?.color
+                                ? `3px solid ${appearance.color}`
+                                : undefined,
                             borderRadius: view === "grid" ? 12 : undefined,
-                            background:
-                              view === "grid"
-                                ? appearance?.accent_color
-                                  ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} 12%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
-                                  : UI_COLORS.surface
+                            background: appearance?.accent_color
+                              ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} ${view === "grid" ? 12 : 6}%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
+                              : view === "grid"
+                                ? UI_COLORS.surface
                                 : undefined,
                           }}
                         >
@@ -542,65 +545,79 @@ function AccountArtifactBrowser({
                             onClick={() => void openResult(result)}
                           >
                             <span
-                              style={{ minWidth: 0, overflowWrap: "anywhere" }}
+                              style={{
+                                minWidth: 0,
+                                overflowWrap: "anywhere",
+                                display: view === "list" ? "flex" : undefined,
+                                alignItems: "center",
+                                gap: 12,
+                              }}
                             >
-                              {view === "grid" &&
-                                (appearance?.image_blob ? (
-                                  <img
-                                    src={`${appBasePath}/blobs/theme-image.png?uuid=${encodeURIComponent(appearance.image_blob)}`}
-                                    alt=""
-                                    style={{
-                                      display: "block",
-                                      width: 32,
-                                      height: 32,
-                                      objectFit: "cover",
-                                      borderRadius: 6,
-                                      margin: "0 auto 8px",
-                                    }}
-                                  />
-                                ) : (
-                                  <Icon
-                                    name={
-                                      isIconName(appearance?.icon)
-                                        ? appearance.icon
-                                        : "file"
-                                    }
-                                    style={{
-                                      display: "block",
-                                      fontSize: 30,
-                                      marginBottom: 8,
-                                      color:
-                                        appearance?.color ?? UI_COLORS.text,
-                                    }}
-                                  />
-                                ))}
-                              <strong
-                                style={{
-                                  display: "block",
-                                }}
-                              >
-                                {result.hit.artifact_title}
-                              </strong>
-                              {alias && (
-                                <span
+                              {appearance?.image_blob ? (
+                                <img
+                                  src={blobImageUrl(appearance.image_blob)}
+                                  alt=""
                                   style={{
                                     display: "block",
-                                    color: UI_COLORS.link,
+                                    width: view === "grid" ? 32 : 36,
+                                    height: view === "grid" ? 32 : 36,
+                                    objectFit: "cover",
+                                    borderRadius: 6,
+                                    margin:
+                                      view === "grid"
+                                        ? "0 auto 8px"
+                                        : undefined,
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              ) : (
+                                <Icon
+                                  name={
+                                    isIconName(appearance?.icon)
+                                      ? appearance.icon
+                                      : "file"
+                                  }
+                                  style={{
+                                    display: "block",
+                                    fontSize: view === "grid" ? 30 : 28,
+                                    marginBottom:
+                                      view === "grid" ? 8 : undefined,
+                                    color: appearance?.color ?? UI_COLORS.text,
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              )}
+                              <span style={{ minWidth: 0 }}>
+                                <strong
+                                  style={{
+                                    display: "block",
+                                  }}
+                                >
+                                  {result.hit.artifact_title}
+                                </strong>
+                                {alias && (
+                                  <span
+                                    style={{
+                                      display: "block",
+                                      color: UI_COLORS.link,
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    @{alias}
+                                  </span>
+                                )}
+                                <span
+                                  style={{
+                                    color: UI_COLORS.secondary,
                                     fontSize: 12,
                                   }}
                                 >
-                                  @{alias}
+                                  {projectTitle(
+                                    result.agent.endpoint.project_id,
+                                  )}{" "}
+                                  · @{result.agent.name} ·{" "}
+                                  {result.hit.artifact_kind}
                                 </span>
-                              )}
-                              <span
-                                style={{
-                                  color: UI_COLORS.secondary,
-                                  fontSize: 12,
-                                }}
-                              >
-                                {projectTitle(result.agent.endpoint.project_id)}{" "}
-                                · @{result.agent.name} ·{" "}
-                                {result.hit.artifact_kind}
                               </span>
                             </span>
                           </Button>
