@@ -36,6 +36,30 @@ cannot reach a service at the Mac's loopback address.
 The app supports a development-only HTTP exception for explicit local targets.
 Production profiles require HTTPS.
 
+## Standalone iPhone build
+
+Build a Release app with an embedded JavaScript bundle and install it on a
+paired iPhone from this directory:
+
+```bash
+COCALC_MOBILE_VARIANT=production pnpm exec expo prebuild --platform ios --no-install --clean
+COCALC_MOBILE_VARIANT=production pnpm exec expo run:ios --configuration Release --device <device-udid> --no-bundler
+```
+
+The production variant is named **CoCalc** and uses
+`com.sagemath.cocalc.mobile`; it installs beside **CoCalc Dev**
+(`com.sagemath.cocalc.mobile.dev`). A clean prebuild replaces the ignored local
+`ios/` directory, so run the dev variant's prebuild again before the next dev
+native build. Existing installed apps and their data are unaffected. The
+standalone app has its own secure storage, so sign in to a site again.
+
+The Release build embeds `main.jsbundle` in `CoCalc.app` and runs without a
+Metro connection. For a cold-launch check, stop the Metro servers, launch the
+CoCalc icon directly, then restore them for development. A local Release build
+signed for a paired device is a device-test artifact, not a TestFlight or App
+Store distribution build. Store distribution and wider device qualification
+remain separate release steps.
+
 Implementation status and remaining device/release qualification are tracked in
 [the mobile progress document](../../.agents/cocalc-mobile-progress-2026-09-21.md).
 The component tests mock native platform primitives; they do not establish
