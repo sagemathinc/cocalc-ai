@@ -46,7 +46,7 @@ const logger = getLogger("project-host:acp:harness-launcher");
 const QUALIFIED_HARNESS_ENTRY = "/opt/cocalc/acp/qualified-harness-entry.js";
 const QUALIFIED_HARNESS_HOST_ENTRY =
   process.env.COCALC_QUALIFIED_HARNESS_ENTRY ??
-  join(process.cwd(), "qualified-harness", "index.js");
+  join(__dirname, "..", "qualified-harness", "index.js");
 const CREDENTIAL_RELAY_MOUNT = "/run/cocalc/credential-relay";
 
 export function resolveHarnessCommand(

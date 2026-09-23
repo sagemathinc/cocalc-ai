@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   launchHarnessInProject as launch,
@@ -167,7 +168,7 @@ test("account credentials are exposed only through a revocable relay mount", asy
   const args = mockExec.mock.calls[0][1];
   expect(args).toContain("mount:/host-relay:/run/cocalc/credential-relay:true");
   expect(args).toContain(
-    `mount:${process.cwd()}/qualified-harness/index.js:/opt/cocalc/acp/qualified-harness-entry.js:true`,
+    `mount:${join(__dirname, "..", "qualified-harness", "index.js")}:/opt/cocalc/acp/qualified-harness-entry.js:true`,
   );
   expect(args).not.toContain("short-lived-token");
   expect(args.slice(-3)).toEqual(["claude-code", "0.79.0", "account-api-key"]);
