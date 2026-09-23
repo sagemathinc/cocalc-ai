@@ -226,6 +226,26 @@ describe("listHostProjectMaintenanceSchedules", () => {
     );
   });
 
+  it("filters a bounded event batch by project id and assigned host", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+      project_ids: ["proj-1", "proj-2"],
+      limit: 50,
+    });
+
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("project_id = ANY($4::uuid[])"),
+      ["host-1", null, 50, ["proj-1", "proj-2"]],
+    );
+  });
+
   it("uses the storage payer for priority and the owner for existing limits", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })

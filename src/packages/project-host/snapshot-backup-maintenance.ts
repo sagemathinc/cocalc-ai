@@ -28,6 +28,7 @@ import {
 } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
+import { onProjectChangeReported } from "./last-edited";
 import {
   listPendingMaintenanceReports,
   markMaintenanceReportDelivered,
@@ -45,6 +46,9 @@ const DEFAULT_PARALLELISM = 1;
 const DEFAULT_INITIAL_DELAY_MS = DEFAULT_SWEEP_MS;
 const DEFAULT_CANDIDATE_LIMIT = 250;
 const MAX_CANDIDATE_LIMIT = 500;
+const CHANGE_EVENT_BATCH_LIMIT = 50;
+const CHANGE_EVENT_DELAY_MS = 15_000;
+const CHANGE_EVENT_RETRY_MS = 60_000;
 const DEFAULT_STARVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARVATION_OVERRIDES_PER_SWEEP = 1;
 const MAX_STARVATION_OVERRIDES_PER_SWEEP = 4;
@@ -444,9 +448,13 @@ function retryAt(
 
 async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   hostId,
+  projectIds,
+  onFutureDue,
 }: {
   hostId: string;
-}) {
+  projectIds?: string[];
+  onFutureDue?: (projectId: string, at: number) => void;
+}): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
     admission?.mode === "enforce" &&
@@ -476,12 +484,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
       memory_psi_full_avg10: memoryDecision.pressureFullAvg10,
     });
-    return;
+    return false;
   }
   const client = getMasterConatClient();
   if (!client) {
     logger.debug("skipping maintenance sweep without master conat client");
-    return;
+    return false;
   }
   const statusClient = createHostStatusClient({
     client,
@@ -535,36 +543,64 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
     });
   }
-  const listing =
-    scheduleListing ??
-    (async () => {
-      const rows: HostProjectMaintenanceSchedule[] = [];
-      let cursor_project_id: string | undefined;
-      while (true) {
-        const page = await statusClient.listProjectMaintenanceSchedules({
-          host_id: hostId,
-          active_days: activeDays,
-          limit: candidateLimit,
-          ...(cursor_project_id ? { cursor_project_id } : {}),
-        });
-        rows.push(...page);
-        if (page.length < candidateLimit) break;
-        const next = page[page.length - 1]?.project_id;
-        if (!next || next <= (cursor_project_id ?? "")) {
-          throw new Error("maintenance project cursor did not advance");
+  const listing = projectIds
+    ? statusClient.listProjectMaintenanceSchedules({
+        host_id: hostId,
+        active_days: activeDays,
+        limit: Math.max(1, projectIds.length),
+        project_ids: projectIds,
+      })
+    : (scheduleListing ??
+      (async () => {
+        const rows: HostProjectMaintenanceSchedule[] = [];
+        let cursor_project_id: string | undefined;
+        while (true) {
+          const page = await statusClient.listProjectMaintenanceSchedules({
+            host_id: hostId,
+            active_days: activeDays,
+            limit: candidateLimit,
+            ...(cursor_project_id ? { cursor_project_id } : {}),
+          });
+          rows.push(...page);
+          if (page.length < candidateLimit) break;
+          const next = page[page.length - 1]?.project_id;
+          if (!next || next <= (cursor_project_id ?? "")) {
+            throw new Error("maintenance project cursor did not advance");
+          }
+          cursor_project_id = next;
         }
-        cursor_project_id = next;
-      }
-      return rows;
-    })();
-  scheduleListing = listing;
+        return rows;
+      })());
+  if (!projectIds) scheduleListing = listing;
   let rows: HostProjectMaintenanceSchedule[];
   try {
     rows = await listing;
   } finally {
-    if (scheduleListing === listing) scheduleListing = undefined;
+    if (!projectIds && scheduleListing === listing) scheduleListing = undefined;
   }
-  if (!rows.length) return;
+  if (!rows.length) return true;
+  const now = Date.now();
+  for (const row of rows) {
+    const snapshotSchedule = mergeSchedule(
+      DEFAULT_SNAPSHOT_COUNTS,
+      row.snapshots,
+    );
+    const backupSchedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
+    const snapshotDue = snapshotSchedule.disabled
+      ? undefined
+      : snapshotDueAt(row, snapshotSchedule);
+    const backupDue = backupSchedule.disabled
+      ? undefined
+      : backupDueAt(row, backupSchedule);
+    for (const [due, retry] of [
+      [snapshotDue, parseTimestampMs(row.snapshot_retry_at)],
+      [backupDue, parseTimestampMs(row.backup_retry_at)],
+    ]) {
+      if (due == null) continue;
+      const next = Math.max(due, retry ?? 0);
+      if (next > now) onFutureDue?.(row.project_id, next);
+    }
+  }
   const snapshotRows = orderProjectMaintenance(rows, (row) => {
     const due = snapshotDueAt(
       row,
@@ -647,6 +683,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 : outcome === "deferred"
                   ? "snapshot_not_created"
                   : undefined);
+          const nextRetry = retryAt(outcome, row.snapshot_failures ?? 0);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
             project_id,
@@ -678,7 +716,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 ? null
                 : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
-            retry_at: retryAt(outcome, row.snapshot_failures ?? 0),
+            retry_at: nextRetry,
             consecutive_failures:
               outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
           }).catch((err) =>
@@ -690,6 +728,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             err: `${err}`,
           });
+          const nextRetry = retryAt("failed", (row.snapshot_failures ?? 0) + 1);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
             project_id,
@@ -700,7 +740,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             reason: `${err}`,
             due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
-            retry_at: retryAt("failed", (row.snapshot_failures ?? 0) + 1),
+            retry_at: nextRetry,
             consecutive_failures: (row.snapshot_failures ?? 0) + 1,
           }).catch(() => {});
         } finally {
@@ -788,6 +828,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               ? "succeeded"
               : "skipped"
             : "deferred";
+          const nextRetry = retryAt(outcome, row.backup_failures ?? 0);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
             project_id,
@@ -798,7 +840,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             reason: result.reason,
             due_at: created ? null : new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
-            retry_at: retryAt(outcome, row.backup_failures ?? 0),
+            retry_at: nextRetry,
             consecutive_failures:
               outcome === "succeeded" ? 0 : (row.backup_failures ?? 0),
           }).catch((err) =>
@@ -810,6 +852,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             err: `${err}`,
           });
+          const nextRetry = retryAt("failed", (row.backup_failures ?? 0) + 1);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
           await report({
             host_id: hostId,
             project_id,
@@ -820,7 +864,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             reason: `${err}`,
             due_at: new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,
-            retry_at: retryAt("failed", (row.backup_failures ?? 0) + 1),
+            retry_at: nextRetry,
             consecutive_failures: (row.backup_failures ?? 0) + 1,
           }).catch(() => {});
         } finally {
@@ -832,14 +876,23 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     }
   };
   await Promise.all([snapshotLane(), backupLane()]);
+  return true;
 }
 
 export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   hostId,
+  projectIds,
+  onFutureDue,
 }: {
   hostId: string;
+  projectIds?: string[];
+  onFutureDue?: (projectId: string, at: number) => void;
 }) {
-  await runProjectSnapshotBackupMaintenanceSweepUnlocked({ hostId });
+  return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
+    hostId,
+    projectIds,
+    onFutureDue,
+  });
 }
 
 export function startProjectSnapshotBackupMaintenance({
@@ -860,17 +913,104 @@ export function startProjectSnapshotBackupMaintenance({
     DEFAULT_INITIAL_DELAY_MS,
   );
   let closed = false;
+  const changedProjects = new Set<string>();
+  const futureDue = new Map<string, number>();
+  let changedTimer: ReturnType<typeof setTimeout> | undefined;
+  let dueTimer: ReturnType<typeof setTimeout> | undefined;
+  let changedDrainRunning = false;
+  const scheduleChangedDrain = (delayMs: number) => {
+    if (closed || changedTimer || !changedProjects.size) return;
+    changedTimer = setTimeout(() => {
+      changedTimer = undefined;
+      void drainChangedProjects();
+    }, delayMs);
+    changedTimer.unref();
+  };
+  const rememberFutureDue = (projectId: string, at: number) => {
+    if (!Number.isFinite(at) || at <= Date.now()) return;
+    const previous = futureDue.get(projectId);
+    if (previous == null || at < previous) futureDue.set(projectId, at);
+  };
+  const scheduleFutureDue = () => {
+    clearTimeout(dueTimer);
+    dueTimer = undefined;
+    if (closed || !futureDue.size) return;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const due of futureDue.values()) earliest = Math.min(earliest, due);
+    dueTimer = setTimeout(
+      () => {
+        dueTimer = undefined;
+        const now = Date.now();
+        for (const [projectId, due] of futureDue) {
+          if (due > now) continue;
+          futureDue.delete(projectId);
+          changedProjects.add(projectId);
+        }
+        scheduleChangedDrain(0);
+        scheduleFutureDue();
+      },
+      Math.max(1, Math.min(sweepMs, earliest - Date.now())),
+    );
+    dueTimer.unref();
+  };
+  const drainChangedProjects = async () => {
+    if (closed || changedDrainRunning) return;
+    changedDrainRunning = true;
+    const projectIds = Array.from(changedProjects).slice(
+      0,
+      CHANGE_EVENT_BATCH_LIMIT,
+    );
+    for (const projectId of projectIds) changedProjects.delete(projectId);
+    for (const projectId of projectIds) futureDue.delete(projectId);
+    const laneBusy = snapshotLaneRunning || backupLaneRunning;
+    let needsRetry = laneBusy;
+    try {
+      const reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId,
+        projectIds,
+        onFutureDue: rememberFutureDue,
+      });
+      if (!reconciled || laneBusy) {
+        needsRetry = true;
+        for (const projectId of projectIds) changedProjects.add(projectId);
+      }
+    } catch (err) {
+      needsRetry = true;
+      for (const projectId of projectIds) changedProjects.add(projectId);
+      logger.warn("changed-project maintenance batch failed", {
+        hostId,
+        count: projectIds.length,
+        err: `${err}`,
+      });
+    } finally {
+      changedDrainRunning = false;
+      scheduleFutureDue();
+      scheduleChangedDrain(
+        needsRetry ? CHANGE_EVENT_RETRY_MS : CHANGE_EVENT_DELAY_MS,
+      );
+    }
+  };
+  const unsubscribeChanges = onProjectChangeReported((projectId) => {
+    if (closed) return;
+    changedProjects.add(projectId);
+    scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
+  });
   const runSweep = async () => {
     if (closed) {
       return;
     }
     try {
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId });
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId,
+        onFutureDue: rememberFutureDue,
+      });
     } catch (err) {
       logger.warn("snapshot/backup maintenance sweep failed", {
         hostId,
         err: `${err}`,
       });
+    } finally {
+      scheduleFutureDue();
     }
   };
   logger.info("snapshot/backup maintenance scheduled", {
@@ -897,6 +1037,9 @@ export function startProjectSnapshotBackupMaintenance({
   let repeatingTimer: ReturnType<typeof setInterval> | undefined;
   return () => {
     closed = true;
+    unsubscribeChanges();
+    clearTimeout(changedTimer);
+    clearTimeout(dueTimer);
     clearTimeout(initialTimer);
     if (repeatingTimer) {
       clearInterval(repeatingTimer);

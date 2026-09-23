@@ -9,6 +9,7 @@ const reportProjectMaintenanceMock = jest.fn();
 const listPendingMaintenanceReportsMock = jest.fn();
 const saveMaintenanceReportMock = jest.fn();
 const markMaintenanceReportDeliveredMock = jest.fn();
+const onProjectChangeReportedMock = jest.fn();
 
 jest.mock("./sqlite/maintenance-ledger", () => ({
   listPendingMaintenanceReports: (...args: any[]) =>
@@ -16,6 +17,11 @@ jest.mock("./sqlite/maintenance-ledger", () => ({
   saveMaintenanceReport: (...args: any[]) => saveMaintenanceReportMock(...args),
   markMaintenanceReportDelivered: (...args: any[]) =>
     markMaintenanceReportDeliveredMock(...args),
+}));
+
+jest.mock("./last-edited", () => ({
+  onProjectChangeReported: (listener: (project_id: string) => void) =>
+    onProjectChangeReportedMock(listener),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -99,6 +105,8 @@ describe("snapshot-backup-maintenance", () => {
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
     listPendingMaintenanceReportsMock.mockReturnValue([]);
     releaseStorageOperationMock.mockReset();
+    onProjectChangeReportedMock.mockReset();
+    onProjectChangeReportedMock.mockImplementation(() => jest.fn());
     admitStorageOperationMock.mockImplementation(
       ({ operation_kind, project_id, allow_starvation_override }) => ({
         admitted: true,
@@ -462,6 +470,68 @@ describe("snapshot-backup-maintenance", () => {
     expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
     expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
     expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches confirmed project changes in bounded event batches", async () => {
+    jest.useFakeTimers();
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([]);
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+    const notifyChanged = onProjectChangeReportedMock.mock.calls[0][0];
+    for (let i = 0; i < 60; i++) notifyChanged(`project-${i}`);
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        host_id: "host-1",
+        limit: 50,
+        project_ids: Array.from({ length: 50 }, (_, i) => `project-${i}`),
+      }),
+    );
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(
+      listProjectMaintenanceSchedulesMock.mock.calls[1][0].project_ids,
+    ).toEqual(Array.from({ length: 10 }, (_, i) => `project-${i + 50}`));
+    stop();
+  });
+
+  it("dispatches a known future due time before the reconciliation timer", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-10T22:00:00.000Z"));
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-future",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        last_snapshot: "2026-04-10T21:50:00.000Z",
+        last_snapshot_observed_at: "2026-04-10T22:00:00.000Z",
+        snapshots: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+        backups: { disabled: true },
+      },
+    ]);
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBeGreaterThan(1);
+
+    await jest.advanceTimersByTimeAsync(5 * 60_000 + 1_000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "proj-future" }),
+    );
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_ids: ["proj-future"] }),
+    );
+    stop();
   });
 
   it("reevaluates admission before snapshot and backup work", async () => {

@@ -17,6 +17,14 @@ const pendingProjectTouches = new Set<string>();
 const pendingProjectTouchAccounts = new Map<string, Set<string>>();
 const pendingProjectChanges = new Map<string, number | null>();
 const runningGeneration = new Map<string, number>();
+const projectChangeReportedListeners = new Set<(project_id: string) => void>();
+
+export function onProjectChangeReported(
+  listener: (project_id: string) => void,
+): () => void {
+  projectChangeReportedListeners.add(listener);
+  return () => projectChangeReportedListeners.delete(listener);
+}
 
 export async function touchProjectLastEdited(
   project_id: string,
@@ -111,6 +119,13 @@ export async function reportPendingProjectTouches(): Promise<void> {
         duration_ms: Date.now() - started,
       });
       pendingProjectChanges.delete(project_id);
+      for (const listener of projectChangeReportedListeners) {
+        try {
+          listener(project_id);
+        } catch (err) {
+          logger.warn("project change listener failed", { project_id, err });
+        }
+      }
     } catch (err) {
       recordProjectHostRpcTraffic({
         channel: "hub-api",

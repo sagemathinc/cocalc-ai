@@ -39,11 +39,13 @@ export async function listHostProjectMaintenanceSchedules({
   host_id,
   limit,
   cursor_project_id,
+  project_ids,
 }: {
   host_id: string;
   active_days?: number;
   limit?: number;
   cursor_project_id?: string;
+  project_ids?: string[];
 }): Promise<HostProjectMaintenanceSchedule[]> {
   if (!host_id) {
     throw Error("host_id is required");
@@ -66,6 +68,14 @@ export async function listHostProjectMaintenanceSchedules({
   );
   params.push(normalizedLimit);
   const limitParam = `$${params.length}`;
+  if (project_ids && project_ids.length > 100) {
+    throw Error("too many maintenance project ids");
+  }
+  let projectFilter = "";
+  if (project_ids) {
+    params.push(project_ids);
+    projectFilter = `AND project_id = ANY($${params.length}::uuid[])`;
+  }
   const { rows } = await getPool().query<{
     project_id: string;
     last_edited: Date | string | null;
@@ -147,6 +157,7 @@ export async function listHostProjectMaintenanceSchedules({
        AND provisioned IS TRUE
        AND deleted IS NOT TRUE
        AND ($2::uuid IS NULL OR project_id > $2::uuid)
+       ${projectFilter}
      ORDER BY project_id ASC
      LIMIT ${limitParam}`,
     params,
@@ -594,12 +605,14 @@ export async function initHostStatusService() {
         active_days,
         limit,
         cursor_project_id,
+        project_ids,
       }) {
         return await listHostProjectMaintenanceSchedules({
           host_id,
           active_days,
           limit,
           cursor_project_id,
+          project_ids,
         });
       },
       async reportProjectMaintenance(report) {

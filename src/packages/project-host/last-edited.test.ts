@@ -62,4 +62,21 @@ describe("project-host last edited queue", () => {
     await mod.reportPendingProjectTouches();
     expect(callHub).toHaveBeenCalledTimes(1);
   });
+
+  it("notifies maintenance only after the bay confirms a change", async () => {
+    const mod = await import("./last-edited");
+    const listener = jest.fn();
+    const unsubscribe = mod.onProjectChangeReported(listener);
+    mod.markProjectLastChanged("22222222-2222-4222-8222-222222222222", 4);
+    callHub.mockRejectedValueOnce(new Error("hub unavailable"));
+
+    await mod.reportPendingProjectTouches();
+    expect(listener).not.toHaveBeenCalled();
+
+    await mod.reportPendingProjectTouches();
+    expect(listener).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+    );
+    unsubscribe();
+  });
 });

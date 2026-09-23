@@ -1190,6 +1190,7 @@ export interface HostStatusApi {
     active_days?: number;
     limit?: number;
     cursor_project_id?: string;
+    project_ids?: string[];
   }) => Promise<HostProjectMaintenanceSchedule[]>;
   reportProjectMaintenance: (report: ProjectMaintenanceReport) => Promise<void>;
   registerOnPremTunnel: (
