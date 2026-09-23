@@ -41,8 +41,14 @@ it("uploads images to the authenticated home bay and composes an inline image", 
     json: async () => ({ uuid: "11111111-1111-4111-8111-111111111111" }),
   });
   global.fetch = fetchMock;
-  expect(
-    await uploadChatImage({
+  const append = jest.fn();
+  const originalFormData = global.FormData;
+  global.FormData = class {
+    append = append;
+  } as unknown as typeof FormData;
+  let attachment;
+  try {
+    attachment = await uploadChatImage({
       profileId: "profile",
       projectId: "project",
       asset: {
@@ -51,13 +57,24 @@ it("uploads images to the authenticated home bay and composes an inline image", 
         mimeType: "image/png",
         size: 4,
       },
-    }),
-  ).toEqual({
+    });
+  } finally {
+    global.FormData = originalFormData;
+  }
+  expect(attachment).toEqual({
     kind: "image",
     name: "my [photo].png",
     markdown:
       "![my \\[photo\\].png](https://example.org/cocalc/blobs/my__photo_.png?uuid=11111111-1111-4111-8111-111111111111)",
   });
+  const part = append.mock.calls[0]?.[1];
+  expect(part).toMatchObject({
+    name: "my__photo_.png",
+    type: "image/png",
+    bytes: expect.any(Function),
+  });
+  expect(part).not.toHaveProperty("uri");
+  await expect(part.bytes()).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
   expect(fetchMock).toHaveBeenCalledWith(
     "https://bay.example/cocalc/blobs?project_id=project",
     expect.objectContaining({

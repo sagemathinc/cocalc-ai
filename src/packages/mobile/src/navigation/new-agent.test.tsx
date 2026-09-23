@@ -1,6 +1,6 @@
 import React from "react";
 const { act, create } = require("react-test-renderer");
-import NewAgentScreen from "./new-agent";
+import NewAgentScreen from "../app/new-agent";
 import { router } from "expo-router";
 import { createNamedAgent } from "../agents/create";
 import { getActiveSiteSession } from "../cocalc/session-registry";

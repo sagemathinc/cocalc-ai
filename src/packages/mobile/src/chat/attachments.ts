@@ -82,14 +82,16 @@ export async function uploadChatImage({
 }): Promise<ChatAttachment> {
   assertSize(asset.size);
   const image = await normalizedImage(asset);
-  await localFile(image);
+  const file = await localFile(image);
   const session = await getActiveSiteSession(profileId);
   const filename = safeName(image.name);
   const body = new FormData();
+  // Expo's fetch converts FormData parts by calling bytes(); a React Native
+  // { uri, name, type } part is rejected by that converter.
   body.append("file", {
-    uri: image.uri,
     name: filename,
     type: image.mimeType ?? "image/jpeg",
+    bytes: () => file.bytes(),
   } as unknown as Blob);
   const uploadBase = session.profile.home_bay_url.replace(/\/+$/, "");
   const response = await fetch(
