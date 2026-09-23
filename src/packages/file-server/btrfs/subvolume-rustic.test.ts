@@ -163,6 +163,94 @@ describe("scheduled backup replacement", () => {
     ).rejects.toThrow("upload failed");
     expect(snapshots.map((item) => item.id)).toEqual(["old"]);
   });
+
+  it("keeps tagged manual backups while replacing at a four-backup limit", async () => {
+    const { rustic, snapshots } = volume();
+    snapshots.push(
+      {
+        id: "older",
+        time: new Date("2026-09-19T00:00:00.000Z"),
+        tags: [],
+        summary: {},
+      },
+      {
+        id: "manual",
+        time: new Date("2026-09-21T00:00:00.000Z"),
+        tags: ["cocalc-manual"],
+        summary: {},
+      },
+      {
+        id: "recent",
+        time: new Date("2026-09-22T00:00:00.000Z"),
+        tags: [],
+        summary: {},
+      },
+    );
+    (rustic as any).backup = jest.fn(async ({ limit, tags }) => {
+      expect(limit).toBe(5);
+      const created = {
+        id: "new",
+        time: new Date(),
+        tags,
+        summary: {},
+        snapshotGeneration: 2,
+      };
+      snapshots.push(created);
+      return created;
+    });
+
+    await rustic.update(
+      { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+      { limit: 4 },
+    );
+
+    expect(snapshots.length).toBeLessThanOrEqual(4);
+    expect(snapshots.map(({ id }) => id)).toContain("manual");
+    expect(snapshots.map(({ id }) => id)).toContain("new");
+  });
+
+  it("does not create or prune backups at a zero-backup entitlement", async () => {
+    const { rustic, snapshots } = volume();
+    (rustic as any).backup = jest.fn();
+
+    await expect(rustic.update(undefined, { limit: 0 })).rejects.toMatchObject({
+      code: 507,
+    });
+    expect(snapshots.map(({ id }) => id)).toEqual(["old"]);
+    expect(rustic.backup).not.toHaveBeenCalled();
+  });
+
+  it("retries pruning without another upload after replacement succeeds", async () => {
+    const { rustic, snapshots } = volume();
+    let pruneBlocked = true;
+    (rustic as any).forget = jest.fn(async ({ id }) => {
+      if (pruneBlocked) throw new Error("prune blocked");
+      const index = snapshots.findIndex((item) => item.id === id);
+      if (index >= 0) snapshots.splice(index, 1);
+    });
+    const backup = jest.fn(async ({ tags }) => {
+      const created = {
+        id: "new",
+        time: new Date(),
+        tags,
+        summary: {},
+        snapshotGeneration: 2,
+      };
+      snapshots.push(created);
+      return created;
+    });
+    (rustic as any).backup = backup;
+    const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
+
+    await expect(rustic.update(schedule, { limit: 1 })).rejects.toThrow(
+      "prune blocked",
+    );
+    expect(snapshots.map(({ id }) => id)).toEqual(["old", "new"]);
+    pruneBlocked = false;
+    await rustic.update(schedule, { limit: 1 });
+    expect(backup).toHaveBeenCalledTimes(1);
+    expect(snapshots.map(({ id }) => id)).toEqual(["new"]);
+  });
 });
 
 describe("SubvolumeRustic.backup", () => {
