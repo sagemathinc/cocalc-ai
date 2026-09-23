@@ -277,6 +277,15 @@ const CODEX_MODEL_ALIASES = new Set([
 
 const CODEX_MODEL_CANONICAL_ALIASES = new Map([["gpt-5.6", "gpt-5.6-sol"]]);
 
+// For launches without a live credential catalog, not historical thread routing.
+export function resolveCurrentCodexModel(model?: string): string | undefined {
+  if (typeof model !== "string") return undefined;
+  const raw = model.trim().toLowerCase();
+  if (!raw) return undefined;
+  const canonical = CODEX_MODEL_CANONICAL_ALIASES.get(raw) ?? raw;
+  return CODEX_MODEL_NAME_SET.has(canonical) ? canonical : undefined;
+}
+
 export function isCodexModelName(model?: string): boolean {
   if (typeof model !== "string") return false;
   const normalized = model.trim().toLowerCase();

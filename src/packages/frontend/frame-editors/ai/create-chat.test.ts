@@ -29,6 +29,15 @@ describe("createChat", () => {
     expect(resolveAssistantCodexModel("gpt-6-sol")).toBe("gpt-6-sol");
   });
 
+  it.each(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])(
+    "does not launch retired assistant model %s",
+    (model) => expect(resolveAssistantCodexModel(model)).toBe("gpt-6-astra"),
+  );
+
+  it("canonicalizes the current assistant model alias", () => {
+    expect(resolveAssistantCodexModel("gpt-5.6")).toBe("gpt-5.6-sol");
+  });
+
   it("routes editor assistant requests through navigator Codex intents", async () => {
     submitNavigatorPromptInWorkspaceChat.mockResolvedValue(true);
     const actions: any = {

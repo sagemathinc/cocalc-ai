@@ -3,10 +3,25 @@ import {
   DEFAULT_CODEX_MODELS,
   DEFAULT_CODEX_MODEL_INFO,
   isCodexModelName,
+  resolveCurrentCodexModel,
   resolveCodexServiceTier,
 } from "./codex";
 
 describe("DEFAULT_CODEX_MODELS", () => {
+  it.each(DEFAULT_CODEX_MODELS.map(({ name }) => name))(
+    "accepts current launch model %s",
+    (name) => expect(resolveCurrentCodexModel(name)).toBe(name),
+  );
+
+  it("canonicalizes current aliases for launch", () => {
+    expect(resolveCurrentCodexModel(" GPT-5.6 ")).toBe("gpt-5.6-sol");
+  });
+
+  it.each([undefined, "", "codex-agent", "gpt-5-codex", "gpt-4o"])(
+    "does not launch non-catalog model %s",
+    (name) => expect(resolveCurrentCodexModel(name)).toBeUndefined(),
+  );
+
   it.each(["gpt-6-sol", "gpt-6-luna"])(
     "recognizes %s with max reasoning and medium default",
     (name) => {
@@ -26,6 +41,7 @@ describe("DEFAULT_CODEX_MODELS", () => {
     "recognizes historical %s threads without offering it",
     (name) => {
       expect(isCodexModelName(name)).toBe(true);
+      expect(resolveCurrentCodexModel(name)).toBeUndefined();
       expect(DEFAULT_CODEX_MODELS.some((model) => model.name === name)).toBe(
         false,
       );

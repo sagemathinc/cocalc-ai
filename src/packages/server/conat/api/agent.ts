@@ -50,7 +50,7 @@ import type {
   AgentRunRequest,
   AgentRunResponse,
 } from "@cocalc/conat/hub/api/agent";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { resolveCurrentCodexModel } from "@cocalc/util/ai/codex";
 import * as projects from "./projects";
 import * as system from "./system";
 import { assertCollab } from "./util";
@@ -264,10 +264,7 @@ function parsePlannerOutput({
 }
 
 function getPlannerCodexModel(explicit?: string): string {
-  if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
-    return explicit.trim();
-  }
-  return DEFAULT_PLANNER_MODEL;
+  return resolveCurrentCodexModel(explicit) ?? DEFAULT_PLANNER_MODEL;
 }
 
 let plannerCodexAgent: Promise<AcpAgent> | undefined;
@@ -420,9 +417,7 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       : fallbackManifest;
   const manifest = manifest0.filter((entry) => !!entry?.actionType);
   let raw = "";
-  const configuredPlannerModel = [opts.model]
-    .map((value) => `${value ?? ""}`.trim())
-    .find((value) => isCodexModelName(value));
+  const configuredPlannerModel = resolveCurrentCodexModel(opts.model);
   try {
     raw = await runPlannerWithCodex({
       account_id,
