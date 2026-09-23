@@ -6,6 +6,11 @@
 const mockUserIsInGroup = jest.fn();
 const mockGetConn = jest.fn();
 const mockSend = jest.fn();
+const mockCreatePaymentIntent = jest.fn();
+jest.mock("./stripe/create-payment-intent", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockCreatePaymentIntent(...args),
+}));
 
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,
@@ -35,7 +40,14 @@ import {
   createTestAccount,
   createTestMembershipPackage,
   createTestMembershipSubscription,
+  createTestMembershipTier,
 } from "./test-data";
+import {
+  createTeamLicenseRenewalPayment,
+  purchaseTeamLicenseChange,
+  processTeamLicenseRenewalFailure,
+  processTeamLicenseRenewal,
+} from "./team-license";
 import {
   assignMembershipPackageSeat,
   listMembershipPackageAssignments,
@@ -51,6 +63,7 @@ describe("membership admin refund", () => {
   beforeEach(() => {
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockSend.mockReset().mockResolvedValue(undefined);
+    mockCreatePaymentIntent.mockReset();
     mockGetConn.mockReset().mockResolvedValue({
       charges: {
         list: jest.fn().mockResolvedValue({ data: [{ id: "ch_membership" }] }),
@@ -211,6 +224,113 @@ describe("membership admin refund", () => {
     expect(
       await listMembershipPackageAssignments({ package_id: f.package_id }),
     ).toHaveLength(1);
+  });
+
+  it("blocks refund while the provider is creating the renewal intent", async () => {
+    const f = await teamFixture();
+    mockCreatePaymentIntent.mockImplementationOnce(async () => {
+      await expect(
+        processTeamLicenseRenewal({
+          account_id: f.account_id,
+          amount: 1800,
+          paymentIntent: { metadata: { team_license_id: f.licenseId } },
+        }),
+      ).rejects.toThrow("pending Team renewal");
+      await processTeamLicenseRenewalFailure({
+        account_id: f.account_id,
+        paymentIntent: {
+          id: "pi_old_canceled",
+          metadata: { team_license_id: f.licenseId },
+        },
+      });
+      await expect(
+        createTeamLicenseRenewalPayment({
+          team_license_id: f.licenseId,
+          owner_account_id: f.account_id,
+        }),
+      ).rejects.toThrow("state changed");
+      await expect(
+        createRefund({
+          account_id: f.admin_account_id,
+          purchase_id: f.purchase_id,
+          reason: "requested_by_customer",
+        }),
+      ).rejects.toThrow("pending Team renewal");
+      return {
+        payment_intent: "pi_reserved",
+        hosted_invoice_url: "https://example.com/invoice",
+      };
+    });
+    await createTeamLicenseRenewalPayment({
+      team_license_id: f.licenseId,
+      owner_account_id: f.account_id,
+    });
+    expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(Number(await getBalance({ account_id: f.account_id }))).toBe(0);
+  });
+
+  it("never creates a renewal for an already refunded license", async () => {
+    const f = await teamFixture();
+    await createRefund({
+      account_id: f.admin_account_id,
+      purchase_id: f.purchase_id,
+      reason: "requested_by_customer",
+    });
+    await expect(
+      createTeamLicenseRenewalPayment({
+        team_license_id: f.licenseId,
+        owner_account_id: f.account_id,
+      }),
+    ).rejects.toThrow();
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("keeps an uncertain provider outcome reserved for reconciliation", async () => {
+    const f = await teamFixture();
+    mockCreatePaymentIntent.mockRejectedValueOnce(
+      new Error("provider timeout"),
+    );
+    await expect(
+      createTeamLicenseRenewalPayment({
+        team_license_id: f.licenseId,
+        owner_account_id: f.account_id,
+      }),
+    ).rejects.toThrow("provider timeout");
+    await expect(
+      createRefund({
+        account_id: f.admin_account_id,
+        purchase_id: f.purchase_id,
+        reason: "requested_by_customer",
+      }),
+    ).rejects.toThrow("pending Team renewal");
+  });
+
+  it("permits a new paid Team license without reviving refunded history", async () => {
+    const f = await teamFixture();
+    await createRefund({
+      account_id: f.admin_account_id,
+      purchase_id: f.purchase_id,
+      reason: "requested_by_customer",
+    });
+    const tier = `refund-repurchase-${uuid()}`;
+    await createTestMembershipTier({
+      id: tier,
+      price_yearly: 120,
+      team_visible: true,
+    });
+    const next = await purchaseTeamLicenseChange({
+      account_id: f.account_id,
+      target_seats: { [tier]: 1 },
+    });
+    expect(next.id).not.toBe(f.licenseId);
+    expect(next.status).toBe("active");
+    expect(next.packages[0].id).not.toBe(f.package_id);
+    const old = (
+      await getPool().query("SELECT status FROM team_licenses WHERE id=$1", [
+        f.licenseId,
+      ])
+    ).rows[0];
+    expect(old.status).toBe("canceled");
   });
 
   it("refunds membership and Stripe credit independently", async () => {

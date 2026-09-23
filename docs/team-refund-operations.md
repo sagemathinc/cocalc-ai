@@ -29,3 +29,22 @@ the previous plan or undo a prior prorated upgrade credit. Reconcile the origina
 term and credit before restoring access. Do not refund the same credit twice.
 
 No production account changes are part of this code change.
+
+## Deployment and renewal reconciliation
+
+Run the normal declarative schema convergence before enabling repurchase: the
+existing owner unique index is replaced with a partial unique index that excludes
+canceled licenses. Canceled license rows and their packages remain historical;
+a subsequent purchase creates a new license rather than reviving refunded seats.
+
+Deploy the renewal reservation code to every billing worker and drain old workers
+before performing refunds. An old in-flight worker does not know about this fence.
+New renewal attempts reserve an active payment record before contacting the
+provider. Refunds and duplicate renewals reject while this reservation exists.
+
+Provider timeouts, process crashes and notification failures do not prove that
+the external invoice was never created. Such reservations remain active; entries
+with a caught error include `reconciliation_required`. Inspect provider and
+fulfillment state, and settle or cancel any external invoice before clearing a
+reservation through a reviewed operator procedure. Do not expire these
+reservations automatically by age or treat a retry as harmless.

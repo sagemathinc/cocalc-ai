@@ -111,6 +111,31 @@ describe("declarative index convergence", () => {
     );
   });
 
+  it("migrates owner uniqueness to live records while preserving canceled history", async () => {
+    const table = "team_owner_migration_test";
+    const name = `${table}_value_unique_idx`;
+    await createTable(table);
+    await db.query(`CREATE UNIQUE INDEX ${name} ON ${table} (value)`);
+    await db.query(`INSERT INTO ${table} VALUES (1, 'owner', 'canceled')`);
+    const definition = schema({
+      table,
+      name,
+      unique: true,
+      query: "(value) WHERE state IS DISTINCT FROM 'canceled'",
+    });
+    await syncTableSchemaIndexes(db as unknown as Client, definition);
+    await db.query(`INSERT INTO ${table} VALUES (2, 'owner', 'active')`);
+    await expect(
+      db.query(`INSERT INTO ${table} VALUES (3, 'owner', 'past_due')`),
+    ).rejects.toThrow();
+    expect(
+      (await db.query(`SELECT id FROM ${table} ORDER BY id`)).rows,
+    ).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(await getIndexActions(db as unknown as Client, definition)).toEqual(
+      [],
+    );
+  });
+
   it("adopts an equivalent legacy name instead of creating a duplicate", async () => {
     const table = "index_legacy_name_test";
     const definition = schema({ table });
