@@ -6,7 +6,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import {
-  AGENT_FILE_GRANT_MODE,
+  normalizeAgentFileGrantMode,
+  type AgentFileGrantMode,
   MAX_AGENT_FILE_GRANTS,
   normalizeAgentFileGrantRoots,
   type AgentFileGrant,
@@ -39,7 +40,7 @@ function normalizeRow(row: any): AgentFileGrant {
   return {
     ...row,
     roots: normalizeAgentFileGrantRoots(row.roots),
-    mode: AGENT_FILE_GRANT_MODE,
+    mode: normalizeAgentFileGrantMode(row.mode),
   };
 }
 
@@ -71,7 +72,11 @@ export async function listFileGrantsLocal(
 }
 
 export async function saveFileGrantLocal(
-  opts: FileGrantLocator & { target_project_id: string; roots: string[] },
+  opts: FileGrantLocator & {
+    target_project_id: string;
+    roots: string[];
+    mode?: AgentFileGrantMode;
+  },
 ): Promise<AgentFileGrant> {
   await assertGrantActor(opts);
   requireUuid(opts.target_project_id, "target_project_id");
@@ -79,6 +84,7 @@ export async function saveFileGrantLocal(
     throw new Error("source and target projects must be different");
   }
   const roots = normalizeAgentFileGrantRoots(opts.roots);
+  const mode = normalizeAgentFileGrantMode(opts.mode);
   await assertProjectCollaboratorAccessAllowRemote({
     account_id: opts.account_id,
     project_id: opts.target_project_id,
@@ -123,7 +129,7 @@ export async function saveFileGrantLocal(
         opts.project_id,
         opts.target_project_id,
         JSON.stringify(roots),
-        AGENT_FILE_GRANT_MODE,
+        mode,
       ],
     );
     return normalizeRow(rows[0]);
@@ -150,7 +156,10 @@ export async function authorizeFileGrantReadLocal(opts: {
   grant_id: string;
   agent_id: string;
   run_id: string;
-}): Promise<{ read_policy: ProjectViewerReadPolicy }> {
+}): Promise<{
+  read_policy: ProjectViewerReadPolicy;
+  mode: AgentFileGrantMode;
+}> {
   for (const [name, value] of Object.entries(opts)) requireUuid(value, name);
   const run = await agentStore().activeRun(opts.agent_id, opts.run_id);
   if (
@@ -164,7 +173,7 @@ export async function authorizeFileGrantReadLocal(opts: {
     `SELECT * FROM agent_file_grants
       WHERE grant_id=$1 AND account_id=$2 AND agent_id=$3
         AND source_project_id=$4 AND target_project_id=$5
-        AND mode='read' AND revoked_at IS NULL`,
+        AND mode IN ('read','read-write') AND revoked_at IS NULL`,
     [
       opts.grant_id,
       opts.account_id,
@@ -183,6 +192,7 @@ export async function authorizeFileGrantReadLocal(opts: {
   }
   const roots = normalizeAgentFileGrantRoots(rows[0].roots);
   return {
+    mode: normalizeAgentFileGrantMode(rows[0].mode),
     read_policy: {
       rules: [
         ...roots.map((root) => ({

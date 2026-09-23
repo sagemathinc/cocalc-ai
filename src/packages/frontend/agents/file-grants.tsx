@@ -22,6 +22,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   normalizeAgentFileGrantRoots,
   type AgentFileGrant,
+  type AgentFileGrantMode,
 } from "@cocalc/conat/agents/file-grants";
 import { fileGrantsForAgent } from "./file-grants-service";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -65,12 +66,14 @@ function FileGrantsContents({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [wholeProject, setWholeProject] = useState(true);
+  const [mode, setMode] = useState<AgentFileGrantMode>("read");
   const [helpOpen, setHelpOpen] = useState(false);
   const title = (id: string) =>
     projectMap?.getIn([id, "title"]) || "Untitled project";
   function selectProject(id: string) {
     setTargetProjectId(id);
     const existing = grants.find((grant) => grant.target_project_id === id);
+    setMode(existing?.mode ?? "read");
     setRoots(existing?.roots.map((root) => root || ".").join("\n") ?? "");
     setWholeProject(
       !existing || existing.roots.some((root) => !root || root === "."),
@@ -119,6 +122,7 @@ function FileGrantsContents({
           (grant) => grant.target_project_id === initialTargetProjectId,
         );
         setRoots(selected?.roots.map((root) => root || ".").join("\n") ?? "");
+        setMode(selected?.mode ?? "read");
         setWholeProject(
           !selected || selected.roots.some((root) => !root || root === "."),
         );
@@ -164,6 +168,9 @@ function FileGrantsContents({
               <Typography.Text strong>
                 {title(grant.target_project_id)}
               </Typography.Text>
+              <div>
+                {grant.mode === "read-write" ? "Read & write" : "Read-only"}
+              </div>
               <div>
                 {grant.roots
                   .map((root) =>
@@ -213,7 +220,7 @@ function FileGrantsContents({
           trigger="click"
           open={helpOpen}
           onOpenChange={setHelpOpen}
-          title="Read-only access for this agent"
+          title="File access for this agent"
           content={
             <KeyboardBoundary>
               <div style={{ width: 360, maxWidth: "75vw" }}>
@@ -226,6 +233,12 @@ function FileGrantsContents({
                 <p>
                   Saved access is personal to this user and agent and is
                   available on future turns until removed.
+                </p>
+                <p>
+                  Read &amp; write access can overwrite or delete data and
+                  change code that target-project processes later execute. These
+                  changes persist after the run ends. Writes through symlinks
+                  are not supported.
                 </p>
                 <p>
                   This is ordinary filesystem access within the listed roots.
@@ -271,7 +284,25 @@ function FileGrantsContents({
           </Form.Item>
           <Form.Item>
             <Radio.Group
+              aria-label="File permission"
+              name="file-grant-permission"
+              value={mode}
+              onChange={(event) => setMode(event.target.value)}
+            >
+              <Radio value="read">Read-only</Radio>
+              <Radio value="read-write">Read &amp; write</Radio>
+            </Radio.Group>
+          </Form.Item>
+          {mode === "read-write" && (
+            <Typography.Paragraph type="warning">
+              Allows creating, overwriting, renaming, and deleting files within
+              the shared paths.
+            </Typography.Paragraph>
+          )}
+          <Form.Item>
+            <Radio.Group
               value={wholeProject}
+              name="file-grant-scope"
               onChange={(event) => setWholeProject(event.target.value)}
             >
               <Radio value={true}>Share the whole project</Radio>
@@ -312,6 +343,7 @@ function FileGrantsContents({
                   project_id: projectId,
                   agent_id: identity.agent_id,
                   target_project_id: targetProjectId!,
+                  mode,
                   roots: normalizeAgentFileGrantRoots(
                     wholeProject
                       ? ["."]
@@ -320,12 +352,14 @@ function FileGrantsContents({
                 });
                 await refresh();
                 setNotice(
-                  "Read access saved for this user and agent. It will be available on future turns.",
+                  `${mode === "read-write" ? "Read & write" : "Read"} access saved for this user and agent. It will be available on future turns.`,
                 );
               })
             }
           >
-            Save read access
+            {mode === "read-write"
+              ? "Save read & write access"
+              : "Save read access"}
           </Button>
         </Form>
         <Typography.Title level={5}>Available on future turns</Typography.Title>
@@ -359,6 +393,9 @@ function FileGrantsContents({
                   }}
                 >
                   {title(grant.target_project_id)}:{" "}
+                  {grant.mode === "read-write"
+                    ? "(read & write) "
+                    : "(read-only) "}
                   {grant.roots
                     .map((root) =>
                       root && root !== "." ? root : "Whole project",
@@ -367,7 +404,7 @@ function FileGrantsContents({
                 </Button>
                 <Popconfirm
                   title="Remove this file grant?"
-                  description="New reads stop immediately. An operation already admitted may finish."
+                  description="New operations stop immediately. An operation already admitted may finish."
                   onConfirm={() =>
                     run(async () => {
                       await webapp_client.conat_client.hub.agent.revokeFileGrant(

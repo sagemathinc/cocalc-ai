@@ -51,6 +51,7 @@ export interface InterBayAgentIdentityApi {
     opts: AgentIdentityLookupRequest & {
       target_project_id: string;
       roots: string[];
+      mode?: "read" | "read-write";
     },
   ): Promise<AgentFileGrant>;
   revokeFileGrant(
@@ -63,7 +64,10 @@ export interface InterBayAgentIdentityApi {
       grant_id: string;
       run_id: string;
     },
-  ): Promise<{ read_policy: ProjectViewerReadPolicy }>;
+  ): Promise<{
+    read_policy: ProjectViewerReadPolicy;
+    mode?: "read" | "read-write";
+  }>;
 }
 
 export function agentIdentityControlSubject(bay_id: string): string {

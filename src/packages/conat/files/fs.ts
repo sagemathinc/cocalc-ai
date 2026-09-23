@@ -490,13 +490,26 @@ function rejectReadOnlyLock(lock: unknown): void {
   throw err;
 }
 
-export async function fsReadOnlyServer({
-  service,
-  fs: fs0,
-  client,
-  project_id,
-  cacheTtlMs = DEFAULT_READ_ONLY_FILESYSTEM_CACHE_TTL_MS,
-}: ReadOnlyOptions) {
+export async function fsReadOnlyServer(opts: ReadOnlyOptions) {
+  return restrictedFilesystemServer(opts);
+}
+
+// Only the dedicated agent grant endpoint opts into these mutations. Its
+// filesystem adapter must reauthorize and confine every operation.
+export async function fsAgentGrantServer(opts: ReadOnlyOptions) {
+  return restrictedFilesystemServer(opts, true);
+}
+
+async function restrictedFilesystemServer(
+  {
+    service,
+    fs: fs0,
+    client,
+    project_id,
+    cacheTtlMs = DEFAULT_READ_ONLY_FILESYSTEM_CACHE_TTL_MS,
+  }: ReadOnlyOptions,
+  allowMutations = false,
+) {
   const resolvedClient = requireClient(client, "fsReadOnlyServer");
   const subject = project_id
     ? `${service}.project-${project_id}.>`
@@ -521,8 +534,29 @@ export async function fsReadOnlyServer({
   });
 
   const sub = await resolvedClient.service<
-    ReadOnlyFilesystem & { subject?: string }
+    ReadOnlyFilesystem & Partial<Filesystem> & { subject?: string }
   >(subject, {
+    ...(allowMutations
+      ? {
+          async writeFile(path, data, saveLast) {
+            return await (
+              await fs(this.subject)
+            ).writeFile(path, data, saveLast);
+          },
+          async mkdir(path, options) {
+            return await (await fs(this.subject)).mkdir(path, options);
+          },
+          async rename(source, dest) {
+            return await (await fs(this.subject)).rename(source, dest);
+          },
+          async copyFile(source, dest) {
+            return await (await fs(this.subject)).copyFile(source, dest);
+          },
+          async rm(path, options) {
+            return await (await fs(this.subject)).rm(path, options);
+          },
+        }
+      : {}),
     async constants(): Promise<{ [key: string]: number }> {
       return await (await fs(this.subject)).constants();
     },

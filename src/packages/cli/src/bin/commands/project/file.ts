@@ -6,7 +6,8 @@
  */
 import { dirname } from "node:path";
 import { Command } from "commander";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import {
   listAgentFileGrants,
   openAgentFileGrant,
@@ -54,7 +55,87 @@ export function registerProjectFileCommands(
   const file = project.command("file").description("project file operations");
   const grant = file
     .command("grant")
-    .description("read files authorized for this active agent run");
+    .description("access files authorized for this active agent run");
+
+  async function mutateGrant(
+    command: Command,
+    opts: { project: string },
+    operation: string,
+    action: (fs: FilesystemClient) => Promise<void>,
+  ) {
+    const globals = globalsFrom(command);
+    let opened: Awaited<ReturnType<typeof openAgentFileGrant>> | undefined;
+    try {
+      opened = await openAgentFileGrant({
+        projectId: opts.project,
+        apiUrl: globals.api,
+      });
+      if (opened.prepared.grant.mode !== "read-write")
+        throw new Error("This file grant is read-only");
+      await action(opened.fs);
+      emitSuccess({ globals }, `project file grant ${operation}`, {
+        project_id: opened.prepared.grant.target_project_id,
+      });
+    } catch (error) {
+      emitError({ globals }, `project file grant ${operation}`, error);
+      process.exitCode = 1;
+    } finally {
+      opened?.close();
+    }
+  }
+
+  grant
+    .command("put <local-file> <path>")
+    .description("upload or overwrite an authorized file")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(async (local: string, path: string, opts, command: Command) =>
+      mutateGrant(command, opts, "put", async (fs) => {
+        await fs.writeFile(path, await readFile(local));
+      }),
+    );
+
+  grant
+    .command("mkdir <path>")
+    .description("create an authorized directory")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .option("-p, --parents", "create missing authorized parents")
+    .action(async (path: string, opts, command: Command) =>
+      mutateGrant(command, opts, "mkdir", async (fs) => {
+        await fs.mkdir(path, { recursive: !!opts.parents });
+      }),
+    );
+
+  grant
+    .command("rename <source> <dest>")
+    .description("rename an authorized file or directory")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(async (source: string, dest: string, opts, command: Command) =>
+      mutateGrant(command, opts, "rename", async (fs) => {
+        await fs.rename(source, dest);
+      }),
+    );
+
+  grant
+    .command("copy <source> <dest>")
+    .description("copy an authorized file (not a directory)")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .action(async (source: string, dest: string, opts, command: Command) =>
+      mutateGrant(command, opts, "copy", async (fs) => {
+        await fs.copyFile(source, dest);
+      }),
+    );
+
+  grant
+    .command("rm <path>")
+    .description("remove an authorized file or directory")
+    .requiredOption("-w, --project <project-id>", "target project id")
+    .option("-r, --recursive", "remove a directory tree")
+    .option("-f, --force", "ignore missing paths")
+    .action(async (path: string, opts, command: Command) =>
+      mutateGrant(command, opts, "rm", async (fs) => {
+        await fs.rm(path, { recursive: !!opts.recursive, force: !!opts.force });
+      }),
+    );
 
   grant
     .command("show")

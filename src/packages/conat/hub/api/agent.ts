@@ -287,6 +287,7 @@ export interface AgentApi {
     opts: AgentIdentityLocator & {
       target_project_id: string;
       roots: string[];
+      mode?: "read" | "read-write";
     },
   ): Promise<AgentFileGrant>;
   revokeFileGrant(
@@ -300,7 +301,10 @@ export interface AgentApi {
       agent_id: string;
       run_id: string;
     },
-  ): Promise<{ read_policy: ProjectViewerReadPolicy }>;
+  ): Promise<{
+    read_policy: ProjectViewerReadPolicy;
+    mode?: "read" | "read-write";
+  }>;
   issueIdentity(
     opts: AgentHostAuth & {
       project_id: string;

@@ -125,6 +125,7 @@ test("keyboard configures read-only paths for a collaborator project", async () 
       agent_id: agentId,
       target_project_id: targetProjectId,
       roots: ["docs", "README.md"],
+      mode: "read",
     }),
   );
   expect(
@@ -137,7 +138,37 @@ const grant = {
   agent_id: agentId,
   target_project_id: targetProjectId,
   roots: ["docs", "results"],
+  mode: "read",
 };
+
+test("permission changes require an explicit selection and are sent on save", async () => {
+  loadGrants.mockResolvedValue({ agentId, grants: [grant] });
+  const user = userEvent.setup();
+  render(
+    <FileGrants
+      projectId={sourceProjectId}
+      path="agent.chat"
+      threadId="thread"
+      open
+      initialTargetProjectId={targetProjectId}
+      onClose={jest.fn()}
+    />,
+  );
+  await screen.findByRole("textbox", { name: "Readable paths" });
+  expect(screen.getByRole("radio", { name: "Read-only" })).toBeChecked();
+  await user.click(screen.getByRole("radio", { name: "Read & write" }));
+  await user.click(
+    screen.getByRole("button", { name: "Save read & write access" }),
+  );
+  await waitFor(() =>
+    expect(saveFileGrant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "read-write",
+        roots: ["docs", "results"],
+      }),
+    ),
+  );
+});
 
 test("summary shows titles and paths, and keyboard Edit selects its project", async () => {
   loadGrants.mockResolvedValue({ agentId, grants: [grant] });

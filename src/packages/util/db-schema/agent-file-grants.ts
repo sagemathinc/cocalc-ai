@@ -24,9 +24,9 @@ Table({
         references: { table: "agent_identities", columns: ["agent_id"] },
       },
       {
-        name: "agent_file_grants_mode_check",
+        name: "agent_file_grants_mode_v2_check",
         type: "check",
-        expression: "mode IN ('read')",
+        expression: "mode IN ('read', 'read-write')",
       },
       {
         name: "agent_file_grants_account_agent_target_key",
@@ -49,14 +49,14 @@ Table({
       "uuid",
       "Project containing the agent runtime.",
     ),
-    target_project_id: required("uuid", "Project whose files may be read."),
+    target_project_id: required("uuid", "Project whose files may be accessed."),
     roots: {
       type: "array",
       pg_type: "JSONB",
       not_null: true,
-      desc: "Canonical project-home-relative read roots.",
+      desc: "Canonical project-home-relative granted roots.",
     },
-    mode: required("string", "Granted filesystem mode; currently read only."),
+    mode: required("string", "Granted filesystem mode: read or read-write."),
     created_at: {
       ...required("timestamp", "Grant creation time."),
       pg_type: "TIMESTAMPTZ",

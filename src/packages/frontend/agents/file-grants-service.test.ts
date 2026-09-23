@@ -41,6 +41,7 @@ beforeEach(() => {
       grant_id: "00000000-0000-4000-8000-000000000003",
       target_project_id: "00000000-0000-4000-8000-000000000004",
       roots: ["docs"],
+      mode: "read",
     },
   ]);
 });
@@ -51,6 +52,17 @@ test("renders exact identity-only CLI commands for active grants", async () => {
     "cocalc project file grant cat --project 00000000-0000-4000-8000-000000000004 <path>",
   );
   expect(context).toContain("roots: docs");
+  expect(context).not.toContain("grant put");
+});
+
+test("only write grants advertise mutation commands", async () => {
+  listFileGrants.mockResolvedValue([
+    { target_project_id: "target", roots: ["docs"], mode: "read-write" },
+  ]);
+  const context = await contextForFileGrants(request);
+  for (const command of ["put", "mkdir", "rename", "copy", "rm"])
+    expect(context).toContain(`grant ${command} --project target`);
+  expect(context).toContain("permission: read-write");
 });
 
 test("returns no context before an identity or grants exist", async () => {

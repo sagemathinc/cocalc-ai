@@ -69,7 +69,7 @@ describe("agent file grants", () => {
                   source_project_id,
                   target_project_id,
                   roots: JSON.parse(params[5]),
-                  mode: "read",
+                  mode: params[6],
                 },
               ],
             };
@@ -92,9 +92,12 @@ describe("agent file grants", () => {
       agent_id,
       target_project_id,
       roots: ["src"],
+      mode: "read-write",
     });
 
     expect(first.grant_id).not.toBe(second.grant_id);
+    expect(first.mode).toBe("read");
+    expect(second.mode).toBe("read-write");
     expect(issued).toEqual([first.grant_id, second.grant_id]);
   });
 
@@ -120,6 +123,7 @@ describe("agent file grants", () => {
         run_id,
       }),
     ).resolves.toEqual({
+      mode: "read",
       read_policy: {
         rules: [
           { action: "include", path: "docs/*", match: "prefix" },
@@ -135,6 +139,34 @@ describe("agent file grants", () => {
       },
     });
     expect(mockAssertRun).toHaveBeenCalledTimes(1);
+    mockStore.query.mockResolvedValueOnce({
+      rows: [{ roots: ["docs"], mode: "read-write" }],
+    });
+    await expect(
+      authorizeFileGrantReadLocal({
+        account_id,
+        host_id,
+        source_project_id,
+        target_project_id,
+        grant_id,
+        agent_id,
+        run_id,
+      }),
+    ).resolves.toMatchObject({ mode: "read-write" });
+    mockStore.query.mockResolvedValueOnce({
+      rows: [{ roots: ["docs"], mode: "admin" }],
+    });
+    await expect(
+      authorizeFileGrantReadLocal({
+        account_id,
+        host_id,
+        source_project_id,
+        target_project_id,
+        grant_id,
+        agent_id,
+        run_id,
+      }),
+    ).rejects.toThrow("invalid file grant mode");
 
     mockAssertProjectAccess.mockResolvedValueOnce({ host_id: randomUUID() });
     await expect(

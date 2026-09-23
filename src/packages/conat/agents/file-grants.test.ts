@@ -8,6 +8,7 @@ import {
   agentFileGrantInboxPrefix,
   agentFileGrantSubject,
   normalizeAgentFileGrantRoots,
+  normalizeAgentFileGrantMode,
   parseAgentFileGrantSubject,
   validatePreparedAgentFileGrant,
 } from "./file-grants";
@@ -22,6 +23,13 @@ const binding = {
 };
 
 describe("agent file grant protocol", () => {
+  it("defaults old grants to read and rejects unknown modes", () => {
+    expect(normalizeAgentFileGrantMode(undefined)).toBe("read");
+    expect(normalizeAgentFileGrantMode("read")).toBe("read");
+    expect(normalizeAgentFileGrantMode("read-write")).toBe("read-write");
+    for (const value of ["write", "admin", true, {}, 1])
+      expect(() => normalizeAgentFileGrantMode(value)).toThrow();
+  });
   it("round trips every authority binding through the subject", () => {
     const subject = agentFileGrantSubject(binding);
     expect(parseAgentFileGrantSubject(subject)).toEqual(binding);

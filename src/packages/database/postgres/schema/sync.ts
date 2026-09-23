@@ -1,5 +1,6 @@
 import { getClient, Client } from "@cocalc/database/pool";
 import type { DBSchema, TableSchema } from "./types";
+import { ensureAgentFileGrantModeSchema } from "./agent-file-grant-mode";
 import { quoteField } from "./util";
 import { pgType } from "./pg-type";
 import { createTable } from "./table";
@@ -469,6 +470,9 @@ export async function syncSchema(
     }
     if (dbSchema.agent_identities != null) {
       await ensureAgentIdentityRecoverySchema(db);
+    }
+    if (dbSchema.agent_file_grants != null) {
+      await ensureAgentFileGrantModeSchema(db);
     }
     // Constraints are synchronized after all tables and columns exist. This
     // supports cross-table references without coupling correctness to import

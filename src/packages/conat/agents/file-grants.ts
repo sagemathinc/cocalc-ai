@@ -8,7 +8,15 @@ import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import { PROJECT_VIEWER_SENSITIVE_PATHS } from "@cocalc/util/project-access";
 
 export const AGENT_FILE_SERVICE = "fs-agent";
-export const AGENT_FILE_GRANT_MODE = "read" as const;
+export type AgentFileGrantMode = "read" | "read-write";
+
+export function normalizeAgentFileGrantMode(
+  value: unknown,
+): AgentFileGrantMode {
+  if (value == null || value === "read") return "read";
+  if (value === "read-write") return value;
+  throw new Error("invalid file grant mode");
+}
 export const MAX_AGENT_FILE_GRANT_ROOTS = 20;
 export const MAX_AGENT_FILE_GRANTS = 50;
 
@@ -19,7 +27,7 @@ export interface AgentFileGrant {
   source_project_id: string;
   target_project_id: string;
   roots: string[];
-  mode: typeof AGENT_FILE_GRANT_MODE;
+  mode: AgentFileGrantMode;
   created_at: Date | string;
   updated_at: Date | string;
   revoked_at?: Date | string | null;
@@ -153,4 +161,5 @@ export function validatePreparedAgentFileGrant(
     throw new Error("prepared file grant is mismatched or expired");
   }
   normalizeAgentFileGrantRoots(value.grant.roots);
+  normalizeAgentFileGrantMode(value.grant.mode);
 }

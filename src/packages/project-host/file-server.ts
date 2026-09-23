@@ -44,6 +44,7 @@ import {
   ConatError,
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
+import { createAgentGrantFilesystem } from "./agent-grant-filesystem";
 import type {
   ProjectBackupConfig,
   ProjectBackupIndexStoreConfig,
@@ -106,6 +107,7 @@ import {
 import {
   fsServer,
   fsReadOnlyServer,
+  fsAgentGrantServer,
   DEFAULT_FILE_SERVICE,
   SHARE_FILE_SERVICE,
   VIEWER_FILE_SERVICE,
@@ -5189,8 +5191,8 @@ async function getAgentFileGrantReadPolicy(subject: string) {
       },
     ],
     timeout: 15_000,
-  })) as { read_policy: ProjectViewerReadPolicy };
-  return { grant, read_policy: response.read_policy };
+  })) as { read_policy: ProjectViewerReadPolicy; mode?: "read" | "read-write" };
+  return { grant, read_policy: response.read_policy, mode: response.mode };
 }
 
 export async function initAgentFileGrantFsServer({
@@ -5199,7 +5201,7 @@ export async function initAgentFileGrantFsServer({
   client: ConatClient;
 }) {
   logger.debug("initAgentFileGrantFsServer");
-  return await fsReadOnlyServer({
+  return await fsAgentGrantServer({
     service: AGENT_FILE_SERVICE,
     client,
     fs: async (subject?: string) => {
@@ -5215,11 +5217,11 @@ export async function initAgentFileGrantFsServer({
         deleteSnapshot: async (name: string) =>
           await deleteSnapshot({ project_id: grant.target_project_id, name }),
       });
-      return createViewerReadOnlyFilesystem({
+      return createAgentGrantFilesystem({
         fs: projectFs,
         readPolicy: read_policy,
         authorize: async () => {
-          await getAgentFileGrantReadPolicy(subject);
+          return await getAgentFileGrantReadPolicy(subject);
         },
       });
     },

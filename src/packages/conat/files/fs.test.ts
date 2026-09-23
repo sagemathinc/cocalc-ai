@@ -182,7 +182,48 @@ describe("filesystem explicit routing", () => {
 
     expect(handlers.jupyterImportIpynb).toBeUndefined();
     expect(handlers.jupyterSaveIpynb).toBeUndefined();
+    for (const method of ["writeFile", "mkdir", "rename", "copyFile", "rm"])
+      expect(handlers[method]).toBeUndefined();
     server.close();
+  });
+
+  it("agent grant service exposes only the explicit mutation allowlist", async () => {
+    const { fsAgentGrantServer } = await import("./fs");
+    let handlers: any;
+    const writeFile = jest.fn();
+    const server = await fsAgentGrantServer({
+      service: "fs-agent",
+      client: {
+        service: async (_subject, svc) => {
+          handlers = svc;
+          return { close: jest.fn() };
+        },
+      } as any,
+      fs: async () => ({ writeFile }) as any,
+    });
+    try {
+      for (const method of ["writeFile", "mkdir", "rename", "copyFile", "rm"])
+        expect(typeof handlers[method]).toBe("function");
+      for (const method of [
+        "symlink",
+        "link",
+        "chmod",
+        "cp",
+        "move",
+        "ouch",
+        "watch",
+        "jupyterSaveIpynb",
+      ])
+        expect(handlers[method]).toBeUndefined();
+      await handlers.writeFile.call(
+        { subject: "fs-agent.test" },
+        "docs/a",
+        "data",
+      );
+      expect(writeFile).toHaveBeenCalledWith("docs/a", "data", undefined);
+    } finally {
+      server.close();
+    }
   });
 
   it("rejects read locks on read-only filesystem service", async () => {
