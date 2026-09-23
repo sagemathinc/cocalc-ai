@@ -2,7 +2,7 @@
 
 Date: 2026-09-23 UTC
 
-Status: staging implementation and restore drills completed; production gates remain open.
+Status: staged reliability changes and restore drills validated; implementation and production gates remain open.
 
 This report tracks implementation of
 [the project snapshot and backup reliability plan](project-snapshot-backup-reliability-plan-2026-09-23.md).
