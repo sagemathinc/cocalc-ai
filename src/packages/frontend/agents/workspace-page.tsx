@@ -50,6 +50,7 @@ import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
@@ -3092,6 +3093,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
         <WorkspaceSidebarActions
+          onProjects={
+            lite
+              ? undefined
+              : () => {
+                  void redux.getActions("page").set_active_tab("projects");
+                }
+          }
           onNewAgent={() => {
             searchNavigation.current++;
             setCreatingSourceAgentId(selected?.endpoint.agent_id);

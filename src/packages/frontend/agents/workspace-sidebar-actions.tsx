@@ -2,8 +2,10 @@ import { Button } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 
 export function WorkspaceSidebarActions({
+  onProjects,
   onNewAgent,
 }: {
+  onProjects?: () => void;
   onNewAgent: () => void;
 }) {
   return (
@@ -17,6 +19,17 @@ export function WorkspaceSidebarActions({
       >
         New Agent
       </Button>
+      {onProjects && (
+        <Button
+          type="text"
+          block
+          icon={<Icon name="folder-open" />}
+          onClick={onProjects}
+          style={{ justifyContent: "flex-start" }}
+        >
+          Projects
+        </Button>
+      )}
     </div>
   );
 }

@@ -7,17 +7,23 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: () => false,
 }));
 
-test("quiet New Agent works from the keyboard without duplicate Projects navigation", async () => {
+test("quiet New Agent and Projects navigation work from the keyboard", async () => {
   const user = userEvent.setup();
   const onNewAgent = jest.fn();
-  render(<WorkspaceSidebarActions onNewAgent={onNewAgent} />);
+  const onProjects = jest.fn();
+  render(
+    <WorkspaceSidebarActions onNewAgent={onNewAgent} onProjects={onProjects} />,
+  );
   await user.tab();
   expect(document.activeElement).toBe(
     screen.getByRole("button", { name: "New Agent" }),
   );
   await user.keyboard("{Enter}");
   expect(onNewAgent).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Projects" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(onProjects).toHaveBeenCalledTimes(1);
   expect(
     screen.queryByText(
       /Back to Projects|Your projects and courses are still here/,

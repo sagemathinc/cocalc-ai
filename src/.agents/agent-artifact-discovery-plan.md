@@ -7,11 +7,12 @@ Opening or filtering the Library never initiates chat-file scans or starts proje
 
 ## Standalone Library foundation (2026-09-23)
 
-- The existing top-left logo, Agents, Projects and Hosts navigation stays in
-  place, with Agents selected; other full-view navbar controls are hidden.
-  Quiet sidebar navigation separates New Agent, Library and Search conversations,
-  without a duplicate Projects button. Agent sorting/grouping lives behind an
-  organization disclosure.
+- Quiet sidebar navigation separates New Agent, Projects, Library and Search
+  conversations. The full navbar is hidden in agent view; Projects returns to
+  the full interface, including Hosts. Selected-agent and Library headers stay
+  in the main area so they remain aligned when the sidebar resizes or hides.
+  The retained-global-navbar and docked-header experiments were withdrawn.
+  Agent sorting/grouping lives behind an organization disclosure.
 - `/library` is a real browser route. `/library/{project_id}/{entry_id}` opens
   an artifact directly, including on reload, without selecting its source agent.
   A permission-checked, owner-routed catalog point lookup resolves the entry in

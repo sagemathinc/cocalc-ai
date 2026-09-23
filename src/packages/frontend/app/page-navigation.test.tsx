@@ -2,7 +2,6 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Map } from "immutable";
 import { IntlProvider } from "react-intl";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Page } from "./page";
 
 let activeTab = "projects";
@@ -162,7 +161,7 @@ beforeEach(() => {
 });
 
 test.each([false, true])(
-  "Agents retains the exact logo/tab segment, order and styles (narrow=%s)",
+  "Agents hides the full navigation and Projects restores it (narrow=%s)",
   async (isNarrow) => {
     narrow = isNarrow;
     const mounted = render(view());
@@ -173,8 +172,6 @@ test.each([false, true])(
     const hosts = within(nav).getByRole("button", { name: "Compute" });
     const segment = [logo, agents, projects, hosts];
     expect(Array.from(nav.children).slice(0, 4)).toEqual(segment);
-    const styles = segment.map((el) => el.getAttribute("style"));
-    const contents = segment.map((el) => el.innerHTML);
     expect(
       screen.getByRole("region", { name: "post-surface project navigation" }),
     ).toBeVisible();
@@ -185,15 +182,7 @@ test.each([false, true])(
     expect(actions.set_active_tab).toHaveBeenCalledWith("agents");
     activeTab = "agents";
     mounted.rerender(view());
-    expect(screen.getByRole("navigation")).toBe(nav);
-    expect(Array.from(nav.children)).toEqual(segment);
-    expect(segment.map((el) => el.innerHTML)).toEqual(contents);
-    expect(logo.getAttribute("style")).toBe(styles[0]);
-    expect(hosts.getAttribute("style")).toBe(styles[3]);
-    expect(agents.style.backgroundColor).toBe(UI_COLORS.selected);
-    expect(within(nav).getByRole("button", { current: "page" })).toBe(agents);
-    expect(projects.style.backgroundColor).toBe("transparent");
-    expect(agents).toHaveFocus();
+    expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("button", { name: "Docs" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Appearance" })).toBeNull();
     expect(
@@ -202,21 +191,17 @@ test.each([false, true])(
     expect(
       screen.queryByRole("region", { name: "post-surface navigation" }),
     ).toBeNull();
-    await user.tab();
-    expect(projects).toHaveFocus();
-    await user.keyboard(" ");
-    expect(actions.set_active_tab).toHaveBeenLastCalledWith("projects");
-    await user.tab();
-    expect(hosts).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(actions.set_active_tab).toHaveBeenLastCalledWith("hosts");
+    activeTab = "projects";
+    mounted.rerender(view());
+    expect(screen.getByRole("navigation")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
   },
 );
 
 test.each(["lite", "exam", "fullscreen", "auth"])(
   "retained navigation respects %s visibility",
   (mode) => {
-    activeTab = mode === "auth" ? "auth" : "agents";
+    activeTab = mode === "auth" ? "auth" : "projects";
     isLite = mode === "lite";
     examMode = mode === "exam";
     fullscreen = mode === "fullscreen" ? "default" : undefined;
@@ -226,7 +211,7 @@ test.each(["lite", "exam", "fullscreen", "auth"])(
 );
 
 test("retained tabs preserve login and AI visibility", () => {
-  activeTab = "agents";
+  activeTab = "projects";
   loggedIn = false;
   const mounted = render(view());
   expect(screen.getByRole("link", { name: "CoCalc home" })).toBeVisible();
