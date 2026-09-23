@@ -111,6 +111,28 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("replaces a stale latest snapshot after confirmed empty inventory", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordProjectMaintenanceStatus({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "snapshot",
+      observed_at: new Date().toISOString(),
+      outcome: "skipped",
+      reason: "no_content_change",
+      latest_snapshot_at: null,
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    expect(insert?.[0]).toContain(
+      "excluded.outcome='skipped' AND excluded.reason='no_content_change'",
+    );
+    expect(insert?.[1][7]).toBeNull();
+  });
+
   it("counts new changes after an unchanged-content report in health", async () => {
     const { getProjectRecoveryHealth, snapshotScheduleRevision } =
       await import("./maintenance-status");
