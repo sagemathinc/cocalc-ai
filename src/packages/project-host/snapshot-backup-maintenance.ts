@@ -30,9 +30,11 @@ import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
 import { onProjectChangeReported } from "./last-edited";
 import {
+  listLeasedMaintenanceSchedules,
   listPendingMaintenanceReports,
   markMaintenanceReportDelivered,
   saveMaintenanceReport,
+  saveValidatedMaintenanceSchedules,
 } from "./sqlite/maintenance-ledger";
 
 const logger = getLogger("project-host:snapshot-backup-maintenance");
@@ -605,10 +607,27 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       })());
   if (!projectIds) scheduleListing = listing;
   let rows: HostProjectMaintenanceSchedule[];
+  let usedOwnershipLease = false;
   try {
     rows = await listing;
+  } catch (err) {
+    rows = listLeasedMaintenanceSchedules({ hostId, projectIds });
+    if (!rows.length) throw err;
+    usedOwnershipLease = true;
+    logger.warn("using short maintenance ownership lease during bay outage", {
+      hostId,
+      count: rows.length,
+      err: `${err}`,
+    });
   } finally {
     if (!projectIds && scheduleListing === listing) scheduleListing = undefined;
+  }
+  if (!usedOwnershipLease) {
+    saveValidatedMaintenanceSchedules({
+      hostId,
+      rows,
+      requestedProjectIds: projectIds,
+    });
   }
   if (!rows.length) return true;
   const validateAssignment = async (
@@ -631,6 +650,21 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         ? undefined
         : (assignment.reason ?? "assignment_changed");
     } catch (err) {
+      const leased = listLeasedMaintenanceSchedules({
+        hostId,
+        projectIds: [row.project_id],
+      })[0];
+      if (
+        leased &&
+        scheduleRevision(
+          kind === "snapshot" ? leased.snapshots : leased.backups,
+        ) ===
+          scheduleRevision(kind === "snapshot" ? row.snapshots : row.backups) &&
+        (leased.last_changed ?? leased.last_edited ?? null) ===
+          (row.last_changed ?? row.last_edited ?? null)
+      ) {
+        return undefined;
+      }
       logger.warn("scheduled maintenance assignment check failed", {
         hostId,
         project_id: row.project_id,
@@ -640,6 +674,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       return "assignment_unverified";
     }
   };
+  if (usedOwnershipLease) {
+    logger.info("maintenance dispatch using bounded cached assignment", {
+      hostId,
+      count: rows.length,
+    });
+  }
   const now = Date.now();
   for (const row of rows) {
     const snapshotSchedule = mergeSchedule(

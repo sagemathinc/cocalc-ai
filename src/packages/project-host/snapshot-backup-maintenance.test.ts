@@ -8,11 +8,17 @@ const getStorageAdmissionStatusMock = jest.fn();
 const releaseStorageOperationMock = jest.fn();
 const reportProjectMaintenanceMock = jest.fn();
 const listPendingMaintenanceReportsMock = jest.fn();
+const listLeasedMaintenanceSchedulesMock = jest.fn();
+const saveValidatedMaintenanceSchedulesMock = jest.fn();
 const saveMaintenanceReportMock = jest.fn();
 const markMaintenanceReportDeliveredMock = jest.fn();
 const onProjectChangeReportedMock = jest.fn();
 
 jest.mock("./sqlite/maintenance-ledger", () => ({
+  listLeasedMaintenanceSchedules: (...args: any[]) =>
+    listLeasedMaintenanceSchedulesMock(...args),
+  saveValidatedMaintenanceSchedules: (...args: any[]) =>
+    saveValidatedMaintenanceSchedulesMock(...args),
   listPendingMaintenanceReports: (...args: any[]) =>
     listPendingMaintenanceReportsMock(...args),
   saveMaintenanceReport: (...args: any[]) => saveMaintenanceReportMock(...args),
@@ -108,6 +114,7 @@ describe("snapshot-backup-maintenance", () => {
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
     listPendingMaintenanceReportsMock.mockReturnValue([]);
+    listLeasedMaintenanceSchedulesMock.mockReturnValue([]);
     releaseStorageOperationMock.mockReset();
     onProjectChangeReportedMock.mockReset();
     onProjectChangeReportedMock.mockImplementation(() => jest.fn());
@@ -235,6 +242,59 @@ describe("snapshot-backup-maintenance", () => {
         project_id: "proj-1",
         kind: "snapshot",
         outcome: "deferred",
+        reason: "assignment_unverified",
+      }),
+    );
+  });
+
+  it("uses a persisted short lease when the bay is briefly unavailable", async () => {
+    const cached = {
+      project_id: "proj-1",
+      last_edited: "2026-04-10T22:00:00.000Z",
+      snapshots: { daily: 5 },
+      backups: { disabled: true },
+    };
+    listProjectMaintenanceSchedulesMock.mockRejectedValue(
+      new Error("bay unavailable"),
+    );
+    confirmProjectMaintenanceAssignmentMock.mockRejectedValue(
+      new Error("bay unavailable"),
+    );
+    listLeasedMaintenanceSchedulesMock.mockImplementation(
+      ({ projectIds }: { projectIds?: string[] }) =>
+        !projectIds || projectIds.includes(cached.project_id) ? [cached] : [],
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    expect(saveValidatedMaintenanceSchedulesMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an offline lease for a different schedule revision", async () => {
+    confirmProjectMaintenanceAssignmentMock.mockRejectedValue(
+      new Error("bay unavailable"),
+    );
+    listLeasedMaintenanceSchedulesMock.mockReturnValue([
+      {
+        project_id: "proj-1",
+        last_edited: "2026-04-10T22:00:00.000Z",
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
         reason: "assignment_unverified",
       }),
     );
