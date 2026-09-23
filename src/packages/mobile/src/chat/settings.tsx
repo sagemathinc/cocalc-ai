@@ -227,6 +227,8 @@ export function ChatSettings({
                 ...draft,
                 paymentSource: "auto",
                 credentialId: undefined,
+                reasoning: undefined,
+                serviceTier: undefined,
               }),
           )}
           {!source?.subscriptions?.length &&
@@ -238,6 +240,8 @@ export function ChatSettings({
                   ...draft,
                   paymentSource: "subscription",
                   credentialId: undefined,
+                  reasoning: undefined,
+                  serviceTier: undefined,
                 }),
               !!source && !source.hasSubscription,
             )}
@@ -249,6 +253,8 @@ export function ChatSettings({
                 ...draft,
                 paymentSource: "site-api-key",
                 credentialId: undefined,
+                reasoning: undefined,
+                serviceTier: undefined,
               }),
             !!source &&
               !(
@@ -267,6 +273,8 @@ export function ChatSettings({
                   ...draft,
                   paymentSource: "subscription",
                   credentialId: c.id,
+                  reasoning: undefined,
+                  serviceTier: undefined,
                 }),
             ),
           )}
@@ -279,6 +287,8 @@ export function ChatSettings({
                   ...draft,
                   paymentSource: "project-api-key",
                   credentialId: undefined,
+                  reasoning: undefined,
+                  serviceTier: undefined,
                 }),
             )}
           {source?.hasAccountApiKey &&
@@ -290,6 +300,8 @@ export function ChatSettings({
                   ...draft,
                   paymentSource: "account-api-key",
                   credentialId: undefined,
+                  reasoning: undefined,
+                  serviceTier: undefined,
                 }),
             )}
           {source && (

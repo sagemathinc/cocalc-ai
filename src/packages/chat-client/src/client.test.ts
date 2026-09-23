@@ -232,3 +232,51 @@ test("creates a Codex thread config in the constrained chat document", async () 
   expect(save).toHaveBeenCalled();
   await client.close();
 });
+
+test("updates settings without writing unrelated goal metadata", async () => {
+  const goal = { sessionId: "session", observedAt: 1, goal: null };
+  const existing = {
+    event: "chat-thread-config",
+    date: "1970-01-01T00:00:00.000Z",
+    sender_id: "__thread_config__:thread-1",
+    thread_id: "thread-1",
+    agent_kind: "acp",
+    agent_model: "old-model",
+    acp_config: { model: "old-model" },
+    acp_goal: goal,
+  };
+  const set = jest.fn();
+  dbMock = Object.assign(new EventEmitter(), {
+    close: jest.fn(async () => undefined),
+    commit: jest.fn(() => true),
+    get: () => [existing],
+    isReady: () => true,
+    save: jest.fn(async () => undefined),
+    set,
+  });
+  const client = createHeadlessChatClient({
+    account_id: "account-1",
+    path: "/home/user/existing.chat",
+    projectHostClient: new EventEmitter() as any,
+    project_id: "project-1",
+    selected_thread_id: "thread-1",
+  });
+  await client.open();
+
+  await client.updateCodexThreadConfig({
+    thread_id: "thread-1",
+    acp_config: { model: "new-model", serviceTier: undefined },
+  });
+
+  expect(set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chat-thread-config",
+      thread_id: "thread-1",
+      agent_model: "new-model",
+      acp_config: { model: "new-model", serviceTier: undefined },
+    }),
+  );
+  expect(set.mock.calls[0][0]).not.toHaveProperty("acp_goal");
+  expect(existing.acp_goal).toBe(goal);
+  await client.close();
+});

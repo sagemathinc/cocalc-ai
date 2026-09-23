@@ -153,7 +153,7 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
         profile="p"
         project="project"
         thread="t"
-        config={{ model: "test" }}
+        config={{ model: "test", serviceTier: "fast", reasoning: "high" }}
         client={{ updateCodexThreadConfig: save } as any}
         onClose={() => {}}
       />,
@@ -161,6 +161,11 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
   });
   expect(find("ChatGPT plan")).toBeUndefined();
   await act(async () => find("ChatGPT: My Pro").props.onPress());
+  expect(find("Default speed").props.accessibilityState.selected).toBe(true);
+  expect(find("Model default").props.accessibilityState.selected).toBe(true);
+  expect(find("Save agent settings").props.accessibilityState.disabled).toBe(
+    false,
+  );
   expect(lookup).toHaveBeenLastCalledWith(
     expect.objectContaining({
       preference: "subscription",
@@ -173,6 +178,8 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
       acp_config: expect.objectContaining({
         paymentSource: "subscription",
         credentialId: "personal",
+        serviceTier: undefined,
+        reasoning: undefined,
       }),
     }),
   );
