@@ -1,6 +1,39 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ArtifactCard } from "../artifact-card";
+jest.mock("@cocalc/frontend/agents/artifact-name-control", () => ({
+  ArtifactNameControl: ({ target }) => (
+    <div role="dialog" aria-label="Name artifact">
+      {target.artifactId}
+    </div>
+  ),
+}));
+
+test("card menu can name a published artifact", async () => {
+  const user = userEvent.setup();
+  render(
+    <ArtifactCard
+      publication={
+        {
+          thread_id: "thread",
+          artifact_id: "artifact",
+          operation_id: "version",
+          snapshot: { title: "Plan", markdown: "Plan" },
+        } as any
+      }
+      projectId="project"
+      chatPath="/source.chat"
+      open={jest.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More options for Plan" }),
+  );
+  await user.click(screen.getByRole("menuitem", { name: "Name artifact" }));
+  expect(
+    screen.getByRole("dialog", { name: "Name artifact" }),
+  ).toHaveTextContent("artifact");
+});
 test("card title and history are keyboard accessible without triggering the surrounding message", async () => {
   const user = userEvent.setup();
   const open = jest.fn();

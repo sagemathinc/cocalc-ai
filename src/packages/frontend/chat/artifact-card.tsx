@@ -5,6 +5,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
 import type {
   ArtifactPublication,
   ArtifactRecord,
@@ -78,6 +79,7 @@ export function ArtifactCard({
   showInConversation,
   syncdb,
   projectId,
+  chatPath,
   compact = false,
   leading,
   trailing,
@@ -89,12 +91,23 @@ export function ArtifactCard({
   showInConversation?: () => void | Promise<void>;
   syncdb?: any;
   projectId?: string;
+  chatPath?: string;
   compact?: boolean;
   leading?: ReactNode;
   trailing?: ReactNode;
   reorder?: { up?: () => void; down?: () => void };
 }) {
   const [editing, setEditing] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const nameTarget =
+    projectId && chatPath
+      ? {
+          projectId,
+          chatPath,
+          threadId: publication.thread_id,
+          artifactId: publication.artifact_id,
+        }
+      : undefined;
   const published = publication.snapshot;
   const s = current
     ? {
@@ -177,6 +190,7 @@ export function ArtifactCard({
     ...(current && syncdb
       ? [{ key: "appearance", label: "Edit appearance" }]
       : []),
+    ...(nameTarget ? [{ key: "name", label: "Name artifact" }] : []),
     ...(showInConversation
       ? [{ key: "conversation", label: "Show in conversation" }]
       : []),
@@ -330,6 +344,7 @@ export function ArtifactCard({
                 if (key === "move-up") reorder?.up?.();
                 else if (key === "move-down") reorder?.down?.();
                 else if (key === "appearance") setEditing(true);
+                else if (key === "name") setNaming(true);
                 else if (key === "conversation") void showInConversation?.();
                 else open?.(publication.operation_id);
               },
@@ -361,6 +376,13 @@ export function ArtifactCard({
             onClose={() => setEditing(false)}
           />
         </Suspense>
+      )}
+      {naming && nameTarget && (
+        <ArtifactNameControl
+          target={nameTarget}
+          open
+          onClose={() => setNaming(false)}
+        />
       )}
     </article>
   );

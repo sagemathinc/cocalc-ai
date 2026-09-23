@@ -182,6 +182,7 @@ export function ArtifactResults({
           current={entry.current}
           syncdb={actions.syncdb}
           projectId={actions.store?.get("project_id")}
+          chatPath={actions.store?.get("path")}
           open={
             canOpen
               ? (version) => {

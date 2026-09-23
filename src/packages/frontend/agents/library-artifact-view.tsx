@@ -170,7 +170,7 @@ function LibraryArtifactPage({
         >
           {onShowConversation && (
             <Button disabled={opening} onClick={() => void openConversation()}>
-              Open source conversation
+              Conversation
             </Button>
           )}
           {onName && (

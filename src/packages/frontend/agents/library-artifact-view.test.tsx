@@ -240,9 +240,7 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   expect(onShowConversation).not.toHaveBeenCalled();
   expect(event).not.toHaveBeenCalled();
   await user.tab();
-  expect(
-    screen.getByRole("button", { name: "Open source conversation" }),
-  ).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Conversation" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(onShowConversation).toHaveBeenCalledWith(target);
   await user.tab();
@@ -341,7 +339,7 @@ test("uses sanitized source context and follows live title/content updates, not 
     "Updated source content",
   );
   expect(
-    screen.queryByRole("button", { name: "Open source conversation" }),
+    screen.queryByRole("button", { name: "Conversation" }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Open in project" }),
@@ -417,7 +415,7 @@ test.each(["throw", "reject"])(
     await screen.findByRole("heading", { name: "Actual source title" });
     const open = within(
       screen.getByRole("group", { name: "Library artifact navigation" }),
-    ).getByRole("button", { name: "Open source conversation" });
+    ).getByRole("button", { name: "Conversation" });
     open.focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -450,7 +448,7 @@ test("source navigation prevents duplicate activation while its promise is pendi
     />,
   );
   await screen.findByRole("heading", { name: "Actual source title" });
-  const open = screen.getByRole("button", { name: "Open source conversation" });
+  const open = screen.getByRole("button", { name: "Conversation" });
   await user.click(open);
   expect(open).toBeDisabled();
   await user.click(open);

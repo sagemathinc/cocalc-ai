@@ -1,4 +1,5 @@
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import type { PersonalLibraryAlias } from "@cocalc/util/personal-library";
 import type { ArtifactCatalogItem } from "@cocalc/util/artifact-catalog";
 import type { AgentSearchHit } from "./search-runner";
 
@@ -210,7 +211,14 @@ export function catalogResults(
     project,
     sort = "recent",
     pins = [],
-  }: { query?: string; project?: string; sort?: string; pins?: string[] } = {},
+    aliases = [],
+  }: {
+    query?: string;
+    project?: string;
+    sort?: string;
+    pins?: string[];
+    aliases?: PersonalLibraryAlias[];
+  } = {},
 ): AgentSearchHit[] {
   const known = new Map<string, NamedAgent>();
   for (const agent of [...agents].sort((a, b) =>
@@ -224,6 +232,11 @@ export function catalogResults(
     if (!known.has(key)) known.set(key, agent);
   }
   const needle = query.trim().toLowerCase();
+  const personalNames = new Map(
+    aliases
+      .filter((alias) => alias.active)
+      .map((alias) => [`${alias.project_id}/${alias.entry_id}`, alias.name]),
+  );
   const results: AgentSearchHit[] = [];
   for (const entry of entries) {
     const item = entry.item;
@@ -242,6 +255,7 @@ export function catalogResults(
         item.target?.sha,
         agent.name,
         entry.chat_path,
+        personalNames.get(`${entry.project_id}/${entry.entry_id}`),
       ]
         .filter(Boolean)
         .join(" ")

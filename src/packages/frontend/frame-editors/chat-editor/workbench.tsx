@@ -44,6 +44,7 @@ import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
+import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
 import { path_split } from "@cocalc/util/misc";
 const AppearanceEditor = lazyWithRetry(
   () => import("@cocalc/frontend/chat/artifact-appearance-editor"),
@@ -113,6 +114,7 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
   const readOnly = props.source ? props.source.readOnly : props.read_only;
   useArtifactChanges(syncdb);
   const [edit, setEdit] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
   let record: ArtifactRecord | undefined;
   try {
     record = readArtifact(syncdb, {
@@ -128,6 +130,16 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
     record?.title ||
     (directPath ? path_split(directPath).tail || directPath : undefined);
   const theme = record?.theme;
+  const nameTarget =
+    record && (props.source?.path ?? actions.store?.get("path"))
+      ? {
+          projectId: props.source?.projectId ?? props.project_id,
+          chatPath: (props.source?.path ??
+            actions.store?.get("path")) as string,
+          threadId: record.thread_id,
+          artifactId: record.artifact_id,
+        }
+      : undefined;
   useEffect(() => {
     if (!title) return;
     const label =
@@ -172,6 +184,11 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
               Appearance
             </Button>
           )}
+          {nameTarget && (
+            <Button size="small" onClick={() => setNameOpen(true)}>
+              Name artifact
+            </Button>
+          )}
         </div>
       )}
       {directPath && !props.desc.get("data-artifact") ? (
@@ -192,6 +209,13 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
             onClose={() => setEdit(false)}
           />
         </Suspense>
+      )}
+      {nameOpen && nameTarget && (
+        <ArtifactNameControl
+          target={nameTarget}
+          open
+          onClose={() => setNameOpen(false)}
+        />
       )}
     </div>
   );

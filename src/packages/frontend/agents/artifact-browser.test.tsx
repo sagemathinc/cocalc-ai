@@ -12,6 +12,10 @@ import { CATALOG_LIMITS } from "./artifact-catalog-store";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
 const listProject = jest.fn();
+let artifactNames: any[] = [];
+jest.mock("./artifact-names", () => ({
+  useArtifactNames: () => ({ names: artifactNames }),
+}));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -27,7 +31,18 @@ let pinned: string[] = [];
 jest.mock("@cocalc/frontend/chat/use-artifact-pins", () => ({
   useArtifactPins: () => ({ pins: pinned, error: "", setPinned, move }),
 }));
-jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+  isIconName: () => false,
+}));
+jest.mock("./library-appearance-editor", () => ({
+  LibraryAppearanceEditor: ({ target, onClose }) => (
+    <div role="dialog" aria-label="Edit appearance">
+      {target.artifactId}
+      <button onClick={onClose}>Close appearance</button>
+    </div>
+  ),
+}));
 const agents = ["one", "two"].map(
   (name) =>
     ({
@@ -54,6 +69,7 @@ const entry = (name: string, id = "same-id") => ({
 });
 beforeEach(() => {
   pinned = [];
+  artifactNames = [];
   listProject.mockReset();
   setPinned.mockReset();
   move.mockReset();
@@ -185,15 +201,130 @@ test("navigation shares the heading and participates in keyboard order", async (
   ).toContainElement(navigation);
   const user = userEvent.setup();
   await user.tab({ shift: true });
+  expect(screen.getByRole("button", { name: "List view" })).toHaveFocus();
+  await user.tab({ shift: true });
+  expect(screen.getByRole("button", { name: "Grid view" })).toHaveFocus();
+  await user.tab({ shift: true });
   expect(navigation).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(toggle).toHaveBeenCalledTimes(1);
+  await user.tab();
+  await user.tab();
   await user.tab();
   expect(
     screen.getByRole("searchbox", { name: "Search library" }),
   ).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: /Return to agent|Back to agent/ }),
+  ).not.toBeInTheDocument();
+});
+
+test("grid and list views retain the same artifact actions", async () => {
+  const user = userEvent.setup();
+  const onSelect = jest.fn(async () => {});
+  render(
+    <AgentArtifactBrowser
+      accountId="library-grid"
+      agents={agents}
+      active
+      onSelect={onSelect}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  await user.click(screen.getByRole("button", { name: "Grid view" }));
+  expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByRole("list", { name: "" })).toHaveStyle({
+    display: "grid",
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Open Result one from one" }),
+  );
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "List view" }));
+  expect(screen.getByRole("button", { name: "List view" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+test("a personal artifact name is visible and searchable in grid view", async () => {
+  artifactNames = [
+    {
+      name: "my-notebook",
+      project_id: "p-one",
+      entry_id: "same-id",
+      active: true,
+    },
+  ];
+  const user = userEvent.setup();
+  render(
+    <AgentArtifactBrowser
+      accountId="library-alias-search"
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  await user.click(screen.getByRole("button", { name: "Grid view" }));
+  expect(screen.getByText("@my-notebook")).toBeVisible();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search library" }),
+    "my-notebook",
+  );
+  expect(
+    screen.getByRole("button", { name: "Open Result one from one" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open Result two from two" }),
+  ).not.toBeInTheDocument();
+});
+
+test("grid tiles use catalog appearance and open the real appearance action", async () => {
+  listProject.mockImplementation(async ({ project_id }) => ({
+    entries: [
+      {
+        ...entry(project_id.slice(2)),
+        item: {
+          ...entry(project_id.slice(2)).item,
+          appearance: { color: "#123456", accent_color: "#abcdef" },
+        },
+      },
+    ],
+    indexed_sources: 1,
+  }));
+  const user = userEvent.setup();
+  render(
+    <AgentArtifactBrowser
+      accountId="library-appearance"
+      agents={agents}
+      active
+      onSelect={async () => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Open Result one from one" });
+  await user.click(screen.getByRole("button", { name: "Grid view" }));
+  expect(
+    screen
+      .getByRole("button", { name: "Open Result one from one" })
+      .closest("[role=listitem]"),
+  ).toHaveStyle({
+    border: "1px solid #123456",
+    minHeight: "136px",
+  });
+  await user.click(
+    screen.getByRole("button", { name: "More options for Result one" }),
+  );
+  await user.click(screen.getByRole("menuitem", { name: "Edit appearance" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Edit appearance" }),
+  ).toHaveTextContent("same-id");
+  await user.click(screen.getByRole("button", { name: "Close appearance" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Edit appearance" }),
   ).not.toBeInTheDocument();
 });
 
@@ -506,7 +637,12 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   const back = screen.getByRole("button", { name: "Return to agent" });
   back.focus();
   await user.tab();
+  expect(screen.getByRole("button", { name: "Grid view" })).toHaveFocus();
+  await user.tab();
+  await user.tab();
   expect(screen.getByRole("searchbox")).toHaveFocus();
+  await user.tab({ shift: true });
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(back).toHaveFocus();
   await user.keyboard("{Enter}");

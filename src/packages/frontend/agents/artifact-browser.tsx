@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,12 +12,15 @@ import type { ComponentRef, ReactNode } from "react";
 import { Alert, Button, Checkbox, Dropdown, Empty, Input, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, isIconName } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AgentSearchHit } from "./search-runner";
 import { useArtifactPins } from "@cocalc/frontend/chat/use-artifact-pins";
+import { useArtifactNames } from "./artifact-names";
 import {
   DragHandle,
   SortableItem,
@@ -27,6 +32,12 @@ import {
   catalogResults,
   CATALOG_LIMITS,
 } from "./artifact-catalog-store";
+
+const LibraryAppearanceEditor = lazy(() =>
+  import("./library-appearance-editor").then(({ LibraryAppearanceEditor }) => ({
+    default: LibraryAppearanceEditor,
+  })),
+);
 
 interface Props {
   accountId: string;
@@ -59,6 +70,7 @@ function AccountArtifactBrowser({
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
+  const [view, setView] = useState<"list" | "grid">("list");
   const [groupByProject, setGroupByProject] = useState(false);
   const [organizationOpen, setOrganizationOpen] = useState(false);
   const organizationId = useId();
@@ -78,6 +90,8 @@ function AccountArtifactBrowser({
   );
   const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
   const [openError, setOpenError] = useState("");
+  const [appearanceTarget, setAppearanceTarget] =
+    useState<ForeignArtifactTarget>();
   const [opening, setOpening] = useState(false);
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -114,6 +128,7 @@ function AccountArtifactBrowser({
     else searchRef.current?.focus({ preventScroll: true });
   }, [active, opening, selectedArtifactIdentity]);
   const pins = useArtifactPins();
+  const { names: artifactNames } = useArtifactNames();
   const projects = [
     ...new Set(agents.map((agent) => agent.endpoint.project_id)),
   ].sort();
@@ -128,7 +143,14 @@ function AccountArtifactBrowser({
     project,
     sort,
     pins: sort === "custom" ? pins.pins : [],
+    aliases: artifactNames,
   });
+  const catalogById = new Map(
+    metadata.entries.map((entry) => [
+      `${entry.project_id}/${entry.entry_id}`,
+      entry,
+    ]),
+  );
   const projectTitle = (id: string) =>
     agents.find((agent) => agent.endpoint.project_id === id)?.project_title ||
     id;
@@ -179,7 +201,11 @@ function AccountArtifactBrowser({
     >
       <KeyboardBoundary
         boundary="agent-library"
-        style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 16px" }}
+        style={{
+          maxWidth: 1440,
+          margin: "0 auto",
+          padding: "24px 16px",
+        }}
       >
         <header
           style={{
@@ -209,6 +235,26 @@ function AccountArtifactBrowser({
           >
             Library
           </h1>
+          <div
+            role="group"
+            aria-label="Library view"
+            style={{ display: "flex", gap: 4 }}
+          >
+            <Button
+              type={view === "grid" ? "primary" : "text"}
+              aria-label="Grid view"
+              aria-pressed={view === "grid"}
+              icon={<Icon name="dashboard" />}
+              onClick={() => setView("grid")}
+            />
+            <Button
+              type={view === "list" ? "primary" : "text"}
+              aria-label="List view"
+              aria-pressed={view === "list"}
+              icon={<Icon name="list" />}
+              onClick={() => setView("list")}
+            />
+          </div>
           <Input
             ref={searchRef}
             type="search"
@@ -407,10 +453,22 @@ function AccountArtifactBrowser({
                     {projectTitle(projectId)}
                   </h2>
                 )}
-                <div role="list">
+                <div
+                  role="list"
+                  style={
+                    view === "grid"
+                      ? {
+                          display: "grid",
+                          gridTemplateColumns:
+                            "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
+                          gap: 8,
+                        }
+                      : undefined
+                  }
+                >
                   <SortableList
                     items={visiblePins}
-                    disabled={sort !== "custom"}
+                    disabled={sort !== "custom" || view === "grid"}
                     onDragStop={(_from, to, id) => {
                       if (typeof id === "string")
                         pins.move(visiblePins, id, to);
@@ -418,6 +476,16 @@ function AccountArtifactBrowser({
                   >
                     {results.map((result) => {
                       const id = identity(result);
+                      const alias = artifactNames.find(
+                        (item) =>
+                          item.active &&
+                          item.project_id ===
+                            result.agent.endpoint.project_id &&
+                          item.entry_id === result.catalogEntryId,
+                      )?.name;
+                      const appearance = catalogById.get(
+                        `${result.agent.endpoint.project_id}/${result.catalogEntryId}`,
+                      )?.item.appearance;
                       const pinnedIndex = visiblePins.indexOf(id);
                       const reorder = sort === "custom" && pinnedIndex >= 0;
                       const row = (
@@ -428,12 +496,28 @@ function AccountArtifactBrowser({
                             display: "flex",
                             alignItems: "center",
                             gap: 8,
-                            flexWrap: "wrap",
-                            padding: "12px 0",
-                            borderBottom: `1px solid ${UI_COLORS.border}`,
+                            flexWrap: view === "grid" ? "nowrap" : "wrap",
+                            flexDirection: view === "grid" ? "column" : "row",
+                            minHeight: view === "grid" ? 136 : undefined,
+                            padding: view === "grid" ? 10 : "12px 0",
+                            border:
+                              view === "grid"
+                                ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
+                                : undefined,
+                            borderBottom:
+                              view === "grid"
+                                ? undefined
+                                : `1px solid ${UI_COLORS.border}`,
+                            borderRadius: view === "grid" ? 12 : undefined,
+                            background:
+                              view === "grid"
+                                ? appearance?.accent_color
+                                  ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} 12%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
+                                  : UI_COLORS.surface
+                                : undefined,
                           }}
                         >
-                          {reorder && (
+                          {reorder && view === "list" && (
                             <DragHandle
                               id={id}
                               ariaLabel={`Drag ${result.hit.artifact_title} to reorder`}
@@ -446,18 +530,50 @@ function AccountArtifactBrowser({
                             aria-label={`Open ${result.hit.artifact_title} from ${result.agent.name}`}
                             data-artifact-identity={id}
                             style={{
-                              flex: "1 1 180px",
+                              flex: view === "grid" ? "1 1 auto" : "1 1 180px",
                               minWidth: 0,
+                              width: view === "grid" ? "100%" : undefined,
                               height: "auto",
                               whiteSpace: "normal",
-                              justifyContent: "flex-start",
-                              textAlign: "left",
+                              justifyContent:
+                                view === "grid" ? "center" : "flex-start",
+                              textAlign: view === "grid" ? "center" : "left",
                             }}
                             onClick={() => void openResult(result)}
                           >
                             <span
                               style={{ minWidth: 0, overflowWrap: "anywhere" }}
                             >
+                              {view === "grid" &&
+                                (appearance?.image_blob ? (
+                                  <img
+                                    src={`${appBasePath}/blobs/theme-image.png?uuid=${encodeURIComponent(appearance.image_blob)}`}
+                                    alt=""
+                                    style={{
+                                      display: "block",
+                                      width: 32,
+                                      height: 32,
+                                      objectFit: "cover",
+                                      borderRadius: 6,
+                                      margin: "0 auto 8px",
+                                    }}
+                                  />
+                                ) : (
+                                  <Icon
+                                    name={
+                                      isIconName(appearance?.icon)
+                                        ? appearance.icon
+                                        : "file"
+                                    }
+                                    style={{
+                                      display: "block",
+                                      fontSize: 30,
+                                      marginBottom: 8,
+                                      color:
+                                        appearance?.color ?? UI_COLORS.text,
+                                    }}
+                                  />
+                                ))}
                               <strong
                                 style={{
                                   display: "block",
@@ -465,6 +581,17 @@ function AccountArtifactBrowser({
                               >
                                 {result.hit.artifact_title}
                               </strong>
+                              {alias && (
+                                <span
+                                  style={{
+                                    display: "block",
+                                    color: UI_COLORS.link,
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  @{alias}
+                                </span>
+                              )}
                               <span
                                 style={{
                                   color: UI_COLORS.secondary,
@@ -477,48 +604,88 @@ function AccountArtifactBrowser({
                               </span>
                             </span>
                           </Button>
-                          {onShowConversation && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              alignSelf:
+                                view === "grid" ? "stretch" : undefined,
+                              justifyContent:
+                                view === "grid" ? "flex-end" : undefined,
+                            }}
+                          >
+                            {onShowConversation && (
+                              <Button
+                                type="text"
+                                disabled={opening}
+                                aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
+                                onClick={() => void openResult(result, true)}
+                                icon={<Icon name="comment" />}
+                              />
+                            )}
                             <Button
                               type="text"
-                              disabled={opening}
-                              aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
-                              onClick={() => void openResult(result, true)}
-                              icon={<Icon name="comment" />}
-                            />
-                          )}
-                          <Button
-                            type="text"
-                            aria-label={`${pins.pins.includes(identity(result)) ? "Unpin" : "Pin"} ${result.hit.artifact_title}`}
-                            aria-pressed={pins.pins.includes(identity(result))}
-                            onClick={() =>
-                              pins.setPinned(
+                              aria-label={`${pins.pins.includes(identity(result)) ? "Unpin" : "Pin"} ${result.hit.artifact_title}`}
+                              aria-pressed={pins.pins.includes(
                                 identity(result),
-                                !pins.pins.includes(identity(result)),
-                              )
-                            }
-                            icon={
-                              <Icon
-                                name={
-                                  pins.pins.includes(identity(result))
-                                    ? "pushpin-filled"
-                                    : "pushpin"
-                                }
-                              />
-                            }
-                          />
-                          {reorder && (
-                            <PinOrderMenu
-                              title={result.hit.artifact_title ?? "artifact"}
-                              index={pinnedIndex}
-                              count={visiblePins.length}
-                              onMove={(index) =>
-                                pins.move(visiblePins, id, index)
+                              )}
+                              onClick={() =>
+                                pins.setPinned(
+                                  identity(result),
+                                  !pins.pins.includes(identity(result)),
+                                )
+                              }
+                              icon={
+                                <Icon
+                                  name={
+                                    pins.pins.includes(identity(result))
+                                      ? "pushpin-filled"
+                                      : "pushpin"
+                                  }
+                                />
                               }
                             />
-                          )}
+                            {reorder && (
+                              <PinOrderMenu
+                                title={result.hit.artifact_title ?? "artifact"}
+                                index={pinnedIndex}
+                                count={visiblePins.length}
+                                onMove={(index) =>
+                                  pins.move(visiblePins, id, index)
+                                }
+                              />
+                            )}
+                            <Dropdown
+                              trigger={["click"]}
+                              menu={{
+                                items: [
+                                  {
+                                    key: "appearance",
+                                    label: "Edit appearance",
+                                  },
+                                ],
+                                onClick: () => {
+                                  if (!result.hit.artifact_id) return;
+                                  setAppearanceTarget({
+                                    projectId: result.agent.endpoint.project_id,
+                                    path: result.agent.path,
+                                    threadId: result.threadId,
+                                    artifactId: result.hit.artifact_id,
+                                  });
+                                },
+                              }}
+                            >
+                              <Button
+                                type="text"
+                                aria-label={`More options for ${result.hit.artifact_title}`}
+                                icon={<Icon name="ellipsis" />}
+                              />
+                            </Dropdown>
+                          </div>
                         </div>
                       );
-                      return reorder ? (
+                      return reorder && view === "list" ? (
                         <SortableItem key={id} id={id} hideActive={false}>
                           {row}
                         </SortableItem>
@@ -537,6 +704,16 @@ function AccountArtifactBrowser({
             Showing the first 200 of {ordered.length} matches. Narrow the search
             or project filter to see other cached artifacts.
           </p>
+        )}
+        {appearanceTarget && (
+          <Suspense
+            fallback={<div role="status">Loading appearance editor...</div>}
+          >
+            <LibraryAppearanceEditor
+              target={appearanceTarget}
+              onClose={() => setAppearanceTarget(undefined)}
+            />
+          </Suspense>
         )}
       </KeyboardBoundary>
     </div>
