@@ -40,7 +40,7 @@ beforeAll(async () => {
 }, 30000);
 beforeEach(async () => {
   await getPool().query(
-    "TRUNCATE artifact_catalog_outbox,artifact_catalog,artifact_catalog_sources,projects CASCADE",
+    "TRUNCATE artifact_catalog,artifact_catalog_sources,projects CASCADE",
   );
   await getPool().query(
     `INSERT INTO projects(project_id,host_id,owning_bay_id,users)
@@ -89,7 +89,7 @@ test("writer recovery lookup is owner/host checked and reports committed sequenc
   ).rejects.toThrow("owner/host");
 });
 
-test("catalog writes and projection outbox are atomic and retries do not duplicate events", async () => {
+test("catalog writes are idempotent and retries do not advance revisions", async () => {
   expect(await applyArtifactCatalogSnapshot(snapshot(), authority)).toEqual({
     revision: 1,
     replayed: false,
@@ -98,12 +98,10 @@ test("catalog writes and projection outbox are atomic and retries do not duplica
     revision: 1,
     replayed: true,
   });
-  const events = (
-    await getPool().query("SELECT * FROM artifact_catalog_outbox")
-  ).rows;
-  expect(events).toHaveLength(1);
-  expect(events[0].payload.entries[0].metadata.title).toBe("Notes");
-  expect(events[0].published_at).toBeNull();
+  const rows = (await getPool().query("SELECT * FROM artifact_catalog")).rows;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].metadata.title).toBe("Notes");
+  expect(Number(rows[0].revision)).toBe(1);
 });
 
 test("metadata pages use stable keyset cursors and omit tombstones", async () => {
@@ -204,13 +202,7 @@ test("deletion/reappearance and edits preserve original creation order", async (
   expect(row.created_at.getTime()).toBe(1000);
   expect(row.metadata.title).toBe("Renamed");
   expect(row.metadata.created_at).toBe(1000);
-  const events = (
-    await getPool().query(
-      "SELECT payload FROM artifact_catalog_outbox ORDER BY revision",
-    )
-  ).rows;
-  expect(events[1].payload.entries).toEqual([]);
-  expect(Date.parse(events[2].payload.entries[0].created_at)).toBe(1000);
+  expect(Number(row.revision)).toBe(3);
 });
 
 test("wrong bay, reassigned host and deleted project cannot ingest", async () => {
@@ -261,10 +253,10 @@ test("epoch registration supports lost-response retry but fences stale registrat
   ).toEqual({ revision: 1, replayed: true });
 });
 
-test("outbox failure rolls back metadata and sequence advancement", async () => {
+test("source update failure rolls back metadata and sequence advancement", async () => {
   const pool = getPool();
   await pool.query(
-    `ALTER TABLE artifact_catalog_outbox ADD CONSTRAINT catalog_test_fail CHECK (revision < 0)`,
+    `ALTER TABLE artifact_catalog_sources ADD CONSTRAINT catalog_test_fail CHECK (source_sequence < 1)`,
   );
   try {
     await expect(
@@ -284,7 +276,7 @@ test("outbox failure rolls back metadata and sequence advancement", async () => 
     ).toBe(0);
   } finally {
     await pool.query(
-      "ALTER TABLE artifact_catalog_outbox DROP CONSTRAINT catalog_test_fail",
+      "ALTER TABLE artifact_catalog_sources DROP CONSTRAINT catalog_test_fail",
     );
   }
   expect(await applyArtifactCatalogSnapshot(snapshot(), authority)).toEqual({
@@ -300,19 +292,20 @@ test("concurrent duplicate delivery produces only one revision", async () => {
   ]);
   expect(results.filter((x) => !x.replayed)).toHaveLength(1);
   expect(
-    (await getPool().query("SELECT * FROM artifact_catalog_outbox")).rows,
+    (await getPool().query("SELECT * FROM artifact_catalog")).rows,
   ).toHaveLength(1);
 });
 
-test("ordinary chat writes do not produce artifact feed churn", async () => {
+test("ordinary chat writes do not advance the catalog revision", async () => {
   await applyArtifactCatalogSnapshot(snapshot(), authority);
   expect(await applyArtifactCatalogSnapshot(snapshot(2), authority)).toEqual({
     revision: 1,
     replayed: true,
   });
-  expect(
-    (await getPool().query("SELECT * FROM artifact_catalog_outbox")).rows,
-  ).toHaveLength(1);
+  const row = (await getPool().query("SELECT * FROM artifact_catalog_sources"))
+    .rows[0];
+  expect(Number(row.catalog_revision)).toBe(1);
+  expect(Number(row.source_sequence)).toBe(2);
   const changed = snapshot(2);
   changed.items[0].title = "Conflicting retry";
   await expect(

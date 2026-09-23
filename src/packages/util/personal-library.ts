@@ -11,6 +11,15 @@ export interface PersonalLibraryAlias extends PersonalLibraryTarget {
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const ENTRY = /^[a-f0-9]{64}$/;
 const NAME = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+export const PERSONAL_LIBRARY_MAX_PINS = 100;
+export const PERSONAL_LIBRARY_MAX_PIN_BYTES = 64 * 1024;
+
+export interface PersonalLibraryPinLocator {
+  project_id: string;
+  chat_path: string;
+  thread_id: string;
+  artifact_id: string;
+}
 
 export function normalizePersonalLibraryName(input: string): string {
   if (typeof input !== "string") throw Error("Invalid artifact name");
@@ -29,8 +38,10 @@ export function validatePersonalLibraryTarget(
     throw Error("Invalid artifact identity");
 }
 
-export function validatePersonalLibraryPinKey(value: string): string {
-  if (typeof value !== "string" || value.length > 4096)
+export function parsePersonalLibraryPinKey(
+  value: string,
+): PersonalLibraryPinLocator {
+  if (typeof value !== "string" || value.length > 4600)
     throw Error("Invalid artifact pin");
   let parsed: unknown;
   try {
@@ -43,45 +54,35 @@ export function validatePersonalLibraryPinKey(value: string): string {
     parsed.length !== 4 ||
     typeof parsed[0] !== "string" ||
     !UUID.test(parsed[0]) ||
-    parsed
-      .slice(1)
+    typeof parsed[1] !== "string" ||
+    parsed[1].length > 4096 ||
+    !parsed[1].startsWith("/") ||
+    !parsed[1].endsWith(".chat") ||
+    parsed[1]
+      .split("/")
       .some(
-        (part) =>
-          typeof part !== "string" || !part.length || part.length > 2048,
-      )
+        (part, index) => index > 0 && (!part || part === "." || part === ".."),
+      ) ||
+    typeof parsed[2] !== "string" ||
+    !parsed[2].length ||
+    parsed[2].length > 200 ||
+    typeof parsed[3] !== "string" ||
+    !parsed[3].length ||
+    parsed[3].length > 200
   )
     throw Error("Invalid artifact pin");
-  return JSON.stringify(parsed);
+  return {
+    project_id: parsed[0],
+    chat_path: parsed[1],
+    thread_id: parsed[2],
+    artifact_id: parsed[3],
+  };
 }
 
-export function normalizeLegacyPersonalLibraryAliases(
-  value: unknown,
-): PersonalLibraryAlias[] {
-  if (!Array.isArray(value)) return [];
-  const names = new Set<string>();
-  const activeTargets = new Set<string>();
-  const result: PersonalLibraryAlias[] = [];
-  for (const raw of value.slice(0, 1000)) {
-    try {
-      const alias = raw as PersonalLibraryAlias;
-      const name = normalizePersonalLibraryName(alias.name);
-      validatePersonalLibraryTarget(alias);
-      if (names.has(name) || typeof alias.active !== "boolean") continue;
-      const key = `${alias.project_id}/${alias.entry_id}`;
-      if (alias.active && activeTargets.has(key)) continue;
-      names.add(name);
-      if (alias.active) activeTargets.add(key);
-      result.push({
-        name,
-        project_id: alias.project_id,
-        entry_id: alias.entry_id,
-        active: alias.active,
-      });
-    } catch {
-      /* Ignore malformed legacy preferences. */
-    }
-  }
-  return result;
+export function validatePersonalLibraryPinKey(value: string): string {
+  const { project_id, chat_path, thread_id, artifact_id } =
+    parsePersonalLibraryPinKey(value);
+  return JSON.stringify([project_id, chat_path, thread_id, artifact_id]);
 }
 
 export function movePersonalLibraryPin(
@@ -98,26 +99,4 @@ export function movePersonalLibraryPin(
   ordered.splice(index, 0, pinKey);
   let cursor = 0;
   return pins.map((pin) => (visibleSet.has(pin) ? ordered[cursor++] : pin));
-}
-
-export function normalizeLegacyPersonalLibraryPins(value: unknown): string[] {
-  try {
-    const plain = (value as any)?.toJS?.() ?? value;
-    const parsed = typeof plain === "string" ? JSON.parse(plain) : plain;
-    if (!Array.isArray(parsed)) return [];
-    return [
-      ...new Set(
-        parsed.filter((item): item is string => {
-          try {
-            validatePersonalLibraryPinKey(item);
-            return true;
-          } catch {
-            return false;
-          }
-        }),
-      ),
-    ].slice(0, 1000);
-  } catch {
-    return [];
-  }
 }

@@ -316,7 +316,6 @@ export const TABLE_OWNERSHIP = {
       "personal_library_controls",
       "personal_library_aliases",
       "personal_library_pins",
-      "personal_library_imports",
     ],
     {
       ownership: "account-home",
@@ -419,7 +418,6 @@ export const TABLE_OWNERSHIP = {
   ...entries(
     [
       "artifact_catalog",
-      "artifact_catalog_outbox",
       "artifact_catalog_sources",
       "bookmarks",
       "blobs",

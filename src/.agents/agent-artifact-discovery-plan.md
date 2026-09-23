@@ -93,12 +93,12 @@ workers, a standalone Lite adapter, and an in-memory frontend catalog preview:
   First writes can be journaled without contacting an available hub.
 - Bounded single-flight source projector with injectable sandbox reader and
   owner-routed sender, single-flight timer, and service lifetime process lock.
-- Project-owning-bay Postgres catalog/source/outbox tables. Ingestion checks
+- Project-owning-bay Postgres catalog/source tables. Ingestion checks
   current project owner/host under a lock; owner-issued writer epochs fence
   stale writers. Registration and delivery retries are idempotent.
-- Catalog updates and the projection outbox commit atomically. Removals leave
-  tombstones; original creation order survives updates and reappearance.
-  Ordinary chat writes with unchanged metadata do not generate feed churn.
+- Catalog updates commit atomically. Removals leave tombstones; original
+  creation order survives updates and reappearance. Ordinary chat writes with
+  unchanged metadata do not rewrite catalog rows.
 - Host-authenticated registration, writer-state lookup and ingestion RPCs,
   routed through the trusted fabric to the project-owning bay. The owner
   rechecks directory epochs and bounds concurrent work globally and per host.
@@ -129,7 +129,7 @@ Manual-test checkpoint: dev hub and project-host deployment includes the catalog
 pipeline and frontend preview. Live Postgres ingestion has been verified.
 Standalone Lite is covered by tests/typecheck, not a live deployment test.
 
-Not implemented yet: account-home projections/outbox delivery, live feed,
+Not implemented yet: account-home projections, live feed,
 or IndexedDB cache. The shelf/stationary-tab checkpoint above builds on this.
 Initial page loading still fetches metadata; only a warm cache is instant.
 Host backfill discovers
@@ -166,14 +166,17 @@ to 16 MiB and failures retain prior metadata rather than implying deletion.
    bytes, concurrency and retries; expose incomplete/error coverage. External
    filesystem edits and project moves/restores need reconciliation. Source
    registration/state lookup must support a journal lost during host migration.
-3. Drain the catalog outbox into authorized account-home projections using
-   trusted inter-bay routing. Cover new collaborators, removal, project deletion,
-   account/project rehome and revocation races with replayed updates. Membership
-   removal must win over delayed artifact deliveries. Keep tombstone/revision
-   floors until replay/snapshot recovery can no longer resurrect old rows.
+3. Design a bounded, coalesced catalog-to-account-home delivery mechanism when
+   account-home projections are implemented; do not persist an unconsumed
+   append-only outbox. Use trusted inter-bay routing and cover new collaborators,
+   removal, project deletion, account/project rehome and revocation races.
+   Membership removal must win over delayed artifact deliveries. Keep
+   tombstone/revision floors until replay/snapshot recovery cannot resurrect
+   old rows.
 4. Add authenticated snapshot/cursor APIs and account-feed delivery with explicit
    snapshot-to-feed handoff and gap recovery. Feed broadcast alone is not the
-   source of truth. Do not delete outbox work until durable projection succeeds.
+   source of truth. Bound pending delivery and retain it only until durable
+   projection succeeds.
    Use keyset pagination and indexed metadata queries, not chat scans.
 5. Maintain one account-scoped frontend catalog store, warmed independently of
    the modal, then persist metadata in IndexedDB. Switch scopes/search/order

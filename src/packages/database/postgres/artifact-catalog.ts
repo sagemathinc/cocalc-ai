@@ -297,35 +297,6 @@ export async function applyArtifactCatalogSnapshot(
       catalog_revision=$3,payload_hash=$4,metadata_hash=$5,updated_at=now() WHERE source_id=$1`,
       [source_id, snapshot.sequence, next, payload_hash, metadata_hash],
     );
-    // Store the resulting projection in the same transaction. Do not publish
-    // a feed event before commit or treat best-effort broadcast as durability.
-    const persisted = (
-      await db.query(
-        `SELECT entry_id,metadata,created_at FROM artifact_catalog
-      WHERE source_id=$1 AND NOT deleted ORDER BY created_at,entry_id`,
-        [source_id],
-      )
-    ).rows;
-    await db.query(
-      `INSERT INTO artifact_catalog_outbox
-      (event_id,project_id,source_id,revision,payload,created_at)
-      VALUES($1,$2,$3,$4,$5::jsonb,now())`,
-      [
-        randomUUID(),
-        snapshot.project_id,
-        source_id,
-        next,
-        JSON.stringify({
-          schema_version: 1,
-          project_id: snapshot.project_id,
-          chat_path: snapshot.chat_path,
-          owning_bay_id: authority.owning_bay_id,
-          source_id,
-          revision: next,
-          entries: persisted,
-        }),
-      ],
-    );
     return { revision: next, replayed: false };
   });
 }

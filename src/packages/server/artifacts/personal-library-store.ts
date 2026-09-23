@@ -9,8 +9,9 @@ import type {
   PersonalLibrarySnapshot,
 } from "@cocalc/conat/hub/api/personal-library";
 import {
+  PERSONAL_LIBRARY_MAX_PIN_BYTES,
+  PERSONAL_LIBRARY_MAX_PINS,
   movePersonalLibraryPin,
-  normalizeLegacyPersonalLibraryAliases,
   normalizePersonalLibraryName,
   validatePersonalLibraryPinKey,
   validatePersonalLibraryTarget,
@@ -52,6 +53,12 @@ async function locked<T>(
   try {
     await client.query("BEGIN");
     await assertPersonalAccountAuthority(client, account);
+    const admission = await client.query(
+      "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired",
+      [`personal-library:${account}`],
+    );
+    if (!admission.rows[0].acquired)
+      throw Error("Personal library is busy; retry the change");
     await client.query(
       "INSERT INTO personal_library_controls(account_id) VALUES($1) ON CONFLICT DO NOTHING",
       [account],
@@ -76,11 +83,13 @@ async function replacePins(
   account: string,
   pins: string[],
 ): Promise<void> {
-  for (let rank = 0; rank < pins.length; rank++)
-    await db.query(
-      "UPDATE personal_library_pins SET rank=$3 WHERE account_id=$1 AND pin_key=$2",
-      [account, pins[rank], rank],
-    );
+  await db.query(
+    `UPDATE personal_library_pins AS pins SET rank=ordered.rank - 1
+     FROM unnest($2::text[]) WITH ORDINALITY AS ordered(pin_key,rank)
+     WHERE pins.account_id=$1 AND pins.pin_key=ordered.pin_key
+       AND pins.rank IS DISTINCT FROM ordered.rank - 1`,
+    [account, pins],
+  );
 }
 
 export const personalLibraryStore: PersonalLibraryApi = {
@@ -149,22 +158,27 @@ export const personalLibraryStore: PersonalLibraryApi = {
     const key = validatePersonalLibraryPinKey(opts.pin_key);
     if (typeof opts.pinned !== "boolean") throw Error("Invalid pin state");
     return locked(account, async (db) => {
-      const pins = (await snapshot(db, account)).pins.filter(
-        (item) => item !== key,
-      );
-      if (opts.pinned) pins.push(key);
-      if (pins.length > 1000) throw Error("Artifact pin limit reached");
-      if (opts.pinned)
+      const pins = (await snapshot(db, account)).pins;
+      if (opts.pinned && !pins.includes(key)) {
+        if (
+          pins.length >= PERSONAL_LIBRARY_MAX_PINS ||
+          Buffer.byteLength(key) +
+            pins.reduce((bytes, pin) => bytes + Buffer.byteLength(pin), 0) >
+            PERSONAL_LIBRARY_MAX_PIN_BYTES
+        )
+          throw Error("Artifact pin limit reached");
         await db.query(
-          "INSERT INTO personal_library_pins(account_id,pin_key,rank) VALUES($1,$2,$3) ON CONFLICT(account_id,pin_key) DO NOTHING",
-          [account, key, pins.length - 1],
+          `INSERT INTO personal_library_pins(account_id,pin_key,rank)
+           SELECT $1,$2,COALESCE(MAX(rank),-1)+1 FROM personal_library_pins WHERE account_id=$1
+           ON CONFLICT(account_id,pin_key) DO NOTHING`,
+          [account, key],
         );
-      else
+      } else if (!opts.pinned) {
         await db.query(
           "DELETE FROM personal_library_pins WHERE account_id=$1 AND pin_key=$2",
           [account, key],
         );
-      await replacePins(db, account, pins);
+      }
       return snapshot(db, account);
     });
   },
@@ -174,11 +188,16 @@ export const personalLibraryStore: PersonalLibraryApi = {
     const key = validatePersonalLibraryPinKey(opts.pin_key);
     if (
       !Array.isArray(opts.visible) ||
-      opts.visible.length > 1000 ||
+      opts.visible.length > PERSONAL_LIBRARY_MAX_PINS ||
       !Number.isInteger(opts.index)
     )
       throw Error("Invalid pin order");
     const visible = opts.visible.map(validatePersonalLibraryPinKey);
+    if (
+      visible.reduce((bytes, pin) => bytes + Buffer.byteLength(pin), 0) >
+      PERSONAL_LIBRARY_MAX_PIN_BYTES
+    )
+      throw Error("Invalid pin order");
     return locked(account, async (db) => {
       const pins = (await snapshot(db, account)).pins;
       await replacePins(
@@ -186,56 +205,6 @@ export const personalLibraryStore: PersonalLibraryApi = {
         account,
         movePersonalLibraryPin(pins, visible, key, opts.index),
       );
-      return snapshot(db, account);
-    });
-  },
-  async importLegacy(opts) {
-    const account = opts.account_id;
-    requireUuid(account, "account_id");
-    if (
-      !Array.isArray(opts.aliases) ||
-      !Array.isArray(opts.pins) ||
-      opts.aliases.length > 1000 ||
-      opts.pins.length > 1000
-    )
-      throw Error("Invalid legacy library data");
-    const aliases = normalizeLegacyPersonalLibraryAliases(opts.aliases);
-    const pins = [...new Set(opts.pins.map(validatePersonalLibraryPinKey))];
-    return locked(account, async (db) => {
-      const inserted = await db.query(
-        "INSERT INTO personal_library_imports(account_id) VALUES($1) ON CONFLICT DO NOTHING",
-        [account],
-      );
-      if (inserted.rowCount) {
-        for (const alias of aliases) {
-          const current = (
-            await db.query(
-              "SELECT 1 FROM personal_library_aliases WHERE account_id=$1 AND project_id=$2 AND entry_id=$3 AND active",
-              [account, alias.project_id, alias.entry_id],
-            )
-          ).rows.length;
-          if (alias.active && current) continue;
-          await db.query(
-            "INSERT INTO personal_library_aliases(account_id,name,project_id,entry_id,active) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-            [
-              account,
-              alias.name,
-              alias.project_id,
-              alias.entry_id,
-              alias.active,
-            ],
-          );
-        }
-        const existing = (await snapshot(db, account)).pins;
-        for (const pin of pins) {
-          if (existing.includes(pin)) continue;
-          await db.query(
-            "INSERT INTO personal_library_pins(account_id,pin_key,rank) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-            [account, pin, existing.length],
-          );
-          existing.push(pin);
-        }
-      }
       return snapshot(db, account);
     });
   },

@@ -45,12 +45,3 @@ Table({
     rank: { type: "integer", pg_type: "BIGINT", not_null: true },
   },
 });
-
-Table({
-  name: "personal_library_imports",
-  rules: { primary_key: "account_id" },
-  fields: {
-    account_id: { type: "uuid", not_null: true },
-    imported_at: { type: "timestamp", not_null: true, pg_default: "now()" },
-  },
-});

@@ -33,12 +33,6 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     reason:
       "Artifact metadata is derived from project chat files, but rehome needs an explicit rescan and reconciliation before the destination catalog can serve it.",
   },
-  artifact_catalog_outbox: {
-    table: "artifact_catalog_outbox",
-    status: "not-portable",
-    reason:
-      "Catalog projection events must drain or be regenerated after rehome; copying in-flight events could publish stale owner metadata.",
-  },
   artifact_catalog_sources: {
     table: "artifact_catalog_sources",
     status: "not-portable",

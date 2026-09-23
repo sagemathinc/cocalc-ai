@@ -2,13 +2,6 @@ import { useEffect, useState } from "react";
 import type { PersonalLibrarySnapshot } from "@cocalc/conat/hub/api/personal-library";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import {
-  normalizeLegacyPersonalLibraryAliases,
-  normalizeLegacyPersonalLibraryPins,
-} from "@cocalc/util/personal-library";
-
-const ARTIFACT_NAMES_SETTING = "artifact_names_v1";
-const PINS_SETTING = "artifact_pins_v1";
 const empty = (): PersonalLibrarySnapshot => ({ aliases: [], pins: [] });
 const cache = new Map<string, PersonalLibrarySnapshot>();
 const listeners = new Set<
@@ -17,17 +10,6 @@ const listeners = new Set<
 const loads = new Map<string, Promise<PersonalLibrarySnapshot>>();
 const writes = new Map<string, Promise<PersonalLibrarySnapshot>>();
 
-function legacyAliases(value: unknown) {
-  try {
-    const plain = (value as any)?.toJS?.() ?? value;
-    return normalizeLegacyPersonalLibraryAliases(
-      typeof plain === "string" ? JSON.parse(plain) : plain,
-    );
-  } catch {
-    return [];
-  }
-}
-
 function publish(accountId: string, snapshot: PersonalLibrarySnapshot) {
   cache.set(accountId, snapshot);
   for (const listener of listeners) listener(accountId, snapshot);
@@ -35,9 +17,6 @@ function publish(accountId: string, snapshot: PersonalLibrarySnapshot) {
 
 export function usePersonalLibrary() {
   const accountId = useTypedRedux("account", "account_id");
-  const settings = useTypedRedux("account", "other_settings");
-  const legacyNames = settings?.get?.(ARTIFACT_NAMES_SETTING);
-  const legacyPins = settings?.get?.(PINS_SETTING);
   const [state, setState] = useState<{
     accountId?: string;
     snapshot: PersonalLibrarySnapshot;
@@ -76,7 +55,7 @@ export function usePersonalLibrary() {
   }, [accountId]);
 
   useEffect(() => {
-    if (!accountId || settings == null) return;
+    if (!accountId) return;
     const cached = cache.get(accountId);
     if (cached) {
       setState({ accountId, snapshot: cached, loading: false, error: "" });
@@ -94,10 +73,7 @@ export function usePersonalLibrary() {
     }));
     let load = loads.get(accountId);
     if (!load) {
-      load = webapp_client.conat_client.hub.personalLibrary.importLegacy({
-        aliases: legacyAliases(legacyNames),
-        pins: normalizeLegacyPersonalLibraryPins(legacyPins),
-      });
+      load = webapp_client.conat_client.hub.personalLibrary.list({});
       loads.set(accountId, load);
       void load
         .finally(() => {
@@ -122,7 +98,7 @@ export function usePersonalLibrary() {
     return () => {
       disposed = true;
     };
-  }, [accountId, legacyNames, legacyPins, settings == null]);
+  }, [accountId]);
 
   async function mutate(run: () => Promise<PersonalLibrarySnapshot>) {
     if (!accountId) throw Error("Sign in to organize Library.");
