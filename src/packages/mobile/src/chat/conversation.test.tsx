@@ -288,7 +288,7 @@ it("opens at recent messages without imperative scrolling during streamed update
   expect(client.loadOlderMessages).toHaveBeenCalledWith(60);
 });
 
-it("renders the thinking placeholder as an accessible spinner", async () => {
+it("renders the thinking placeholder as a compact running status", async () => {
   client.getSnapshot().messages = [
     {
       message_id: "thinking",
@@ -301,8 +301,10 @@ it("renders the thinking placeholder as an accessible spinner", async () => {
     renderer = create(<ChatScreen />);
   });
   expect(
-    renderer.root.findByProps({ accessibilityLabel: "Agent is thinking" }),
+    renderer.root.findByProps({ accessibilityLabel: "Codex running" }),
   ).toBeDefined();
+  expect(renderer.root.findAllByProps({ children: "Running" })).toHaveLength(1);
+  expect(renderer.root.findAllByProps({ size: 12 })).toHaveLength(1);
   expect(
     renderer.root.findAllByProps({ value: ":robot: Thinking..." }),
   ).toHaveLength(0);

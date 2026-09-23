@@ -141,7 +141,21 @@ function Message({
         <Text style={styles.messageRole}>
           {human ? "You" : item.role === "agent" ? "Codex" : "System"}
         </Text>
-        {item.state ? (
+        {item.generating ? (
+          <View
+            accessibilityLabel="Codex running"
+            accessibilityLiveRegion="polite"
+            accessibilityRole="text"
+            style={styles.runningBadge}
+          >
+            <ActivityIndicator
+              accessibilityElementsHidden
+              color={colors.secondary}
+              size={12}
+            />
+            <Text style={styles.runningText}>Running</Text>
+          </View>
+        ) : item.state ? (
           <Text style={styles.messageState}>{item.state}</Text>
         ) : null}
       </View>
@@ -158,9 +172,7 @@ function Message({
           Codex activity could not be recovered: {item.activity.error}
         </Text>
       ) : null}
-      {item.generating && (!item.content || thinkingPlaceholder) ? (
-        <ActivityIndicator accessibilityLabel="Agent is thinking" />
-      ) : thinkingPlaceholder ? null : (
+      {thinkingPlaceholder || (item.generating && !item.content) ? null : (
         <Markdown value={item.content} />
       )}
       <View style={styles.messageActions}>
@@ -770,6 +782,17 @@ const makeStyles = (colors: AppearancePalette) =>
       paddingHorizontal: 4,
     },
     messageHeader: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    runningBadge: {
+      alignItems: "center",
+      borderColor: colors.border,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: "row",
+      gap: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+    },
+    runningText: { color: colors.secondary, fontSize: 12, fontWeight: "600" },
     activity: {
       borderLeftColor: colors.border,
       borderLeftWidth: 3,
