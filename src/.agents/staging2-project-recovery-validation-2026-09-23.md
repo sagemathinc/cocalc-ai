@@ -41,6 +41,10 @@ Production was not changed.
   artifact `20260923T213343Z-12360e88-recovery-unknown-debt-20260923-dirty`
   passed static smoke. The project UI now shows a known missed due time even
   while host or report freshness is unknown.
+- Empty-inventory bay reconciliation: `674689d344e2`. Hub artifact
+  `20260923T213641Z-674689d3-snapshot-inventory-20260923-dirty` deployed
+  and passed hub smoke. A confirmed empty host inventory now clears a stale
+  latest-snapshot value from the bay projection.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -62,6 +66,7 @@ the source commits above identify the tracked code used for the builds.
 | Recovery health visibility                                                | After the first successful sweep, unknown snapshot and backup status counts both fell from 12 to 0.                                                               |
 | Confirmed snapshot outcome and unchanged-content reconciliation           | Focused tests passed across file-server, project-host, server, and frontend. A snapshot success now requires a confirmed recovery point; unchanged content records a schedule-aware reconciliation marker. |
 | Recovery health after new changes                                         | Staging2 operator health at 21:28 UTC reported 0 unknown snapshot and backup statuses. The health query now recomputes due times in bounded pages, so a later project edit cannot be hidden by an earlier unchanged-content report. |
+| First normal scheduler cycle after host rollout                           | At 21:41:39 UTC, the scheduled host worker created Btrfs snapshot `2026-09-23T21:41:39.414Z` for project `1b461cb0-47c3-4d58-bdc0-3bdd4af2e139`. Project recovery health then reported healthy, 0 snapshot delay, and 0 unknown statuses. |
 
 The scheduled-path project is
 `1b461cb0-47c3-4d58-bdc0-3bdd4af2e139`. The separate restore-test project is
@@ -93,10 +98,9 @@ projects; it did not create hundreds of live projects.
    coordinated rollout. None is established by this single-day staging test.
 5. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
-6. The 21:25 UTC project edit was observed after the host rollout. The new host
-   scheduler uses a 15-minute initial delay after restart, so that particular
-   edit had not yet reached a normal sweep at the 21:28 UTC health check. A
-   subsequent normal-cycle result still needs verification.
+6. The host scheduler still uses a 15-minute initial delay and sweep. The first
+   normal post-rollout sweep succeeded, but the plan's event-driven due dispatch
+   and measured responsiveness under large inventories remain open.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
