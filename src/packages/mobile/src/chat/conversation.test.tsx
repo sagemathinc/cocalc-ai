@@ -304,7 +304,7 @@ it("renders the thinking placeholder as a compact running status", async () => {
     renderer.root.findByProps({ accessibilityLabel: "Codex running" }),
   ).toBeDefined();
   expect(renderer.root.findAllByProps({ children: "Running" })).toHaveLength(1);
-  expect(renderer.root.findAllByProps({ size: 12 })).toHaveLength(1);
+  expect(renderer.root.findAllByProps({ size: "small" })).toHaveLength(1);
   expect(
     renderer.root.findAllByProps({ value: ":robot: Thinking..." }),
   ).toHaveLength(0);

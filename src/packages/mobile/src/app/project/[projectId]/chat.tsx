@@ -151,7 +151,8 @@ function Message({
             <ActivityIndicator
               accessibilityElementsHidden
               color={colors.secondary}
-              size={12}
+              size="small"
+              style={styles.runningSpinner}
             />
             <Text style={styles.runningText}>Running</Text>
           </View>
@@ -788,9 +789,14 @@ const makeStyles = (colors: AppearancePalette) =>
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       flexDirection: "row",
-      gap: 4,
       paddingHorizontal: 7,
       paddingVertical: 2,
+    },
+    runningSpinner: {
+      height: 20,
+      marginRight: 5,
+      transform: [{ scale: 0.7 }],
+      width: 20,
     },
     runningText: { color: colors.secondary, fontSize: 12, fontWeight: "600" },
     activity: {
