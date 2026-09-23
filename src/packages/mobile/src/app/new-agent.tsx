@@ -14,7 +14,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -113,6 +116,7 @@ export default function NewAgentScreen() {
 
   const create = async () => {
     if (inFlight.current) return;
+    Keyboard.dismiss();
     setError(undefined);
     let normalizedName: string;
     try {
@@ -205,124 +209,163 @@ export default function NewAgentScreen() {
       edges={["bottom"]}
       style={{ flex: 1, backgroundColor: colors.page }}
     >
-      <Stack.Screen options={{ title: "New Agent" }} />
-      <ScrollView
-        contentContainerStyle={{ padding: 20, gap: 16 }}
-        keyboardShouldPersistTaps="handled"
+      <Stack.Screen
+        options={{
+          title: "New Agent",
+          headerRight: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss keyboard"
+              onPress={Keyboard.dismiss}
+            >
+              <Text style={{ color: colors.link, fontSize: 16 }}>Done</Text>
+            </Pressable>
+          ),
+        }}
+      />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
       >
-        <Text style={{ color: colors.secondary, fontSize: 16 }}>
-          Create an agent in one of your projects. You can set its payment
-          source and model in chat Settings before sending the first message.
-        </Text>
-        <View style={{ gap: 6 }}>
-          <Text style={{ color: colors.text, fontWeight: "600" }}>Name</Text>
-          <TextInput
-            accessibilityLabel="Agent name"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!creating}
-            onChangeText={setName}
-            placeholder="e.g. research"
-            placeholderTextColor={colors.muted}
-            style={fieldStyle}
-            value={name}
-          />
-          <Text style={{ color: colors.secondary }}>
-            Letters, digits, and hyphens. This is also the agent’s handle.
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 20, gap: 16 }}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="always"
+        >
+          <Text style={{ color: colors.secondary, fontSize: 16 }}>
+            Create an agent in one of your projects. You can set its payment
+            source and model in chat Settings before sending the first message.
           </Text>
-        </View>
-        <View style={{ gap: 6 }}>
-          <Text style={{ color: colors.text, fontWeight: "600" }}>Project</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Choose project"
-            accessibilityState={{ disabled: creating }}
-            disabled={creating}
-            onPress={() => setPickerOpen(true)}
-            style={fieldStyle}
-          >
-            <Text style={{ color: colors.text }}>
-              {project
-                ? project.title
-                : loadingProjects
-                  ? "Loading projects…"
-                  : "Choose a project"}
+          <View style={{ gap: 6 }}>
+            <Text style={{ color: colors.text, fontWeight: "600" }}>Name</Text>
+            <TextInput
+              accessibilityLabel="Agent name"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!creating}
+              onChangeText={setName}
+              placeholder="e.g. research"
+              placeholderTextColor={colors.muted}
+              returnKeyType="done"
+              onSubmitEditing={Keyboard.dismiss}
+              style={fieldStyle}
+              value={name}
+            />
+            <Text style={{ color: colors.secondary }}>
+              Letters, digits, and hyphens. This is also the agent’s handle.
             </Text>
-          </Pressable>
-          {project && !project.host_id ? (
-            <Text style={{ color: colors.danger }}>
-              Open this project in CoCalc first to assign a project host.
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={{ color: colors.text, fontWeight: "600" }}>
+              Project
             </Text>
-          ) : null}
-        </View>
-        <View style={{ gap: 6 }}>
-          <Text style={{ color: colors.text, fontWeight: "600" }}>
-            Description (optional)
-          </Text>
-          <TextInput
-            accessibilityLabel="Agent description"
-            editable={!creating}
-            onChangeText={setDescription}
-            placeholder="What is this agent for?"
-            placeholderTextColor={colors.muted}
-            style={fieldStyle}
-            value={description}
-          />
-        </View>
-        <View style={{ gap: 6 }}>
-          <Text style={{ color: colors.text, fontWeight: "600" }}>
-            Working directory
-          </Text>
-          <TextInput
-            accessibilityLabel="Working directory"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!creating}
-            onChangeText={setWorkingDirectory}
-            style={fieldStyle}
-            value={workingDirectory}
-          />
-        </View>
-        {error ? (
-          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            {error}
-          </Text>
-        ) : null}
-        {projectError ? (
-          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            Could not load projects: {projectError}
-          </Text>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            pending.current ? "Retry creating agent" : "Create agent"
-          }
-          accessibilityState={{ disabled: creating || !project?.host_id }}
-          disabled={creating || !project?.host_id}
-          onPress={() => void create()}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Choose project"
+              accessibilityState={{ disabled: creating }}
+              disabled={creating}
+              onPress={() => setPickerOpen(true)}
+              style={fieldStyle}
+            >
+              <Text style={{ color: colors.text }}>
+                {project
+                  ? project.title
+                  : loadingProjects
+                    ? "Loading projects…"
+                    : "Choose a project"}
+              </Text>
+            </Pressable>
+            {project && !project.host_id ? (
+              <Text style={{ color: colors.danger }}>
+                Open this project in CoCalc first to assign a project host.
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={{ color: colors.text, fontWeight: "600" }}>
+              Description (optional)
+            </Text>
+            <TextInput
+              accessibilityLabel="Agent description"
+              editable={!creating}
+              onChangeText={setDescription}
+              placeholder="What is this agent for?"
+              placeholderTextColor={colors.muted}
+              returnKeyType="done"
+              onSubmitEditing={Keyboard.dismiss}
+              style={fieldStyle}
+              value={description}
+            />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={{ color: colors.text, fontWeight: "600" }}>
+              Working directory
+            </Text>
+            <TextInput
+              accessibilityLabel="Working directory"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!creating}
+              onChangeText={setWorkingDirectory}
+              returnKeyType="done"
+              onSubmitEditing={Keyboard.dismiss}
+              style={fieldStyle}
+              value={workingDirectory}
+            />
+          </View>
+        </ScrollView>
+        <View
           style={{
-            backgroundColor: colors.link,
-            borderRadius: 10,
-            padding: 14,
-            alignItems: "center",
-            opacity: creating || !project?.host_id ? 0.5 : 1,
+            paddingHorizontal: 20,
+            paddingTop: 12,
+            paddingBottom: 12,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            backgroundColor: colors.page,
           }}
         >
-          {creating ? (
-            <ActivityIndicator
-              color={colors.page}
-              accessibilityLabel="Creating agent"
-            />
-          ) : (
-            <Text
-              style={{ color: colors.page, fontSize: 16, fontWeight: "700" }}
-            >
-              {pending.current ? "Retry creation" : "Create agent"}
+          {error ? (
+            <Text accessibilityRole="alert" style={{ color: colors.danger }}>
+              {error}
             </Text>
-          )}
-        </Pressable>
-      </ScrollView>
+          ) : null}
+          {projectError ? (
+            <Text accessibilityRole="alert" style={{ color: colors.danger }}>
+              Could not load projects: {projectError}
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              pending.current ? "Retry creating agent" : "Create agent"
+            }
+            accessibilityState={{ disabled: creating || !project?.host_id }}
+            disabled={creating || !project?.host_id}
+            onPress={() => void create()}
+            style={{
+              backgroundColor: colors.link,
+              borderRadius: 10,
+              padding: 14,
+              alignItems: "center",
+              opacity: creating || !project?.host_id ? 0.5 : 1,
+            }}
+          >
+            {creating ? (
+              <ActivityIndicator
+                color={colors.page}
+                accessibilityLabel="Creating agent"
+              />
+            ) : (
+              <Text
+                style={{ color: colors.page, fontSize: 16, fontWeight: "700" }}
+              >
+                {pending.current ? "Retry creation" : "Create agent"}
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
       <Modal
         animationType="slide"
         onRequestClose={() => setPickerOpen(false)}

@@ -6,10 +6,14 @@ import { createNamedAgent } from "../agents/create";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { openProjectHost } from "../cocalc/site-session";
 import { fsClient } from "@cocalc/conat/files/fs";
+import { Keyboard } from "react-native";
 
 jest.mock("expo-router", () => ({
   router: { replace: jest.fn() },
-  Stack: { Screen: () => null },
+  Stack: {
+    Screen: ({ options }: any) =>
+      require("react").createElement("StackScreen", { options }),
+  },
   useLocalSearchParams: () => ({ profile: "site" }),
 }));
 jest.mock("expo-crypto", () => ({ randomUUID: jest.fn(() => "test-uuid") }));
@@ -68,6 +72,17 @@ it("lets a user name an agent, choose a project, and open its new chat", async (
   await act(async () => {
     renderer = create(<NewAgentScreen />);
   });
+  const avoiding = renderer.root.findByType("KeyboardAvoidingView");
+  expect(avoiding.props.behavior).toBe("padding");
+  expect(avoiding.findByType("ScrollView").props.keyboardDismissMode).toBe(
+    "interactive",
+  );
+  const done = renderer.root
+    .findByType("StackScreen")
+    .props.options.headerRight();
+  expect(done.props.accessibilityLabel).toBe("Dismiss keyboard");
+  await act(async () => done.props.onPress());
+  expect(Keyboard.dismiss).toHaveBeenCalled();
   expect(control(renderer, "button", "Create agent").props.disabled).toBe(true);
   await act(async () => {
     control(renderer, "button", "Choose project").props.onPress();
