@@ -307,6 +307,58 @@ export async function listHostProjectMaintenanceSchedules({
   });
 }
 
+export async function confirmHostProjectMaintenanceAssignment({
+  host_id,
+  project_id,
+  kind,
+  schedule_revision,
+  observed_change_at,
+}: {
+  host_id: string;
+  project_id: string;
+  kind: "snapshot" | "backup";
+  schedule_revision: string;
+  observed_change_at: string | null;
+}): Promise<{
+  valid: boolean;
+  reason?:
+    | "assignment_changed"
+    | "schedule_changed"
+    | "change_generation_changed";
+}> {
+  const { rows } = await getPool().query<{
+    snapshots: HostProjectMaintenanceSchedule["snapshots"];
+    backups: HostProjectMaintenanceSchedule["backups"];
+    observed_change_at: Date | string | null;
+  }>(
+    `SELECT snapshots, backups,
+            COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP,
+                     last_edited) AS observed_change_at
+       FROM projects
+      WHERE project_id=$1 AND host_id=$2
+        AND provisioned IS TRUE AND deleted IS NOT TRUE
+      LIMIT 1`,
+    [project_id, host_id],
+  );
+  const row = rows[0];
+  if (!row) return { valid: false, reason: "assignment_changed" };
+  if (
+    snapshotScheduleRevision(
+      kind === "snapshot" ? row.snapshots : row.backups,
+    ) !== schedule_revision
+  ) {
+    return { valid: false, reason: "schedule_changed" };
+  }
+  const currentChange =
+    row.observed_change_at == null
+      ? null
+      : new Date(row.observed_change_at).toISOString();
+  if (currentChange !== observed_change_at) {
+    return { valid: false, reason: "change_generation_changed" };
+  }
+  return { valid: true };
+}
+
 export async function initHostStatusService() {
   logger.info("starting host status service");
   return await createHostStatusService({
@@ -614,6 +666,9 @@ export async function initHostStatusService() {
           cursor_project_id,
           project_ids,
         });
+      },
+      async confirmProjectMaintenanceAssignment(opts) {
+        return await confirmHostProjectMaintenanceAssignment(opts);
       },
       async reportProjectMaintenance(report) {
         await recordProjectMaintenanceStatus(report);

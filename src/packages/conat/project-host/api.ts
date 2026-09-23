@@ -1063,6 +1063,14 @@ export interface HostProjectMaintenanceSchedule {
   max_backups_per_project?: number | null;
 }
 
+export interface HostProjectMaintenanceAssignment {
+  valid: boolean;
+  reason?:
+    | "assignment_changed"
+    | "schedule_changed"
+    | "change_generation_changed";
+}
+
 export interface ProjectMaintenanceReport {
   host_id: string;
   project_id: string;
@@ -1192,6 +1200,13 @@ export interface HostStatusApi {
     cursor_project_id?: string;
     project_ids?: string[];
   }) => Promise<HostProjectMaintenanceSchedule[]>;
+  confirmProjectMaintenanceAssignment: (opts: {
+    host_id: string;
+    project_id: string;
+    kind: "snapshot" | "backup";
+    schedule_revision: string;
+    observed_change_at: string | null;
+  }) => Promise<HostProjectMaintenanceAssignment>;
   reportProjectMaintenance: (report: ProjectMaintenanceReport) => Promise<void>;
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,

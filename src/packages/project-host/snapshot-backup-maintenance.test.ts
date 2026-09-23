@@ -1,4 +1,5 @@
 const listProjectMaintenanceSchedulesMock = jest.fn();
+const confirmProjectMaintenanceAssignmentMock = jest.fn();
 const getMasterConatClientMock = jest.fn();
 const runScheduledSnapshotMaintenanceMock = jest.fn();
 const runScheduledBackupMaintenanceMock = jest.fn();
@@ -39,6 +40,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostStatusClient: jest.fn(() => ({
     listProjectMaintenanceSchedules: (...args: any[]) =>
       listProjectMaintenanceSchedulesMock(...args),
+    confirmProjectMaintenanceAssignment: (...args: any[]) =>
+      confirmProjectMaintenanceAssignmentMock(...args),
     reportProjectMaintenance: (...args: any[]) =>
       reportProjectMaintenanceMock(...args),
   })),
@@ -80,6 +83,7 @@ describe("snapshot-backup-maintenance", () => {
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES =
       "0";
     getMasterConatClientMock.mockReturnValue({ id: "master-client" });
+    confirmProjectMaintenanceAssignmentMock.mockResolvedValue({ valid: true });
     getStorageAdmissionStatusMock.mockReturnValue(undefined);
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
@@ -190,6 +194,88 @@ describe("snapshot-backup-maintenance", () => {
       allow_starvation_override: true,
     });
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mutate a project after its host assignment changes", async () => {
+    confirmProjectMaintenanceAssignmentMock.mockImplementation(
+      async ({ project_id }: { project_id: string }) =>
+        project_id === "proj-1"
+          ? { valid: false, reason: "assignment_changed" }
+          : { valid: true },
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
+        outcome: "deferred",
+        reason: "assignment_changed",
+      }),
+    );
+  });
+
+  it("fails closed when the owning bay cannot verify an assignment", async () => {
+    confirmProjectMaintenanceAssignmentMock.mockRejectedValue(
+      new Error("bay unavailable"),
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
+        outcome: "deferred",
+        reason: "assignment_unverified",
+      }),
+    );
+  });
+
+  it("does not report success if the schedule changes during a snapshot", async () => {
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-1",
+        last_edited: "2026-04-10T22:00:00.000Z",
+        snapshots: { daily: 5 },
+        backups: { disabled: true },
+      },
+    ]);
+    confirmProjectMaintenanceAssignmentMock.mockResolvedValueOnce({
+      valid: true,
+    });
+    confirmProjectMaintenanceAssignmentMock.mockResolvedValueOnce({
+      valid: false,
+      reason: "schedule_changed",
+    });
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: "2026-09-23T22:00:00.000Z",
+      created_snapshot_at: "2026-09-23T22:00:00.000Z",
+      changed: true,
+      disabled: false,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledTimes(1);
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
+        outcome: "deferred",
+        reason: "schedule_changed",
+      }),
+    );
   });
 
   it("does not claim a snapshot when the host finds no changed content", async () => {

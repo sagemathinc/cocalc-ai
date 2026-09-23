@@ -138,6 +138,62 @@ describe("listHostProjectMaintenanceSchedules", () => {
     delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
+  it("fences maintenance against moves, schedule edits, and newer changes", async () => {
+    const { confirmHostProjectMaintenanceAssignment } =
+      await import("./host-status");
+    const request = {
+      host_id: "host-1",
+      project_id: "proj-1",
+      kind: "snapshot" as const,
+      schedule_revision: "schedule-revision",
+      observed_change_at: "2026-09-23T21:00:00.000Z",
+    };
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: false, reason: "assignment_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date(request.observed_change_at),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment({
+        ...request,
+        schedule_revision: "old-revision",
+      }),
+    ).resolves.toEqual({ valid: false, reason: "schedule_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date("2026-09-23T22:00:00.000Z"),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: false, reason: "change_generation_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date(request.observed_change_at),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: true });
+    expect(queryMock.mock.calls[0][0]).toContain("host_id=$2");
+  });
+
   it("pages provisioned projects in stable project-id order", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })

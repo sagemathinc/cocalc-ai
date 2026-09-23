@@ -3177,22 +3177,52 @@ export async function runScheduledSnapshotMaintenance({
   created_snapshot_at: string | null;
   changed: boolean | null;
   disabled: boolean;
+  skipped_reason?: string;
 }> {
-  const vol = await getVolume(project_id);
-  const result = await vol.snapshots.update(counts, {
-    limit,
-    quotaMode: "async",
-  });
-  const snapshots = (await vol.snapshots.readdir()).filter(isISODate).sort();
-  if (result.createdName && !snapshots.includes(result.createdName)) {
-    throw new Error("new snapshot is not present after creation");
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  const result = await withCurrentProjectVolumeLifecycleLock(
+    project_id,
+    generation,
+    async () => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (!(await exists(vol.path))) {
+        return { skipped_reason: "project_volume_unavailable" };
+      }
+      if (!(await isBtrfsSubvolume(vol.path))) {
+        return { skipped_reason: "project_volume_invalid" };
+      }
+      if (await isSubvolumeReadonly(vol.path)) {
+        return { skipped_reason: "project_volume_archiving" };
+      }
+      const update = await vol.snapshots.update(counts, {
+        limit,
+        quotaMode: "async",
+      });
+      const snapshots = (await vol.snapshots.readdir())
+        .filter(isISODate)
+        .sort();
+      if (update.createdName && !snapshots.includes(update.createdName)) {
+        throw new Error("new snapshot is not present after creation");
+      }
+      return {
+        latest_snapshot_at: snapshots.at(-1) ?? null,
+        created_snapshot_at: update.createdName,
+        changed: update.changed,
+        disabled: update.disabled,
+      };
+    },
+  );
+  if (!result || "skipped_reason" in result) {
+    return {
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: null,
+      disabled: false,
+      skipped_reason:
+        result?.skipped_reason ?? "project_volume_lifecycle_changed",
+    };
   }
-  return {
-    latest_snapshot_at: snapshots.at(-1) ?? null,
-    created_snapshot_at: result.createdName,
-    changed: result.changed,
-    disabled: result.disabled,
-  };
+  return result;
 }
 
 async function allSnapshotUsage({

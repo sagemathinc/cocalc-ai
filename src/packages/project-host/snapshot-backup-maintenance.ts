@@ -289,6 +289,7 @@ async function runScheduledStorageOperation({
   project_id,
   operation_kind,
   allowStarvationOverride = false,
+  validate,
   run,
 }: {
   hostId: string;
@@ -298,6 +299,7 @@ async function runScheduledStorageOperation({
     "scheduled_snapshot" | "scheduled_backup"
   >;
   allowStarvationOverride?: boolean;
+  validate: () => Promise<string | undefined>;
   run: () => Promise<void>;
 }): Promise<{ ran: boolean; starvationOverride: boolean; reason?: string }> {
   const ticket = admitStorageOperation({
@@ -333,6 +335,7 @@ async function runScheduledStorageOperation({
   }
   try {
     try {
+      let validationReason: string | undefined;
       await withBtrfsMutationContext(
         {
           operation_id: ticket.operation_id,
@@ -343,8 +346,29 @@ async function runScheduledStorageOperation({
           checkpointable: true,
           starvation_override: ticket.starvation_override,
         },
-        run,
+        async () => {
+          validationReason = await validate();
+          if (validationReason) return;
+          await run();
+        },
       );
+      if (validationReason) {
+        return {
+          ran: false,
+          starvationOverride: false,
+          reason: validationReason,
+        };
+      }
+      // A move, edit, or schedule update during a long backup invalidates the
+      // old assignment before its result is published as current protection.
+      validationReason = await validate();
+      if (validationReason) {
+        return {
+          ran: false,
+          starvationOverride: false,
+          reason: validationReason,
+        };
+      }
       return {
         ran: true,
         starvationOverride: ticket.starvation_override,
@@ -362,6 +386,14 @@ async function runScheduledStorageOperation({
   } finally {
     ticket.release();
   }
+}
+
+function scheduleRevision(schedule: SnapshotSchedule | null): string {
+  return JSON.stringify(
+    Object.entries({ ...DEFAULT_SNAPSHOT_COUNTS, ...(schedule ?? {}) }).sort(
+      ([a], [b]) => a.localeCompare(b),
+    ),
+  );
 }
 
 function parseTimestampMs(
@@ -579,6 +611,35 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     if (!projectIds && scheduleListing === listing) scheduleListing = undefined;
   }
   if (!rows.length) return true;
+  const validateAssignment = async (
+    row: HostProjectMaintenanceSchedule,
+    kind: "snapshot" | "backup",
+  ): Promise<string | undefined> => {
+    try {
+      const assignment = await statusClient.confirmProjectMaintenanceAssignment(
+        {
+          host_id: hostId,
+          project_id: row.project_id,
+          kind,
+          schedule_revision: scheduleRevision(
+            kind === "snapshot" ? row.snapshots : row.backups,
+          ),
+          observed_change_at: row.last_changed ?? row.last_edited ?? null,
+        },
+      );
+      return assignment.valid
+        ? undefined
+        : (assignment.reason ?? "assignment_changed");
+    } catch (err) {
+      logger.warn("scheduled maintenance assignment check failed", {
+        hostId,
+        project_id: row.project_id,
+        kind,
+        err,
+      });
+      return "assignment_unverified";
+    }
+  };
   const now = Date.now();
   for (const row of rows) {
     const snapshotSchedule = mergeSchedule(
@@ -640,10 +701,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           let created_snapshot_at: string | null = null;
           let changed: boolean | null = null;
           let disabled = false;
+          let skippedReason: string | undefined;
           const result = await runScheduledStorageOperation({
             hostId,
             project_id,
             operation_kind: "scheduled_snapshot",
+            validate: () => validateAssignment(row, "snapshot"),
             run: async () => {
               const updated = await runScheduledSnapshotMaintenance({
                 project_id,
@@ -654,6 +717,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               created_snapshot_at = updated?.created_snapshot_at ?? null;
               changed = updated?.changed ?? null;
               disabled = updated?.disabled ?? false;
+              skippedReason = updated?.skipped_reason;
             },
           });
           const changedAt = parseTimestampMs(
@@ -676,6 +740,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                   : "deferred";
           const reason =
             result.reason ??
+            skippedReason ??
             (disabled
               ? "snapshot_maintenance_disabled"
               : outcome === "skipped"
@@ -693,7 +758,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             observed_at: new Date().toISOString(),
             outcome,
             reason,
-            latest_snapshot_at,
+            latest_snapshot_at:
+              outcome === "succeeded" || reason === "no_content_change"
+                ? latest_snapshot_at
+                : null,
             reconciled_change_at:
               reason === "no_content_change"
                 ? (row.last_changed ?? row.last_edited)
@@ -813,6 +881,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             hostId,
             project_id,
             operation_kind: "scheduled_backup",
+            validate: () => validateAssignment(row, "backup"),
             allowStarvationOverride,
             run: async () => {
               created = await runScheduledBackupMaintenance({
