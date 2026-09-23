@@ -197,26 +197,35 @@ export async function createTeamLicenseRenewalPayment({
     // Reserve under the same license row lock used by refund cancellation,
     // before any external payment can exist. A crash leaves a visible active
     // reservation that must be reconciled, never a silently refundable license.
-    const reserved = await getPool().query(
-      `UPDATE team_licenses
+    const reserveRenewal = async () => {
+      // Quotes carry JS Dates, so compare at millisecond precision even when
+      // PostgreSQL stored a period boundary with fractional microseconds.
+      const reserved = await getPool().query(
+        `UPDATE team_licenses
           SET payment=$4::jsonb, last_renewal_attempt_at=NOW(), updated=NOW()
         WHERE id=$1 AND owner_account_id=$2 AND status != 'canceled'
-          AND current_period_end=$3
+          AND date_trunc('milliseconds', current_period_end)=$3::timestamp
           AND latest_purchase_id IS NOT DISTINCT FROM $5::integer
           AND COALESCE(payment->>'status','') != 'active'
         RETURNING id`,
-      [
-        team_license_id,
-        owner_account_id,
-        quote.license.current_period_end,
-        { status: "active", initiation_id: initiationId, created: Date.now() },
-        quote.license.latest_purchase_id ?? null,
-      ],
-    );
-    if (!reserved.rows.length)
-      throw Error("Team renewal state changed; reload before retrying");
-    renewalReserved = true;
+        [
+          team_license_id,
+          owner_account_id,
+          quote.license.current_period_end,
+          {
+            status: "active",
+            initiation_id: initiationId,
+            created: Date.now(),
+          },
+          quote.license.latest_purchase_id ?? null,
+        ],
+      );
+      if (!reserved.rows.length)
+        throw Error("Team renewal state changed; reload before retrying");
+      renewalReserved = true;
+    };
     const { payment_intent, hosted_invoice_url } = await createPaymentIntent({
+      beforeInvoiceCreate: reserveRenewal,
       account_id: owner_account_id,
       purpose: TEAM_LICENSE_RENEWAL,
       description:

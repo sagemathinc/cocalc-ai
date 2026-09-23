@@ -39,8 +39,10 @@ a subsequent purchase creates a new license rather than reviving refunded seats.
 
 Deploy the renewal reservation code to every billing worker and drain old workers
 before performing refunds. An old in-flight worker does not know about this fence.
-New renewal attempts reserve an active payment record before contacting the
-provider. Refunds and duplicate renewals reject while this reservation exists.
+New external renewal attempts reserve an active payment record after checkout
+preflight and immediately before creating a provider invoice. Refunds and
+duplicate renewals reject while this reservation exists. A preflight rejection
+(for example, checkout maintenance) leaves no reservation to reconcile.
 
 Provider timeouts, process crashes and notification failures do not prove that
 the external invoice was never created. Such reservations remain active; entries

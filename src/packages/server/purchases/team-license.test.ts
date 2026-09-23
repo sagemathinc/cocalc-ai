@@ -19,7 +19,10 @@ const mockUrl = jest.fn();
 
 jest.mock("./stripe/create-payment-intent", () => ({
   __esModule: true,
-  default: (...args: any[]) => mockCreatePaymentIntent(...args),
+  default: async (opts: any) => {
+    await opts.beforeInvoiceCreate?.();
+    return mockCreatePaymentIntent(opts);
+  },
 }));
 
 jest.mock("@cocalc/server/messages/send", () => ({

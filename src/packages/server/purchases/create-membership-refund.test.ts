@@ -7,9 +7,14 @@ const mockUserIsInGroup = jest.fn();
 const mockGetConn = jest.fn();
 const mockSend = jest.fn();
 const mockCreatePaymentIntent = jest.fn();
+const mockPaymentPreflight = jest.fn();
 jest.mock("./stripe/create-payment-intent", () => ({
   __esModule: true,
-  default: (...args: any[]) => mockCreatePaymentIntent(...args),
+  default: async (opts: any) => {
+    await mockPaymentPreflight();
+    await opts.beforeInvoiceCreate?.();
+    return mockCreatePaymentIntent(opts);
+  },
 }));
 
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
@@ -64,6 +69,7 @@ describe("membership admin refund", () => {
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockSend.mockReset().mockResolvedValue(undefined);
     mockCreatePaymentIntent.mockReset();
+    mockPaymentPreflight.mockReset().mockResolvedValue(undefined);
     mockGetConn.mockReset().mockResolvedValue({
       charges: {
         list: jest.fn().mockResolvedValue({ data: [{ id: "ch_membership" }] }),
@@ -283,6 +289,27 @@ describe("membership admin refund", () => {
       }),
     ).rejects.toThrow();
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("does not block a refund when checkout preflight rejects renewal", async () => {
+    const f = await teamFixture();
+    mockPaymentPreflight.mockRejectedValueOnce(
+      new Error("Payment checkout is temporarily disabled"),
+    );
+    await expect(
+      createTeamLicenseRenewalPayment({
+        team_license_id: f.licenseId,
+        owner_account_id: f.account_id,
+      }),
+    ).rejects.toThrow("temporarily disabled");
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    await expect(
+      createRefund({
+        account_id: f.admin_account_id,
+        purchase_id: f.purchase_id,
+        reason: "requested_by_customer",
+      }),
+    ).resolves.toBeDefined();
   });
 
   it("keeps an uncertain provider outcome reserved for reconciliation", async () => {

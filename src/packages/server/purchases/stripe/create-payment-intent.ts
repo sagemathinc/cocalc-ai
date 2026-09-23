@@ -47,6 +47,7 @@ export default async function createPaymentIntent({
   processImmediately = true,
   idempotencyKeyPrefix,
   allowedPaymentMethodTypes,
+  beforeInvoiceCreate,
 }: {
   account_id: string;
   purpose: string;
@@ -72,6 +73,9 @@ export default async function createPaymentIntent({
   idempotencyKeyPrefix?: string;
   // Restrict automatic collection to explicitly supported instant methods.
   allowedPaymentMethodTypes?: string[];
+  // Reserve local fulfillment state after preflight, before a payable invoice
+  // can exist. Throwing here must prevent every invoice-creation attempt.
+  beforeInvoiceCreate?: () => Promise<void>;
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
   lineItems = normalizeStripeLineItems(lineItems) as LineItem[];
   logger.debug("createPaymentIntent", {
@@ -163,6 +167,7 @@ export default async function createPaymentIntent({
     ...invoiceCreateParams,
     automatic_tax: { enabled: true },
   };
+  await beforeInvoiceCreate?.();
   invoice = idempotencyKeyPrefix
     ? await stripe.invoices.create(createParams, {
         idempotencyKey: `${idempotencyKeyPrefix}:invoice`,

@@ -227,6 +227,20 @@ describe("createPaymentIntent", () => {
     expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
   });
 
+  it("does not create an invoice when local reservation fails", async () => {
+    await expect(
+      createPaymentIntent({
+        account_id: "acct-1",
+        purpose: "membership-change",
+        lineItems,
+        beforeInvoiceCreate: async () => {
+          throw Error("renewal canceled");
+        },
+      }),
+    ).rejects.toThrow("renewal canceled");
+    expect(stripe.invoices.create).not.toHaveBeenCalled();
+  });
+
   it("creates an invoice and returns the default invoice payment intent", async () => {
     stripe.invoices.finalizeInvoice.mockResolvedValue({
       id: "in_123",
@@ -244,14 +258,19 @@ describe("createPaymentIntent", () => {
       },
     });
 
+    const beforeInvoiceCreate = jest.fn(async () => {
+      expect(stripe.invoices.create).not.toHaveBeenCalled();
+    });
     const result = await createPaymentIntent({
       account_id: "acct-1",
       purpose: "membership-change",
       description: "Basic membership, annual",
       lineItems,
       metadata: { membership_class: "basic" },
+      beforeInvoiceCreate,
     });
 
+    expect(beforeInvoiceCreate).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       payment_intent: "pi_123",
       hosted_invoice_url: "https://stripe.example/invoice",
