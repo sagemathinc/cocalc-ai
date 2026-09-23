@@ -27,6 +27,24 @@ export interface ProjectRehomeSqlSideTablePreflight {
 }
 
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
+  artifact_catalog: {
+    table: "artifact_catalog",
+    status: "not-portable",
+    reason:
+      "Artifact metadata is derived from project chat files, but rehome needs an explicit rescan and reconciliation before the destination catalog can serve it.",
+  },
+  artifact_catalog_outbox: {
+    table: "artifact_catalog_outbox",
+    status: "not-portable",
+    reason:
+      "Catalog projection events must drain or be regenerated after rehome; copying in-flight events could publish stale owner metadata.",
+  },
+  artifact_catalog_sources: {
+    table: "artifact_catalog_sources",
+    status: "not-portable",
+    reason:
+      "Source sequence and writer epoch are owner-issued fences and require destination registration and rescan rather than raw row copying.",
+  },
   project_collab_invites: {
     table: "project_collab_invites",
     status: "not-portable",
