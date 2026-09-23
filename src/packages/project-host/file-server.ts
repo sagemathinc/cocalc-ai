@@ -826,6 +826,30 @@ async function replaceTreeByMove({
   await sudo({ command: "mv", args: [src, dest] });
 }
 
+async function replaceTreeByCopy({
+  src,
+  dest,
+}: {
+  src?: string;
+  dest: string;
+}): Promise<void> {
+  if (await exists(dest)) {
+    await sudo({ command: "rm", args: ["-rf", dest] });
+  }
+  if (!src || !(await exists(src))) {
+    return;
+  }
+  // A directory inside the old Btrfs project subvolume cannot be renamed into
+  // the restored subvolume (EXDEV). The privileged helper preserves ownership
+  // and metadata while reflinking file data when the filesystem permits it.
+  await sudo({ command: "mkdir", args: ["-p", dest] });
+  await sudo({
+    command: "copy-tree-reflink",
+    args: [src, dest],
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+  });
+}
+
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
   if (!pathToRemove || !(await exists(pathToRemove))) return;
   await sudo({ command: "rm", args: ["-rf", pathToRemove] });
@@ -3200,7 +3224,6 @@ async function restoreSnapshot({
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
   let preservedRootfsPath: string | undefined;
-  let restoredHomeRootfs = false;
   try {
     if (mode === "rootfs") {
       preservedRootfsPath = await createSnapshotRestoreTempPath(
@@ -3221,13 +3244,6 @@ async function restoreSnapshot({
       return;
     }
 
-    if (mode === "home") {
-      preservedRootfsPath = await createSnapshotRestoreTempPath(
-        `${volName(project_id)}.rootfs-`,
-      );
-      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
-    }
-
     ({ oldHomePath } = await swapProjectHome({
       project_id,
       replacementPath: staged.path,
@@ -3236,12 +3252,10 @@ async function restoreSnapshot({
 
     try {
       if (mode === "home") {
-        await replaceTreeByMove({
-          src: preservedRootfsPath,
+        await replaceTreeByCopy({
+          src: join(oldHomePath, PROJECT_IMAGE_PATH),
           dest: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
         });
-        preservedRootfsPath = undefined;
-        restoredHomeRootfs = true;
       }
       if (oldHomePath && safety_snapshot_name) {
         await createSafetySnapshotFromPath({
@@ -3251,21 +3265,6 @@ async function restoreSnapshot({
         });
       }
     } catch (err) {
-      if (mode === "home" && oldHomePath) {
-        const oldRootfsPath = join(oldHomePath, PROJECT_IMAGE_PATH);
-        if (preservedRootfsPath && (await exists(preservedRootfsPath))) {
-          await replaceTreeByMove({
-            src: preservedRootfsPath,
-            dest: oldRootfsPath,
-          }).catch(() => {});
-          preservedRootfsPath = undefined;
-        } else if (restoredHomeRootfs) {
-          await replaceTreeByMove({
-            src: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
-            dest: oldRootfsPath,
-          }).catch(() => {});
-        }
-      }
       if (oldHomePath) {
         await rollbackProjectHomeSwap({
           project_id,
