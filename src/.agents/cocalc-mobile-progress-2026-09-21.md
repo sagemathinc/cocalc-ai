@@ -5,6 +5,8 @@ Branch: `feature/cocalc-mobile`
 PR: [#671](https://github.com/sagemathinc/cocalc-ai/pull/671)
 Plan: [native agent-first application](cocalc-mobile-plan-2026-09-21.md)
 
+Entries are chronological; later milestones supersede earlier remaining-work lists.
+
 ## Implemented in the first milestone
 
 - Successful sign-in and saved-account selection now open native My Agents.
@@ -46,7 +48,7 @@ At the initial milestone, live-account acceptance, simulator visual review, and
 physical-device testing had not yet been performed. Subsequent evidence is
 recorded below. No push, audio, or store release is claimed.
 
-## Current boundaries and next work
+## Initial boundaries and next work
 
 This is an agent-first foundation, not full plan completion. Native agent
 creation, attachments, rich output/artifact viewing and selection feedback,
@@ -279,3 +281,21 @@ live provider call has been made during this UI change. Deployment target/config
 and R2 artifact setup are not present in this worktree's operator configuration;
 the maintainer has been asked for the staging deployment location. Existing
 live voice remains the admin-only development prototype described above.
+
+## Native message attachments
+
+The iPhone composer now offers camera, photo library, and document selection.
+Selected files upload before Send and appear as removable items in a saved
+per-conversation draft; an attachment can be sent without typed text. Raster
+photos use the authenticated home-bay blob endpoint and render inline in chat.
+Other files go directly to the owning project host beside the agent chat and
+use the same `sandbox:` project-file links as the web agent composer. Inputs are
+bounded to 20 MB per file and eight items per draft. Unsupported camera image formats are converted to
+JPEG for cross-client rendering. Failed uploads leave existing text and already
+attached items intact, and only confirmed sends clear the saved draft.
+
+The native picker dependencies require a rebuilt app. Typecheck, mobile tests,
+frontend lint, dependency consistency, and an iOS production bundle export
+passed. Actual camera/library/document selection, authenticated uploads on a
+physical iPhone, and viewing a resulting project-file link on mobile still
+need device acceptance.

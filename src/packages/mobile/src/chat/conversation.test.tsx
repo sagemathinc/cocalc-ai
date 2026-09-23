@@ -9,6 +9,8 @@ import {
   loadChatDraft,
   saveChatDraft,
 } from "./drafts";
+import { uploadChatFile, uploadChatImage } from "./attachments";
+import { pickFiles, pickLibraryPhotos } from "./pick-attachment";
 
 let mockLivePhase = "idle";
 jest.mock("../live/use-live", () => ({
@@ -67,12 +69,28 @@ jest.mock("@react-native-community/netinfo", () => ({
   default: { addEventListener: () => () => {} },
 }));
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn() }));
+jest.mock("./attachments", () => ({
+  uploadChatFile: jest.fn(),
+  uploadChatImage: jest.fn(),
+}));
+jest.mock("./pick-attachment", () => ({
+  pickCameraPhoto: jest.fn(),
+  pickLibraryPhotos: jest.fn(),
+  pickFiles: jest.fn(),
+}));
 jest.mock("./drafts", () => ({
+  composeChatDraft: (draft: any) =>
+    [draft.text.trim(), ...draft.attachments.map((a: any) => a.markdown)]
+      .filter(Boolean)
+      .join("\n\n"),
   clearChatDraftIfUnchanged: jest.fn(),
   loadChatDraft: jest.fn(),
   saveChatDraft: jest.fn(),
 }));
-jest.mock("./markdown", () => ({ Markdown: "Markdown" }));
+jest.mock("./markdown", () => ({
+  Markdown: "Markdown",
+  ProjectFileLinkContext: require("react").createContext(undefined),
+}));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).requestAnimationFrame = (callback: () => void) =>
   setTimeout(callback, 0);
@@ -113,7 +131,10 @@ beforeEach(() => {
   };
   jest.mocked(createRemoteHeadlessChatClient).mockReturnValue(client);
   jest.mocked(resolveNamedAgentHost).mockResolvedValue("current-host");
-  jest.mocked(loadChatDraft).mockResolvedValue("saved draft");
+  jest.mocked(loadChatDraft).mockResolvedValue({
+    text: "saved draft",
+    attachments: [],
+  });
   jest.mocked(saveChatDraft).mockResolvedValue();
   jest.mocked(clearChatDraftIfUnchanged).mockResolvedValue();
 });
@@ -140,6 +161,122 @@ it("opens and reads earlier messages without starting compute, then starts only 
   expect(input().props.value).toBe("");
 });
 
+it("attaches a photo as a saved draft chip and sends it with the message", async () => {
+  jest
+    .mocked(pickLibraryPhotos)
+    .mockResolvedValue([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+    ]);
+  jest.mocked(uploadChatImage).mockResolvedValue({
+    kind: "image",
+    name: "photo.png",
+    markdown: "![photo.png](/blobs/photo.png?uuid=one)",
+  });
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose photos").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  expect(uploadChatImage).toHaveBeenCalledWith({
+    profileId: "profile",
+    projectId: "project",
+    asset: expect.objectContaining({ name: "photo.png" }),
+  });
+  expect(input().props.value).toBe("saved draft");
+  expect(button("Remove attachment photo.png")).toBeDefined();
+  expect(saveChatDraft).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      text: "saved draft",
+      attachments: [expect.objectContaining({ name: "photo.png" })],
+    }),
+  );
+  await act(async () => button("Send message to Codex").props.onPress());
+  expect(client.sendToExistingCodexThread).toHaveBeenCalledWith({
+    thread_id: "thread",
+    text: "saved draft\n\n![photo.png](/blobs/photo.png?uuid=one)",
+  });
+});
+
+it("allows an attachment-only message and removes it without touching typed text", async () => {
+  jest
+    .mocked(pickLibraryPhotos)
+    .mockResolvedValue([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+    ]);
+  jest.mocked(uploadChatImage).mockResolvedValue({
+    kind: "image",
+    name: "photo.png",
+    markdown: "![photo.png](/blobs/photo.png?uuid=one)",
+  });
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => input().props.onChangeText(""));
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose photos").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  expect(button("Send message to Codex").props.disabled).toBe(false);
+  await act(async () => button("Remove attachment photo.png").props.onPress());
+  expect(button("Send message to Codex").props.disabled).toBe(true);
+  expect(input().props.value).toBe("");
+});
+
+it("sends a selected project file using the web-compatible sandbox link", async () => {
+  jest.mocked(pickFiles).mockResolvedValue([
+    {
+      uri: "file:///report.pdf",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+    },
+  ]);
+  jest.mocked(uploadChatFile).mockResolvedValue({
+    kind: "file",
+    name: "report.pdf",
+    markdown: "[report.pdf](sandbox:/home/user/report.pdf)",
+  });
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose files").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  await act(async () => button("Send message to Codex").props.onPress());
+  expect(uploadChatFile).toHaveBeenCalledWith(
+    expect.objectContaining({
+      profileId: "profile",
+      projectId: "project",
+      chatPath: "agent.chat",
+    }),
+  );
+  expect(client.sendToExistingCodexThread).toHaveBeenCalledWith({
+    thread_id: "thread",
+    text: "saved draft\n\n[report.pdf](sandbox:/home/user/report.pdf)",
+  });
+});
+
+it("keeps the draft and disables no messages when an attachment upload fails", async () => {
+  jest
+    .mocked(pickLibraryPhotos)
+    .mockResolvedValue([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+    ]);
+  jest.mocked(uploadChatImage).mockRejectedValue(new Error("upload refused"));
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose photos").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  expect(input().props.value).toBe("saved draft");
+  expect(button("Remove attachment photo.png")).toBeUndefined();
+  expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
+  expect(
+    renderer.root.findByProps({ accessibilityRole: "alert" }).props.children,
+  ).toContain("upload refused");
+});
+
 it("restores without overwriting storage, persists edits immediately, and separates guidance", async () => {
   await act(async () => {
     renderer = create(<ChatScreen />);
@@ -150,7 +287,7 @@ it("restores without overwriting storage, persists edits immediately, and separa
   );
   expect(saveChatDraft).toHaveBeenLastCalledWith(
     expect.objectContaining({ threadId: "thread", profileId: "profile" }),
-    "Please focus on the table",
+    { text: "Please focus on the table", attachments: [] },
   );
   await act(async () =>
     button("Send guidance to running agent").props.onPress(),
@@ -221,10 +358,10 @@ it("appends dictation to the latest edited draft and never sends automatically",
   await act(async () => input().props.onChangeText("Please investigate:"));
   await act(async () => mockTranscript("the failing build"));
   expect(input().props.value).toBe("Please investigate: the failing build");
-  expect(saveChatDraft).toHaveBeenLastCalledWith(
-    expect.anything(),
-    "Please investigate: the failing build",
-  );
+  expect(saveChatDraft).toHaveBeenLastCalledWith(expect.anything(), {
+    text: "Please investigate: the failing build",
+    attachments: [],
+  });
   expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
   expect(ensureProjectRunning).not.toHaveBeenCalled();
 });

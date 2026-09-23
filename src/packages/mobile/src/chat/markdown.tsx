@@ -2,7 +2,14 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { memo, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { parse_markdown } from "@cocalc/util/markdown/parse";
 import type Token from "markdown-it/lib/token";
 import {
@@ -26,6 +33,9 @@ interface Node {
   token: Token;
   children: Node[];
 }
+export const ProjectFileLinkContext = createContext<
+  ((href: string) => void) | undefined
+>(undefined);
 function tree(tokens: Token[]): Node[] {
   const root: Node[] = [],
     stack = [root];
@@ -83,6 +93,7 @@ function groupDetails(nodes: Node[]): Node[] {
 }
 export const Markdown = memo(function Markdown({ value }: { value: string }) {
   const colors = usePalette();
+  const openProjectFile = useContext(ProjectFileLinkContext);
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const nodes = useMemo(() => tree(parse_markdown(value).tokens), [value]);
   function render(nodes: Node[]): ReactNode {
@@ -190,7 +201,8 @@ export const Markdown = memo(function Markdown({ value }: { value: string }) {
           );
         case "link_open": {
           const href = t.attrGet("href") ?? "";
-          const allowed = /^(https?:\/\/|mailto:)/i.test(href);
+          const projectFile = href.startsWith("sandbox:/") && !!openProjectFile;
+          const allowed = projectFile || /^(https?:\/\/|mailto:)/i.test(href);
           return (
             <Text
               key={index}
@@ -199,7 +211,8 @@ export const Markdown = memo(function Markdown({ value }: { value: string }) {
               onPress={
                 allowed
                   ? () => {
-                      void Linking.openURL(href).catch(() => {});
+                      if (projectFile) openProjectFile(href);
+                      else void Linking.openURL(href).catch(() => {});
                     }
                   : undefined
               }

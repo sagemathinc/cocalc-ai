@@ -1,9 +1,24 @@
 import React from "react";
 const { act, create } = require("react-test-renderer");
-import { Markdown } from "./markdown";
+import { Markdown, ProjectFileLinkContext } from "./markdown";
 import * as Clipboard from "expo-clipboard";
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn() }));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+it("opens project-file attachments through the current project's handoff", async () => {
+  const open = jest.fn();
+  let view: any;
+  await act(async () => {
+    view = create(
+      <ProjectFileLinkContext.Provider value={open}>
+        <Markdown value="[report.pdf](sandbox:/home/user/report.pdf)" />
+      </ProjectFileLinkContext.Provider>,
+    );
+  });
+  const link = view.root.findByProps({ accessibilityRole: "link" });
+  await act(async () => link.props.onPress());
+  expect(open).toHaveBeenCalledWith("sandbox:/home/user/report.pdf");
+  await act(async () => view.unmount());
+});
 it("renders semantic headings, lists, emphasis, code copy and scrollable tables", async () => {
   let view: any;
   await act(async () => {

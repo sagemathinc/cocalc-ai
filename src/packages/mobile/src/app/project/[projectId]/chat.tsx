@@ -16,6 +16,7 @@ import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import type { AppearancePalette } from "@cocalc/util/appearance-palette";
 import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
+import { posix } from "path-browserify";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useLiveVoice } from "../../../live/use-live";
 import { LiveVoiceControls } from "../../../live/controls";
@@ -35,6 +36,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -44,15 +46,27 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { Markdown } from "../../../chat/markdown";
+import { Markdown, ProjectFileLinkContext } from "../../../chat/markdown";
 import {
   inlineGuidance,
   type ConversationMessage,
 } from "../../../chat/guidance";
 import {
+  uploadChatFile,
+  uploadChatImage,
+  type PickedAttachment,
+} from "../../../chat/attachments";
+import {
+  pickCameraPhoto,
+  pickFiles,
+  pickLibraryPhotos,
+} from "../../../chat/pick-attachment";
+import {
   clearChatDraftIfUnchanged,
+  composeChatDraft,
   loadChatDraft,
   saveChatDraft,
+  type ChatDraft,
 } from "../../../chat/drafts";
 import { ensureProjectRunning } from "../../../cocalc/project-runtime";
 import {
@@ -67,6 +81,8 @@ import {
   resumePreviewChat,
   type ConversationClient,
 } from "../../../preview/fixtures";
+
+const MAX_DRAFT_ATTACHMENTS = 8;
 
 function useChatSnapshot(
   client: ConversationClient | undefined,
@@ -252,9 +268,13 @@ export default function ChatScreen() {
   const generation = useRef(0);
   const listRef = useRef<FlatList<ConversationMessage>>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<ChatDraft>({ text: "", attachments: [] });
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string>();
+  const pendingAttachmentPicker = useRef<(() => void) | undefined>(undefined);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [draftRevision, setDraftRevision] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -338,7 +358,7 @@ export default function ChatScreen() {
   useEffect(() => {
     let active = true;
     setDraftLoaded(false);
-    setDraft("");
+    setDraft({ text: "", attachments: [] });
     void loadChatDraft(draftKey)
       .then((value) => {
         if (active) {
@@ -362,15 +382,99 @@ export default function ChatScreen() {
   );
 
   const changeDraft = (value: string) => {
-    draftRef.current = value;
-    setDraft(value);
-    void saveChatDraft(draftKey, value).catch((err) =>
+    const next = { ...draftRef.current, text: value };
+    draftRef.current = next;
+    setDraft(next);
+    void saveChatDraft(draftKey, next).catch((err) =>
       setError(`Could not save your draft: ${err}`),
     );
   };
 
+  const addAttachment = (attachment: ChatDraft["attachments"][number]) => {
+    const next = {
+      ...draftRef.current,
+      attachments: [...draftRef.current.attachments, attachment],
+    };
+    draftRef.current = next;
+    setDraft(next);
+    void saveChatDraft(draftKey, next).catch((err) =>
+      setError(`Could not save your attachment draft: ${err}`),
+    );
+  };
+
+  const removeAttachment = (index: number) => {
+    const next = {
+      ...draftRef.current,
+      attachments: draftRef.current.attachments.filter((_, i) => i !== index),
+    };
+    draftRef.current = next;
+    setDraft(next);
+    void saveChatDraft(draftKey, next).catch((err) =>
+      setError(`Could not save your attachment draft: ${err}`),
+    );
+  };
+
+  const attach = async (
+    picker: () => Promise<PickedAttachment[]>,
+    kind: "photo" | "file",
+  ) => {
+    if (attaching || isPreviewProfile(profileId)) return;
+    setAttaching(true);
+    setAttachmentError(undefined);
+    try {
+      const assets = await picker();
+      for (const asset of assets) {
+        if (draftRef.current.attachments.length >= MAX_DRAFT_ATTACHMENTS) {
+          throw new Error("Add at most 8 attachments to one message.");
+        }
+        setStatus(`Attaching ${asset.name}…`);
+        const image =
+          kind === "photo" ||
+          ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+            asset.mimeType ?? "",
+          );
+        addAttachment(
+          image
+            ? await uploadChatImage({ profileId, projectId, asset })
+            : await uploadChatFile({ profileId, projectId, chatPath, asset }),
+        );
+      }
+      if (assets.length) setStatus("Attachment ready to send");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : `${err}`;
+      setAttachmentError(
+        /native module|ExpoImagePicker|ExpoDocumentPicker|ExpoImageManipulator/i.test(
+          detail,
+        )
+          ? "Attachments need an updated CoCalc app build. Install the latest build and try again."
+          : `Could not attach file: ${detail}`,
+      );
+      setStatus(
+        "Attachment upload stopped; files already added remain in your draft",
+      );
+    } finally {
+      setAttaching(false);
+    }
+  };
+
+  const openAttachmentPicker = (
+    picker: () => Promise<PickedAttachment[]>,
+    kind: "photo" | "file",
+  ) => {
+    // iOS cannot present the system picker until our own modal has dismissed.
+    pendingAttachmentPicker.current = () => void attach(picker, kind);
+    setAttachmentMenuOpen(false);
+    if (Platform.OS !== "ios") {
+      setTimeout(() => {
+        const next = pendingAttachmentPicker.current;
+        pendingAttachmentPicker.current = undefined;
+        next?.();
+      }, 250);
+    }
+  };
+
   const speech = useSpeech(profileId, projectId, chatPath, threadId, (text) => {
-    const before = draftRef.current;
+    const before = draftRef.current.text;
     changeDraft(`${before}${before && !/\s$/.test(before) ? " " : ""}${text}`);
   });
   const live = useLiveVoice(profileId, projectId, threadId, client, snapshot);
@@ -423,13 +527,15 @@ export default function ChatScreen() {
     snapshot.connection === "connected" &&
     draftLoaded &&
     !submitting &&
-    !!draft.trim() &&
+    !attaching &&
+    !!composeChatDraft(draft).trim() &&
     (selectedThread?.agent_kind === "acp" ||
       selectedThread?.acp_config != null);
 
   const send = async (guidance = false) => {
     const activeClient = clientRef.current;
-    const text = draft.trim();
+    const submittedDraft = draftRef.current;
+    const text = composeChatDraft(submittedDraft);
     if (!activeClient || !canSend || !text) return;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
     setSubmitting(true);
@@ -449,14 +555,18 @@ export default function ChatScreen() {
       });
       // Clear the submitted draft even if its screen closed during admission,
       // but never remove a newer draft created in a reopened conversation.
-      await clearChatDraftIfUnchanged(draftKey, draft).catch((err) => {
+      await clearChatDraftIfUnchanged(draftKey, submittedDraft).catch((err) => {
         if (clientRef.current === activeClient)
           setError(
             `Message accepted, but the saved draft could not be cleared. Do not resend it. ${err}`,
           );
       });
       if (clientRef.current !== activeClient) return;
-      setDraft("");
+      if (draftRef.current === submittedDraft) {
+        const empty = { text: "", attachments: [] };
+        draftRef.current = empty;
+        setDraft(empty);
+      }
       setStatus(
         guidance ? "Guidance accepted by Codex" : "Prompt accepted by Codex",
       );
@@ -500,6 +610,26 @@ export default function ChatScreen() {
     }
   };
 
+  const openProjectFile = useCallback(
+    (href: string) => {
+      void (async () => {
+        try {
+          const path = decodeURIComponent(href.slice("sandbox:".length));
+          if (!posix.isAbsolute(path) || posix.normalize(path) !== path) {
+            throw new Error("Invalid project file link.");
+          }
+          const session = await getActiveSiteSession(profileId);
+          await Linking.openURL(
+            projectWebUrl(session.profile, projectId, path),
+          );
+        } catch (err) {
+          setError(`Could not open project file: ${err}`);
+        }
+      })();
+    },
+    [profileId, projectId],
+  );
+
   const running = selectedThread?.state === "running";
   const loadOlder = async () => {
     const activeClient = clientRef.current;
@@ -534,6 +664,50 @@ export default function ChatScreen() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      <Modal
+        transparent
+        visible={attachmentMenuOpen}
+        animationType="fade"
+        onRequestClose={() => setAttachmentMenuOpen(false)}
+        onDismiss={() => {
+          const next = pendingAttachmentPicker.current;
+          pendingAttachmentPicker.current = undefined;
+          next?.();
+        }}
+      >
+        <View style={styles.attachmentOverlay}>
+          <View style={styles.attachmentMenu}>
+            <Text accessibilityRole="header" style={styles.attachmentTitle}>
+              Attach to message
+            </Text>
+            {(
+              [
+                ["Take photo", pickCameraPhoto, "photo"],
+                ["Choose photos", pickLibraryPhotos, "photo"],
+                ["Choose files", pickFiles, "file"],
+              ] as const
+            ).map(([label, picker, kind]) => (
+              <Pressable
+                key={label}
+                accessibilityLabel={label}
+                accessibilityRole="button"
+                onPress={() => openAttachmentPicker(picker, kind)}
+                style={styles.attachmentMenuButton}
+              >
+                <Text style={styles.link}>{label}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              accessibilityLabel="Cancel attachment"
+              accessibilityRole="button"
+              onPress={() => setAttachmentMenuOpen(false)}
+              style={styles.attachmentMenuButton}
+            >
+              <Text style={styles.statusText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={headerHeight}
@@ -634,14 +808,16 @@ export default function ChatScreen() {
           ref={listRef}
           renderItem={({ item: row }) => (
             <MarkdownImageContext.Provider value={resolveImage}>
-              <Message
-                item={row.item}
-                guidance={row.guidance}
-                speechBusy={speechBusy}
-                read={(item) =>
-                  void speech.controller.read(item.content, item.message_id)
-                }
-              />
+              <ProjectFileLinkContext.Provider value={openProjectFile}>
+                <Message
+                  item={row.item}
+                  guidance={row.guidance}
+                  speechBusy={speechBusy}
+                  read={(item) =>
+                    void speech.controller.read(item.content, item.message_id)
+                  }
+                />
+              </ProjectFileLinkContext.Provider>
             </MarkdownImageContext.Provider>
           )}
         />
@@ -651,6 +827,7 @@ export default function ChatScreen() {
             disabled={
               speech.state.phase !== "idle" ||
               submitting ||
+              attaching ||
               snapshot.connection !== "connected"
             }
           />
@@ -696,27 +873,85 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           ) : null}
+          {draft.attachments.length ? (
+            <View style={styles.attachmentList}>
+              {draft.attachments.map((attachment, index) => (
+                <View
+                  key={`${attachment.markdown}-${index}`}
+                  style={styles.attachmentChip}
+                >
+                  <Text numberOfLines={1} style={styles.attachmentName}>
+                    {attachment.kind === "image" ? "Photo: " : "File: "}
+                    {attachment.name}
+                  </Text>
+                  <Pressable
+                    accessibilityLabel={`Remove attachment ${attachment.name}`}
+                    accessibilityRole="button"
+                    disabled={submitting}
+                    onPress={() => removeAttachment(index)}
+                    style={styles.removeAttachment}
+                  >
+                    <Text style={styles.link}>Remove</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {attaching ? (
+            <Text accessibilityLiveRegion="polite" style={styles.statusText}>
+              Uploading attachment…
+            </Text>
+          ) : null}
+          {attachmentError ? (
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {attachmentError}
+            </Text>
+          ) : null}
           {live.phase === "idle" ? (
             <TextInput
               accessibilityLabel="Message Codex"
-              editable={draftLoaded && !submitting}
+              editable={draftLoaded && !submitting && !attaching}
               multiline
               onChangeText={changeDraft}
               placeholder="Message Codex"
               placeholderTextColor={colors.muted}
               style={styles.input}
-              value={draft}
+              value={draft.text}
             />
           ) : null}
           <View style={styles.actions}>
             {live.phase === "idle" ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="Attach photo or file"
+                accessibilityState={{
+                  disabled:
+                    !draftLoaded ||
+                    submitting ||
+                    attaching ||
+                    isPreviewProfile(profileId),
+                }}
+                disabled={
+                  !draftLoaded ||
+                  submitting ||
+                  attaching ||
+                  isPreviewProfile(profileId)
+                }
+                onPress={() => setAttachmentMenuOpen(true)}
+                style={styles.messageAction}
+              >
+                <Text style={styles.link}>Attach</Text>
+              </Pressable>
+            ) : null}
+            {live.phase === "idle" ? (
+              <Pressable
+                accessibilityRole="button"
                 accessibilityLabel="Dictate message"
                 accessibilityState={{
-                  disabled: speechBusy || !draftLoaded || submitting,
+                  disabled:
+                    speechBusy || !draftLoaded || submitting || attaching,
                 }}
-                disabled={speechBusy || !draftLoaded || submitting}
+                disabled={speechBusy || !draftLoaded || submitting || attaching}
                 onPress={() => void speech.controller.start()}
                 style={styles.messageAction}
               >
@@ -867,6 +1102,43 @@ const makeStyles = (colors: AppearancePalette) =>
       gap: 8,
       padding: 10,
     },
+    attachmentOverlay: {
+      alignItems: "center",
+      backgroundColor: "rgba(0, 0, 0, 0.35)",
+      flex: 1,
+      justifyContent: "center",
+      padding: 20,
+    },
+    attachmentMenu: {
+      backgroundColor: colors.page,
+      borderRadius: 14,
+      gap: 4,
+      maxWidth: 420,
+      padding: 16,
+      width: "100%",
+    },
+    attachmentTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: "700",
+      marginBottom: 6,
+    },
+    attachmentMenuButton: {
+      justifyContent: "center",
+      minHeight: 48,
+      paddingHorizontal: 8,
+    },
+    attachmentList: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+    attachmentChip: {
+      alignItems: "center",
+      backgroundColor: colors.inset,
+      borderRadius: 8,
+      flexDirection: "row",
+      maxWidth: "100%",
+      paddingLeft: 10,
+    },
+    attachmentName: { color: colors.text, flexShrink: 1, fontSize: 13 },
+    removeAttachment: { justifyContent: "center", minHeight: 44, padding: 10 },
     input: {
       backgroundColor: colors.inset,
       borderRadius: 12,

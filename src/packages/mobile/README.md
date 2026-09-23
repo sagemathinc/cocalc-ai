@@ -65,6 +65,15 @@ Implementation status and remaining device/release qualification are tracked in
 The component tests mock native platform primitives; they do not establish
 physical-device accessibility, audio, or background behavior.
 
+Chat attachments use the native camera, photo-library, and document pickers.
+Photos are uploaded as CoCalc blobs for inline rendering; other files are saved
+directly on the owning project host and inserted as project-file links. The
+composer keeps selected attachments in its saved draft until Send. Each file is
+limited to 20 MB and a draft can contain eight attachments. The pickers are
+unavailable in the credential-free local UI
+preview. Because these are new native modules, rebuild the installed development
+app before testing attachments on a phone; a Metro refresh alone is insufficient.
+
 ## Simulator visual development loop
 
 Use the native iOS Simulator for routine layout work; a phone screenshot is not

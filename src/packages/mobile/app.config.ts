@@ -35,6 +35,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     "expo-secure-store",
     [
+      "expo-image-picker",
+      {
+        photosPermission: "Allow CoCalc to attach photos to agent messages.",
+        cameraPermission: "Allow CoCalc to take photos for agent messages.",
+        microphonePermission: false,
+      },
+    ],
+    [
       "expo-audio",
       {
         microphonePermission:
