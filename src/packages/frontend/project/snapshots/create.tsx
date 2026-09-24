@@ -60,8 +60,7 @@ export default function CreateSnapshot({
   const modalIdRef = useRef<symbol>(Symbol("CreateSnapshot"));
 
   function closeModal(clearName: boolean = false): void {
-    const restoreFocus =
-      open && activeCreateSnapshotModal === modalIdRef.current;
+    const restoreFocus = activeCreateSnapshotModal === modalIdRef.current;
     releaseCreateSnapshotModal(modalIdRef.current);
     setOpen(false);
     setCreating(false);
