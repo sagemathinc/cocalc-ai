@@ -6,7 +6,6 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown } from "antd";
 
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   useActions,
   useEffect,
@@ -83,14 +82,11 @@ export function CompactAgentsTopNav({
       icon: <Icon name="mail" />,
       label: "Notifications",
     },
-    { type: "divider" },
-    {
-      key: "agents-settings",
-      icon: <Icon name="users" />,
-      label: "Manage agents and connections",
-    },
     ...(groups?.includes("admin")
-      ? [{ key: "admin", icon: <Icon name="users" />, label: "Admin" }]
+      ? [
+          { type: "divider" as const },
+          { key: "admin", icon: <Icon name="users" />, label: "Admin" },
+        ]
       : []),
     { type: "divider" },
     { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
@@ -112,9 +108,6 @@ export function CompactAgentsTopNav({
         return;
       case "open-in-project":
         onOpenInProject?.();
-        return;
-      case "agents-settings":
-        openAccountSettings({ page: "my-agents" });
         return;
       case "support":
         openSupportTab();

@@ -9,7 +9,6 @@ import userEvent from "@testing-library/user-event";
 const setActiveTab = jest.fn();
 const showConnection = jest.fn();
 const toggleFullscreen = jest.fn();
-const openAccountSettings = jest.fn();
 const openSupportTab = jest.fn();
 
 jest.mock("antd", () => ({
@@ -69,9 +68,6 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span data-icon={name} />,
 }));
 
-jest.mock("@cocalc/frontend/account/settings-routing", () => ({
-  openAccountSettings: (...args: any[]) => openAccountSettings(...args),
-}));
 jest.mock("@cocalc/frontend/support/open", () => ({
   __esModule: true,
   default: (...args: any[]) => openSupportTab(...args),
@@ -118,22 +114,17 @@ describe("compact Agents navigation", () => {
       screen.getByRole("menuitem", { name: "Notifications" }),
     ).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Admin" })).toBeTruthy();
+    expect(
+      screen.queryByRole("menuitem", { name: "Manage agents and connections" }),
+    ).toBeNull();
   });
 
-  it("routes project and agent-management destinations without a reload", () => {
+  it("routes project navigation without a reload", () => {
     render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
 
     fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Projects" }));
     expect(setActiveTab).toHaveBeenCalledWith("projects");
-
-    fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
-    fireEvent.click(
-      screen.getByRole("menuitem", {
-        name: "Manage agents and connections",
-      }),
-    );
-    expect(openAccountSettings).toHaveBeenCalledWith({ page: "my-agents" });
   });
 
   it("runs the contextual Open in project command from the menu", () => {

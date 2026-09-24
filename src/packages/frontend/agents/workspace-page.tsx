@@ -61,7 +61,6 @@ import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   ProjectContext,
   useProjectContextProvider,
@@ -3621,18 +3620,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 <Button onClick={refreshNamedAgents}>Retry directory</Button>
               }
             />
-          ) : agents.length === 0 ? (
-            <Empty
-              style={{ marginTop: 80 }}
-              description="Name an agent chat to make it available here."
-            >
-              <Button
-                type="link"
-                onClick={() => openAccountSettings({ page: "my-agents" })}
-              >
-                Manage named agents
-              </Button>
-            </Empty>
           ) : !selected ? (
             <Empty
               style={{ marginTop: 80 }}

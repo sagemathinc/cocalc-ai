@@ -7,6 +7,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
+import { redux } from "@cocalc/frontend/app-framework";
 import { NamedAgentUsage } from "./agent-limit";
 
 const openAccountSettings = jest.fn();
@@ -38,6 +39,10 @@ beforeEach(() => {
 });
 
 test("explains how to free named-agent slots and opens management", async () => {
+  const setActiveTab = jest.fn();
+  const getActions = jest
+    .spyOn(redux, "getActions")
+    .mockReturnValue({ set_active_tab: setActiveTab } as any);
   const user = userEvent.setup();
   render(<NamedAgentUsage directory={directory} />);
 
@@ -56,5 +61,7 @@ test("explains how to free named-agent slots and opens management", async () => 
   ).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Manage named agents" }));
-  expect(openAccountSettings).toHaveBeenCalledWith({ page: "my-agents" });
+  expect(setActiveTab).toHaveBeenCalledWith("agents");
+  expect(openAccountSettings).not.toHaveBeenCalled();
+  getActions.mockRestore();
 });
