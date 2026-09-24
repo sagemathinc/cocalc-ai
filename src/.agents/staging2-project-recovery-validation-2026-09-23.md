@@ -762,6 +762,24 @@ production safe-capacity threshold. Overall staging2 health remained warning
 because bay-backup restore/PITR had no completed backup and browser latency
 telemetry had no samples.
 
+## September 24 follow-up: repeated dialog focus validation
+
+A repeated keyboard check found that the prior zero-delay focus restoration
+raced Ant Design's closing transition: the first Escape returned focus, but
+later cycles could leave focus on the page body. Commit `c0289d1a23` keeps
+the dialog mounted through its close transition and restores focus in the
+transition callback. The focused component test now closes it three times in
+succession; all six snapshot-dialog tests, frontend typecheck, and lint passed.
+
+Static artifact
+`20260924T091441Z-c0289d1a-20260924-focus-transition-c0289d1-dirty`
+is active on staging2 as release `20260924091554-static`. All seven static
+smoke checks passed. In a separate authenticated Chromium tab at 320 CSS
+pixels, 12 consecutive Enter/open and Escape/close cycles returned focus to
+the Create Snapshot button every time. The page had no document overflow,
+visible crash overlay, or JavaScript page errors. This strengthens the focus
+result but does not establish the cause of the earlier one-off crash overlay.
+
 ## Open findings and release gates
 
 1. Recovery Settings, project files, and the backup catalog load in the
