@@ -95,7 +95,7 @@ export async function updateRollingSnapshots({
         ? 1e12 // infinitely old
         : Date.now() - new Date(snapshotNames.slice(-1)[0]).valueOf();
     for (const key in SNAPSHOT_INTERVALS_MS) {
-      if (counts[key] && timeSinceLastSnapshot > SNAPSHOT_INTERVALS_MS[key]) {
+      if (counts[key] && timeSinceLastSnapshot >= SNAPSHOT_INTERVALS_MS[key]) {
         // there is NOT a sufficiently recent snapshot to satisfy the constraint
         // of having at least one snapshot for the given interval.
         needNewSnapshot = true;

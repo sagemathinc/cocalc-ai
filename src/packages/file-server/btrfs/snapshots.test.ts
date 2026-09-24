@@ -48,6 +48,7 @@ describe("rolling btrfs snapshot retention", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   afterAll(() => {
@@ -145,5 +146,26 @@ describe("rolling btrfs snapshot retention", () => {
       createdName: expect.any(String),
       disabled: false,
     });
+  });
+
+  it("creates a changed snapshot exactly when the scheduled interval is due", async () => {
+    jest.useFakeTimers({ now });
+    const { updateRollingSnapshots } = await import("./snapshots");
+    const last = new Date(now - 15 * 60_000).toISOString();
+    const snapshots = {
+      subvolume: { name: "project-1" },
+      hasUnsavedChanges: jest.fn(async () => true),
+      readdir: jest.fn(async () => [last]),
+      create: jest.fn(async () => undefined),
+      delete: jest.fn(async () => undefined),
+    };
+
+    const result = await updateRollingSnapshots({
+      snapshots: snapshots as any,
+      counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+    });
+
+    expect(snapshots.create).toHaveBeenCalledTimes(1);
+    expect(result.createdName).toBe(new Date(now).toISOString());
   });
 });
