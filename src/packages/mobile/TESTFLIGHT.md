@@ -5,6 +5,30 @@ The first iOS beta is for internal testers only. Use the production variant,
 does not depend on Metro. The development app has a separate bundle ID and is
 not the TestFlight candidate.
 
+## Funded live voice candidate built on 2026-09-24
+
+- Source: `feature/cocalc-mobile` at
+  `c6d9c9a70a66be6241d56b7b2384311604991a20`, with site-funded voice and
+  browser live voice.
+- Production iOS archive:
+  `/tmp/CoCalc-voice-20260924-production.xcarchive`.
+- Bundle ID: `com.sagemath.cocalc.mobile`; version/build: `0.1.0 (1)`.
+- Embedded `main.jsbundle` SHA-256:
+  `a65c6477f82af40244c16b4ac22567eafdcd8ce4a17434017da84b1077f4a508`.
+- `xcodebuild archive` and `codesign --verify --deep --strict` passed. The
+  native bundle and embedded Expo configuration both identify the production
+  app. The build was installed on the paired iPhone, and the maintainer
+  confirmed it opens. Physical-device provider audio and a matching browser
+  call still need qualification.
+- Staging has matching hub and static bundles. Voice is currently enabled
+  there only for administrator testing through `COCALC_LIVE_VOICE_DEV=1`;
+  general paid-account access remains off pending real-call verification.
+
+The archive was made with `COCALC_MOBILE_VARIANT=production`. Always set that
+variable when archiving; otherwise the embedded Expo configuration can say
+"CoCalc Dev" even when the native bundle ID is production. Inspect
+`EXConstants.bundle/app.config` before installing or exporting an archive.
+
 ## Previous candidate rebuilt on 2026-09-23
 
 This archive predates funded live voice. It is superseded for the planned
@@ -57,7 +81,7 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
    ```bash
    xcodebuild -exportArchive \
-     -archivePath /tmp/CoCalc-0.1.0-1-merged-beta.xcarchive \
+     -archivePath /tmp/CoCalc-voice-20260924-production.xcarchive \
      -exportOptionsPlist testflight-internal-export-options.plist \
      -exportPath /tmp/CoCalc-TestFlight-internal \
      -allowProvisioningUpdates

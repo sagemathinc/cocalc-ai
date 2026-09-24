@@ -74,3 +74,36 @@ Validation for the follow-up: 45 mobile UI tests, 15 focused auth/voice tests, 5
 Mobile model discovery was calling the real hub's `projects.getCodexUsageStatus`, which intentionally returns an unavailable placeholder. The browser intercepts this method and sends it to the project host. Mobile now resolves the owning host and uses the same account-authorized method on its direct host connection, including the selected credential ID and a 90-second discovery timeout. A read-only staging check returned `available: true`, subscription funding, and five models, including the thread's `gpt-5.6-sol`.
 
 Named subscriptions now replace the generic ChatGPT plan row, avoiding two selected radio buttons for one choice. Automatic continues to reflect the server's default resolution. Validation: 46 mobile UI tests, mobile typecheck, frontend lint, and the real project-host catalog check passed. The user confirmed the API-key live-voice path works end to end; subscription phone qualification is next.
+
+## September 24 funded voice and browser rollout
+
+The earlier hub-only prototype described above has been superseded by commit
+`c6d9c9a70a66be6241d56b7b2384311604991a20` on `feature/cocalc-mobile`.
+This version adds site-funded voice for paid accounts, explicit own-key voice
+for free accounts, remaining 5-hour and 7-day percentages, and the same live
+voice control in browser chat. It reserves and settles site allocation on the
+account's home bay; provider audio travels directly over WebRTC. A call is
+capped at 120 seconds. The site API key remains on the server.
+
+The clean Linux build in `/home/wstein/cocalc-live-voice-build` produced hub and
+static bundles from that exact commit. Both were deployed to staging:
+
+- Hub: `/opt/cocalc/bay/releases/20260924162248-hub`; archive SHA-256
+  `4018626fb62109e3ce296c41afd2f782bab4f2cef3447e76d3b57a4911b8d9ad`.
+- Static: `/opt/cocalc/bay/releases/20260924162349-static`; archive SHA-256
+  `adadeb1ab1526e29e5b548fe3f8506e5c0658f22f93a3c45b1254122a680b71a`.
+
+The rolling deployment and subsequent health checks reported all four hub
+workers, database, router, persist, and frontdoor healthy. The staging systemd
+drop-in still sets `COCALC_LIVE_VOICE_DEV=1`, so voice is available to admin
+accounts for qualification. `COCALC_LIVE_VOICE_ENABLED` is not set; general
+paid-account beta access remains off until a provider-backed call and browser
+and physical-device audio have been checked. The earlier paragraph saying that
+site funding is disabled applies only to the superseded prototype. A real
+site-funded provider call has not yet been verified.
+
+Local deployment reports are in
+`/Users/williamstein/build/cocalc-mobile/tmp/bay-upgrade-20260924T162239Z`
+and `bay-upgrade-20260924T162338Z`. The prior static release shown near the
+top of this document is historical; inspect the current release and rollback
+target before any new rollback.
