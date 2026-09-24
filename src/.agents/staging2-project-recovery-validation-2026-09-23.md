@@ -1091,5 +1091,35 @@ notification switch was still off. The enabled-state critical health path was
 validated by focused tests, not by changing live site settings. A named staging
 recipient and controlled delivery drill are still required before enabling it.
 
+## 2026-09-24 signed-in Chromium start and recovery health check
+
+The staging2 Chromium session on port 9222 was signed in and showed the
+recovery canary's project Settings. Explicit Start controls were exercised on
+the disposable project while the staging2 CLI confirmed the runtime reached
+`running` and later `opened` after each stop. The rolling 60-minute
+browser-observed lifecycle sample at 13:09 UTC contained six starts, with p95
+2.8 seconds versus the 10-second warm-start threshold. Admission p95 was
+451 ms, backend p95 1.6 seconds, and convergence p95 216 ms. The health check
+correctly remained `unknown` because its lifecycle gate requires ten recent
+samples; terminal, Jupyter, exec, and file samples had also aged out of this
+window. A later reload/navigation race in the probe prevented a clean ten-cycle
+sample. This is a low-load single-project observation, not a sustained
+maintenance-latency result.
+
+At 13:09 UTC, project-recovery health was healthy: zero paying threshold
+breaches, unknown recovery statuses, and hosts missing recent pressure
+telemetry. The 24-hour ledger counted 1,037 succeeded, 142 deferred, and one
+failed attempt. Free snapshot due-to-success was p95 77 seconds and p99 272
+seconds over 861 completions; free backup was p95 964 seconds and p99 1,058
+seconds over 175 completions. These are staging observations, not evidence of
+30-day service-objective compliance. Site-wide health still warned for
+separate bay-backup, admin-alert, and synthetic-smoke checks.
+
+Automatic starts were briefly blocked on this disposable project to prevent
+its open terminal and notebook tabs from waking it during the explicit-start
+test. The original Allowed setting was restored and verified; the temporary
+browser tab was closed; the final CLI status was `opened` (stopped). No
+production state or alert-delivery setting changed.
+
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
