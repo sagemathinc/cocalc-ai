@@ -109,6 +109,15 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it("keeps the Agents outer shell neutral while the editor is focused", () => {
+    renderComposer({}, { agentWorkspace: true });
+    const composer = screen.getByTestId("chat-composer");
+    const border = composer.style.border;
+    fireEvent.focus(screen.getByTestId("chat-input-focus-probe"));
+    expect(composer.style.border).toBe(border);
+    expect(composer.style.boxShadow).toBe("");
+  });
+
   it.each([false, true])(
     "offers agent delivery for a new thread only when Codex is selected (%s)",
     (isNewThreadCodex) => {
@@ -229,7 +238,9 @@ describe("ChatRoomComposer resize handle", () => {
         isSelectedThreadAI: true,
         selectedThread: { key: "thread-mobile", label: "Agent" } as any,
       });
-      expect(lastCodexConfigProps.compact).toBe(mobile ? "icon" : "composer");
+      expect(lastCodexConfigProps.compact).toBe(
+        mobile ? "mobile-composer" : "composer",
+      );
       expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
       expect(
         screen.getByRole("button", { name: "Codex settings" }),

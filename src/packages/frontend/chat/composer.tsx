@@ -616,11 +616,12 @@ export function ChatRoomComposer({
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
     background: UI_COLORS.surface,
-    border: `1px solid ${isInputFocused ? UI_COLORS.link : UI_COLORS.border}`,
+    border: `1px solid ${isInputFocused && !embeddingOptions.agentWorkspace ? UI_COLORS.link : UI_COLORS.border}`,
     borderRadius: isZenMode && isFullscreen ? 0 : 16,
-    boxShadow: isInputFocused
-      ? `inset 0 0 0 1px ${UI_COLORS.focus}`
-      : undefined,
+    boxShadow:
+      isInputFocused && !embeddingOptions.agentWorkspace
+        ? `inset 0 0 0 1px ${UI_COLORS.focus}`
+        : undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
