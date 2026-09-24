@@ -623,6 +623,63 @@ This proves live admission and fail-closed promotion behavior for the unknown
 latency case. It does not prove the latency regression threshold under actual
 load, a seven-day canary, or a 30-day due-to-success objective.
 
+## September 24 follow-up: four-shard remote-only restore drills
+
+I created four isolated staging2 projects on the canary host, each assigned to
+a distinct active backup repository shard, wrote a unique marker, and created
+an off-host Rustic backup while the project was stopped. I moved each project
+to the shared host, restored the original backup into a temporary path, and
+verified the marker hash. The initial cross-host restores succeeded, but could
+have used Rustic's local cache. Commits `2f760bcc25` and `54f5d4ea55` added a
+`--remote-only` restore option and allowed the corresponding `--no-cache`
+flag through both privileged and sandboxed restore paths. The first live
+remote-only attempt exposed the missing sandbox allowlist entry; after the
+second commit and host rollout, all four remote-only restores succeeded.
+
+| Shard repository | Project | Original backup | Remote-only restore operation | Marker SHA-256 |
+| --- | --- | --- | --- | --- |
+| `712f48f7-2d11-4a69-9359-2c80ec83f548` | `aa9d72ea-bd4c-460e-b479-2760cc8b9c29` | `21aa4e7d38341c3f240b8bb121b2b130c813daeeb192a084467ef4a28720fa62` | `15b39241-81c0-458a-9485-30a00855fa22` | `07a35b2d36c6a506d333fe49c39a13d3b73c2fea27602d5ce970bef47a96d5e0` |
+| `bea69159-87f7-498e-84a0-5b0560a84f03` | `85793315-15ec-4cab-b062-ee7fcae065c6` | `f2772c1213d69fdd0f4e2136f1dd7293051a373c7a077539809f1ac8e3e867b9` | `46870c18-fef1-423f-9000-6a3e9cd04e97` | `2b79a7230500070ed124c5515fdf8ceae0f8b4fb031ae56bcb9751ef7a72a297` |
+| `f3c8309a-b085-4c5d-905b-ec939a5815d1` | `2bf70bcc-b77e-4288-876f-65250eeab79a` | `9edb08069db3bcd24ace0bc4fba8629086573a6dd8499c485f9d257d1d9744a9` | `bc45acd5-d792-44eb-b656-3ef970164726` | `cde05fbf5644d47e55fd7e8099da0095d748e657cda5070d1b6b0c824f7bf220` |
+| `fcf896d9-7e29-4c54-93ce-c5cb84024956` | `9dab607d-1839-4f8c-90e3-874de7b5f451` | `08fb8bb97587382e8133497359521ba5e168258b9a278589268e851a43faa78c` | `b00fa9b0-445f-452b-b5fd-3048163c6b9e` | `fc22bf3409ce4121ff77f98be6d222988fee7a116a11f9f9439670af4d5fc53f` |
+
+Every restore operation reports `status=succeeded` and
+`result.remote_only=true`. I read each restored file through the project
+file API while the project was stopped and computed SHA-256; all four matched
+the original marker. All four projects remain stopped (`state=opened`) on
+`staging2-shared-1`. This tests one repository in each active shard and a
+canary-host-to-shared-host data move. It does not constitute long-term
+retention testing or a production restore drill.
+
+The full development build, touched package typechecks, 13 project-backup API
+tests, six project-host Rustic wrapper tests, 109 bootstrap tests, and eight
+sandbox Rustic tests passed. The helper artifact
+`20260924T061738Z-2f760bcc-20260924T0618Z-2f760bcc-remote-only-dirty`
+was installed on both hosts. The hub artifact
+`20260924T061912Z-2f760bcc-20260924T0620Z-2f760bcc-remote-only-dirty`
+is active as release `20260924062058-hub`; seven hub smoke checks passed.
+The final project-host artifact
+`20260924T063316Z-54f5d4ea-20260924T0635Z-54f5d4ea-cache-allow-dirty`
+is running on both staging2 hosts as explicit host overrides, and both hosts
+passed project-host smoke checks. The bay global project-host default was not
+promoted.
+
+The first project-host fleet campaign
+`4edd3ef3-de74-4230-945c-5f0d9c75339a` stopped at its recovery health
+gate after two free projects on the shared host became briefly overdue for
+local snapshots during restart. The gate recorded healthy baseline and warning
+post-wave recovery, then refused global promotion. The host scheduler
+subsequently caught up and recovery returned to healthy before the final
+host-by-host patch rollout. The remote-only drill itself caused fresh free
+snapshot debt on the shared host: at the immediate post-test check, seven
+projects were overdue by at most two minutes, including two drill projects.
+There were zero paying incident-threshold breaches, zero unknown statuses,
+and recent pressure telemetry on both hosts. Scheduled maintenance cleared the
+four drill projects' snapshot debt without manual intervention; the audited
+status query at 06:43:47 UTC recorded new successful local snapshots, and
+`admin health` returned project-recovery=healthy with no overdue debt at
+06:44:26 UTC. The short warning and gate stop remain real staging observations.
+
 ## Open findings and release gates
 
 1. Recovery Settings, the project file listing, and the backup catalog now
@@ -644,9 +701,10 @@ load, a seven-day canary, or a 30-day due-to-success objective.
    diagnostic returned raw attempt rows under an audit ID. The aggregated
    operator health query returned new completions and due-to-success metrics.
 3. The requested seven-day canary, 30-day due-to-success objectives, paid/free
-   production distributions, interactive latency comparison, and restore
-   drills across repository shards require observation after code review and
-   coordinated rollout. None is established by this single-day staging test.
+   production distributions and interactive latency comparison require
+   observation after code review and coordinated rollout. One remote-only
+   cross-host restore succeeded in each staging2 repository shard; production
+   restore drills and retention-window coverage remain open.
 4. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
 5. The host scheduler now uses a 60-to-120-second initial delay and a
