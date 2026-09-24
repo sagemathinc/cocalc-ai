@@ -53,6 +53,7 @@ import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
 export interface ProjectRecoveryStatus {
   project_id: string;
+  storage_service_class: "paying" | "free" | "unclassified";
   host_id: string | null;
   last_backup: string | null;
   last_changed: string | null;

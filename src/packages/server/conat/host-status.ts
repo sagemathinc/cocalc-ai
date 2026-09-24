@@ -23,6 +23,10 @@ import {
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
+  storageFundingAccountId,
+  storageServiceClassFromMembership,
+} from "@cocalc/server/membership/storage-service-class";
+import {
   classifyHostProvisionedInventory,
   shouldDeleteHostProjectUpdate,
 } from "./host-project-ownership";
@@ -173,14 +177,10 @@ export async function listHostProjectMaintenanceSchedules({
     new Set(
       rows
         .flatMap((row) => {
-          const usageId = `${row.usage_account_id ?? ""}`.trim();
           const ownerId = `${row.owner_account_id ?? ""}`.trim();
-          return [
-            ownerId,
-            usageId && row.users?.[usageId]?.group ? usageId : ownerId,
-          ];
+          return [ownerId, storageFundingAccountId(row)];
         })
-        .filter((account_id) => account_id.length > 0),
+        .filter((account_id): account_id is string => Boolean(account_id)),
     ),
   );
   const serviceByAccount = new Map<
@@ -200,32 +200,22 @@ export async function listHostProjectMaintenanceSchedules({
             limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
         });
         serviceByAccount.set(account_id, {
-          service_class:
-            (resolution.source === "subscription" &&
-              Number(resolution.subscription_cost) > 0) ||
-            (resolution.source === "grant" &&
-              (resolution.grant_purchase_id != null ||
-                resolution.site_license_id != null ||
-                resolution.team_license_id != null))
-              ? "paying"
-              : "free",
+          service_class: storageServiceClassFromMembership(resolution),
           priority: limits.shared_compute_priority ?? 0,
         });
       }),
     );
   }
   return rows.map((row) => {
-    const usageId = `${row.usage_account_id ?? ""}`.trim();
-    const storage_account_id =
-      usageId && row.users?.[usageId]?.group
-        ? usageId
-        : `${row.owner_account_id ?? ""}`.trim();
+    const storage_account_id = storageFundingAccountId(row);
     // Existing snapshot and backup entitlements belong to the project owner.
     // Funding priority may follow a different usage account; changing limits
     // here would silently alter the product's storage entitlement policy.
     const ownerId = `${row.owner_account_id ?? ""}`.trim();
     const limits = ownerId ? limitsByOwner.get(ownerId) : undefined;
-    const service = serviceByAccount.get(storage_account_id);
+    const service = storage_account_id
+      ? serviceByAccount.get(storage_account_id)
+      : undefined;
     const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
       storage_account_id: storage_account_id || null,

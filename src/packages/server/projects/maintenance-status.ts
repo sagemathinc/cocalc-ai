@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import type { ProjectMaintenanceReport } from "@cocalc/conat/project-host/api";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import {
@@ -13,6 +14,18 @@ import {
   type SnapshotCounts,
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
+import {
+  PAYING_BACKUP_INCIDENT_DELAY_MS,
+  PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
+  recoveryDelayExceeds,
+} from "@cocalc/util/consts/project-recovery";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import {
+  storageFundingAccountId,
+  storageServiceClassFromMembership,
+} from "@cocalc/server/membership/storage-service-class";
+
+const logger = getLogger("server:projects:maintenance-status");
 
 function dueAt(
   changed: Date | null,
@@ -356,11 +369,20 @@ export async function getProjectRecoveryStatusLocal(
     host_last_seen: Date | null;
     snapshots: SnapshotSchedule | null;
     backups: SnapshotSchedule | null;
+    owner_account_id: string | null;
+    usage_account_id: string | null;
+    users: Record<string, { group?: string }> | null;
   }>(
     `SELECT p.project_id, p.host_id, p.last_backup,
             COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
               AS last_changed,
-            h.last_seen AS host_last_seen, p.snapshots, p.backups
+            h.last_seen AS host_last_seen, p.snapshots, p.backups,
+            p.usage_account_id::text AS usage_account_id, p.users,
+            (SELECT account_id_text::text
+               FROM jsonb_each(COALESCE(p.users, '{}'::jsonb))
+                    AS u(account_id_text, user_data)
+              WHERE COALESCE(u.user_data->>'group', '')='owner'
+              LIMIT 1) AS owner_account_id
        FROM projects p LEFT JOIN project_hosts h ON h.id=p.host_id
       WHERE p.project_id=$1 AND p.deleted IS NOT TRUE`,
     [project_id],
@@ -387,6 +409,7 @@ export async function getProjectRecoveryStatusLocal(
   );
   const status: ProjectRecoveryStatus = {
     project_id,
+    storage_service_class: "unclassified",
     host_id: project.host_id,
     last_backup: project.last_backup?.toISOString() ?? null,
     last_changed: project.last_changed?.toISOString() ?? null,
@@ -444,6 +467,27 @@ export async function getProjectRecoveryStatusLocal(
       { ...DEFAULT_BACKUP_COUNTS, ...project.backups },
       false,
     );
+  }
+  if (
+    recoveryDelayExceeds(
+      status.snapshot_due_at,
+      PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
+    ) ||
+    recoveryDelayExceeds(status.backup_due_at, PAYING_BACKUP_INCIDENT_DELAY_MS)
+  ) {
+    const payer = storageFundingAccountId(project);
+    if (payer) {
+      try {
+        status.storage_service_class = storageServiceClassFromMembership(
+          await resolveMembershipForAccount(payer),
+        );
+      } catch (err) {
+        logger.warn("unable to classify recovery service funding", {
+          project_id,
+          err,
+        });
+      }
+    }
   }
   return status;
 }
@@ -775,9 +819,15 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             health.oldest_snapshot_delay_seconds,
             delaySeconds,
           );
-          if (row.snapshot_class === "paying" && delaySeconds > 2 * 3600) {
+          if (
+            row.snapshot_class === "paying" &&
+            delaySeconds > PAYING_SNAPSHOT_INCIDENT_DELAY_MS / 1000
+          ) {
             health.paying_snapshot_overdue++;
-          } else if (row.snapshot_class == null && delaySeconds > 2 * 3600) {
+          } else if (
+            row.snapshot_class == null &&
+            delaySeconds > PAYING_SNAPSHOT_INCIDENT_DELAY_MS / 1000
+          ) {
             health.unclassified_snapshot_overdue++;
           }
         }
@@ -820,9 +870,15 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             health.oldest_backup_delay_seconds,
             delaySeconds,
           );
-          if (row.backup_class === "paying" && delaySeconds > 12 * 3600) {
+          if (
+            row.backup_class === "paying" &&
+            delaySeconds > PAYING_BACKUP_INCIDENT_DELAY_MS / 1000
+          ) {
             health.paying_backup_overdue++;
-          } else if (row.backup_class == null && delaySeconds > 12 * 3600) {
+          } else if (
+            row.backup_class == null &&
+            delaySeconds > PAYING_BACKUP_INCIDENT_DELAY_MS / 1000
+          ) {
             health.unclassified_backup_overdue++;
           }
         }

@@ -4,6 +4,12 @@
  */
 
 const queryMock = jest.fn();
+const resolveMembershipForAccountMock = jest.fn();
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -14,16 +20,23 @@ describe("project recovery status after unchanged-content reconciliation", () =>
   beforeEach(() => {
     jest.resetModules();
     queryMock.mockReset();
+    resolveMembershipForAccountMock.mockReset();
   });
 
   async function statusFor({
     changedAt,
     reconciledAt,
     scheduleChanged = false,
+    ownerAccountId = null,
+    usageAccountId = null,
+    users = null,
   }: {
     changedAt: string;
     reconciledAt: string;
     scheduleChanged?: boolean;
+    ownerAccountId?: string | null;
+    usageAccountId?: string | null;
+    users?: Record<string, { group?: string }> | null;
   }) {
     const { snapshotScheduleRevision } = await import("./maintenance-status");
     const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
@@ -39,6 +52,9 @@ describe("project recovery status after unchanged-content reconciliation", () =>
               host_last_seen: new Date("2026-04-11T00:00:00.000Z"),
               snapshots: schedule,
               backups: { disabled: true },
+              owner_account_id: ownerAccountId,
+              usage_account_id: usageAccountId,
+              users,
             },
           ],
         };
@@ -93,6 +109,27 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       scheduleChanged: true,
     });
     expect(status.snapshot_due_at).toBe("2026-04-10T00:00:00.000Z");
+  });
+
+  it("classifies a critical recovery breach using the storage payer", async () => {
+    resolveMembershipForAccountMock.mockResolvedValue({
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    const status = await statusFor({
+      changedAt: "2026-04-11T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      ownerAccountId: "owner-account",
+      usageAccountId: "storage-payer",
+      users: {
+        "owner-account": { group: "owner" },
+        "storage-payer": { group: "collaborator" },
+      },
+    });
+    expect(status.storage_service_class).toBe("paying");
+    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
+      "storage-payer",
+    );
   });
 
   it("rejects a snapshot success report without a recovery point", async () => {

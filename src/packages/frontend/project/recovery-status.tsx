@@ -7,6 +7,11 @@ import { useEffect, useState } from "react";
 import { Alert } from "antd";
 import type { ProjectRecoveryStatus as RecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  PAYING_BACKUP_INCIDENT_DELAY_MS,
+  PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
+  recoveryDelayExceeds,
+} from "@cocalc/util/consts/project-recovery";
 
 const REFRESH_MS = 60_000;
 const STALE_HOST_MS = 5 * 60_000;
@@ -114,8 +119,12 @@ export function ProjectRecoveryStatus({
     reportStale > STALE_REPORT_MS;
   const overdueMs = age(dueAt);
   const overdue = overdueMs != null && overdueMs > 0;
-  const critical =
-    overdue && overdueMs > (kind === "snapshot" ? 2 : 12) * 60 * 60_000;
+  const critical = recoveryDelayExceeds(
+    dueAt,
+    kind === "snapshot"
+      ? PAYING_SNAPSHOT_INCIDENT_DELAY_MS
+      : PAYING_BACKUP_INCIDENT_DELAY_MS,
+  );
   const reason = reasonText(report?.reason);
   let title = `${label}: latest confirmed ${formatted(latest)}`;
   let description: string | undefined;
