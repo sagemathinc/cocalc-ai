@@ -176,6 +176,14 @@ jest.mock("@cocalc/frontend/project/explorer/clone", () => ({
   __esModule: true,
   default: () => <button type="button">Clone</button>,
 }));
+jest.mock("@cocalc/frontend/project/recovery-status", () => ({
+  ProjectRecoveryStatus: ({ kind }: { kind: string }) => (
+    <div role="status">
+      {kind === "snapshot" ? "Local snapshots" : "Off-host backups"}: current
+      protection status unknown
+    </div>
+  ),
+}));
 jest.mock("@cocalc/frontend/project/settings/datastore", () => ({
   Datastore: () => <div>Datastore</div>,
 }));
@@ -275,6 +283,12 @@ describe("SettingsFlyout", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create Backup" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Clone" })).toBeTruthy();
+    expect(
+      screen.getByText("Local snapshots: current protection status unknown"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Off-host backups: current protection status unknown"),
+    ).toBeTruthy();
   });
 
   it("shows SSH before Location in flyout settings", () => {

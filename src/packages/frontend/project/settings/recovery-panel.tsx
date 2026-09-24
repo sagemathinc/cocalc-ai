@@ -6,13 +6,12 @@
 import { Card, Space, Typography } from "antd";
 import type { ReactNode } from "react";
 
-import { useProjectMapField } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo, type IconName } from "@cocalc/frontend/components";
+import { Icon, type IconName } from "@cocalc/frontend/components";
 import CreateBackup from "@cocalc/frontend/project/backups/create";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
+import { ProjectRecoveryStatus } from "@cocalc/frontend/project/recovery-status";
 import CreateSnapshot from "@cocalc/frontend/project/snapshots/create";
 import RestoreSnapshot from "@cocalc/frontend/project/snapshots/restore";
-import { COLORS } from "@cocalc/util/theme";
 
 import { Datastore } from "./datastore";
 import type { Project } from "./types";
@@ -25,6 +24,7 @@ interface RecoveryActionProps {
   title: string;
   description: ReactNode;
   actions: ReactNode;
+  status?: ReactNode;
   mode?: "project" | "flyout";
 }
 
@@ -41,6 +41,7 @@ function RecoveryAction({
   title,
   description,
   actions,
+  status,
   mode,
 }: RecoveryActionProps) {
   const isFlyout = mode === "flyout";
@@ -77,21 +78,18 @@ function RecoveryAction({
           {actions}
         </Space>
       </div>
+      {status}
     </Card>
   );
 }
 
 export function RecoveryPanel({
   project_id,
-  project,
   mode,
   showDatastore,
   datastoreReload,
 }: Props) {
   const runtime = useProjectRuntimeCapabilities();
-  const projectLastBackup = useProjectMapField(project_id, "last_backup");
-  const lastBackup = projectLastBackup ?? project.get("last_backup");
-
   return (
     <Space
       vertical
@@ -110,6 +108,9 @@ export function RecoveryPanel({
               <RestoreSnapshot />
             </>
           }
+          status={
+            <ProjectRecoveryStatus project_id={project_id} kind="snapshot" />
+          }
         />
       )}
       {runtime.backups && (
@@ -117,24 +118,11 @@ export function RecoveryPanel({
           mode={mode}
           icon="cloud-upload"
           title="Backups"
-          description={
-            <>
-              Host-independent archives for project files, rootfs state, and
-              TimeTravel history.
-              {lastBackup ? (
-                <>
-                  {" "}
-                  Last backup: <TimeAgo date={lastBackup as any} />.
-                </>
-              ) : (
-                <span style={{ color: COLORS.GRAY_M }}>
-                  {" "}
-                  No backup recorded.
-                </span>
-              )}
-            </>
-          }
+          description="Host-independent archives for project files, rootfs state, and TimeTravel history."
           actions={<CreateBackup />}
+          status={
+            <ProjectRecoveryStatus project_id={project_id} kind="backup" />
+          }
         />
       )}
       <RecoveryAction
