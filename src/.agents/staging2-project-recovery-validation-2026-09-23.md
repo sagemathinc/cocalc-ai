@@ -894,8 +894,8 @@ Polls found one snapshot through 11:32:31, then a second Btrfs snapshot at
 11:32:40.460 UTC. The project file still contained the changed marker after
 restart, and the browser Recovery view showed the new confirmed snapshot.
 This verifies that the rebuilt due timer dispatched before the next full
-reconciliation. The test project remains for cleanup pending staging2
-fresh-auth approval for permanent deletion with backup purge.
+reconciliation. The test project was later deleted through the first-party
+CLI with normal seven-day backup retention.
 
 Commit `417ccd17db` stores a bounded sample of fresh host-wide memory
 maintenance gate decisions and reports their 24-hour duration by reason in
@@ -972,9 +972,10 @@ seven-day canary gate.
    15-minute full reconciliation sweep, with one-minute retries after a skipped
    sweep. A pressure-blocked startup followed by a successful full-sweep
    retry was observed live. A bounded 80-project inventory canary completed,
-   and due-timer recovery after a restart passed live. A live inventory above
-   500 projects and sustained interactive responsiveness remain to be
-   validated. The canary event path completed about 97 seconds after bay confirmation; its
+   and due-timer recovery after a restart passed live. A live 525-project
+   inventory and backup queue completed on September 24; sustained browser
+   responsiveness remains to be validated. The canary event path completed
+   about 97 seconds after bay confirmation; its
    generation check cached the prior observation for about five minutes, so
    edit-to-bay change detection took longer than dispatch.
 6. The staging account hit its 16 active runtime sponsor-slot limit while
@@ -999,10 +1000,11 @@ seven-day canary gate.
 9. A bay-local five-minute recovery notification worker, named on-call
    setting, incident grouping, and daily oldest-debt report are deployed on
    staging2. Trusted incidents now queue immediate critical-lane email even
-   when ordinary maintenance email is disabled. Delivery remains disabled by
-   default and no on-call account is configured. Live email delivery, recipient
-   acknowledgement, and any external paging integration remain unvalidated.
-   Production alert activation is a separate operational gate.
+   when ordinary maintenance email is disabled. A named on-call account is
+   configured and the recipient confirmed delivery of the daily recovery-debt
+   report. The notification switch was returned to off after the drill. A live
+   critical incident drill and any external paging integration remain
+   unvalidated. Production alert activation is a separate operational gate.
 
 ## 2026-09-24 recovery notification staging rollout
 
@@ -1043,8 +1045,8 @@ delivery and acknowledgement, then decide whether a distinct external paging
 integration is required. Keep production disabled until that gate and the
 seven-day canary, 30-day objectives, production restore drills, safe-capacity
 calibration, and remaining UI/live-load findings are complete. The disposable
-staging test project `94d31e68-cec6-4e0b-aebf-d05ac1930d5d` is stopped;
-permanent deletion awaits first-party fresh-auth approval.
+staging test project `94d31e68-cec6-4e0b-aebf-d05ac1930d5d` was later
+deleted through the first-party CLI with normal seven-day backup retention.
 
 ## 2026-09-24 critical operator email staging rollout
 
@@ -1215,3 +1217,111 @@ confirmed success, and one on-time success. This verifies live persistence and
 readback, not 30-day compliance. The first 30-day window requires a full
 collection period and validation of host coverage. Production remains
 unchanged; the shared staging host still uses the previously pinned artifact.
+
+## 2026-09-24 greater-than-500 inventory and missed-due preservation
+
+To exercise the live keyset inventory beyond two 250-project pages, 525
+disposable, stopped projects were created on `staging2-shared-1`. Their exact
+IDs are recorded in `tmp/recovery-scale-canary-20260924-ids.txt` for cleanup.
+The admin account's original 250-project limit was temporarily raised to 650
+with a typed, audited entitlement override expiring at 20:00 UTC; no previous
+override existed. This must be cleared after deleting the test projects.
+
+All 525 projects were provisioned and assigned to the shared host. The full
+inventory sweep produced a snapshot status for every one, proving it crossed
+the page boundary. Most empty-project snapshots were correctly marked
+`no_content_change`; lifecycle deferrals remained visible. Off-host backups
+then drained through the independent backup lane while project recovery health
+showed the unreported tail as unknown. By 17:05 UTC all 525 backups were
+confirmed with distinct, non-null repository IDs, none failed, and recovery
+health showed zero unknown snapshot or backup statuses. Due-to-confirmed-backup
+was p50 841 seconds, p95 1,987 seconds, p99 2,087 seconds, and max 2,113
+seconds. Cleanup is in progress. These empty projects test inventory coverage
+and queue behavior, not realistic upload bytes or the 30-day service
+objectives.
+
+During the backup queue, ten explicit stop/start plus exec smoke probes on an
+existing staging project all succeeded. Start p95 was 2.32 seconds and total
+probe p95 was 3.04 seconds. Host maintenance I/O pressure was 0%, the memory
+gate stayed clear, and available memory stayed around 11 GiB during sampled
+checkpoints. These are backend probes; the browser-observed terminal, Jupyter,
+file, and lifecycle health window remained unknown and still needs a sustained
+UI canary.
+
+Commit `cd627c72f1` fixes a due-time reset found while inspecting the live
+queue: a later edit must not move an already missed snapshot or backup due
+time forward. The owning bay now includes the current snapshot outcome and
+due timestamp in host inventory, and both lanes retain an unfulfilled earlier
+due time. A newer confirmed recovery point releases the old debt. Focused
+project-host tests passed 42/42, bay host-status tests passed 7/7, conat,
+server, and project-host package typechecks passed, and the full development
+build passed. The hub artifact
+`20260924T164303Z-cd627c72-20260924-recovery-due-preservation-cd627c72-dirty`
+was deployed as staging2 release `20260924164505-hub` and passed hub smoke.
+The matching project-host artifact
+`20260924T164743Z-cd627c72-20260924-recovery-due-preservation-cd627c72-dirty`
+was installed only on `staging2-agent-messaging-canary` and passed host smoke.
+The shared host remained pinned during its scale backup queue. A controlled
+live edit on the canary raced with an already completed backup, so it did not
+prove the missed-due-after-later-edit case; the focused regression test is the
+evidence for that exact condition. The disposable live canary project was
+deleted with the normal seven-day backup retention after the test.
+
+## 2026-09-24 queued-obligation accounting
+
+The 525-project queue exposed a denominator gap in the newly deployed 30-day
+objective counters: a due backup waiting behind other backups appeared as
+unknown in live recovery health, but was not included in the historical
+obligation denominator until the worker reported an attempt. Commit
+`714dbc8265` makes the host publish due snapshot and backup queue status before
+dispatch. Queue status creates a durable objective obligation and visible
+project debt without inflating attempted-maintenance or deferral metrics. A
+snapshot inventory result of `no_content_change` or
+`snapshot_interval_wait` cancels a provisional objective; a tombstone prevents
+a delayed queue report from recreating false debt. The Recovery view explains
+the queued state in plain language.
+
+Focused bay integration tests passed 8/8, host scheduler tests passed 43/43,
+frontend lint passed with zero errors or warnings, and the full development
+build passed. Immutable hub, project-host, and static artifacts were built and
+uploaded. The static artifact
+`20260924T173906Z-714dbc82-20260924-recovery-queue-714dbc8-dirty` was
+deployed as release `20260924174234-static` and passed smoke, including 3,410
+current and previous content-addressed assets. After the 525-project cleanup,
+the hub artifact
+`20260924T173633Z-714dbc82-20260924-recovery-queue-714dbc8-dirty` was
+deployed as release `20260924175120-hub`, passed migration and hub smoke, and
+reported healthy project recovery. The project-host artifact
+`20260924T173802Z-714dbc82-20260924-recovery-queue-714dbc8-dirty` was
+installed on `staging2-agent-messaging-canary` and `staging2-shared-1` in that
+order; both host smoke checks passed. The first canary smoke immediately after
+upgrade ran before the host was relisted and failed `host not found or not
+listed`; the retry after a fresh heartbeat passed. One short memory-gate
+warning immediately after the shared host restart cleared on the next health
+check; recovery health then showed zero unknown statuses and zero current
+memory gates.
+
+The 525-project deletion journal exactly matched the original ID manifest, and
+an audited bay query found zero remaining live scale projects. The temporary
+admin `max_projects` override was cleared and verified absent. One disposable
+canary had its backup purged at deletion; the other 524 used the normal
+seven-day backup retention.
+
+A second live canary created 12 disposable projects on the upgraded shared
+host. At 17:55 UTC, eight backup status rows read `deferred/queued` while four
+had already succeeded. The bay objective state had all 12 backup obligations
+with six confirmed successes by the next sample, plus 12 canceled provisional
+snapshot obligations after `no_content_change`; there were zero `queued`
+maintenance attempts. By 17:56 UTC, all 12 backup statuses read `succeeded`
+and all snapshot statuses read `skipped/no_content_change`. Their cleanup uses
+normal seven-day backup retention. All 12 delete operations succeeded; the
+delete journal matched the original ID list, and an audited bay query found
+zero remaining live canary projects. At 17:57:54 UTC, project recovery health
+was healthy with zero unknown statuses and zero current memory gates.
+
+This closes the observed **reported inventory queue** gap. A host that never
+reconciles, including one blocked before listing by a memory safety gate, can
+still be absent from the historical denominator. Unknown/stale host and
+project health remains a separate stop signal. A durable coverage audit over
+the full 30-day window is required before objective percentages can be
+qualified as complete.
