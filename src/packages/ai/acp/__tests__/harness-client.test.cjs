@@ -345,7 +345,7 @@ test("subscription status accepts only an explicit Claude account identity", () 
     assert.equal(isClaudeSubscriptionStatus(status), false);
 });
 
-test("subscription policy disables native tools and refuses unknown or API billing", async (t) => {
+test("subscription policy exposes only mediated project tools and refuses unknown or API billing", async (t) => {
   for (const [flag, permitted] of [
     ["--subscription-status", true],
     ["--api-key-status", false],

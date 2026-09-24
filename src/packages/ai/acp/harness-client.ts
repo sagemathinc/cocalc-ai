@@ -415,7 +415,17 @@ export class AcpHarnessClient {
           this.sessionPolicy === "claude-subscription-controller"
             ? "/workspace"
             : this.binding.profile.cwd,
-        mcpServers: [],
+        mcpServers:
+          this.sessionPolicy === "claude-subscription-controller"
+            ? [
+                {
+                  name: "cocalc_project",
+                  command: "/opt/cocalc/bin/node",
+                  args: ["/run/cocalc/agent-tools/bridge.cjs"],
+                  env: [],
+                },
+              ]
+            : [],
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? { _meta: claudeSubscriptionSessionMeta() }
           : {}),

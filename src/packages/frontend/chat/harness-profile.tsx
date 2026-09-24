@@ -30,7 +30,7 @@ export function claudeCredentialTrustWarning(
   mode: "project-secret" | "account-api-key" | "account-subscription",
 ): string {
   if (mode === "account-subscription")
-    return "Experimental Claude Pro/Max: sign-in is account-owned and runs in a separate controller without project files or secrets. Tool access to project code is not yet enabled. Do not treat this as a verified isolation boundary until security qualification is complete.";
+    return "Experimental Claude Pro/Max: sign-in is account-owned and runs in a separate controller. Project commands run through a private tool bridge, not inside the controller. Credential isolation and subscription billing still require live qualification; use only with trusted project code.";
   return mode === "account-api-key"
     ? "Full-project-trust preview: CoCalc does not expose the account-stored key value to project code for reading or copying. However, project code can use the key through Claude's active relay and incur Anthropic charges. Use only with trusted collaborators and code."
     : "Full-project-trust preview: the project secret can be read, copied, or used by project collaborators and code Claude runs. Anthropic bills the key owner. Use only with trusted collaborators and code.";
@@ -261,20 +261,22 @@ function ClaudeCredentialControl({
               </Button>
             </Space>
           )}
-          <Button
-            onClick={async () => {
-              try {
-                await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
-                  { project_id: projectId, id: login.id },
-                );
-                setLogin(undefined);
-              } catch (err) {
-                setError(`${err}`);
-              }
-            }}
-          >
-            Cancel sign-in
-          </Button>
+          {login.state === "pending" && (
+            <Button
+              onClick={async () => {
+                try {
+                  await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
+                    { project_id: projectId, id: login.id },
+                  );
+                  setLogin(undefined);
+                } catch (err) {
+                  setError(`${err}`);
+                }
+              }}
+            >
+              Cancel sign-in
+            </Button>
+          )}
         </Space>
       )}
       {login?.state === "completed" && (

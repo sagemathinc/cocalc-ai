@@ -29,6 +29,12 @@ import {
   claudeSubscriptionBundlePaths,
   restoreClaudeSubscriptionHome,
 } from "./claude-subscription-home";
+import {
+  CLAUDE_PROJECT_TOOL_MOUNT,
+  createClaudeProjectToolBridge,
+  type ClaudeProjectToolBridge,
+} from "./claude-project-tool-bridge";
+import { ensureProjectContainerRunning } from "../codex/codex-project";
 
 const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
@@ -41,6 +47,7 @@ export function claudeSubscriptionContainerArgs(options: {
   home: string;
   managedHarnesses: string;
   nodeMounts: Record<string, string>;
+  toolBridgeDirectory?: string;
   uid: number;
   gid: number;
   runtimeArgs?: string[];
@@ -51,6 +58,7 @@ export function claudeSubscriptionContainerArgs(options: {
     home,
     managedHarnesses,
     nodeMounts,
+    toolBridgeDirectory,
     uid,
     gid,
     runtimeArgs = [],
@@ -82,6 +90,15 @@ export function claudeSubscriptionContainerArgs(options: {
       target: MANAGED_HARNESSES,
       readOnly: true,
     }),
+    ...(toolBridgeDirectory
+      ? [
+          mountArg({
+            source: toolBridgeDirectory,
+            target: CLAUDE_PROJECT_TOOL_MOUNT,
+            readOnly: true,
+          }),
+        ]
+      : []),
     ...Object.entries(nodeMounts).map(([source, target]) =>
       mountArg({ source, target, readOnly: true }),
     ),
@@ -126,6 +143,7 @@ export async function launchClaudeSubscriptionController(
   const launcher = projectPoolPodmanLauncher(projectId);
   const name = `claude-controller-${projectId}-${randomUUID()}`;
   let created = false;
+  let toolBridge: ClaudeProjectToolBridge | undefined;
   let stopped: Promise<void> | undefined;
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
@@ -143,6 +161,7 @@ export async function launchClaudeSubscriptionController(
     (stopped ??= (async () => {
       if (created)
         await command(["rm", "--ignore", "--force", "--time", "0", name]);
+      await toolBridge?.close();
       await publishClaudeSubscriptionCredential({
         projectId,
         accountId,
@@ -160,6 +179,18 @@ export async function launchClaudeSubscriptionController(
     }));
   try {
     await restoreClaudeSubscriptionHome(home, registered.payload);
+    await ensureProjectContainerRunning({ projectId, accountId });
+    toolBridge = await createClaudeProjectToolBridge(
+      projectId,
+      undefined,
+      async () => {
+        await getClaudeSubscriptionCredential({
+          projectId,
+          accountId,
+          credentialId,
+        });
+      },
+    );
     const rootfs = await extractBaseImage(DEFAULT_PROJECT_IMAGE);
     const managedHarnesses =
       process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
@@ -171,6 +202,7 @@ export async function launchClaudeSubscriptionController(
         home,
         managedHarnesses,
         nodeMounts: getNodeRuntimeMounts(),
+        toolBridgeDirectory: toolBridge.directory,
         uid: process.getuid!(),
         gid: process.getgid!(),
         runtimeArgs: await podmanRuntimeArgs(),

@@ -2,9 +2,9 @@
 
 Date: 2026-09-23
 
-Status: experimental login and tool-free controller canary implemented on the
-unreleased feature branch; Pro/Max billing and a useful coding-agent tool plane
-are not verified. See
+Status: experimental login and isolated controller with a mediated project
+shell tool are implemented on the unreleased feature branch; Pro/Max billing,
+runtime behavior, and credential isolation are not verified. See
 `src/.agents/claude-subscription-offline-qualification-2026-09-23.md`.
 
 ## Implementation Note (2026-09-23)
@@ -31,17 +31,24 @@ The feature branch now has a first-party Claude CLI sign-in action, account-home
 credential storage, account-local credential selection, exact-ID admission, and
 an isolated controller launch path. The controller uses a trusted base image,
 not the project rootfs, with a separate network and no project/secret mount.
-The ACP client sends an empty tool catalog and refuses a prompt without an
-explicit Pro/Max status report. Fake CLI, bundle, controller-argument, and UI
-selection tests pass. This is an **experimental text-only canary**, not coding
-agent subscription support or proof of credential isolation. The adapter status
-is not billing proof and model-controlled tool access has not been qualified.
+The ACP client disables built-in tools and exposes one CoCalc project-shell MCP
+tool over a private socket. The project host executes commands in the regular
+project container, not the credential-bearing controller. The client refuses a
+prompt without an explicit Pro/Max status report. Fake CLI, bundle, MCP bridge,
+controller-argument, and UI selection tests pass. This is an **experimental
+coding canary**, not proof of credential isolation. The adapter status is not
+billing proof and model-controlled tool access has not been live-qualified.
 
 This development host has neither the pinned 0.81.1 managed harness package nor
 a local Podman image. A live Pro/Max account is also not available to this run.
-Consequently sign-in, container launch, session creation, refresh, billing, and
-adversarial prompts remain untested. Do not release or claim end-to-end support
-until the provider and security exit gates below pass.
+An isolated no-account probe of the real 0.81.1 adapter completed ACP
+`session/new` with the mediated MCP server configured. The real Claude CLI also
+produced an authorization URL through the sign-in service, then canceled
+without publishing a credential. These probes used no model inference.
+Credential publication with a real account, container launch, a project-tool
+turn, refresh, billing, and adversarial prompts remain untested. Do not release
+or claim end-to-end support until the provider and security exit gates below
+pass.
 
 ## Goal
 

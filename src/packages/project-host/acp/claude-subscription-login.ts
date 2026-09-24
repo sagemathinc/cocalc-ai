@@ -13,6 +13,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
+const TERMINAL_STATUS_RETENTION_MS = 15 * 60_000;
 const MAX_OUTPUT_BYTES = 16 * 1024;
 const MAX_STATUS_BYTES = 16 * 1024;
 
@@ -206,9 +207,14 @@ export class ClaudeSubscriptionLoginService {
 
   cancel(id: string, projectId: string, accountId: string): void {
     const session = this.required(id, projectId, accountId);
-    if (session.state !== "pending" && session.state !== "verifying") return;
+    if (session.state === "verifying")
+      throw Error("Claude sign-in verification is already in progress");
+    if (session.state === "completed")
+      throw Error("Claude sign-in has already completed");
+    if (session.state !== "pending") return;
     session.state = "canceled";
     clearTimeout(session.timer);
+    this.retire(session);
     this.removeHomeAfterExit(session);
     this.kill(session);
   }
@@ -244,6 +250,7 @@ export class ClaudeSubscriptionLoginService {
         throw Error("Published Claude credential ID is invalid");
       session.credentialId = credentialId;
       session.state = "completed";
+      this.retire(session);
     } catch {
       this.fail(session, "Claude subscription verification failed");
     } finally {
@@ -256,6 +263,7 @@ export class ClaudeSubscriptionLoginService {
     clearTimeout(session.timer);
     session.state = "failed";
     session.error = error;
+    this.retire(session);
     this.removeHomeAfterExit(session);
     this.kill(session);
   }
@@ -277,6 +285,14 @@ export class ClaudeSubscriptionLoginService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
+  }
+
+  private retire(session: LoginSession): void {
+    const timer = setTimeout(
+      () => this.sessions.delete(session.id),
+      TERMINAL_STATUS_RETENTION_MS,
+    );
+    timer.unref();
   }
 
   private required(

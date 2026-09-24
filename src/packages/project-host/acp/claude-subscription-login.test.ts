@@ -75,6 +75,9 @@ test("login stages outside projects, accepts one code, verifies and cleans up", 
     ).toThrow();
     const completed = await waitFor(service, started.id, "completed");
     expect(completed.credentialId).toBe(credentialId);
+    expect(() => service.cancel(started.id, projectId, accountId)).toThrow(
+      "already completed",
+    );
     for (let attempt = 0; attempt < 100; attempt++) {
       if (
         await stat(publishedHome!).then(
@@ -116,4 +119,39 @@ test("status rejects API billing, no plan, and absent identity", () => {
         JSON.stringify({ ...valid, ...override }),
       ),
     ).toThrow();
+});
+
+test("verification cannot report cancellation after publication starts", async () => {
+  let releasePublish!: () => void;
+  let enteredPublish!: () => void;
+  const entered = new Promise<void>((resolve) => (enteredPublish = resolve));
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish: async () => {
+      enteredPublish();
+      await new Promise<void>((resolve) => (releasePublish = resolve));
+      return credentialId;
+    },
+  });
+  const started = await service.start(projectId, accountId);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (service.status(started.id, projectId, accountId).verificationUrl) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  service.submitCode(started.id, projectId, accountId, "fixture-code");
+  try {
+    await entered;
+    expect(service.status(started.id, projectId, accountId).state).toBe(
+      "verifying",
+    );
+    expect(() => service.cancel(started.id, projectId, accountId)).toThrow(
+      "verification is already in progress",
+    );
+  } finally {
+    releasePublish?.();
+  }
+  expect((await waitFor(service, started.id, "completed")).credentialId).toBe(
+    credentialId,
+  );
 });

@@ -108,7 +108,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           options.tools.length ||
           !Array.isArray(options.settingSources) ||
           options.settingSources.length ||
-          message.params.mcpServers.length
+          message.params.mcpServers.length !== 1 ||
+          message.params.mcpServers[0]?.name !== "cocalc_project" ||
+          message.params.mcpServers[0]?.command !== "/opt/cocalc/bin/node" ||
+          message.params.mcpServers[0]?.args?.[0] !==
+            "/run/cocalc/agent-tools/bridge.cjs"
         )
           return send({
             id: message.id,
