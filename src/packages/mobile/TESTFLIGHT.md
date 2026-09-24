@@ -41,11 +41,14 @@ not the TestFlight candidate.
   management was disabled, so the uploaded build remains `0.1.0 (1)`.
   App Store Connect finished processing it and reports **Ready to Test**.
 - The **CoCalc Mobile Internal Beta** group contains this build and one
-  internal tester, `wstein@gmail.com`, whose status is **Invited**. Automatic
-  distribution of future Xcode builds is disabled. The build's **What to Test**
+  internal tester, `wstein@gmail.com`. Automatic distribution of future Xcode
+  builds is disabled. The build's **What to Test**
   text covers sign-in, agents, attachments, live voice, dictation, app resume,
-  and reporting regressions. The TestFlight install and device smoke test are
-  still pending.
+  and reporting regressions. The tester accepted the invitation, and the
+  TestFlight app installed and opened on an iPhone. TestFlight initially showed
+  a prolonged download spinner, but after reopening it reported the app was
+  installed. The maintainer reports that the app works; the full feature smoke
+  test of this exact TestFlight build is still pending.
 - The upload completed with a warning: the archive lacks a dSYM for
   `hermesvm.framework` UUID `5A86B6FB-CE4E-331E-96E2-CA2281AD05ED`.
   The build upload succeeded, but Hermes crash frames may not be symbolicated.
@@ -143,10 +146,10 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
      -allowProvisioningUpdates
    ```
 
-4. The IPA's bundle ID, version, signing, and embedded bundle were inspected.
-   Accept the TestFlight invitation, install that exact build on an iPhone,
-   and repeat the sign-in, chat, attachment, live voice, and dictation smoke
-   tests. Add further internal testers to the group only by explicit choice.
+4. The IPA's bundle ID, version, signing, and embedded bundle were inspected,
+   and the exact TestFlight build is installed on an iPhone. Repeat the sign-in,
+   chat, attachment, live voice, and dictation smoke tests on that installation.
+   Add further internal testers to the group only by explicit choice.
    This internal-only build must not be added to external testing.
 
 Suggested **What to Test** text:
