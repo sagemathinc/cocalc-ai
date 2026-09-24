@@ -99,6 +99,45 @@ Production was not changed.
   and smoke on both hosts. The owning bay now retains bounded attempt history
   and exposes 24-hour outcome counts, per-stage p95/p99 timing, and
   due-to-success percentiles in operator health.
+- One-project operator diagnostic: `cf4480d672b9`. Focused CLI tests (58)
+  and server/conat typechecks passed. The staging hub artifact
+  `20260923T235617Z-20260923T235452Z-cf4480d6-20260923T2357Z-cf4480d6-recovery-diagnostic-dirty`
+  passed smoke. The installed project CLI is older than this source command,
+  so its live invocation still needs an installed CLI update; audited raw SQL
+  remains pending fresh operator authorization.
+- Critical health classification: `aad8e5c00bb3`. Staging hub artifact
+  `20260924T0005Z-aad8e5c0-recovery-health` passed smoke. Overdue projects
+  without a confirmed funding class and paying projects with at least three
+  consecutive failures now trigger critical health instead of appearing
+  healthy.
+- Bounded deferral-reason health summary: `5f7f16af27a8`. Staging hub
+  artifact `20260924T0013Z-5f7f16af-recovery-reasons` passed smoke. The
+  24-hour operator view groups host, class, operation, outcome, and fixed
+  reason code without project IDs in metric labels.
+- Exact snapshot due boundary: `95c1631292`. Project-host artifact
+  `20260924T001337Z-95c16312-20260924T0022Z-95c16312-snapshot-due-boundary-dirty`
+  completed canary-first rollout `d9dddb37-f6da-4bd3-80c7-0648cd031c21`
+  on both online hosts; both host smoke checks passed. The rolling creator
+  treats equality with the configured interval as due. A focused regression
+  test covers the 15-minute boundary.
+- Pressure deferral accounting: `b0df490b60b1`. The staging hub artifact
+  `20260924T002130Z-b0df490b-20260924T0025Z-b0df490b-pressure-deferrals-dirty`
+  passed hub smoke. Project-host artifact
+  `20260924T002350Z-b0df490b-20260924T0026Z-b0df490b-pressure-deferrals-dirty`
+  completed canary-first rollout `2a0822a8-a035-4327-9096-bc9a56e2c8d0`
+  on both online hosts; both host smoke checks passed. Due work now reaches
+  operation-level admission and records its deferral reason and retry instead
+  of disappearing behind a sweep-wide pressure check. The operator summary
+  groups `io_pressure_*` reasons under a bounded code.
+- Local snapshot reconciliation after deferral: `624642abdd11`. Hub artifact
+  `20260924T002952Z-624642ab-20260924T0032Z-624642ab-snapshot-reconcile-dirty`
+  passed smoke. Project-host artifact
+  `20260924T003210Z-624642ab-20260924T0033Z-624642ab-snapshot-reconcile-dirty`
+  completed canary-first rollout `e6808764-3150-42b1-b808-1ffdd4cca0d5`
+  on both online hosts, and both host smoke checks passed. When the host
+  verifies a recent local snapshot but a newer edit must wait for the
+  interval, its deferred report now updates the bay's latest local snapshot
+  time. A focused worker test checks the resulting next due time.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -150,6 +189,35 @@ The automated pagination test walks 1,003 projects across five pages. Live
 staging2 validation used its existing small host inventory plus the disposable
 projects; it did not create hundreds of live projects.
 
+At 00:14 UTC on September 24, staging2 operator health showed 35 successful,
+37 deferred, and 0 failed project-maintenance attempts in the previous 24
+hours. Of the deferrals, 33 were `snapshot_not_created`. The measured snapshot
+stage p95 values were about 5.8 seconds for inventory, 6.7 seconds for prune,
+and 0.14 seconds for create, which confirms that discovery and retention work
+dominate local snapshot time on these hosts. The strict interval comparison
+was one plausible cause of the boundary deferrals; the 24-hour cumulative
+counter alone cannot prove their root cause.
+
+After the exact-boundary rollout, I wrote a new marker in canary project
+`b528cb8d-797c-464c-8f60-1508789595c2` at 00:17:37 UTC. Its last prior
+snapshot was at 00:02:49.859 UTC. The scheduled worker created snapshot
+`2026-09-24T00:17:50.827Z`, and reading the marker through that snapshot
+returned `2026-09-24T00:17:37Z`. At 00:18:25 UTC, health showed 37 successes,
+38 deferrals, and 0 failures; the canary host's `snapshot_not_created` count
+remained at 13. The shared host's count rose from 20 to 21 during its rollout
+window. A longer post-rollout observation is still needed to establish the
+deferral rate.
+
+The same canary received another edit at 00:30:28 UTC. Scheduled snapshot
+`2026-09-24T00:32:52.151Z` includes that marker and readback returned the
+original timestamp. An explicit CLI snapshot made during this check was named
+`manual-2026-09-24T00:30:16.230Z` by the server; manual snapshots are
+intentionally excluded from rolling interval calculations, so it did not
+exercise the new bay reconciliation branch. That branch has focused worker
+coverage, but its exact stale-bay scenario remains unverified live. At
+00:36 UTC, operator project recovery health was healthy: 54 successful, 39
+deferred, and 0 failed attempts in 24 hours, with zero unknown statuses.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending the staging2 CLI fresh-auth approval. Frontend
@@ -160,7 +228,7 @@ projects; it did not create hundreds of live projects.
    any release criterion requiring a bay file index for each backup remains
    open until its indexing policy and writer are confirmed and tested.
 3. The plan's full observability and scheduler contract remains broader than
-   the current code: pressure debt and capacity reports, operator drill
+   the current code: pressure-time and capacity reports, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
    schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
@@ -188,6 +256,12 @@ projects; it did not create hundreds of live projects.
    released a slot; starting and testing the new project then succeeded. This
    is a staging test-capacity constraint and a CLI status issue, not evidence
    that the snapshot/backup worker failed.
+8. The 24-hour deferral counter is cumulative, so the two fixes for
+   `snapshot_not_created` need a longer post-rollout observation. The exact
+   stale-bay/local-snapshot case has an automated test but could not be
+   reproduced through the public snapshot CLI because it labels explicit
+   snapshots as manual. Live normal scheduled snapshots and marker readback
+   succeeded on the new host artifact.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
