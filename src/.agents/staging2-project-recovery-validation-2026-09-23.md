@@ -1724,3 +1724,13 @@ did confirm receipt of the separate operator daily recovery-debt email; the
 critical incident drill email remains unconfirmed. The seven-day canary,
 fully qualified 30-day objective window, browser latency under sustained
 load, and production review gates remain open. Production is unchanged.
+
+The follow-up commit `0c3b13a864` changed the warning destination from a
+relative project route to an absolute site URL. The notification email
+renderer discards a Markdown link's destination from plaintext; keeping the
+absolute URL visibly in the body preserves it in both HTML and plaintext.
+The focused PGlite suite again passed 37/37, including a rendered plaintext
+assertion, and the server package typecheck passed. Hub artifact
+`20260924T212936Z-0c3b13a8-recovery-customer-links-0c3b13a-dirty` was
+deployed as staging2 release `20260924213119-hub`; worker health and all
+seven hub smoke checks passed. The customer warning switch remained false.
