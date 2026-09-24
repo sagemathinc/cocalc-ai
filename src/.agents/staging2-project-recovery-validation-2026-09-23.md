@@ -911,6 +911,29 @@ new samples are collected; historical blocked time before this release is
 not reconstructed. Browser-observed UX latency still had no qualifying
 samples, so this check does not establish the canary latency gate.
 
+## September 24 follow-up: browser latency traces on the canary
+
+The signed-in staging2 Chromium session recorded 11 real project starts on
+the disposable canary, stopping it between starts. At 11:51 UTC, the
+60-minute browser lifecycle p95 was 2.7 seconds across 11 samples versus
+the configured 10-second warm-start threshold. Admission p95 was 318 ms,
+backend p95 2.1 seconds, and frontend convergence p95 91 ms. The same
+session opened the changed marker through the file editor and created a
+terminal. Terminal-ready p95 was 351 ms, project-exec readiness 2 ms,
+file-content paint p95 527 ms from two opens, and file sync readiness p95
+704 ms from two opens. The browser showed the changed marker and a live
+shell prompt. Project-recovery health stayed healthy with zero unknown,
+overdue, or paying incident-threshold statuses. The canary was stopped
+afterward.
+
+A new notebook opened in the same browser, but the disposable project's
+base image has no Jupyter kernel, pip, or ensurepip. No cell ran, so there
+is no `project_jupyter_ready` sample and operator UX-latency health
+remains `unknown`. These low-load, single-project traces establish
+telemetry and basic interactive behavior. They do not compare against a
+production baseline, exercise sustained maintenance contention, or satisfy
+the seven-day canary gate.
+
 ## Open findings and release gates
 
 1. Recovery Settings, project files, and the backup catalog load in the
@@ -925,8 +948,8 @@ samples, so this check does not establish the canary latency gate.
 2. The plan's safe-capacity threshold is still uncalibrated. Durable
    operator-supplied hash attestations and the remote-only restore view are
    deployed on staging2, with four passing shard drills. Automatic fleet
-   recovery stop gates run there, but browser latency samples are required
-   for promotion. The versioned schedule cache, ownership lease, event
+   recovery stop gates run there, but a representative, complete set of browser latency samples is
+   required for promotion. The versioned schedule cache, ownership lease, event
    dispatch, assignment checks, host/bay attempt history, and 24-hour
    timing/byte metrics are deployed. Full inventory still reconciles on a
    15-minute timer; observed load cannot establish the 70% safe budget
