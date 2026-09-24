@@ -838,6 +838,48 @@ project-recovery health was healthy with zero unknown statuses and zero paying
 incident-threshold breaches. Pressure and safe-maintenance capacity still need
 calibration using a longer representative canary and production baseline.
 
+## September 24 follow-up: host memory gate visibility
+
+The second load batch exposed a visibility gap: the scheduler skipped all
+maintenance when global memory PSI exceeded its guard, before any project
+received a deferred attempt. Commit `67c2409d46` publishes the latest
+host-wide memory gate decision in the host heartbeat, attaches a fresh blocked
+reason to owning-bay recovery status, and shows that reason in overdue and
+unknown Recovery alerts. Operator project-recovery health now lists blocked
+hosts. It also fails closed with `memory_measurement_unavailable` when
+meminfo or enabled PSI telemetry cannot be read. Commit `01e334c666`
+preserves this gate in the normalized `host metrics` view. The gate is
+reported once per host check, avoiding per-project writes during pressure.
+
+Focused tests passed: 36 snapshot/backup scheduler tests, 17 owning-bay
+status tests, 8 Recovery UI tests, and 26 host-metrics normalization tests.
+Conat, project-host, server, and frontend package typechecks and frontend lint
+passed. The staging2 hub releases `20260924105839-hub` and
+`20260924110837-hub`, static release `20260924110258-static`, and
+project-host artifact
+`20260924T105933Z-67c2409d-20260924-memory-gate-67c2409-dirty`
+were deployed. Both project hosts were upgraded explicitly, canary first.
+Hub, static, and project-host smoke checks passed. An audited read-only bay
+query (audit `a9a9f4da-fe46-4b67-bd33-cb83b3f995c8`) confirmed a fresh
+canary heartbeat gate with memory PSI 0; `host metrics` now shows that gate.
+At 11:10 UTC, staging2 project-recovery health was healthy: zero unknown
+statuses, zero paying incident-threshold breaches, zero hosts at the memory
+safety gate, and zero hosts missing recent storage pressure telemetry.
+
+At 11:11 UTC, the upgraded shared host reported a live `memory_pressure`
+gate with memory PSI full avg10 at 31.45%. Project-recovery health changed to
+warning and named that host, the block reason, and the measurement. At 11:12,
+the next gate check reported PSI 0 and cleared the block. One disposable project
+was created to check the user view, but pressure had already cleared before it
+could qualify a blocked alert; its delete operation completed with backups
+purged. No pressure injection was used.
+
+A live pressure-blocked Recovery alert has not yet been captured after this
+rollout. The browser text and bay freshness rules are covered by focused tests;
+a live blocked-state capture remains an open UI qualification. The previous
+80-project pressure event and this shared-host block verify the scheduler guard
+and operator warning.
+
 ## Open findings and release gates
 
 1. Recovery Settings, project files, and the backup catalog load in the
