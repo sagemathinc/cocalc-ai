@@ -5,7 +5,27 @@ The first iOS beta is for internal testers only. Use the production variant,
 does not depend on Metro. The development app has a separate bundle ID and is
 not the TestFlight candidate.
 
-## Funded live voice candidate built on 2026-09-24
+## Current candidate built on 2026-09-24
+
+- Source: `feature/cocalc-mobile` at
+  `58cce520b4fc0a11e01f2cff4122bffc8f194e48`, including the browser and
+  iPhone dictation fixes. The maintainer confirmed live voice and dictation
+  work in both clients before this archive was made.
+- Production iOS archive:
+  `/tmp/CoCalc-voice-20260924-dictation.xcarchive`.
+- Bundle ID: `com.sagemath.cocalc.mobile`; version/build: `0.1.0 (1)`.
+- Embedded `main.jsbundle` SHA-256:
+  `837c00ac857debd93bb10799e88ce34a40b6be04618b419485b90507823ac19d`.
+- `xcodebuild archive` and `codesign --verify --deep --strict` passed. The
+  native bundle and embedded Expo configuration both identify the production
+  app. This exact archive has not yet been installed or tested on an iPhone.
+- Internal TestFlight export was attempted with the checked-in options and
+  `-allowProvisioningUpdates`. It failed with `No Accounts`, no
+  `iOS Distribution` certificate, and no provisioning profile for this bundle
+  ID. No IPA was produced or uploaded. Sign in to the Apple Developer team in
+  Xcode before retrying export.
+
+## Earlier funded live voice candidate
 
 - Source: `feature/cocalc-mobile` at
   `c6d9c9a70a66be6241d56b7b2384311604991a20`, with site-funded voice and
@@ -81,7 +101,7 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
    ```bash
    xcodebuild -exportArchive \
-     -archivePath /tmp/CoCalc-voice-20260924-production.xcarchive \
+     -archivePath /tmp/CoCalc-voice-20260924-dictation.xcarchive \
      -exportOptionsPlist testflight-internal-export-options.plist \
      -exportPath /tmp/CoCalc-TestFlight-internal \
      -allowProvisioningUpdates
