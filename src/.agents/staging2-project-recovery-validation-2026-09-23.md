@@ -481,6 +481,32 @@ loading. The same file-listing failure occurred on the shared-host testing
 project. Thus the recovery summary has a partial live UI check, while file and
 backup browsing remain blocked on the testing account and require follow-up.
 
+## September 24 follow-up: recovery status in Settings
+
+Commit `81f7b3f18b` places the shared hub-reported snapshot and off-host
+backup protection status in Project Settings -> Recovery. The prior Settings
+view displayed only the last backup age; the file-browser status remains
+available there as before. This lets a user see confirmed points, overdue
+obligations, and unknown reporting in a hub-backed view when the project-host
+file view is unavailable. The Settings flyout and status tests passed 11/11;
+frontend lint and the frontend package typecheck passed.
+
+Staging2 static artifact
+`20260924T040232Z-81f7b3f1-recovery-settings-81f7b3f-20260924-dirty`
+deployed successfully and passed static smoke checks. A non-admin testing
+browser (`HD9UEU7M6B`) opened the canary project. Its browser logs continued
+to show repeated `missing project-host bearer token` responses from the
+project-host connection, despite an existing project-host session cookie. The
+typed browser screenshot timed out and the QuickJS screenshot path returned a
+syntax error, so this run did not produce a visual confirmation of the new
+Settings status. The browser issue is a UI qualification blocker, separate
+from the backup-worker and restore-drill results above.
+
+An audited staging2 funding check found no active paid subscription or
+purchase/site/team-license-backed membership grant. Staging2 therefore has
+no genuine paying-funded project sample for a live priority check. Do not
+substitute an admin-assigned membership for a paid funding contract.
+
 ## Open findings and release gates
 
 1. Browser UI qualification is partial. The testing account reached Project
