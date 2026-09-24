@@ -1048,8 +1048,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       backupLaneRunning = false;
     }
   };
+  const overlappingLane = snapshotLaneRunning || backupLaneRunning;
   await Promise.all([snapshotLane(), backupLane()]);
-  return true;
+  // One lane may have been occupied by an event-triggered batch. A full
+  // reconciliation is incomplete until both lanes have seen its inventory.
+  return !overlappingLane;
 }
 
 export async function runProjectSnapshotBackupMaintenanceSweepOnce({

@@ -1048,7 +1048,9 @@ describe("snapshot-backup-maintenance", () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
     expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
-    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" }),
+    ).toBe(false);
     expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({ project_id: "snapshot-project" }),
     );
