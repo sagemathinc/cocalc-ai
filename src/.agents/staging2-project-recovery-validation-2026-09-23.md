@@ -1685,3 +1685,42 @@ errors or warnings across 3,696 frontend files. The available Chromium
 debugging port was closed, and the previously known staging browser session
 IDs timed out through the typed browser API, so this run did not add
 browser-observed latency samples.
+
+## 2026-09-24 paid customer recovery warning rollout
+
+Commit `0d61977fe1` adds a distinct, default-off customer notice path for
+paying-funded projects. The owning bay scans current schedules and confirmed
+snapshot/backup timestamps, including projects for which no host attempt
+report has arrived. It compares live debt against the paid objectives of 30
+minutes after snapshot due time and 6 hours after off-host backup due time.
+Before delivery, it rechecks bay ownership, current collaborators, current
+funding, and current recovery status. It sends owners and collaborators a
+durable account notice with a direct Recovery-settings link. Message subject
+and recipient deduplication suppress repeats for the same due event for 30
+days; the customer switch is independent of operator incident and daily debt
+mail.
+
+Focused PGlite tests passed 37/37, including the paid objective boundaries,
+recipient selection, funding downgrade, recovery completion, and ownership
+change. The full `pnpm -C src tsc` build and frontend lint passed. The hub
+artifact
+`20260924T212053Z-0d61977f-recovery-customer-warnings-0d61977-dirty`
+was deployed as staging2 release `20260924212236-hub`; migration, worker
+health, host routing, and all seven hub smoke checks passed. The static
+artifact
+`20260924T212317Z-0d61977f-recovery-customer-warnings-0d61977-dirty`
+was deployed as release `20260924212419-static`; all seven static smoke checks
+passed, including 3,451 current and previous content-addressed assets. The
+new site setting was read back from the live hub as
+`project_recovery_customer_warnings_enabled=false`, its default. Operator
+notifications also remained disabled.
+
+This establishes code, build, deployment, and disabled-state staging gates.
+The earlier audited inventory found no genuinely paid staging membership, so
+the enabled customer notice and email path have not yet been exercised live.
+Do not claim paid notice delivery until a controlled paid-funded staging
+project crosses an objective and the recipient confirms the notice. The user
+did confirm receipt of the separate operator daily recovery-debt email; the
+critical incident drill email remains unconfirmed. The seven-day canary,
+fully qualified 30-day objective window, browser latency under sustained
+load, and production review gates remain open. Production is unchanged.
