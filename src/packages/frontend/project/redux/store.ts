@@ -15,11 +15,7 @@ import {
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import { remove } from "@cocalc/frontend/project-file";
 import { ProjectLogMap } from "@cocalc/frontend/project/history/types";
-import {
-  FILE_ACTIONS,
-  ProjectActions,
-  type FileAction,
-} from "./actions";
+import { FILE_ACTIONS, ProjectActions, type FileAction } from "./actions";
 import {
   Available as AvailableFeatures,
   isMainConfiguration,
@@ -456,6 +452,10 @@ export function init(
     const store: ProjectStore | undefined = redux.getProjectStore(name);
     // this makes TS happy. we already check that it exists due to "hasStore()"
     if (store != null) return store;
+  }
+
+  if (typeof projectActions.ProjectActions !== "function") {
+    throw Error("project actions class is not ready");
   }
 
   // Initialize everything
