@@ -86,19 +86,23 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 1. Open the current archive in Xcode with
    `/usr/bin/open -a Xcode /tmp/CoCalc-voice-20260924-dictation.xcarchive`. In
    **Window → Organizer → Archives**, select the CoCalc archive and click
-   **Distribute App**. Choose **App Store Connect**, then **Export**, enable
-   **TestFlight internal testing only**, and choose **Automatically manage
-   signing** for team `BVF94G2MB4`. Follow any Xcode account prompts. If Xcode
-   cannot create distribution signing, use **Xcode → Settings → Apple Accounts
-   → Manage Certificates… → + → Apple Distribution** for that team, then retry
-   the GUI export. Keep credentials in Xcode; do not add them to this repository.
+   **Distribute App**. In Xcode 26.6, choose **Custom → Distribute**, then
+   **App Store Connect → Export**. The top-level **TestFlight Internal Only**
+   shortcut uploads directly, so do not choose it for a local IPA review.
+   Enable **TestFlight internal testing only** in the custom options and choose
+   **Automatically manage signing** for team `BVF94G2MB4`. Follow any Xcode
+   account prompts. If Xcode cannot create distribution signing, use **Xcode →
+   Settings → Apple Accounts → Manage Certificates… → + → Apple Distribution**
+   for that team, then retry the GUI export. Keep credentials in Xcode; do not
+   add them to this repository.
 2. Check App Store Connect for an existing iOS app record with that bundle ID.
    If none exists, create one before uploading. Suggested initial metadata for
    review: name **CoCalc**, primary language **English**, SKU
    `cocalc-mobile-ios`. Check that version/build `0.1.0 (1)` is unused; if it
    is already present, increment `ios.buildNumber` in `app.config.ts` and
    rebuild the archive.
-3. Export the archive locally with method `app-store-connect`, destination
+3. If the GUI did not export an IPA, retry command-line export once Xcode has
+   created the signing assets. Use method `app-store-connect`, destination
    `export`, team `BVF94G2MB4`, and
    `testFlightInternalTestingOnly=true`. Xcode's CLI documents these keys in
    `xcodebuild -help`. The checked-in options are in
