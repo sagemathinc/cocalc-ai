@@ -452,6 +452,8 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(health.paying_snapshot_overdue).toBe(1);
     expect(health.oldest_snapshot_delay_seconds).toBeGreaterThan(2 * 3600);
     expect(health.unknown_snapshot_status).toBe(0);
+    expect(health.eligible_snapshot_projects).toBe(1);
+    expect(health.unaccounted_snapshot_due).toBe(1);
     expect(health.by_host_class).toEqual([
       expect.objectContaining({
         host_id: "host-1",

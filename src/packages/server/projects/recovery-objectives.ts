@@ -5,6 +5,7 @@
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
+import type { ProjectRecoveryHealth } from "./maintenance-status";
 
 type Kind = "snapshot" | "backup";
 type ServiceClass = ProjectRecoveryStatus["storage_service_class"];
@@ -14,6 +15,8 @@ const TARGET_MS: Record<"paying" | "free", Record<Kind, number>> = {
   paying: { snapshot: 30 * 60_000, backup: 6 * 60 * 60_000 },
   free: { snapshot: 4 * 60 * 60_000, backup: 24 * 60 * 60_000 },
 };
+const COVERAGE_SLOT_MS = 15 * 60_000;
+const EXPECTED_COVERAGE_SLOTS = 30 * 24 * 4;
 
 function withinTarget({
   serviceClass,
@@ -65,11 +68,69 @@ export async function ensureProjectRecoveryObjectiveTables(): Promise<void> {
       PRIMARY KEY (due_day, storage_service_class, kind)
     )
     `);
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS project_recovery_coverage_slots (
+        slot_start TIMESTAMPTZ PRIMARY KEY,
+        eligible_snapshots INTEGER NOT NULL,
+        eligible_backups INTEGER NOT NULL,
+        unknown_snapshots INTEGER NOT NULL,
+        unknown_backups INTEGER NOT NULL,
+        unaccounted_snapshot_due INTEGER NOT NULL,
+        unaccounted_backup_due INTEGER NOT NULL,
+        blocked_hosts INTEGER NOT NULL,
+        first_recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
   })().catch((err) => {
     ensurePromise = undefined;
     throw err;
   });
   await ensurePromise;
+}
+
+/** Bay-owned inventory audit. Repeated samples retain the worst gap in a slot. */
+export async function recordProjectRecoveryCoverageSlot({
+  health,
+  checkedAt = new Date(),
+}: {
+  health: ProjectRecoveryHealth;
+  checkedAt?: Date;
+}): Promise<string> {
+  await ensureProjectRecoveryObjectiveTables();
+  const slotStart = new Date(
+    Math.floor(checkedAt.getTime() / COVERAGE_SLOT_MS) * COVERAGE_SLOT_MS,
+  );
+  if (!Number.isFinite(slotStart.getTime())) {
+    throw new Error("invalid recovery coverage audit time");
+  }
+  await getPool().query(
+    `INSERT INTO project_recovery_coverage_slots
+       (slot_start, eligible_snapshots, eligible_backups,
+        unknown_snapshots, unknown_backups, unaccounted_snapshot_due,
+        unaccounted_backup_due, blocked_hosts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (slot_start) DO UPDATE SET
+       eligible_snapshots=GREATEST(project_recovery_coverage_slots.eligible_snapshots, excluded.eligible_snapshots),
+       eligible_backups=GREATEST(project_recovery_coverage_slots.eligible_backups, excluded.eligible_backups),
+       unknown_snapshots=GREATEST(project_recovery_coverage_slots.unknown_snapshots, excluded.unknown_snapshots),
+       unknown_backups=GREATEST(project_recovery_coverage_slots.unknown_backups, excluded.unknown_backups),
+       unaccounted_snapshot_due=GREATEST(project_recovery_coverage_slots.unaccounted_snapshot_due, excluded.unaccounted_snapshot_due),
+       unaccounted_backup_due=GREATEST(project_recovery_coverage_slots.unaccounted_backup_due, excluded.unaccounted_backup_due),
+       blocked_hosts=GREATEST(project_recovery_coverage_slots.blocked_hosts, excluded.blocked_hosts),
+       last_recorded_at=NOW()`,
+    [
+      slotStart,
+      health.eligible_snapshot_projects,
+      health.eligible_backup_projects,
+      health.unknown_snapshot_status,
+      health.unknown_backup_status,
+      health.unaccounted_snapshot_due,
+      health.unaccounted_backup_due,
+      health.host_maintenance_blocks.length,
+    ],
+  );
+  return slotStart.toISOString();
 }
 
 async function addDailyObjectiveCounts({
@@ -315,6 +376,9 @@ export async function getProjectRecoveryServiceObjectives(): Promise<{
   window_start: string;
   window_end: string;
   ready: boolean;
+  coverage_slots_observed: number;
+  coverage_slots_expected: number;
+  coverage_gap_slots: number;
   rows: ProjectRecoveryServiceObjective[];
 }> {
   await ensureProjectRecoveryObjectiveTables();
@@ -346,13 +410,34 @@ export async function getProjectRecoveryServiceObjectives(): Promise<{
     today.getUTCMonth(),
     today.getUTCDate(),
   );
+  const windowStart = new Date(day - 31 * 86_400_000);
+  const windowExclusiveEnd = new Date(day - 86_400_000);
+  const coverage = await getPool().query<{
+    observed: string;
+    gaps: string;
+  }>(
+    `SELECT COUNT(*)::text AS observed,
+            COUNT(*) FILTER (WHERE unknown_snapshots > 0 OR unknown_backups > 0
+              OR unaccounted_snapshot_due > 0 OR unaccounted_backup_due > 0
+              OR blocked_hosts > 0)::text AS gaps
+       FROM project_recovery_coverage_slots
+      WHERE slot_start >= $1 AND slot_start < $2`,
+    [windowStart, windowExclusiveEnd],
+  );
+  const observedSlots = Number(coverage.rows[0]?.observed ?? 0);
+  const gapSlots = Number(coverage.rows[0]?.gaps ?? 0);
   return {
     collecting_since: collectingSince?.toISOString() ?? null,
-    window_start: new Date(day - 31 * 86_400_000).toISOString().slice(0, 10),
+    window_start: windowStart.toISOString().slice(0, 10),
     window_end: new Date(day - 2 * 86_400_000).toISOString().slice(0, 10),
     ready:
       collectingSince != null &&
-      Date.now() - collectingSince.getTime() >= 32 * 86_400_000,
+      Date.now() - collectingSince.getTime() >= 32 * 86_400_000 &&
+      observedSlots === EXPECTED_COVERAGE_SLOTS &&
+      gapSlots === 0,
+    coverage_slots_observed: observedSlots,
+    coverage_slots_expected: EXPECTED_COVERAGE_SLOTS,
+    coverage_gap_slots: gapSlots,
     rows: rows.map((row) => ({
       storage_service_class: row.storage_service_class,
       kind: row.kind,

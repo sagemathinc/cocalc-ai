@@ -2396,6 +2396,8 @@ export async function getLaunchHealth({
                     })) ||
                   projectRecovery.unknown_snapshot_status > 0 ||
                   projectRecovery.unknown_backup_status > 0 ||
+                  projectRecovery.unaccounted_snapshot_due > 0 ||
+                  projectRecovery.unaccounted_backup_due > 0 ||
                   projectRecovery.host_maintenance_blocks.length > 0 ||
                   projectRecovery.oldest_snapshot_delay_seconds > 0 ||
                   projectRecovery.oldest_backup_delay_seconds > 0 ||
@@ -2406,7 +2408,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2458,6 +2460,7 @@ export async function getLaunchHealth({
                   : projectRecoveryObjectives
                     ? [
                         `30-day objectives ${projectRecoveryObjectives.ready ? "mature" : "collecting"}; recorded since ${projectRecoveryObjectives.collecting_since ?? "no due observations"}; mature UTC due window ${projectRecoveryObjectives.window_start} through ${projectRecoveryObjectives.window_end}`,
+                        `30-day inventory coverage: ${projectRecoveryObjectives.coverage_slots_observed}/${projectRecoveryObjectives.coverage_slots_expected} fifteen-minute slots audited, ${projectRecoveryObjectives.coverage_gap_slots} slots with unknown status, blocked hosts, or unaccounted due work`,
                         ...projectRecoveryObjectives.rows.map(
                           (row) =>
                             `${row.storage_service_class} ${row.kind} 30-day objective: ${row.on_time}/${row.obligations} on time, ${row.succeeded} confirmed; ${row.target_seconds == null ? "target unavailable" : `target ${row.target_seconds}s`}`,

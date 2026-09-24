@@ -607,6 +607,10 @@ export async function getProjectRecoveryStatusLocal(
 }
 
 export interface ProjectRecoveryHealth {
+  eligible_snapshot_projects: number;
+  eligible_backup_projects: number;
+  unaccounted_snapshot_due: number;
+  unaccounted_backup_due: number;
   paying_snapshot_overdue: number;
   paying_backup_overdue: number;
   unclassified_snapshot_overdue: number;
@@ -663,6 +667,26 @@ export interface ProjectRecoveryAttemptAggregate {
   execution_seconds: number;
   successful_execution_seconds: number;
   queue_wait_seconds: number;
+}
+
+function objectiveCoversDue({
+  due,
+  objectiveDueAt,
+  objectiveSucceededAt,
+  objectiveCancelledAt,
+}: {
+  due: string;
+  objectiveDueAt: Date | null;
+  objectiveSucceededAt: Date | null;
+  objectiveCancelledAt: Date | null;
+}): boolean {
+  const dueTime = Date.parse(due);
+  return (
+    objectiveCancelledAt == null &&
+    objectiveDueAt != null &&
+    objectiveDueAt.getTime() <= dueTime &&
+    (objectiveSucceededAt == null || objectiveSucceededAt.getTime() >= dueTime)
+  );
 }
 
 export interface ProjectRecoveryStageAggregate {
@@ -851,8 +875,18 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     backup_class: string | null;
     backup_outcome: string | null;
     backup_failures: number | null;
+    snapshot_objective_due_at: Date | null;
+    snapshot_objective_succeeded_at: Date | null;
+    snapshot_objective_cancelled_at: Date | null;
+    backup_objective_due_at: Date | null;
+    backup_objective_succeeded_at: Date | null;
+    backup_objective_cancelled_at: Date | null;
   };
   const health: ProjectRecoveryHealth = {
+    eligible_snapshot_projects: 0,
+    eligible_backup_projects: 0,
+    unaccounted_snapshot_due: 0,
+    unaccounted_backup_due: 0,
     paying_snapshot_overdue: 0,
     paying_backup_overdue: 0,
     unclassified_snapshot_overdue: 0,
@@ -942,13 +976,23 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               b.observed_at AS backup_observed_at,
               b.storage_service_class AS backup_class,
               b.outcome AS backup_outcome,
-              b.consecutive_failures AS backup_failures
+              b.consecutive_failures AS backup_failures,
+              so.due_at AS snapshot_objective_due_at,
+              so.succeeded_at AS snapshot_objective_succeeded_at,
+              so.cancelled_at AS snapshot_objective_cancelled_at,
+              bo.due_at AS backup_objective_due_at,
+              bo.succeeded_at AS backup_objective_succeeded_at,
+              bo.cancelled_at AS backup_objective_cancelled_at
          FROM projects p
          LEFT JOIN project_hosts h ON h.id=p.host_id
          LEFT JOIN project_maintenance_status s ON s.project_id=p.project_id
            AND s.kind='snapshot' AND s.host_id=p.host_id
          LEFT JOIN project_maintenance_status b ON b.project_id=p.project_id
            AND b.kind='backup' AND b.host_id=p.host_id
+         LEFT JOIN project_recovery_objective_state so
+           ON so.project_id=p.project_id AND so.kind='snapshot'
+         LEFT JOIN project_recovery_objective_state bo
+           ON bo.project_id=p.project_id AND bo.kind='backup'
         WHERE p.provisioned IS TRUE AND p.deleted IS NOT TRUE
           AND p.host_id IS NOT NULL
           AND ($1::uuid IS NULL OR p.project_id > $1::uuid)
@@ -960,6 +1004,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         row.host_last_seen == null ||
         now - row.host_last_seen.getTime() > 5 * 60_000;
       if (row.snapshots?.disabled !== true) {
+        health.eligible_snapshot_projects++;
         const group = debtGroup(row.host_id, row.snapshot_class, "snapshot");
         if (
           row.snapshot_outcome === "failed" &&
@@ -994,6 +1039,20 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             );
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
+          // A full host reconciliation may take an hour. After that, missing
+          // objective state means the due work was absent from the historical
+          // denominator even if live debt remains visible.
+          if (
+            delaySeconds > 3600 &&
+            !objectiveCoversDue({
+              due,
+              objectiveDueAt: row.snapshot_objective_due_at,
+              objectiveSucceededAt: row.snapshot_objective_succeeded_at,
+              objectiveCancelledAt: row.snapshot_objective_cancelled_at,
+            })
+          ) {
+            health.unaccounted_snapshot_due++;
+          }
           if (delaySeconds > 0) {
             group.overdue_count++;
             recordOldestDebt(
@@ -1027,6 +1086,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         }
       }
       if (row.backups?.disabled !== true) {
+        health.eligible_backup_projects++;
         const group = debtGroup(row.host_id, row.backup_class, "backup");
         if (
           row.backup_outcome === "failed" &&
@@ -1053,6 +1113,17 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         );
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
+          if (
+            delaySeconds > 3600 &&
+            !objectiveCoversDue({
+              due,
+              objectiveDueAt: row.backup_objective_due_at,
+              objectiveSucceededAt: row.backup_objective_succeeded_at,
+              objectiveCancelledAt: row.backup_objective_cancelled_at,
+            })
+          ) {
+            health.unaccounted_backup_due++;
+          }
           if (delaySeconds > 0) {
             group.overdue_count++;
             recordOldestDebt(

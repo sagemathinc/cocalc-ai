@@ -8,6 +8,10 @@ import { buildProjectRecoveryNotificationPlan } from "./recovery-notification-pl
 
 function health(): ProjectRecoveryHealth {
   return {
+    eligible_snapshot_projects: 0,
+    eligible_backup_projects: 0,
+    unaccounted_snapshot_due: 0,
+    unaccounted_backup_due: 0,
     paying_snapshot_overdue: 0,
     paying_backup_overdue: 0,
     unclassified_snapshot_overdue: 0,
@@ -25,6 +29,24 @@ function health(): ProjectRecoveryHealth {
 }
 
 const checkedAt = "2026-09-24T12:00:00.000Z";
+
+test("alerts when due work is absent from objective accounting", () => {
+  const current = health();
+  current.unaccounted_snapshot_due = 2;
+  const plan = buildProjectRecoveryNotificationPlan({
+    bayId: "bay-1",
+    checkedAt,
+    health: current,
+    recentPayingCompletions: [],
+    missingPressureHosts: [],
+  });
+  expect(plan.incidents.map(({ code }) => code)).toEqual([
+    "objective_coverage_gap",
+  ]);
+  expect(plan.dailyReport).toContain(
+    "Unaccounted due obligations: 2 snapshots",
+  );
+});
 
 test("pages paying incident debt and failures without hiding affected projects", () => {
   const current = health();

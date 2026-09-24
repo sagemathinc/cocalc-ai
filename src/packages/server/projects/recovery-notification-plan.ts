@@ -16,7 +16,8 @@ export interface RecoveryIncident {
     | "unclassified_debt"
     | "paying_failures"
     | "paying_queue_stalled"
-    | "pressure_telemetry_missing";
+    | "pressure_telemetry_missing"
+    | "objective_coverage_gap";
   subject: string;
   body: string;
 }
@@ -196,6 +197,18 @@ export function buildProjectRecoveryNotificationPlan({
     });
   }
 
+  if (health.unaccounted_snapshot_due || health.unaccounted_backup_due) {
+    incidents.push({
+      code: "objective_coverage_gap",
+      subject: `Project recovery objective accounting gap on ${bayId}`,
+      body: [
+        header,
+        `${health.unaccounted_snapshot_due} snapshot and ${health.unaccounted_backup_due} backup obligations were due more than one hour ago but have no covering objective record.`,
+        "Inspect the owning bay's project recovery health, host reconciliation, and maintenance reports before using 30-day objective percentages.",
+      ].join("\n"),
+    });
+  }
+
   const groups = health.by_host_class
     .filter((group) => ["paying", "free"].includes(group.storage_service_class))
     .slice(0, MAX_DETAIL_ROWS)
@@ -205,6 +218,7 @@ export function buildProjectRecoveryNotificationPlan({
     `Checked: ${checkedAt}`,
     `Paying incident thresholds: ${health.paying_snapshot_overdue} snapshots, ${health.paying_backup_overdue} backups.`,
     `Unknown host/status: ${health.unknown_snapshot_status} snapshots, ${health.unknown_backup_status} backups.`,
+    `Unaccounted due obligations: ${health.unaccounted_snapshot_due} snapshots, ${health.unaccounted_backup_due} backups.`,
     `Oldest delay: snapshots ${minutes(health.oldest_snapshot_delay_seconds)}m, backups ${minutes(health.oldest_backup_delay_seconds)}m.`,
     "",
     "Debt by host and funding class:",

@@ -12,7 +12,11 @@ import {
   getProjectRecoveryStatusLocal,
   recordProjectMaintenanceStatus,
 } from "./maintenance-status";
-import { getProjectRecoveryServiceObjectives } from "./recovery-objectives";
+import {
+  getProjectRecoveryServiceObjectives,
+  recordProjectRecoveryCoverageSlot,
+} from "./recovery-objectives";
+import type { ProjectRecoveryHealth } from "./maintenance-status";
 
 describe("project recovery capacity accounting", () => {
   beforeAll(async () => {
@@ -376,6 +380,114 @@ describe("project recovery capacity accounting", () => {
       on_time: 1,
       target_seconds: 24 * 60 * 60,
     });
+  });
+
+  it("retains the worst inventory gap across repeated coverage samples", async () => {
+    const checkedAt = new Date();
+    const health: ProjectRecoveryHealth = {
+      eligible_snapshot_projects: 2,
+      eligible_backup_projects: 3,
+      unaccounted_snapshot_due: 1,
+      unaccounted_backup_due: 0,
+      paying_snapshot_overdue: 0,
+      paying_backup_overdue: 0,
+      unclassified_snapshot_overdue: 0,
+      unclassified_backup_overdue: 0,
+      paying_snapshot_repeated_failures: 0,
+      paying_backup_repeated_failures: 0,
+      unknown_snapshot_status: 0,
+      unknown_backup_status: 1,
+      oldest_snapshot_delay_seconds: 0,
+      oldest_backup_delay_seconds: 0,
+      host_maintenance_blocks: [],
+      by_host_class: [],
+      oldest_debt: [],
+    };
+    const slot = await recordProjectRecoveryCoverageSlot({ health, checkedAt });
+    await recordProjectRecoveryCoverageSlot({
+      health: {
+        ...health,
+        eligible_snapshot_projects: 1,
+        unaccounted_snapshot_due: 0,
+        unknown_backup_status: 0,
+      },
+      checkedAt,
+    });
+    const { rows } = await getPool().query(
+      `SELECT eligible_snapshots, unknown_backups, unaccounted_snapshot_due
+         FROM project_recovery_coverage_slots WHERE slot_start=$1`,
+      [slot],
+    );
+    expect(rows).toEqual([
+      {
+        eligible_snapshots: 2,
+        unknown_backups: 1,
+        unaccounted_snapshot_due: 1,
+      },
+    ]);
+    const report = await getProjectRecoveryServiceObjectives();
+    expect(report.ready).toBe(false);
+    expect(report.coverage_slots_expected).toBe(2880);
+  });
+
+  it("qualifies a mature objective only with every clean coverage slot", async () => {
+    const today = new Date();
+    const utcDay = Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth(),
+      today.getUTCDate(),
+    );
+    const start = new Date(utcDay - 31 * 86_400_000);
+    const end = new Date(utcDay - 86_400_000);
+    const fixtureClass = `coverage-fixture-${uuid()}`;
+    await getPool().query(
+      `INSERT INTO project_recovery_objective_daily
+         (due_day, storage_service_class, kind, obligations,
+          first_recorded_at)
+       VALUES ($1, $2, 'backup', 1, $3)`,
+      [
+        new Date(utcDay - 3 * 86_400_000),
+        fixtureClass,
+        new Date(utcDay - 33 * 86_400_000),
+      ],
+    );
+    try {
+      await getPool().query(
+        `INSERT INTO project_recovery_coverage_slots
+           (slot_start, eligible_snapshots, eligible_backups,
+            unknown_snapshots, unknown_backups, unaccounted_snapshot_due,
+            unaccounted_backup_due, blocked_hosts)
+         SELECT slot, 1, 1, 0, 0, 0, 0, 0
+           FROM generate_series($1::timestamptz,
+             $2::timestamptz - INTERVAL '15 minutes',
+             INTERVAL '15 minutes') AS slots(slot)`,
+        [start, end],
+      );
+      const clean = await getProjectRecoveryServiceObjectives();
+      expect(clean.coverage_slots_observed).toBe(2880);
+      expect(clean.coverage_gap_slots).toBe(0);
+      expect(clean.ready).toBe(true);
+
+      await getPool().query(
+        `UPDATE project_recovery_coverage_slots
+            SET unknown_backups=1 WHERE slot_start=$1`,
+        [start],
+      );
+      const gap = await getProjectRecoveryServiceObjectives();
+      expect(gap.coverage_gap_slots).toBe(1);
+      expect(gap.ready).toBe(false);
+    } finally {
+      await getPool().query(
+        `DELETE FROM project_recovery_coverage_slots
+          WHERE slot_start >= $1 AND slot_start < $2`,
+        [start, end],
+      );
+      await getPool().query(
+        `DELETE FROM project_recovery_objective_daily
+          WHERE storage_service_class=$1`,
+        [fixtureClass],
+      );
+    }
   });
 
   it("reclassifies an unresolved obligation when its storage payer becomes known", async () => {
