@@ -283,7 +283,6 @@ function SavedFileArtifact({
       }}
     >
       <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
-        <strong>{artifact.title}</strong>
         <Button
           disabled={!actions}
           onClick={() => {
@@ -369,7 +368,9 @@ function SavedFileArtifact({
           can still be previewed or opened.
         </div>
       )}
-      <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
+      {artifact.title !== path.split("/").pop() && (
+        <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
+      )}
       {historical && (
         <div role="note">
           Published file reference; the contents shown are current, not a

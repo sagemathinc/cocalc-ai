@@ -489,6 +489,9 @@ function WorkbenchDocument({
     return (
       <CommitArtifact
         artifact={artifact}
+        fontSize={font_size}
+        onIncreaseFontSize={() => actions.increase_font_size(id)}
+        onDecreaseFontSize={() => actions.decrease_font_size(id)}
         projectId={project_id}
         sourcePath={path}
         readOnly={read_only}
@@ -511,6 +514,9 @@ function WorkbenchDocument({
       <GitHubPRArtifact
         key={`${artifact.thread_id}:${artifact.artifact_id}`}
         artifact={artifact}
+        fontSize={font_size}
+        onIncreaseFontSize={() => actions.increase_font_size(id)}
+        onDecreaseFontSize={() => actions.decrease_font_size(id)}
         projectId={project_id}
         sourcePath={path}
         historical={historical}
