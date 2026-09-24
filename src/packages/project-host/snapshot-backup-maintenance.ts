@@ -32,6 +32,7 @@ import {
 } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
+import { recoveryFailureReason } from "./recovery-failure-reason";
 import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
 import { onProjectChangeReported } from "./last-edited";
 import {
@@ -1192,7 +1193,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             storage_service_class: row.storage_service_class,
             observed_at: new Date().toISOString(),
             outcome: "failed",
-            reason: `${err}`,
+            reason: recoveryFailureReason(err, "snapshot") ?? `${err}`,
             due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
             attempt_due_at:
               dueAt == null ? null : new Date(dueAt).toISOString(),
@@ -1395,7 +1396,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             storage_service_class: row.storage_service_class,
             observed_at: new Date().toISOString(),
             outcome: "failed",
-            reason: `${err}`,
+            reason: recoveryFailureReason(err, "backup") ?? `${err}`,
             due_at: new Date(dueAt).toISOString(),
             attempt_due_at: new Date(dueAt).toISOString(),
             duration_ms: Date.now() - startedAt,

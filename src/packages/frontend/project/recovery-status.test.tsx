@@ -259,6 +259,18 @@ it.each([
     "new backup is not confirmed in the repository",
     "The off-host backup could not be confirmed. Maintenance will retry.",
   ],
+  [
+    "repository_credentials_invalid",
+    "The backup repository credentials are invalid. An administrator must repair them.",
+  ],
+  [
+    "object_store_unavailable",
+    "The off-host backup store is unavailable. Maintenance will retry.",
+  ],
+  [
+    "managed_backup_egress_policy_blocked",
+    "Backup uploads are temporarily blocked by the account's upload allowance.",
+  ],
 ])("explains a blocked backup with reason %s", async (reason, message) => {
   getRecoveryStatus.mockResolvedValue({
     project_id: "project-1",

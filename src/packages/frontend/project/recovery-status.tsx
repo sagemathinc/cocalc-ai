@@ -61,6 +61,16 @@ function reasonText(reason: string | null | undefined): string | null {
     return "A local snapshot has not been confirmed yet. Maintenance will retry.";
   if (text.includes("not confirmed in the repository"))
     return "The off-host backup could not be confirmed. Maintenance will retry.";
+  if (text.includes("repository_confirmation_failed"))
+    return "The off-host backup could not be confirmed. Maintenance will retry.";
+  if (text.includes("repository_credentials_invalid"))
+    return "The backup repository credentials are invalid. An administrator must repair them.";
+  if (text.includes("object_store_unavailable"))
+    return "The off-host backup store is unavailable. Maintenance will retry.";
+  if (text.includes("managed_backup_egress_policy_blocked"))
+    return "Backup uploads are temporarily blocked by the account's upload allowance.";
+  if (text.includes("storage_quota_exceeded"))
+    return "Storage quota is blocking maintenance.";
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";

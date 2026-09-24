@@ -81,6 +81,7 @@ jest.mock("./storage-admission", () => ({
 
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
   __esModule: true,
+  BtrfsMutationDeferredError: class extends Error {},
   withBtrfsMutationContext: (_context: unknown, run: () => Promise<unknown>) =>
     run(),
 }));
@@ -497,6 +498,26 @@ describe("snapshot-backup-maintenance", () => {
         kind: "backup",
         outcome: "deferred",
         reason: "backup_capacity_busy",
+        retry_at: expect.any(String),
+      }),
+    );
+  });
+
+  it("reports a classified repository failure without sending its raw error", async () => {
+    runScheduledBackupMaintenanceMock.mockRejectedValue(
+      new Error("rustic s3: InvalidAccessKeyId secret=do-not-report"),
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-2",
+        kind: "backup",
+        outcome: "failed",
+        reason: "repository_credentials_invalid",
         retry_at: expect.any(String),
       }),
     );
