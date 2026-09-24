@@ -69,6 +69,8 @@ import {
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
 } from "@cocalc/frontend/chat/harness-profile";
+import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
@@ -77,6 +79,10 @@ import {
   writeHarnessCredentialSelection,
 } from "@cocalc/frontend/chat/harness-credential-selection";
 import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
+import {
+  newAgentClaudeCredentialOptions,
+  newAgentClaudeCredentialValue,
+} from "./claude-credential-options";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -780,15 +786,22 @@ function NewAgentPanel({
   useEffect(() => {
     if (runtimeKind !== "claude-code") return;
     let disposed = false;
+    setAnthropicCredentials([]);
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({
         provider: "anthropic",
-        kind: "anthropic-api-key",
         scope: "account",
       })
       .then((rows) => {
         if (!disposed)
-          setAnthropicCredentials(rows.filter((row) => !row.revoked));
+          setAnthropicCredentials(
+            rows.filter(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          );
       })
       .catch((err) => {
         if (!disposed) setError(`${err}`);
@@ -796,7 +809,7 @@ function NewAgentPanel({
     return () => {
       disposed = true;
     };
-  }, [runtimeKind]);
+  }, [runtimeKind, boundAccount.accountId]);
 
   useEffect(() => {
     let disposed = false;
@@ -1792,38 +1805,34 @@ function NewAgentPanel({
             {runtimeKind === "claude-code" && (
               <Select
                 aria-label="Claude credential"
-                value={
-                  claudeCredential.mode === "account-api-key"
-                    ? `account-api-key:${claudeCredential.credentialId}`
-                    : "project-secret"
-                }
+                value={newAgentClaudeCredentialValue(claudeCredential)}
                 disabled={busy || !!pending}
-                options={[
-                  {
-                    value: "project-secret",
-                    label: "Project secret",
-                  },
-                  ...anthropicCredentials.map((row) => ({
-                    value: `account-api-key:${row.id}`,
-                    label:
-                      row.metadata?.label ||
-                      `Anthropic key ${row.id.slice(0, 8)}`,
-                  })),
-                ]}
+                options={newAgentClaudeCredentialOptions(anthropicCredentials)}
                 onChange={(value) =>
                   setClaudeCredential(
-                    value.startsWith("account-api-key:")
+                    value.startsWith("account-subscription:")
                       ? {
                           version: 1,
                           provider: "anthropic",
-                          mode: "account-api-key",
-                          credentialId: value.slice("account-api-key:".length),
+                          mode: "account-subscription",
+                          credentialId: value.slice(
+                            "account-subscription:".length,
+                          ),
                         }
-                      : {
-                          version: 1,
-                          provider: "anthropic",
-                          mode: "project-secret",
-                        },
+                      : value.startsWith("account-api-key:")
+                        ? {
+                            version: 1,
+                            provider: "anthropic",
+                            mode: "account-api-key",
+                            credentialId: value.slice(
+                              "account-api-key:".length,
+                            ),
+                          }
+                        : {
+                            version: 1,
+                            provider: "anthropic",
+                            mode: "project-secret",
+                          },
                   )
                 }
                 style={{ minWidth: 180 }}
@@ -1871,11 +1880,48 @@ function NewAgentPanel({
         {runtimeKind === "claude-code" && (
           <Text type="warning">
             {claudeCredentialTrustWarning(
-              claudeCredential.mode === "account-api-key"
-                ? "account-api-key"
+              claudeCredential.mode === "account-api-key" ||
+                claudeCredential.mode === "account-subscription"
+                ? claudeCredential.mode
                 : "project-secret",
             )}
           </Text>
+        )}
+        {runtimeKind === "claude-code" && projectId && (
+          <ClaudeSubscriptionConnect
+            key={`${boundAccount.accountId}:${projectId}`}
+            projectId={projectId}
+            disabled={busy || !!pending}
+            onConnected={async (credentialId) => {
+              const rows =
+                await webapp_client.conat_client.hub.system.listExternalCredentials(
+                  { provider: "anthropic", scope: "account" },
+                );
+              setAnthropicCredentials(
+                rows.filter(
+                  (row) =>
+                    !row.revoked &&
+                    (row.kind === "anthropic-api-key" ||
+                      row.kind === CLAUDE_SUBSCRIPTION_KIND),
+                ),
+              );
+              if (
+                !rows.some(
+                  (row) =>
+                    row.id === credentialId &&
+                    row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+                    !row.revoked,
+                )
+              )
+                throw Error("Connected Claude subscription is not available");
+              setClaudeCredential({
+                version: 1,
+                provider: "anthropic",
+                mode: "account-subscription",
+                credentialId,
+              });
+            }}
+          />
         )}
         {runtimeKind === "claude-code" &&
           claudeCredential.mode === "project-secret" &&

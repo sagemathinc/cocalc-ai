@@ -37,6 +37,7 @@ import {
   readHarnessCredentialSelection,
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
+import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -74,15 +75,6 @@ function ClaudeCredentialControl({
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
-  const [login, setLogin] = useState<{
-    id: string;
-    state: string;
-    verificationUrl?: string;
-    credentialId?: string;
-    error?: string;
-  }>();
-  const [loginCode, setLoginCode] = useState("");
-  const [loginBusy, setLoginBusy] = useState(false);
   const [disconnectBusy, setDisconnectBusy] = useState(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selection = readHarnessCredentialSelection({
@@ -100,7 +92,6 @@ function ClaudeCredentialControl({
     let disposed = false;
     setCredentials([]);
     setCredentialsLoaded(false);
-    setLogin(undefined);
     setError("");
     const refresh = () => {
       const current = readHarnessCredentialSelection({
@@ -143,44 +134,6 @@ function ClaudeCredentialControl({
       window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     };
   }, [accountId, projectId, threadKey]);
-  useEffect(() => {
-    if (!login || (login.state !== "pending" && login.state !== "verifying"))
-      return;
-    let active = true;
-    const timer = setInterval(() => {
-      void webapp_client.conat_client.hub.projects
-        .claudeSubscriptionLoginStatus({ project_id: projectId, id: login.id })
-        .then(async (next) => {
-          if (!active) return;
-          if (next.state === "completed" && next.credentialId) {
-            const rows =
-              await webapp_client.conat_client.hub.system.listExternalCredentials(
-                {
-                  provider: "anthropic",
-                  scope: "account",
-                },
-              );
-            if (active)
-              setCredentials(
-                rows.filter(
-                  (row) =>
-                    !row.revoked &&
-                    (row.kind === "anthropic-api-key" ||
-                      row.kind === CLAUDE_SUBSCRIPTION_KIND),
-                ),
-              );
-          }
-          if (active) setLogin(next);
-        })
-        .catch((err) => {
-          if (active) setError(`${err}`);
-        });
-    }, 1500);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [login?.id, login?.state, projectId]);
   const selectedSubscription = value.startsWith("account-subscription:")
     ? credentials.find(
         (row) =>
@@ -285,87 +238,23 @@ function ClaudeCredentialControl({
           </Button>
         </Popconfirm>
       )}
-      <Button
-        loading={loginBusy}
-        onClick={async () => {
-          setLoginBusy(true);
-          setError("");
-          try {
-            setLogin(
-              await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
-                { project_id: projectId },
-              ),
+      <ClaudeSubscriptionConnect
+        projectId={projectId}
+        onConnected={async () => {
+          const rows =
+            await webapp_client.conat_client.hub.system.listExternalCredentials(
+              { provider: "anthropic", scope: "account" },
             );
-          } catch (err) {
-            setError(`${err}`);
-          } finally {
-            setLoginBusy(false);
-          }
+          setCredentials(
+            rows.filter(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          );
         }}
-      >
-        Connect Claude Pro/Max (experimental)
-      </Button>
-      {login && (login.state === "pending" || login.state === "verifying") && (
-        <Space orientation="vertical">
-          {login.verificationUrl && (
-            <a
-              href={login.verificationUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open Claude sign-in
-            </a>
-          )}
-          {login.state === "pending" && login.verificationUrl && (
-            <Space>
-              <Input
-                aria-label="Claude sign-in code"
-                autoComplete="off"
-                value={loginCode}
-                onChange={(event) => setLoginCode(event.target.value)}
-              />
-              <Button
-                onClick={async () => {
-                  try {
-                    await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
-                      { project_id: projectId, id: login.id, code: loginCode },
-                    );
-                    setLoginCode("");
-                  } catch (err) {
-                    setError(`${err}`);
-                  }
-                }}
-              >
-                Submit code
-              </Button>
-            </Space>
-          )}
-          {login.state === "pending" && (
-            <Button
-              onClick={async () => {
-                try {
-                  await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
-                    { project_id: projectId, id: login.id },
-                  );
-                  setLogin(undefined);
-                } catch (err) {
-                  setError(`${err}`);
-                }
-              }}
-            >
-              Cancel sign-in
-            </Button>
-          )}
-        </Space>
-      )}
-      {login?.state === "completed" && (
-        <Typography.Text role="status">
-          Claude subscription connected. Select it above for the next turn.
-        </Typography.Text>
-      )}
-      {login?.state === "failed" && (
-        <div role="alert">{login.error || "Claude sign-in failed"}</div>
-      )}
+      />
       <Typography.Text type="secondary">
         This account-local choice is applied when the next turn is admitted.
       </Typography.Text>
