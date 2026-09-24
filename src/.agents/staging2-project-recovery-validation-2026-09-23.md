@@ -469,17 +469,25 @@ backup status became `succeeded` at 03:32:19 UTC with reason
 and next due `2026-09-25T02:56:54.651Z`. The original failed attempt
 remains in 24-hour history for operational accounting.
 
-The first-party testing browser daemon opened the staging2 canary project twice
-under the designated non-admin account, but its browser session did not
-register before the CLI timeout. The browser UI therefore remains unverified;
-this is a browser automation finding, not a passed UI check.
+The first-party testing browser registered when launched at the project list
+under the designated non-admin account (browser `P8N9JVJ2ZU`). Typed actions
+opened the canary's Project Settings and Recovery section. The [Recovery
+settings screenshot](screenshots/staging2-recovery-settings-testing-account-2026-09-24.png)
+shows the latest backup and snapshot ages, and the automatic backup schedule
+opened read-only for this collaborator. The [file listing screenshot](screenshots/staging2-project-host-auth-error-testing-account-2026-09-24.png)
+shows `failed to sign in - Error: missing project-host bearer token`.
+Full workspace entered a reconnect loop; the backup browser did not finish
+loading. The same file-listing failure occurred on the shared-host testing
+project. Thus the recovery summary has a partial live UI check, while file and
+backup browsing remain blocked on the testing account and require follow-up.
 
 ## Open findings and release gates
 
-1. Browser UI testing is still pending. Fresh operator login and elevation
-   succeeded, but two designated testing-account Chromium launches opened the
-   project page without registering a browser session for typed UI actions.
-   The actual status UI needs direct review or a repaired browser session.
+1. Browser UI qualification is partial. The testing account reached Project
+   Settings, the Recovery summary, and the read-only backup schedule. The file
+   listing and backup browser could not connect to either project host because
+   the browser lacked a project-host bearer token. Diagnose this auth path,
+   then retest the full recovery interface and warning states.
 2. The plan's full observability and scheduler contract remains broader than
    the current code: a calibrated safe-capacity threshold, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
