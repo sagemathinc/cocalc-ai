@@ -13,7 +13,7 @@ describe("installBrowserCompatibility", () => {
 
   afterEach(() => {
     if (originalHasOwn == null) {
-      Reflect.deleteProperty(Object, "hasOwn");
+      delete compatibleObject.hasOwn;
     } else {
       Object.defineProperty(Object, "hasOwn", originalHasOwn);
     }
