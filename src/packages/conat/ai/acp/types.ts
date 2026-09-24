@@ -358,7 +358,7 @@ export type AcpAttentionRequest =
       account_id: string;
       path?: string;
       thread_id?: string;
-      state?: AcpAttentionState | "all";
+      state?: AcpAttentionState | "all" | "actionable";
     }
   | {
       action: "register_action";

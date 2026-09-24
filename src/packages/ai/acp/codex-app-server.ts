@@ -804,6 +804,21 @@ export class AppServerClient {
     this.attentionContext = context;
   }
 
+  async finishAttentionTurn(turnId: string): Promise<void> {
+    const context = this.attentionContext;
+    if (context?.turnId === turnId) {
+      this.attentionContext = undefined;
+      const finished = this.attentionHandler?.turnFinished?.(context);
+      for (const [requestId, requestContext] of this.serverRequestContexts) {
+        if (requestContext.turnId !== turnId) continue;
+        this.serverRequestAborts
+          .get(Number(requestId))
+          ?.abort(new Error("Codex turn ended"));
+      }
+      await finished;
+    }
+  }
+
   async initialize(timeoutMs = REQUEST_TIMEOUT_MS): Promise<any> {
     const result = await this.request(
       "initialize",
@@ -3858,6 +3873,7 @@ export class CodexAppServerAgent implements AcpAgent {
         let lastReconciliationNoticeAt = 0;
         let awaitingGoalContinuation = false;
         const adoptContinuation = async (nextTurnId: string) => {
+          if (turnId) await client.finishAttentionTurn(turnId);
           completedGoalUsage = cumulativeUsage(latestUsage);
           latestUsage = undefined;
           turnId = nextTurnId;
@@ -4232,6 +4248,7 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw new Error(userFacingPrimaryError);
     } finally {
+      if (turnId) await client.finishAttentionTurn(turnId);
       await cleanupMentionFile().catch((error) => {
         logger.warn("failed removing current-turn mention references", {
           error: String(error),

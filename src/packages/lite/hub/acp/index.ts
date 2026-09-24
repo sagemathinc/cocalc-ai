@@ -11011,6 +11011,7 @@ function publicAttentionRecord(
     response: _response,
     response_id: _responseId,
     response_declined: _responseDeclined,
+    dispatch_as_async: _dispatchAsAsync,
     ...publicRecord
   } = record;
   return publicRecord;
@@ -11517,11 +11518,18 @@ async function handleAcpAttentionRequest(
         response_id: request.response_id,
         answers,
         decline: request.decline,
+        allow_stale_sync: current.state === "stale",
       });
       if (!submitted.record) {
         return { ok: false, state: submitted.state };
       }
-      if (current.source_kind !== "codex_async_question") {
+      if (
+        current.source_kind !== "codex_async_question" &&
+        !(
+          current.source_kind === "codex_sync_question" &&
+          current.state === "stale"
+        )
+      ) {
         return {
           ok: true,
           state: submitted.state,

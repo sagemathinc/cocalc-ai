@@ -120,6 +120,17 @@ function RuntimeCodexAttentionCard({
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState(0);
   const [error, setError] = useState<string>();
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return (
+        sessionStorage.getItem(
+          `codex-attention-collapsed:${initialRecord.attention_id}`,
+        ) === "1"
+      );
+    } catch {
+      return false;
+    }
+  });
   const responseIdRef = useRef(responseId());
   const markedSeenRef = useRef(initialRecord.seen_at != null);
 
@@ -309,6 +320,9 @@ function RuntimeCodexAttentionCard({
   };
 
   const pending = record.state === "pending";
+  const lateQuestion =
+    record.state === "stale" && record.source_kind === "codex_sync_question";
+  const answerable = (pending || lateQuestion) && !record.response_submitted_at;
   const pendingFreshAuth =
     pending &&
     record.source_kind === "cocalc_action" &&
@@ -317,219 +331,246 @@ function RuntimeCodexAttentionCard({
     record.state === "stale" && record.response_submitted_at != null;
   const responseAwaitingCodex =
     pending && record.response_submitted_at != null && !pendingFreshAuth;
+  const setDismissed = (value: boolean) => {
+    setCollapsed(value);
+    try {
+      const key = `codex-attention-collapsed:${record.attention_id}`;
+      if (value) sessionStorage.setItem(key, "1");
+      else sessionStorage.removeItem(key);
+    } catch {
+      // Session storage may be unavailable in a restricted browser context.
+    }
+  };
   return (
     <section
       aria-label="Codex needs attention"
       data-codex-attention-id={record.attention_id}
       tabIndex={-1}
       style={{
-        border: `1px solid ${pending ? UI_COLORS.warning : UI_COLORS.border}`,
-        borderRadius: 8,
-        padding: 12,
+        border: `1px solid ${UI_COLORS.border}`,
+        borderLeft: `3px solid ${pending ? UI_COLORS.warning : UI_COLORS.secondary}`,
+        borderRadius: 12,
+        padding: "12px 16px",
         width: "100%",
         color: UI_COLORS.text,
-        background: pending ? UI_COLORS.warningBg : undefined,
+        background: UI_COLORS.surface,
       }}
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
-          <Title level={5} style={{ margin: 0 }}>
-            {record.title}
-          </Title>
-          <Tag
-            color={
-              pending ? "gold" : record.state === "stale" ? "red" : "default"
-            }
-          >
-            {pendingFreshAuth
-              ? "Waiting for authorization"
-              : responseAwaitingCodex
-                ? "Response submitted"
-                : stateLabel(record.state)}
-          </Tag>
-        </Space>
-        <Text type="secondary" aria-live="polite">
-          {pendingFreshAuth
-            ? "Approve this request in CoCalc. The waiting command will continue automatically."
-            : responseAwaitingCodex
-              ? "Your response is saved. Waiting for Codex to accept it."
-              : record.is_blocking
-                ? "The current Codex turn is paused until you respond."
-                : record.source_kind === "codex_async_question"
-                  ? "Codex may continue while it waits. Your response starts a new user message."
-                  : record.summary}
-        </Text>
-        {lite && pending ? (
-          <Text type="secondary">
-            This request is available in this project. Cross-device inbox and
-            email delivery are not available in CoCalc Lite.
-          </Text>
-        ) : null}
-        {pending && !pendingFreshAuth && !responseAwaitingCodex
-          ? record.questions.map((question) => (
-              <fieldset
-                key={question.id}
-                style={{
-                  border: 0,
-                  margin: 0,
-                  minWidth: 0,
-                  padding: 0,
-                }}
-              >
-                <legend style={{ fontWeight: 600, padding: 0 }}>
-                  {question.header}
-                </legend>
-                <Paragraph
-                  style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}
-                >
-                  {question.question}
-                </Paragraph>
-                {question.options?.length ? (
-                  <Radio.Group
-                    aria-label={`Suggested answers for ${question.header}`}
-                    name={`codex-attention-${record.attention_id}-${question.id}`}
-                    value={draft.selected[question.id]}
-                    onChange={(event) => {
-                      updateDraft((current) => ({
-                        selected: {
-                          ...current.selected,
-                          [question.id]: String(event.target.value),
-                        },
-                        other: { ...current.other, [question.id]: "" },
-                      }));
-                    }}
-                    style={{ display: "grid", gap: 6, marginBottom: 8 }}
-                  >
-                    {question.options.map((option) => (
-                      <Radio key={option.label} value={option.label}>
-                        <Space orientation="vertical" size={0}>
-                          <span>{option.label}</span>
-                          {option.description ? (
-                            <Text type="secondary">{option.description}</Text>
-                          ) : null}
-                        </Space>
-                      </Radio>
-                    ))}
-                  </Radio.Group>
-                ) : null}
-                {question.isOther || !question.options?.length ? (
-                  <div
-                    role="group"
-                    aria-label={`Custom answer for ${question.header}`}
-                  >
-                    <MarkdownInput
-                      cacheId={`codex-answer:${record.attention_id}:${question.id}`}
-                      project_id={record.project_id}
-                      path={record.path}
-                      placeholder={`Custom answer for ${question.header}`}
-                      autoGrow
-                      autoGrowMaxHeight={220}
-                      hideHelp
-                      compact
-                      enableMentions={false}
-                      enableUpload
-                      saveDebounceMs={0}
-                      undoMode="local"
-                      redoMode="local"
-                      onUploadStart={() => setUploads((n) => n + 1)}
-                      onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
-                      value={draft.other[question.id] ?? ""}
-                      onChange={(value) => {
-                        updateDraft((current) => ({
-                          other: { ...current.other, [question.id]: value },
-                          selected: value
-                            ? {
-                                ...current.selected,
-                                [question.id]: undefined,
-                              }
-                            : current.selected,
-                        }));
-                      }}
-                    />
-                    <div role="status" aria-live="polite">
-                      <Text
-                        type={
-                          (draft.other[question.id] ?? "").trim().length >
-                          CODEX_ATTENTION_ANSWER_MAX_LENGTH
-                            ? "danger"
-                            : "secondary"
-                        }
-                      >
-                        {(draft.other[question.id] ?? "").trim().length} /{" "}
-                        {CODEX_ATTENTION_ANSWER_MAX_LENGTH} characters
-                        {(draft.other[question.id] ?? "").trim().length >
-                        CODEX_ATTENTION_ANSWER_MAX_LENGTH
-                          ? ` (${(draft.other[question.id] ?? "").trim().length - CODEX_ATTENTION_ANSWER_MAX_LENGTH} over the limit)`
-                          : ""}
-                      </Text>
-                    </div>
-                  </div>
-                ) : null}
-              </fieldset>
-            ))
-          : null}
-        {error ? (
-          <Alert type="error" showIcon message={error} role="alert" />
-        ) : null}
-        {pendingFreshAuth ? (
           <Space wrap>
-            <Button
-              type="primary"
-              icon={<SafetyCertificateOutlined />}
-              aria-label="Approve in CoCalc"
-              loading={submitting}
-              onClick={() => void openFreshAuth()}
-            >
-              Approve in CoCalc
-            </Button>
-            <Button
-              disabled={submitting || record.acknowledged_at != null}
-              onClick={() => void updateDelivery("acknowledge")}
-            >
-              Acknowledge
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void updateDelivery("snooze")}
-            >
-              Snooze 5 minutes
-            </Button>
+            <Title level={5} style={{ margin: 0 }}>
+              {record.title}
+            </Title>
+            <Tag color={pending ? "gold" : "default"}>
+              {pendingFreshAuth
+                ? "Waiting for authorization"
+                : responseAwaitingCodex
+                  ? "Response submitted"
+                  : lateQuestion
+                    ? "Turn ended"
+                    : stateLabel(record.state)}
+            </Tag>
           </Space>
-        ) : pending && !responseAwaitingCodex ? (
-          <Space wrap>
-            <Button
-              type="primary"
-              disabled={!canSubmit || uploads > 0}
-              loading={submitting}
-              onClick={() => void respond(false)}
-            >
-              Send response
-            </Button>
-            <Button disabled={submitting} onClick={() => void respond(true)}>
-              Decline
-            </Button>
-            <Button
-              disabled={submitting || record.acknowledged_at != null}
-              onClick={() => void updateDelivery("acknowledge")}
-            >
-              Acknowledge
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void updateDelivery("snooze")}
-            >
-              Snooze 5 minutes
-            </Button>
-          </Space>
-        ) : staleWithAnswer ? (
-          <Button
-            type="primary"
-            loading={submitting}
-            onClick={() => void continueAnswer()}
-          >
-            Continue with this answer
+          <Button type="text" onClick={() => setDismissed(!collapsed)}>
+            {collapsed ? "Show question" : "Dismiss"}
           </Button>
-        ) : null}
+        </Space>
+        {!collapsed && (
+          <>
+            <Text type="secondary" aria-live="polite">
+              {pendingFreshAuth
+                ? "Approve this request in CoCalc. The waiting command will continue automatically."
+                : responseAwaitingCodex
+                  ? "Your response is saved. Waiting for Codex to accept it."
+                  : lateQuestion
+                    ? "That turn has ended. Send your answer as a new message to continue."
+                    : record.is_blocking
+                      ? "The current Codex turn is paused until you respond."
+                      : record.source_kind === "codex_async_question"
+                        ? "Codex may continue while it waits. Your response starts a new user message."
+                        : record.summary}
+            </Text>
+            {lite && pending ? (
+              <Text type="secondary">
+                This request is available in this project. Cross-device inbox
+                and email delivery are not available in CoCalc Lite.
+              </Text>
+            ) : null}
+            {answerable && !pendingFreshAuth && !responseAwaitingCodex
+              ? record.questions.map((question) => (
+                  <fieldset
+                    key={question.id}
+                    style={{
+                      border: 0,
+                      margin: 0,
+                      minWidth: 0,
+                      padding: 0,
+                    }}
+                  >
+                    <legend style={{ fontWeight: 600, padding: 0 }}>
+                      {question.header}
+                    </legend>
+                    <Paragraph
+                      style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}
+                    >
+                      {question.question}
+                    </Paragraph>
+                    {question.options?.length ? (
+                      <Radio.Group
+                        aria-label={`Suggested answers for ${question.header}`}
+                        name={`codex-attention-${record.attention_id}-${question.id}`}
+                        value={draft.selected[question.id]}
+                        onChange={(event) => {
+                          updateDraft((current) => ({
+                            selected: {
+                              ...current.selected,
+                              [question.id]: String(event.target.value),
+                            },
+                            other: { ...current.other, [question.id]: "" },
+                          }));
+                        }}
+                        style={{ display: "grid", gap: 6, marginBottom: 8 }}
+                      >
+                        {question.options.map((option) => (
+                          <Radio key={option.label} value={option.label}>
+                            <Space orientation="vertical" size={0}>
+                              <span>{option.label}</span>
+                              {option.description ? (
+                                <Text type="secondary">
+                                  {option.description}
+                                </Text>
+                              ) : null}
+                            </Space>
+                          </Radio>
+                        ))}
+                      </Radio.Group>
+                    ) : null}
+                    {question.isOther || !question.options?.length ? (
+                      <div
+                        role="group"
+                        aria-label={`Custom answer for ${question.header}`}
+                      >
+                        <MarkdownInput
+                          cacheId={`codex-answer:${record.attention_id}:${question.id}`}
+                          project_id={record.project_id}
+                          path={record.path}
+                          placeholder={`Custom answer for ${question.header}`}
+                          autoGrow
+                          autoGrowMaxHeight={220}
+                          hideHelp
+                          compact
+                          enableMentions={false}
+                          enableUpload
+                          saveDebounceMs={0}
+                          undoMode="local"
+                          redoMode="local"
+                          onUploadStart={() => setUploads((n) => n + 1)}
+                          onUploadEnd={() =>
+                            setUploads((n) => Math.max(0, n - 1))
+                          }
+                          value={draft.other[question.id] ?? ""}
+                          onChange={(value) => {
+                            updateDraft((current) => ({
+                              other: { ...current.other, [question.id]: value },
+                              selected: value
+                                ? {
+                                    ...current.selected,
+                                    [question.id]: undefined,
+                                  }
+                                : current.selected,
+                            }));
+                          }}
+                        />
+                        <div role="status" aria-live="polite">
+                          <Text
+                            type={
+                              (draft.other[question.id] ?? "").trim().length >
+                              CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                                ? "danger"
+                                : "secondary"
+                            }
+                          >
+                            {(draft.other[question.id] ?? "").trim().length} /{" "}
+                            {CODEX_ATTENTION_ANSWER_MAX_LENGTH} characters
+                            {(draft.other[question.id] ?? "").trim().length >
+                            CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                              ? ` (${(draft.other[question.id] ?? "").trim().length - CODEX_ATTENTION_ANSWER_MAX_LENGTH} over the limit)`
+                              : ""}
+                          </Text>
+                        </div>
+                      </div>
+                    ) : null}
+                  </fieldset>
+                ))
+              : null}
+            {error ? (
+              <Alert type="error" showIcon message={error} role="alert" />
+            ) : null}
+            {pendingFreshAuth ? (
+              <Space wrap>
+                <Button
+                  type="primary"
+                  icon={<SafetyCertificateOutlined />}
+                  aria-label="Approve in CoCalc"
+                  loading={submitting}
+                  onClick={() => void openFreshAuth()}
+                >
+                  Approve in CoCalc
+                </Button>
+                <Button
+                  disabled={submitting || record.acknowledged_at != null}
+                  onClick={() => void updateDelivery("acknowledge")}
+                >
+                  Acknowledge
+                </Button>
+                <Button
+                  disabled={submitting}
+                  onClick={() => void updateDelivery("snooze")}
+                >
+                  Snooze 5 minutes
+                </Button>
+              </Space>
+            ) : answerable && !responseAwaitingCodex ? (
+              <Space wrap>
+                <Button
+                  type="primary"
+                  disabled={!canSubmit || uploads > 0}
+                  loading={submitting}
+                  onClick={() => void respond(false)}
+                >
+                  {lateQuestion ? "Send as new message" : "Send response"}
+                </Button>
+                <Button
+                  disabled={submitting}
+                  onClick={() => void respond(true)}
+                >
+                  Decline
+                </Button>
+                <Button
+                  disabled={submitting || record.acknowledged_at != null}
+                  onClick={() => void updateDelivery("acknowledge")}
+                >
+                  Acknowledge
+                </Button>
+                <Button
+                  disabled={submitting}
+                  onClick={() => void updateDelivery("snooze")}
+                >
+                  Snooze 5 minutes
+                </Button>
+              </Space>
+            ) : staleWithAnswer ? (
+              <Button
+                type="primary"
+                loading={submitting}
+                onClick={() => void continueAnswer()}
+              >
+                Continue with this answer
+              </Button>
+            ) : null}
+          </>
+        )}
       </Space>
     </section>
   );

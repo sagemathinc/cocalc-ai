@@ -199,6 +199,42 @@ describe("Codex question attention", () => {
     view.unmount();
   });
 
+  it("collapses without answering and offers late answers as a new message", async () => {
+    const user = userEvent.setup();
+    const stale = { ...questionRecord, state: "stale" as const };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "list"
+          ? { records: [stale] }
+          : { record: stale }),
+      }));
+    const view = render(<CodexAttentionCard initialRecord={stale} />);
+    expect(
+      screen.getByRole("button", { name: "Send as new message" }),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("radio", { name: "EU" })).not.toBeInTheDocument();
+    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "respond" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Show question" }));
+    await user.click(screen.getByRole("radio", { name: "EU" }));
+    await user.click(
+      screen.getByRole("button", { name: "Send as new message" }),
+    );
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["EU"] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
   it("keeps oversized drafts visible and enables submission after shortening", async () => {
     const user = userEvent.setup();
     const record = {

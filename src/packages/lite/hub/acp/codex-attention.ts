@@ -67,6 +67,7 @@ function publicRecord(
     response: _response,
     response_id: _id,
     response_declined: _declined,
+    dispatch_as_async: _dispatchAsAsync,
     ...publicRow
   } = record;
   const message_date = `${_chat?.message_date ?? ""}`.trim() || undefined;
@@ -430,6 +431,7 @@ export function createCodexAttentionHandler(
         source_kind: "codex_sync_question",
         source_id: syncSourceId(context, requestId),
       });
+      if (current?.dispatch_as_async) return;
       const resolved = resolveAcpAttentionBySource({
         project_id: context.projectId,
         source_kind: "codex_sync_question",
@@ -460,6 +462,18 @@ export function createCodexAttentionHandler(
         thread_id: context.chat?.thread_id,
         turn_id: context.turnId,
         reason: "Codex runtime closed before the request was resolved",
+      });
+      for (const stale of staleRecords) {
+        void publishStoredAttentionNoticeBestEffort({ client, record: stale });
+      }
+    },
+
+    turnFinished(context) {
+      const staleRecords = markAcpSyncAttentionStale({
+        project_id: context.projectId,
+        thread_id: context.chat?.thread_id,
+        turn_id: context.turnId,
+        reason: "Codex turn ended before the question was answered",
       });
       for (const stale of staleRecords) {
         void publishStoredAttentionNoticeBestEffort({ client, record: stale });
