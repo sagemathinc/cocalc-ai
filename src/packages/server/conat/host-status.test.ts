@@ -349,6 +349,49 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("owner-1");
     expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("sponsor-1");
   });
+
+  it("refreshes funding class when a project's storage payer changes", async () => {
+    const projectRow = {
+      project_id: "proj-1",
+      owner_account_id: "owner-1",
+      users: {
+        "owner-1": { group: "owner" },
+        "sponsor-1": { group: "collaborator" },
+      },
+    };
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [{ ...projectRow, usage_account_id: null }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [{ ...projectRow, usage_account_id: "sponsor-1" }],
+      });
+    resolveMembershipForAccountMock.mockImplementation(async (account_id) =>
+      account_id === "sponsor-1"
+        ? { source: "subscription", subscription_cost: 10 }
+        : { source: "free" },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    const before = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    const after = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+
+    expect(before[0]).toMatchObject({
+      storage_account_id: "owner-1",
+      storage_service_class: "free",
+    });
+    expect(after[0]).toMatchObject({
+      storage_account_id: "sponsor-1",
+      storage_service_class: "paying",
+    });
+  });
 });
 
 describe("initHostStatusService registerOnPremTunnel", () => {

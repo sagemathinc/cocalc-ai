@@ -1057,4 +1057,55 @@ describe("snapshot-backup-maintenance", () => {
     finishBackup({ created: true });
     await first;
   });
+
+  it("retries paid backup work after a running free backup releases the lane", async () => {
+    let finishFreeBackup!: (value: { created: boolean }) => void;
+    const freeBackupRunning = new Promise<{ created: boolean }>((resolve) => {
+      finishFreeBackup = resolve;
+    });
+    const freeRow = {
+      project_id: "free-project",
+      storage_service_class: "free",
+      storage_account_id: "free-account",
+      backup_due_since: "2026-04-01T00:00:00.000Z",
+      snapshots: { disabled: true },
+      backups: { daily: 1 },
+    };
+    const paidRow = {
+      ...freeRow,
+      project_id: "paid-project",
+      storage_service_class: "paying",
+      storage_account_id: "paid-account",
+    };
+    listProjectMaintenanceSchedulesMock
+      .mockResolvedValueOnce([freeRow])
+      .mockResolvedValue([paidRow]);
+    runScheduledBackupMaintenanceMock
+      .mockReturnValueOnce(freeBackupRunning)
+      .mockResolvedValue({ created: true });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    const running = runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "free-project" }),
+    );
+
+    expect(
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" }),
+    ).toBe(false);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
+
+    finishFreeBackup({ created: true });
+    await running;
+    expect(
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" }),
+    ).toBe(true);
+    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "paid-project" }),
+    );
+  });
 });
