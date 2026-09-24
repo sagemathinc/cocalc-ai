@@ -19,7 +19,7 @@ import {
   PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
   recoveryDelayExceeds,
 } from "@cocalc/util/consts/project-recovery";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
@@ -593,7 +593,7 @@ export async function getProjectRecoveryStatusLocal(
     if (payer) {
       try {
         status.storage_service_class = storageServiceClassFromMembership(
-          await resolveMembershipForAccount(payer),
+          await resolveRuntimeMembership(payer),
         );
       } catch (err) {
         logger.warn("unable to classify recovery service funding", {

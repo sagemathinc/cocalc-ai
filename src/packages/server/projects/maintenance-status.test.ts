@@ -4,11 +4,11 @@
  */
 
 const queryMock = jest.fn();
-const resolveMembershipForAccountMock = jest.fn();
+const resolveRuntimeMembershipMock = jest.fn();
 
-jest.mock("@cocalc/server/membership/resolve", () => ({
-  resolveMembershipForAccount: (...args: any[]) =>
-    resolveMembershipForAccountMock(...args),
+jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
+  resolveRuntimeMembership: (...args: any[]) =>
+    resolveRuntimeMembershipMock(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -26,7 +26,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
   beforeEach(() => {
     jest.resetModules();
     queryMock.mockReset();
-    resolveMembershipForAccountMock.mockReset();
+    resolveRuntimeMembershipMock.mockReset();
   });
 
   async function statusFor({
@@ -148,7 +148,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
   });
 
   it("classifies a critical recovery breach using the storage payer", async () => {
-    resolveMembershipForAccountMock.mockResolvedValue({
+    resolveRuntimeMembershipMock.mockResolvedValue({
       source: "subscription",
       subscription_cost: 10,
     });
@@ -163,9 +163,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       },
     });
     expect(status.storage_service_class).toBe("paying");
-    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
-      "storage-payer",
-    );
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("storage-payer");
   });
 
   it("rejects a snapshot success report without a recovery point", async () => {

@@ -6,9 +6,11 @@
 const settings = jest.fn();
 const query = jest.fn();
 const membership = jest.fn();
-const sendMessage = jest.fn();
+const eventGraph = jest.fn();
+const accountHome = jest.fn();
 const currentStatus = jest.fn();
 const ensureTable = jest.fn();
+const eventIds = new Set<string>();
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: () => settings(),
@@ -17,20 +19,20 @@ jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: (...args: unknown[]) => query(...args) }),
 }));
+jest.mock("@cocalc/database/postgres/notifications-core", () => ({
+  createNotificationEventGraph: (...args: unknown[]) => eventGraph(...args),
+}));
 jest.mock("@cocalc/server/bay-directory", () => ({
   getSingleBayInfo: () => ({ bay_id: "bay-1" }),
+  resolveAccountHomeBay: (...args: unknown[]) => accountHome(...args),
 }));
 jest.mock("@cocalc/server/hub/site-url", () => ({
   __esModule: true,
   default: (path: string) =>
     Promise.resolve(`https://staging2.cocalc.dev/${path}`),
 }));
-jest.mock("@cocalc/server/membership/resolve", () => ({
-  resolveMembershipForAccount: (...args: unknown[]) => membership(...args),
-}));
-jest.mock("@cocalc/server/messages/send", () => ({
-  __esModule: true,
-  default: (...args: unknown[]) => sendMessage(...args),
+jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
+  resolveRuntimeMembership: (...args: unknown[]) => membership(...args),
 }));
 jest.mock("./maintenance-status", () => ({
   ensureProjectMaintenanceStatusTable: () => ensureTable(),
@@ -49,6 +51,7 @@ const checkedAt = new Date("2026-09-24T12:30:01.000Z");
 
 beforeEach(() => {
   jest.clearAllMocks();
+  eventIds.clear();
   settings.mockResolvedValue({
     project_recovery_customer_warnings_enabled: false,
   });
@@ -60,8 +63,21 @@ beforeEach(() => {
     snapshot_due_at: due,
     backup_due_at: null,
   });
-  sendMessage.mockResolvedValue(1);
-  query.mockImplementation((sql: string) => {
+  accountHome.mockImplementation(({ account_id }: { account_id: string }) =>
+    Promise.resolve({
+      home_bay_id: account_id === collaboratorId ? "bay-2" : "bay-1",
+    }),
+  );
+  eventGraph.mockImplementation((input: { event_id: string }) => {
+    eventIds.add(input.event_id);
+    return Promise.resolve({});
+  });
+  query.mockImplementation((sql: string, params: unknown[]) => {
+    if (sql.includes("FROM notification_events")) {
+      return Promise.resolve({
+        rows: eventIds.has(`${params[0]}`) ? [{}] : [],
+      });
+    }
     if (sql.includes("LEFT JOIN project_maintenance_status")) {
       return Promise.resolve({
         rows: [
@@ -102,10 +118,10 @@ test("the disabled switch performs no inventory scan or delivery", async () => {
   expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
     enabled: false,
     scanned: 0,
-    notices_checked: 0,
+    notices_sent: 0,
   });
   expect(query).not.toHaveBeenCalled();
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
 });
 
 test("an overdue paid snapshot warns current owners and collaborators with a Recovery link", async () => {
@@ -117,35 +133,61 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
   expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
     enabled: true,
     scanned: 1,
-    notices_checked: 2,
+    notices_sent: 2,
   });
   expect(membership).toHaveBeenCalledWith(ownerId);
-  expect(sendMessage).toHaveBeenCalledTimes(2);
-  expect(sendMessage).toHaveBeenCalledWith(
+  expect(eventGraph).toHaveBeenCalledTimes(2);
+  expect(eventGraph).toHaveBeenCalledWith(
     expect.objectContaining({
-      to_ids: [ownerId],
-      subject: `Project recovery warning: snapshot: ${projectId}: ${due}`,
-      body: expect.stringContaining(
-        `https://staging2.cocalc.dev/projects/${projectId}/settings#recovery`,
-      ),
-      dedupMinutes: 30 * 24 * 60,
-      dedupBySubject: true,
-      requireAccountNoticeDelivery: true,
+      kind: "account_notice",
+      source_bay_id: "bay-1",
+      source_project_id: projectId,
+      payload_json: expect.objectContaining({
+        title: `Project recovery warning: snapshot: ${projectId}: ${due}`,
+        body_markdown: expect.stringContaining(
+          `https://staging2.cocalc.dev/projects/${projectId}/settings#recovery`,
+        ),
+        severity: "warning",
+        action_link: `/projects/${projectId}/settings#recovery`,
+      }),
+      targets: [
+        expect.objectContaining({
+          target_account_id: ownerId,
+          target_home_bay_id: "bay-1",
+        }),
+      ],
     }),
   );
-  expect(sendMessage).toHaveBeenCalledWith(
-    expect.objectContaining({ to_ids: [collaboratorId] }),
+  expect(eventGraph).toHaveBeenCalledWith(
+    expect.objectContaining({
+      targets: [
+        expect.objectContaining({
+          target_account_id: collaboratorId,
+          target_home_bay_id: "bay-2",
+        }),
+      ],
+    }),
   );
   const { renderNotificationEmailMarkdownText } =
     await import("@cocalc/server/notifications/email-format");
   expect(
-    renderNotificationEmailMarkdownText(sendMessage.mock.calls[0][0].body),
+    renderNotificationEmailMarkdownText(
+      eventGraph.mock.calls[0][0].payload_json.body_markdown,
+    ),
   ).toContain(
     `https://staging2.cocalc.dev/projects/${projectId}/settings#recovery`,
   );
-  expect(sendMessage).not.toHaveBeenCalledWith(
-    expect.objectContaining({ to_ids: [viewerId] }),
-  );
+  expect(
+    eventGraph.mock.calls.some(([arg]) =>
+      arg.targets.some((target) => target.target_account_id === viewerId),
+    ),
+  ).toBe(false);
+  expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
+    enabled: true,
+    scanned: 1,
+    notices_sent: 0,
+  });
+  expect(eventGraph).toHaveBeenCalledTimes(2);
 });
 
 test("the paid snapshot target must actually be exceeded", async () => {
@@ -158,7 +200,7 @@ test("the paid snapshot target must actually be exceeded", async () => {
     checkedAt: new Date("2026-09-24T12:30:00.000Z"),
   });
   expect(membership).not.toHaveBeenCalled();
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
 });
 
 test("an off-host backup warning starts only after the six-hour target", async () => {
@@ -191,14 +233,16 @@ test("an off-host backup warning starts only after the six-hour target", async (
   await runProjectRecoveryCustomerWarningCheck({
     checkedAt: new Date("2026-09-24T18:00:00.000Z"),
   });
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
   await runProjectRecoveryCustomerWarningCheck({
     checkedAt: new Date("2026-09-24T18:00:01.000Z"),
   });
-  expect(sendMessage).toHaveBeenCalledWith(
+  expect(eventGraph).toHaveBeenCalledWith(
     expect.objectContaining({
-      subject: `Project recovery warning: backup: ${projectId}: ${due}`,
-      body: expect.stringContaining("off-host backup"),
+      payload_json: expect.objectContaining({
+        title: `Project recovery warning: backup: ${projectId}: ${due}`,
+        body_markdown: expect.stringContaining("off-host backup"),
+      }),
     }),
   );
 });
@@ -211,13 +255,13 @@ test("free funding and newly confirmed recovery both suppress warnings", async (
   const { runProjectRecoveryCustomerWarningCheck } =
     await import("./recovery-customer-warning-maintenance");
   await runProjectRecoveryCustomerWarningCheck({ checkedAt });
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
   currentStatus.mockResolvedValueOnce({
     snapshot_due_at: null,
     backup_due_at: null,
   });
   await runProjectRecoveryCustomerWarningCheck({ checkedAt });
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
 });
 
 test("an ownership change before delivery suppresses the stale candidate", async () => {
@@ -242,5 +286,23 @@ test("an ownership change before delivery suppresses the stale candidate", async
     await import("./recovery-customer-warning-maintenance");
   await runProjectRecoveryCustomerWarningCheck({ checkedAt });
   expect(membership).not.toHaveBeenCalled();
-  expect(sendMessage).not.toHaveBeenCalled();
+  expect(eventGraph).not.toHaveBeenCalled();
+});
+
+test("overlapping workers treat an already committed notice as a duplicate", async () => {
+  settings.mockResolvedValue({
+    project_recovery_customer_warnings_enabled: true,
+  });
+  eventGraph.mockImplementation((input: { event_id: string }) => {
+    eventIds.add(input.event_id);
+    return Promise.reject({ code: "23505" });
+  });
+  const { runProjectRecoveryCustomerWarningCheck } =
+    await import("./recovery-customer-warning-maintenance");
+  expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
+    enabled: true,
+    scanned: 1,
+    notices_sent: 0,
+  });
+  expect(eventIds.size).toBe(2);
 });

@@ -5,15 +5,18 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { createNotificationEventGraph } from "@cocalc/database/postgres/notifications-core";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getSingleBayInfo } from "@cocalc/server/bay-directory";
+import {
+  getSingleBayInfo,
+  resolveAccountHomeBay,
+} from "@cocalc/server/bay-directory";
 import siteUrl from "@cocalc/server/hub/site-url";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
 } from "@cocalc/server/membership/storage-service-class";
-import sendMessage from "@cocalc/server/messages/send";
 import {
   PAYING_BACKUP_OBJECTIVE_MS,
   PAYING_SNAPSHOT_OBJECTIVE_MS,
@@ -24,6 +27,7 @@ import {
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
 import { isValidUUID } from "@cocalc/util/misc";
+import { v5 as uuidv5 } from "uuid";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryStatusLocal,
@@ -35,7 +39,7 @@ const logger = getLogger("server:projects:recovery-customer-warnings");
 const CHECK_INTERVAL_MS = 5 * 60_000;
 const PAGE_SIZE = 500;
 const MAX_PROJECTS_PER_CHECK = 5000;
-const NOTICE_DEDUP_MINUTES = 30 * 24 * 60;
+const NOTICE_EVENT_NAMESPACE = "56cde593-74c2-4a98-8cca-3b27e51b6d0e";
 
 type Kind = "snapshot" | "backup";
 type Users = Record<string, { group?: string }>;
@@ -109,6 +113,76 @@ async function notice({
   };
 }
 
+async function deliverWarning({
+  bayId,
+  projectId,
+  recipient,
+  kind,
+  due,
+}: {
+  bayId: string;
+  projectId: string;
+  recipient: string;
+  kind: Kind;
+  due: string;
+}): Promise<boolean> {
+  const eventId = uuidv5(
+    `${projectId}:${kind}:${due}:${recipient}`,
+    NOTICE_EVENT_NAMESPACE,
+  );
+  const existing = await getPool().query(
+    "SELECT event_id FROM notification_events WHERE event_id=$1",
+    [eventId],
+  );
+  if (existing.rows.length) return false;
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id: recipient,
+    user_account_id: recipient,
+  });
+  if (!home_bay_id) throw Error("recipient account home unavailable");
+  const message = await notice({ projectId, kind, due });
+  const action_link = `/projects/${projectId}/settings#recovery`;
+  const summary = {
+    title: message.subject,
+    body_markdown: message.body,
+    severity: "warning",
+    notice_type: "project_recovery_warning",
+    origin_label: "Project Recovery",
+    action_link,
+    action_label: "Review recovery status",
+  };
+  try {
+    await createNotificationEventGraph({
+      event_id: eventId,
+      kind: "account_notice",
+      source_bay_id: bayId,
+      source_project_id: projectId,
+      origin_kind: "project",
+      payload_json: summary,
+      targets: [
+        {
+          target_account_id: recipient,
+          target_home_bay_id: home_bay_id,
+          dedupe_key: `project-recovery-warning:${eventId}`,
+          summary_json: summary,
+        },
+      ],
+    });
+    return true;
+  } catch (err) {
+    // A retiring primary worker can overlap its replacement. The event's
+    // primary key makes this race harmless without dropping another failure.
+    if ((err as { code?: string })?.code === "23505") {
+      const { rows } = await getPool().query(
+        "SELECT event_id FROM notification_events WHERE event_id=$1",
+        [eventId],
+      );
+      if (rows.length) return false;
+    }
+    throw err;
+  }
+}
+
 let cursor: string | null = null;
 let timer: NodeJS.Timeout | undefined;
 let running = false;
@@ -121,16 +195,16 @@ export async function runProjectRecoveryCustomerWarningCheck({
 } = {}): Promise<{
   enabled: boolean;
   scanned: number;
-  notices_checked: number;
+  notices_sent: number;
 }> {
   const settings = await getServerSettings();
   if (settings.project_recovery_customer_warnings_enabled !== true) {
-    return { enabled: false, scanned: 0, notices_checked: 0 };
+    return { enabled: false, scanned: 0, notices_sent: 0 };
   }
   await ensureProjectMaintenanceStatusTable();
   const bayId = getSingleBayInfo().bay_id;
   let scanned = 0;
-  let noticesChecked = 0;
+  let noticesSent = 0;
   while (scanned < MAX_PROJECTS_PER_CHECK) {
     const { rows } = await getPool().query<Candidate>(
       `SELECT p.project_id, p.last_backup,
@@ -180,7 +254,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
           users,
         });
         if (!payer || !isValidUUID(payer)) continue;
-        const membership = await resolveMembershipForAccount(payer);
+        const membership = await resolveRuntimeMembership(payer);
         if (storageServiceClassFromMembership(membership) !== "paying") {
           continue;
         }
@@ -200,21 +274,19 @@ export async function runProjectRecoveryCustomerWarningCheck({
               ? current.snapshot_due_at
               : current.backup_due_at;
           if (currentDue !== due) continue;
-          const message = await notice({
-            projectId: row.project_id,
-            kind,
-            due,
-          });
           for (const recipient of recipients) {
             try {
-              await sendMessage({
-                to_ids: [recipient],
-                ...message,
-                dedupMinutes: NOTICE_DEDUP_MINUTES,
-                dedupBySubject: true,
-                requireAccountNoticeDelivery: true,
-              });
-              noticesChecked++;
+              if (
+                await deliverWarning({
+                  bayId,
+                  projectId: row.project_id,
+                  recipient,
+                  kind,
+                  due,
+                })
+              ) {
+                noticesSent++;
+              }
             } catch (err) {
               logger.warn("unable to deliver project recovery warning", {
                 project_id: row.project_id,
@@ -237,7 +309,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
       break;
     }
   }
-  return { enabled: true, scanned, notices_checked: noticesChecked };
+  return { enabled: true, scanned, notices_sent: noticesSent };
 }
 
 export function startProjectRecoveryCustomerWarningMaintenance(): void {
