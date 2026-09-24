@@ -62,6 +62,7 @@ import {
   type CodexThreadConfig,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
+import { movePostedMessageToAgent } from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
@@ -1952,6 +1953,41 @@ export default function Message({
         },
       },
     ];
+
+    if (
+      field<boolean>(message, "post_only") &&
+      showEditButton &&
+      isCodexThread &&
+      messageThreadId &&
+      actions
+    ) {
+      overflowItems.unshift({
+        key: "send-posted-to-agent",
+        label: "Send to agent",
+        onClick: () => {
+          void movePostedMessageToAgent({
+            actions,
+            message,
+            threadId: messageThreadId,
+            content: newest_content(message),
+          })
+            .then((result) => {
+              if (result === "failed") {
+                antdMessage.error("Could not send this posted message.");
+              } else if (result === "sent") {
+                antdMessage.warning(
+                  "Sent to the agent, but the original post could not be removed.",
+                );
+              }
+            })
+            .catch(() =>
+              antdMessage.error(
+                "Could not finish moving this posted message. Check the thread before retrying.",
+              ),
+            );
+        },
+      });
+    }
 
     if (showShowActivityButton && onExpandedCodexActivityChange) {
       overflowItems.push({
