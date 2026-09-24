@@ -207,6 +207,13 @@ describe("chat speech request validation", () => {
     ).resolves.toBe(1_000);
   });
 
+  it("measures an AAC recording in MP4 without an optional runtime parser", async () => {
+    const audio = readFileSync(join(__dirname, "fixtures/silent-aac.m4a"));
+    await expect(
+      measureChatSpeechAudioDuration({ contentType: "audio/mp4", audio }),
+    ).resolves.toBe(1_000);
+  });
+
   it("accepts a real Chromium streaming WebM without duration metadata", async () => {
     const audio = readFileSync(
       join(__dirname, "fixtures/chromium-streaming-opus.webm"),

@@ -235,6 +235,8 @@ export default function MultiMarkdownInput({
       setSelectionFromMarkdownPosition,
       allowNextValueUpdateWhileFocused: () =>
         richTextControlRef.current?.allowNextValueUpdateWhileFocused?.(),
+      setValueNow: (value: string) =>
+        richTextControlRef.current?.setValueNow?.(value),
       cancelPendingUploads: () =>
         richTextControlRef.current?.cancelPendingUploads?.(),
     };

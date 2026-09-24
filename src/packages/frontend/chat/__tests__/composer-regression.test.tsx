@@ -221,14 +221,17 @@ describe("ChatInput send lifecycle regressions", () => {
     }
 
     render(<Harness />);
+    const setValueNow = jest.fn();
     lastMarkdownInputProps.controlRef.current = {
       allowNextValueUpdateWhileFocused: allowFocusedValueUpdate,
+      setValueNow,
       getMarkdownPositionForSelection: () => null,
     };
     act(() => {
       expect(control.current?.insertText("spoken words")).toBe(true);
     });
     expect(allowFocusedValueUpdate).toHaveBeenCalledTimes(1);
+    expect(setValueNow).toHaveBeenCalledWith("spoken words");
     expect(lastMarkdownInputProps.value).toBe("spoken words");
   });
 
