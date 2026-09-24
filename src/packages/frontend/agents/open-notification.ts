@@ -7,7 +7,9 @@ export async function openAgentNotification(
   path: string,
   thread?: string,
 ): Promise<boolean> {
-  if (!thread) return false;
+  if (!thread || redux.getStore("page")?.get("active_top_tab") !== "agents") {
+    return false;
+  }
   let agents;
   try {
     ({ agents } = await personalAgentApi().listNamedAgents({}));

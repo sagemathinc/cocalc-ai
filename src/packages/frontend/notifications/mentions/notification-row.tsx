@@ -183,7 +183,13 @@ export function NotificationRow(props: Props) {
     try {
       const { openAgentNotification } =
         await import("../../agents/open-notification");
-      if (await openAgentNotification(project_id, path, fragmentId?.thread)) {
+      if (
+        await openAgentNotification(
+          project_id,
+          path,
+          thread_id ?? fragmentId?.thread,
+        )
+      ) {
         markReadState("read");
         return;
       }
