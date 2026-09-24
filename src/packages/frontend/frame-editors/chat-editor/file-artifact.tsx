@@ -178,12 +178,14 @@ function SavedFileArtifact({
   onComment,
   projectId,
   localComments = false,
+  fontSize,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
   projectId?: string;
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
   localComments?: boolean;
+  fontSize?: number;
 }) {
   const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
@@ -410,7 +412,7 @@ function SavedFileArtifact({
           )
             event.preventDefault();
         }}
-        style={{ overflow: "auto", flex: "1 1 0", minHeight: 0 }}
+        style={{ overflow: "auto", flex: "1 1 0", minHeight: 0, minWidth: 0 }}
       >
         <FileContext.Provider
           value={{
@@ -442,6 +444,7 @@ function SavedFileArtifact({
               content={loaded.content}
               path={path}
               rawUrl=""
+              fontSize={fontSize}
               fileContext={{
                 ...context,
                 noSanitize: false,

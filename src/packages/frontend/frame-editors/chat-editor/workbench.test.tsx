@@ -3,7 +3,7 @@ import { useState } from "react";
 import { fromJS } from "immutable";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
-import { Workbench } from "./workbench";
+import { Workbench, workbench } from "./workbench";
 import { focusChatFrameInput } from "./actions";
 import { refreshPR } from "./github-pr-operations";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -66,6 +66,13 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
     />
   ),
 }));
+
+test("artifact frames expose the standard font zoom actions", () => {
+  expect(workbench.commands?.increase_font_size).toBe(true);
+  expect(workbench.commands?.decrease_font_size).toBe(true);
+  expect(workbench.buttons?.increase_font_size).toBe(true);
+  expect(workbench.buttons?.decrease_font_size).toBe(true);
+});
 
 test.each([
   ["other-project", "other.chat", "thread"],

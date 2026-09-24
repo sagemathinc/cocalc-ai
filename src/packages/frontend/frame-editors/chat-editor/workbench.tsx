@@ -45,7 +45,7 @@ import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
 import { ArtifactNameControl } from "@cocalc/frontend/agents/artifact-name-control";
-import { path_split } from "@cocalc/util/misc";
+import { path_split, set } from "@cocalc/util/misc";
 const AppearanceEditor = lazyWithRetry(
   () => import("@cocalc/frontend/chat/artifact-appearance-editor"),
   "artifact appearance",
@@ -91,6 +91,8 @@ export const workbench: EditorDescription = {
   hide_public: true,
   hide_frame_type: true,
   component: (props) => <WorkbenchSurface {...props} />,
+  commands: set(["decrease_font_size", "increase_font_size"]),
+  buttons: set(["decrease_font_size", "increase_font_size"]),
 };
 
 export function WorkbenchSurface(props: WorkbenchProps) {
@@ -475,6 +477,7 @@ function WorkbenchDocument({
       >
         <FileArtifact
           projectId={project_id}
+          fontSize={font_size}
           key={`${artifact.thread_id}:${artifact.artifact_id}`}
           artifact={artifact}
           historical={historical}
@@ -780,7 +783,10 @@ function WorkbenchDocument({
                 }
               }}
             >
-              <StaticMarkdown value={value.input} />
+              <StaticMarkdown
+                value={value.input}
+                style={{ fontSize: font_size, overflowWrap: "anywhere" }}
+              />
             </div>
           )}
         </FileContext.Provider>

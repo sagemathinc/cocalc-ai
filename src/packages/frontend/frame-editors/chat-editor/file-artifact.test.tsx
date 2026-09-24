@@ -24,11 +24,12 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 }));
 jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
   __esModule: true,
-  default: ({ content, fileContext, rawUrl, style }) => (
+  default: ({ content, fileContext, rawUrl, style, fontSize }) => (
     <div
       data-testid="preview"
       data-sanitized={String(fileContext.noSanitize === false)}
       data-raw-url={rawUrl}
+      data-font-size={fontSize}
       style={style}
     >
       {content}
@@ -98,8 +99,9 @@ beforeEach(() => {
 });
 
 test("previews saved text, opens the real file, and keeps the preview mounted on refresh", async () => {
-  render(<FileArtifact artifact={artifact} historical />);
+  render(<FileArtifact artifact={artifact} historical fontSize={20} />);
   const preview = await screen.findByTestId("preview");
+  expect(preview).toHaveAttribute("data-font-size", "20");
   expect(preview).toHaveTextContent("Saved policy");
   expect(preview.dataset.sanitized).toBe("true");
   expect(screen.getByRole("note")).toHaveTextContent(
