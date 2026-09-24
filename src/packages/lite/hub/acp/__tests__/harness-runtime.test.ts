@@ -231,7 +231,7 @@ test("queued ACP delivery preserves admitted settings and exact existing session
   ).toThrow();
 });
 
-test("generic RPC delivery permits queued envelopes but never live guidance", () => {
+test("generic RPC delivery permits guidance under the execution principal", () => {
   const value = request();
   value.chat!.agent_message = true;
   expect(() => prepareHarnessRequest(value)).toThrow();
@@ -240,10 +240,12 @@ test("generic RPC delivery permits queued envelopes but never live guidance", ()
     guidance: false,
   });
   value.chat!.agent_rpc_execution!.guidance = true;
-  expect(() => prepareHarnessRequest(value)).toThrow();
+  expect(prepareHarnessRequest(value).chat!.agent_rpc_execution?.guidance).toBe(
+    true,
+  );
   value.chat!.agent_rpc_execution!.guidance = false;
   value.chat!.send_mode = "immediate";
-  expect(() => prepareHarnessRequest(value)).toThrow();
+  expect(prepareHarnessRequest(value).chat!.send_mode).toBe("immediate");
 });
 
 test("unsupported runtime versions, funding and recovery fail closed", () => {

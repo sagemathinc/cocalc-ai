@@ -97,6 +97,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
         },
+        ...(process.argv.includes("--steering")
+          ? { _meta: { steering: { supported: true } } }
+          : {}),
         authMethods: [],
       });
     case "session/new":
@@ -430,6 +433,22 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
         pendingPrompt = undefined;
       }
+      return;
+    case "_session/steering":
+      if (!process.argv.includes("--steering"))
+        return send({
+          id: message.id,
+          error: { code: -32601, message: "Unsupported method" },
+        });
+      if (pendingPrompt == null)
+        return result(message.id, {
+          outcome: "promptRequired",
+          reason: "noRunningTurn",
+        });
+      result(message.id, { outcome: "injected" });
+      update(`steered: ${message.params.prompt[0].text}`);
+      result(pendingPrompt, { stopReason: "end_turn" });
+      pendingPrompt = undefined;
       return;
     default:
       if (message.id != null)

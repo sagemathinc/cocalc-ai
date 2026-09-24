@@ -129,8 +129,6 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.recovery_parent_op_id ||
     request.chat.recovery_parent_op_id ||
     request.chat.automation_id ||
-    request.chat.send_mode === "immediate" ||
-    request.chat.agent_rpc_execution?.guidance ||
     (request.chat.agent_message && !request.chat.agent_rpc_execution)
   )
     throw Error("Unsupported ACP harness request options");

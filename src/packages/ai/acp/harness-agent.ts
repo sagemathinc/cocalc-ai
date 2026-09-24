@@ -4,13 +4,19 @@ import {
   disposeFailedHarness,
 } from "./harness-client";
 import type { HarnessBinding, HarnessLauncher } from "./harness-client";
-import type { AcpAgent, AcpEvaluateRequest } from "./types";
+import type {
+  AcpAgent,
+  AcpEvaluateRequest,
+  AcpSteerRequest,
+  AcpSteerResult,
+} from "./types";
 import {
   parseAcpHarnessCredential,
   parseAcpHarnessProfile,
 } from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
 import { harnessPrompt } from "./harness-context";
+import { assertSameTurnPrincipal } from "./turn-principal";
 import type {
   CodexAttentionContext,
   CodexAttentionHandler,
@@ -234,6 +240,38 @@ export class HarnessAgent implements AcpAgent {
 
   hasRunningTurn(threadId: string): boolean {
     return this.busy && threadId === this.client?.sessionId;
+  }
+
+  async steer(
+    threadId: string,
+    request: AcpSteerRequest,
+  ): Promise<AcpSteerResult> {
+    if (threadId !== this.client?.sessionId) return { state: "missing" };
+    assertSameTurnPrincipal(this.binding.accountId, request.account_id);
+    if (
+      request.project_id !== this.binding.projectId ||
+      request.chat.project_id !== this.binding.projectId ||
+      request.chat.path !== this.conversation.path ||
+      request.chat.thread_id !== this.conversation.threadId
+    )
+      throw Object.assign(Error("ACP guidance conversation mismatch"), {
+        code: "principal_mismatch",
+      });
+    if (
+      !this.busy ||
+      this.closed ||
+      !this.client?.running ||
+      !this.client.supportsSteering ||
+      request.local_images?.length ||
+      /(?:<img\b[^>]*\bsrc=|!\[[^\]]*\]\()[^\n]*\/blobs\//i.test(request.prompt)
+    )
+      return { state: "not_steerable", threadId };
+    await this.validateAuthority?.(this.binding);
+    const outcome = await this.client.steer(request.prompt);
+    return {
+      state: outcome === "injected" ? "steered" : "not_steerable",
+      threadId,
+    };
   }
 
   async interruptOutstanding(threadId: string): Promise<boolean> {

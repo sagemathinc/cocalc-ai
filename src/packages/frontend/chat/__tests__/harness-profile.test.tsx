@@ -175,12 +175,10 @@ test("existing harness settings explain limitations before capability discovery"
   await screen.findByRole("dialog", { name: "ACP harness settings" });
   expect(
     screen.getByText(
-      /Text and image prompts\. Agent Networks support queued messages/,
+      /Text and image prompts\. Live guidance works when the harness advertises it/,
     ),
   ).toBeTruthy();
-  expect(
-    screen.getByText(/Automations and live guidance are not supported yet/),
-  ).toBeTruthy();
+  expect(screen.getByText(/Automations are not supported yet/)).toBeTruthy();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(trigger);
@@ -249,9 +247,9 @@ test("profile fields have visible labels and support keyboard editing", async ()
   }
   render(<Form />);
   expect(
-    screen.getByText(/Agent Networks support queued messages/),
+    screen.getByText(/Live guidance works when the harness advertises it/),
   ).toBeTruthy();
-  expect(screen.getByText(/live guidance are not supported/)).toBeTruthy();
+  expect(screen.getByText(/otherwise messages queue/)).toBeTruthy();
   const user = userEvent.setup();
   await user.tab();
   expect(document.activeElement).toBe(

@@ -612,6 +612,46 @@ test("harness sends pasted images as ACP image blocks", async (t) => {
   );
 });
 
+test("harness guidance injects into a running turn and never starts an idle one", async (t) => {
+  const { agent, request, events } = adapter(t, ["--steering"]);
+  let ready;
+  const started = new Promise((resolve) => (ready = resolve));
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.text === "working") ready();
+    },
+  });
+  await started;
+  const guidance = { ...request, prompt: "use the safer path" };
+  await assert.rejects(
+    agent.steer("fixture-session", { ...guidance, account_id: "other" }),
+    { code: "principal_mismatch" },
+  );
+  assert.deepEqual(
+    await agent.steer("fixture-session", {
+      ...guidance,
+      prompt: "See ![image](/blobs/paste.png?uuid=123)",
+    }),
+    { state: "not_steerable", threadId: "fixture-session" },
+  );
+  assert.deepEqual(await agent.steer("fixture-session", guidance), {
+    state: "steered",
+    threadId: "fixture-session",
+  });
+  await run;
+  assert.equal(
+    events.at(-1).finalResponse,
+    "workingsteered: use the safer path",
+  );
+  assert.deepEqual(await agent.steer("fixture-session", guidance), {
+    state: "not_steerable",
+    threadId: "fixture-session",
+  });
+});
+
 test("fixture recognizes settings commands after the worker queue-delay note", async (t) => {
   const { agent, request, events } = adapter(t);
   await agent.evaluate({

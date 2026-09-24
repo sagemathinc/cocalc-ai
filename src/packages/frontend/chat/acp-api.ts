@@ -360,10 +360,6 @@ export async function processAcpLLM({
   try {
     if (isHarnessThread)
       runtime = parseAcpHarnessRuntime(threadMetadata!.agent_runtime);
-    if (runtime && sendMode === "immediate")
-      throw Error(
-        "This ACP harness does not support live guidance; queue a new turn instead",
-      );
   } catch (error) {
     runtimeError = error;
   }

@@ -266,6 +266,12 @@ export class AcpHarnessClient {
   get running(): boolean {
     return this.active;
   }
+  get supportsSteering(): boolean {
+    return (
+      (this.info._meta as { steering?: { supported?: boolean } } | undefined)
+        ?.steering?.supported === true
+    );
+  }
   get controls(): HarnessSessionControls {
     return harnessSessionControls(this.session ?? {});
   }
@@ -518,6 +524,28 @@ export class AcpHarnessClient {
       this.questionAbort?.abort();
       this.listener = undefined;
     }
+  }
+
+  /** Only inject into a running prompt; never let an idle steer start a detached turn. */
+  async steer(text: string): Promise<"injected" | "idle"> {
+    if (!this.supportsSteering || !this.active || !this.session) return "idle";
+    if (
+      typeof text !== "string" ||
+      !text.trim() ||
+      Buffer.byteLength(text) > 512 * 1024
+    )
+      throw Error("Invalid ACP guidance size");
+    const response = (await this.request(
+      this.connection.extMethod("_session/steering", {
+        sessionId: this.session.sessionId,
+        prompt: [{ type: "text", text }],
+        _meta: { steering: { idleBehavior: "promptRequired" } },
+      }),
+      true,
+    )) as { outcome?: string };
+    if (response.outcome === "injected") return "injected";
+    if (response.outcome === "promptRequired") return "idle";
+    throw new HarnessError("outcome_unknown", "Unexpected ACP guidance result");
   }
 
   private onUpdate(notification: SessionNotification): Promise<void> {
