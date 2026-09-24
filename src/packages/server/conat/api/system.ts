@@ -2446,11 +2446,13 @@ export async function getLaunchHealth({
                   ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
                   : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
                 ...recoveryNotificationConfigurationIssues,
-                settings?.project_recovery_customer_warnings_enabled
+                ...(settings?.project_recovery_customer_warnings_enabled
                   ? customerWarningScan
-                    ? `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned; ${customerWarningScan.notices_sent} notices sent`
-                    : "Customer warning scan has not completed"
-                  : "Customer warnings disabled",
+                    ? [
+                        `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned; ${customerWarningScan.notices_sent} notices sent`,
+                      ]
+                    : []
+                  : ["Customer warnings disabled"]),
                 ...(customerWarningScanProblem
                   ? [customerWarningScanProblem]
                   : []),
