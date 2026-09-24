@@ -42,3 +42,26 @@ it("offers explicit delivery actions and restores trigger focus on Escape", asyn
   fireEvent.keyDown(menu, { key: "Escape", keyCode: 27 });
   await waitFor(() => expect(document.activeElement).toBe(trigger));
 });
+
+it("offers Queue only during a running turn and selects it by keyboard", async () => {
+  function Harness() {
+    const [value, setValue] = useState<ComposerDelivery>("agent");
+    return (
+      <ComposerDeliverySelector value={value} onChange={setValue} canQueue />
+    );
+  }
+  render(<Harness />);
+  const trigger = screen.getByRole("button", {
+    name: "Message delivery: To Agent",
+  });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const queue = await screen.findByRole("menuitem", {
+    name: /Queue Alt\+Enter/,
+  });
+  act(() => queue.focus());
+  fireEvent.keyDown(queue, { key: "Enter", keyCode: 13 });
+  expect(
+    screen.getByRole("button", { name: "Message delivery: Queue" }),
+  ).toHaveFocus();
+});

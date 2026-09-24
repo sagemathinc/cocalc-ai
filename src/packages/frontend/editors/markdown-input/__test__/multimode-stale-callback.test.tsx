@@ -41,17 +41,21 @@ describe("MultiMarkdownInput stale callback guard", () => {
 
   it("ignores stale editor callbacks from an old cacheId", () => {
     const onChange = jest.fn();
+    const onAltEnter = jest.fn();
     const { rerender } = render(
       <MultiMarkdownInput
         fixedMode="editor"
         cacheId="draft-a"
         value=""
         onChange={onChange}
+        onAltEnter={onAltEnter}
+        disableModeSwitchShortcuts
       />,
     );
     expect(latestEditableProps).toBeTruthy();
     const staleSetValue = latestEditableProps.actions.set_value;
     const staleShiftEnter = latestEditableProps.actions.shiftEnter;
+    const staleAltEnter = latestEditableProps.actions.altEnter;
 
     rerender(
       <MultiMarkdownInput
@@ -59,23 +63,32 @@ describe("MultiMarkdownInput stale callback guard", () => {
         cacheId="draft-b"
         value=""
         onChange={onChange}
+        onAltEnter={onAltEnter}
+        disableModeSwitchShortcuts
       />,
     );
     expect(latestEditableProps).toBeTruthy();
     const activeSetValue = latestEditableProps.actions.set_value;
     const activeShiftEnter = latestEditableProps.actions.shiftEnter;
+    const activeAltEnter = latestEditableProps.actions.altEnter;
 
     act(() => {
       staleSetValue("stale");
       staleShiftEnter("stale-shift");
+      staleAltEnter("stale-queue");
     });
     expect(onChange).not.toHaveBeenCalled();
+    expect(onAltEnter).not.toHaveBeenCalled();
 
     act(() => {
       activeSetValue("fresh");
       activeShiftEnter("fresh-shift");
+      activeAltEnter("fresh-queue");
     });
     expect(onChange).toHaveBeenNthCalledWith(1, "fresh");
     expect(onChange).toHaveBeenNthCalledWith(2, "fresh-shift");
+    expect(onChange).toHaveBeenLastCalledWith("fresh-queue");
+    expect(onAltEnter).toHaveBeenCalledTimes(1);
+    expect(onAltEnter).toHaveBeenCalledWith("fresh-queue");
   });
 });

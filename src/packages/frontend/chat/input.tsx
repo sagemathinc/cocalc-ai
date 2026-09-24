@@ -26,6 +26,7 @@ import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/t
 
 interface Props {
   on_send: (value: string) => void;
+  on_queue?: (value: string) => void;
   on_post?: (value: string) => void;
   on_font_size_change?: (delta: -1 | 1) => void;
   onChange: (value: string, sessionToken?: number) => void;
@@ -150,6 +151,7 @@ export default function ChatInput({
   autoGrowMinHeight,
   input: propsInput,
   on_send,
+  on_queue,
   on_post,
   on_font_size_change,
   onBlur,
@@ -469,6 +471,18 @@ export default function ChatInput({
         publishNotComposing();
         on_send(value);
       }}
+      onAltEnter={
+        on_queue
+          ? (value) => {
+              if (!mountedRef.current || isStaleSessionCallback(sessionToken))
+                return;
+              savePresence.cancel();
+              controlRef.current?.cancelPendingUploads?.();
+              publishNotComposing();
+              on_queue(value);
+            }
+          : undefined
+      }
       onCtrlEnter={(value) => {
         if (
           !on_post ||

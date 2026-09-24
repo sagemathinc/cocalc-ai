@@ -726,7 +726,7 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).not.toHaveBeenCalled();
   });
 
-  it("makes Steer the running-turn primary action and leaves Queue explicit", () => {
+  it("switches the running-turn primary action between Steer and Queue", async () => {
     const onSend = jest.fn();
     const onSendImmediately = jest.fn();
     renderComposer({
@@ -740,9 +740,8 @@ describe("ChatRoomComposer resize handle", () => {
     });
 
     const steer = screen.getByRole("button", { name: "Steer" });
-    const queue = screen.getByRole("button", { name: "Queue" });
     expect(steer.className).toContain("ant-btn-primary");
-    expect(queue.className).not.toContain("ant-btn-primary");
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
 
     act(() => {
       lastChatInputProps.on_send("shift-enter guidance");
@@ -750,7 +749,21 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).toHaveBeenCalledWith("shift-enter guidance");
     expect(onSend).not.toHaveBeenCalled();
 
-    fireEvent.click(queue);
+    act(() => {
+      lastChatInputProps.on_queue("alt-enter guidance");
+    });
+    expect(onSend).toHaveBeenCalledWith("alt-enter guidance");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Queue Alt\+Enter/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Message delivery: Queue" }),
+    ).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(onSend).toHaveBeenCalledWith("guidance");
   });
 
@@ -843,27 +856,43 @@ describe("ChatRoomComposer resize handle", () => {
         "Add files and more",
         "Codex settings",
         "Agent Prompt",
-        "Queue",
         "Message delivery: To Agent",
       ]) {
         expect(within(options).getByRole("button", { name })).toBeEnabled();
       }
       const user = userEvent.setup();
-      const queue = within(options).getByRole("button", { name: "Queue" });
       const delivery = within(options).getByRole("button", {
         name: "Message delivery: To Agent",
       });
-      queue.focus();
+      delivery.focus();
+      await user.keyboard("{Enter}");
+      const queue = await screen.findByRole("menuitem", {
+        name: /Queue Alt\+Enter/,
+      });
+      await user.click(queue);
+      expect(delivery).toHaveFocus();
+      expect(
+        within(options).getByRole("button", {
+          name: "Message delivery: Queue",
+        }),
+      ).toBe(delivery);
+      await user.tab();
+      const queueSubmit = within(row).getByRole("button", {
+        name: "Queue message",
+      });
+      expect(queueSubmit).toHaveFocus();
       await user.keyboard("{Enter}");
       expect(send).toHaveBeenCalledWith("guidance");
-      await user.tab();
+      await user.tab({ shift: true });
       expect(delivery).toHaveFocus();
+      await user.keyboard("{Enter}");
+      await user.click(
+        await screen.findByRole("menuitem", { name: /To Agent Shift\+Enter/ }),
+      );
       await user.tab();
       expect(submit).toHaveFocus();
       await user.keyboard("{Enter}");
       expect(steer).toHaveBeenCalledWith("guidance");
-      await user.tab({ shift: true });
-      expect(delivery).toHaveFocus();
     },
   );
 });

@@ -51,6 +51,7 @@ export interface MultiMarkdownInputProps {
   getValueRef?: MutableRefObject<() => string>;
   onModeChange?: (mode: Mode) => void;
   onShiftEnter?: (value: string) => void;
+  onAltEnter?: (value: string) => void;
   onCtrlEnter?: (value: string) => void;
   onFontSizeChange?: (delta: -1 | 1) => void;
   placeholder?: string;

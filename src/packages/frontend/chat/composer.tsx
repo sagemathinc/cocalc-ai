@@ -178,13 +178,22 @@ export function ChatRoomComposer({
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
-  const canChooseDelivery =
+  const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
+  const canPost =
     on_post != null &&
     (selectedThread
       ? threadMetadata?.agent_kind !== "none" &&
         (isSelectedThreadAI || showGoal)
       : isNewThreadCodex);
-  const postOnly = canChooseDelivery && delivery === "post";
+  const canChooseDelivery = canPost || hasRunningCodexTurn;
+  const postOnly = canPost && delivery === "post";
+  const queueOnly = hasRunningCodexTurn && delivery === "queue";
+  const selectedDelivery = queueOnly ? "queue" : postOnly ? "post" : "agent";
+  useEffect(() => {
+    if (!hasRunningCodexTurn) {
+      setDelivery((current) => (current === "queue" ? "agent" : current));
+    }
+  }, [hasRunningCodexTurn]);
   const showComposerCodexConfig =
     isSelectedThreadAI ||
     showGoal ||
@@ -594,7 +603,6 @@ export function ChatRoomComposer({
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
-  const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
   const handlePrimarySend = hasRunningCodexTurn
     ? handleSendImmediately
     : handleSend;
@@ -827,6 +835,7 @@ export function ChatRoomComposer({
                 input={input}
                 presenceThreadKey={presenceThreadKey}
                 on_send={handlePrimarySend}
+                on_queue={hasRunningCodexTurn ? handleSend : undefined}
                 on_post={on_post ? handlePost : undefined}
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
@@ -984,28 +993,11 @@ export function ChatRoomComposer({
                 </Button>
               </Tooltip>
             ) : null}
-            {hasRunningCodexTurn && !postOnly ? (
-              <Tooltip
-                title={
-                  <FormattedMessage
-                    id="chatroom.chat_input.queue_button.tooltip"
-                    defaultMessage={"Queue after the running turn"}
-                  />
-                }
-              >
-                <Button
-                  onClick={handleSend}
-                  disabled={!hasInput}
-                  size="small"
-                  type="text"
-                >
-                  Queue
-                </Button>
-              </Tooltip>
-            ) : null}
             {canChooseDelivery && hasInput && (
               <ComposerDeliverySelector
-                value={delivery}
+                value={selectedDelivery}
+                canQueue={hasRunningCodexTurn}
+                canPost={canPost}
                 onChange={(value) => {
                   setDelivery(value);
                   refocusComposerInput();
@@ -1017,6 +1009,8 @@ export function ChatRoomComposer({
             title={
               postOnly ? (
                 "Post without sending to the agent (Ctrl+Enter)"
+              ) : queueOnly ? (
+                "Queue after the running turn (Alt+Enter)"
               ) : hasRunningCodexTurn ? (
                 <FormattedMessage
                   id="chatroom.chat_input.steer_button.tooltip"
@@ -1031,16 +1025,24 @@ export function ChatRoomComposer({
             }
           >
             <Button
-              onClick={postOnly ? handlePost : handlePrimarySend}
+              onClick={
+                postOnly
+                  ? handlePost
+                  : queueOnly
+                    ? handleSend
+                    : handlePrimarySend
+              }
               disabled={!hasInput}
               type="primary"
               shape="circle"
               aria-label={
                 postOnly
                   ? "Post message"
-                  : hasRunningCodexTurn
-                    ? "Steer"
-                    : "Send"
+                  : queueOnly
+                    ? "Queue message"
+                    : hasRunningCodexTurn
+                      ? "Steer"
+                      : "Send"
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}

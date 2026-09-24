@@ -57,6 +57,7 @@ export default function MultiMarkdownInput({
   noVfill,
   onBlur,
   onChange,
+  onAltEnter,
   onCursorBottom,
   onCursors,
   onCursorTop,
@@ -113,6 +114,10 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onShiftEnterRef.current = onShiftEnter;
   }, [onShiftEnter]);
+  const onAltEnterRef = useRef(onAltEnter);
+  useEffect(() => {
+    onAltEnterRef.current = onAltEnter;
+  }, [onAltEnter]);
   const onCtrlEnterRef = useRef<any>(onCtrlEnter);
   useEffect(() => {
     onCtrlEnterRef.current = onCtrlEnter;
@@ -419,15 +424,20 @@ export default function MultiMarkdownInput({
             }
             onFontSizeChange={onFontSizeChange}
             onAltEnter={
-              disableModeSwitchShortcuts
-                ? () => undefined
-                : (value, pos) => {
-                    onChangeRef.current?.(value);
-                    if (pos) {
-                      rememberPendingSelection("editor", pos);
-                    }
-                    setMode("editor");
+              onAltEnter
+                ? (value) => {
+                    if (!isActiveCallback("markdown")) return;
+                    onAltEnterRef.current?.(value);
                   }
+                : disableModeSwitchShortcuts
+                  ? () => undefined
+                  : (value, pos) => {
+                      onChangeRef.current?.(value);
+                      if (pos) {
+                        rememberPendingSelection("editor", pos);
+                      }
+                      setMode("editor");
+                    }
             }
             placeholder={placeholder ?? "Type markdown..."}
             fontSize={fontSize}
@@ -508,16 +518,22 @@ export default function MultiMarkdownInput({
             }
             onFontSizeChange={onFontSizeChange}
             onAltEnter={
-              disableModeSwitchShortcuts
-                ? () => undefined
-                : (value) => {
+              onAltEnter
+                ? (value) => {
+                    if (!isActiveCallback("editor")) return;
                     onChangeRef.current?.(value);
-                    const pos = getMarkdownPositionForSelection();
-                    if (pos) {
-                      rememberPendingSelection("markdown", pos);
-                    }
-                    setMode("markdown");
+                    onAltEnterRef.current?.(value);
                   }
+                : disableModeSwitchShortcuts
+                  ? () => undefined
+                  : (value) => {
+                      onChangeRef.current?.(value);
+                      const pos = getMarkdownPositionForSelection();
+                      if (pos) {
+                        rememberPendingSelection("markdown", pos);
+                      }
+                      setMode("markdown");
+                    }
             }
             onCursors={onCursors}
             onUndo={onUndo}

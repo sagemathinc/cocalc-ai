@@ -4,14 +4,24 @@ import { Icon } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
-export type ComposerDelivery = "agent" | "post";
+export type ComposerDelivery = "agent" | "queue" | "post";
+
+const DELIVERY_LABELS: Record<ComposerDelivery, string> = {
+  agent: "To Agent",
+  queue: "Queue",
+  post: "Post",
+};
 
 export function ComposerDeliverySelector({
   value,
   onChange,
+  canQueue = false,
+  canPost = true,
 }: {
   value: ComposerDelivery;
   onChange: (value: ComposerDelivery) => void;
+  canQueue?: boolean;
+  canPost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +73,18 @@ export function ComposerDeliverySelector({
             ),
           },
           {
+            key: "queue",
+            icon: <Icon name="clock" />,
+            label: (
+              <div>
+                <strong>Queue</strong> <kbd>Alt+Enter</kbd>
+                <div style={{ whiteSpace: "normal" }}>
+                  Send after the running turn finishes, without interrupting it.
+                </div>
+              </div>
+            ),
+          },
+          {
             key: "post",
             icon: <Icon name="comment" />,
             label: (
@@ -74,7 +96,9 @@ export function ComposerDeliverySelector({
               </div>
             ),
           },
-        ],
+        ].filter(({ key }) =>
+          key === "queue" ? canQueue : key === "post" ? canPost : true,
+        ),
       }}
     >
       <Button
@@ -84,9 +108,9 @@ export function ComposerDeliverySelector({
         type="text"
         size="small"
         style={{ color: UI_COLORS.secondary }}
-        aria-label={`Message delivery: ${value === "agent" ? "To Agent" : "Post"}`}
+        aria-label={`Message delivery: ${DELIVERY_LABELS[value]}`}
       >
-        {value === "agent" ? "To Agent" : "Post"} <Icon name="caret-down" />
+        {DELIVERY_LABELS[value]} <Icon name="caret-down" />
       </Button>
     </Dropdown>
   );
