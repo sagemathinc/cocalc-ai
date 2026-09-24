@@ -22,8 +22,10 @@ not the TestFlight candidate.
 - Internal TestFlight export was attempted with the checked-in options and
   `-allowProvisioningUpdates`. It failed with `No Accounts`, no
   `iOS Distribution` certificate, and no provisioning profile for this bundle
-  ID. No IPA was produced or uploaded. Sign in to the Apple Developer team in
-  Xcode before retrying export.
+  ID. Xcode's Apple Accounts screen does show William STEIN's Developer Team
+  with admin access, so the CLI's `No Accounts` message does not establish that
+  the GUI account is signed out. No IPA was produced or uploaded. Try Xcode's
+  Organizer distribution flow with automatic signing before retrying the CLI.
 
 ## Earlier funded live voice candidate
 
@@ -81,11 +83,15 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
 ## Finish the candidate
 
-1. Sign in to the appropriate Apple Developer Program account in **Xcode →
-   Settings → Apple Accounts**. Confirm that Xcode can use team `BVF94G2MB4`
-   and automatically manage distribution signing for
-   `com.sagemath.cocalc.mobile`. Keep credentials in Xcode; do not add them to
-   this repository.
+1. Open the current archive in Xcode with
+   `/usr/bin/open -a Xcode /tmp/CoCalc-voice-20260924-dictation.xcarchive`. In
+   **Window → Organizer → Archives**, select the CoCalc archive and click
+   **Distribute App**. Choose **App Store Connect**, then **Export**, enable
+   **TestFlight internal testing only**, and choose **Automatically manage
+   signing** for team `BVF94G2MB4`. Follow any Xcode account prompts. If Xcode
+   cannot create distribution signing, use **Xcode → Settings → Apple Accounts
+   → Manage Certificates… → + → Apple Distribution** for that team, then retry
+   the GUI export. Keep credentials in Xcode; do not add them to this repository.
 2. Check App Store Connect for an existing iOS app record with that bundle ID.
    If none exists, create one before uploading. Suggested initial metadata for
    review: name **CoCalc**, primary language **English**, SKU
