@@ -2449,7 +2449,7 @@ export async function getLaunchHealth({
                 ...(settings?.project_recovery_customer_warnings_enabled
                   ? customerWarningScan
                     ? [
-                        `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned; ${customerWarningScan.notices_sent} notices sent`,
+                        `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned; ${customerWarningScan.notices_sent} notices sent; ${customerWarningScan.failures} failures`,
                       ]
                     : []
                   : ["Customer warnings disabled"]),

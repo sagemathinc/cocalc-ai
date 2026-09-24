@@ -64,6 +64,7 @@ export type ProjectRecoveryCustomerWarningScanStatus = {
   last_completed_at: Date;
   scanned: number;
   notices_sent: number;
+  failures: number;
 };
 
 let ensureScanTablePromise: Promise<void> | undefined;
@@ -75,8 +76,15 @@ async function ensureScanTable(): Promise<void> {
       bay_id TEXT PRIMARY KEY,
       last_completed_at TIMESTAMPTZ NOT NULL,
       scanned INTEGER NOT NULL,
-      notices_sent INTEGER NOT NULL
+      notices_sent INTEGER NOT NULL,
+      failures INTEGER NOT NULL DEFAULT 0
     )`,
+    )
+    .then(() =>
+      getPool().query(
+        `ALTER TABLE project_recovery_customer_warning_scan_status
+         ADD COLUMN IF NOT EXISTS failures INTEGER NOT NULL DEFAULT 0`,
+      ),
     )
     .then(() => undefined)
     .catch((err) => {
@@ -92,7 +100,7 @@ export async function getProjectRecoveryCustomerWarningScanStatus(
   await ensureScanTable();
   const { rows } =
     await getPool().query<ProjectRecoveryCustomerWarningScanStatus>(
-      `SELECT bay_id, last_completed_at, scanned, notices_sent
+      `SELECT bay_id, last_completed_at, scanned, notices_sent, failures
        FROM project_recovery_customer_warning_scan_status WHERE bay_id=$1`,
       [bayId],
     );
@@ -115,6 +123,9 @@ export function projectRecoveryCustomerWarningScanProblem({
   }
   if (checkedAt.getTime() - scan.last_completed_at.getTime() > SCAN_STALE_MS) {
     return `Customer warning scan stale since ${scan.last_completed_at.toISOString()}`;
+  }
+  if (scan.failures > 0) {
+    return `Customer warning scan had ${scan.failures} classification or delivery failures`;
   }
   return null;
 }
@@ -257,16 +268,18 @@ export async function runProjectRecoveryCustomerWarningCheck({
   enabled: boolean;
   scanned: number;
   notices_sent: number;
+  failures: number;
 }> {
   const settings = await getServerSettings();
   if (settings.project_recovery_customer_warnings_enabled !== true) {
-    return { enabled: false, scanned: 0, notices_sent: 0 };
+    return { enabled: false, scanned: 0, notices_sent: 0, failures: 0 };
   }
   await ensureProjectMaintenanceStatusTable();
   await ensureScanTable();
   const bayId = getSingleBayInfo().bay_id;
   let scanned = 0;
   let noticesSent = 0;
+  let failures = 0;
   while (scanned < MAX_PROJECTS_PER_CHECK) {
     const { rows } = await getPool().query<Candidate>(
       `SELECT p.project_id, p.last_backup,
@@ -350,6 +363,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
                 noticesSent++;
               }
             } catch (err) {
+              failures++;
               logger.warn("unable to deliver project recovery warning", {
                 project_id: row.project_id,
                 kind,
@@ -360,6 +374,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
           }
         }
       } catch (err) {
+        failures++;
         logger.warn("unable to classify project recovery warning", {
           project_id: row.project_id,
           err: `${err}`,
@@ -373,20 +388,22 @@ export async function runProjectRecoveryCustomerWarningCheck({
   }
   await getPool().query(
     `INSERT INTO project_recovery_customer_warning_scan_status
-       (bay_id, last_completed_at, scanned, notices_sent)
-     VALUES ($1, $2, $3, $4)
+       (bay_id, last_completed_at, scanned, notices_sent, failures)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (bay_id) DO UPDATE SET
        last_completed_at=excluded.last_completed_at,
        scanned=excluded.scanned,
-       notices_sent=excluded.notices_sent`,
-    [bayId, checkedAt, scanned, noticesSent],
+       notices_sent=excluded.notices_sent,
+       failures=excluded.failures`,
+    [bayId, checkedAt, scanned, noticesSent, failures],
   );
   logger.info("project recovery customer warning scan completed", {
     bay_id: bayId,
     scanned,
     notices_sent: noticesSent,
+    failures,
   });
-  return { enabled: true, scanned, notices_sent: noticesSent };
+  return { enabled: true, scanned, notices_sent: noticesSent, failures };
 }
 
 export function startProjectRecoveryCustomerWarningMaintenance(): void {

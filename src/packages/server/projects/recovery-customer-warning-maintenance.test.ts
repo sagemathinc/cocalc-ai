@@ -77,6 +77,9 @@ beforeEach(() => {
       sql.includes(
         "CREATE TABLE IF NOT EXISTS project_recovery_customer_warning_scan_status",
       ) ||
+      sql.includes(
+        "ALTER TABLE project_recovery_customer_warning_scan_status",
+      ) ||
       sql.includes("INSERT INTO project_recovery_customer_warning_scan_status")
     ) {
       return Promise.resolve({ rows: [] });
@@ -89,6 +92,7 @@ beforeEach(() => {
             last_completed_at: checkedAt,
             scanned: 1,
             notices_sent: 2,
+            failures: 0,
           },
         ],
       });
@@ -139,6 +143,7 @@ test("the disabled switch performs no inventory scan or delivery", async () => {
     enabled: false,
     scanned: 0,
     notices_sent: 0,
+    failures: 0,
   });
   expect(query).not.toHaveBeenCalled();
   expect(eventGraph).not.toHaveBeenCalled();
@@ -154,6 +159,7 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
     enabled: true,
     scanned: 1,
     notices_sent: 2,
+    failures: 0,
   });
   expect(membership).toHaveBeenCalledWith(ownerId);
   expect(eventGraph).toHaveBeenCalledTimes(2);
@@ -206,6 +212,7 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
     enabled: true,
     scanned: 1,
     notices_sent: 0,
+    failures: 0,
   });
   expect(eventGraph).toHaveBeenCalledTimes(2);
 });
@@ -323,6 +330,7 @@ test("overlapping workers treat an already committed notice as a duplicate", asy
     enabled: true,
     scanned: 1,
     notices_sent: 0,
+    failures: 0,
   });
   expect(eventIds.size).toBe(2);
 });
@@ -341,13 +349,14 @@ test("enabled scans persist a timestamp and operator health detects stale scans"
     expect.stringContaining(
       "INSERT INTO project_recovery_customer_warning_scan_status",
     ),
-    ["bay-1", checkedAt, 1, 2],
+    ["bay-1", checkedAt, 1, 2, 0],
   );
   const scan = {
     bay_id: "bay-1",
     last_completed_at: checkedAt,
     scanned: 1,
     notices_sent: 2,
+    failures: 0,
   };
   expect(await getProjectRecoveryCustomerWarningScanStatus("bay-1")).toEqual(
     scan,
@@ -373,4 +382,40 @@ test("enabled scans persist a timestamp and operator health detects stale scans"
       checkedAt,
     }),
   ).toContain("not completed");
+});
+
+test("delivery failures remain visible in scan status and operator health", async () => {
+  settings.mockResolvedValue({
+    project_recovery_customer_warnings_enabled: true,
+  });
+  accountHome.mockRejectedValueOnce(Error("remote account bay unavailable"));
+  const {
+    runProjectRecoveryCustomerWarningCheck,
+    projectRecoveryCustomerWarningScanProblem,
+  } = await import("./recovery-customer-warning-maintenance");
+  expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
+    enabled: true,
+    scanned: 1,
+    notices_sent: 1,
+    failures: 1,
+  });
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining(
+      "INSERT INTO project_recovery_customer_warning_scan_status",
+    ),
+    ["bay-1", checkedAt, 1, 1, 1],
+  );
+  expect(
+    projectRecoveryCustomerWarningScanProblem({
+      enabled: true,
+      scan: {
+        bay_id: "bay-1",
+        last_completed_at: checkedAt,
+        scanned: 1,
+        notices_sent: 1,
+        failures: 1,
+      },
+      checkedAt,
+    }),
+  ).toContain("1 classification or delivery failures");
 });
