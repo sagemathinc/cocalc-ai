@@ -19,13 +19,22 @@ not the TestFlight candidate.
 - `xcodebuild archive` and `codesign --verify --deep --strict` passed. The
   native bundle and embedded Expo configuration both identify the production
   app. This exact archive has not yet been installed or tested on an iPhone.
-- Internal TestFlight export was attempted with the checked-in options and
-  `-allowProvisioningUpdates`. It failed with `No Accounts`, no
-  `iOS Distribution` certificate, and no provisioning profile for this bundle
-  ID. Xcode's Apple Accounts screen does show William STEIN's Developer Team
-  with admin access, so the CLI's `No Accounts` message does not establish that
-  the GUI account is signed out. No IPA was produced or uploaded. Try Xcode's
-  Organizer distribution flow with automatic signing before retrying the CLI.
+- The command-line export failed with `No Accounts`, but Xcode's Organizer
+  successfully created cloud-managed Apple Distribution signing and an iOS
+  Team Store provisioning profile for this bundle ID. A local internal-only
+  App Store Connect export was made with automatic signing, symbols included,
+  and version/build management disabled:
+  `/tmp/CoCalc-TestFlight-internal-dictation/CoCalc.ipa`.
+- Exported IPA SHA-256:
+  `291864fcaf2c193035b92ab12c098e365501eb72fe35bbd51dcd3d090d3f9937`.
+  Its bundle ID and `0.1.0 (1)` version match the archive, the embedded
+  `main.jsbundle` hash matches above, and `codesign --verify --deep --strict`
+  passes on the extracted app. The export options record
+  `testFlightInternalTestingOnly=true`; the store profile includes
+  `beta-reports-active=true` and `get-task-allow=false`.
+- Xcode offered to create an App Store Connect app record during export. That
+  step was skipped so the IPA could be inspected first. Nothing has been
+  uploaded or assigned to testers.
 
 ## Earlier funded live voice candidate
 
@@ -81,9 +90,10 @@ Apple Development certificate, which is sufficient for a paired-device build
 but not this distribution export.
 No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 
-## Finish the candidate
+## Finish the internal beta
 
-1. Open the current archive in Xcode with
+1. The local IPA export and inspection are complete. To repeat the GUI export,
+   open the current archive in Xcode with
    `/usr/bin/open -a Xcode /tmp/CoCalc-voice-20260924-dictation.xcarchive`. In
    **Window → Organizer → Archives**, select the CoCalc archive and click
    **Distribute App**. In Xcode 26.6, choose **Custom → Distribute**, then
@@ -95,14 +105,16 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
    Settings → Apple Accounts → Manage Certificates… → + → Apple Distribution**
    for that team, then retry the GUI export. Keep credentials in Xcode; do not
    add them to this repository.
-2. Check App Store Connect for an existing iOS app record with that bundle ID.
-   If none exists, create one before uploading. Suggested initial metadata for
-   review: name **CoCalc**, primary language **English**, SKU
+2. Create an App Store Connect iOS app record for that bundle ID before
+   uploading. Suggested initial metadata for review: name **CoCalc**, primary
+   language **English**, SKU
    `cocalc-mobile-ios`. Check that version/build `0.1.0 (1)` is unused; if it
    is already present, increment `ios.buildNumber` in `app.config.ts` and
    rebuild the archive.
-3. If the GUI did not export an IPA, retry command-line export once Xcode has
-   created the signing assets. Use method `app-store-connect`, destination
+3. The existing IPA is ready for a reviewed internal-only upload. A future
+   command-line export may still need a local distribution identity because
+   Xcode used a cloud-managed certificate for this GUI export. If retrying the
+   CLI, use method `app-store-connect`, destination
    `export`, team `BVF94G2MB4`, and
    `testFlightInternalTestingOnly=true`. Xcode's CLI documents these keys in
    `xcodebuild -help`. The checked-in options are in
@@ -117,9 +129,9 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
      -allowProvisioningUpdates
    ```
 
-4. Inspect the exported IPA's bundle ID, version, signing, and embedded
-   bundle. Upload only after reviewing that concrete artifact. Create a small
-   internal tester group and assign this build manually after processing.
+4. The IPA's bundle ID, version, signing, and embedded bundle were inspected.
+   After upload and processing, create a small internal tester group and assign
+   this build manually.
    This internal-only build must not be added to external testing.
 
 Suggested **What to Test** text:
