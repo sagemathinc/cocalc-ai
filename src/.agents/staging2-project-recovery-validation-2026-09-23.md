@@ -316,6 +316,52 @@ These are observed costs, not a calibrated safe maintenance budget or proof
 of sustainable capacity. The backup and paid-class samples remain too small
 for a capacity threshold.
 
+Commit `936b2e3bce` changed the default first host reconciliation from
+15 minutes after startup to a stable per-host delay of 60 to 120 seconds;
+the explicit initial-delay setting still overrides it. The 29 focused
+project-host scheduler tests and package build passed. Project-host artifact
+`20260924T015744Z-936b2e3b-20260924T-recovery-startup-936b2e3b-dirty`
+completed canary-first rollout `e1b68f1b-2123-4a19-9ec3-9ade08df9f25`
+on both online hosts at 02:00:57 UTC. Both project-host smoke checks passed.
+The unit test verifies the default bound. During the next rollout, the
+shared host logged a memory-pressure skip at 02:07:13 UTC and another at
+02:08:13 UTC, exactly one minute apart. The first skip
+reported 12.3 GB available memory but 40.19% memory PSI full average over
+10 seconds, so the worker correctly preserved host responsiveness. The
+logs do not identify whether either call came from the full-sweep timer or
+an event batch, which also retries after one minute. The full-sweep retry
+was verified by a focused timer test in commit `100deca107`; project-host
+artifact `20260924T020415Z-100deca1-20260924T-recovery-retry-100deca1-dirty`
+completed canary-first rollout `3ee77df8-1577-42d5-9427-acb6ef6f62a4`
+on both hosts at 02:07:13 UTC. Both host smoke checks passed. At 02:10 UTC,
+operator recovery health was healthy with 163 succeeded, 41 deferred, and
+zero failed attempts in 24 hours, zero unknown statuses, and zero overdue
+delay.
+
+Commit `3ce0996dd2` closes a second full-sweep gap: if an event batch owns
+one lane, the full sweep processes the free lane but returns incomplete so
+the retry revisits the occupied lane. All 30 focused scheduler tests and the
+package build passed. Project-host artifact
+`20260924T020916Z-3ce0996d-20260924T-recovery-overlap-3ce0996d-dirty`
+completed canary-first rollout `cd676d8e-ed88-4ad0-8dec-03c77a27dd20`
+on both hosts at 02:12:33 UTC. Both host smoke checks passed; operator
+recovery health was healthy with 164 succeeded, 41 deferred, zero failed,
+and zero unknown statuses in the 24-hour window.
+
+Commit `a97db13222` added a low-cardinality full-sweep log with trigger,
+completion state, and duration. Project-host artifact
+`20260924T021459Z-a97db132-20260924T-recovery-sweep-log-a97db132-dirty`
+completed canary-first rollout `cb76df50-d4b0-4c62-b647-94749e01b22f`
+on both hosts at 02:18:07 UTC; both host smoke checks passed. The canary
+host logged `startup, reconciled=true` at 02:17:44 UTC in 48 ms. The shared
+host logged `startup, reconciled=false` at 02:18:55 UTC under 55% memory
+PSI full average, then `retry, reconciled=true` at 02:20:51 UTC after a
+55.9-second full reconciliation. At 02:21 UTC, operator recovery health was
+healthy: zero overdue delay, zero unknown statuses, zero hosts missing
+recent pressure telemetry, 175 succeeded, 41 deferred, and zero failed
+maintenance attempts in 24 hours. The staging account still has no paying
+recovery sample, so this does not validate paying priority or objectives.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
@@ -340,12 +386,14 @@ for a capacity threshold.
    coordinated rollout. None is established by this single-day staging test.
 4. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
-5. The host scheduler still uses a 15-minute initial delay and full
-   reconciliation sweep. The canary event path completed in about 97 seconds
-   after bay confirmation, but due timers, retry recovery, and responsiveness
-   under large live inventories remain to be validated. The host's generation
-   check cached this project's prior observation for about five minutes, so
-   the edit-to-bay change detection interval was longer than dispatch itself.
+5. The host scheduler now uses a 60-to-120-second initial delay and a
+   15-minute full reconciliation sweep, with one-minute retries after a skipped
+   sweep. A pressure-blocked startup followed by a successful full-sweep
+   retry was observed live; due-timer recovery after a restart and host
+   responsiveness under a large live inventory remain to be validated. The
+   canary event path completed about 97 seconds after bay confirmation; its
+   generation check cached the prior observation for about five minutes, so
+   edit-to-bay change detection took longer than dispatch.
 6. The staging account hit its 16 active runtime sponsor-slot limit while
    creating the bay-history canary. `project create --start` returned a project
    ID and `started: true`, but the project remained `opened` and an immediate
