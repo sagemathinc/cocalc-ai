@@ -102,17 +102,19 @@ export async function markProjectChanged({
 
 export async function markProjectBackedUp({
   project_id,
+  host_id,
   backed_up_at,
   generation,
 }: {
   project_id: string;
+  host_id: string;
   backed_up_at?: Date | string | null;
   generation?: number | null;
-}): Promise<void> {
+}): Promise<boolean> {
   await ensureProjectChangeTrackingColumns();
   const backedUpAt = normalizeDate(backed_up_at);
   const normalizedGeneration = normalizeGeneration(generation);
-  await getPool().query(
+  const { rowCount } = await getPool().query(
     `
       UPDATE projects
          SET last_backup = GREATEST(
@@ -123,8 +125,10 @@ export async function markProjectBackedUp({
                WHEN $3::BIGINT IS NULL THEN last_backup_generation
                ELSE GREATEST(COALESCE(last_backup_generation, 0), $3::BIGINT)
              END
-       WHERE project_id = $1
+       WHERE project_id = $1 AND host_id = $4
+         AND deleted IS NOT TRUE
     `,
-    [project_id, backedUpAt, normalizedGeneration],
+    [project_id, backedUpAt, normalizedGeneration, host_id],
   );
+  return !!rowCount;
 }
