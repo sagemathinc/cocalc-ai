@@ -4295,12 +4295,14 @@ async function restoreBackup({
   id,
   path: backupPath,
   dest,
+  remote_only = false,
   lro,
 }: {
   project_id: string;
   id: string;
   path?: string;
   dest?: string;
+  remote_only?: boolean;
   lro?: LroRef;
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
@@ -4404,6 +4406,7 @@ async function restoreBackup({
             dest,
             timeoutMs: timeout,
             progress,
+            remote_only,
           }),
       });
     } catch (err) {
@@ -4416,7 +4419,12 @@ async function restoreBackup({
     }
   } else {
     await restoreFs.rustic(
-      ["restore", `${id}${restorePath ? ":" + restorePath : ""}`, relDest],
+      [
+        "restore",
+        ...(remote_only ? ["--no-cache"] : []),
+        `${id}${restorePath ? ":" + restorePath : ""}`,
+        relDest,
+      ],
       {
         timeout: PROJECT_RUSTIC_TIMEOUT_MS,
         env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,

@@ -457,6 +457,7 @@ export async function restoreBackup({
   id,
   path,
   dest,
+  remote_only = false,
 }: {
   account_id?: string;
   session_hash?: string | null;
@@ -464,6 +465,7 @@ export async function restoreBackup({
   id: string;
   path?: string;
   dest?: string;
+  remote_only?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -480,7 +482,13 @@ export async function restoreBackup({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id, id, path, dest },
+    input: {
+      project_id,
+      id,
+      path,
+      dest,
+      ...(remote_only ? { remote_only: true } : {}),
+    },
     status: "queued",
   });
   await publishQueuedLroSafe({

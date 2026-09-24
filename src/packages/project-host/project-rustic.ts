@@ -180,16 +180,18 @@ export async function projectRusticRestore({
   dest,
   timeoutMs,
   progress,
+  remote_only = false,
 }: {
   repoProfile: string;
   snapshot: string;
   dest: string;
   timeoutMs: number;
   progress?: (update: RusticProgressUpdate) => void;
+  remote_only?: boolean;
 }): Promise<void> {
   await runProjectRustic({
     command: "project-rustic-restore",
-    args: [repoProfile, snapshot, dest],
+    args: [repoProfile, snapshot, dest, ...(remote_only ? ["--no-cache"] : [])],
     timeoutMs,
     onProgress: progress,
   });

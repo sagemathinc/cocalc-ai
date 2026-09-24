@@ -97,6 +97,37 @@ describe("project rustic wrapper", () => {
     );
   });
 
+  it("bypasses the local cache for a remote-only restore", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+    } as any);
+
+    await projectRusticRestore({
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      snapshot: "backup-id:data/results",
+      dest: "/mnt/cocalc/project-1/.restore-staging/project-1",
+      timeoutMs: 30_000,
+      remote_only: true,
+    });
+
+    expect(mockedExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "project-rustic-restore",
+          "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+          "backup-id:data/results",
+          "/mnt/cocalc/project-1/.restore-staging/project-1",
+          "--no-cache",
+        ],
+      }),
+    );
+  });
+
   it("moves scheduled backups through the maintenance wrapper command", async () => {
     mockedExecuteCode.mockResolvedValue({
       type: "blocking",

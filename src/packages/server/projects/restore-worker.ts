@@ -208,6 +208,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
   const snapshot = input.snapshot;
   const path = input.path;
   const dest = input.dest;
+  const remoteOnly = input.remote_only === true;
   const account_id = `${op.created_by ?? ""}`.trim();
 
   if (!project_id || (!backup_id && !snapshot)) {
@@ -365,13 +366,19 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       progress({
         step: "restore",
         message: "restoring backup",
-        detail: { backup_id, path, dest },
+        detail: {
+          backup_id,
+          path,
+          dest,
+          ...(remoteOnly ? { remote_only: true } : {}),
+        },
       });
       await client.restoreBackup({
         project_id,
         id: backup_id,
         path,
         dest,
+        ...(remoteOnly ? { remote_only: true } : {}),
         lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
       });
       result = {
@@ -379,6 +386,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
         id: backup_id,
         path,
         dest,
+        ...(remoteOnly ? { remote_only: true } : {}),
       };
     }
     const duration_ms = Date.now() - started;

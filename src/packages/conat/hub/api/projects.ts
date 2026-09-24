@@ -2033,6 +2033,7 @@ export interface Projects {
     project_id: string;
     path?: string;
     dest?: string;
+    remote_only?: boolean;
     id: string;
   }) => Promise<{
     op_id: string;

@@ -535,4 +535,30 @@ describe("project-backups.restoreBackup", () => {
       stream_name: "stream:op-restore-1",
     });
   });
+
+  it("records a remote-only restore request in the operation", async () => {
+    const { restoreBackup } = await import("./project-backups");
+
+    await restoreBackup({
+      account_id: "acct-1",
+      session_hash: "session-1",
+      project_id: "proj-1",
+      id: "backup-1",
+      path: "data/results",
+      dest: "restored/results",
+      remote_only: true,
+    });
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          project_id: "proj-1",
+          id: "backup-1",
+          path: "data/results",
+          dest: "restored/results",
+          remote_only: true,
+        },
+      }),
+    );
+  });
 });

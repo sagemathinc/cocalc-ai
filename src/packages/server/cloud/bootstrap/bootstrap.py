@@ -4699,7 +4699,7 @@ def remove_entry(parentfd, name, recursive, force):
 
 def parse_rustic(argv):
     command = argv[0]
-    values = {"tag": [], "delete": False}
+    values = {"tag": [], "delete": False, "no-cache": False}
     value_options = {
         "--root",
         "--path",
@@ -4713,10 +4713,11 @@ def parse_rustic(argv):
     i = 1
     while i < len(argv):
         option = argv[i]
-        if option == "--delete":
-            if values["delete"]:
-                fail("duplicate --delete")
-            values["delete"] = True
+        if option in ("--delete", "--no-cache"):
+            key = option[2:]
+            if values[key]:
+                fail(f"duplicate {option}")
+            values[key] = True
             i += 1
             continue
         if option not in value_options or i + 1 >= len(argv):
@@ -4730,7 +4731,7 @@ def parse_rustic(argv):
             values[key] = argv[i + 1]
         i += 2
 
-    common = {"root", "path", "profile-root", "profile-path", "tag", "delete"}
+    common = {"root", "path", "profile-root", "profile-path", "tag", "delete", "no-cache"}
     allowed = {
         "rustic-project-backup": common | {"host", "parent"},
         "rustic-rootfs-backup": common | {"host"},
@@ -4746,6 +4747,8 @@ def parse_rustic(argv):
             fail(f"missing --{key}")
     if values["delete"] and command != "rustic-rootfs-restore":
         fail("--delete is only valid for rootfs restore")
+    if values["no-cache"] and command != "rustic-project-restore":
+        fail("--no-cache is only valid for project restore")
     if values["tag"] and not command.endswith("backup"):
         fail("--tag is only valid for backup")
     validate_relative(values["path"], allow_root=True)
@@ -4989,6 +4992,8 @@ def run_rustic(
             return
 
         restore = ["restore"]
+        if values["no-cache"]:
+            restore.append("--no-cache")
         if values["delete"]:
             restore.append("--delete")
         restore.extend([values["snapshot"], f"/proc/self/fd/{datafd}"])
@@ -9101,13 +9106,20 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       "${parent_args[@]}"
     ;;
   project-rustic-restore)
-    if [ "$#" -ne 3 ]; then
-      echo "usage: cocalc-runtime-storage project-rustic-restore <repo-profile> <snapshot> <dest>" >&2
+    if [ "$#" -ne 3 ] && [ "$#" -ne 4 ]; then
+      echo "usage: cocalc-runtime-storage project-rustic-restore <repo-profile> <snapshot> <dest> [--no-cache]" >&2
       exit 2
     fi
     repo_profile="$1"
     snapshot="$2"
     dest="$3"
+    no_cache_args=()
+    if [ "$#" -eq 4 ]; then
+      if [ "$4" != "--no-cache" ]; then
+        deny "project-rustic-restore-bad-option" "$4"
+      fi
+      no_cache_args=(--no-cache)
+    fi
     case "$snapshot" in
       -*)
         deny "project-rustic-restore-bad-snapshot" "$snapshot"
@@ -9124,7 +9136,8 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --path "$dest_rel" \
       --profile-root "$RUSTIC_PROFILE_ROOT" \
       --profile-path "$RUSTIC_PROFILE_REL" \
-      --snapshot "$snapshot"
+      --snapshot "$snapshot" \
+      "${no_cache_args[@]}"
     ;;
   rootfs-manifest)
     if [ "$#" -ne 1 ]; then
