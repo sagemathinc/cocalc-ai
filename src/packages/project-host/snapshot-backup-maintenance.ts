@@ -17,7 +17,10 @@ import {
   type SnapshotCounts,
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
-import { getMasterConatClient } from "./master-status";
+import {
+  getMasterConatClient,
+  onProjectProvisionedReported,
+} from "./master-status";
 import {
   getBackups,
   runScheduledBackupMaintenance,
@@ -1289,11 +1292,15 @@ export function startProjectSnapshotBackupMaintenance({
       );
     }
   };
-  const unsubscribeChanges = onProjectChangeReported((projectId) => {
+  const enqueueConfirmedProject = (projectId: string) => {
     if (closed) return;
     changedProjects.add(projectId);
     scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
-  });
+  };
+  const unsubscribeChanges = onProjectChangeReported(enqueueConfirmedProject);
+  const unsubscribeProvisioned = onProjectProvisionedReported(
+    enqueueConfirmedProject,
+  );
   const runSweep = async (trigger: "startup" | "periodic" | "retry") => {
     if (closed || fullSweepRunning) return;
     fullSweepRunning = true;
@@ -1357,6 +1364,7 @@ export function startProjectSnapshotBackupMaintenance({
   return () => {
     closed = true;
     unsubscribeChanges();
+    unsubscribeProvisioned();
     clearTimeout(changedTimer);
     clearTimeout(dueTimer);
     clearTimeout(sweepRetryTimer);

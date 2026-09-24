@@ -14,6 +14,7 @@ const saveValidatedMaintenanceSchedulesMock = jest.fn();
 const saveMaintenanceReportMock = jest.fn();
 const markMaintenanceReportDeliveredMock = jest.fn();
 const onProjectChangeReportedMock = jest.fn();
+const onProjectProvisionedReportedMock = jest.fn();
 const loggerInfoMock = jest.fn();
 
 jest.mock("./sqlite/maintenance-ledger", () => ({
@@ -58,6 +59,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
 jest.mock("./master-status", () => ({
   __esModule: true,
   getMasterConatClient: (...args: any[]) => getMasterConatClientMock(...args),
+  onProjectProvisionedReported: (listener: (project_id: string) => void) =>
+    onProjectProvisionedReportedMock(listener),
 }));
 
 jest.mock("./file-server", () => ({
@@ -122,6 +125,8 @@ describe("snapshot-backup-maintenance", () => {
     releaseStorageOperationMock.mockReset();
     onProjectChangeReportedMock.mockReset();
     onProjectChangeReportedMock.mockImplementation(() => jest.fn());
+    onProjectProvisionedReportedMock.mockReset();
+    onProjectProvisionedReportedMock.mockImplementation(() => jest.fn());
     admitStorageOperationMock.mockImplementation(
       ({ operation_kind, project_id, allow_starvation_override }) => ({
         admitted: true,
@@ -974,6 +979,25 @@ describe("snapshot-backup-maintenance", () => {
     expect(
       listProjectMaintenanceSchedulesMock.mock.calls[1][0].project_ids,
     ).toEqual(Array.from({ length: 10 }, (_, i) => `project-${i + 50}`));
+    stop();
+  });
+
+  it("dispatches a newly provisioned project after bay acknowledgement", async () => {
+    jest.useFakeTimers();
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([]);
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+    const notifyProvisioned = onProjectProvisionedReportedMock.mock.calls[0][0];
+    notifyProvisioned("project-new");
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        project_ids: ["project-new"],
+      }),
+    );
     stop();
   });
 
