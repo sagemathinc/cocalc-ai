@@ -431,6 +431,17 @@ export interface ProjectRecoveryHealth {
   unknown_backup_status: number;
   oldest_snapshot_delay_seconds: number;
   oldest_backup_delay_seconds: number;
+  by_host_class: ProjectRecoveryDebtAggregate[];
+}
+
+export interface ProjectRecoveryDebtAggregate {
+  host_id: string;
+  storage_service_class: "paying" | "free" | "unclassified";
+  kind: "snapshot" | "backup";
+  overdue_count: number;
+  oldest_delay_seconds: number;
+  unknown_count: number;
+  repeated_failures: number;
 }
 
 export interface ProjectRecoveryAttemptAggregate {
@@ -575,6 +586,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
   await ensureProjectMaintenanceStatusTable();
   type HealthRow = {
     project_id: string;
+    host_id: string;
     last_changed: Date | null;
     last_backup: Date | null;
     host_last_seen: Date | null;
@@ -603,12 +615,39 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     unknown_backup_status: 0,
     oldest_snapshot_delay_seconds: 0,
     oldest_backup_delay_seconds: 0,
+    by_host_class: [],
+  };
+  const debtByHostClass = new Map<string, ProjectRecoveryDebtAggregate>();
+  const debtGroup = (
+    host_id: string,
+    service_class: string | null,
+    kind: "snapshot" | "backup",
+  ): ProjectRecoveryDebtAggregate => {
+    const storage_service_class =
+      service_class === "paying" || service_class === "free"
+        ? service_class
+        : "unclassified";
+    const key = `${host_id}:${storage_service_class}:${kind}`;
+    let group = debtByHostClass.get(key);
+    if (!group) {
+      group = {
+        host_id,
+        storage_service_class,
+        kind,
+        overdue_count: 0,
+        oldest_delay_seconds: 0,
+        unknown_count: 0,
+        repeated_failures: 0,
+      };
+      debtByHostClass.set(key, group);
+    }
+    return group;
   };
   const now = Date.now();
   let cursor: string | null = null;
   while (true) {
     const { rows } = await getPool().query<HealthRow>(
-      `SELECT p.project_id,
+      `SELECT p.project_id, p.host_id,
               COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
                 AS last_changed,
               p.last_backup, h.last_seen AS host_last_seen,
@@ -640,12 +679,15 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         row.host_last_seen == null ||
         now - row.host_last_seen.getTime() > 5 * 60_000;
       if (row.snapshots?.disabled !== true) {
+        const group = debtGroup(row.host_id, row.snapshot_class, "snapshot");
         if (
-          row.snapshot_class === "paying" &&
           row.snapshot_outcome === "failed" &&
           (row.snapshot_failures ?? 0) >= 3
         ) {
-          health.paying_snapshot_repeated_failures++;
+          if (row.snapshot_class === "paying") {
+            health.paying_snapshot_repeated_failures++;
+          }
+          group.repeated_failures++;
         }
         if (
           hostUnknown ||
@@ -653,6 +695,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           now - row.snapshot_observed_at.getTime() > 25 * 60 * 60_000
         ) {
           health.unknown_snapshot_status++;
+          group.unknown_count++;
         }
         const reconciled =
           row.last_changed != null &&
@@ -670,6 +713,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             );
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
+          if (delaySeconds > 0) {
+            group.overdue_count++;
+            group.oldest_delay_seconds = Math.max(
+              group.oldest_delay_seconds,
+              delaySeconds,
+            );
+          }
           health.oldest_snapshot_delay_seconds = Math.max(
             health.oldest_snapshot_delay_seconds,
             delaySeconds,
@@ -682,12 +732,15 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         }
       }
       if (row.backups?.disabled !== true) {
+        const group = debtGroup(row.host_id, row.backup_class, "backup");
         if (
-          row.backup_class === "paying" &&
           row.backup_outcome === "failed" &&
           (row.backup_failures ?? 0) >= 3
         ) {
-          health.paying_backup_repeated_failures++;
+          if (row.backup_class === "paying") {
+            health.paying_backup_repeated_failures++;
+          }
+          group.repeated_failures++;
         }
         if (
           hostUnknown ||
@@ -695,6 +748,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           now - row.backup_observed_at.getTime() > 25 * 60 * 60_000
         ) {
           health.unknown_backup_status++;
+          group.unknown_count++;
         }
         const due = dueAt(
           row.last_changed,
@@ -704,6 +758,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         );
         if (due != null) {
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
+          if (delaySeconds > 0) {
+            group.overdue_count++;
+            group.oldest_delay_seconds = Math.max(
+              group.oldest_delay_seconds,
+              delaySeconds,
+            );
+          }
           health.oldest_backup_delay_seconds = Math.max(
             health.oldest_backup_delay_seconds,
             delaySeconds,
@@ -719,5 +780,20 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     if (rows.length < 1000) break;
     cursor = rows.at(-1)!.project_id;
   }
+  health.by_host_class = [...debtByHostClass.values()]
+    .filter(
+      (group) =>
+        group.overdue_count > 0 ||
+        group.unknown_count > 0 ||
+        group.repeated_failures > 0,
+    )
+    .sort(
+      (a, b) =>
+        b.oldest_delay_seconds - a.oldest_delay_seconds ||
+        b.overdue_count - a.overdue_count ||
+        a.host_id.localeCompare(b.host_id) ||
+        a.kind.localeCompare(b.kind) ||
+        a.storage_service_class.localeCompare(b.storage_service_class),
+    );
   return health;
 }

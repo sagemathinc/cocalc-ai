@@ -313,6 +313,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           rows: [
             {
               project_id: "project-1",
+              host_id: "host-1",
               last_changed: old,
               last_backup: null,
               host_last_seen: new Date(),
@@ -333,6 +334,16 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(health.paying_snapshot_overdue).toBe(1);
     expect(health.oldest_snapshot_delay_seconds).toBeGreaterThan(2 * 3600);
     expect(health.unknown_snapshot_status).toBe(0);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "paying",
+        kind: "snapshot",
+        overdue_count: 1,
+        unknown_count: 0,
+        repeated_failures: 0,
+      }),
+    ]);
   });
 
   it("keeps an overdue project with missing host classification visible", async () => {
@@ -343,6 +354,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           rows: [
             {
               project_id: "project-1",
+              host_id: "host-1",
               last_changed: new Date(Date.now() - 3 * 60 * 60_000),
               last_backup: null,
               host_last_seen: null,
@@ -362,6 +374,15 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     const health = await getProjectRecoveryHealth();
     expect(health.unclassified_snapshot_overdue).toBe(1);
     expect(health.unknown_snapshot_status).toBe(1);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "unclassified",
+        kind: "snapshot",
+        overdue_count: 1,
+        unknown_count: 1,
+      }),
+    ]);
   });
 
   it("counts repeated paid failures before the due-age incident threshold", async () => {
@@ -372,6 +393,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           rows: [
             {
               project_id: "project-1",
+              host_id: "host-1",
               last_changed: new Date(Date.now() - 60_000),
               last_backup: null,
               host_last_seen: new Date(),
@@ -390,5 +412,13 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     const health = await getProjectRecoveryHealth();
     expect(health.paying_backup_repeated_failures).toBe(1);
     expect(health.paying_backup_overdue).toBe(0);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "paying",
+        kind: "backup",
+        repeated_failures: 1,
+      }),
+    ]);
   });
 });

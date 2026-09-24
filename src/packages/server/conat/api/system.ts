@@ -2353,7 +2353,10 @@ export async function getLaunchHealth({
                   projectRecovery.unknown_snapshot_status > 0 ||
                   projectRecovery.unknown_backup_status > 0 ||
                   projectRecovery.oldest_snapshot_delay_seconds > 0 ||
-                  projectRecovery.oldest_backup_delay_seconds > 0
+                  projectRecovery.oldest_backup_delay_seconds > 0 ||
+                  projectRecovery.by_host_class.some(
+                    (group) => group.repeated_failures > 0,
+                  )
                 ? "warning"
                 : "healthy",
       summary: !projectRecovery
@@ -2367,6 +2370,12 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...projectRecovery.by_host_class
+                  .slice(0, 12)
+                  .map(
+                    (group) =>
+                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures`,
+                  ),
                 ...(projectRecoveryAttemptsResult.status === "rejected"
                   ? [
                       `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,
