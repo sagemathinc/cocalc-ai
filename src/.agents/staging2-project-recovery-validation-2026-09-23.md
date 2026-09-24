@@ -1678,3 +1678,8 @@ after the first due-obligation record at 16:09 UTC. The first-day sample is
 therefore incomplete, and the dirty 19:00 slot must age out of any eventual
 clean 30-day qualification window. A current healthy operator check does not
 rewrite that historical slot.
+
+The repository-wide `pnpm -C src tsc` completed successfully after the
+staging changes and load tests. The available Chromium debugging port was
+closed, and the previously known staging browser session IDs timed out through
+the typed browser API, so this run did not add browser-observed latency samples.

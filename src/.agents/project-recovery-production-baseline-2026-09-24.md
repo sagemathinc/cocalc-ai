@@ -94,8 +94,11 @@ baseline.
   table has not yet been extracted. The audited read-only production SQL route
   requires a cookie-backed fresh-auth session, and the general operator
   health request for a 10,080-minute window timed out at its 30-second RPC
-  limit. Neither result is evidence of a seven-day latency distribution; use
-  fresh-auth bounded aggregation before making a baseline claim.
+  limit. The first-party short elevation flow failed before presenting an
+  approval URL with `user must be a collaborator on project`, even with
+  ambient project authentication defaults disabled. No approval occurred and
+  no historical SQL ran. Resolve that authorization path before attempting a
+  bounded aggregate or making a seven-day baseline claim.
 - Seven days of start, terminal, Jupyter, exec, file, and host pressure
   distributions, with host and maintenance activity context.
 - Snapshot and off-host backup due-to-confirmed-success distributions by bay,
