@@ -2343,7 +2343,11 @@ export async function getLaunchHealth({
           : !projectRecovery
             ? "unknown"
             : projectRecovery.paying_snapshot_overdue > 0 ||
-                projectRecovery.paying_backup_overdue > 0
+                projectRecovery.paying_backup_overdue > 0 ||
+                projectRecovery.unclassified_snapshot_overdue > 0 ||
+                projectRecovery.unclassified_backup_overdue > 0 ||
+                projectRecovery.paying_snapshot_repeated_failures > 0 ||
+                projectRecovery.paying_backup_repeated_failures > 0
               ? "critical"
               : projectRecoveryAttemptsResult.status === "rejected" ||
                   projectRecovery.unknown_snapshot_status > 0 ||
@@ -2354,7 +2358,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown.`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown.`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2362,6 +2366,7 @@ export async function getLaunchHealth({
             ? [
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
+                `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
                 ...(projectRecoveryAttemptsResult.status === "rejected"
                   ? [
                       `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,

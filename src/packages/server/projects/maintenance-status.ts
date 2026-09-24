@@ -420,6 +420,10 @@ export async function getProjectRecoveryStatusLocal(
 export interface ProjectRecoveryHealth {
   paying_snapshot_overdue: number;
   paying_backup_overdue: number;
+  unclassified_snapshot_overdue: number;
+  unclassified_backup_overdue: number;
+  paying_snapshot_repeated_failures: number;
+  paying_backup_repeated_failures: number;
   unknown_snapshot_status: number;
   unknown_backup_status: number;
   oldest_snapshot_delay_seconds: number;
@@ -537,14 +541,22 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     snapshot_at: Date | null;
     snapshot_observed_at: Date | null;
     snapshot_class: string | null;
+    snapshot_outcome: string | null;
+    snapshot_failures: number | null;
     reconciled_change_at: Date | null;
     reconciled_schedule_revision: string | null;
     backup_observed_at: Date | null;
     backup_class: string | null;
+    backup_outcome: string | null;
+    backup_failures: number | null;
   };
   const health: ProjectRecoveryHealth = {
     paying_snapshot_overdue: 0,
     paying_backup_overdue: 0,
+    unclassified_snapshot_overdue: 0,
+    unclassified_backup_overdue: 0,
+    paying_snapshot_repeated_failures: 0,
+    paying_backup_repeated_failures: 0,
     unknown_snapshot_status: 0,
     unknown_backup_status: 0,
     oldest_snapshot_delay_seconds: 0,
@@ -562,9 +574,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               s.latest_snapshot_at AS snapshot_at,
               s.observed_at AS snapshot_observed_at,
               s.storage_service_class AS snapshot_class,
+              s.outcome AS snapshot_outcome,
+              s.consecutive_failures AS snapshot_failures,
               s.reconciled_change_at, s.reconciled_schedule_revision,
               b.observed_at AS backup_observed_at,
-              b.storage_service_class AS backup_class
+              b.storage_service_class AS backup_class,
+              b.outcome AS backup_outcome,
+              b.consecutive_failures AS backup_failures
          FROM projects p
          LEFT JOIN project_hosts h ON h.id=p.host_id
          LEFT JOIN project_maintenance_status s ON s.project_id=p.project_id
@@ -582,6 +598,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         row.host_last_seen == null ||
         now - row.host_last_seen.getTime() > 5 * 60_000;
       if (row.snapshots?.disabled !== true) {
+        if (
+          row.snapshot_class === "paying" &&
+          row.snapshot_outcome === "failed" &&
+          (row.snapshot_failures ?? 0) >= 3
+        ) {
+          health.paying_snapshot_repeated_failures++;
+        }
         if (
           hostUnknown ||
           row.snapshot_observed_at == null ||
@@ -611,10 +634,19 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           );
           if (row.snapshot_class === "paying" && delaySeconds > 2 * 3600) {
             health.paying_snapshot_overdue++;
+          } else if (row.snapshot_class == null && delaySeconds > 2 * 3600) {
+            health.unclassified_snapshot_overdue++;
           }
         }
       }
       if (row.backups?.disabled !== true) {
+        if (
+          row.backup_class === "paying" &&
+          row.backup_outcome === "failed" &&
+          (row.backup_failures ?? 0) >= 3
+        ) {
+          health.paying_backup_repeated_failures++;
+        }
         if (
           hostUnknown ||
           row.backup_observed_at == null ||
@@ -636,6 +668,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           );
           if (row.backup_class === "paying" && delaySeconds > 12 * 3600) {
             health.paying_backup_overdue++;
+          } else if (row.backup_class == null && delaySeconds > 12 * 3600) {
+            health.unclassified_backup_overdue++;
           }
         }
       }

@@ -310,4 +310,61 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(health.oldest_snapshot_delay_seconds).toBeGreaterThan(2 * 3600);
     expect(health.unknown_snapshot_status).toBe(0);
   });
+
+  it("keeps an overdue project with missing host classification visible", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              last_changed: new Date(Date.now() - 3 * 60 * 60_000),
+              last_backup: null,
+              host_last_seen: null,
+              snapshots: { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+              backups: { disabled: true },
+              snapshot_at: null,
+              snapshot_observed_at: null,
+              snapshot_class: null,
+              reconciled_change_at: null,
+              reconciled_schedule_revision: null,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.unclassified_snapshot_overdue).toBe(1);
+    expect(health.unknown_snapshot_status).toBe(1);
+  });
+
+  it("counts repeated paid failures before the due-age incident threshold", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              last_changed: new Date(Date.now() - 60_000),
+              last_backup: null,
+              host_last_seen: new Date(),
+              snapshots: { disabled: true },
+              backups: { daily: 1 },
+              backup_observed_at: new Date(),
+              backup_class: "paying",
+              backup_outcome: "failed",
+              backup_failures: 3,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.paying_backup_repeated_failures).toBe(1);
+    expect(health.paying_backup_overdue).toBe(0);
+  });
 });
