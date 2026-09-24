@@ -157,6 +157,17 @@ Production was not changed.
   was listed from the repository. Restoring
   `recovery-canary/reconcile-latest.txt` to a separate file and comparing
   bytes returned the original `2026-09-24T00:30:28Z` marker.
+- Confirmed remote backup identity in the maintenance ledger: `020e90100d`.
+  Hub artifact
+  `20260924T010422Z-020e9010-backup-identity-020e901-dirty` passed hub
+  smoke. Project-host artifact
+  `20260924T010640Z-020e9010-backup-identity-020e901-dirty` completed
+  canary-first rollout `636cae6a-a7b7-4fea-899e-28a9bd49ac4b` on both
+  online hosts, and both host smoke checks passed. Scheduled reports now carry
+  the ID confirmed by repository readback into bay status and attempt history.
+  Focused tests, package builds, frontend typecheck, and actual PGlite
+  execution of the status and attempt insert SQL passed. Live inspection of
+  the new bay field remains pending fresh operator authorization.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -199,9 +210,10 @@ The scheduled-path project is
 `47db6b2a-9675-4ae2-834c-3923ba0ed935`. The stage-metrics canary is
 `9d1000b8-7f9e-4fc5-be53-0156c3047c94`; the host-ledger and bay-history
 canaries are `ac76eb98-13fc-43f5-b207-30c70313b5e8` and
-`b528cb8d-797c-464c-8f60-1508789595c2`. The stage-metrics canary was
-stopped after its restore drill to free a staging runtime sponsor slot; all
-disposable projects remain on
+`b528cb8d-797c-464c-8f60-1508789595c2`. The confirmed-ID canary is
+`3441c07a-894a-4080-bf8b-acf2bc27d043`. The stage-metrics canary and the
+older assignment-fenced canary were stopped after their restore drills to
+free staging runtime sponsor slots; all disposable projects remain on
 staging2 for inspection.
 
 The automated pagination test walks 1,003 projects across five pages. Live
@@ -248,13 +260,26 @@ and 0 failed attempts in the preceding 24 hours, no overdue project, and no
 unknown status. The cumulative `snapshot_not_created` counter remained 36;
 its post-rollout rate still requires a longer observation window.
 
+At 01:10 UTC on September 24, fresh project
+`3441c07a-894a-4080-bf8b-acf2bc27d043` on the canary host contained marker
+`confirmed-id-canary-2026-09-24T01:10Z`. The backup catalog listed remote ID
+`46b41ca02c9891ff178699fed31876c4c64cdf98c51f05b79d755342ed03eadb`
+at 01:10:49 UTC. Restoring the marker to a separate file and comparing bytes
+succeeded. This proves the deployed backup and restore path works; the public
+project CLI does not expose the new bay status/attempt ID field, so its live
+projection remains unverified. At 01:15 UTC, project recovery health showed
+101 succeeded, 41 deferred, and 0 failed attempts over 24 hours, with zero
+unknown statuses. Its two backup due-to-success samples had not increased,
+so this fresh project is not counted as a confirmed scheduled-report test.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
    elevation. Frontend automated checks and static smoke passed, but the
    actual project status UI has not yet been exercised in a browser. A fresh
    first-party bootstrap flow was started after the older elevation request
-   expired.
+   expired. A designated testing-account browser spawn returned
+   `fresh_auth_required` at 01:13 UTC; no credential workaround was used.
 2. The bay backup file index was not produced by the scheduled path. The
    recoverable Rustic snapshot and `last_backup` report were confirmed, but
    any release criterion requiring a bay file index for each backup remains
@@ -265,9 +290,10 @@ its post-rollout rate still requires a longer observation window.
    schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
-   reconciles on a 15-minute timer. Individual SQL rows have not been inspected
-   live because audited SQL requires fresh operator auth, but the aggregated
-   operator health query returned new completions and due-to-success metrics.
+   reconciles on a 15-minute timer. Individual SQL rows, including the new
+   confirmed backup ID, have not been inspected live because audited SQL
+   requires fresh operator auth. The aggregated operator health query returned
+   new completions and due-to-success metrics.
 4. The requested seven-day canary, 30-day due-to-success objectives, paid/free
    production distributions, interactive latency comparison, and restore
    drills across repository shards require observation after code review and
