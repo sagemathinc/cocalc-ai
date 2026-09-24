@@ -319,6 +319,7 @@ import { validateAttentionAnswers } from "@cocalc/ai/acp";
 import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
 import {
   prepareHarnessRequest,
+  harnessProfileKey,
   harnessRuntimeKey,
   createHarnessAgent,
   discoverHarnessControls,
@@ -7885,9 +7886,17 @@ async function executeAcpRequest({
     ]);
     const previousKey = harnessConversationProfiles.get(conversationKey);
     if (previousKey && previousKey !== harnessKey && agents.has(previousKey)) {
-      throw Error(
-        "Start a fresh conversation to change a retained ACP harness profile",
-      );
+      if (JSON.parse(previousKey)[0] !== harnessProfileKey(request)) {
+        throw Error(
+          "Start a fresh conversation to change a retained ACP harness profile",
+        );
+      }
+      const previousAgent = agents.get(previousKey)!;
+      if (!previousAgent.dispose)
+        throw Error("Cannot retire the previous ACP harness runtime");
+      await previousAgent.dispose();
+      if (agents.get(previousKey) === previousAgent) agents.delete(previousKey);
+      agentProjectIds.delete(previousAgent);
     }
     harnessConversationProfiles.set(conversationKey, harnessKey);
   }

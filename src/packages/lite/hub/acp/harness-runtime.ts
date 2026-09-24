@@ -188,6 +188,13 @@ export function assertConfiguredHarnessRuntime(
 }
 
 export function harnessRuntimeKey(request: AcpRequest): string {
+  return JSON.stringify([
+    harnessProfileKey(request),
+    request.harness_credential,
+  ]);
+}
+
+export function harnessProfileKey(request: AcpRequest): string {
   if (!request.runtime || !request.chat)
     throw Error("Missing ACP runtime binding");
   return JSON.stringify([
@@ -199,7 +206,6 @@ export function harnessRuntimeKey(request: AcpRequest): string {
     createHash("sha256")
       .update(JSON.stringify(request.runtime.profile))
       .digest("hex"),
-    request.harness_credential,
   ]);
 }
 

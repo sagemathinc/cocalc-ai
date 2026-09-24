@@ -5,6 +5,7 @@ import {
   prepareHarnessRequest,
   setHarnessLauncher,
   harnessRuntimeKey,
+  harnessProfileKey,
   assertConfiguredHarnessRuntime,
 } from "../harness-runtime";
 import {
@@ -279,4 +280,14 @@ test("runtime keys separate principals, conversations and profile revisions", ()
     expect(harnessRuntimeKey({ ...source, ...change })).not.toBe(key);
   const native = { ...source, runtime: undefined };
   expect(prepareHarnessRequest(native)).toBe(native);
+});
+
+test("credential changes retain the profile but require a distinct runtime", () => {
+  const source = request();
+  const changed = {
+    ...source,
+    harness_credential: { kind: "project-secret", name: "OTHER_API_KEY" },
+  } as AcpRequest;
+  expect(harnessProfileKey(changed)).toBe(harnessProfileKey(source));
+  expect(harnessRuntimeKey(changed)).not.toBe(harnessRuntimeKey(source));
 });
