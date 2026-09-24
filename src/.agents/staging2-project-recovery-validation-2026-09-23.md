@@ -559,6 +559,20 @@ Restore to /tmp action, then read
 it returned the same marker with exit code 0. The original project file was
 left in place.
 
+A further code review found that a file clicked directly inside an expanded
+backup folder skipped the special backup selection handler. Commit
+`ae3f8c0422` routes inline preview file clicks through that handler, including
+snapshot files. Two focused peek tests, frontend typecheck, and lint passed.
+Static artifact
+`20260924T050951Z-ae3f8c04-20260924T0509Z-ae3f8c04-recovery-peek-open-dirty`
+deployed to staging2 as release `20260924051216-static` and passed bay health
+checks. In the non-admin browser, I expanded `recovery-ui-canary` inside the
+new backup and clicked `marker.txt` from the [inline file row](screenshots/staging2-backup-direct-peek-file-2026-09-24.png).
+The [backup selection modal](screenshots/staging2-backup-direct-peek-file-preview-2026-09-24.png)
+opened with the exact marker content. The first navigation into this backup
+showed a [timeout screen](screenshots/staging2-backup-direct-peek-root-ready-2026-09-24.png); clicking Refresh loaded the same directory. That
+intermittent catalog delay remains a staging finding to watch.
+
 At 04:47 UTC, `admin health --wide` marked project recovery healthy: zero unknown
 statuses, zero overdue delay, and recent pressure telemetry on both online
 hosts. The 24-hour history contained 336 succeeded, 53 deferred, and one
@@ -573,7 +587,9 @@ checks are a point-in-time staging result, not the seven-day canary.
    load in the non-admin staging2 browser. A nonempty backup was browsed,
    previewed, and restored to a temporary path through the UI. Overdue,
    blocked, and unknown warning states still need live UI qualification, including keyboard and narrow-width
-   review; automated component coverage exists for the key status states.
+   review; automated component coverage exists for the key status states. One
+   backup directory navigation timed out before a successful Refresh, so
+   archive browsing latency and retry behavior need continued observation.
 2. The plan's full observability and scheduler contract remains broader than
    the current code: a calibrated safe-capacity threshold, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
