@@ -954,8 +954,10 @@ seven-day canary gate.
 2. The plan's safe-capacity threshold is still uncalibrated. Durable
    operator-supplied hash attestations and the remote-only restore view are
    deployed on staging2, with four passing shard drills. Automatic fleet
-   recovery stop gates run there, but representative browser latency samples
-   under sustained maintenance load are required for promotion. The
+   recovery stop gates run there. A 100-project empty-backup queue produced
+   ten browser start samples below the warm-start threshold; representative
+   large-byte maintenance load and a longer latency window are still required
+   for promotion. The
    versioned schedule cache, ownership lease, event dispatch, assignment
    checks, host/bay attempt history, and 24-hour
    timing/byte metrics are deployed. Full inventory still reconciles on a
@@ -973,8 +975,9 @@ seven-day canary gate.
    sweep. A pressure-blocked startup followed by a successful full-sweep
    retry was observed live. A bounded 80-project inventory canary completed,
    and due-timer recovery after a restart passed live. A live 525-project
-   inventory and backup queue completed on September 24; sustained browser
-   responsiveness remains to be validated. The canary event path completed
+   inventory and backup queue completed on September 24. A later 100-project
+   queue allowed same-host browser start and file-open probes, while under-load
+   terminal and Jupyter readiness remain unqualified. The canary event path completed
    about 97 seconds after bay confirmation; its
    generation check cached the prior observation for about five minutes, so
    edit-to-bay change detection took longer than dispatch.
@@ -1418,3 +1421,65 @@ and [`after at 1280 pixels`](screenshots/staging2-current-recovery-1280-2026-09-
 This establishes the healthy state and responsive presentation in the tested
 project. A live blocked-state rendering and sustained browser latency during
 maintenance remain open canary checks.
+
+## 2026-09-24 shared-host browser load canary
+
+One hundred uniquely named disposable projects were created through the
+first-party staging2 CLI and assigned to `staging2-shared-1` (host
+`8cd90870-e58f-4979-b87f-cf85f3622324`). Their IDs were journaled in
+`tmp/recovery-ui-load-20260924-ids.tsv`. The project list confirmed exactly
+100 matching live projects on that host. While the host reconciled them,
+operator recovery health showed the temporary unknown inventory tail and an
+overdue free backup queue. At the beginning of interactive probes it showed
+51 overdue free backups; after ten browser starts it showed 31, with zero
+unknown or unaccounted obligations, repeated failures, memory gates, or
+missing pressure telemetry.
+
+The audited read-only query
+`e806479f-058c-4d5a-984d-763495d8acf0` found exactly 100 projects with
+confirmed `last_backup` timestamps, 100 distinct confirmed backup IDs, and
+zero failed backup statuses. The first and last confirmations were at 19:06:51
+and 19:21:14 UTC. These empty projects exercise host inventory coverage,
+backup queueing, and recovery status, but do not model large upload bytes.
+
+Ten browser-initiated starts of an existing smoke project on the _same_ shared
+host occurred while backups remained queued. The operator's 60-minute browser
+latency check recorded lifecycle p95 3.0 seconds (10 samples) against the
+10-second warm-start threshold, admission p95 266 ms, backend p95 2.5 seconds,
+and frontend convergence p95 48 ms. Each observed start reached `running`,
+and a typed stop returned the smoke project to its original `opened` state.
+Ten additional typed start, exec, and stop cycles during the queue all
+succeeded; their measured p95 values were 2.91, 1.04, and 1.52 seconds,
+respectively, recorded in
+`tmp/recovery-ui-load-lifecycle-fixed-20260924.tsv`. An earlier timing journal
+used a variable-width fractional clock and is invalid as duration evidence;
+the fixed-width rerun is the measurement cited here.
+
+A marker file in that smoke project opened through the signed-in browser while
+the backup queue was active. Two file-content paint samples yielded p95 355 ms
+in operator telemetry; one collaboration-sync sample was 574 ms. A terminal
+created near the end of the test produced a prompt and a 298 ms ready sample,
+but the last of the 100 new backups had already completed, so that sample is
+not an under-load terminal qualification. An existing notebook was opened
+without edits after the smoke project was stopped; its kernel stayed loading, so
+there is no under-load Jupyter readiness result from this canary. The marker
+and test terminal file were removed, and the smoke project was verified
+`opened` again.
+
+The durable fifteen-minute coverage audit retained three unknown snapshot and
+three unknown backup statuses in its 19:00 UTC slot even after current health
+cleared them. This is the expected conservative record of the temporary
+inventory tail. Both unaccounted due counts and the blocked-host count stayed
+zero in that slot (audited query
+`ed768455-1618-48ec-903f-6d7cc22c7e28`). This test slot cannot qualify a
+clean 30-day objective window until it ages out. All 100 disposable projects
+were then deleted through the typed CLI with the normal seven-day backup
+retention and no immediate purge. Every returned operation was `succeeded`;
+the deletion journal exactly matches the creation manifest. The project list
+returned zero live matching projects, and audited read-only query
+`4da932ca-c6d6-4071-8ebd-909085d4a238` found zero remaining matching
+project rows after hard deletion. The existing smoke project was verified
+`opened` after its test files were removed. A subsequent operator check showed
+project recovery healthy with zero current snapshot or backup delay, unknown
+status, unaccounted due work, memory gates, or missing storage pressure
+telemetry.
