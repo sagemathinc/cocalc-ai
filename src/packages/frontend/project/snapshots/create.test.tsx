@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import CreateSnapshot from "./create";
 
 const createSnapshot = jest.fn(async (_opts?: any) => undefined);
@@ -164,6 +165,21 @@ describe("CreateSnapshot", () => {
     expect(
       screen.getByPlaceholderText("Name of snapshot to create..."),
     ).toBeInTheDocument();
+  });
+
+  it("returns keyboard focus to the create button when Escape closes the modal", async () => {
+    const user = userEvent.setup();
+    render(<CreateSnapshot />);
+    const trigger = screen.getByRole("button", { name: /Create Snapshot/i });
+    await user.click(trigger);
+    await screen.findByPlaceholderText("Name of snapshot to create...");
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText("Name of snapshot to create..."),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("closes every open create snapshot modal after one successful create", async () => {

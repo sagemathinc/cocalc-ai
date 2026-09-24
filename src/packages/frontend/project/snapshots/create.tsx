@@ -56,14 +56,20 @@ export default function CreateSnapshot({
   const [rollingReserved, setRollingReserved] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const modalIdRef = useRef<symbol>(Symbol("CreateSnapshot"));
 
   function closeModal(clearName: boolean = false): void {
+    const restoreFocus =
+      open && activeCreateSnapshotModal === modalIdRef.current;
     releaseCreateSnapshotModal(modalIdRef.current);
     setOpen(false);
     setCreating(false);
     if (clearName) {
       setName("");
+    }
+    if (restoreFocus) {
+      window.setTimeout(() => triggerRef.current?.focus(), 0);
     }
   }
 
@@ -169,7 +175,7 @@ export default function CreateSnapshot({
 
   return (
     <>
-      <Button disabled={open} onClick={openModal}>
+      <Button ref={triggerRef} disabled={open} onClick={openModal}>
         <Icon name="disk-snapshot" /> Create Snapshot
       </Button>
       {open && (
