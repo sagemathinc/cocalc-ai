@@ -8,6 +8,7 @@ import { uuid } from "@cocalc/util/misc";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryAttemptHealth,
+  getProjectRecoveryHealth,
   getProjectRecoveryRecentPayingCompletions,
   getProjectRecoveryStatusLocal,
   recordProjectMaintenanceStatus,
@@ -562,6 +563,25 @@ describe("project recovery capacity accounting", () => {
           on_time: "1",
         }),
       ]),
+    );
+  });
+
+  it("counts legacy local projects but excludes projects owned by another bay", async () => {
+    const before = await getProjectRecoveryHealth();
+    const host_id = uuid();
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'legacy local recovery', NULL, $3, true),
+              ($2, 'foreign recovery', 'another-bay', $3, true)`,
+      [uuid(), uuid(), host_id],
+    );
+    const after = await getProjectRecoveryHealth();
+    expect(after.eligible_snapshot_projects).toBe(
+      before.eligible_snapshot_projects + 1,
+    );
+    expect(after.eligible_backup_projects).toBe(
+      before.eligible_backup_projects + 1,
     );
   });
 });

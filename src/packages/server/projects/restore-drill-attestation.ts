@@ -139,7 +139,8 @@ export async function getProjectRestoreDrillHealth(
     `WITH active_shards AS (
        SELECT backup_repo_id, COUNT(*)::integer AS backed_up_projects
          FROM projects
-        WHERE owning_bay_id = $1 AND deleted IS NOT TRUE
+        WHERE COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $1) = $1
+          AND deleted IS NOT TRUE
           AND provisioned IS TRUE AND last_backup IS NOT NULL
           AND backup_repo_id IS NOT NULL
         GROUP BY backup_repo_id

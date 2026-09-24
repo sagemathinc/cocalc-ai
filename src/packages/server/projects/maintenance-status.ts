@@ -26,6 +26,7 @@ import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
 } from "@cocalc/server/membership/storage-service-class";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   cancelProjectRecoveryObjective,
   ensureProjectRecoveryObjectiveTables,
@@ -1061,9 +1062,10 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
            ON bo.project_id=p.project_id AND bo.kind='backup'
         WHERE p.provisioned IS TRUE AND p.deleted IS NOT TRUE
           AND p.host_id IS NOT NULL
+          AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $2) = $2
           AND ($1::uuid IS NULL OR p.project_id > $1::uuid)
         ORDER BY p.project_id LIMIT 1000`,
-      [cursor],
+      [cursor, getConfiguredBayId()],
     );
     const currentClassByProject = new Map<
       string,

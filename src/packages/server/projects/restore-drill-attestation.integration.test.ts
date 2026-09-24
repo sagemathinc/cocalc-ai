@@ -207,5 +207,15 @@ describe("restore drill operator attestation", () => {
         ),
       ).level,
     ).toBe("healthy");
+    await getPool().query(
+      "UPDATE projects SET owning_bay_id = 'another-bay' WHERE project_id = $1",
+      [missing.project_id],
+    );
+    expect(await getProjectRestoreDrillHealth(bay_id)).toHaveLength(3);
+    await getPool().query(
+      "UPDATE projects SET owning_bay_id = NULL WHERE project_id = $1",
+      [missing.project_id],
+    );
+    expect(await getProjectRestoreDrillHealth(bay_id)).toHaveLength(4);
   });
 });
