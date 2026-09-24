@@ -996,5 +996,11 @@ seven-day canary gate.
    counter. Continue watching for repeated hub report timeouts and confirm
    later scheduled backup cycles complete normally.
 
+9. Project-recovery debt and failures appear in `admin health`, and the
+   fleet rollout gates query that health. Current code inspection found no
+   periodic project-recovery incident alert, named on-call routing, or daily
+   oldest-debt report. Those plan requirements remain implementation work;
+   a healthy on-demand operator check does not prove paging is active.
+
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
