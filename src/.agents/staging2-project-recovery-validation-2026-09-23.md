@@ -595,7 +595,7 @@ being promoted.
 The server package typecheck, 17 focused PGlite tests, and full development
 build passed. Hub artifact
 `20260924T054144Z-2e6b962d-recovery-latency-gate-2e6b962-dirty`
-is active on staging2 as release `20260924054330-hub`; all seven hub smoke
+was active on staging2 as release `20260924054330-hub`; all seven hub smoke
 checks passed. A same-version, two-host canary campaign with global promotion
 disabled succeeded as operation
 `76fb590e-d063-453f-9e21-dd5ffac035f6`. Its durable record contains
@@ -608,6 +608,16 @@ were unchanged. At 05:44:53 UTC, post-test project-recovery health was healthy
 with zero unknown or overdue statuses; browser latency still had no samples.
 The negative test used the same already-deployed host artifact, so it tested
 the gate without introducing a new project-host build.
+
+A final cohort fix in commit `d7db3a7d4e` rechecks every already-upgraded
+host after each later wave, including campaigns without global promotion.
+Hub artifact `20260924T054830Z-d7db3a7d-recovery-cohort-gate-d7db3a7-dirty`
+is the current staging2 hub release `20260924055018-hub`. All seven hub
+smoke checks passed. Same-version campaign
+`5182f247-372b-4d87-a74e-c12b1362d84c` succeeded with both host IDs
+in its durable passed list; baseline and final project-recovery levels were
+healthy. The post-campaign operator check at 05:51:37 UTC remained healthy
+for project recovery, while browser latency remained unknown.
 
 This proves live admission and fail-closed promotion behavior for the unknown
 latency case. It does not prove the latency regression threshold under actual
