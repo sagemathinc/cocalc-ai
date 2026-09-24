@@ -67,11 +67,12 @@ export function AgentNameInput({
   sideFeedback?: boolean;
 }) {
   const [showRequirements, setShowRequirements] = useState(false);
+  const requirementsVisible = showRequirements && !problem;
   const requirementsId = `${id}-requirements`;
   const retirementId = `${id}-retirement`;
   const problemId = `${id}-problem`;
   const describedBy = [
-    showRequirements ? requirementsId : undefined,
+    requirementsVisible ? requirementsId : undefined,
     showRetirementWarning ? retirementId : undefined,
     problem ? problemId : undefined,
   ]
@@ -98,9 +99,10 @@ export function AgentNameInput({
             htmlType="button"
             icon={<InfoCircleOutlined />}
             aria-label="Agent name requirements"
-            aria-expanded={showRequirements}
+            aria-expanded={requirementsVisible}
             aria-controls={requirementsId}
             title="Name requirements"
+            disabled={!!problem}
             onClick={() => setShowRequirements((value) => !value)}
             style={{ height: "auto", padding: 0 }}
           />
@@ -118,7 +120,7 @@ export function AgentNameInput({
         />
       </div>
       <div className={sideFeedback ? "agent-name-input-feedback" : undefined}>
-        <div id={requirementsId} hidden={!showRequirements}>
+        <div id={requirementsId} hidden={!requirementsVisible}>
           Use 1-32 letters, digits, or internal hyphens, beginning with a
           letter. Availability is checked again when saved.
         </div>

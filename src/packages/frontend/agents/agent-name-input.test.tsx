@@ -33,7 +33,8 @@ test("keeps naming guidance collapsed and omits persistent status copy", async (
   expect(screen.queryByText(/Choose a name/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Old names are retired/)).not.toBeInTheDocument();
 
-  requirements.focus();
+  await user.tab({ shift: true });
+  expect(requirements).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(requirements).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByText(/Use 1-32 letters/)).toHaveTextContent(
@@ -90,45 +91,60 @@ test("classifies only a valid normalized name change as a rename", () => {
   expect(isAgentNameRename("builder", undefined)).toBe(false);
 });
 
-test("keeps validation errors visible and associated with the input", async () => {
-  const user = userEvent.setup();
+test("keeps validation errors visible and associated with the input", () => {
   renderInput({ problem: "That agent name is already used." });
 
   const input = screen.getByRole("textbox", { name: "Agent name" });
   const status = screen.getByRole("status");
   expect(input).toHaveAttribute("aria-invalid", "true");
   expect(input).toHaveAttribute("aria-describedby", status.id);
-
-  await user.click(
+  expect(screen.getByText(/Use 1-32 letters/)).not.toBeVisible();
+  expect(
     screen.getByRole("button", { name: "Agent name requirements" }),
-  );
-  expect(input.getAttribute("aria-describedby")?.split(" ")).toEqual([
-    "agent-name-requirements",
-    status.id,
-  ]);
+  ).toBeDisabled();
 });
 
 test("places new-agent validation and name guidance in the side feedback area", async () => {
   const user = userEvent.setup();
-  renderInput({
-    label: "Name",
-    problem: "That agent name is already used.",
-    sideFeedback: true,
-  });
+  const onChange = jest.fn();
+  const { rerender } = render(
+    <AgentNameInput
+      id="agent-name"
+      value="builder"
+      onChange={onChange}
+      label="Name"
+      sideFeedback
+    />,
+  );
 
   const input = screen.getByRole("textbox", { name: "Name" });
-  const feedback = screen.getByRole("status").parentElement;
-  expect(feedback).toHaveClass("agent-name-input-feedback");
-  expect(input).toHaveAttribute("aria-describedby", "agent-name-problem");
+  const requirements = screen.getByRole("button", {
+    name: "Agent name requirements",
+  });
+  await user.tab({ shift: true });
+  expect(requirements).toHaveFocus();
+  await user.keyboard("{Enter}");
+  const guidance = screen.getByText(/Use 1-32 letters/);
+  expect(guidance).toBeVisible();
+  expect(guidance.parentElement).toHaveClass("agent-name-input-feedback");
+  expect(input).toHaveAttribute("aria-describedby", "agent-name-requirements");
 
-  await user.click(
-    screen.getByRole("button", { name: "Agent name requirements" }),
+  rerender(
+    <AgentNameInput
+      id="agent-name"
+      value="builder"
+      onChange={onChange}
+      label="Name"
+      problem="That agent name is already used."
+      sideFeedback
+    />,
   );
-  expect(screen.getByText(/Use 1-32 letters/).parentElement).toBe(feedback);
-  expect(input).toHaveAttribute(
-    "aria-describedby",
-    "agent-name-requirements agent-name-problem",
-  );
+  expect(guidance).not.toBeVisible();
+  expect(requirements).toHaveAttribute("aria-expanded", "false");
+  expect(requirements).toBeDisabled();
+  const status = screen.getByRole("status");
+  expect(status).toBeVisible();
+  expect(input).toHaveAttribute("aria-describedby", status.id);
 });
 
 test("preserves input change, Enter, autofocus, length, and busy behavior", () => {
