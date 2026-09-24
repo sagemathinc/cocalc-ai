@@ -83,6 +83,30 @@ function oldestDebtLines(health: ProjectRecoveryHealth): string[] {
     );
 }
 
+export function stalledPayingRecoveryQueues({
+  health,
+  recentPayingCompletions,
+}: Pick<
+  RecoveryInput,
+  "health" | "recentPayingCompletions"
+>): ProjectRecoveryHealth["by_host_class"] {
+  return health.by_host_class.filter((group) => {
+    if (
+      group.storage_service_class !== "paying" ||
+      group.overdue_count === 0 ||
+      group.oldest_delay_seconds < STALLED_QUEUE_DELAY_SECONDS[group.kind]
+    ) {
+      return false;
+    }
+    return !recentPayingCompletions.some(
+      (completion) =>
+        completion.host_id === group.host_id &&
+        completion.kind === group.kind &&
+        completion.succeeded > 0,
+    );
+  });
+}
+
 export function buildProjectRecoveryNotificationPlan({
   bayId,
   checkedAt,
@@ -156,20 +180,9 @@ export function buildProjectRecoveryNotificationPlan({
     });
   }
 
-  const stalled = health.by_host_class.filter((group) => {
-    if (
-      group.storage_service_class !== "paying" ||
-      group.overdue_count === 0 ||
-      group.oldest_delay_seconds < STALLED_QUEUE_DELAY_SECONDS[group.kind]
-    ) {
-      return false;
-    }
-    return !recentPayingCompletions.some(
-      (completion) =>
-        completion.host_id === group.host_id &&
-        completion.kind === group.kind &&
-        completion.succeeded > 0,
-    );
+  const stalled = stalledPayingRecoveryQueues({
+    health,
+    recentPayingCompletions,
   });
   if (stalled.length) {
     incidents.push({

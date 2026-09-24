@@ -4,7 +4,10 @@
  */
 
 import type { ProjectRecoveryHealth } from "./maintenance-status";
-import { buildProjectRecoveryNotificationPlan } from "./recovery-notification-plan";
+import {
+  buildProjectRecoveryNotificationPlan,
+  stalledPayingRecoveryQueues,
+} from "./recovery-notification-plan";
 
 function health(): ProjectRecoveryHealth {
   return {
@@ -129,6 +132,20 @@ test("alerts on an overdue paying queue with no completions, and clears after on
     health: current,
     missingPressureHosts: [],
   };
+  expect(
+    stalledPayingRecoveryQueues({
+      health: current,
+      recentPayingCompletions: [],
+    }).map(({ host_id, kind }) => `${host_id}/${kind}`),
+  ).toEqual(["host-1/snapshot"]);
+  expect(
+    stalledPayingRecoveryQueues({
+      health: current,
+      recentPayingCompletions: [
+        { host_id: "host-1", kind: "snapshot", succeeded: 1 },
+      ],
+    }),
+  ).toEqual([]);
   expect(
     buildProjectRecoveryNotificationPlan({
       ...input,

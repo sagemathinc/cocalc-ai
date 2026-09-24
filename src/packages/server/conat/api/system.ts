@@ -197,7 +197,9 @@ import {
 import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
+  getProjectRecoveryRecentPayingCompletions,
 } from "@cocalc/server/projects/maintenance-status";
+import { stalledPayingRecoveryQueues } from "@cocalc/server/projects/recovery-notification-plan";
 import {
   getProjectRestoreDrillHealth,
   summarizeProjectRestoreDrills,
@@ -2076,6 +2078,7 @@ export async function getLaunchHealth({
     loadResult,
     backupsResult,
     projectRecoveryResult,
+    projectRecoveryPayingCompletionsResult,
     projectRestoreDrillsResult,
     projectRecoveryAttemptsResult,
     projectRecoveryObjectivesResult,
@@ -2091,6 +2094,7 @@ export async function getLaunchHealth({
     getBayLoad({ account_id, bay_id: currentBay.bay_id }),
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
     getProjectRecoveryHealth(),
+    getProjectRecoveryRecentPayingCompletions(),
     getProjectRestoreDrillHealth(currentBay.bay_id),
     getProjectRecoveryAttemptHealth(),
     getProjectRecoveryServiceObjectives(),
@@ -2140,6 +2144,14 @@ export async function getLaunchHealth({
     projectRecoveryResult.status === "fulfilled"
       ? projectRecoveryResult.value
       : undefined;
+  const stalledPayingQueues =
+    projectRecovery &&
+    projectRecoveryPayingCompletionsResult.status === "fulfilled"
+      ? stalledPayingRecoveryQueues({
+          health: projectRecovery,
+          recentPayingCompletions: projectRecoveryPayingCompletionsResult.value,
+        })
+      : [];
   const projectRestoreDrills =
     projectRestoreDrillsResult.status === "fulfilled"
       ? summarizeProjectRestoreDrills(
@@ -2403,6 +2415,8 @@ export async function getLaunchHealth({
       label: "Project snapshots and backups",
       level:
         projectRecoveryResult.status === "rejected" ||
+        projectRecoveryPayingCompletionsResult.status === "rejected" ||
+        stalledPayingQueues.length > 0 ||
         projectRestoreDrillsResult.status === "rejected" ||
         projectRestoreDrills?.level === "critical" ||
         projectRecoveryPressureResult.status === "rejected" ||
@@ -2449,7 +2463,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry; ${stalledPayingQueues.length} paying host queues with no recent completion${projectRecoveryPayingCompletionsResult.status === "rejected" ? " (completion history unavailable)" : ""}. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2458,6 +2472,16 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...(projectRecoveryPayingCompletionsResult.status === "rejected"
+                  ? [
+                      `Unable to read recent paying completions: ${projectRecoveryPayingCompletionsResult.reason}`,
+                    ]
+                  : stalledPayingQueues
+                      .slice(0, 12)
+                      .map(
+                        (group) =>
+                          `${group.host_id} paying ${group.kind} queue stalled: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes; no confirmed completion in the last ${group.kind === "snapshot" ? "30 minutes" : "2 hours"}`,
+                      )),
                 ...(projectRestoreDrillsResult.status === "rejected"
                   ? [
                       `Unable to read project restore drill coverage: ${projectRestoreDrillsResult.reason}`,
