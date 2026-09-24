@@ -1382,3 +1382,39 @@ hosts. The current operator health display reports these accounting-gap counts
 as zero and the mature window as `0/2880` slots, correctly unqualified because
 the new audit has not covered the earlier 30 days. This is one live sample,
 not evidence of a complete 30-day objective.
+
+## 2026-09-24 current Recovery UI and narrow-screen check
+
+Using a signed-in nonadmin collaborator on the existing staging canary project,
+a fresh Chromium context loaded Project Settings and activated its Recovery
+link with keyboard focus and Enter. The live page showed a confirmed local
+snapshot and off-host backup, each with a next due time; Create Backup was
+present as a named button. The first-party browser screenshot and visible
+selector commands timed out or returned a QuickJS parser error, so this UI-only
+check used local Playwright with the same test account cookie held in memory.
+The offered Chromium debugging port 9222 was not listening at the time of the
+check.
+
+The initial 320 CSS-pixel rendering squeezed the snapshot status text into a
+62-pixel column and broke words apart. Commit `be349868da` reduces settings
+page padding below the small breakpoint and omits the decorative alert icon at
+that width. Focused frontend tests passed 10/10; frontend lint reported zero
+errors or warnings, and the frontend TypeScript build passed. The immutable
+static artifact
+`20260924T185949Z-be349868-20260924-recovery-mobile-be34986-dirty` was
+deployed to staging2 as release `20260924190036-static`; all seven static
+smoke checks passed, including 3,422 current and previous content-addressed
+assets.
+
+A new signed-in Chromium context against that release again activated Recovery
+with keyboard focus and Enter. At 1280 and 320 CSS pixels, both confirmed
+status cards were present, the Create Backup button had an accessible name,
+and document width equaled viewport width. At 320 pixels the snapshot status
+text column measured 122 pixels, versus 62 before the fix. The reviewed
+screenshots are
+[`before at 320 pixels`](screenshots/staging2-recovery-320-before-compact-fix-2026-09-24.png),
+[`after at 320 pixels`](screenshots/staging2-current-recovery-320-2026-09-24.png),
+and [`after at 1280 pixels`](screenshots/staging2-current-recovery-1280-2026-09-24.png).
+This establishes the healthy state and responsive presentation in the tested
+project. A live blocked-state rendering and sustained browser latency during
+maintenance remain open canary checks.
