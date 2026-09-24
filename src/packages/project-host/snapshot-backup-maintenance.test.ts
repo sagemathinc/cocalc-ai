@@ -270,6 +270,101 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("keeps the first missed due time after later project edits", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-12T00:00:00.000Z"));
+    const originalDue = "2026-04-10T21:00:00.000Z";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "snapshot-project",
+        last_edited: originalDue,
+        last_changed: "2026-04-11T21:00:00.000Z",
+        snapshot_status_outcome: "deferred",
+        snapshot_status_due_at: originalDue,
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+      {
+        project_id: "backup-project",
+        last_edited: originalDue,
+        backup_due_since: "2026-04-11T21:00:00.000Z",
+        backup_status_outcome: "failed",
+        backup_status_due_at: originalDue,
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    for (const [project_id, kind] of [
+      ["snapshot-project", "snapshot"],
+      ["backup-project", "backup"],
+    ]) {
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id,
+          kind,
+          due_at: originalDue,
+          attempt_due_at: originalDue,
+        }),
+      );
+    }
+  });
+
+  it("does not retain debt after a newer recovery point covers it", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-13T23:00:00.000Z"));
+    const oldDue = "2026-04-10T21:00:00.000Z";
+    const recoveredAt = "2026-04-11T23:00:00.000Z";
+    const newDue = "2026-04-12T23:00:00.000Z";
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: recoveredAt,
+      changed: true,
+    });
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "snapshot-project",
+        last_edited: oldDue,
+        last_changed: "2026-04-12T22:00:00.000Z",
+        last_snapshot: recoveredAt,
+        snapshot_status_outcome: "deferred",
+        snapshot_status_due_at: oldDue,
+        snapshots: { daily: 1 },
+        backups: { disabled: true },
+      },
+      {
+        project_id: "backup-project",
+        last_edited: oldDue,
+        backup_due_since: "2026-04-12T22:00:00.000Z",
+        last_backup: recoveredAt,
+        backup_status_outcome: "failed",
+        backup_status_due_at: oldDue,
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    for (const [project_id, kind, expectedDue] of [
+      ["snapshot-project", "snapshot", "2026-04-12T22:00:00.000Z"],
+      ["backup-project", "backup", newDue],
+    ]) {
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id,
+          kind,
+          attempt_due_at: expectedDue,
+        }),
+      );
+    }
+  });
+
   it("does not mutate a project after its host assignment changes", async () => {
     confirmProjectMaintenanceAssignmentMock.mockImplementation(
       async ({ project_id }: { project_id: string }) =>

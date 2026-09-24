@@ -560,7 +560,12 @@ function backupIsStarved({
 }
 
 function backupDueAt(
-  row: { backup_due_since?: string | null; last_backup?: string | null },
+  row: {
+    backup_due_since?: string | null;
+    last_backup?: string | null;
+    backup_status_outcome?: HostProjectMaintenanceSchedule["backup_status_outcome"];
+    backup_status_due_at?: string | null;
+  },
   schedule: SnapshotSchedule,
 ): number | undefined {
   const changedAt = parseTimestampMs(row.backup_due_since);
@@ -572,9 +577,17 @@ function backupDueAt(
     .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
   if (!intervals.length) return undefined;
   const lastBackup = parseTimestampMs(row.last_backup);
-  return lastBackup == null
-    ? changedAt
-    : Math.max(changedAt, lastBackup + Math.min(...intervals));
+  const candidate =
+    lastBackup == null
+      ? changedAt
+      : Math.max(changedAt, lastBackup + Math.min(...intervals));
+  const previousDue = parseTimestampMs(row.backup_status_due_at);
+  return (row.backup_status_outcome === "deferred" ||
+    row.backup_status_outcome === "failed") &&
+    previousDue != null &&
+    (lastBackup == null || lastBackup < previousDue)
+    ? Math.min(candidate, previousDue)
+    : candidate;
 }
 
 function snapshotDueAt(
@@ -602,9 +615,17 @@ function snapshotDueAt(
     .filter((kind) => schedule[kind] > 0)
     .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
   if (!intervals.length) return undefined;
-  return lastSnapshot == null
-    ? changedAt
-    : Math.max(changedAt, lastSnapshot + Math.min(...intervals));
+  const candidate =
+    lastSnapshot == null
+      ? changedAt
+      : Math.max(changedAt, lastSnapshot + Math.min(...intervals));
+  const previousDue = parseTimestampMs(row.snapshot_status_due_at);
+  return (row.snapshot_status_outcome === "deferred" ||
+    row.snapshot_status_outcome === "failed") &&
+    previousDue != null &&
+    (lastSnapshot == null || lastSnapshot < previousDue)
+    ? Math.min(candidate, previousDue)
+    : candidate;
 }
 
 function retryAt(

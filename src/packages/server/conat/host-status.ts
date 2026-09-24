@@ -87,6 +87,8 @@ export async function listHostProjectMaintenanceSchedules({
     last_backup: Date | string | null;
     last_snapshot: Date | string | null;
     last_snapshot_observed_at: Date | string | null;
+    snapshot_status_outcome: HostProjectMaintenanceSchedule["snapshot_status_outcome"];
+    snapshot_status_due_at: Date | string | null;
     snapshot_reconciled_change_at: Date | string | null;
     snapshot_reconciled_schedule_revision: string | null;
     last_backup_observed_at: Date | string | null;
@@ -115,6 +117,12 @@ export async function listHostProjectMaintenanceSchedules({
        (SELECT observed_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='snapshot'
            AND host_id=projects.host_id) AS last_snapshot_observed_at,
+       (SELECT outcome FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_status_outcome,
+       (SELECT due_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_status_due_at,
        (SELECT reconciled_change_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='snapshot'
            AND host_id=projects.host_id) AS snapshot_reconciled_change_at,
@@ -271,6 +279,13 @@ export async function listHostProjectMaintenanceSchedules({
         : row.last_snapshot_observed_at instanceof Date
           ? row.last_snapshot_observed_at.toISOString()
           : `${row.last_snapshot_observed_at}`;
+    schedule.snapshot_status_outcome = row.snapshot_status_outcome ?? null;
+    schedule.snapshot_status_due_at =
+      row.snapshot_status_due_at == null
+        ? null
+        : row.snapshot_status_due_at instanceof Date
+          ? row.snapshot_status_due_at.toISOString()
+          : `${row.snapshot_status_due_at}`;
     schedule.snapshot_reconciled_change_at =
       row.snapshot_reconciled_change_at == null
         ? null

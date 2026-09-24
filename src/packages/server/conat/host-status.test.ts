@@ -230,6 +230,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
         last_backup: null,
         last_snapshot: null,
         last_snapshot_observed_at: null,
+        snapshot_status_outcome: null,
+        snapshot_status_due_at: null,
         snapshot_reconciled_change_at: null,
         snapshot_schedule_revision: "schedule-revision",
         snapshot_reconciled_schedule_revision: null,
