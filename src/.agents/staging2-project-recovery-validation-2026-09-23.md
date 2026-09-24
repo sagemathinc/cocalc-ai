@@ -1123,3 +1123,61 @@ production state or alert-delivery setting changed.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
+
+## 2026-09-24 interval scheduling and Bees pressure canary
+
+Commit `7a339ffea8` schedules verified snapshot interval waits without holding
+an active worker slot. Its focused host tests passed (38/38), server
+maintenance-status tests passed (18/18), the integration checks passed (3/3),
+package typechecks passed, and the full development build passed. The hub
+artifact `20260924T132546Z-7a339ffe-20260924-recovery-interval-wait-7a339ff-dirty`
+was deployed as release `20260924132859-hub`; hub smoke passed. The matching
+project-host artifact was installed on the canary. A restart caused global
+memory PSI to rise above 50%, the conservative host gate deferred scheduled
+work, and snapshot debt accumulated. The canary was rolled back to the prior
+`67c2409d` project-host artifact while the source was investigated. The shared
+host was never upgraded to `7a339ffea8`.
+
+Per-cgroup inspection attributed the pressure to `cocalc-bees`: its
+`memory.current` was approximately 1.09 GiB against a 1 GiB `memory.high`,
+while the project pool, maintenance, host services, and other top-level
+cgroups had zero memory PSI and the host had more than 5 GiB available.
+Stopping three test projects did not reduce the pressure. A controlled,
+temporary increase of the Bees soft limit to 1.5 GiB brought both Bees and
+global PSI below 1% and recovery health returned to healthy. The original
+1 GiB limit was restored and verified. The pressure persisted after the
+rollback, so this observation does not attribute the Bees workload to the
+interval-scheduling change.
+
+Commit `81a6162d01` now attributes isolated Bees cgroup pressure before
+applying the global memory gate. It admits at most one maintenance worker
+only when Bees is at its soft limit, its PSI accounts for global PSI, other
+required cgroups are quiet, and host available memory meets the preferred
+floor. Missing or inconsistent cgroup measurements remain fail closed. The
+attribution appears in host telemetry. Focused host tests passed (40/40),
+server normalization tests passed (27/27), relevant package typechecks passed,
+and the full development build passed.
+
+The `81a6162d01` hub artifact
+`20260924T141313Z-81a6162d-20260924-recovery-bees-pressure-81a6162-dirty`
+was deployed as staging2 release `20260924141524-hub` and passed hub smoke.
+The project-host artifact
+`20260924T141600Z-81a6162d-20260924-recovery-bees-pressure-81a6162-dirty`
+was installed only on `staging2-agent-messaging-canary` and passed host smoke.
+The restart reproduced the original condition: Bees PSI exceeded 40% and
+global full PSI exceeded 29%, while host available memory remained about
+5.3 GiB and other top-level cgroups read 0%. At 14:18:41 UTC the first
+maintenance sweep reported `pressure_attribution: bees_cgroup` with global
+full PSI 36.18%; at 14:19:20 it did so again with PSI 55.06%. No canary
+snapshot or backup debt appeared. By 14:21:47 UTC, recovery health was
+healthy with zero overdue/unknown work and zero hosts at the memory gate;
+Bees and global full avg10 had returned to 0%. The 1 GiB Bees soft limit
+remained in place. The shared host stayed pinned to the earlier
+`67c2409d` artifact. No production host or alert setting changed.
+
+This is a short staging restart canary, not the plan's seven-day comparison
+or safe-capacity calibration. Keep the shared host pinned until interactive
+p95/p99 latency under sustained maintenance, longer due-to-success behavior,
+and the wider rollout gates are reviewed. The 30-day objectives, production
+baseline and restore drills, a live inventory above 500 projects, and alert
+recipient/delivery drill remain open.
