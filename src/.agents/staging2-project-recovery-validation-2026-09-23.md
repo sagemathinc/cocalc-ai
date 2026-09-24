@@ -1505,3 +1505,37 @@ showed the confirmed local snapshot and off-host backup statuses with no
 document-level horizontal overflow. A live blocked project has not yet been
 captured, so the new wording is qualified by focused component tests and the
 post-deploy healthy-state browser check, not by a live blocked-state UI drill.
+
+## 2026-09-24 Classified recovery failures
+
+Commit `f92144b51a` classifies recognizable scheduled maintenance failures
+before publishing them to the owning bay. Storage quota, managed backup upload
+policy, repository confirmation, repository credentials, and object-store
+unavailability now have distinct status reasons and Recovery view descriptions.
+The raw error remains in the host log. Unknown errors retain the prior report
+path so new failure modes remain diagnosable; the classifier is deliberately
+limited to identifiable evidence in the error text. It does not establish that
+every possible Rustic or object-store error form is classified. Focused tests
+passed: 50 host tests and 16 Recovery UI tests. Project-host and frontend
+TypeScript checks and frontend lint passed.
+
+The project-host artifact
+`20260924T195131Z-f92144b5-recovery-failure-reasons-20260924-dirty` was
+published to staging2. The general rollout skipped both pinned hosts, so I
+upgraded the canary host and then the shared host explicitly to that exact
+version. Both returned successful upgrade operations and passed project-host
+smoke checks. The static artifact
+`20260924T195221Z-f92144b5-recovery-failure-reasons-20260924-dirty` was
+deployed as release `20260924195335-static`; all seven static smoke checks
+passed, including 3,442 current and previous frontend assets.
+
+A fresh disposable project on the upgraded canary host received repository
+backup `d572c5ffc2ff9f9402e912837c6f0aed9ad6af2879db01d8e645a8d36270180b`
+at 19:56:44 UTC, visible through the typed backup-list API. It was deleted
+successfully with the normal seven-day backup retention and no immediate
+purge; the matching live project list is empty. At 19:57:15 UTC, project
+recovery health was healthy with zero overdue, unknown, or unaccounted due
+obligations and no active memory gate or missing recent storage telemetry.
+The new error wording is covered by focused component tests and deployment
+smoke checks; a genuine live credential or object-store failure was not
+induced on the shared staging repositories.
