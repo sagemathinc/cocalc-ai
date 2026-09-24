@@ -23,7 +23,10 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
-import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import {
+  ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
+  CLAUDE_SUBSCRIPTION_KIND,
+} from "@cocalc/util/ai/external-credential-profiles";
 import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
 import {
   FreshAuthModal,
@@ -68,6 +71,7 @@ function ClaudeCredentialControl({
     | string
     | undefined;
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
   const [login, setLogin] = useState<{
@@ -94,25 +98,10 @@ function ClaudeCredentialControl({
   );
   useEffect(() => {
     let disposed = false;
-    void webapp_client.conat_client.hub.system
-      .listExternalCredentials({
-        provider: "anthropic",
-        scope: "account",
-      })
-      .then((rows) => {
-        if (!disposed)
-          setCredentials(
-            rows.filter(
-              (row) =>
-                !row.revoked &&
-                (row.kind === "anthropic-api-key" ||
-                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
-            ),
-          );
-      })
-      .catch((err) => {
-        if (!disposed) setError(`${err}`);
-      });
+    setCredentials([]);
+    setCredentialsLoaded(false);
+    setLogin(undefined);
+    setError("");
     const refresh = () => {
       const current = readHarnessCredentialSelection({
         accountId,
@@ -126,6 +115,28 @@ function ClaudeCredentialControl({
           : "project-secret",
       );
     };
+    refresh();
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({
+        provider: "anthropic",
+        scope: "account",
+      })
+      .then((rows) => {
+        if (!disposed) {
+          setCredentials(
+            rows.filter(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          );
+          setCredentialsLoaded(true);
+        }
+      })
+      .catch((err) => {
+        if (!disposed) setError(`${err}`);
+      });
     window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     return () => {
       disposed = true;
@@ -170,6 +181,13 @@ function ClaudeCredentialControl({
       clearInterval(timer);
     };
   }, [login?.id, login?.state, projectId]);
+  const selectedSubscription = value.startsWith("account-subscription:")
+    ? credentials.find(
+        (row) =>
+          row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+          row.id === value.slice("account-subscription:".length),
+      )
+    : undefined;
   return (
     <Space orientation="vertical" size={4} style={{ width: "100%" }}>
       <Select
@@ -182,7 +200,7 @@ function ClaudeCredentialControl({
           },
           ...credentials.map((row) => ({
             value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
-            label: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "Claude Pro/Max" : row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
+            label: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? `${row.metadata?.plan || "Claude Pro/Max"} - ${row.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY] || "unknown account"}` : row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
           })),
         ]}
         onChange={(next) => {
@@ -351,6 +369,24 @@ function ClaudeCredentialControl({
       <Typography.Text type="secondary">
         This account-local choice is applied when the next turn is admitted.
       </Typography.Text>
+      {selectedSubscription && (
+        <Typography.Text role="status">
+          Billing: Claude {selectedSubscription.metadata?.plan || "Pro/Max"}{" "}
+          plan for{" "}
+          {selectedSubscription.metadata?.[
+            ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY
+          ] || "unknown account"}
+          . Anthropic controls plan limits and optional extra usage.
+        </Typography.Text>
+      )}
+      {credentialsLoaded &&
+        value.startsWith("account-subscription:") &&
+        !selectedSubscription && (
+          <div role="alert">
+            This Claude subscription is unavailable or revoked. Reconnect or
+            choose another credential.
+          </div>
+        )}
       <Typography.Text type="warning">
         {claudeCredentialTrustWarning(
           value.startsWith("account-subscription:")

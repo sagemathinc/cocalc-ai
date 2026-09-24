@@ -9,6 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import {
   claudeCredentialTrustWarning,
@@ -113,6 +114,47 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
       ),
     ).toBeTruthy();
   } finally {
+    getStore.mockRestore();
+    localStorage.clear();
+  }
+});
+
+test("Claude subscription shows the verified billing account and plan", async () => {
+  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
+    get: () => "account-a",
+  } as any);
+  const list = jest
+    .spyOn(webapp_client.conat_client.hub.system, "listExternalCredentials")
+    .mockResolvedValue([
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        kind: "claude-subscription-home-v1",
+        revoked: null,
+        metadata: {
+          plan: "max",
+          cocalc_provider_identity: "subscriber@example.com",
+        },
+      },
+    ] as any);
+  localStorage.setItem(
+    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
+    "account-subscription:00000000-0000-4000-8000-000000000001",
+  );
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-a"
+      />,
+    );
+    expect(
+      await screen.findByText(
+        /Billing: Claude max plan for subscriber@example.com/,
+      ),
+    ).toBeTruthy();
+  } finally {
+    list.mockRestore();
     getStore.mockRestore();
     localStorage.clear();
   }
