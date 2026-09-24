@@ -32,9 +32,18 @@ not the TestFlight candidate.
   passes on the extracted app. The export options record
   `testFlightInternalTestingOnly=true`; the store profile includes
   `beta-reports-active=true` and `get-task-allow=false`.
-- Xcode offered to create an App Store Connect app record during export. That
-  step was skipped so the IPA could be inspected first. Nothing has been
-  uploaded or assigned to testers.
+- Xcode created the App Store Connect app record with ID `6815857970`, name
+  **CoCalc Mobile by SageMath**, primary language English (US), and SKU
+  `com.sagemath.cocalc.mobile`. Apple's name registry rejected **CoCalc**;
+  the app's on-device name remains **CoCalc**.
+- Xcode Organizer uploaded this archive for **internal TestFlight testing
+  only** on 2026-09-24 and now reports **Uploaded to Apple**. Version/build
+  management was disabled, so the uploaded build remains `0.1.0 (1)`.
+  Processing and tester availability have not yet been verified. No testers
+  have been assigned.
+- The upload completed with a warning: the archive lacks a dSYM for
+  `hermesvm.framework` UUID `5A86B6FB-CE4E-331E-96E2-CA2281AD05ED`.
+  The build upload succeeded, but Hermes crash frames may not be symbolicated.
 
 ## Earlier funded live voice candidate
 
@@ -105,13 +114,13 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
    Settings → Apple Accounts → Manage Certificates… → + → Apple Distribution**
    for that team, then retry the GUI export. Keep credentials in Xcode; do not
    add them to this repository.
-2. Create an App Store Connect iOS app record for that bundle ID before
-   uploading. Suggested initial metadata for review: name **CoCalc**, primary
-   language **English**, SKU
-   `cocalc-mobile-ios`. Check that version/build `0.1.0 (1)` is unused; if it
-   is already present, increment `ios.buildNumber` in `app.config.ts` and
-   rebuild the archive.
-3. The existing IPA is ready for a reviewed internal-only upload. A future
+2. The App Store Connect app record and internal-only upload are complete.
+   Open [App Store Connect](https://appstoreconnect.apple.com/apps/6815857970/testflight/ios)
+   and verify that build `0.1.0 (1)` finishes processing. Its app-record name
+   can be revisited before any public release; the phone still displays
+   **CoCalc**. For a later candidate, increment `ios.buildNumber` in
+   `app.config.ts` and rebuild the archive.
+3. The existing IPA was inspected before upload. A future
    command-line export may still need a local distribution identity because
    Xcode used a cloud-managed certificate for this GUI export. If retrying the
    CLI, use method `app-store-connect`, destination
@@ -130,8 +139,9 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
    ```
 
 4. The IPA's bundle ID, version, signing, and embedded bundle were inspected.
-   After upload and processing, create a small internal tester group and assign
-   this build manually.
+   After processing, create a small internal tester group and assign this
+   build manually. Install that exact TestFlight build on an iPhone and repeat
+   the sign-in, chat, attachment, live voice, and dictation smoke tests.
    This internal-only build must not be added to external testing.
 
 Suggested **What to Test** text:
