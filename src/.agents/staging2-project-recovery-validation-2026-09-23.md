@@ -1181,3 +1181,37 @@ p95/p99 latency under sustained maintenance, longer due-to-success behavior,
 and the wider rollout gates are reviewed. The 30-day objectives, production
 baseline and restore drills, a live inventory above 500 projects, and alert
 recipient/delivery drill remain open.
+
+## 2026-09-24 daily report delivery and 30-day objective accounting
+
+The staging2 on-call account was set to
+`cc82e1f9-b452-42ae-9904-4c29ac1f24a4`. Notifications were enabled briefly
+for a controlled daily-debt delivery test, then disabled and verified off. The
+transactional outbox recorded one successful delivery attempt at 15:55:57 UTC
+to the account's verified address with no error. The recipient confirmed that
+the recovery daily debt email reached their inbox. This validates the daily
+report path; it does not exercise a live critical-incident alert or recipient
+acknowledgement for that lane. The named on-call account remains configured.
+
+Commit `6633901f66` adds durable, daily per-project due-obligation counters
+for the proposed paid/free snapshot and backup objectives. It addresses the
+128-attempt history cap, which could otherwise discard evidence before a
+30-day review. Counters are written transactionally with the maintenance
+status and attempt, and are idempotent across retries and repeated reports.
+The health view excludes the two newest UTC due days so even the 24-hour free
+backup target has matured. A collection-age flag is not evidence that every
+host reported continuously; unknown and stale hosts still need separate
+review. Focused PGlite tests passed 23/23, the server package typecheck passed,
+and the full development build passed.
+
+The hub artifact
+`20260924T160541Z-6633901f-20260924-recovery-slo-6633901-dirty` was deployed
+to staging2 as release `20260924160821-hub`. Hub smoke passed, including the
+project-host route probe. At 16:08:56 UTC, recovery health showed zero paying
+incident breaches and zero unknown project statuses; the new 30-day objective
+view correctly said `collecting`. At 16:09:18 UTC, an audited read-only query
+found one objective state and one daily row, with one due obligation, one
+confirmed success, and one on-time success. This verifies live persistence and
+readback, not 30-day compliance. The first 30-day window requires a full
+collection period and validation of host coverage. Production remains
+unchanged; the shared staging host still uses the previously pinned artifact.
