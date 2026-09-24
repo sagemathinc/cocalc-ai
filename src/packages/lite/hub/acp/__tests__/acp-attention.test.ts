@@ -21,6 +21,8 @@ import {
   upsertAcpAttention,
 } from "../../sqlite/acp-attention";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
+import { enqueueAcpJob } from "../../sqlite/acp-jobs";
+import { acpTestInternals } from "../index";
 import { __test__ } from "../codex-attention";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -84,6 +86,42 @@ describe("ACP attention storage", () => {
 
   afterEach(() => {
     closeAcpDatabase();
+  });
+
+  it("reports queued agent activity without opening its chat", async () => {
+    enqueueAcpJob({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      prompt: "Work",
+      chat: {
+        project_id: PROJECT_ID,
+        path: "agent.chat",
+        thread_id: "thread-1",
+        sender_id: ACCOUNT_ID,
+        parent_message_id: "user-1",
+        message_id: "assistant-1",
+        message_date: "2026-09-24T06:00:00.000Z",
+      },
+    });
+    expect(
+      await acpTestInternals.handleAcpControlRequest({
+        action: "status",
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).toEqual({
+      ok: true,
+      active_threads: [
+        { path: "agent.chat", thread_id: "thread-1", state: "queued" },
+      ],
+    });
+    expect(
+      await acpTestInternals.handleAcpControlRequest({
+        action: "status",
+        account_id: "other-account",
+        project_id: PROJECT_ID,
+      }),
+    ).toEqual({ ok: true, active_threads: [] });
   });
 
   it("retains the owning chat row in the public attention record", () => {

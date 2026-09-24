@@ -191,6 +191,7 @@ import {
   hasQueuedOrRunningAcpJobs,
   hasRunningAcpJobForThread,
   listQueuedAcpJobThreadKeys,
+  listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
@@ -11724,6 +11725,52 @@ async function handleAcpControlRequest(
   request: AcpControlRequest,
 ): Promise<AcpControlResponse> {
   const project_id = `${request.project_id ?? ""}`.trim();
+  if (request.action === "status") {
+    const liveTurns = new Set(
+      listRunningAcpTurnLeases()
+        .filter(
+          (turn) =>
+            turn.project_id === project_id &&
+            turn.thread_id &&
+            turnStillLikelyOwnedByLiveWorker(turn),
+        )
+        .map((turn) => `${turn.path}\0${turn.thread_id}`),
+    );
+    const active = new Map<
+      string,
+      { path: string; thread_id: string; state: "queued" | "running" }
+    >();
+    for (const job of listQueuedAcpJobs()) {
+      if (
+        job.project_id !== project_id ||
+        job.account_id !== request.account_id
+      )
+        continue;
+      active.set(`${job.path}\0${job.thread_id}`, {
+        path: job.path,
+        thread_id: job.thread_id,
+        state: "queued",
+      });
+    }
+    for (const job of listRunningAcpJobs()) {
+      if (
+        job.project_id !== project_id ||
+        job.account_id !== request.account_id
+      )
+        continue;
+      if (
+        !jobStillLikelyOwnedByLiveWorker(job) &&
+        !liveTurns.has(`${job.path}\0${job.thread_id}`)
+      )
+        continue;
+      active.set(`${job.path}\0${job.thread_id}`, {
+        path: job.path,
+        thread_id: job.thread_id,
+        state: "running",
+      });
+    }
+    return { ok: true, active_threads: [...active.values()] };
+  }
   const path = `${request.path ?? ""}`.trim();
   const thread_id = `${request.thread_id ?? ""}`.trim();
   const user_message_id = `${request.user_message_id ?? ""}`.trim();
@@ -12563,6 +12610,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  handleAcpControlRequest,
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,
