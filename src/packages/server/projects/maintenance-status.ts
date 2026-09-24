@@ -24,6 +24,10 @@ import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
 } from "@cocalc/server/membership/storage-service-class";
+import {
+  ensureProjectRecoveryObjectiveTables,
+  recordProjectRecoveryObjective,
+} from "./recovery-objectives";
 
 const logger = getLogger("server:projects:maintenance-status");
 
@@ -152,6 +156,7 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS latest_backup_id TEXT`,
       );
+      await ensureProjectRecoveryObjectiveTables();
     })
     .catch((err) => {
       ensurePromise = undefined;
@@ -253,8 +258,11 @@ export async function recordProjectMaintenanceStatus(
   const bytesScanned = boundedBytes(report.bytes_scanned);
   const bytesUploaded = boundedBytes(report.bytes_uploaded);
   await ensureProjectMaintenanceStatusTable();
-  const result = await getPool().query(
-    `INSERT INTO project_maintenance_status
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO project_maintenance_status
        (project_id, kind, host_id, storage_service_class, observed_at, outcome,
         reason, due_at, latest_snapshot_at, latest_backup_id, reconciled_change_at,
         reconciled_schedule_revision,
@@ -312,56 +320,62 @@ export async function recordProjectMaintenanceStatus(
        retry_at=excluded.retry_at,
        consecutive_failures=excluded.consecutive_failures
      WHERE project_maintenance_status.observed_at <= excluded.observed_at`,
-    [
-      report.project_id,
-      report.host_id,
-      report.kind,
-      observedAt,
-      report.outcome,
-      report.reason?.slice(0, 500) ?? null,
-      dueAt,
-      latestSnapshot,
-      duration,
-      reportedServiceClass(report),
-      retryAt,
-      Math.max(0, Math.min(1000, Math.floor(report.consecutive_failures ?? 0))),
-      reconciledChange,
-      scheduleRevision,
-      stageDurations,
-      bytesScanned,
-      bytesUploaded,
-      latestBackupId,
-    ],
-  );
-  if (!result.rowCount) return false;
-  await getPool().query(
-    `INSERT INTO project_maintenance_attempts
+      [
+        report.project_id,
+        report.host_id,
+        report.kind,
+        observedAt,
+        report.outcome,
+        report.reason?.slice(0, 500) ?? null,
+        dueAt,
+        latestSnapshot,
+        duration,
+        reportedServiceClass(report),
+        retryAt,
+        Math.max(
+          0,
+          Math.min(1000, Math.floor(report.consecutive_failures ?? 0)),
+        ),
+        reconciledChange,
+        scheduleRevision,
+        stageDurations,
+        bytesScanned,
+        bytesUploaded,
+        latestBackupId,
+      ],
+    );
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      `INSERT INTO project_maintenance_attempts
        (project_id, kind, host_id, storage_service_class, observed_at,
         outcome, reason, due_at, attempt_due_at, latest_backup_id, duration_ms,
         stage_durations_ms, bytes_scanned, bytes_uploaded, retry_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15, $10, $11::jsonb,
              $12, $13, $14)
      ON CONFLICT (project_id, kind, observed_at) DO NOTHING`,
-    [
-      report.project_id,
-      report.kind,
-      report.host_id,
-      reportedServiceClass(report),
-      observedAt,
-      report.outcome,
-      report.reason?.slice(0, 500) ?? null,
-      dueAt,
-      attemptDueAt,
-      duration,
-      stageDurations,
-      bytesScanned,
-      bytesUploaded,
-      retryAt,
-      latestBackupId,
-    ],
-  );
-  await getPool().query(
-    `DELETE FROM project_maintenance_attempts
+      [
+        report.project_id,
+        report.kind,
+        report.host_id,
+        reportedServiceClass(report),
+        observedAt,
+        report.outcome,
+        report.reason?.slice(0, 500) ?? null,
+        dueAt,
+        attemptDueAt,
+        duration,
+        stageDurations,
+        bytesScanned,
+        bytesUploaded,
+        retryAt,
+        latestBackupId,
+      ],
+    );
+    await client.query(
+      `DELETE FROM project_maintenance_attempts
       WHERE project_id=$1 AND kind=$2
         AND (observed_at < NOW() - INTERVAL '30 days'
           OR ctid IN (
@@ -369,9 +383,25 @@ export async function recordProjectMaintenanceStatus(
             WHERE project_id=$1 AND kind=$2
             ORDER BY observed_at DESC OFFSET 128
           ))`,
-    [report.project_id, report.kind],
-  );
-  return true;
+      [report.project_id, report.kind],
+    );
+    await recordProjectRecoveryObjective({
+      db: client,
+      projectId: report.project_id,
+      kind: report.kind,
+      serviceClass: reportedServiceClass(report),
+      outcome: report.outcome,
+      dueAt: attemptDueAt,
+      observedAt,
+    });
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function freshHostMaintenanceBlock(

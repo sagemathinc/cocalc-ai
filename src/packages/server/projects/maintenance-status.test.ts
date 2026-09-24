@@ -13,7 +13,13 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: (...args: any[]) => queryMock(...args) })),
+  default: jest.fn(() => ({
+    query: (...args: any[]) => queryMock(...args),
+    connect: async () => ({
+      query: (...args: any[]) => queryMock(...args),
+      release: jest.fn(),
+    }),
+  })),
 }));
 
 describe("project recovery status after unchanged-content reconciliation", () => {

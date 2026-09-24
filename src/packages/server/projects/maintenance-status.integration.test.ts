@@ -12,6 +12,7 @@ import {
   getProjectRecoveryStatusLocal,
   recordProjectMaintenanceStatus,
 } from "./maintenance-status";
+import { getProjectRecoveryServiceObjectives } from "./recovery-objectives";
 
 describe("project recovery capacity accounting", () => {
   beforeAll(async () => {
@@ -166,5 +167,164 @@ describe("project recovery capacity accounting", () => {
       ]),
     );
     expect(rows.filter((row) => row.host_id === host_id)).toHaveLength(2);
+  });
+
+  it("counts a due obligation once across retries and report replay", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    const firstDue = new Date(Date.now() - 3 * 60 * 60_000);
+    const firstFailure = new Date(firstDue.getTime() + 5 * 60_000);
+    const firstSuccess = new Date(firstDue.getTime() + 20 * 60_000);
+    const secondDue = new Date(firstDue.getTime() + 60 * 60_000);
+    const secondSuccess = new Date(secondDue.getTime() + 35 * 60_000);
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'objective test', 'bay-0', $2, true)`,
+      [project_id, host_id],
+    );
+    const report = async ({
+      due,
+      observed,
+      outcome,
+    }: {
+      due: Date;
+      observed: Date;
+      outcome: "failed" | "succeeded";
+    }) =>
+      recordProjectMaintenanceStatus({
+        host_id,
+        project_id,
+        kind: "snapshot",
+        storage_service_class: "paying",
+        observed_at: observed.toISOString(),
+        due_at: due.toISOString(),
+        attempt_due_at: due.toISOString(),
+        outcome,
+        latest_snapshot_at:
+          outcome === "succeeded" ? observed.toISOString() : null,
+      });
+    expect(
+      await report({
+        due: firstDue,
+        observed: firstFailure,
+        outcome: "failed",
+      }),
+    ).toBe(true);
+    expect(
+      await report({
+        due: firstDue,
+        observed: firstSuccess,
+        outcome: "succeeded",
+      }),
+    ).toBe(true);
+    expect(
+      await report({
+        due: firstDue,
+        observed: firstSuccess,
+        outcome: "succeeded",
+      }),
+    ).toBe(true);
+    expect(
+      await report({
+        due: secondDue,
+        observed: secondSuccess,
+        outcome: "succeeded",
+      }),
+    ).toBe(true);
+    expect(
+      await report({
+        due: firstDue,
+        observed: firstFailure,
+        outcome: "failed",
+      }),
+    ).toBe(false);
+    const { rows } = await getPool().query(
+      `SELECT obligations, succeeded, on_time
+         FROM project_recovery_objective_daily
+        WHERE due_day=$1 AND storage_service_class='paying'
+          AND kind='snapshot'`,
+      [firstDue.toISOString().slice(0, 10)],
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        obligations: "2",
+        succeeded: "2",
+        on_time: "1",
+      }),
+    ]);
+  });
+
+  it("reads a mature UTC due day from durable objective counters", async () => {
+    await getPool().query(
+      `INSERT INTO project_recovery_objective_daily
+         (due_day, storage_service_class, kind, obligations, succeeded, on_time)
+       VALUES ((NOW() AT TIME ZONE 'UTC')::date - INTERVAL '3 days',
+               'free', 'backup', 3, 2, 1)`,
+    );
+    const report = await getProjectRecoveryServiceObjectives();
+    expect(report.ready).toBe(false);
+    expect(report.rows).toContainEqual({
+      storage_service_class: "free",
+      kind: "backup",
+      obligations: 3,
+      succeeded: 2,
+      on_time: 1,
+      target_seconds: 24 * 60 * 60,
+    });
+  });
+
+  it("reclassifies an unresolved obligation when its storage payer becomes known", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    const due = new Date(Date.now() - 28 * 60 * 60_000);
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'objective payer test', 'bay-0', $2, true)`,
+      [project_id, host_id],
+    );
+    for (const [minutes, outcome, serviceClass] of [
+      [5, "failed", "unclassified"],
+      [20, "succeeded", "paying"],
+    ] as const) {
+      const observed = new Date(due.getTime() + minutes * 60_000);
+      expect(
+        await recordProjectMaintenanceStatus({
+          host_id,
+          project_id,
+          kind: "snapshot",
+          storage_service_class: serviceClass,
+          observed_at: observed.toISOString(),
+          attempt_due_at: due.toISOString(),
+          outcome,
+          latest_snapshot_at:
+            outcome === "succeeded" ? observed.toISOString() : null,
+        }),
+      ).toBe(true);
+    }
+    const { rows } = await getPool().query(
+      `SELECT storage_service_class, obligations, succeeded, on_time
+         FROM project_recovery_objective_daily
+        WHERE due_day=$1 AND kind='snapshot'
+          AND storage_service_class IN ('unclassified', 'paying')`,
+      [due.toISOString().slice(0, 10)],
+    );
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          storage_service_class: "unclassified",
+          obligations: "0",
+          succeeded: "0",
+          on_time: "0",
+        }),
+        expect.objectContaining({
+          storage_service_class: "paying",
+          obligations: "1",
+          succeeded: "1",
+          on_time: "1",
+        }),
+      ]),
+    );
   });
 });

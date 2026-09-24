@@ -198,6 +198,7 @@ import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
 } from "@cocalc/server/projects/maintenance-status";
+import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
 import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/project-host-metrics";
 import {
   getBayBackupStatus as getBayBackupStatus0,
@@ -2067,6 +2068,7 @@ export async function getLaunchHealth({
     backupsResult,
     projectRecoveryResult,
     projectRecoveryAttemptsResult,
+    projectRecoveryObjectivesResult,
     projectRecoveryPressureResult,
     latencyResult,
     setupResult,
@@ -2080,6 +2082,7 @@ export async function getLaunchHealth({
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
     getProjectRecoveryHealth(),
     getProjectRecoveryAttemptHealth(),
+    getProjectRecoveryServiceObjectives(),
     getProjectHostStoragePressureWindows({ bay_id: currentBay.bay_id }),
     getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
     getSiteSetupStatus({ account_id }),
@@ -2110,6 +2113,10 @@ export async function getLaunchHealth({
   const projectRecoveryAttempts =
     projectRecoveryAttemptsResult.status === "fulfilled"
       ? projectRecoveryAttemptsResult.value
+      : undefined;
+  const projectRecoveryObjectives =
+    projectRecoveryObjectivesResult.status === "fulfilled"
+      ? projectRecoveryObjectivesResult.value
       : undefined;
   const projectRecoveryPressure =
     projectRecoveryPressureResult.status === "fulfilled"
@@ -2373,6 +2380,20 @@ export async function getLaunchHealth({
                 projectRecovery.paying_backup_repeated_failures > 0
               ? "critical"
               : projectRecoveryAttemptsResult.status === "rejected" ||
+                  projectRecoveryObjectivesResult.status === "rejected" ||
+                  (projectRecoveryObjectives?.ready &&
+                    projectRecoveryObjectives.rows.some((row) => {
+                      const required =
+                        row.storage_service_class === "paying"
+                          ? 0.999
+                          : row.storage_service_class === "free"
+                            ? 0.99
+                            : 1;
+                      return (
+                        row.obligations > 0 &&
+                        row.on_time / row.obligations < required
+                      );
+                    })) ||
                   projectRecovery.unknown_snapshot_status > 0 ||
                   projectRecovery.unknown_backup_status > 0 ||
                   projectRecovery.host_maintenance_blocks.length > 0 ||
@@ -2430,6 +2451,19 @@ export async function getLaunchHealth({
                       `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,
                     ]
                   : []),
+                ...(projectRecoveryObjectivesResult.status === "rejected"
+                  ? [
+                      `Unable to read 30-day recovery objectives: ${projectRecoveryObjectivesResult.reason}`,
+                    ]
+                  : projectRecoveryObjectives
+                    ? [
+                        `30-day objectives ${projectRecoveryObjectives.ready ? "mature" : "collecting"}; recorded since ${projectRecoveryObjectives.collecting_since ?? "no due observations"}; mature UTC due window ${projectRecoveryObjectives.window_start} through ${projectRecoveryObjectives.window_end}`,
+                        ...projectRecoveryObjectives.rows.map(
+                          (row) =>
+                            `${row.storage_service_class} ${row.kind} 30-day objective: ${row.on_time}/${row.obligations} on time, ${row.succeeded} confirmed; ${row.target_seconds == null ? "target unavailable" : `target ${row.target_seconds}s`}`,
+                        ),
+                      ]
+                    : []),
                 ...(projectRecoveryAttempts
                   ? [
                       `24-hour attempts: ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.succeeded, 0)} succeeded, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.deferred, 0)} deferred, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.failed, 0)} failed`,
