@@ -34,8 +34,12 @@ function reasonText(reason: string | null | undefined): string | null {
   const text = reason.toLowerCase();
   if (text === "queued")
     return "Maintenance is queued. The recovery point is not confirmed yet.";
+  if (text.includes("project_volume_lifecycle_changed"))
+    return "Project storage changed during maintenance. Maintenance will retry.";
   if (text.includes("lifecycle"))
     return "The host is busy starting or stopping projects.";
+  if (text.includes("io_pressure_unavailable"))
+    return "The host cannot verify storage pressure. Maintenance will retry.";
   if (text.includes("io_pressure"))
     return "The host is under storage pressure.";
   if (text.includes("memory_measurement_unavailable"))
@@ -47,10 +51,16 @@ function reasonText(reason: string | null | undefined): string | null {
     return "Project data is temporarily unavailable. Maintenance will retry.";
   if (text.includes("project_volume_archiving"))
     return "Project archival is in progress. Maintenance will retry.";
+  if (text.includes("legacy_restore_active"))
+    return "Project restoration is in progress. Backups will retry afterward.";
   if (text.includes("assignment_") || text.includes("schedule_changed"))
     return "Project storage settings changed. Maintenance will retry.";
   if (text.includes("backup_not_created"))
     return "A new backup has not been confirmed yet. Maintenance will retry.";
+  if (text.includes("snapshot_not_created"))
+    return "A local snapshot has not been confirmed yet. Maintenance will retry.";
+  if (text.includes("not confirmed in the repository"))
+    return "The off-host backup could not be confirmed. Maintenance will retry.";
   if (text.includes("quota")) return "Storage quota is blocking maintenance.";
   if (text.includes("limit of") && text.includes("backup")) {
     return "The backup retention limit is blocking a new backup.";

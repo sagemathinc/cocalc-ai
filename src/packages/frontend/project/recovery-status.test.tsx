@@ -241,3 +241,64 @@ it("shows a current host memory gate above an older attempt reason", async () =>
   expect(screen.getByText(/The host is under memory pressure/)).toBeVisible();
   expect(screen.getByText(/Due .* Latest confirmed/)).toBeVisible();
 });
+
+it.each([
+  [
+    "io_pressure_unavailable",
+    "The host cannot verify storage pressure. Maintenance will retry.",
+  ],
+  [
+    "project_volume_lifecycle_changed",
+    "Project storage changed during maintenance. Maintenance will retry.",
+  ],
+  [
+    "legacy_restore_active",
+    "Project restoration is in progress. Backups will retry afterward.",
+  ],
+  [
+    "new backup is not confirmed in the repository",
+    "The off-host backup could not be confirmed. Maintenance will retry.",
+  ],
+])("explains a blocked backup with reason %s", async (reason, message) => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_backup: null,
+    backup_due_at: "2026-09-22T00:00:00.000Z",
+    snapshot_disabled: false,
+    backup_disabled: false,
+    backup: {
+      observed_at: current(),
+      outcome: "deferred",
+      reason,
+      due_at: "2026-09-22T00:00:00.000Z",
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="backup" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(
+    screen.getByText("Off-host backups: scheduled recovery point overdue"),
+  ).toBeVisible();
+});
+
+it("explains an unconfirmed local snapshot", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    snapshot_due_at: "2026-09-22T00:00:00.000Z",
+    snapshot_disabled: false,
+    backup_disabled: false,
+    snapshot: {
+      observed_at: current(),
+      outcome: "deferred",
+      reason: "snapshot_not_created",
+      due_at: "2026-09-22T00:00:00.000Z",
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="snapshot" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "A local snapshot has not been confirmed yet. Maintenance will retry.",
+  );
+});
