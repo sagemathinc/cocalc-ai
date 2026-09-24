@@ -403,6 +403,13 @@ const CHAT_VIRTUOSO_STYLE: CSSProperties = {
   minHeight: 0,
 } as const;
 
+const CHAT_LOG_READING_WIDTH: CSSProperties = {
+  boxSizing: "border-box",
+  marginInline: "auto",
+  maxWidth: 1040,
+  width: "100%",
+} as const;
+
 const NEWEST_MESSAGES_BUTTON_STYLE: CSSProperties = {
   position: "absolute",
   left: "50%",
@@ -1449,6 +1456,7 @@ export function MessageList({
     const shouldDim = false;
 
     const wrapperStyle: CSSProperties = {
+      ...CHAT_LOG_READING_WIDTH,
       overflow: "hidden",
       paddingTop: index == 0 ? "20px" : undefined,
       opacity: shouldDim ? 0.7 : 1,
@@ -1626,7 +1634,12 @@ export function MessageList({
         render:
           index === sortedDates.length
             ? () => (
-                <div style={{ padding: "8px 12px 25px" }}>
+                <div
+                  style={{
+                    ...CHAT_LOG_READING_WIDTH,
+                    padding: "8px 12px 25px",
+                  }}
+                >
                   {attentionRecords.map((record) => (
                     <div key={record.attention_id} style={{ marginTop: 8 }}>
                       <CodexAttentionCard
@@ -1862,7 +1875,10 @@ export function MessageList({
         onPointerDownCapture={markUserScrollIntent}
       >
         {sortedDates.map((_, index) => renderMessage(index))}
-        <div ref={endRef} style={{ padding: "8px 12px 25px" }}>
+        <div
+          ref={endRef}
+          style={{ ...CHAT_LOG_READING_WIDTH, padding: "8px 12px 25px" }}
+        >
           {attentionRecords.map((record) => (
             <div key={record.attention_id} style={{ marginTop: 8 }}>
               <CodexAttentionCard
