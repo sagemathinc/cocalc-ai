@@ -166,8 +166,13 @@ Production was not changed.
   online hosts, and both host smoke checks passed. Scheduled reports now carry
   the ID confirmed by repository readback into bay status and attempt history.
   Focused tests, package builds, frontend typecheck, and actual PGlite
-  execution of the status and attempt insert SQL passed. Live inspection of
-  the new bay field remains pending fresh operator authorization.
+  execution of the status and attempt insert SQL passed.
+- Audited backup-health diagnostic for the current index-less browser:
+  `d1ce105b2b`. Hub artifact
+  `20260924T012157Z-d1ce105b-backup-catalog-diagnostic-d1ce105-dirty`
+  passed smoke. It reports `latest_scheduled_backup_id` and the bay report
+  time beside `last_backup`, and labels older SQLite sidecars as legacy index
+  data. The installed CLI can invoke this diagnostic without a CLI upgrade.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -181,7 +186,7 @@ the source commits above identify the tracked code used for the builds.
 | First production-timed scheduler sweep                                    | Found an empty-string UUID cursor error. Fixed in `426994cc`, deployed to staging2, and verified on the next normal sweep.                                                                                                                                                                                                                                                                                                                                                                      |
 | Scheduled backup on a newly provisioned project                           | Rustic backup `e034db1fa34b9994f20eecf606de470f003965bf70b8d4a2078f352bf21de4b9` created at 20:43:24 UTC; `projects.last_backup` advanced to 20:43:24.645 UTC.                                                                                                                                                                                                                                                                                                                                  |
 | Scheduled backup restore                                                  | Restored `recovery-canary/marker.txt` to a second file and read back `new scheduled worker 2026-09-23`.                                                                                                                                                                                                                                                                                                                                                                                         |
-| Bay backup file index                                                     | The Rustic catalog and file restore worked, but admin `backup-health` still reports `latest_index_backup_at: null` for this backup.                                                                                                                                                                                                                                                                                                                                                             |
+| Backup catalog and file browsing                                          | New backups intentionally use a bounded Rustic metadata browser instead of SQLite sidecar indexes (commit `fc7c75ebc5`). The fresh canary backup listed `confirmed-id.txt`, restored it byte-for-byte, and reported the same remote ID and timestamp to the owning bay. A null legacy index timestamp is expected.                                                                                                                                                                              |
 | Independent snapshot lane                                                 | Local snapshot `2026-09-23T20:45:17.464Z` created after the backup completed, with the host still responsive to project commands.                                                                                                                                                                                                                                                                                                                                                               |
 | Manual backup and restore                                                 | Passed on a separate disposable project after the new project-host deployment.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Full Btrfs snapshot restore                                               | `mode=both` restored a marker to its pre-mutation value and restarted the project successfully.                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -264,13 +269,17 @@ At 01:10 UTC on September 24, fresh project
 `3441c07a-894a-4080-bf8b-acf2bc27d043` on the canary host contained marker
 `confirmed-id-canary-2026-09-24T01:10Z`. The backup catalog listed remote ID
 `46b41ca02c9891ff178699fed31876c4c64cdf98c51f05b79d755342ed03eadb`
-at 01:10:49 UTC. Restoring the marker to a separate file and comparing bytes
-succeeded. This proves the deployed backup and restore path works; the public
-project CLI does not expose the new bay status/attempt ID field, so its live
-projection remains unverified. At 01:15 UTC, project recovery health showed
-101 succeeded, 41 deferred, and 0 failed attempts over 24 hours, with zero
-unknown statuses. Its two backup due-to-success samples had not increased,
-so this fresh project is not counted as a confirmed scheduled-report test.
+at 01:10:49 UTC. The project backup file browser listed `confirmed-id.txt`
+through Rustic metadata, and the restored file matched the original
+byte-for-byte. The audited `backup-health` diagnostic at 01:24 UTC showed
+`last_backup` at 01:10:49.374 UTC, `latest_scheduled_backup_id` equal to the
+restored ID, and the scheduled bay report observed at 01:10:52.787 UTC. This
+verifies the deployed scheduled report end to end. The diagnostic's legacy
+index timestamp was null, as expected for the current index-less browser. At
+01:15 UTC, project recovery health showed 101 succeeded, 41 deferred, and 0
+failed attempts over 24 hours, with zero unknown statuses; at 01:17 UTC it
+was healthy with 105 succeeded, 41 deferred, 0 failed, and no overdue or
+unknown status.
 
 ## Open findings and release gates
 
@@ -280,33 +289,29 @@ so this fresh project is not counted as a confirmed scheduled-report test.
    first-party bootstrap flow was started after the older elevation request
    expired. A designated testing-account browser spawn returned
    `fresh_auth_required` at 01:13 UTC; no credential workaround was used.
-2. The bay backup file index was not produced by the scheduled path. The
-   recoverable Rustic snapshot and `last_backup` report were confirmed, but
-   any release criterion requiring a bay file index for each backup remains
-   open until its indexing policy and writer are confirmed and tested.
-3. The plan's full observability and scheduler contract remains broader than
+2. The plan's full observability and scheduler contract remains broader than
    the current code: pressure-time and capacity reports, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
    schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
-   reconciles on a 15-minute timer. Individual SQL rows, including the new
-   confirmed backup ID, have not been inspected live because audited SQL
-   requires fresh operator auth. The aggregated operator health query returned
-   new completions and due-to-success metrics.
-4. The requested seven-day canary, 30-day due-to-success objectives, paid/free
+   reconciles on a 15-minute timer. The audited backup-health diagnostic
+   confirmed the latest scheduled ID; raw attempt rows still require fresh
+   operator auth. The aggregated operator health query returned new
+   completions and due-to-success metrics.
+3. The requested seven-day canary, 30-day due-to-success objectives, paid/free
    production distributions, interactive latency comparison, and restore
    drills across repository shards require observation after code review and
    coordinated rollout. None is established by this single-day staging test.
-5. Staging2's overall health has a separate pre-existing bay-backup restore
+4. Staging2's overall health has a separate pre-existing bay-backup restore
    warning. Project snapshot/backup health must be judged separately.
-6. The host scheduler still uses a 15-minute initial delay and full
+5. The host scheduler still uses a 15-minute initial delay and full
    reconciliation sweep. The canary event path completed in about 97 seconds
    after bay confirmation, but due timers, retry recovery, and responsiveness
    under large live inventories remain to be validated. The host's generation
    check cached this project's prior observation for about five minutes, so
    the edit-to-bay change detection interval was longer than dispatch itself.
-7. The staging account hit its 16 active runtime sponsor-slot limit while
+6. The staging account hit its 16 active runtime sponsor-slot limit while
    creating the bay-history canary. `project create --start` returned a project
    ID and `started: true`, but the project remained `opened` and an immediate
    `project exec` timed out. A subsequent `project start --wait` identified the
@@ -314,7 +319,7 @@ so this fresh project is not counted as a confirmed scheduled-report test.
    released a slot; starting and testing the new project then succeeded. This
    is a staging test-capacity constraint and a CLI status issue, not evidence
    that the snapshot/backup worker failed.
-8. The 24-hour deferral counter is cumulative, so the two fixes for
+7. The 24-hour deferral counter is cumulative, so the two fixes for
    `snapshot_not_created` need a longer post-rollout observation. The exact
    stale-bay/local-snapshot case has an automated test but could not be
    reproduced through the public snapshot CLI because it labels explicit

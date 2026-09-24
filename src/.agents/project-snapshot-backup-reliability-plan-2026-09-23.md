@@ -2,7 +2,8 @@
 
 Date: 2026-09-23
 
-Status: proposed for review; no production or scheduler changes made
+Status: staging implementation in progress; production unchanged. See the
+[staging2 validation report](staging2-project-recovery-validation-2026-09-23.md).
 
 ## Decision and desired outcome
 
@@ -242,6 +243,13 @@ policy block stays visible to the user and operations; an old recovery copy
 must remain intact. Verify backup index and `last_backup` reporting after
 success, including retries after hub disconnect, so a confirmed backup does
 not remain falsely overdue.
+
+Current architecture note: commit `fc7c75ebc5` replaced new SQLite backup
+sidecar indexes with a bounded Rustic metadata browser. For new backups,
+verify repository catalog listing and file browsing plus `last_backup` and
+the confirmed backup ID in the owning bay; keep legacy index checks only for
+older indexed backups. A null legacy index timestamp is expected for a new
+backup and does not indicate missing recovery data.
 
 ### 6. Show actual protection to users and operators
 
