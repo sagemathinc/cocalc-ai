@@ -1173,9 +1173,10 @@ export function startProjectSnapshotBackupMaintenance({
     changedProjects.add(projectId);
     scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
   });
-  const runSweep = async () => {
+  const runSweep = async (trigger: "startup" | "periodic" | "retry") => {
     if (closed || fullSweepRunning) return;
     fullSweepRunning = true;
+    const startedAt = Date.now();
     let reconciled = false;
     try {
       reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
@@ -1189,6 +1190,12 @@ export function startProjectSnapshotBackupMaintenance({
       });
     } finally {
       fullSweepRunning = false;
+      logger.info("snapshot/backup full reconciliation finished", {
+        hostId,
+        trigger,
+        reconciled,
+        duration_ms: Date.now() - startedAt,
+      });
       scheduleFutureDue();
       if (reconciled) {
         clearTimeout(sweepRetryTimer);
@@ -1196,7 +1203,7 @@ export function startProjectSnapshotBackupMaintenance({
       } else if (!closed && !sweepRetryTimer) {
         sweepRetryTimer = setTimeout(() => {
           sweepRetryTimer = undefined;
-          void runSweep();
+          void runSweep("retry");
         }, FULL_SWEEP_RETRY_MS);
         sweepRetryTimer.unref();
       }
@@ -1210,7 +1217,7 @@ export function startProjectSnapshotBackupMaintenance({
   const startRepeatingSweep = () => {
     if (closed) return;
     const timer = setInterval(() => {
-      void runSweep();
+      void runSweep("periodic");
     }, sweepMs);
     timer.unref();
     return timer;
@@ -1219,7 +1226,7 @@ export function startProjectSnapshotBackupMaintenance({
     if (closed) {
       return;
     }
-    void runSweep();
+    void runSweep("startup");
     repeatingTimer = startRepeatingSweep();
   }, initialDelayMs);
   initialTimer.unref();
