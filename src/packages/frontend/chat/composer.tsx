@@ -383,19 +383,18 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const collapseWhenIdle = !isZenMode && !hasInput;
+  const collapseWhenIdle =
+    !isZenMode && input.length === 0 && manualHeightPx == null;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
     : collapseWhenIdle
       ? `${IDLE_COLLAPSED_HEIGHT}px`
-      : !mobile && manualHeightPx != null
-        ? `${manualHeightPx}px`
-        : INPUT_HEIGHT;
+      : INPUT_HEIGHT;
   const autoGrowMaxHeight = collapseWhenIdle
     ? IDLE_COLLAPSED_HEIGHT
     : isZenMode
       ? zenHeight
-      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0));
+      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0) + 100);
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -831,8 +830,9 @@ export function ChatRoomComposer({
                 on_post={on_post ? handlePost : undefined}
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
-                autoGrowMinHeight={32}
+                autoGrowMinHeight={!mobile ? (manualHeightPx ?? 32) : 32}
                 autoGrowMaxHeight={autoGrowMaxHeight}
+                clampAutoGrowToHost={false}
                 compactModeSwitch
                 softFocus
                 onChange={(value) => {

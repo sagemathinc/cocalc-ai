@@ -15,6 +15,7 @@ import {
 
 let lastChatInputProps: any;
 let lastCodexConfigProps: any;
+let mockStoredHeight: string | null = null;
 
 jest.mock("../input", () => ({
   __esModule: true,
@@ -67,12 +68,12 @@ jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
 
 jest.mock("@cocalc/frontend/misc", () => ({
   delete_local_storage: jest.fn(),
-  get_local_storage: jest.fn(() => null),
+  get_local_storage: jest.fn(() => mockStoredHeight),
   set_local_storage: jest.fn(),
 }));
 
 jest.mock("../utils", () => ({
-  INPUT_HEIGHT: 60,
+  INPUT_HEIGHT: "auto",
 }));
 
 function renderComposer(
@@ -121,6 +122,18 @@ describe("ChatRoomComposer resize handle", () => {
     );
   });
 
+  it("keeps growing a draft with a saved manual minimum height", () => {
+    mockStoredHeight = "180";
+    renderComposer(
+      { hasInput: true, input: "A multiline draft" },
+      { agentWorkspace: true },
+    );
+    expect(lastChatInputProps.height).toBe("auto");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(180);
+    expect(lastChatInputProps.autoGrowMaxHeight).toBeGreaterThan(180);
+    expect(lastChatInputProps.clampAutoGrowToHost).toBe(false);
+  });
+
   it("centers a compact auto-growing Agents composer", () => {
     renderComposer(
       { hasInput: true, input: "draft" },
@@ -129,7 +142,7 @@ describe("ChatRoomComposer resize handle", () => {
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
     expect(composer.style.margin).toBe("0px auto 8px");
-    expect(lastChatInputProps.height).toBe(60);
+    expect(lastChatInputProps.height).toBe("auto");
     expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
@@ -275,6 +288,7 @@ describe("ChatRoomComposer resize handle", () => {
   );
   beforeEach(() => {
     lastChatInputProps = undefined;
+    mockStoredHeight = null;
   });
 
   it("allows agent mentions only in explicit ACP or new Codex threads", () => {

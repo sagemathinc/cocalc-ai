@@ -71,6 +71,7 @@ import {
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
+import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
@@ -480,7 +481,6 @@ function NewAgentPanel({
   const [firstRequest, setFirstRequest] = useState("");
   const firstRequestRef = useRef<() => string>(() => "");
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
-  const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
@@ -804,9 +804,6 @@ function NewAgentPanel({
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
       : paymentPreference;
-  const paymentLabel =
-    paymentOptions.find(({ value }) => value === selectedPaymentValue)?.label ??
-    "Automatic";
   const siteFundedPolicy = shouldUseExplicitMembershipModel({
     preference: paymentPreference,
     paymentSource,
@@ -816,14 +813,6 @@ function NewAgentPanel({
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        <AgentNameInput
-          id="new-agent-name"
-          value={name}
-          onChange={setName}
-          problem={name.trim() ? problem : undefined}
-          busy={busy || !!pending}
-          onEnter={() => undefined}
-        />
         <label htmlFor="new-agent-description">Description (optional)</label>
         <Input.TextArea
           id="new-agent-description"
@@ -903,12 +892,23 @@ function NewAgentPanel({
             What should your new agent do?
           </Title>
           <Text type="secondary">
-            Starting from{" "}
-            {sourceAgent ? `@${sourceAgent.name}` : "your defaults"}. You can
-            change any setting below.
+            {sourceAgent
+              ? `Using @${sourceAgent.name}'s project and settings as defaults. This starts a new conversation.`
+              : "Choose a name and describe the first task for your agent."}
           </Text>
         </div>
         <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        <div style={{ maxWidth: 320, width: "100%" }}>
+          <AgentNameInput
+            id="new-agent-name"
+            label="Name"
+            value={name}
+            onChange={setName}
+            problem={name.trim() ? problem : undefined}
+            busy={busy || !!pending}
+            autoFocus={false}
+          />
+        </div>
         <div
           style={{
             background: UI_COLORS.surface,
@@ -920,7 +920,10 @@ function NewAgentPanel({
             padding: "6px 10px",
           }}
         >
-          <div inert={busy ? true : undefined}>
+          <div
+            className="new-agent-composer-input"
+            inert={busy ? true : undefined}
+          >
             <MarkdownInput
               project_id={projectId}
               cacheId={`new-agent:${boundAccount.accountId ?? "account"}`}
@@ -1110,19 +1113,7 @@ function NewAgentPanel({
           }}
         >
           <Space size={4} wrap>
-            <Button
-              type="link"
-              size="small"
-              aria-label={`Change agent name @${name}`}
-              disabled={busy || !!pending}
-              style={{ height: "auto", padding: 0 }}
-              onClick={() => setNameOpen(true)}
-            >
-              @{name}
-            </Button>
-            <Text type="secondary">
-              · {paymentLabel} · Shift+Enter to start
-            </Text>
+            <Text type="secondary">Shift+Enter to start</Text>
           </Space>
           <Space>
             <NamedAgentUsage directory={namedAgentDirectory} />
@@ -1189,26 +1180,6 @@ function NewAgentPanel({
             }}
           />
         )}
-      </Modal>
-      <Modal
-        open={nameOpen}
-        title="Agent name"
-        okText="Done"
-        okButtonProps={{ disabled: !!problem }}
-        cancelButtonProps={{ style: { display: "none" } }}
-        onOk={() => setNameOpen(false)}
-        onCancel={() => setNameOpen(false)}
-      >
-        <AgentNameInput
-          id="new-agent-name-dialog"
-          value={name}
-          onChange={setName}
-          problem={name.trim() ? problem : undefined}
-          busy={busy || !!pending}
-          onEnter={() => {
-            if (!problem) setNameOpen(false);
-          }}
-        />
       </Modal>
     </div>
   );

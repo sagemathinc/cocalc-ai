@@ -46,6 +46,13 @@ test("keeps naming guidance collapsed and omits persistent status copy", async (
   expect(screen.getByText(/Use 1-32 letters/)).not.toBeVisible();
 });
 
+test("supports a visible Name field without stealing prompt focus", () => {
+  renderInput({ label: "Name", autoFocus: false });
+  const name = screen.getByRole("textbox", { name: "Name" });
+  expect(name).toHaveValue("builder");
+  expect(name).not.toHaveFocus();
+});
+
 test("shows and associates the retirement warning only for a pending rename", () => {
   const onChange = jest.fn();
   const { rerender } = render(

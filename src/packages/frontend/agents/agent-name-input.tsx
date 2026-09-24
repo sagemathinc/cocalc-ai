@@ -50,6 +50,7 @@ export function AgentNameInput({
   problem,
   busy,
   onEnter,
+  autoFocus = true,
   label = "Agent name",
   showRetirementWarning = false,
 }: {
@@ -59,6 +60,7 @@ export function AgentNameInput({
   problem?: string;
   busy?: boolean;
   onEnter?: () => void;
+  autoFocus?: boolean;
   label?: string;
   showRetirementWarning?: boolean;
 }) {
@@ -100,7 +102,7 @@ export function AgentNameInput({
       </div>
       <Input
         id={id}
-        autoFocus
+        autoFocus={autoFocus}
         value={value}
         maxLength={32}
         disabled={busy}
