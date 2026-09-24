@@ -284,8 +284,7 @@ export default function MultiMarkdownInput({
               color: UI_COLORS.text,
               ...(softFocus
                 ? {
-                    border: `1px solid ${focused ? UI_COLORS.focus : UI_COLORS.border}`,
-                    borderRadius: 8,
+                    border: 0,
                   }
                 : focused
                   ? FOCUSED_STYLE

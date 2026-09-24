@@ -118,17 +118,17 @@ describe("ChatRoomComposer resize handle", () => {
     expect(composer.style.maxWidth).toBe("1120px");
     expect(composer.style.margin).toBe("0px auto 8px");
     expect(lastChatInputProps.height).toBe(60);
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(44);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
   });
 
-  it("keeps the Agents outer shell neutral while the editor is focused", () => {
+  it("shows focus on the Agents outer shell without an extra shadow", () => {
     renderComposer({}, { agentWorkspace: true });
     const composer = screen.getByTestId("chat-composer");
-    const border = composer.style.border;
+    expect(composer.style.border).toContain("var(--cocalc-ui-border)");
     fireEvent.focus(screen.getByTestId("chat-input-focus-probe"));
-    expect(composer.style.border).toBe(border);
+    expect(composer.style.border).toContain("var(--cocalc-ui-focus)");
     expect(composer.style.boxShadow).toBe("");
   });
 

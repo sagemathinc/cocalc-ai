@@ -627,7 +627,7 @@ export function ChatRoomComposer({
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
     background: UI_COLORS.surface,
-    border: `1px solid ${isInputFocused && !embeddingOptions.agentWorkspace ? UI_COLORS.link : UI_COLORS.border}`,
+    border: `1px solid ${isInputFocused ? (embeddingOptions.agentWorkspace ? UI_COLORS.focus : UI_COLORS.link) : UI_COLORS.border}`,
     borderRadius: isZenMode && isFullscreen ? 0 : 16,
     boxShadow:
       isInputFocused && !embeddingOptions.agentWorkspace
@@ -842,7 +842,7 @@ export function ChatRoomComposer({
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
                 autoGrowMinHeight={
-                  embeddingOptions.agentWorkspace ? 44 : undefined
+                  embeddingOptions.agentWorkspace ? 32 : undefined
                 }
                 autoGrowMaxHeight={autoGrowMaxHeight}
                 compactModeSwitch={embeddingOptions.agentWorkspace}
@@ -911,7 +911,9 @@ export function ChatRoomComposer({
           aria-label="Message actions"
           style={{
             alignItems: "flex-end",
-            borderTop: `1px solid ${UI_COLORS.border}`,
+            borderTop: embeddingOptions.agentWorkspace
+              ? undefined
+              : `1px solid ${UI_COLORS.border}`,
             display: "flex",
             flexDirection: "row",
             flexWrap: "nowrap",
