@@ -1815,3 +1815,30 @@ to false and read back as false. The immediate final recovery-health sample
 was `warning` for one free snapshot newly due by seconds; it listed zero
 paying debt, unknown status, unaccounted obligations, host memory gates, and
 missing storage telemetry. Production remains unchanged.
+
+## 2026-09-24 storage payer attribution follow-up
+
+Commit `ecf11ea99e` aligns recovery funding with the existing project usage
+account policy. An explicit `usage_account_id` now funds recovery priority and
+warnings even when it is not a collaborator; a student course's account is the
+fallback payer when there is no explicit usage account. The host inventory
+resolves owner entitlements and payer priority on each account's home bay.
+An unavailable owner membership still defers the page rather than guessing a
+smaller retention limit. Focused server tests passed 44/44, the existing
+project usage integration suite passed 7/7, and the server TypeScript build
+passed.
+
+Staging2 hub artifact
+`20260924T223602Z-ecf11ea9-recovery-usage-payer-ecf11ea-dirty` deployed as
+release `20260924223735-hub`; worker health, host routing, and all seven hub
+smoke checks passed. At 22:38:39 UTC project recovery health was healthy with
+zero paying threshold breaches, unknown statuses, unaccounted due obligations,
+host memory gates, or missing storage pressure telemetry. An audited inventory
+query found no provisioned project with an explicit external usage payer and
+one student course project with a separate course payer (audits
+`e107ebd7-2c02-4646-9727-fa6e83caddf1` and
+`78b985e0-5d8f-42ee-8ea3-6825973f8a86`). Its host schedule cache had
+last verified at 22:37:38 UTC, during the rollout, and still showed the
+previous owner payer at the 22:40:37 UTC read (`f221c136-325d-40a7-9a04-4c100a9d8f89`). A post-rollout normal reconciliation must verify that
+this cache changes to the course payer before treating the live case as
+qualified. Customer warnings remain off; production is unchanged.
