@@ -193,6 +193,7 @@ export class HarnessAgent implements AcpAgent {
             });
           }
         },
+        request.image_attachments ?? [],
       );
       await publishControls();
       await request.stream({

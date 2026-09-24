@@ -594,6 +594,24 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   assert.equal(launches(), 1);
 });
 
+test("harness sends pasted images as ACP image blocks", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await agent.evaluate({
+    ...request,
+    prompt: "images",
+    image_attachments: [
+      {
+        mimeType: "image/png",
+        data: Buffer.from("fixture").toString("base64"),
+      },
+    ],
+  });
+  assert.equal(
+    events.at(-1).finalResponse,
+    JSON.stringify([{ type: "image", mimeType: "image/png", bytes: 7 }]),
+  );
+});
+
 test("fixture recognizes settings commands after the worker queue-delay note", async (t) => {
   const { agent, request, events } = adapter(t);
   await agent.evaluate({

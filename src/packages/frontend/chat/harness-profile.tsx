@@ -39,7 +39,7 @@ import {
 } from "./harness-credential-selection";
 
 const HARNESS_LIMITATIONS =
-  "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
+  "Text and image prompts. Agent Networks support queued messages. Automations and live guidance are not supported yet.";
 
 export function claudeCredentialTrustWarning(
   mode: "project-secret" | "account-api-key" | "account-subscription",

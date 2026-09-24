@@ -16,6 +16,11 @@ export type AcpStreamUsage = SharedAcpStreamUsage;
 export type AcpStreamEvent = SharedAcpStreamEvent;
 export type AcpStreamPayload = SharedAcpStreamPayload;
 
+export interface AcpImageAttachment {
+  mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  data: string;
+}
+
 export type CommandOutput = string | Iterable<string> | AsyncIterable<string>;
 
 export interface CommandHandlerContext {
@@ -51,6 +56,7 @@ export interface AcpEvaluateRequest {
   account_id: string;
   prompt: string;
   local_images?: string[];
+  image_attachments?: AcpImageAttachment[];
   session_id?: string;
   runtime_env?: Record<string, string>;
   stream: AcpStreamHandler;

@@ -13,6 +13,7 @@ import type {
   CreateElicitationResponse,
 } from "@agentclientprotocol/sdk-v1";
 import type { AcpAttentionQuestion } from "@cocalc/conat/ai/acp/types";
+import type { AcpImageAttachment } from "./types";
 import { harnessQuestionForm } from "./harness-questions";
 import type { Readable, Writable } from "node:stream";
 import {
@@ -453,6 +454,7 @@ export class AcpHarnessClient {
   async prompt(
     text: string,
     listener: (event: HarnessEvent) => Promise<void>,
+    images: readonly AcpImageAttachment[] = [],
   ): Promise<{ stopReason: StopReason }> {
     if (this.disposed || this.failure)
       throw new HarnessError("unavailable", "ACP runtime is closed");
@@ -472,6 +474,18 @@ export class AcpHarnessClient {
       Buffer.byteLength(text) > 512 * 1024
     )
       throw Error("Invalid ACP prompt size");
+    if (
+      images.length > 8 ||
+      images.some(
+        ({ data, mimeType }) =>
+          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+            mimeType,
+          ) ||
+          typeof data !== "string" ||
+          data.length > 7 * 1024 * 1024,
+      )
+    )
+      throw Error("Invalid ACP image attachment");
     this.active = true;
     this.canceled = false;
     this.listener = listener;
@@ -479,7 +493,14 @@ export class AcpHarnessClient {
       const result = await this.request(
         this.connection.prompt({
           sessionId: this.session.sessionId,
-          prompt: [{ type: "text", text }],
+          prompt: [
+            { type: "text", text },
+            ...images.map(({ data, mimeType }) => ({
+              type: "image" as const,
+              data,
+              mimeType,
+            })),
+          ],
         }),
         true,
       );

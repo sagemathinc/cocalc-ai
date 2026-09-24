@@ -179,6 +179,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         /^System note: this message was queued for [^\n]+ while another turn was active, and is being sent automatically now\.\n\n/,
         "",
       );
+      if (text === "images") {
+        update(
+          JSON.stringify(
+            message.params.prompt.slice(1).map(({ type, mimeType, data }) => ({
+              type,
+              mimeType,
+              bytes: Buffer.from(data ?? "", "base64").length,
+            })),
+          ),
+        );
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "turn-context") {
         const contextLine = rawText
           .split("\n")

@@ -175,13 +175,11 @@ test("existing harness settings explain limitations before capability discovery"
   await screen.findByRole("dialog", { name: "ACP harness settings" });
   expect(
     screen.getByText(
-      /Text prompts only\. Agent Networks support queued messages/,
+      /Text and image prompts\. Agent Networks support queued messages/,
     ),
   ).toBeTruthy();
   expect(
-    screen.getByText(
-      /Images, automations and live guidance are not supported yet/,
-    ),
+    screen.getByText(/Automations and live guidance are not supported yet/),
   ).toBeTruthy();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

@@ -89,6 +89,7 @@ import {
   resolveWorkspaceRoot,
 } from "./workspace-root";
 import {
+  acpImageAttachment,
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
@@ -7911,16 +7912,18 @@ async function executeAcpRequest({
     harnessAgents.add(currentAgent);
   }
   currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
-  const { prompt, local_images, cleanup } = await materializeBlobs(
-    request.prompt ?? "",
-    projectId,
-    useContainer && hostProjectRoot
-      ? projectBlobMaterializationRoots({
-          hostProjectRoot,
-          runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
-        })
-      : undefined,
-  );
+  const { prompt, local_images, image_attachments, cleanup } =
+    await materializeBlobs(
+      request.prompt ?? "",
+      projectId,
+      useContainer && hostProjectRoot
+        ? projectBlobMaterializationRoots({
+            hostProjectRoot,
+            runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+          })
+        : undefined,
+      !!harness,
+    );
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
@@ -8002,7 +8005,8 @@ async function executeAcpRequest({
         prompt: artifactReferences.length
           ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
           : augmentPromptWithAgentMentions(prompt, mentionReferences),
-        local_images,
+        local_images: harness ? undefined : local_images,
+        image_attachments: harness ? image_attachments : undefined,
         runtime_env: runtimeEnv,
         config: harness ? undefined : effectiveConfig,
         stream: wrappedStream,
@@ -12409,12 +12413,16 @@ async function materializeBlobs(
   prompt: string,
   projectId: string,
   projectRoots?: { host: string; runtime: string },
+  forHarness = false,
 ): Promise<{
   prompt: string;
   local_images: string[];
+  image_attachments?: ReturnType<typeof acpImageAttachment>[];
   cleanup: () => Promise<void>;
 }> {
   if (!blobStore && !attachmentBlobReader) {
+    if (forHarness && extractBlobReferences(prompt).length)
+      throw Error("ACP image attachment storage is unavailable");
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
@@ -12435,6 +12443,7 @@ async function materializeBlobs(
     ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
     : tempDir;
   const attachments: MaterializedBlobAttachment[] = [];
+  const imageAttachments: ReturnType<typeof acpImageAttachment>[] = [];
   let bytes = 0;
   try {
     for (const ref of unique) {
@@ -12455,8 +12464,19 @@ async function materializeBlobs(
           }
         }
         data ??= await blobStore?.get(ref.uuid);
-        if (data == null) continue;
+        if (data == null) {
+          if (forHarness) throw Error("ACP image attachment is unavailable");
+          continue;
+        }
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (forHarness) {
+          if (
+            imageAttachments.length >= 8 ||
+            bytes + buffer.byteLength > 10 * 1024 * 1024
+          )
+            throw Error("ACP image attachment limit exceeded");
+          imageAttachments.push(acpImageAttachment(buffer));
+        }
         const safeName = buildSafeBlobFilename(ref);
         const hostFilePath = path.join(tempDir, safeName);
         const runtimeFilePath = projectRoots
@@ -12466,6 +12486,7 @@ async function materializeBlobs(
         bytes += buffer.byteLength;
         attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {
+        if (forHarness) throw err;
         logger.warn("failed to materialize blob", { ref, err });
       }
     }
@@ -12494,10 +12515,13 @@ async function materializeBlobs(
         (att, idx) => `Attachment ${idx + 1}: available locally at ${att.path}`,
       )
       .join("\n");
-    const augmented = `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
+    const augmented = forHarness
+      ? sanitizedPrompt
+      : `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
     return {
       prompt: augmented,
       local_images: attachments.map((att) => att.path),
+      image_attachments: forHarness ? imageAttachments : undefined,
       cleanup: async () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       },
@@ -12511,6 +12535,7 @@ async function materializeBlobs(
       err,
     });
     await fs.rm(tempDir, { recursive: true, force: true });
+    if (forHarness) throw err;
     return { prompt, local_images: [], cleanup: async () => {} };
   }
 }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { AcpImageAttachment } from "@cocalc/ai/acp/types";
 
 const CHAT_BLOB_TEMP_RELATIVE_PATH = ".local/share/cocalc/tmp";
 
@@ -12,6 +13,27 @@ export type MaterializedBlobAttachment = {
   ref: BlobReference;
   path: string;
 };
+
+export function acpImageAttachment(data: Buffer): AcpImageAttachment {
+  const mimeType = data
+    .subarray(0, 8)
+    .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    ? "image/png"
+    : data.subarray(0, 3).equals(Buffer.from([255, 216, 255]))
+      ? "image/jpeg"
+      : data.subarray(0, 6).toString("ascii") === "GIF87a" ||
+          data.subarray(0, 6).toString("ascii") === "GIF89a"
+        ? "image/gif"
+        : data.subarray(0, 4).toString("ascii") === "RIFF" &&
+            data.subarray(8, 12).toString("ascii") === "WEBP"
+          ? "image/webp"
+          : undefined;
+  if (!mimeType || data.byteLength > 5 * 1024 * 1024)
+    throw Error(
+      "ACP attachment must be a PNG, JPEG, GIF or WebP image up to 5 MiB",
+    );
+  return { mimeType, data: data.toString("base64") };
+}
 
 export function projectBlobMaterializationRoots({
   hostProjectRoot,
