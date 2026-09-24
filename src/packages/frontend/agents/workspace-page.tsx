@@ -1856,7 +1856,7 @@ function AgentWorkspace({
             onClick={onShowList}
           />
         )}
-        {onToggleAgentSidebar && agentSidebarHidden != null && (
+        {onToggleAgentSidebar && agentSidebarHidden && (
           <AgentsSidebarToggle
             hidden={agentSidebarHidden}
             onToggle={onToggleAgentSidebar}
@@ -2290,12 +2290,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         icon={<Icon name="bars" />}
         onClick={() => setMobileList(true)}
       />
-    ) : (
+    ) : agentSidebarHidden ? (
       <AgentsSidebarToggle
         hidden={agentSidebarHidden}
         onToggle={toggleAgentSidebar}
       />
-    );
+    ) : null;
   }
 
   const toggleAgentSidebar = useCallback(() => {
@@ -3112,6 +3112,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <WorkspaceSidebarActions
+        onHideSidebar={isNarrow ? undefined : toggleAgentSidebar}
         footer={
           <div
             style={{
@@ -3505,7 +3506,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   zIndex: 3,
                 }}
               >
-                {!isNarrow ? (
+                {!isNarrow && agentSidebarHidden ? (
                   <AgentsSidebarToggle
                     hidden={agentSidebarHidden}
                     onToggle={toggleAgentSidebar}

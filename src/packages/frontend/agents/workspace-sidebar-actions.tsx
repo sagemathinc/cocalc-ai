@@ -1,30 +1,35 @@
 import { Button } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { ReactNode } from "react";
+import { AgentsSidebarToggle } from "./workspace-sidebar-toggle";
 
 export function WorkspaceSidebarActions({
   onProjects,
   onNewAgent,
   children,
   footer,
+  onHideSidebar,
 }: {
   onProjects?: () => void;
   onNewAgent: () => void;
   children?: ReactNode;
   footer?: ReactNode;
+  onHideSidebar?: () => void;
 }) {
   return (
     <>
-      <div style={{ flex: "0 0 auto" }}>
+      <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center" }}>
         <Button
           type="text"
-          block
           icon={<Icon name="plus" />}
           onClick={onNewAgent}
-          style={{ justifyContent: "flex-start" }}
+          style={{ justifyContent: "flex-start", flex: 1 }}
         >
           New Agent
         </Button>
+        {onHideSidebar && (
+          <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
+        )}
       </div>
       <div
         role="region"
