@@ -1895,3 +1895,53 @@ deployed as release `20260924225816-hub`; worker health and all seven hub
 smoke checks passed. At 22:58:51 UTC, live operator health was healthy and
 listed 60 free snapshot and seven free backup
 `change_generation_changed` deferrals by name rather than `other`.
+
+## 2026-09-24 bounded replacement and post-rollout restore
+
+Commit `df22c96dc6` tightens automatic rolling backup replacement. The
+ordinary entitlement limit now applies until the project is exactly at its
+limit. At that point, the existing per-project backup lock permits one
+temporary replacement slot. A fresh repository inventory must still match
+before the upload, and limit enforcement reads the repository again instead
+of trusting its cache. A remote repository quota or capacity failure during
+replacement is recorded as `replacement_capacity_blocked`; the old backup
+remains. Operator health and the project's Recovery view show this reason.
+The existing managed-upload policy check still runs before creation.
+
+Focused file-server snapshot/Rustic suites passed 39 tests, the project-host
+reason suite passed seven, the Recovery UI suite passed 17, and the server
+integration suite passed 11. File-server, project-host, server, and frontend
+TypeScript builds passed, as did frontend lint. Tests cover limits 0, 1, and
+4; failed uploads; a changed repository inventory; a full repository; and a
+prune retry without a second upload.
+
+Staging2 hub artifact
+`20260924T230834Z-df22c96d-recovery-replacement-df22c96-dirty` deployed as
+release `20260924231009-hub`; all seven hub smoke checks passed. Static
+artifact `20260924T231101Z-df22c96d-recovery-replacement-df22c96-dirty`
+deployed as release `20260924231147-static`; all seven static checks passed.
+Project-host artifact
+`20260924T231217Z-df22c96d-recovery-replacement-df22c96-dirty` was
+published. The generic fleet rollout skipped both pinned online hosts. An
+initial explicit canary upgrade failed on a 404 artifact URL before
+activation; the host retained its prior version. Retrying with the published
+software store base URL succeeded (`cffd3413-41bd-494e-a457-9678c8f8b13c`).
+The shared-host upgrade then succeeded (`a7d77131-6973-4599-9422-58751fc2ed9d`).
+Both hosts reported the exact new project-host version and passed host smoke.
+
+Disposable canary project `fd281d94-e6d2-464b-9130-7dacc65c5521` on the
+upgraded canary host produced a scheduled off-host backup
+`26a9a09678bfad2f02cb0107fc359d95baa483407b599e5b0df36368aa80a855`.
+Because that backup preceded the test marker, a second backup was created
+after the write; repository copy
+`8ab134173a361978bcdce628bb98a8bcffd2ac37b047a336ff711930ca52411e`
+listed `recovery-canary/marker.txt`. Restoring it to a separate path and
+comparing bytes returned `retention-slot-canary-20260924T2318Z`. The
+disposable project was deleted with seven-day backup retention and no
+immediate purge; audited query `5d78a0b2-63d4-4fa9-9b59-335a7619fd91`
+found zero remaining project rows. At 23:19:06 UTC recovery health was
+healthy with zero paying or unclassified critical debt, unknown statuses,
+unaccounted due obligations, memory gates, or missing storage telemetry.
+The live test establishes the below-limit backup path and byte recovery;
+at-limit replacement and capacity-denial preservation have focused tests but
+still lack a live staged repository-capacity drill.
