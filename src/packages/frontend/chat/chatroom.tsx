@@ -44,6 +44,8 @@ import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
 import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
+import { ChatLiveVoice } from "./live-voice";
+import type { ProjectedChatMessage } from "@cocalc/chat-client";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
@@ -1727,6 +1729,29 @@ function ChatPanelContent({
         : [],
     [actions, selectedThreadLookupKey, messages],
   );
+  const liveVoiceMessages = useMemo<ProjectedChatMessage[]>(
+    () =>
+      selectedThreadMessages.map((message) => {
+        const history = field<{ content: string; date: string }[]>(
+          message,
+          "history",
+        );
+        const latest = history?.[history.length - 1];
+        const generating = field<boolean>(message, "generating") === true;
+        return {
+          message_id: field<string>(message, "message_id") ?? "",
+          thread_id: selectedThreadId ?? "",
+          parent_message_id: field<string>(message, "parent_message_id"),
+          sender_id: field<string>(message, "sender_id") ?? "",
+          role: isAcpAssistantMessage(message) ? "agent" : "human",
+          content: latest?.content ?? "",
+          date: dateValue(message)?.toISOString() ?? latest?.date ?? "",
+          generating,
+          state: generating ? "running" : "complete",
+        };
+      }),
+    [selectedThreadMessages, selectedThreadId],
+  );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
       isSelectedThreadAI,
@@ -2165,6 +2190,39 @@ function ChatPanelContent({
       };
     };
     return resolveFromThreadKey(selectedThreadKey);
+  }
+
+  async function sendVoiceTask(text: string): Promise<{ message_id: string }> {
+    if (
+      readOnly ||
+      !selectedThreadId ||
+      selectedThreadMetadata?.agent_kind !== "acp" ||
+      !aiAgentPolicyAllowed
+    ) {
+      throw new Error(
+        "Select an available Codex thread before speaking a task.",
+      );
+    }
+    if (isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)) {
+      refreshCodexPaymentSource?.();
+      setCodexPaymentConfigOpen(true);
+      throw new Error("Configure this agent's payment source in chat first.");
+    }
+    await ensureProjectRunningForCodex({ project_id, redux });
+    const { parent_message_id } = resolveReplyTarget();
+    const chatIdentity = actions.reserveChatSendIdentity({
+      reply_thread_id: selectedThreadId,
+    });
+    const sent = actions.sendChat({
+      reply_thread_id: selectedThreadId,
+      parent_message_id,
+      input: text,
+      acpConfigOverride: selectedThreadMetadata.acp_config ?? undefined,
+      chatIdentity,
+      skipDraftDelete: true,
+    });
+    if (!sent) throw new Error("The agent did not accept the spoken task.");
+    return { message_id: chatIdentity.message_id };
   }
 
   async function sendMessage(
@@ -3072,6 +3130,14 @@ function ChatPanelContent({
         projectId={project_id}
         threadId={selectedThreadId ?? undefined}
       />
+      {selectedThreadMetadata?.agent_kind === "acp" && !effectiveReadOnly && (
+        <ChatLiveVoice
+          projectId={project_id}
+          messages={liveVoiceMessages}
+          onDelegate={sendVoiceTask}
+          visible={isVisible && tabIsVisible && isChatForeground}
+        />
+      )}
       {selectedThreadResolved != null ? (
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (

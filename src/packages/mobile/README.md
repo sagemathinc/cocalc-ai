@@ -185,37 +185,43 @@ It is silent: simulated replies appear in captions.
 the real conversation bridge into the local fixture chat. Its delayed result
 returns through the same bridge to the simulated voice captions. Try mute/unmute,
 ending a call before the result, **Simulate disconnect**, and leaving/returning to
-the app. Accepted preview tasks continue independently of the call. The displayed
-cost is an example only. Text drafts are preserved while the call panel replaces
-the composer. The extended `pnpm test:visual` flow covers these states in light,
+the app. Accepted preview tasks continue independently of the call. Text drafts
+are preserved while the call panel replaces the composer. The extended
+`pnpm test:visual` flow covers these states in light,
 dark, and enlarged-text configurations.
 
-### Real live-voice development gate
+### Real live voice
 
 The native development build includes `react-native-webrtc`; a rebuild is needed
 for actual audio, but the local simulation works without loading that module.
-The server API is implemented but awaits staging integration and real-provider
-qualification. Remote deployment is intentionally on hold.
+The beta gate is `COCALC_LIVE_VOICE_ENABLED=1` on account-home bays. It requires
+the site's OpenAI API key to have GPT-Live access. Paid members default to
+site-funded voice, subject to their 5-hour and 7-day AI allowances; the app
+shows only remaining percentages. Free members do not receive site-funded
+voice, but may explicitly choose their own account or project OpenAI key. An
+administrator can also use the narrower `COCALC_LIVE_VOICE_DEV=1` gate during
+development. The same service powers **Live voice** in a selected Codex thread
+in the browser web app.
 
-The preview API requires **both** `COCALC_LIVE_VOICE_DEV=1` on the account-home
-server and an administrator account, plus an existing account/project OpenAI API
-key. Site-funded live voice and customer access remain disabled. Keys stay on the
-server; audio travels directly between the phone and OpenAI. Session admission,
-heartbeat, and end operations route to the account's home bay; ordinary agent
-work uses the existing project-host chat transport.
+Keys stay on the server; audio travels directly between the phone or browser
+and OpenAI. Session admission, heartbeat, and end operations route to the
+account's home bay; ordinary agent work uses the existing project-host chat
+transport. The server reserves the maximum call cost before creating a funded
+session, then settles the provider's final duration when confirmed. A lost
+provider response or unconfirmed final usage conservatively settles the full
+reservation.
 
 Calls expire after 120 seconds, with a 25-second heartbeat lease and five-second
-server cleanup sweep. Lease records are durable across server restarts; keep the
-development switch enabled until sessions are closed. Failed provider hangups
-remain pending for retries. These are application cleanup deadlines, not a
-provider-enforced monetary cap: server/provider outages, credential revocation,
-or an unknown creation response still require operator/provider reconciliation.
-This limitation must be resolved before customer rollout.
+server cleanup sweep. Lease records are durable across server restarts. These
+are application cleanup deadlines, not a provider-enforced monetary cap;
+staging must verify startup, sideband closure, final usage, network loss, and
+mobile audio routing with a real GPT-Live-enabled key before the beta flag is
+enabled for customers.
 
 Spoken task submissions and agent results live in the existing chat. Incidental
 voice captions are currently transient; full finalized-voice transcript
-reconciliation, verified provider usage settlement, configurable paid entitlements,
-and background/Bluetooth qualification remain later work. Ending a call never
+reconciliation, configurable paid entitlements, and background/Bluetooth
+qualification remain later work. Ending a call never
 invokes agent interruption. Voice approval is not a substitute for the existing
 approval controls.
 

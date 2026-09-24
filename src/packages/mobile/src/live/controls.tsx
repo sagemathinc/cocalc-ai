@@ -16,7 +16,8 @@ export function LiveVoiceControls({
 }) {
   const colors = usePalette();
   const [confirming, setConfirming] = useState(false);
-  if (!live.capabilities?.enabled) return null;
+  if (!live.capabilities) return null;
+  if (live.capabilities.reason === "Live voice is not enabled.") return null;
   const button = (label: string, onPress: () => void, off = false) => (
     <Pressable
       accessibilityRole="button"
@@ -34,8 +35,35 @@ export function LiveVoiceControls({
       <Text style={{ color: colors.link }}>{label}</Text>
     </Pressable>
   );
+  const included = live.capabilities.funding_source === "site";
+  const sourceChoice =
+    live.phase === "idle" && live.capabilities.own_key_available
+      ? live.fundingPreference === "site"
+        ? button("Use my OpenAI key", () => live.chooseFunding("own"))
+        : button("Use included AI instead", () => live.chooseFunding("site"))
+      : null;
+  const meters = included ? (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+      {live.capabilities.allowance?.map((window) => (
+        <Text key={window.window} style={{ color: colors.muted }}>
+          {window.window === "5h" ? "5-hour" : "7-day"} AI remaining:{" "}
+          {window.remaining_percent}%
+        </Text>
+      ))}
+    </View>
+  ) : null;
+  if (!live.capabilities.enabled)
+    return (
+      <View style={{ paddingVertical: 4 }}>
+        <Text accessibilityRole="alert" style={{ color: colors.muted }}>
+          {live.capabilities.reason ?? "Live voice is unavailable."}
+        </Text>
+        {sourceChoice}
+      </View>
+    );
   return (
     <View style={{ paddingVertical: 4 }}>
+      {meters}
       {live.error ? (
         <Text accessibilityRole="alert" style={{ color: colors.danger }}>
           {live.error}
@@ -52,7 +80,7 @@ export function LiveVoiceControls({
             <Text style={{ color: colors.text }}>
               {live.preview
                 ? "Silent local simulation. No microphone, audio playback, network, or charges. Use Simulate spoken task; replies appear as captions."
-                : `Live voice preview · $${live.capabilities.usd_per_minute.toFixed(2)}/minute billed to your ${live.capabilities.funding_source} OpenAI key. Up to ${live.capabilities.max_seconds / 60} minutes per call; agent work costs extra. Spoken tasks are sent to this chat. Leaving the app ends the call.`}
+                : `Live voice uses ${included ? "your included AI allowance" : "your OpenAI API key"}. Calls last up to ${live.capabilities.max_seconds / 60} minutes. Agent work can use a separate payment source and continues in chat after the call. Leaving the app ends the call.`}
             </Text>
             {button(
               live.preview ? "Start silent simulation" : "Start live call",
@@ -66,14 +94,17 @@ export function LiveVoiceControls({
             {button("Not now", () => setConfirming(false))}
           </View>
         ) : (
-          button("Live voice", () => setConfirming(true), disabled)
+          <View>
+            {button("Live voice", () => setConfirming(true), disabled)}
+            {sourceChoice}
+          </View>
         )
       ) : (
         <View>
           <Text style={{ color: colors.text }}>
             {live.phase === "connecting"
               ? "Connecting live voice…"
-              : `${live.preview ? "Silent simulation" : "Live"} · ${Math.floor(live.seconds / 60)}:${String(live.seconds % 60).padStart(2, "0")} · ${live.preview ? "example cost " : "≈"}$${((Math.max(15, live.seconds) / 60) * live.capabilities.usd_per_minute).toFixed(3)}`}
+              : `${live.preview ? "Silent simulation" : "Live"} · ${Math.floor(live.seconds / 60)}:${String(live.seconds % 60).padStart(2, "0")}`}
           </Text>
           <Text accessibilityLiveRegion="polite" style={{ color: colors.text }}>
             {live.status}

@@ -5,7 +5,11 @@ The first iOS beta is for internal testers only. Use the production variant,
 does not depend on Metro. The development app has a separate bundle ID and is
 not the TestFlight candidate.
 
-## Candidate rebuilt on 2026-09-23
+## Previous candidate rebuilt on 2026-09-23
+
+This archive predates funded live voice. It is superseded for the planned
+internal beta; build a fresh archive from the committed voice implementation
+after staging provider and physical-device qualification.
 
 - Source: `feature/cocalc-mobile` at `655ac91c4b`, including the merge of
   `origin/main` at `de9a62c731` and the mobile payment-settings fix.
@@ -67,9 +71,13 @@ No IPA was produced, and nothing was uploaded to Apple or offered to testers.
 Suggested **What to Test** text:
 
 > Sign in to your CoCalc site, open and create agents, read and send messages,
-> and attach a photo and a PDF. Check a long conversation, background and
-> reopen the app, and report any lost draft, scroll jump, or payment-setting
-> mismatch. Live voice is not part of this beta.
+> and attach a photo and a PDF. Start a live voice call in an agent thread,
+> speak a task, confirm it appears in chat, and end the call while the agent
+> continues. Check a long conversation, background and reopen the app, and
+> report any lost draft, scroll jump, audio-routing, or payment-setting mismatch.
+
+Qualify the matching **Live voice** control in the web agent workspace against
+the same staging home-bay service before widening the beta.
 
 The local archive is a temporary build artifact; make a new one from the
 committed source for a later candidate. This runbook does not claim App Store

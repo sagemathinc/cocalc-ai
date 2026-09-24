@@ -28,6 +28,9 @@ export function useLiveVoice(
   snapshot: ChatSnapshot,
 ) {
   const [capabilities, setCapabilities] = useState<LiveVoiceResult>();
+  const [fundingPreference, setFundingPreference] = useState<"site" | "own">(
+    "site",
+  );
   const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
   const [captionSpeaker, setCaptionSpeaker] = useState<"You" | "Voice">("You");
   const speaker = useRef<"You" | "Voice">("You");
@@ -56,28 +59,37 @@ export function useLiveVoice(
     },
     [profile, project],
   );
+  const fundedRpc = useCallback(
+    (request: Omit<LiveVoiceRequest, "project_id">) =>
+      rpc({ ...request, funding_preference: fundingPreference }),
+    [rpc, fundingPreference],
+  );
   const end = useCallback(() => {
     const call = active.current;
     active.current = undefined;
     call?.bridge.close();
     call?.abort.abort();
     if (call?.connection)
-      void call.connection.close().catch(() => {
-        if (!active.current)
-          setError("Call disconnected. Server cleanup is pending.");
-      });
+      void call.connection
+        .close()
+        .then(() => fundedRpc({ action: "capabilities" }))
+        .then(setCapabilities)
+        .catch(() => {
+          if (!active.current)
+            setError("Call disconnected. Server cleanup is pending.");
+        });
     if (call) setStatus("Call ended. Accepted work remains in chat.");
     setPhase("idle");
     setMuted(false);
     setCaption("");
-  }, []);
+  }, [fundedRpc]);
   useEffect(() => {
     let cancelled = false;
     setCapabilities(undefined);
     if (isPreviewProfile(profile)) {
       setCapabilities(previewLiveCapabilities);
     } else {
-      void rpc({ action: "capabilities" })
+      void fundedRpc({ action: "capabilities" })
         .then((value) => {
           if (!cancelled) setCapabilities(value);
         })
@@ -87,7 +99,7 @@ export function useLiveVoice(
       cancelled = true;
       end();
     };
-  }, [rpc, profile, thread, end]);
+  }, [fundedRpc, profile, thread, end]);
   useFocusEffect(useCallback(() => () => end(), [end]));
   useEffect(() => {
     const listener = AppState.addEventListener("change", (state) => {
@@ -216,7 +228,14 @@ export function useLiveVoice(
         }));
       const connection = isPreviewProfile(profile)
         ? await connectPreviewLive(call.abort.signal, receive)
-        : await connectLive(rpc, history, call.abort.signal, receive);
+        : await connectLive(
+            fundedRpc,
+            history,
+            call.abort.signal,
+            receive,
+            (status) =>
+              setCapabilities((previous) => ({ ...previous, ...status })),
+          );
       if (active.current !== call) {
         await connection.close();
         return;
@@ -239,6 +258,11 @@ export function useLiveVoice(
     simulate: (scenario: PreviewScenario) =>
       active.current?.connection?.simulate?.(scenario),
     capabilities,
+    fundingPreference,
+    chooseFunding: (preference: "site" | "own") => {
+      if (active.current) return;
+      setFundingPreference(preference);
+    },
     phase,
     caption,
     captionSpeaker,

@@ -23,6 +23,7 @@ export async function connectLive(
   history: LiveVoiceRequest["history"],
   signal: AbortSignal,
   receive: (event: LiveEvent) => void,
+  onStatus?: (status: LiveVoiceResult) => void,
 ): Promise<LiveConnection> {
   // Lazy import keeps existing installations usable until their native rebuild.
   const { RTCPeerConnection, mediaDevices } =
@@ -125,6 +126,30 @@ export async function connectLive(
     };
     await peer.setLocalDescription(await peer.createOffer());
     check();
+    if (peer.iceGatheringState !== "complete") {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timeout);
+          peer.onicegatheringstatechange = null;
+          signal.removeEventListener("abort", onAbort);
+        };
+        const onAbort = () => {
+          cleanup();
+          reject(new Error("Live call cancelled."));
+        };
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("Microphone connection setup timed out."));
+        }, 8_000);
+        signal.addEventListener("abort", onAbort, { once: true });
+        peer.onicegatheringstatechange = () => {
+          if (peer.iceGatheringState !== "complete") return;
+          cleanup();
+          resolve();
+        };
+      });
+    }
+    check();
     const result = await rpc({
       action: "start",
       request_id: randomUUID(),
@@ -158,6 +183,7 @@ export async function connectLive(
       if (pinging || closed) return;
       pinging = true;
       void rpc({ action: "heartbeat", session_id })
+        .then((status) => onStatus?.(status))
         .catch(() => {
           receive({
             type: "error",

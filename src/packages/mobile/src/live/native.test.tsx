@@ -16,6 +16,7 @@ const mockEvents: any = {
   send: jest.fn(),
 };
 const mockPeer: any = {
+  iceGatheringState: "complete",
   createDataChannel: () => mockEvents,
   addTrack: jest.fn(),
   createOffer: async () => ({ type: "offer", sdp: "v=0" }),
@@ -45,6 +46,22 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 beforeEach(() => {
   jest.clearAllMocks();
   mockTrack.enabled = true;
+  mockPeer.iceGatheringState = "complete";
+});
+
+it("waits for ICE candidates before sending the mobile offer", async () => {
+  mockPeer.iceGatheringState = "gathering";
+  const rpc = jest.fn(async () => result());
+  const pending = connectLive(rpc, [], new AbortController().signal, () => {});
+  await tick();
+  expect(rpc).not.toHaveBeenCalled();
+  mockPeer.iceGatheringState = "complete";
+  mockPeer.onicegatheringstatechange();
+  const call = await pending;
+  expect(rpc).toHaveBeenCalledWith(
+    expect.objectContaining({ action: "start", sdp: "v=0" }),
+  );
+  await call.close();
 });
 
 it("uses native tracks, mutes capture, and stops both media and server session on end", async () => {

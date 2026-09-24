@@ -14,3 +14,4 @@ export * from "./agent-organization";
 export * from "./named-agents";
 
 export { markdownToSpeechText, splitSpeechText } from "./speech-text";
+export { LiveDelegation, type LiveEvent } from "./live-delegation";

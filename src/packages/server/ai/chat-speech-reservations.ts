@@ -41,7 +41,7 @@ export async function reserveChatSpeechUsage({
 }: {
   accountId: string;
   requestId: string;
-  operation: "transcription" | "speech";
+  operation: "transcription" | "speech" | "live";
   model: string;
   reservedMicrousd: number;
 }): Promise<ChatSpeechUsageReservation> {
@@ -159,7 +159,7 @@ export async function settleChatSpeechUsage({
   reservation: ChatSpeechUsageReservation;
   projectId?: string;
   path?: string;
-  operation: "transcription" | "speech";
+  operation: "transcription" | "speech" | "live";
   model: string;
   costMicrousd: number;
   durationMs: number;
