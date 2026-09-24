@@ -436,6 +436,14 @@ describe("fleet recovery stop gates", () => {
     expect(
       gate(current(), { ...baseline(), recovery_level: "unknown" }),
     ).toMatch(/baseline is unknown/);
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: { ...baseline(), latency_level: "unknown" },
+        current: { ...current(), latency_level: "unknown" },
+        host_ids: ["canary"],
+        require_measured_latency: true,
+      }),
+    ).toMatch(/global promotion requires browser latency samples/);
   });
 
   test("stops on a new failure, backup age jump, or emergency pressure", () => {

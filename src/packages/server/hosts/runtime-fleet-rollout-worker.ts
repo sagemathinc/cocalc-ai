@@ -144,16 +144,21 @@ function recoveryStopGateFailure({
   baseline,
   current,
   host_ids,
+  require_measured_latency = false,
 }: {
   baseline: RecoveryStopGateSnapshot;
   current: RecoveryStopGateSnapshot;
   host_ids: string[];
+  require_measured_latency?: boolean;
 }): string | undefined {
   if (baseline.recovery_level === "unknown") {
     return "project recovery baseline is unknown";
   }
   if (current.recovery_level === "unknown") {
     return "project recovery health is unknown";
+  }
+  if (require_measured_latency && current.latency_level === "unknown") {
+    return "interactive latency is unmeasured; global promotion requires browser latency samples";
   }
   const rank = (level: LaunchHealthLevel) =>
     level === "critical" ? 2 : level === "warning" ? 1 : 0;
@@ -235,12 +240,19 @@ async function assertRecoveryStopGate({
   baseline,
   current,
   host_ids,
+  require_measured_latency,
 }: {
   baseline: RecoveryStopGateSnapshot;
   current: RecoveryStopGateSnapshot;
   host_ids: string[];
+  require_measured_latency?: boolean;
 }): Promise<void> {
-  const failure = recoveryStopGateFailure({ baseline, current, host_ids });
+  const failure = recoveryStopGateFailure({
+    baseline,
+    current,
+    host_ids,
+    require_measured_latency,
+  });
   if (failure) throw new Error(`fleet rollout health gate stopped: ${failure}`);
   const newFailures = await countFailedRecoveryAttemptsSince({
     since: baseline.checked_at,
@@ -922,6 +934,7 @@ async function handleRollout(op: LroSummary): Promise<void> {
         baseline: recoveryStopGateBaseline,
         current: recoveryStopGateLatest,
         host_ids: hostIds,
+        require_measured_latency: true,
       });
       await publishProgress({
         phase: "promoting",
