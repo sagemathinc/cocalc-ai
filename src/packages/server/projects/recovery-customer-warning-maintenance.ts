@@ -41,6 +41,7 @@ const PAGE_SIZE = 500;
 const MAX_PROJECTS_PER_CHECK = 5000;
 const NOTICE_EVENT_NAMESPACE = "56cde593-74c2-4a98-8cca-3b27e51b6d0e";
 const SCAN_STALE_MS = 15 * 60_000;
+const FULL_SCAN_STALE_MS = 60 * 60_000;
 
 type Kind = "snapshot" | "backup";
 type Users = Record<string, { group?: string }>;
@@ -65,6 +66,12 @@ export type ProjectRecoveryCustomerWarningScanStatus = {
   scanned: number;
   notices_sent: number;
   failures: number;
+  cursor_project_id: string | null;
+  cycle_scanned: number;
+  cycle_failures: number;
+  last_full_scan_at: Date | null;
+  last_full_scan_scanned: number;
+  last_full_scan_failures: number;
 };
 
 let ensureScanTablePromise: Promise<void> | undefined;
@@ -77,13 +84,25 @@ async function ensureScanTable(): Promise<void> {
       last_completed_at TIMESTAMPTZ NOT NULL,
       scanned INTEGER NOT NULL,
       notices_sent INTEGER NOT NULL,
-      failures INTEGER NOT NULL DEFAULT 0
+      failures INTEGER NOT NULL DEFAULT 0,
+      cursor_project_id UUID,
+      cycle_scanned INTEGER NOT NULL DEFAULT 0,
+      cycle_failures INTEGER NOT NULL DEFAULT 0,
+      last_full_scan_at TIMESTAMPTZ,
+      last_full_scan_scanned INTEGER NOT NULL DEFAULT 0,
+      last_full_scan_failures INTEGER NOT NULL DEFAULT 0
     )`,
     )
     .then(() =>
       getPool().query(
         `ALTER TABLE project_recovery_customer_warning_scan_status
-         ADD COLUMN IF NOT EXISTS failures INTEGER NOT NULL DEFAULT 0`,
+         ADD COLUMN IF NOT EXISTS failures INTEGER NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS cursor_project_id UUID,
+         ADD COLUMN IF NOT EXISTS cycle_scanned INTEGER NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS cycle_failures INTEGER NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS last_full_scan_at TIMESTAMPTZ,
+         ADD COLUMN IF NOT EXISTS last_full_scan_scanned INTEGER NOT NULL DEFAULT 0,
+         ADD COLUMN IF NOT EXISTS last_full_scan_failures INTEGER NOT NULL DEFAULT 0`,
       ),
     )
     .then(() => undefined)
@@ -100,7 +119,9 @@ export async function getProjectRecoveryCustomerWarningScanStatus(
   await ensureScanTable();
   const { rows } =
     await getPool().query<ProjectRecoveryCustomerWarningScanStatus>(
-      `SELECT bay_id, last_completed_at, scanned, notices_sent, failures
+      `SELECT bay_id, last_completed_at, scanned, notices_sent, failures,
+              cursor_project_id, cycle_scanned, cycle_failures,
+              last_full_scan_at, last_full_scan_scanned, last_full_scan_failures
        FROM project_recovery_customer_warning_scan_status WHERE bay_id=$1`,
       [bayId],
     );
@@ -124,8 +145,21 @@ export function projectRecoveryCustomerWarningScanProblem({
   if (checkedAt.getTime() - scan.last_completed_at.getTime() > SCAN_STALE_MS) {
     return `Customer warning scan stale since ${scan.last_completed_at.toISOString()}`;
   }
-  if (scan.failures > 0) {
-    return `Customer warning scan had ${scan.failures} classification or delivery failures`;
+  if (
+    scan.failures > 0 ||
+    scan.cycle_failures > 0 ||
+    scan.last_full_scan_failures > 0
+  ) {
+    return `Customer warning scan had classification or delivery failures (latest batch ${scan.failures}, current cycle ${scan.cycle_failures}, last full scan ${scan.last_full_scan_failures})`;
+  }
+  if (!scan.last_full_scan_at) {
+    return "Customer warning scan has not completed a full inventory";
+  }
+  if (
+    checkedAt.getTime() - scan.last_full_scan_at.getTime() >
+    FULL_SCAN_STALE_MS
+  ) {
+    return `Customer warning full inventory stale since ${scan.last_full_scan_at.toISOString()}`;
   }
   return null;
 }
@@ -255,7 +289,6 @@ async function deliverWarning({
   }
 }
 
-let cursor: string | null = null;
 let timer: NodeJS.Timeout | undefined;
 let running = false;
 
@@ -277,9 +310,12 @@ export async function runProjectRecoveryCustomerWarningCheck({
   await ensureProjectMaintenanceStatusTable();
   await ensureScanTable();
   const bayId = getSingleBayInfo().bay_id;
+  const previous = await getProjectRecoveryCustomerWarningScanStatus(bayId);
+  let cursor = previous?.cursor_project_id ?? null;
   let scanned = 0;
   let noticesSent = 0;
   let failures = 0;
+  let fullScanCompleted = false;
   while (scanned < MAX_PROJECTS_PER_CHECK) {
     const { rows } = await getPool().query<Candidate>(
       `SELECT p.project_id, p.last_backup,
@@ -299,6 +335,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
     );
     if (!rows.length) {
       cursor = null;
+      fullScanCompleted = true;
       break;
     }
     for (const row of rows) {
@@ -383,25 +420,56 @@ export async function runProjectRecoveryCustomerWarningCheck({
     }
     if (rows.length < PAGE_SIZE) {
       cursor = null;
+      fullScanCompleted = true;
       break;
     }
   }
+  const cycleScanned = (previous?.cycle_scanned ?? 0) + scanned;
+  const cycleFailures = (previous?.cycle_failures ?? 0) + failures;
   await getPool().query(
     `INSERT INTO project_recovery_customer_warning_scan_status
-       (bay_id, last_completed_at, scanned, notices_sent, failures)
-     VALUES ($1, $2, $3, $4, $5)
+       (bay_id, last_completed_at, scanned, notices_sent, failures,
+        cursor_project_id, cycle_scanned, cycle_failures,
+        last_full_scan_at, last_full_scan_scanned, last_full_scan_failures)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (bay_id) DO UPDATE SET
        last_completed_at=excluded.last_completed_at,
        scanned=excluded.scanned,
        notices_sent=excluded.notices_sent,
-       failures=excluded.failures`,
-    [bayId, checkedAt, scanned, noticesSent, failures],
+       failures=excluded.failures,
+       cursor_project_id=excluded.cursor_project_id,
+       cycle_scanned=excluded.cycle_scanned,
+       cycle_failures=excluded.cycle_failures,
+       last_full_scan_at=excluded.last_full_scan_at,
+       last_full_scan_scanned=excluded.last_full_scan_scanned,
+       last_full_scan_failures=excluded.last_full_scan_failures
+     WHERE project_recovery_customer_warning_scan_status.last_completed_at
+       <= excluded.last_completed_at`,
+    [
+      bayId,
+      checkedAt,
+      scanned,
+      noticesSent,
+      failures,
+      cursor,
+      fullScanCompleted ? 0 : cycleScanned,
+      fullScanCompleted ? 0 : cycleFailures,
+      fullScanCompleted ? checkedAt : (previous?.last_full_scan_at ?? null),
+      fullScanCompleted
+        ? cycleScanned
+        : (previous?.last_full_scan_scanned ?? 0),
+      fullScanCompleted
+        ? cycleFailures
+        : (previous?.last_full_scan_failures ?? 0),
+    ],
   );
   logger.info("project recovery customer warning scan completed", {
     bay_id: bayId,
     scanned,
     notices_sent: noticesSent,
     failures,
+    full_scan_completed: fullScanCompleted,
+    cycle_scanned: cycleScanned,
   });
   return { enabled: true, scanned, notices_sent: noticesSent, failures };
 }
