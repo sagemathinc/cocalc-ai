@@ -1100,6 +1100,46 @@ describe("snapshot-backup-maintenance", () => {
     stop();
   });
 
+  it("rebuilds a future due timer after scheduler restart", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-10T22:00:00.000Z"));
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-future",
+        last_changed: "2026-04-10T22:00:00.000Z",
+        last_snapshot: "2026-04-10T21:50:00.000Z",
+        last_snapshot_observed_at: "2026-04-10T22:00:00.000Z",
+        snapshots: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+        backups: { disabled: true },
+      },
+    ]);
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stopBeforeRestart = startProjectSnapshotBackupMaintenance({
+      hostId: "host-1",
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    await jest.advanceTimersByTimeAsync(2 * 60_000);
+    stopBeforeRestart();
+
+    const stopAfterRestart = startProjectSnapshotBackupMaintenance({
+      hostId: "host-1",
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(2);
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(3 * 60_000 + 1_000);
+    expect(runScheduledSnapshotMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "proj-future" }),
+    );
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ project_ids: ["proj-future"] }),
+    );
+    stopAfterRestart();
+  });
+
   it("reevaluates admission before snapshot and backup work", async () => {
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
