@@ -131,6 +131,22 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(focus).toHaveBeenCalled();
   });
 
+  it("lets an auto-growing compact editor expand its shell", () => {
+    const { container } = render(
+      <MultiMarkdownInput
+        value="A growing draft"
+        onChange={() => {}}
+        compactModeSwitch
+        modeSwitchPlacement="toolbar"
+        height="auto"
+      />,
+    );
+
+    expect((container.firstElementChild as HTMLElement).style.height).toBe(
+      "auto",
+    );
+  });
+
   it("reports initial mode and updates onModeChange when the mode switch is used", () => {
     const onModeChange = jest.fn();
 

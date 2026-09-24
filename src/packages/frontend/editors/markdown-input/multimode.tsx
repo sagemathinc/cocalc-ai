@@ -146,7 +146,7 @@ export default function MultiMarkdownInput({
       ? "100%" // The flex body already excludes the toolbar height.
       : height;
   const shellHeight =
-    unboundedAutoGrow && height === "auto"
+    height === "auto"
       ? "auto"
       : reserveToolbarModeSwitch && height != null && height !== "auto"
         ? height

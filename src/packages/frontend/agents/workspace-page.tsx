@@ -930,6 +930,7 @@ function NewAgentPanel({
               onShiftEnter={(value) => void create(value)}
               onCtrlEnter={() => undefined}
               autoFocus
+              fontSize={16}
               autoGrow
               autoGrowMinHeight={40}
               autoGrowMaxHeight={420}
