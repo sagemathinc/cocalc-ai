@@ -780,14 +780,73 @@ the Create Snapshot button every time. The page had no document overflow,
 visible crash overlay, or JavaScript page errors. This strengthens the focus
 result but does not establish the cause of the earlier one-off crash overlay.
 
+## September 24 follow-up: unknown status and inventory load canary
+
+A fresh disposable project first displayed two live Recovery alerts at 390 CSS
+pixels: local snapshots and off-host backups both said current protection
+status unknown, showed no confirmed recovery point, and retained the missed
+due time. The page had no document overflow or JavaScript errors. After the
+worker ran, the same view displayed confirmed snapshot and backup times. The
+[desktop unknown-state view](screenshots/staging2-recovery-unknown-1280-2026-09-24.png)
+and [390-pixel unknown-state view](screenshots/staging2-recovery-unknown-390-2026-09-24.png)
+are saved for review. This qualifies the live unknown-to-confirmed transition;
+a live blocked-reason warning still needs qualification.
+
+I created 80 empty projects on staging2-shared-1 between 09:30:31 and
+09:30:47 UTC, raising its provisioned inventory from 18 to 98. All 80 initial
+snapshot checks correctly reported `no_content_change`. Their p95
+creation-to-check time was 578 seconds. All 80 initial off-host backups
+succeeded by 09:48:27 UTC, including three that first deferred for
+`lifecycle_active` and then retried. Backup creation-to-success p50/p95/p99
+was 798/1044/1058 seconds; audited operator query
+`b8cd5fe0-af5f-4127-8384-d2e1e801148d` contains the timing aggregate.
+During the run, one sampled host check showed 28.5% CPU, 11.4 GiB available
+memory, storage admission allowed, and no capacity alert. These are short
+staging observations on empty free-class projects, not a production latency
+baseline or a 500-project live inventory test.
+
+Code inspection after the first batch found a gap in event dispatch:
+provisioning acknowledgement was not notifying the maintenance queues. The
+first reports arrived during the full-reconciliation window; that timing is
+consistent with waiting for the sweep. Commit `4956908676` emits a bounded scheduler candidate only
+after the owning bay accepts the host's provisioned report. The existing
+assignment and schedule checks still run before mutation. Both focused
+project-host test files passed (41 tests), as did the package typecheck.
+Artifact
+`20260924T094846Z-49569086-20260924-provisioned-dispatch-4956908-dirty`
+was built and published. The generic fleet rollout skipped both pinned hosts;
+explicit canary-first host upgrades succeeded on the canary and shared hosts,
+and project-host smoke passed.
+
+On the upgraded canary host, a new project created at 09:57:31 UTC received its
+no-change snapshot check about 16 seconds later and a confirmed off-host
+backup about 22 seconds later. It started in 3.7 seconds, wrote and read a
+marker through project exec, and stopped cleanly. After pressure subsided on
+the upgraded shared host, another new project created at 10:35:43 UTC received
+its snapshot check about 16 seconds later and backup about 20 seconds later.
+The canary host had a stale pre-upgrade synthetic probe claim and then
+recorded a passing automatic probe at 10:10 UTC.
+
+A second 80-project batch immediately after the shared-host upgrade could not
+qualify dispatch latency: global memory PSI full average rose above 50% even
+though roughly 11.5 GiB of RAM was available. The worker correctly skipped
+risky maintenance with `memory_pressure`; host status remained current and
+admission/capacity checks showed no separate alert. I stopped the load test
+and deleted both 80-project cohorts, their test backups, and the individual
+canaries. The shared host returned to 17 provisioned projects. At 10:39 UTC,
+project-recovery health was healthy with zero unknown statuses and zero paying
+incident-threshold breaches. Pressure and safe-maintenance capacity still need
+calibration using a longer representative canary and production baseline.
+
 ## Open findings and release gates
 
 1. Recovery Settings, project files, and the backup catalog load in the
    non-admin staging2 browser. A nonempty backup was browsed, previewed, and
    restored through the UI. A live overdue snapshot warning was visible in
    the 320-pixel Recovery view, and keyboard navigation, dialog closing, and
-   focus restoration passed in Chromium. Blocked and unknown warning states
-   still need live qualification; focused component tests cover them. One
+   focus restoration passed in Chromium. The unknown state and its transition
+   to confirmed protection passed live; blocked warnings still need live
+   qualification. Focused component tests cover both states. One
    earlier browser attempt briefly showed the generic crash overlay, without
    a reproducible cause. Archive browsing had one timeout before Refresh.
 2. The plan's safe-capacity threshold is still uncalibrated. Durable
@@ -809,8 +868,9 @@ result but does not establish the cause of the earlier one-off crash overlay.
 5. The host scheduler now uses a 60-to-120-second initial delay and a
    15-minute full reconciliation sweep, with one-minute retries after a skipped
    sweep. A pressure-blocked startup followed by a successful full-sweep
-   retry was observed live; due-timer recovery after a restart and host
-   responsiveness under a large live inventory remain to be validated. The
+   retry was observed live. A bounded 80-project inventory canary completed,
+   but due-timer recovery after a restart, a live inventory above 500 projects,
+   and sustained interactive responsiveness remain to be validated. The
    canary event path completed about 97 seconds after bay confirmation; its
    generation check cached the prior observation for about five minutes, so
    edit-to-bay change detection took longer than dispatch.
