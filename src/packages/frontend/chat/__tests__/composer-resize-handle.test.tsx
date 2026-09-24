@@ -864,6 +864,39 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).not.toHaveBeenCalled();
   });
 
+  it("offers live guidance for a running qualified Claude turn", () => {
+    const onSend = jest.fn();
+    const onSendImmediately = jest.fn();
+    renderComposer({
+      selectedThread: { key: "claude-thread" } as any,
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "acp",
+          agent_runtime: {
+            version: 1,
+            kind: "acp",
+            profile: { version: 2, id: "claude-code" },
+          },
+        }),
+        isCodexThread: () => true,
+      } as any,
+      hasActiveAcpTurn: true,
+      hasInput: true,
+      input: "guidance",
+      isSelectedThreadAI: true,
+      on_send: onSend,
+      on_send_immediately: onSendImmediately,
+    });
+    expect(screen.getByRole("button", { name: "Steer" })).not.toBeNull();
+    const queue = screen.getByRole("button", { name: "Queue" });
+    act(() => lastChatInputProps.on_send("keyboard guidance"));
+    expect(onSendImmediately).toHaveBeenCalledWith("keyboard guidance");
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(queue);
+    expect(onSend).toHaveBeenCalledWith("guidance");
+  });
+
   it("keeps phone input readable and expands without browser fullscreen", async () => {
     const requestFullscreen = jest.fn();
     const original = HTMLElement.prototype.requestFullscreen;

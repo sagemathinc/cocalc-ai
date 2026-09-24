@@ -25,6 +25,7 @@ export function harnessPrompt(
 This turn runs inside a CoCalc project. The installed CoCalc CLI is:
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"
 ${projectGuidance}
+Complete foreground work before ending the turn. CoCalc cannot wake a completed turn when a background command finishes; do not promise a later notification.
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.
 Current turn publication context (non-secret metadata, not an authorization grant):
 ${JSON.stringify(context)}

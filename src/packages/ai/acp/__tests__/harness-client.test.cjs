@@ -990,6 +990,7 @@ test("harness context preserves user input and does not invent missing attributi
     prompt.includes('"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"'),
   );
   assert.ok(prompt.includes("not an authorization grant"));
+  assert.ok(prompt.includes("cannot wake a completed turn"));
   assert.ok(prompt.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
   assert.ok(
     !harnessPrompt({

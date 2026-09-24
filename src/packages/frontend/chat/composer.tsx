@@ -185,7 +185,10 @@ export function ChatRoomComposer({
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
   const isGenericHarness = threadMetadata?.agent_runtime?.kind === "acp";
-  const supportsLiveGuidance = !isGenericHarness;
+  const supportsLiveGuidance =
+    !isGenericHarness ||
+    (threadMetadata?.agent_runtime?.profile?.version === 2 &&
+      threadMetadata.agent_runtime.profile.id === "claude-code");
   const hasAgentControls =
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
