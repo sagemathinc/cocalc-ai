@@ -19,6 +19,7 @@ import {
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { showParticipantAvatar } from "./message-avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
@@ -302,7 +303,7 @@ const THREAD_STYLE_TOP: CSS = {
 
 const MARGIN_TOP_VIEWER = "17px";
 
-const AVATAR_MARGIN_LEFTRIGHT = "15px";
+const AVATAR_MARGIN_LEFTRIGHT = "8px";
 
 export const MESSAGE_ACTIONS_STYLE: CSS = {
   display: "flex",
@@ -471,7 +472,6 @@ export default function Message({
   const intl = useIntl();
   const narrow = useNarrowChatViewport();
   const embeddingOptions = useChatEmbeddingOptions();
-  const fullWidthContent = narrow && (mode === "sidechat" || !show_avatar);
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
   const [edited_message, set_edited_message] = useState<string>(
@@ -543,8 +543,16 @@ export default function Message({
     : isCodexAgentMessage
       ? codexAgentName(senderId)
       : get_user_name(senderId);
-  const avatarAccountId =
-    rpcAttribution || isCodexAgentMessage ? "codex-agent" : senderId;
+  const showHumanAvatar = showParticipantAvatar({
+    showAvatar: show_avatar,
+    senderId,
+    viewerAccountId: account_id,
+    isAgent:
+      !!rpcAttribution ||
+      msgWrittenByLLM ||
+      (typeof senderId === "string" && isLanguageModelService(senderId)),
+  });
+  const fullWidthContent = narrow && (mode === "sidechat" || !showHumanAvatar);
   const useCodexSelectToolbar = useMemo(
     () =>
       shouldUseCodexSelectToolbar({
@@ -562,9 +570,6 @@ export default function Message({
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
   }, [firstHistoryEntry, get_user_name]);
-
-  const reverseRowOrdering =
-    !is_thread_body && sender_is_viewer(account_id, message);
 
   const submitMentionsRef = useRef<SubmitMentionsFn>(null as any);
 
@@ -1495,10 +1500,10 @@ export default function Message({
     }
 
     return (
-      <Col key={0} xs={2}>
+      <Col key={0} flex="40px">
         <div style={style}>
-          {avatarAccountId != null && show_avatar ? (
-            <Avatar size={40} account_id={avatarAccountId} />
+          {showHumanAvatar ? (
+            <Avatar size={24} account_id={senderId} />
           ) : undefined}
         </div>
       </Col>
@@ -2675,7 +2680,12 @@ export default function Message({
   }
 
   function contentColumn() {
-    const mainXS = fullWidthContent ? 24 : mode === "standalone" ? 20 : 22;
+    const mainXS =
+      fullWidthContent || (mode === "standalone" && !showHumanAvatar)
+        ? 24
+        : mode === "standalone"
+          ? undefined
+          : 22;
 
     const { background, color, lighten, message_class } = message_colors(
       rpcAttribution ? "" : account_id,
@@ -2707,7 +2717,11 @@ export default function Message({
     } as const;
 
     return (
-      <Col key={1} xs={mainXS}>
+      <Col
+        key={1}
+        xs={mainXS}
+        flex={mode === "standalone" && showHumanAvatar ? "auto" : undefined}
+      >
         {!rpcAttribution &&
         !isCodexAgentMessage &&
         !is_prev_sender &&
@@ -3012,11 +3026,9 @@ export default function Message({
     if (fullWidthContent) return contentColumn();
     switch (mode) {
       case "standalone":
-        const cols = [avatar_column(), contentColumn(), BLANK_COLUMN(2)];
-        if (reverseRowOrdering) {
-          cols.reverse();
-        }
-        return cols;
+        return showHumanAvatar
+          ? [avatar_column(), contentColumn()]
+          : contentColumn();
 
       case "sidechat":
         return [BLANK_COLUMN(2), contentColumn()];
