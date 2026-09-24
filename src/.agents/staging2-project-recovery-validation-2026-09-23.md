@@ -1788,3 +1788,30 @@ switch was returned to false and read back as false. Recovery health displayed
 with zero current delay, unknown statuses, or unaccounted due obligations.
 The customer-delivery qualification remains open until a genuinely paying
 staging project crosses an objective and a recipient confirms the notice.
+
+Commit `210285c4a8` persists the customer warning scanner's project cursor
+and full-inventory evidence on the owning bay. A hub restart can now resume
+after the first 5,000 projects; a full scan retains its project count and
+failure count until a later complete scan supersedes it. Enabled operator
+health reports missing or older-than-one-hour full coverage as critical, and
+an older overlapping worker cannot overwrite a newer scan row. A focused
+test covered 5,001 projects across a worker-module restart. Five focused
+server suites passed 44/44 and the server package TypeScript build passed.
+
+Staging2 hub artifact
+`20260924T221655Z-210285c4-recovery-warning-cursor-210285c-dirty` was
+deployed as release `20260924221826-hub`; worker health, host routing, and
+all seven hub smoke checks passed. With customer warnings temporarily enabled,
+health initially marked the pre-migration row critical because it lacked
+full-inventory evidence. The schema audit
+`fcc30736-7c62-4586-bbde-53e14adc908a` confirmed the cursor and full-scan
+columns. A normal worker pass then completed at `2026-09-24T22:19:48.667Z`:
+23 projects scanned, a null cursor, zero notices, and zero failures, with the
+same timestamp and count recorded for the full inventory (audit
+`972179f7-d5c2-4aed-b886-185e08b1548f`). The current funding audit again
+found zero active positive-cost subscriptions and zero current grants
+(`b75edd48-e20f-4ac0-b004-496aaf9525e4`). The customer switch was returned
+to false and read back as false. The immediate final recovery-health sample
+was `warning` for one free snapshot newly due by seconds; it listed zero
+paying debt, unknown status, unaccounted obligations, host memory gates, and
+missing storage telemetry. Production remains unchanged.
