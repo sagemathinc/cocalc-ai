@@ -47,6 +47,7 @@ const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 const DEFAULT_PARALLELISM = 1;
 const DEFAULT_INITIAL_DELAY_MS = 60_000;
 const INITIAL_DELAY_JITTER_MS = 60_000;
+const FULL_SWEEP_RETRY_MS = 60_000;
 const DEFAULT_CANDIDATE_LIMIT = 250;
 const MAX_CANDIDATE_LIMIT = 500;
 const CHANGE_EVENT_BATCH_LIMIT = 50;
@@ -1089,7 +1090,9 @@ export function startProjectSnapshotBackupMaintenance({
   const futureDue = new Map<string, number>();
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   let dueTimer: ReturnType<typeof setTimeout> | undefined;
+  let sweepRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let changedDrainRunning = false;
+  let fullSweepRunning = false;
   const scheduleChangedDrain = (delayMs: number) => {
     if (closed || changedTimer || !changedProjects.size) return;
     changedTimer = setTimeout(() => {
@@ -1168,11 +1171,11 @@ export function startProjectSnapshotBackupMaintenance({
     scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
   });
   const runSweep = async () => {
-    if (closed) {
-      return;
-    }
+    if (closed || fullSweepRunning) return;
+    fullSweepRunning = true;
+    let reconciled = false;
     try {
-      await runProjectSnapshotBackupMaintenanceSweepOnce({
+      reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
         hostId,
         onFutureDue: rememberFutureDue,
       });
@@ -1182,7 +1185,18 @@ export function startProjectSnapshotBackupMaintenance({
         err: `${err}`,
       });
     } finally {
+      fullSweepRunning = false;
       scheduleFutureDue();
+      if (reconciled) {
+        clearTimeout(sweepRetryTimer);
+        sweepRetryTimer = undefined;
+      } else if (!closed && !sweepRetryTimer) {
+        sweepRetryTimer = setTimeout(() => {
+          sweepRetryTimer = undefined;
+          void runSweep();
+        }, FULL_SWEEP_RETRY_MS);
+        sweepRetryTimer.unref();
+      }
     }
   };
   logger.info("snapshot/backup maintenance scheduled", {
@@ -1212,6 +1226,7 @@ export function startProjectSnapshotBackupMaintenance({
     unsubscribeChanges();
     clearTimeout(changedTimer);
     clearTimeout(dueTimer);
+    clearTimeout(sweepRetryTimer);
     clearTimeout(initialTimer);
     if (repeatingTimer) {
       clearInterval(repeatingTimer);

@@ -777,6 +777,25 @@ describe("snapshot-backup-maintenance", () => {
     stop();
   });
 
+  it("retries a skipped full reconciliation before the next sweep", async () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    getMasterConatClientMock.mockReturnValue(undefined);
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(59_999);
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+
+    getMasterConatClientMock.mockReturnValue({ id: "master-client" });
+    await jest.advanceTimersByTimeAsync(1);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
   it("can disable maintenance entirely", () => {
     jest.useFakeTimers();
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_DISABLE = "true";
