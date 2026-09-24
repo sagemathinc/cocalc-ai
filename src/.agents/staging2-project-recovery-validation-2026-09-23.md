@@ -173,6 +173,16 @@ Production was not changed.
   passed smoke. It reports `latest_scheduled_backup_id` and the bay report
   time beside `last_backup`, and labels older SQLite sidecars as legacy index
   data. The installed CLI can invoke this diagnostic without a CLI upgrade.
+- Host storage-pressure duration and telemetry coverage: `d80c657f4a`,
+  followed by validity and active-project fixes `52f41b8483` and
+  `a6f74b90a1`. Final staging hub artifact
+  `20260924T014310Z-a6f74b90-recovery-pressure-final-a6f74b9-dirty`
+  passed smoke. The owning bay stores bounded pressure-state samples and
+  reports 24-hour normal, contended, emergency, recovery, and unavailable
+  durations for hosts with provisioned projects. A host without a valid
+  pressure reading for five minutes triggers critical recovery health.
+  Database integration tests (12), database/server builds, and SQL execution
+  against PGlite passed.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -281,6 +291,15 @@ failed attempts over 24 hours, with zero unknown statuses; at 01:17 UTC it
 was healthy with 105 succeeded, 41 deferred, 0 failed, and no overdue or
 unknown status.
 
+At 01:45 UTC, the pressure-health rollout covered both online hosts with
+projects: `staging2-agent-messaging-canary` and `staging2-shared-1`. The
+operator summary reported zero hosts missing recent valid pressure telemetry,
+134 successful, 41 deferred, and zero failed maintenance attempts in 24
+hours. Each host reported zero minutes of contended, emergency, or recovery
+pressure in the sampled period. Earlier metrics rows lacked the new pressure
+field, so approximately 1,431 minutes appeared as unavailable; a complete
+24-hour pressure baseline begins only after the rollout. Hub smoke passed.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
@@ -290,8 +309,8 @@ unknown status.
    expired. A designated testing-account browser spawn returned
    `fresh_auth_required` at 01:13 UTC; no credential workaround was used.
 2. The plan's full observability and scheduler contract remains broader than
-   the current code: pressure-time and capacity reports, operator drill
-   reporting, and gated automatic rollout are not yet present. A versioned
+   the current code: capacity reports, operator drill reporting, and gated
+   automatic rollout are not yet present. A versioned
    schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
