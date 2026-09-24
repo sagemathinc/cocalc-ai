@@ -14,7 +14,7 @@
     "test": "tsx --test 'src/**/*.test.ts'",
     "build": "echo 0",
     "typecheck": "tsc --noEmit",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/react,buffer,expo-dev-client,react-native-worklets",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node,@types/react,abort-controller,buffer,expo-dev-client,react-native-worklets",
     "doctor": "pnpm dlx expo-doctor@latest",
     "test:ui": "jest --config jest.config.cjs --runInBand",
     "start:preview": "EXPO_PUBLIC_MOBILE_PREVIEW=1 expo start --dev-client --port 8082",
