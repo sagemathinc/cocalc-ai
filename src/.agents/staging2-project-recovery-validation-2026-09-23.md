@@ -1354,3 +1354,31 @@ confirm inbox receipt; that confirmation is pending. The named on-call remains
 configured, and `project_recovery_notifications_enabled` was verified false
 after the drill. This validates the staging send path and provider acceptance;
 it does not establish recipient receipt until the on-call confirms it.
+
+## 2026-09-24 durable objective coverage audit
+
+Commit `18067e3f34` closes a qualification gap in the 30-day objective
+report. The owning bay now samples its full eligible project inventory every
+five minutes into durable fifteen-minute slots. Each slot retains the worst
+observed unknown status, unaccounted due work, or host memory block. Due work
+absent from the objective denominator after the hourly reconciliation bound is
+visible in operator health and the incident plan. A report is `ready` only
+after the complete mature 30-day UTC window contains all 2,880 slots with no
+coverage gap; the first recorded obligation alone is insufficient.
+
+Focused PGlite and server tests passed 36/36, including a generated full
+2,880-slot window that qualified only while every slot was clean. The server
+package typecheck and full development build passed. The immutable hub artifact
+`20260924T183202Z-18067e3f-20260924-recovery-coverage-18067e3-dirty`
+was deployed as staging2 release `20260924183635-hub`, and hub smoke passed.
+The first deploy attempt failed during SSH setup before activation; remote
+release inspection confirmed the prior hub was still current, and the retry
+completed with migration, worker health, and host route checks passing.
+
+Audited read-only query `72429481-7921-492b-9107-599ae0fc8cbe` found the
+first live slot at `2026-09-24T18:30:00Z`: 23 eligible snapshots, 23 eligible
+backups, zero unknown statuses, zero unaccounted due work, and zero blocked
+hosts. The current operator health display reports these accounting-gap counts
+as zero and the mature window as `0/2880` slots, correctly unqualified because
+the new audit has not covered the earlier 30 days. This is one live sample,
+not evidence of a complete 30-day objective.
