@@ -73,6 +73,26 @@ beforeEach(() => {
     return Promise.resolve({});
   });
   query.mockImplementation((sql: string, params: unknown[]) => {
+    if (
+      sql.includes(
+        "CREATE TABLE IF NOT EXISTS project_recovery_customer_warning_scan_status",
+      ) ||
+      sql.includes("INSERT INTO project_recovery_customer_warning_scan_status")
+    ) {
+      return Promise.resolve({ rows: [] });
+    }
+    if (sql.includes("FROM project_recovery_customer_warning_scan_status")) {
+      return Promise.resolve({
+        rows: [
+          {
+            bay_id: "bay-1",
+            last_completed_at: checkedAt,
+            scanned: 1,
+            notices_sent: 2,
+          },
+        ],
+      });
+    }
     if (sql.includes("FROM notification_events")) {
       return Promise.resolve({
         rows: eventIds.has(`${params[0]}`) ? [{}] : [],
@@ -305,4 +325,52 @@ test("overlapping workers treat an already committed notice as a duplicate", asy
     notices_sent: 0,
   });
   expect(eventIds.size).toBe(2);
+});
+
+test("enabled scans persist a timestamp and operator health detects stale scans", async () => {
+  settings.mockResolvedValue({
+    project_recovery_customer_warnings_enabled: true,
+  });
+  const {
+    runProjectRecoveryCustomerWarningCheck,
+    getProjectRecoveryCustomerWarningScanStatus,
+    projectRecoveryCustomerWarningScanProblem,
+  } = await import("./recovery-customer-warning-maintenance");
+  await runProjectRecoveryCustomerWarningCheck({ checkedAt });
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining(
+      "INSERT INTO project_recovery_customer_warning_scan_status",
+    ),
+    ["bay-1", checkedAt, 1, 2],
+  );
+  const scan = {
+    bay_id: "bay-1",
+    last_completed_at: checkedAt,
+    scanned: 1,
+    notices_sent: 2,
+  };
+  expect(await getProjectRecoveryCustomerWarningScanStatus("bay-1")).toEqual(
+    scan,
+  );
+  expect(
+    projectRecoveryCustomerWarningScanProblem({
+      enabled: true,
+      scan,
+      checkedAt: new Date(checkedAt.getTime() + 14 * 60_000),
+    }),
+  ).toBeNull();
+  expect(
+    projectRecoveryCustomerWarningScanProblem({
+      enabled: true,
+      scan,
+      checkedAt: new Date(checkedAt.getTime() + 16 * 60_000),
+    }),
+  ).toContain("stale");
+  expect(
+    projectRecoveryCustomerWarningScanProblem({
+      enabled: true,
+      scan: null,
+      checkedAt,
+    }),
+  ).toContain("not completed");
 });

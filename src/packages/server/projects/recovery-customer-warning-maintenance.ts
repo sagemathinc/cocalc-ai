@@ -40,6 +40,7 @@ const CHECK_INTERVAL_MS = 5 * 60_000;
 const PAGE_SIZE = 500;
 const MAX_PROJECTS_PER_CHECK = 5000;
 const NOTICE_EVENT_NAMESPACE = "56cde593-74c2-4a98-8cca-3b27e51b6d0e";
+const SCAN_STALE_MS = 15 * 60_000;
 
 type Kind = "snapshot" | "backup";
 type Users = Record<string, { group?: string }>;
@@ -57,6 +58,66 @@ type CurrentProject = {
   usage_account_id: string | null;
   users: Users | null;
 };
+
+export type ProjectRecoveryCustomerWarningScanStatus = {
+  bay_id: string;
+  last_completed_at: Date;
+  scanned: number;
+  notices_sent: number;
+};
+
+let ensureScanTablePromise: Promise<void> | undefined;
+
+async function ensureScanTable(): Promise<void> {
+  ensureScanTablePromise ??= getPool()
+    .query(
+      `CREATE TABLE IF NOT EXISTS project_recovery_customer_warning_scan_status (
+      bay_id TEXT PRIMARY KEY,
+      last_completed_at TIMESTAMPTZ NOT NULL,
+      scanned INTEGER NOT NULL,
+      notices_sent INTEGER NOT NULL
+    )`,
+    )
+    .then(() => undefined)
+    .catch((err) => {
+      ensureScanTablePromise = undefined;
+      throw err;
+    });
+  await ensureScanTablePromise;
+}
+
+export async function getProjectRecoveryCustomerWarningScanStatus(
+  bayId: string,
+): Promise<ProjectRecoveryCustomerWarningScanStatus | null> {
+  await ensureScanTable();
+  const { rows } =
+    await getPool().query<ProjectRecoveryCustomerWarningScanStatus>(
+      `SELECT bay_id, last_completed_at, scanned, notices_sent
+       FROM project_recovery_customer_warning_scan_status WHERE bay_id=$1`,
+      [bayId],
+    );
+  return rows[0] ?? null;
+}
+
+export function projectRecoveryCustomerWarningScanProblem({
+  enabled,
+  scan,
+  checkedAt,
+}: {
+  enabled: boolean;
+  scan: ProjectRecoveryCustomerWarningScanStatus | null;
+  checkedAt: Date;
+}): string | null {
+  if (!enabled) return null;
+  if (!scan) return "Customer warning scan has not completed";
+  if (!Number.isFinite(scan.last_completed_at.getTime())) {
+    return "Customer warning scan completion time is invalid";
+  }
+  if (checkedAt.getTime() - scan.last_completed_at.getTime() > SCAN_STALE_MS) {
+    return `Customer warning scan stale since ${scan.last_completed_at.toISOString()}`;
+  }
+  return null;
+}
 
 function warningDueTimes(row: Candidate, checkedAt: Date) {
   const snapshotReconciled =
@@ -202,6 +263,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
     return { enabled: false, scanned: 0, notices_sent: 0 };
   }
   await ensureProjectMaintenanceStatusTable();
+  await ensureScanTable();
   const bayId = getSingleBayInfo().bay_id;
   let scanned = 0;
   let noticesSent = 0;
@@ -309,6 +371,16 @@ export async function runProjectRecoveryCustomerWarningCheck({
       break;
     }
   }
+  await getPool().query(
+    `INSERT INTO project_recovery_customer_warning_scan_status
+       (bay_id, last_completed_at, scanned, notices_sent)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (bay_id) DO UPDATE SET
+       last_completed_at=excluded.last_completed_at,
+       scanned=excluded.scanned,
+       notices_sent=excluded.notices_sent`,
+    [bayId, checkedAt, scanned, noticesSent],
+  );
   logger.info("project recovery customer warning scan completed", {
     bay_id: bayId,
     scanned,

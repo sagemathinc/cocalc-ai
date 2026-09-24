@@ -199,6 +199,11 @@ import {
   getProjectRecoveryHealth,
 } from "@cocalc/server/projects/maintenance-status";
 import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
+import {
+  getProjectRecoveryCustomerWarningScanStatus,
+  projectRecoveryCustomerWarningScanProblem,
+  type ProjectRecoveryCustomerWarningScanStatus,
+} from "@cocalc/server/projects/recovery-customer-warning-maintenance";
 import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/project-host-metrics";
 import {
   getBayBackupStatus as getBayBackupStatus0,
@@ -2103,6 +2108,25 @@ export async function getLaunchHealth({
     criticalEmailBackend: recoveryCriticalEmailBackend,
     issues: recoveryNotificationConfigurationIssues,
   } = getProjectRecoveryNotificationConfiguration(settings);
+  let customerWarningScan: ProjectRecoveryCustomerWarningScanStatus | null =
+    null;
+  let customerWarningScanReadError: string | null = null;
+  if (settings?.project_recovery_customer_warnings_enabled) {
+    try {
+      customerWarningScan = await getProjectRecoveryCustomerWarningScanStatus(
+        currentBay.bay_id,
+      );
+    } catch (err) {
+      customerWarningScanReadError = `${err}`;
+    }
+  }
+  const customerWarningScanProblem = customerWarningScanReadError
+    ? `Unable to read customer warning scan: ${customerWarningScanReadError}`
+    : projectRecoveryCustomerWarningScanProblem({
+        enabled: !!settings?.project_recovery_customer_warnings_enabled,
+        scan: customerWarningScan,
+        checkedAt: new Date(checkedAt),
+      });
   const load = loadResult.status === "fulfilled" ? loadResult.value : undefined;
   const backups =
     backupsResult.status === "fulfilled" ? backupsResult.value : undefined;
@@ -2368,7 +2392,8 @@ export async function getLaunchHealth({
         projectRecoveryResult.status === "rejected" ||
         projectRecoveryPressureResult.status === "rejected" ||
         hostsMissingPressureTelemetry.length > 0 ||
-        recoveryNotificationConfigurationIssues.length > 0
+        recoveryNotificationConfigurationIssues.length > 0 ||
+        customerWarningScanProblem != null
           ? "critical"
           : !projectRecovery
             ? "unknown"
@@ -2408,7 +2433,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2421,6 +2446,14 @@ export async function getLaunchHealth({
                   ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
                   : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
                 ...recoveryNotificationConfigurationIssues,
+                settings?.project_recovery_customer_warnings_enabled
+                  ? customerWarningScan
+                    ? `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned; ${customerWarningScan.notices_sent} notices sent`
+                    : "Customer warning scan has not completed"
+                  : "Customer warnings disabled",
+                ...(customerWarningScanProblem
+                  ? [customerWarningScanProblem]
+                  : []),
                 ...projectRecovery.host_maintenance_blocks.map(
                   (block) =>
                     `${block.host_id} maintenance blocked: ${block.reason} checked at ${block.checked_at}${block.memory_psi_full_avg10 == null ? "" : ` (memory PSI full avg10 ${block.memory_psi_full_avg10}%)`}`,
