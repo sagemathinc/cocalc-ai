@@ -53,20 +53,25 @@ share the same project state with collaborators.
 export const MY_AGENTS_BODY = String.raw`
 ## Start with a request
 
-After signing in, open **Agents** in the main navigation and choose **New
-Agent**. Describe a result you can inspect, such as a comparison, document,
-application, or visualization. Include the relevant files and the checks that
-would make the result useful.
+After signing in, CoCalc normally opens **Agents**. If it does not, choose
+**Agents** in the main navigation. The new-agent request box appears when you
+have no named agents; otherwise choose **New Agent**. Describe a result you can
+inspect, such as a comparison, document, application, or visualization. Include
+the relevant files and the checks that would make the result useful.
 
 1. Use the project and working-directory control if the work belongs in an
    existing project. If you have no project selected, CoCalc creates one named
    **Agents** when you start.
 2. Review the available payment source and model. Access, funding, project
    permissions, and resource limits still apply.
-3. Choose **Start agent**. This creates the named agent and sends your request.
-   It can start project compute and use model allowance. If CoCalc warns that
-   the agent was created but the first request could not start, the request is
-   preserved as a draft for you to inspect before trying again.
+3. Choose the up-arrow **Start agent** button, or press **Shift+Enter**. This
+   creates the named agent and sends your request. It can start project compute
+   and use model allowance. If CoCalc warns that the agent was created but the
+   first request could not start, the request is preserved as a draft for you
+   to inspect before trying again.
+
+If **Agents** is absent from your installation, ask its administrator whether
+agent access is enabled.
 
 ## Review and continue
 
