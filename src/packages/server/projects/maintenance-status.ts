@@ -32,7 +32,7 @@ import {
 
 const logger = getLogger("server:projects:maintenance-status");
 
-function dueAt(
+export function projectRecoveryDueAt(
   changed: Date | null,
   lastSuccess: Date | null,
   schedule: SnapshotSchedule,
@@ -564,7 +564,7 @@ export async function getProjectRecoveryStatusLocal(
       report.reconciled_schedule_revision !==
         snapshotScheduleRevision(project.snapshots)
     ) {
-      status.snapshot_due_at = dueAt(
+      status.snapshot_due_at = projectRecoveryDueAt(
         project.last_changed,
         status.snapshot?.latest_snapshot_at
           ? new Date(status.snapshot.latest_snapshot_at)
@@ -575,7 +575,7 @@ export async function getProjectRecoveryStatusLocal(
     }
   }
   if (!status.backup_disabled) {
-    status.backup_due_at = dueAt(
+    status.backup_due_at = projectRecoveryDueAt(
       project.last_changed,
       project.last_backup,
       { ...DEFAULT_BACKUP_COUNTS, ...project.backups },
@@ -1031,7 +1031,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             snapshotScheduleRevision(row.snapshots);
         const due = reconciled
           ? null
-          : dueAt(
+          : projectRecoveryDueAt(
               row.last_changed,
               row.snapshot_at,
               { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
@@ -1105,7 +1105,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           health.unknown_backup_status++;
           group.unknown_count++;
         }
-        const due = dueAt(
+        const due = projectRecoveryDueAt(
           row.last_changed,
           row.last_backup,
           { ...DEFAULT_BACKUP_COUNTS, ...row.backups },

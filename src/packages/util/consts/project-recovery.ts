@@ -5,6 +5,8 @@
 
 export const PAYING_SNAPSHOT_INCIDENT_DELAY_MS = 2 * 60 * 60_000;
 export const PAYING_BACKUP_INCIDENT_DELAY_MS = 12 * 60 * 60_000;
+export const PAYING_SNAPSHOT_OBJECTIVE_MS = 30 * 60_000;
+export const PAYING_BACKUP_OBJECTIVE_MS = 6 * 60 * 60_000;
 
 export function recoveryDelayExceeds(
   dueAt: string | null | undefined,

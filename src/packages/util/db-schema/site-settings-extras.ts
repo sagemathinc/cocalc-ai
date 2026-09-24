@@ -246,6 +246,7 @@ export type SiteSettingsExtrasKeys =
   | "launch_sla_file_open_visible_p95_ms"
   | "launch_sla_file_open_sync_ready_p95_ms"
   | "project_recovery_notifications_enabled"
+  | "project_recovery_customer_warnings_enabled"
   | "project_recovery_oncall_account_id"
   | "conat_heading"
   | "conat_password"
@@ -629,9 +630,19 @@ export const EXTRAS: SettingsExtras = {
     group: "System / Advanced",
     subgroup: "Project Recovery",
   },
+  project_recovery_customer_warnings_enabled: {
+    name: "Project Recovery Customer Warnings",
+    desc: "Send paying project owners and collaborators a project notice when a snapshot exceeds the 30-minute objective or an off-host backup exceeds the 6-hour objective. Links lead to the project's Recovery settings. Each owning bay checks its own projects. This switch is independent of operator notifications.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Support", "Project Hosts"],
+    group: "System / Advanced",
+    subgroup: "Project Recovery",
+  },
   project_recovery_oncall_account_id: {
     name: "Project Recovery On-Call Account ID",
-    desc: "Administrator account UUID that receives recovery incidents and the daily debt report on this bay. Notifications remain disabled until the switch above is enabled. The account must exist as an administrator on this bay.",
+    desc: "Administrator account UUID that receives recovery incidents and the daily debt report on this bay. Operator notifications remain disabled until their switch is enabled. The account must exist as an administrator on this bay.",
     default: "",
     valid: (value: string) => !value.trim() || isValidUUID(value.trim()),
     to_val: to_trimmed_str,

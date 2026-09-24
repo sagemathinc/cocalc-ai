@@ -5,6 +5,10 @@
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
+import {
+  PAYING_BACKUP_OBJECTIVE_MS,
+  PAYING_SNAPSHOT_OBJECTIVE_MS,
+} from "@cocalc/util/consts/project-recovery";
 import type { ProjectRecoveryHealth } from "./maintenance-status";
 
 type Kind = "snapshot" | "backup";
@@ -12,7 +16,10 @@ type ServiceClass = ProjectRecoveryStatus["storage_service_class"];
 type Outcome = "succeeded" | "deferred" | "failed" | "skipped";
 
 const TARGET_MS: Record<"paying" | "free", Record<Kind, number>> = {
-  paying: { snapshot: 30 * 60_000, backup: 6 * 60 * 60_000 },
+  paying: {
+    snapshot: PAYING_SNAPSHOT_OBJECTIVE_MS,
+    backup: PAYING_BACKUP_OBJECTIVE_MS,
+  },
   free: { snapshot: 4 * 60 * 60_000, backup: 24 * 60 * 60_000 },
 };
 const COVERAGE_SLOT_MS = 15 * 60_000;
