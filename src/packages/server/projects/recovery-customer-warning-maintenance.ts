@@ -309,6 +309,11 @@ export async function runProjectRecoveryCustomerWarningCheck({
       break;
     }
   }
+  logger.info("project recovery customer warning scan completed", {
+    bay_id: bayId,
+    scanned,
+    notices_sent: noticesSent,
+  });
   return { enabled: true, scanned, notices_sent: noticesSent };
 }
 
