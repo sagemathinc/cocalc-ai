@@ -913,11 +913,11 @@ function NewAgentPanel({
           style={{
             background: UI_COLORS.surface,
             border: `1px solid ${UI_COLORS.border}`,
-            borderRadius: 18,
+            borderRadius: 16,
             boxSizing: "border-box",
-            boxShadow: `0 12px 40px ${UI_COLORS.shadow}`,
+            boxShadow: `0 6px 24px ${UI_COLORS.shadow}`,
             maxWidth: "100%",
-            padding: 12,
+            padding: "6px 10px",
           }}
         >
           <div inert={busy ? true : undefined}>
@@ -931,7 +931,7 @@ function NewAgentPanel({
               onCtrlEnter={() => undefined}
               autoFocus
               autoGrow
-              autoGrowMinHeight={128}
+              autoGrowMinHeight={40}
               autoGrowMaxHeight={420}
               enableUpload
               onUploadStart={() => setUploading(true)}
@@ -939,6 +939,8 @@ function NewAgentPanel({
               hideHelp
               modeSwitchPlacement="toolbar"
               reserveModeSwitchSpace
+              compactModeSwitch
+              softFocus
               undoMode="local"
               redoMode="local"
               placeholder="Ask your agent to build, research, debug, or explain…"
@@ -948,11 +950,11 @@ function NewAgentPanel({
           <div
             style={{
               alignItems: "center",
-              borderTop: `1px solid ${UI_COLORS.border}`,
+              borderTop: 0,
               display: "flex",
               flexWrap: "wrap",
               gap: 6,
-              paddingTop: 10,
+              paddingTop: 2,
             }}
           >
             {projectId ? (

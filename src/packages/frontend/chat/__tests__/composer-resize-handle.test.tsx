@@ -109,6 +109,18 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it("uses the compact idle composer in .chat files", () => {
+    renderComposer();
+    const composer = screen.getByTestId("chat-composer");
+    expect(composer.style.maxWidth).toBe("1120px");
+    expect(lastChatInputProps.height).toBe("40px");
+    expect(lastChatInputProps.compactModeSwitch).toBe(true);
+    expect(lastChatInputProps.softFocus).toBe(true);
+    expect(screen.getByTestId("chat-composer-actions").style.borderTop).toBe(
+      "",
+    );
+  });
+
   it("centers a compact auto-growing Agents composer", () => {
     renderComposer(
       { hasInput: true, input: "draft" },

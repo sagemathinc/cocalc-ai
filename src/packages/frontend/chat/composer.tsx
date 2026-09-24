@@ -162,7 +162,7 @@ export function ChatRoomComposer({
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
-  const IDLE_COLLAPSED_HEIGHT = 60;
+  const IDLE_COLLAPSED_HEIGHT = 40;
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -613,26 +613,16 @@ export function ChatRoomComposer({
     display: "flex",
     flexDirection: "column",
     margin:
-      isZenMode && isFullscreen
-        ? 0
-        : embeddingOptions.agentWorkspace && !mobile
-          ? "0 auto 8px"
-          : "0 8px 8px",
+      isZenMode && isFullscreen ? 0 : !mobile ? "0 auto 8px" : "0 8px 8px",
     overflow: "hidden",
     width: isZenMode && isFullscreen ? "100%" : "calc(100% - 16px)",
-    maxWidth:
-      embeddingOptions.agentWorkspace && !mobile && !isZenMode
-        ? 1120
-        : undefined,
+    maxWidth: !mobile && !isZenMode ? 1120 : undefined,
     height: isZenMode && isFullscreen ? "100%" : undefined,
-    padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
+    padding: isZenMode && isFullscreen ? "12px" : "6px 10px",
     background: UI_COLORS.surface,
-    border: `1px solid ${isInputFocused ? (embeddingOptions.agentWorkspace ? UI_COLORS.focus : UI_COLORS.link) : UI_COLORS.border}`,
+    border: `1px solid ${isInputFocused ? `color-mix(in srgb, ${UI_COLORS.focus} 35%, ${UI_COLORS.border})` : UI_COLORS.border}`,
     borderRadius: isZenMode && isFullscreen ? 0 : 16,
-    boxShadow:
-      isInputFocused && !embeddingOptions.agentWorkspace
-        ? `inset 0 0 0 1px ${UI_COLORS.focus}`
-        : undefined,
+    boxShadow: undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
@@ -841,12 +831,10 @@ export function ChatRoomComposer({
                 on_post={on_post ? handlePost : undefined}
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
-                autoGrowMinHeight={
-                  embeddingOptions.agentWorkspace ? 32 : undefined
-                }
+                autoGrowMinHeight={32}
                 autoGrowMaxHeight={autoGrowMaxHeight}
-                compactModeSwitch={embeddingOptions.agentWorkspace}
-                softFocus={embeddingOptions.agentWorkspace}
+                compactModeSwitch
+                softFocus
                 onChange={(value) => {
                   setInput(value, composerSession);
                 }}
@@ -911,16 +899,14 @@ export function ChatRoomComposer({
           aria-label="Message actions"
           style={{
             alignItems: "flex-end",
-            borderTop: embeddingOptions.agentWorkspace
-              ? undefined
-              : `1px solid ${UI_COLORS.border}`,
+            borderTop: undefined,
             display: "flex",
             flexDirection: "row",
             flexWrap: "nowrap",
             gap: 4,
             flexShrink: 0,
             minWidth: 0,
-            paddingTop: 7,
+            paddingTop: 2,
           }}
         >
           <div
@@ -952,7 +938,7 @@ export function ChatRoomComposer({
               }}
             />
             <DictateButton
-              borderless={embeddingOptions.agentWorkspace}
+              borderless
               inputControlRef={chatInputControlRef}
               path={path}
               projectId={project_id}
