@@ -1680,6 +1680,8 @@ clean 30-day qualification window. A current healthy operator check does not
 rewrite that historical slot.
 
 The repository-wide `pnpm -C src tsc` completed successfully after the
-staging changes and load tests. The available Chromium debugging port was
-closed, and the previously known staging browser session IDs timed out through
-the typed browser API, so this run did not add browser-observed latency samples.
+staging changes and load tests. `pnpm -C src lint:frontend` reported zero
+errors or warnings across 3,696 frontend files. The available Chromium
+debugging port was closed, and the previously known staging browser session
+IDs timed out through the typed browser API, so this run did not add
+browser-observed latency samples.
