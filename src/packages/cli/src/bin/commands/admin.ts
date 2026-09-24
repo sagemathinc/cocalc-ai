@@ -2994,7 +2994,9 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   adminDbCommonOptions(
     adminDb
       .command("backup-health")
-      .description("show project backup recency and backup index state")
+      .description(
+        "show backup recency, scheduled backup ID, and legacy index state",
+      )
       .option("--project-id <uuid>", "specific project id"),
   ).action(async (opts: any, command: Command) => {
     await withContext(command, "admin db backup-health", async (ctx) => {

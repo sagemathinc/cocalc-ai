@@ -104,18 +104,22 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
   `,
   "backup-health": `
     WITH latest_index AS (
-      SELECT project_id, max(backup_time) AS latest_index_backup_at
+      SELECT project_id, max(backup_time) AS latest_legacy_index_backup_at
       FROM project_backup_indexes
       WHERE ($1::uuid IS NULL OR project_id = $1::uuid)
       GROUP BY project_id
     )
     SELECT p.project_id, p.title, p.host_id, p.owning_bay_id,
            p.provisioned, p.last_changed, p.last_backup,
-           latest_index.latest_index_backup_at,
+           m.latest_backup_id AS latest_scheduled_backup_id,
+           m.observed_at AS backup_status_observed_at,
+           latest_index.latest_legacy_index_backup_at,
            p.backup_repo_id,
            now() - p.last_backup AS backup_age
     FROM projects p
     LEFT JOIN latest_index ON latest_index.project_id = p.project_id
+    LEFT JOIN project_maintenance_status m
+      ON m.project_id = p.project_id AND m.kind = 'backup'
     WHERE ($1::uuid IS NULL OR p.project_id = $1::uuid)
       AND p.deleted IS NULL
     ORDER BY p.last_backup ASC NULLS FIRST
@@ -540,7 +544,7 @@ async function executeReadOnly({
   if (!rawSql) {
     throw new Error("unknown or missing admin DB SQL");
   }
-  if (diagnostic === "project-recovery") {
+  if (diagnostic === "project-recovery" || diagnostic === "backup-health") {
     await ensureProjectMaintenanceStatusTable();
   }
   const normalizedSql = trimTrailingSemicolon(rawSql);
