@@ -19,7 +19,10 @@ import {
   useTypedRedux,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
+import { Suspense } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
+import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { useAppContext } from "@cocalc/frontend/app/context";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
@@ -80,7 +83,6 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
-import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
@@ -137,6 +139,7 @@ import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
+import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
 import { AgentHostRecovery } from "./host-recovery";
 import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
@@ -200,6 +203,14 @@ import {
 } from "./workspace-path";
 
 const { Text, Title } = Typography;
+
+const NewProjectCreator = lazyWithRetry(
+  async () => ({
+    default: (await import("@cocalc/frontend/projects/create-project"))
+      .NewProjectCreator,
+  }),
+  "create project dialog",
+);
 
 const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
 const MIN_AGENT_SIDEBAR_WIDTH = 220;
@@ -485,6 +496,10 @@ function NewAgentPanel({
   const firstRequestRef = useRef<() => string>(() => "");
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const createProjectMounted = useRef(false);
+  if (createProjectOpen) createProjectMounted.current = true;
+  const projectSettingsButton = useRef<HTMLButtonElement>(null);
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
@@ -529,6 +544,20 @@ function NewAgentPanel({
       : undefined,
   );
   const atLimit = namedAgentLimitReached(namedAgentDirectory);
+
+  function selectProject(nextProjectId: string) {
+    setMissingDirectory(undefined);
+    setError("");
+    setProjectId(nextProjectId);
+    const home = getProjectHomeDirectory(nextProjectId);
+    setDirectory(home);
+    setDirectoryProjectId(nextProjectId);
+  }
+
+  function closeProjectCreator() {
+    setCreateProjectOpen(false);
+    requestAnimationFrame(() => projectSettingsButton.current?.focus());
+  }
 
   useEffect(() => {
     if (projectId || !projectMap) return;
@@ -835,18 +864,13 @@ function NewAgentPanel({
           autoSize={{ minRows: 2, maxRows: 5 }}
           onChange={(event) => setDescription(event.target.value)}
         />
-        <label>Project</label>
-        <SelectProject
-          fullCollaboratorOnly
+        <AgentProjectSelector
           value={projectId}
           disabled={busy || !!pending}
-          onChange={(nextProjectId) => {
-            setMissingDirectory(undefined);
-            setError("");
-            setProjectId(nextProjectId);
-            const home = getProjectHomeDirectory(nextProjectId);
-            setDirectory(home);
-            setDirectoryProjectId(nextProjectId);
+          onChange={selectProject}
+          onCreate={() => {
+            setSettingsOpen(false);
+            setCreateProjectOpen(true);
           }}
         />
         {!projectId && (
@@ -1005,6 +1029,7 @@ function NewAgentPanel({
               onOpenChange={setSettingsOpen}
             >
               <Button
+                ref={projectSettingsButton}
                 icon={<Icon name="folder-open" />}
                 style={{ height: "auto", maxWidth: 280, overflow: "hidden" }}
                 title={`${projectTitle} / ${effectiveDirectory}`}
@@ -1201,6 +1226,21 @@ function NewAgentPanel({
           />
         )}
       </Modal>
+      {createProjectMounted.current && (
+        <CocalcErrorBoundary
+          scope="agents.create-project"
+          resetKeys={[createProjectOpen]}
+        >
+          <Suspense fallback={null}>
+            <NewProjectCreator
+              default_value=""
+              open={createProjectOpen}
+              onClose={closeProjectCreator}
+              onCreated={selectProject}
+            />
+          </Suspense>
+        </CocalcErrorBoundary>
+      )}
     </div>
   );
 }
