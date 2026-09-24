@@ -58,13 +58,18 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
   const [title, setTitle] = useState("");
   const [renaming, setRenaming] = useState<AgentNetwork>();
   const [renameTitle, setRenameTitle] = useState("");
-  const [delivery, setDelivery] = useState<AgentNetworkDeliveryMode>("queued");
+  const [delivery, setDelivery] = useState<AgentNetworkDeliveryMode>("live");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const revision = useRef(0);
   const requestIds = useRef(new Map<string, string>());
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const duplicateTitle = directory?.networks.some(
+    (network) =>
+      network.title.trim().toLocaleLowerCase() ===
+      title.trim().toLocaleLowerCase(),
+  );
 
   async function refresh() {
     const current = ++revision.current;
@@ -131,6 +136,10 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
   }
 
   async function create() {
+    if (duplicateTitle) {
+      setError("An Agent Network with this title already exists.");
+      return;
+    }
     const members = selected.flatMap((key) => {
       const agent = agents.find((candidate) => memberKey(candidate) === key);
       return agent
@@ -161,7 +170,7 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
       setCreateOpen(false);
       setSelected([]);
       setTitle("");
-      setDelivery("queued");
+      setDelivery("live");
     }
   }
 
@@ -622,6 +631,7 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
         okButtonProps={{
           disabled:
             !title.trim() ||
+            duplicateTitle ||
             selected.length < 2 ||
             selected.length > (directory?.usage.member_limit ?? 0),
         }}
@@ -640,6 +650,12 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Release review"
           />
+          {duplicateTitle && (
+            <Alert
+              type="error"
+              title="An Agent Network with this title already exists."
+            />
+          )}
           <label htmlFor="agent-network-members">Named agents</label>
           <Select
             id="agent-network-members"
@@ -662,8 +678,8 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
             value={delivery}
             onChange={(event) => setDelivery(event.target.value)}
           >
-            <Radio value="queued">Queued (recommended)</Radio>
-            <Radio value="live">Live</Radio>
+            <Radio value="live">Live (default)</Radio>
+            <Radio value="queued">Queued</Radio>
           </Radio.Group>
           {delivery === "live" && (
             <Alert
