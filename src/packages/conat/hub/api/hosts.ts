@@ -1084,6 +1084,7 @@ export interface HostCurrentMetrics {
       | "memory_pressure"
       | "memory_measurement_unavailable";
     memory_psi_full_avg10?: number;
+    pressure_attribution?: "bees_cgroup";
   };
   conat_persist?: HostConatPersistMetrics;
 }

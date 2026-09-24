@@ -203,6 +203,9 @@ function normalizeSnapshotBackupMaintenanceGate(
     isNonNegativeNumberLike(gate.memory_psi_full_avg10)
       ? { memory_psi_full_avg10: Number(gate.memory_psi_full_avg10) }
       : {}),
+    ...(gate.pressure_attribution === "bees_cgroup"
+      ? { pressure_attribution: "bees_cgroup" as const }
+      : {}),
   };
 }
 

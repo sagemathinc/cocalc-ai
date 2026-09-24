@@ -818,6 +818,103 @@ describe("snapshot-backup-maintenance", () => {
     }
   });
 
+  it("admits one maintenance worker when global memory PSI is confined to capped Bees", async () => {
+    delete process.env
+      .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;
+    const { _test } = await import("./snapshot-backup-maintenance");
+    const input = {
+      configuredParallelism: 4,
+      meminfoText: "MemTotal:       8388608 kB\nMemAvailable:    5242880 kB\n",
+      pressureText: "full avg10=50.00 avg60=40.00 avg300=20.00 total=1\n",
+      cgroupPressure: {
+        beesFullAvg10: 49.8,
+        beesCurrentBytes: 1088 * 1024 ** 2,
+        beesHighBytes: 1024 ** 3,
+        otherMaxFullAvg10: 0.1,
+      },
+    };
+    expect(_test.maintenanceMemoryDecision(input)).toMatchObject({
+      skip: false,
+      parallelism: 1,
+      isolatedBeesPressure: true,
+      pressureFullAvg10: 50,
+    });
+    expect(
+      _test.maintenanceMemoryDecision({
+        ...input,
+        cgroupPressure: { ...input.cgroupPressure, otherMaxFullAvg10: 3 },
+      }),
+    ).toMatchObject({ skip: true, reason: "memory_pressure" });
+    expect(
+      _test.maintenanceMemoryDecision({
+        ...input,
+        cgroupPressure: {
+          ...input.cgroupPressure,
+          beesCurrentBytes: 900 * 1024 ** 2,
+        },
+      }),
+    ).toMatchObject({ skip: true, reason: "memory_pressure" });
+    expect(
+      _test.maintenanceMemoryDecision({
+        ...input,
+        meminfoText:
+          "MemTotal:       8388608 kB\nMemAvailable:    1572864 kB\n",
+      }),
+    ).toMatchObject({ skip: true, reason: "memory_pressure" });
+  });
+
+  it("attributes the host's high PSI to an isolated Bees cgroup", async () => {
+    delete process.env
+      .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;
+    const fsModule = require("node:fs");
+    const dirs = [
+      "cocalc-bees",
+      "cocalc-host-services",
+      "cocalc-project-pool",
+      "cocalc-maintenance",
+      "system.slice",
+    ].map((name) => ({ name, isDirectory: () => true }));
+    const readdirSpy = jest
+      .spyOn(fsModule, "readdirSync")
+      .mockReturnValue(dirs as any);
+    const readSpy = jest
+      .spyOn(fsModule, "readFileSync")
+      .mockImplementation((path: unknown) => {
+        const name = String(path);
+        if (name === "/proc/meminfo")
+          return "MemTotal:       8388608 kB\nMemAvailable:    5242880 kB\n";
+        if (name === "/proc/pressure/memory")
+          return "full avg10=50.00 avg60=40.00 avg300=20.00 total=1\n";
+        if (name === "/sys/fs/cgroup/cocalc-bees/memory.current")
+          return `${1088 * 1024 ** 2}\n`;
+        if (name === "/sys/fs/cgroup/cocalc-bees/memory.high")
+          return `${1024 ** 3}\n`;
+        if (name === "/sys/fs/cgroup/cocalc-bees/memory.pressure")
+          return "full avg10=49.80 avg60=40.00 avg300=20.00 total=1\n";
+        if (name.endsWith("/memory.pressure"))
+          return "full avg10=0.10 avg60=0.10 avg300=0.10 total=1\n";
+        throw new Error(`unexpected file: ${name}`);
+      });
+    try {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+        await import("./snapshot-backup-maintenance");
+      const { getSnapshotBackupMaintenanceGate } =
+        await import("./snapshot-backup-gate");
+      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+      expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalled();
+      expect(getSnapshotBackupMaintenanceGate()).toMatchObject({
+        memory_psi_full_avg10: 50,
+        pressure_attribution: "bees_cgroup",
+      });
+      expect(
+        getSnapshotBackupMaintenanceGate()?.blocked_reason,
+      ).toBeUndefined();
+    } finally {
+      readSpy.mockRestore();
+      readdirSpy.mockRestore();
+    }
+  });
+
   it("blocks risky maintenance when host memory measurements are missing", async () => {
     delete process.env
       .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;

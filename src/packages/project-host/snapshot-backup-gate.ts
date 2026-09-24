@@ -10,6 +10,7 @@ export interface SnapshotBackupMaintenanceGate {
     | "memory_pressure"
     | "memory_measurement_unavailable";
   memory_psi_full_avg10?: number;
+  pressure_attribution?: "bees_cgroup";
 }
 
 let current: SnapshotBackupMaintenanceGate | undefined;

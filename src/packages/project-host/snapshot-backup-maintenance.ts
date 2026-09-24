@@ -67,6 +67,8 @@ const DEFAULT_MEMORY_AVAILABLE_MIN_BYTES = 2 * GIB;
 const DEFAULT_MEMORY_AVAILABLE_MAX_BYTES = 16 * GIB;
 const DEFAULT_MEMORY_AVAILABLE_HARD_MIN_BYTES = 4 * GIB;
 const DEFAULT_MEMORY_PSI_FULL_AVG10_MAX = 5;
+const CGROUP_ROOT = "/sys/fs/cgroup";
+const BEES_CGROUP = "cocalc-bees";
 
 const inFlightSnapshots = new Set<string>();
 const inFlightBackups = new Set<string>();
@@ -173,14 +175,99 @@ function readMemoryInfo(): string | undefined {
   }
 }
 
+type MemoryCgroupPressureSample = {
+  beesFullAvg10: number;
+  beesCurrentBytes: number;
+  beesHighBytes: number;
+  otherMaxFullAvg10: number;
+};
+
+function readMemoryCgroupPressure(): MemoryCgroupPressureSample | undefined {
+  try {
+    const beesPath = `${CGROUP_ROOT}/${BEES_CGROUP}`;
+    const beesFullAvg10 = parsePressureFullAvg10(
+      fs.readFileSync(`${beesPath}/memory.pressure`, "utf8"),
+    );
+    const beesCurrentBytes = Number(
+      fs.readFileSync(`${beesPath}/memory.current`, "utf8").trim(),
+    );
+    const beesHighBytes = Number(
+      fs.readFileSync(`${beesPath}/memory.high`, "utf8").trim(),
+    );
+    if (
+      beesFullAvg10 == null ||
+      !Number.isSafeInteger(beesCurrentBytes) ||
+      !Number.isSafeInteger(beesHighBytes) ||
+      beesHighBytes <= 0
+    ) {
+      return undefined;
+    }
+    let otherMaxFullAvg10 = 0;
+    const seen = new Set<string>();
+    for (const entry of fs.readdirSync(CGROUP_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === BEES_CGROUP) continue;
+      const full = parsePressureFullAvg10(
+        fs.readFileSync(`${CGROUP_ROOT}/${entry.name}/memory.pressure`, "utf8"),
+      );
+      if (full == null) return undefined;
+      seen.add(entry.name);
+      otherMaxFullAvg10 = Math.max(otherMaxFullAvg10, full);
+    }
+    // If this is not the host's expected cgroup-v2 layout, keep the
+    // conservative global pressure gate.
+    if (
+      ![
+        "cocalc-host-services",
+        "cocalc-project-pool",
+        "cocalc-maintenance",
+        "system.slice",
+      ].every((name) => seen.has(name))
+    ) {
+      return undefined;
+    }
+    return {
+      beesFullAvg10,
+      beesCurrentBytes,
+      beesHighBytes,
+      otherMaxFullAvg10,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isolatedBeesMemoryPressure({
+  globalFullAvg10,
+  pressureMax,
+  availableBytes,
+  preferredBytes,
+  sample,
+}: {
+  globalFullAvg10: number;
+  pressureMax: number;
+  availableBytes: number;
+  preferredBytes: number;
+  sample: MemoryCgroupPressureSample | undefined;
+}): boolean {
+  if (!sample || availableBytes < preferredBytes) return false;
+  return (
+    sample.beesCurrentBytes >= sample.beesHighBytes &&
+    sample.beesFullAvg10 >= pressureMax &&
+    globalFullAvg10 - sample.beesFullAvg10 <= pressureMax / 2 &&
+    sample.otherMaxFullAvg10 < pressureMax / 2
+  );
+}
+
 function maintenanceMemoryDecision({
   configuredParallelism,
   meminfoText = readMemoryInfo(),
   pressureText = readMemoryPressure(),
+  cgroupPressure,
 }: {
   configuredParallelism: number;
   meminfoText?: string;
   pressureText?: string;
+  cgroupPressure?: MemoryCgroupPressureSample;
 }):
   | {
       skip: false;
@@ -189,6 +276,7 @@ function maintenanceMemoryDecision({
       preferredBytes?: number;
       hardMinBytes?: number;
       pressureFullAvg10?: number;
+      isolatedBeesPressure?: boolean;
     }
   | {
       skip: true;
@@ -249,13 +337,31 @@ function maintenanceMemoryDecision({
     effectivePressureMax > 0 &&
     pressureFullAvg10 >= effectivePressureMax
   ) {
+    const isolatedBeesPressure = isolatedBeesMemoryPressure({
+      globalFullAvg10: pressureFullAvg10,
+      pressureMax: effectivePressureMax,
+      availableBytes: memory.availableBytes,
+      preferredBytes,
+      sample: cgroupPressure ?? readMemoryCgroupPressure(),
+    });
+    if (!isolatedBeesPressure) {
+      return {
+        skip: true,
+        reason: "memory_pressure",
+        availableBytes: memory.availableBytes,
+        preferredBytes,
+        hardMinBytes,
+        pressureFullAvg10,
+      };
+    }
     return {
-      skip: true,
-      reason: "memory_pressure",
+      skip: false,
+      parallelism: 1,
       availableBytes: memory.availableBytes,
       preferredBytes,
       hardMinBytes,
       pressureFullAvg10,
+      isolatedBeesPressure: true,
     };
   }
   if (memory.availableBytes < hardMinBytes) {
@@ -549,6 +655,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   setSnapshotBackupMaintenanceGate({
     checked_at: new Date().toISOString(),
     ...(memoryDecision.skip ? { blocked_reason: memoryDecision.reason } : {}),
+    ...(memoryDecision.skip || !memoryDecision.isolatedBeesPressure
+      ? {}
+      : { pressure_attribution: "bees_cgroup" as const }),
     ...(memoryDecision.pressureFullAvg10 == null
       ? {}
       : { memory_psi_full_avg10: memoryDecision.pressureFullAvg10 }),
@@ -563,6 +672,14 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       memory_psi_full_avg10: memoryDecision.pressureFullAvg10,
     });
     return false;
+  }
+  if (memoryDecision.isolatedBeesPressure) {
+    logger.info("ignoring memory pressure confined to the Bees cgroup", {
+      hostId,
+      memory_psi_full_avg10: memoryDecision.pressureFullAvg10,
+      memory_available_bytes: memoryDecision.availableBytes,
+      parallelism: memoryDecision.parallelism,
+    });
   }
   const client = getMasterConatClient();
   if (!client) {

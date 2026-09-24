@@ -144,6 +144,31 @@ describe("parseRow host metrics normalization", () => {
     });
   });
 
+  it("preserves a verified isolated Bees pressure attribution", () => {
+    const checked_at = new Date().toISOString();
+    const host = parseRow({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      metadata: {
+        metrics: {
+          current: {
+            snapshot_backup_maintenance_gate: {
+              checked_at,
+              memory_psi_full_avg10: 49.8,
+              pressure_attribution: "bees_cgroup",
+            },
+          },
+        },
+      },
+    });
+    expect(host.metrics?.current?.snapshot_backup_maintenance_gate).toEqual({
+      checked_at,
+      memory_psi_full_avg10: 49.8,
+      pressure_attribution: "bees_cgroup",
+    });
+  });
+
   it("rejects malformed I/O control telemetry", () => {
     const host = parseRow({
       id: "host-1",
