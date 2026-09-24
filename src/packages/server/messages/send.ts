@@ -33,6 +33,7 @@ export default async function send({
   dedupMinutes,
   dedupBySubject,
   requireAccountNoticeDelivery,
+  operationalIncident,
 }: {
   // account_id's of user (or users) to send the message to.
   to_ids: string[];
@@ -56,9 +57,20 @@ export default async function send({
   // Wait for the durable notification event to be created. Use this for
   // required operational notices whose delivery failure must be observable.
   requireAccountNoticeDelivery?: boolean;
+  // Classify a named operator's incident for immediate critical-lane email.
+  // Only internal system messages may set this flag.
+  operationalIncident?: boolean;
 }) {
   logger.debug("send a message");
   const isInternalSystemMessage = !from_id;
+  if (operationalIncident && !isInternalSystemMessage) {
+    throw Error("operational incidents must be internal system messages");
+  }
+  if (operationalIncident && !requireAccountNoticeDelivery) {
+    throw Error(
+      "operational incidents require durable account notice delivery",
+    );
+  }
   if (to_ids?.length == 0) {
     // nothing to do
     return;
@@ -117,6 +129,7 @@ export default async function send({
           subject,
           body,
           message_id: id,
+          operationalIncident,
         });
       }
       return id;
@@ -144,6 +157,7 @@ export default async function send({
       subject,
       body,
       message_id: id,
+      operationalIncident,
     };
     if (requireAccountNoticeDelivery) {
       await mirrorSystemMessageToAccountNotice(mirror);

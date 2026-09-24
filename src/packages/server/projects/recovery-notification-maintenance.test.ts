@@ -104,6 +104,7 @@ test("enabled notifications send the named administrator paid incidents and a da
       ),
       to_ids: ["admin-1"],
       requireAccountNoticeDelivery: true,
+      operationalIncident: true,
     }),
   );
   expect(sendMessage).toHaveBeenCalledWith(
@@ -136,6 +137,7 @@ test("misconfigured recipient alerts site admins without sending project debt", 
       subject:
         "Admin Alert - Project recovery on-call configuration missing on bay-1",
       to_ids: ["admin-1"],
+      operationalIncident: true,
     }),
   );
   expect(recoveryHealth).not.toHaveBeenCalled();
@@ -158,6 +160,7 @@ test("an observation failure alerts the named on-call administrator", async () =
         "Admin Alert - Project recovery observation unavailable on bay-1",
       to_ids: ["admin-1"],
       requireAccountNoticeDelivery: true,
+      operationalIncident: true,
     }),
   );
 });

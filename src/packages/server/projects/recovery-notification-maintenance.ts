@@ -57,6 +57,7 @@ export async function runProjectRecoveryNotificationCheck({
       dedupMinutes: DAILY_DEDUP_MINUTES,
       dedupBySubject: true,
       requireAccountNoticeDelivery: true,
+      operationalIncident: true,
     });
     return { enabled: true, incident_count: 0, daily_report_checked: false };
   }
@@ -73,6 +74,7 @@ export async function runProjectRecoveryNotificationCheck({
       dedupMinutes: INCIDENT_DEDUP_MINUTES,
       dedupBySubject: true,
       requireAccountNoticeDelivery: true,
+      operationalIncident: true,
     });
     throw err;
   });
@@ -101,6 +103,7 @@ export async function runProjectRecoveryNotificationCheck({
       dedupMinutes: INCIDENT_DEDUP_MINUTES,
       dedupBySubject: true,
       requireAccountNoticeDelivery: true,
+      operationalIncident: true,
     });
   }
 
