@@ -1,12 +1,18 @@
 import { harnessOwner, reapAbandonedHarnesses } from "./harness-reaper";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const mockExec = jest.fn();
 const mockRead = jest.fn();
+const mockLstat = jest.fn();
+const mockRm = jest.fn();
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
 }));
 jest.mock("node:fs/promises", () => ({
   readFile: (...args) => mockRead(...args),
+  lstat: (...args) => mockLstat(...args),
+  rm: (...args) => mockRm(...args),
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({ podmanEnv: () => ({}) }));
 jest.mock("@cocalc/backend/logger", () => () => ({
@@ -14,9 +20,12 @@ jest.mock("@cocalc/backend/logger", () => () => ({
   warn: jest.fn(),
 }));
 const boot = "00000000-0000-0000-0000-000000000000";
-const container = (id: string, owner?: string) => ({
+const container = (id: string, owner?: string, credentialHome?: string) => ({
   Id: id.repeat(64),
-  Labels: { "cocalc.acp.owner": owner },
+  Labels: {
+    "cocalc.acp.owner": owner,
+    "cocalc.acp.credential-home": credentialHome,
+  },
 });
 const stat = `10 (worker (name)) ${Array(19).fill("0").join(" ")} 999 0`;
 beforeEach(() => {
@@ -25,6 +34,42 @@ beforeEach(() => {
     path.endsWith("boot_id") ? boot : stat,
   );
   mockExec.mockImplementation((_cmd, _args, _options, cb) => cb(null, "[]"));
+  mockLstat.mockResolvedValue({
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+  });
+  mockRm.mockResolvedValue(undefined);
+});
+
+test("reaper removes only a generated Claude controller credential home", async () => {
+  const home = join(tmpdir(), "cocalc-claude-controller-Ab12Cd");
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(
+      null,
+      JSON.stringify([
+        container("a", `10:${boot}:998`, home),
+        container("b", `10:${boot}:998`, join(tmpdir(), "unrelated-home")),
+      ]),
+    ),
+  );
+  await reapAbandonedHarnesses();
+  expect(mockRm).toHaveBeenCalledTimes(1);
+  expect(mockRm).toHaveBeenCalledWith(home, { recursive: true, force: true });
+});
+
+test("reaper refuses a symlinked Claude controller home", async () => {
+  const home = join(tmpdir(), "cocalc-claude-controller-Ab12Cd");
+  mockLstat.mockResolvedValue({
+    isDirectory: () => false,
+    isSymbolicLink: () => true,
+  });
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(null, JSON.stringify([container("a", `10:${boot}:998`, home)])),
+  );
+  await expect(reapAbandonedHarnesses()).rejects.toThrow(
+    "abandoned ACP sidecar",
+  );
+  expect(mockRm).not.toHaveBeenCalled();
 });
 test("owner fingerprint reads process start despite parentheses in process name", async () => {
   expect(await harnessOwner(10)).toBe(`10:${boot}:999`);

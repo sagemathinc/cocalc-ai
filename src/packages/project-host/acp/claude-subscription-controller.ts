@@ -6,8 +6,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { mountArg } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
@@ -17,6 +15,7 @@ import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
 import {
+  forceKillContainerProcesses,
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
 } from "@cocalc/project-runner/run/podman";
@@ -35,6 +34,11 @@ import {
   type ClaudeProjectToolBridge,
 } from "./claude-project-tool-bridge";
 import { ensureProjectContainerRunning } from "../codex/codex-project";
+import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
+import {
+  CLAUDE_CONTROLLER_HOME_LABEL,
+  claudeControllerHomePrefix,
+} from "./claude-subscription-paths";
 
 const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
@@ -43,8 +47,10 @@ const logger = getLogger("project-host:acp:claude-subscription-controller");
 
 export function claudeSubscriptionContainerArgs(options: {
   name: string;
-  rootfs: string;
+  projectId: string;
+  owner: string;
   home: string;
+  rootfs: string;
   managedHarnesses: string;
   nodeMounts: Record<string, string>;
   toolBridgeDirectory?: string;
@@ -54,8 +60,10 @@ export function claudeSubscriptionContainerArgs(options: {
 }): string[] {
   const {
     name,
-    rootfs,
+    projectId,
+    owner,
     home,
+    rootfs,
     managedHarnesses,
     nodeMounts,
     toolBridgeDirectory,
@@ -69,6 +77,14 @@ export function claudeSubscriptionContainerArgs(options: {
     ...runtimeArgs,
     "--name",
     name,
+    "--label",
+    "cocalc.runtime=acp",
+    "--label",
+    `${HARNESS_OWNER_LABEL}=${owner}`,
+    "--label",
+    `cocalc.project=${projectId}`,
+    "--label",
+    `${CLAUDE_CONTROLLER_HOME_LABEL}=${home}`,
     "--interactive",
     "--read-only",
     "--security-opt=no-new-privileges",
@@ -139,7 +155,7 @@ export async function launchClaudeSubscriptionController(
     accountId,
     credentialId,
   });
-  const home = await mkdtemp(join(tmpdir(), "cocalc-claude-controller-"));
+  const home = await mkdtemp(claudeControllerHomePrefix());
   const launcher = projectPoolPodmanLauncher(projectId);
   const name = `claude-controller-${projectId}-${randomUUID()}`;
   let created = false;
@@ -150,17 +166,40 @@ export async function launchClaudeSubscriptionController(
       execFile(
         launcher.command,
         [...launcher.argsPrefix, ...args],
-        { cwd: "/", env: podmanEnv(), timeout: 30_000, maxBuffer: 1024 * 1024 },
-        (error) =>
-          error
-            ? reject(Error("Claude controller operation failed"))
-            : resolve(),
+        {
+          cwd: "/",
+          env: podmanEnv(),
+          timeout: 30_000,
+          killSignal: "SIGKILL",
+          maxBuffer: 1024 * 1024,
+        },
+        (error) => {
+          if (!error) return resolve();
+          reject(
+            Object.assign(Error("Claude controller operation failed"), {
+              code: error.killed ? "CLAUDE_CONTROLLER_STOP_TIMEOUT" : undefined,
+            }),
+          );
+        },
       );
     });
   const cleanup = () =>
     (stopped ??= (async () => {
-      if (created)
-        await command(["rm", "--ignore", "--force", "--time", "0", name]);
+      if (created) {
+        const remove = () =>
+          command(["rm", "--ignore", "--force", "--time", "0", name]);
+        try {
+          await remove();
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code !==
+            "CLAUDE_CONTROLLER_STOP_TIMEOUT"
+          )
+            throw error;
+          await forceKillContainerProcesses(projectId, name);
+          await remove();
+        }
+      }
       await toolBridge?.close();
       await publishClaudeSubscriptionCredential({
         projectId,
@@ -192,12 +231,15 @@ export async function launchClaudeSubscriptionController(
       },
     );
     const rootfs = await extractBaseImage(DEFAULT_PROJECT_IMAGE);
+    const owner = await harnessOwner();
     const managedHarnesses =
       process.env.COCALC_MANAGED_HARNESSES ?? MANAGED_HARNESSES;
     created = true;
     await command(
       claudeSubscriptionContainerArgs({
         name,
+        projectId,
+        owner,
         rootfs,
         home,
         managedHarnesses,
@@ -228,9 +270,12 @@ export async function launchClaudeSubscriptionController(
       stderr: proc.stderr,
       closed,
       stop: async () => {
-        await cleanup();
-        proc.kill("SIGKILL");
-        await closed;
+        try {
+          await cleanup();
+        } finally {
+          proc.kill("SIGKILL");
+          await closed;
+        }
       },
     };
   } catch (error) {

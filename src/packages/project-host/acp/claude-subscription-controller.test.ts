@@ -16,6 +16,8 @@ jest.mock("../codex/codex-project", () => ({
 test("subscription controller has no project filesystem, secret or network mount", () => {
   const args = claudeSubscriptionContainerArgs({
     name: "claude-controller-test",
+    projectId: "00000000-0000-4000-8000-000000000001",
+    owner: "123:00000000-0000-4000-8000-000000000002:456",
     rootfs: "/trusted-base-rootfs",
     home: "/private-auth-home",
     managedHarnesses: "/managed-harnesses",
@@ -25,6 +27,10 @@ test("subscription controller has no project filesystem, secret or network mount
     gid: 1000,
   });
   expect(args).toContain("--read-only");
+  expect(args).toContain("cocalc.runtime=acp");
+  expect(args).toContain(
+    "cocalc.acp.owner=123:00000000-0000-4000-8000-000000000002:456",
+  );
   expect(args).toContain("--network=slirp4netns");
   expect(args).not.toContain("--network=container:project-test");
   expect(args).toContain("mount:/private-auth-home:/home/claude:false");

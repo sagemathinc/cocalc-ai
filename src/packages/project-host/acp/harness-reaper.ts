@@ -1,7 +1,11 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, rm } from "node:fs/promises";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
+import {
+  CLAUDE_CONTROLLER_HOME_LABEL,
+  isManagedClaudeControllerHome,
+} from "./claude-subscription-paths";
 
 const logger = getLogger("project-host:acp:harness-reaper");
 export const HARNESS_OWNER_LABEL = "cocalc.acp.owner";
@@ -79,6 +83,22 @@ export async function reapAbandonedHarnesses(): Promise<void> {
       // Keep the failure visible so subsequent sweeps retry the remaining work.
       failedRemovals++;
       continue;
+    }
+    const credentialHome = row?.Labels?.[CLAUDE_CONTROLLER_HOME_LABEL];
+    if (isManagedClaudeControllerHome(credentialHome)) {
+      try {
+        const stat = await lstat(credentialHome);
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+          throw Error("Refusing unsafe Claude controller home cleanup");
+        await rm(credentialHome, { recursive: true, force: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          failedRemovals++;
+          logger.warn("Unable to clean abandoned Claude controller home", {
+            id,
+          });
+        }
+      }
     }
     // Rootfs leases belong to the old process; don't decrement this process's
     // references or unmount a rootfs still used by the primary project.
