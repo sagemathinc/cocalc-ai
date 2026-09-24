@@ -1483,3 +1483,25 @@ project rows after hard deletion. The existing smoke project was verified
 project recovery healthy with zero current snapshot or backup delay, unknown
 status, unaccounted due work, memory gates, or missing storage pressure
 telemetry.
+
+## 2026-09-24 Recovery block wording
+
+Commit `37d60ff551` fixes a status-label error found while comparing host
+reason codes with the Recovery view. The host's `io_pressure_unavailable`
+means storage pressure could not be measured; the UI had described that as
+confirmed storage pressure. It now says measurement is unavailable and that
+maintenance will retry. Existing host reasons for volume lifecycle changes,
+legacy restore activity, and unconfirmed snapshot or repository backup
+results also have distinct plain-language descriptions. Focused Recovery
+status tests passed 13/13; frontend lint reported zero errors or warnings,
+and the frontend TypeScript build passed.
+
+The immutable static artifact
+`20260924T194108Z-37d60ff5-20260924-recovery-block-reasons-37d60ff-dirty`
+was deployed to staging2 as release `20260924194156-static`. All seven static
+smoke checks passed, including 3,432 current and previous content-addressed
+assets. A fresh signed-in nonadmin Chromium context at 320 CSS pixels still
+showed the confirmed local snapshot and off-host backup statuses with no
+document-level horizontal overflow. A live blocked project has not yet been
+captured, so the new wording is qualified by focused component tests and the
+post-deploy healthy-state browser check, not by a live blocked-state UI drill.
