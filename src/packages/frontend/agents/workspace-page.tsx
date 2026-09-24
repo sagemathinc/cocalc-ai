@@ -130,6 +130,7 @@ import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
+import { OrganizationSaveAlert } from "./organization-save-alert";
 import {
   groupAgentsByProject,
   groupAgentsByRecency,
@@ -3232,14 +3233,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               description={networkError}
             />
           )}
-          {agentOrganization.saveError && (
-            <Alert
-              role="alert"
-              type="error"
-              showIcon
-              title={agentOrganization.saveError}
-            />
-          )}
+          <OrganizationSaveAlert
+            error={agentOrganization.saveError}
+            onRetry={agentOrganization.retrySave}
+          />
         </Space>
         <div>
           {agentOrganization.organization.groupByProject ? (
