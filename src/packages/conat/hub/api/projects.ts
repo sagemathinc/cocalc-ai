@@ -73,6 +73,7 @@ export interface ProjectRecoveryStatus {
     outcome: string;
     reason: string | null;
     due_at: string | null;
+    latest_backup_id: string | null;
   };
 }
 

@@ -1082,6 +1082,7 @@ export interface ProjectMaintenanceReport {
   due_at?: string | null;
   attempt_due_at?: string | null;
   latest_snapshot_at?: string | null;
+  latest_backup_id?: string | null;
   reconciled_change_at?: string | null;
   schedule_revision?: string | null;
   duration_ms?: number;

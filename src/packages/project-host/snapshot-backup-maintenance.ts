@@ -937,6 +937,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         let stageDurations: Record<string, number> = {};
         let bytesScanned: number | undefined;
         let bytesUploaded: number | undefined;
+        let latestBackupId: string | undefined;
         try {
           let created = false;
           let backupDeferredReason: string | undefined;
@@ -959,6 +960,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               stageDurations = updated?.stage_durations_ms ?? {};
               bytesScanned = updated?.bytes_scanned;
               bytesUploaded = updated?.bytes_uploaded;
+              latestBackupId = updated?.latest_backup_id;
             },
           });
           const outcome = result.ran
@@ -981,6 +983,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
               result.reason ??
               backupDeferredReason ??
               (created ? undefined : "backup_not_created"),
+            latest_backup_id: result.ran ? latestBackupId : undefined,
             due_at:
               outcome === "succeeded" ? null : new Date(dueAt).toISOString(),
             attempt_due_at: new Date(dueAt).toISOString(),

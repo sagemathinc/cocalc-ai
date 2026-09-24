@@ -144,6 +144,7 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
            a.kind, a.host_id AS reporting_host_id,
            a.storage_service_class, a.observed_at, a.outcome,
            a.reason, a.attempt_due_at, a.duration_ms,
+           a.latest_backup_id,
            a.stage_durations_ms, a.bytes_scanned, a.bytes_uploaded,
            a.retry_at
     FROM projects p

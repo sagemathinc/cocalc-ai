@@ -60,6 +60,7 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
         reason TEXT,
         due_at TIMESTAMP,
         latest_snapshot_at TIMESTAMP,
+        latest_backup_id TEXT,
         reconciled_change_at TIMESTAMP,
         reconciled_schedule_revision TEXT,
         duration_ms INTEGER,
@@ -84,6 +85,7 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
           reason TEXT,
           due_at TIMESTAMP,
           attempt_due_at TIMESTAMP,
+          latest_backup_id TEXT,
           duration_ms INTEGER,
           stage_durations_ms JSONB,
           bytes_scanned BIGINT,
@@ -99,6 +101,10 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
       await getPool().query(
         `ALTER TABLE project_maintenance_attempts ADD COLUMN IF NOT EXISTS
            attempt_due_at TIMESTAMP`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_attempts ADD COLUMN IF NOT EXISTS
+           latest_backup_id TEXT`,
       );
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS
@@ -125,6 +131,9 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
       );
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS bytes_uploaded BIGINT`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS latest_backup_id TEXT`,
       );
     })
     .catch((err) => {
@@ -190,6 +199,12 @@ export async function recordProjectMaintenanceStatus(
   const dueAt = validDate(report.due_at);
   const attemptDueAt = validDate(report.attempt_due_at);
   const latestSnapshot = validDate(report.latest_snapshot_at);
+  const latestBackupId =
+    report.kind === "backup" &&
+    typeof report.latest_backup_id === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(report.latest_backup_id)
+      ? report.latest_backup_id
+      : null;
   if (
     report.kind === "snapshot" &&
     report.outcome === "succeeded" &&
@@ -215,11 +230,11 @@ export async function recordProjectMaintenanceStatus(
   const result = await getPool().query(
     `INSERT INTO project_maintenance_status
        (project_id, kind, host_id, storage_service_class, observed_at, outcome,
-        reason, due_at, latest_snapshot_at, reconciled_change_at,
+        reason, due_at, latest_snapshot_at, latest_backup_id, reconciled_change_at,
         reconciled_schedule_revision,
         duration_ms, stage_durations_ms, bytes_scanned, bytes_uploaded,
         retry_at, consecutive_failures)
-     SELECT p.project_id, $3, $2, $10, $4, $5, $6, $7, $8, $13, $14, $9,
+     SELECT p.project_id, $3, $2, $10, $4, $5, $6, $7, $8, $18, $13, $14, $9,
             $15::jsonb, $16, $17, $11, $12
        FROM projects p
       WHERE p.project_id=$1 AND p.host_id=$2
@@ -240,6 +255,13 @@ export async function recordProjectMaintenanceStatus(
            THEN excluded.latest_snapshot_at
          WHEN project_maintenance_status.host_id=excluded.host_id
            THEN project_maintenance_status.latest_snapshot_at
+         ELSE NULL END,
+       latest_backup_id=CASE
+         WHEN excluded.latest_backup_id IS NOT NULL
+           OR excluded.outcome='succeeded'
+           THEN excluded.latest_backup_id
+         WHEN project_maintenance_status.host_id=excluded.host_id
+           THEN project_maintenance_status.latest_backup_id
          ELSE NULL END,
        reconciled_change_at=CASE
          WHEN excluded.outcome='skipped' AND excluded.reason='no_content_change'
@@ -278,15 +300,16 @@ export async function recordProjectMaintenanceStatus(
       stageDurations,
       bytesScanned,
       bytesUploaded,
+      latestBackupId,
     ],
   );
   if (!result.rowCount) return false;
   await getPool().query(
     `INSERT INTO project_maintenance_attempts
        (project_id, kind, host_id, storage_service_class, observed_at,
-        outcome, reason, due_at, attempt_due_at, duration_ms,
+        outcome, reason, due_at, attempt_due_at, latest_backup_id, duration_ms,
         stage_durations_ms, bytes_scanned, bytes_uploaded, retry_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15, $10, $11::jsonb,
              $12, $13, $14)
      ON CONFLICT (project_id, kind, observed_at) DO NOTHING`,
     [
@@ -304,6 +327,7 @@ export async function recordProjectMaintenanceStatus(
       bytesScanned,
       bytesUploaded,
       retryAt,
+      latestBackupId,
     ],
   );
   await getPool().query(
@@ -351,11 +375,12 @@ export async function getProjectRecoveryStatusLocal(
     reason: string | null;
     due_at: Date | null;
     latest_snapshot_at: Date | null;
+    latest_backup_id: string | null;
     reconciled_change_at: Date | null;
     reconciled_schedule_revision: string | null;
   }>(
     `SELECT kind, host_id, observed_at, outcome, reason, due_at,
-            latest_snapshot_at, reconciled_change_at,
+            latest_snapshot_at, latest_backup_id, reconciled_change_at,
             reconciled_schedule_revision
        FROM project_maintenance_status WHERE project_id=$1`,
     [project_id],
@@ -385,7 +410,10 @@ export async function getProjectRecoveryStatusLocal(
         latest_snapshot_at: report.latest_snapshot_at?.toISOString() ?? null,
       };
     } else {
-      status.backup = common;
+      status.backup = {
+        ...common,
+        latest_backup_id: report.latest_backup_id ?? null,
+      };
     }
   }
   if (!status.snapshot_disabled) {

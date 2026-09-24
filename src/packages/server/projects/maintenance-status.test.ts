@@ -150,22 +150,26 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       },
       bytes_scanned: 1024,
       bytes_uploaded: 256,
+      latest_backup_id: "a".repeat(64),
     });
     const insert = queryMock.mock.calls.find(([sql]) =>
       sql.includes("INSERT INTO project_maintenance_status"),
     );
-    expect(insert?.[1].slice(14)).toEqual([
+    expect(insert?.[1].slice(14, 18)).toEqual([
       { inventory: 12, create: 50 },
       1024,
       256,
+      "a".repeat(64),
     ]);
     const attempt = queryMock.mock.calls.find(([sql]) =>
       sql.includes("INSERT INTO project_maintenance_attempts"),
     );
-    expect(attempt?.[1].slice(10, 13)).toEqual([
+    expect(attempt?.[1].slice(10, 15)).toEqual([
       { inventory: 12, create: 50 },
       1024,
       256,
+      null,
+      "a".repeat(64),
     ]);
   });
 

@@ -240,7 +240,10 @@ describe("snapshot-backup-maintenance", () => {
         backups: { daily: 1 },
       },
     ]);
-    runScheduledBackupMaintenanceMock.mockResolvedValue({ created: true });
+    runScheduledBackupMaintenanceMock.mockResolvedValue({
+      created: true,
+      latest_backup_id: "a".repeat(64),
+    });
     const { runProjectSnapshotBackupMaintenanceSweepOnce } =
       await import("./snapshot-backup-maintenance");
 
@@ -251,6 +254,7 @@ describe("snapshot-backup-maintenance", () => {
         project_id: "proj-1",
         kind: "backup",
         outcome: "succeeded",
+        latest_backup_id: "a".repeat(64),
         due_at: null,
         attempt_due_at: "2026-04-10T21:00:00.000Z",
       }),

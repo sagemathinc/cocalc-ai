@@ -61,13 +61,23 @@ export function confirmedBackupTimeForIds({
   backups: readonly BackupSnapshotRef[];
   backupIds: ReadonlySet<string>;
 }): Date | undefined {
+  return confirmedBackupForIds({ backups, backupIds })?.time;
+}
+
+export function confirmedBackupForIds({
+  backups,
+  backupIds,
+}: {
+  backups: readonly BackupSnapshotRef[];
+  backupIds: ReadonlySet<string>;
+}): { id: string; time: Date } | undefined {
   if (backupIds.size === 0) return undefined;
   const byId = new Map(backups.map((backup) => [backup.id, backup]));
-  let newest: Date | undefined;
+  let newest: { id: string; time: Date } | undefined;
   for (const id of backupIds) {
     const time = byId.get(id)?.time;
     if (!time || !validDate(time)) return undefined;
-    if (!newest || time > newest) newest = time;
+    if (!newest || time > newest.time) newest = { id, time };
   }
   return newest;
 }

@@ -1,4 +1,5 @@
 import {
+  confirmedBackupForIds,
   confirmedBackupTimeForIds,
   newestBackupTimeForIds,
   parseCreatedBackupSnapshot,
@@ -36,11 +37,21 @@ describe("confirmedBackupTimeForIds", () => {
   ];
 
   it("returns the newest time only when all created IDs are readable", () => {
+    expect(confirmedBackupForIds({ backups, backupIds: created })).toEqual({
+      id: "new-2",
+      time: new Date("2026-09-23T11:00:00Z"),
+    });
     expect(confirmedBackupTimeForIds({ backups, backupIds: created })).toEqual(
       new Date("2026-09-23T11:00:00Z"),
     );
     expect(
       confirmedBackupTimeForIds({
+        backups: backups.slice(0, 1),
+        backupIds: created,
+      }),
+    ).toBeUndefined();
+    expect(
+      confirmedBackupForIds({
         backups: backups.slice(0, 1),
         backupIds: created,
       }),

@@ -233,7 +233,7 @@ import {
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
 import {
-  confirmedBackupTimeForIds,
+  confirmedBackupForIds,
   parseCreatedBackupSnapshot,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
@@ -4579,6 +4579,7 @@ async function updateBackupsUnlocked({
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
+  latest_backup_id?: string;
   stage_durations_ms: Record<string, number>;
   bytes_scanned?: number;
   bytes_uploaded?: number;
@@ -4674,14 +4675,17 @@ async function updateBackupsUnlocked({
     },
   });
   let reportTime: Date | undefined;
+  let latestBackupId: string | undefined;
   let repositoryBackups: Awaited<ReturnType<typeof vol.rustic.snapshots>> = [];
   const confirmationStarted = Date.now();
   try {
     repositoryBackups = await vol.rustic.snapshots();
-    reportTime = confirmedBackupTimeForIds({
+    const confirmed = confirmedBackupForIds({
       backups: repositoryBackups,
       backupIds: createdBackupIds,
     });
+    reportTime = confirmed?.time;
+    latestBackupId = confirmed?.id;
   } catch (err) {
     logger.warn("backup snapshot refresh failed", { project_id, err });
   } finally {
@@ -4707,6 +4711,7 @@ async function updateBackupsUnlocked({
       // The previous upload committed but its bay report may have been lost.
       // Do not claim the current volume generation for that older copy.
       reportTime = latest.time;
+      latestBackupId = latest.id;
     }
   }
   if (reportTime) {
@@ -4724,6 +4729,7 @@ async function updateBackupsUnlocked({
   if (retentionError) throw retentionError;
   return {
     created: createdBackupIds.size > 0,
+    latest_backup_id: latestBackupId,
     stage_durations_ms: stageDurations,
     bytes_scanned: bytesScanned,
     bytes_uploaded: bytesUploaded,
@@ -4747,6 +4753,7 @@ async function updateBackupsIfVolumeCurrent({
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
+  latest_backup_id?: string;
   stage_durations_ms?: Record<string, number>;
   bytes_scanned?: number;
   bytes_uploaded?: number;
@@ -4840,6 +4847,7 @@ export async function runScheduledBackupMaintenance({
 }): Promise<{
   created: boolean;
   deferred_reason?: string;
+  latest_backup_id?: string;
   stage_durations_ms?: Record<string, number>;
   bytes_scanned?: number;
   bytes_uploaded?: number;
