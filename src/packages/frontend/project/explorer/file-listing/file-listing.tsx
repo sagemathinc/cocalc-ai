@@ -1243,6 +1243,7 @@ export function FileListing({
             <DirectoryPeek
               project_id={project_id}
               dirPath={misc.path_to_file(current_path, entry._peekForName)}
+              readOnly={readOnly}
               onClose={() =>
                 setExpandedDirs((prev) =>
                   prev.filter((dir) => dir !== entry._peekForName),
