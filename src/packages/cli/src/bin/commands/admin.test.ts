@@ -1603,6 +1603,47 @@ test("admin db project-recovery scopes an audited diagnostic to one project", as
   });
 });
 
+test("admin db project-restore-drills scopes the report and lookback", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        diagnostic: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-drills", rows: [] };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-restore-drills",
+    "--project-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--window-days",
+    "7",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    limit: 200,
+    statement_timeout_ms: 15000,
+    lock_timeout_ms: 1000,
+    max_bytes: 2097152,
+    diagnostic: "project-restore-drills",
+    params: {
+      project_id: "11111111-1111-4111-8111-111111111111",
+      window_seconds: 7 * 24 * 60 * 60,
+    },
+  });
+});
+
 test("admin db host-query forwards audited project-host SQLite options", async () => {
   let capturedArgs: any;
   const program = new Command();

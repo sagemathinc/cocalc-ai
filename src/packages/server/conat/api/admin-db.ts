@@ -13,6 +13,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { ensureProjectMaintenanceStatusTable } from "@cocalc/server/projects/maintenance-status";
+import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import type {
   AdminDbDiagnostic,
   AdminDbExecuteRequest,
@@ -156,6 +157,23 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
       ON a.project_id = p.project_id
     WHERE p.project_id = $1::uuid
     ORDER BY a.observed_at DESC NULLS LAST
+  `,
+  "project-restore-drills": `
+    SELECT o.op_id, o.scope_id AS project_id,
+           o.input->>'id' AS backup_id,
+           p.backup_repo_id AS current_backup_repo_id,
+           p.host_id AS current_host_id,
+           o.status, o.created_at, o.finished_at,
+           o.result->>'duration_ms' AS restore_duration_ms,
+           o.result->>'remote_only' AS result_remote_only
+    FROM long_running_operations o
+    LEFT JOIN projects p ON p.project_id = o.scope_id
+    WHERE o.kind = 'project-restore'
+      AND o.scope_type = 'project'
+      AND o.input->>'remote_only' = 'true'
+      AND ($1::uuid IS NULL OR o.scope_id = $1::uuid)
+      AND o.updated_at >= now() - make_interval(secs => $2::double precision)
+    ORDER BY o.updated_at DESC
   `,
   "migration-health": `
     SELECT 'projects_by_artifact_status' AS section,
@@ -368,6 +386,16 @@ function diagnosticParams({
   ) {
     return [p.project_id ?? null];
   }
+  if (diagnostic === "project-restore-drills") {
+    return [
+      p.project_id ?? null,
+      normalizePositiveInt({
+        value: Number(p.window_seconds),
+        fallback: 30 * 24 * 60 * 60,
+        max: 365 * 24 * 60 * 60,
+      }),
+    ];
+  }
   if (diagnostic === "host-health") {
     return [p.host_id ?? null];
   }
@@ -546,6 +574,9 @@ async function executeReadOnly({
   }
   if (diagnostic === "project-recovery" || diagnostic === "backup-health") {
     await ensureProjectMaintenanceStatusTable();
+  }
+  if (diagnostic === "project-restore-drills") {
+    await ensureLroSchema();
   }
   const normalizedSql = trimTrailingSemicolon(rawSql);
   rejectClearlyUnsafeSql(normalizedSql);

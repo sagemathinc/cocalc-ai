@@ -14,6 +14,7 @@ export type AdminDbDiagnostic =
   | "host-health"
   | "project"
   | "project-recovery"
+  | "project-restore-drills"
   | "migration-health";
 
 export interface AdminDbField {

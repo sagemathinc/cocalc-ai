@@ -3059,6 +3059,39 @@ Merge comments are private unless their corresponding --*-comment-public flag is
 
   adminDbCommonOptions(
     adminDb
+      .command("project-restore-drills")
+      .description("list audited remote-only project restore attempts")
+      .option("--project-id <uuid>", "limit to one project")
+      .option("--window-days <days>", "lookback window in days", "30"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(
+      command,
+      "admin db project-restore-drills",
+      async (ctx) => {
+        return await runAdminDbDiagnostic({
+          ctx,
+          diagnostic: "project-restore-drills",
+          opts,
+          params: {
+            project_id: opts.projectId,
+            window_seconds:
+              parsePositiveIntegerOption({
+                name: "--window-days",
+                value: opts.windowDays,
+                fallback: 30,
+                max: 365,
+              }) *
+              24 *
+              60 *
+              60,
+          },
+        });
+      },
+    );
+  });
+
+  adminDbCommonOptions(
+    adminDb
       .command("migration-health")
       .description("show legacy migration aggregate health"),
   ).action(async (opts: any, command: Command) => {
