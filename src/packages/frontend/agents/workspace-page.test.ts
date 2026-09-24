@@ -8,6 +8,7 @@ import {
   freshAgentExecutionConfig,
   suggestedAgentName,
 } from "./new-agent-defaults";
+import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
 import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
@@ -57,6 +58,44 @@ describe("new agent defaults", () => {
       paymentSource: "subscription",
       workingDirectory: "/home/user/work",
     });
+  });
+
+  it("does not silently send a preferred model using transient membership funding", () => {
+    const paymentSource: any = {
+      source: "site-api-key",
+      siteFundedCodex: {
+        policy: { model: "gpt-5.6-luna", reasoning: "medium" },
+      },
+    };
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "auto",
+          model: "gpt-6-sol",
+          reasoning: "high",
+        },
+        paymentSource,
+      }),
+    ).toThrow(/Wait for your ChatGPT Plan/);
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "subscription",
+          model: "gpt-6-sol",
+        },
+        paymentSource,
+      }),
+    ).toThrow(/selected payment source is not available/);
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "site-api-key",
+          model: "gpt-5.6-luna",
+          reasoning: "medium",
+        },
+        paymentSource,
+      }),
+    ).not.toThrow();
   });
 
   it("carries an exact subscription selection to the new thread", () => {

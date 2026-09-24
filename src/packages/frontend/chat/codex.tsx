@@ -729,6 +729,7 @@ export function CodexConfigButton({
     Form.useWatch("serviceTier", form) ?? value?.serviceTier ?? "standard";
   const siteFundedPolicy =
     !lite &&
+    selectedPaymentSource === "site-api-key" &&
     paymentSource?.source === "site-api-key" &&
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy

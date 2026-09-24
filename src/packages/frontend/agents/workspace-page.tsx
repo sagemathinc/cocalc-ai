@@ -163,6 +163,7 @@ import {
   getDefaultCodexSessionMode,
 } from "@cocalc/frontend/chat/codex-defaults";
 import {
+  fetchCodexPaymentSourceForSubmit,
   getCodexPaymentSourceOptions,
   useCodexPaymentSource,
 } from "@cocalc/frontend/chat/use-codex-payment-source";
@@ -177,6 +178,10 @@ import {
   rememberAgentName,
   suggestedAgentName,
 } from "./new-agent-defaults";
+import {
+  assertCodexFundingModelReady,
+  shouldUseExplicitMembershipModel,
+} from "@cocalc/frontend/chat/codex-submit-preflight";
 import { namedAgentExecutionState } from "./agent-execution-state";
 import {
   readAgentSubscriptionSelection,
@@ -550,11 +555,12 @@ function NewAgentPanel({
   }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
 
   useEffect(() => {
-    const policy =
-      paymentSource?.source === "site-api-key" &&
-      paymentSource.siteFundedCodex?.enabled
-        ? paymentSource.siteFundedCodex.policy
-        : undefined;
+    const policy = shouldUseExplicitMembershipModel({
+      preference: paymentPreference,
+      paymentSource,
+    })
+      ? paymentSource?.siteFundedCodex?.policy
+      : undefined;
     setConfig((current) => {
       const next = policy
         ? {
@@ -562,16 +568,23 @@ function NewAgentPanel({
             model: policy.model,
             reasoning: policy.reasoning as CodexReasoningId,
           }
-        : reconcileAgentConfig(
-            current,
-            defaultModelOptions(modelCatalog, current.model),
-          );
+        : modelCatalog?.length
+          ? reconcileAgentConfig(
+              current,
+              defaultModelOptions(modelCatalog, current.model),
+            )
+          : current;
       return next.model === current.model &&
         next.reasoning === current.reasoning
         ? current
         : next;
     });
-  }, [modelCatalog, paymentSource?.source, paymentSource?.siteFundedCodex]);
+  }, [
+    modelCatalog,
+    paymentPreference,
+    paymentSource?.source,
+    paymentSource?.siteFundedCodex,
+  ]);
 
   async function prepare(): Promise<PendingAgent> {
     if (pending) return pending;
@@ -638,6 +651,16 @@ function NewAgentPanel({
     setError("");
     setMissingDirectory(undefined);
     try {
+      const source = await fetchCodexPaymentSourceForSubmit({
+        projectId,
+        preference: paymentPreference,
+        credentialId:
+          paymentPreference === "subscription"
+            ? config.credentialId
+            : undefined,
+      });
+      boundAccount.assertCurrent();
+      assertCodexFundingModelReady({ config, paymentSource: source });
       await submitNewAgentRequest(request);
     } catch (err) {
       handleCreateError(err);
@@ -784,11 +807,12 @@ function NewAgentPanel({
   const paymentLabel =
     paymentOptions.find(({ value }) => value === selectedPaymentValue)?.label ??
     "Automatic";
-  const siteFundedPolicy =
-    paymentSource?.source === "site-api-key" &&
-    paymentSource.siteFundedCodex?.enabled
-      ? paymentSource.siteFundedCodex.policy
-      : undefined;
+  const siteFundedPolicy = shouldUseExplicitMembershipModel({
+    preference: paymentPreference,
+    paymentSource,
+  })
+    ? paymentSource?.siteFundedCodex?.policy
+    : undefined;
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>

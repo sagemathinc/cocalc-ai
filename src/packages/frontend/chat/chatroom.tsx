@@ -171,6 +171,7 @@ import {
   setUnseenResult,
 } from "@cocalc/frontend/agents/unseen-result";
 import {
+  assertCodexFundingModelReady,
   codexConnectionNeedsAttentionAfterSubmit,
   ensureProjectRunningForCodex,
   isCodexPaymentSourceNeedsUserConfiguration,
@@ -2254,6 +2255,32 @@ function ChatPanelContent({
           .finally(() => {
             codexConnectionCheckPendingRef.current = false;
           });
+      }
+      if (opts?.immediate !== true) {
+        try {
+          const verifiedSource = await fetchCodexPaymentSourceForSubmit({
+            projectId: project_id,
+            preference: paymentPreference,
+            credentialId:
+              paymentPreference === "subscription"
+                ? codexCredentialId
+                : undefined,
+          });
+          const selectedConfig = reply_thread_id
+            ? existingThreadMetadata?.acp_config
+            : newThreadSetup.codexConfig;
+          assertCodexFundingModelReady({
+            config: {
+              ...selectedConfig,
+              paymentSource: paymentPreference,
+            },
+            paymentSource: verifiedSource,
+          });
+        } catch (err) {
+          antdMessage.error(`${err}`);
+          refreshCodexPaymentSource?.();
+          return;
+        }
       }
       try {
         if (isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)) {

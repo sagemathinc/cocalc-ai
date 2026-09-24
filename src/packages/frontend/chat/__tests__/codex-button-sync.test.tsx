@@ -319,6 +319,45 @@ describe("CodexConfigButton", () => {
     ).toBeTruthy();
   });
 
+  it("keeps the preferred model visible during an automatic membership fallback", async () => {
+    render(
+      <CodexConfigButton
+        compact="mobile-composer"
+        threadKey="thread-auto"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{
+          model: "gpt-6-sol",
+          reasoning: "high",
+          paymentSource: "auto",
+        }}
+        paymentSource={
+          {
+            source: "site-api-key",
+            siteFundedCodex: {
+              enabled: true,
+              policy: { model: "gpt-5.6-luna", reasoning: "medium" },
+            },
+            hasSubscription: true,
+            hasProjectApiKey: false,
+            hasAccountApiKey: false,
+            hasSiteApiKey: true,
+            sharedHomeMode: "disabled",
+          } as any
+        }
+        actions={
+          { getCodexConfig: () => undefined, setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: /Agent settings: gpt-6-sol, high/i,
+      }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /gpt-5\.6-luna/i })).toBeNull();
+  });
+
   it("shows payment on the mobile composer and saves a specific subscription", async () => {
     const user = userEvent.setup();
     const actions = {
