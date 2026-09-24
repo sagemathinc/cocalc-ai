@@ -45,7 +45,7 @@ describe("project host metrics history", () => {
       [host_id],
     );
     await getPool().query(
-      "INSERT INTO projects (project_id, title, host_id, provisioned) VALUES ($1, 'pressure test', $2, true)",
+      "INSERT INTO projects (project_id, title, host_id, provisioned, deleted) VALUES ($1, 'pressure test', $2, true, false)",
       [project_id, host_id],
     );
     const now = Date.now();

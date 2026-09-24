@@ -980,7 +980,7 @@ export async function getProjectHostStoragePressureWindows({
          AND h.deleted IS NULL
          AND EXISTS (
            SELECT 1 FROM projects p
-           WHERE p.host_id = h.id AND p.deleted IS NULL AND p.provisioned
+           WHERE p.host_id = h.id AND p.deleted IS NOT TRUE AND p.provisioned
          )
      ), ordered AS (
        SELECT s.host_id, s.collected_at,

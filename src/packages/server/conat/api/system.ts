@@ -2377,7 +2377,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown.`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
