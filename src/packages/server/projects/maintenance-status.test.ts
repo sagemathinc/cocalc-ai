@@ -213,6 +213,10 @@ describe("project recovery status after unchanged-content reconciliation", () =>
               skipped: 0,
               bytes_scanned: "1024",
               bytes_uploaded: "128",
+              due_obligations: 2,
+              execution_seconds: "180.25",
+              successful_execution_seconds: "170",
+              queue_wait_seconds: "6.5",
             },
           ],
         };
@@ -272,6 +276,10 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           skipped: 0,
           bytes_scanned: 1024,
           bytes_uploaded: 128,
+          due_obligations: 2,
+          execution_seconds: 180.25,
+          successful_execution_seconds: 170,
+          queue_wait_seconds: 6.5,
         },
       ],
       stages: [
@@ -304,6 +312,14 @@ describe("project recovery status after unchanged-content reconciliation", () =>
         },
       ],
     });
+    const aggregateQuery = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("AS due_obligations"),
+    )?.[0];
+    expect(aggregateQuery).toContain("COALESCE(attempt_due_at, due_at)");
+    expect(aggregateQuery).toContain(
+      "outcome IN ('succeeded', 'failed', 'deferred')",
+    );
+    expect(aggregateQuery).toContain("stage_durations_ms->>'queue_wait'");
   });
 
   it("counts new changes after an unchanged-content report in health", async () => {

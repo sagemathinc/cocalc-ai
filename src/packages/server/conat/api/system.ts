@@ -2414,6 +2414,16 @@ export async function getLaunchHealth({
                   ? [
                       `24-hour attempts: ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.succeeded, 0)} succeeded, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.deferred, 0)} deferred, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.failed, 0)} failed`,
                       ...projectRecoveryAttempts.by_host
+                        .filter((item) => item.due_obligations > 0)
+                        .sort(
+                          (a, b) => b.execution_seconds - a.execution_seconds,
+                        )
+                        .slice(0, 12)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind} 24-hour observed load: ${item.due_obligations} distinct due obligations, ${(item.execution_seconds / 3600).toFixed(2)} execution slot-hours (${(item.successful_execution_seconds / 3600).toFixed(2)} successful), ${(item.queue_wait_seconds / 3600).toFixed(2)} queue-wait hours, ${(item.bytes_uploaded / 1024 ** 3).toFixed(2)} GiB uploaded; safe host budget requires calibration`,
+                        ),
+                      ...projectRecoveryAttempts.by_host
                         .filter((item) => item.failed > 0 || item.deferred > 0)
                         .sort(
                           (a, b) =>

@@ -482,6 +482,10 @@ export interface ProjectRecoveryAttemptAggregate {
   skipped: number;
   bytes_scanned: number;
   bytes_uploaded: number;
+  due_obligations: number;
+  execution_seconds: number;
+  successful_execution_seconds: number;
+  queue_wait_seconds: number;
 }
 
 export interface ProjectRecoveryStageAggregate {
@@ -528,6 +532,10 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
       skipped: number;
       bytes_scanned: string;
       bytes_uploaded: string;
+      due_obligations: number;
+      execution_seconds: string;
+      successful_execution_seconds: string;
+      queue_wait_seconds: string;
     }>(
       `SELECT host_id, storage_service_class, kind,
               COUNT(*) FILTER (WHERE outcome='succeeded')::int AS succeeded,
@@ -535,7 +543,19 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
               COUNT(*) FILTER (WHERE outcome='failed')::int AS failed,
               COUNT(*) FILTER (WHERE outcome='skipped')::int AS skipped,
               COALESCE(SUM(bytes_scanned), 0)::text AS bytes_scanned,
-              COALESCE(SUM(bytes_uploaded), 0)::text AS bytes_uploaded
+              COALESCE(SUM(bytes_uploaded), 0)::text AS bytes_uploaded,
+              COUNT(DISTINCT (project_id, COALESCE(attempt_due_at, due_at)))
+                FILTER (WHERE COALESCE(attempt_due_at, due_at) IS NOT NULL)::int
+                AS due_obligations,
+              (COALESCE(SUM(duration_ms) FILTER
+                (WHERE outcome IN ('succeeded', 'failed', 'deferred')), 0)
+                / 1000.0)::text AS execution_seconds,
+              (COALESCE(SUM(duration_ms) FILTER
+                (WHERE outcome='succeeded'), 0)
+                / 1000.0)::text AS successful_execution_seconds,
+              (COALESCE(SUM((stage_durations_ms->>'queue_wait')::bigint)
+                FILTER (WHERE stage_durations_ms ? 'queue_wait'), 0)
+                / 1000.0)::text AS queue_wait_seconds
          FROM project_maintenance_attempts
         WHERE observed_at >= NOW() - INTERVAL '24 hours'
         GROUP BY host_id, storage_service_class, kind
@@ -603,6 +623,9 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
       ...row,
       bytes_scanned: Number(row.bytes_scanned),
       bytes_uploaded: Number(row.bytes_uploaded),
+      execution_seconds: Number(row.execution_seconds),
+      successful_execution_seconds: Number(row.successful_execution_seconds),
+      queue_wait_seconds: Number(row.queue_wait_seconds),
     })),
     stages: stages.rows,
     due_to_success: delays.rows,
