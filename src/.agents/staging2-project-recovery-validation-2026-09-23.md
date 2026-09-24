@@ -1999,3 +1999,27 @@ preservation, and delete the canary under normal seven-day backup retention
 afterward. The induced stale-bay reconciliation is useful safety evidence but
 is not evidence that an at-limit replacement completed. A controlled
 repository-capacity-denial drill remains open. Production is unchanged.
+
+The retention-limit canary was stopped after its byte-restore check to free
+its shared-host runtime slot. Its project and 15 repository backups remain
+available for the natural daily maintenance observation.
+
+## 2026-09-24 paying-queue stall in regular recovery health
+
+Commit `147a2be321` makes regular project-recovery operator health use the
+same paying-queue stall rule as the incident notification worker. A paying
+host snapshot lane with overdue work for at least 30 minutes and no confirmed
+snapshot completion in that window is critical; the corresponding backup
+window is two hours. An unreadable completion history is also critical rather
+than silently implying progress. Health shows bounded host/lane details.
+
+The focused notification-plan suite passed 5/5, including the shared stall
+rule; the server TypeScript build passed. Staging2 hub artifact
+`20260924T234330Z-147a2be3-20260924T2343Z-147a2be3-paying-queue-health-dirty`
+deployed as release `20260924234502-hub`. Migration and worker health passed,
+and all seven hub smoke checks passed. At 23:45:35 UTC, project-recovery
+health was healthy with zero paying queues lacking a recent completion and
+4/4 active backup shards covered by recent passing restore drills. Staging2
+currently has no genuine paid-funded queue, so the critical live branch is
+covered by the shared focused test and still needs a paid staging case.
+Production is unchanged.
