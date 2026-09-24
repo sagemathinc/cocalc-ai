@@ -182,6 +182,25 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("publishes queued debt before starting a slow backup", async () => {
+    const order: string[] = [];
+    reportProjectMaintenanceMock.mockImplementation(async (report) => {
+      if (report.project_id === "proj-2") {
+        order.push(`report:${report.reason ?? report.outcome}`);
+      }
+    });
+    runScheduledBackupMaintenanceMock.mockImplementation(async () => {
+      order.push("backup:start");
+      return { created: true, latest_backup_id: "confirmed-backup" };
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(order[0]).toBe("report:queued");
+    expect(order).toContain("backup:start");
+    expect(order.indexOf("backup:start")).toBeGreaterThan(0);
+  });
+
   afterEach(() => {
     process.env = env;
   });

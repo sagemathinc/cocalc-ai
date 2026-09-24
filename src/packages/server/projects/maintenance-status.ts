@@ -25,6 +25,7 @@ import {
   storageServiceClassFromMembership,
 } from "@cocalc/server/membership/storage-service-class";
 import {
+  cancelProjectRecoveryObjective,
   ensureProjectRecoveryObjectiveTables,
   recordProjectRecoveryObjective,
 } from "./recovery-objectives";
@@ -257,6 +258,7 @@ export async function recordProjectMaintenanceStatus(
   const stageDurations = boundedStageDurations(report.stage_durations_ms);
   const bytesScanned = boundedBytes(report.bytes_scanned);
   const bytesUploaded = boundedBytes(report.bytes_uploaded);
+  const queued = report.outcome === "deferred" && report.reason === "queued";
   await ensureProjectMaintenanceStatusTable();
   const client = await getPool().connect();
   try {
@@ -348,32 +350,34 @@ export async function recordProjectMaintenanceStatus(
       await client.query("ROLLBACK");
       return false;
     }
-    await client.query(
-      `INSERT INTO project_maintenance_attempts
+    if (!queued) {
+      await client.query(
+        `INSERT INTO project_maintenance_attempts
        (project_id, kind, host_id, storage_service_class, observed_at,
         outcome, reason, due_at, attempt_due_at, latest_backup_id, duration_ms,
         stage_durations_ms, bytes_scanned, bytes_uploaded, retry_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $15, $10, $11::jsonb,
              $12, $13, $14)
      ON CONFLICT (project_id, kind, observed_at) DO NOTHING`,
-      [
-        report.project_id,
-        report.kind,
-        report.host_id,
-        reportedServiceClass(report),
-        observedAt,
-        report.outcome,
-        report.reason?.slice(0, 500) ?? null,
-        dueAt,
-        attemptDueAt,
-        duration,
-        stageDurations,
-        bytesScanned,
-        bytesUploaded,
-        retryAt,
-        latestBackupId,
-      ],
-    );
+        [
+          report.project_id,
+          report.kind,
+          report.host_id,
+          reportedServiceClass(report),
+          observedAt,
+          report.outcome,
+          report.reason?.slice(0, 500) ?? null,
+          dueAt,
+          attemptDueAt,
+          duration,
+          stageDurations,
+          bytesScanned,
+          bytesUploaded,
+          retryAt,
+          latestBackupId,
+        ],
+      );
+    }
     await client.query(
       `DELETE FROM project_maintenance_attempts
       WHERE project_id=$1 AND kind=$2
@@ -385,15 +389,31 @@ export async function recordProjectMaintenanceStatus(
           ))`,
       [report.project_id, report.kind],
     );
-    await recordProjectRecoveryObjective({
-      db: client,
-      projectId: report.project_id,
-      kind: report.kind,
-      serviceClass: reportedServiceClass(report),
-      outcome: report.outcome,
-      dueAt: attemptDueAt,
-      observedAt,
-    });
+    if (
+      report.kind === "snapshot" &&
+      report.outcome === "skipped" &&
+      (report.reason === "no_content_change" ||
+        report.reason === "snapshot_interval_wait")
+    ) {
+      await cancelProjectRecoveryObjective({
+        db: client,
+        projectId: report.project_id,
+        kind: report.kind,
+        serviceClass: reportedServiceClass(report),
+        dueAt: attemptDueAt,
+        observedAt,
+      });
+    } else {
+      await recordProjectRecoveryObjective({
+        db: client,
+        projectId: report.project_id,
+        kind: report.kind,
+        serviceClass: reportedServiceClass(report),
+        outcome: report.outcome,
+        dueAt: attemptDueAt,
+        observedAt: queued ? new Date() : observedAt,
+      });
+    }
     await client.query("COMMIT");
     return true;
   } catch (err) {

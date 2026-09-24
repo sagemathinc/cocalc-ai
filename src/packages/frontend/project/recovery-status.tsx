@@ -32,6 +32,8 @@ function age(value: string | null | undefined): number | null {
 function reasonText(reason: string | null | undefined): string | null {
   if (!reason) return null;
   const text = reason.toLowerCase();
+  if (text === "queued")
+    return "Maintenance is queued. The recovery point is not confirmed yet.";
   if (text.includes("lifecycle"))
     return "The host is busy starting or stopping projects.";
   if (text.includes("io_pressure"))

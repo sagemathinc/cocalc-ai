@@ -44,9 +44,14 @@ export async function ensureProjectRecoveryObjectiveTables(): Promise<void> {
       due_at TIMESTAMPTZ NOT NULL,
       storage_service_class TEXT NOT NULL,
       succeeded_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ,
       PRIMARY KEY (project_id, kind)
     )
   `);
+    await getPool().query(`
+      ALTER TABLE project_recovery_objective_state
+        ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ
+    `);
     await getPool().query(`
     CREATE TABLE IF NOT EXISTS project_recovery_objective_daily (
       due_day DATE NOT NULL,
@@ -146,8 +151,9 @@ export async function recordProjectRecoveryObjective({
       due_at: Date;
       storage_service_class: ServiceClass;
       succeeded_at: Date | null;
+      cancelled_at: Date | null;
     }>(
-      `SELECT due_at, storage_service_class, succeeded_at
+      `SELECT due_at, storage_service_class, succeeded_at, cancelled_at
          FROM project_recovery_objective_state
         WHERE project_id=$1 AND kind=$2 FOR UPDATE`,
       [projectId, kind],
@@ -157,13 +163,15 @@ export async function recordProjectRecoveryObjective({
     if (current.due_at < dueAt) {
       await db.query(
         `UPDATE project_recovery_objective_state
-            SET due_at=$3, storage_service_class=$4, succeeded_at=$5
+            SET due_at=$3, storage_service_class=$4, succeeded_at=$5,
+                cancelled_at=NULL
           WHERE project_id=$1 AND kind=$2`,
         [projectId, kind, dueAt, serviceClass, succeededAt],
       );
       obligation = 1;
       success = succeededAt ? 1 : 0;
     } else if (current.due_at.getTime() === dueAt.getTime()) {
+      if (current.cancelled_at) return;
       pinnedClass = current.storage_service_class;
       if (pinnedClass === "unclassified" && serviceClass !== "unclassified") {
         await db.query(
@@ -224,6 +232,72 @@ export async function recordProjectRecoveryObjective({
       ? withinTarget({ serviceClass: pinnedClass, kind, dueAt, succeededAt })
       : 0,
   });
+}
+
+/**
+ * Inventory can prove that a provisional snapshot due time had no changed
+ * content, or that the host had a newer snapshot and the interval is still
+ * open. Keep a tombstone so a delayed queue report cannot recreate false debt.
+ */
+export async function cancelProjectRecoveryObjective({
+  db,
+  projectId,
+  kind,
+  serviceClass,
+  dueAt,
+  observedAt,
+}: {
+  db: PoolClient;
+  projectId: string;
+  kind: Kind;
+  serviceClass: ServiceClass;
+  dueAt: Date | null;
+  observedAt: Date;
+}): Promise<void> {
+  if (!dueAt || dueAt > observedAt) return;
+  const { rows } = await db.query<{
+    due_at: Date;
+    storage_service_class: ServiceClass;
+    succeeded_at: Date | null;
+    cancelled_at: Date | null;
+  }>(
+    `SELECT due_at, storage_service_class, succeeded_at, cancelled_at
+       FROM project_recovery_objective_state
+      WHERE project_id=$1 AND kind=$2 FOR UPDATE`,
+    [projectId, kind],
+  );
+  const current = rows[0];
+  if (current && current.due_at > dueAt) return;
+  if (current && !current.cancelled_at && !current.succeeded_at) {
+    await addDailyObjectiveCounts({
+      db,
+      dueAt: current.due_at,
+      serviceClass: current.storage_service_class,
+      kind,
+      obligation: -1,
+      success: 0,
+      onTime: 0,
+    });
+  }
+  if (current) {
+    if (current.due_at.getTime() === dueAt.getTime() && current.succeeded_at) {
+      return;
+    }
+    await db.query(
+      `UPDATE project_recovery_objective_state
+          SET due_at=$3, storage_service_class=$4, succeeded_at=NULL,
+              cancelled_at=$5
+        WHERE project_id=$1 AND kind=$2`,
+      [projectId, kind, dueAt, serviceClass, observedAt],
+    );
+  } else {
+    await db.query(
+      `INSERT INTO project_recovery_objective_state
+         (project_id, kind, due_at, storage_service_class, cancelled_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [projectId, kind, dueAt, serviceClass, observedAt],
+    );
+  }
 }
 
 export interface ProjectRecoveryServiceObjective {

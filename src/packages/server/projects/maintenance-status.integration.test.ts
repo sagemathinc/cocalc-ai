@@ -255,6 +255,110 @@ describe("project recovery capacity accounting", () => {
     ]);
   });
 
+  it("counts queued backup debt before an attempt without inflating attempt history", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    const due = new Date(Date.now() - 10 * 60_000);
+    // The inventory began just before this item became due.
+    const queued = new Date(due.getTime() - 1000);
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'queued objective test', 'bay-0', $2, true)`,
+      [project_id, host_id],
+    );
+    const base = {
+      host_id,
+      project_id,
+      kind: "backup" as const,
+      storage_service_class: "paying" as const,
+      due_at: due.toISOString(),
+      attempt_due_at: due.toISOString(),
+    };
+    expect(
+      await recordProjectMaintenanceStatus({
+        ...base,
+        observed_at: queued.toISOString(),
+        outcome: "deferred",
+        reason: "queued",
+      }),
+    ).toBe(true);
+    const daily = () =>
+      getPool().query<{ obligations: string; succeeded: string }>(
+        `SELECT obligations, succeeded
+           FROM project_recovery_objective_daily
+          WHERE due_day=$1 AND storage_service_class='paying'
+            AND kind='backup'`,
+        [due.toISOString().slice(0, 10)],
+      );
+    expect((await daily()).rows).toEqual([
+      { obligations: "1", succeeded: "0" },
+    ]);
+    const attempts = await getPool().query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM project_maintenance_attempts
+        WHERE project_id=$1`,
+      [project_id],
+    );
+    expect(attempts.rows[0].count).toBe("0");
+    await recordProjectMaintenanceStatus({
+      ...base,
+      observed_at: new Date(Date.now() - 1000).toISOString(),
+      outcome: "succeeded",
+      latest_backup_id: "queue-test-backup",
+    });
+    expect((await daily()).rows).toEqual([
+      { obligations: "1", succeeded: "1" },
+    ]);
+  });
+
+  it("removes provisional snapshot debt when host inventory finds no change", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    const due = new Date(Date.now() - 10 * 60_000);
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'queued snapshot objective test', 'bay-0', $2, true)`,
+      [project_id, host_id],
+    );
+    const base = {
+      host_id,
+      project_id,
+      kind: "snapshot" as const,
+      storage_service_class: "free" as const,
+      attempt_due_at: due.toISOString(),
+    };
+    await recordProjectMaintenanceStatus({
+      ...base,
+      observed_at: new Date(Date.now() - 5000).toISOString(),
+      outcome: "deferred",
+      reason: "queued",
+      due_at: due.toISOString(),
+    });
+    await recordProjectMaintenanceStatus({
+      ...base,
+      observed_at: new Date(Date.now() - 3000).toISOString(),
+      outcome: "skipped",
+      reason: "no_content_change",
+      due_at: null,
+    });
+    // A late report for the same provisional due must not recreate debt.
+    await recordProjectMaintenanceStatus({
+      ...base,
+      observed_at: new Date(Date.now() - 1000).toISOString(),
+      outcome: "deferred",
+      reason: "queued",
+      due_at: due.toISOString(),
+    });
+    const daily = await getPool().query<{ obligations: string }>(
+      `SELECT obligations FROM project_recovery_objective_daily
+        WHERE due_day=$1 AND storage_service_class='free'
+          AND kind='snapshot'`,
+      [due.toISOString().slice(0, 10)],
+    );
+    expect(daily.rows).toEqual([{ obligations: "0" }]);
+  });
+
   it("reads a mature UTC due day from durable objective counters", async () => {
     await getPool().query(
       `INSERT INTO project_recovery_objective_daily

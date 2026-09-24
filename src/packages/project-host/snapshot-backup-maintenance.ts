@@ -964,6 +964,73 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     return true;
   }
   const queuedAt = Date.now();
+  // Publish every due item before a long lane starts. A project waiting behind
+  // hundreds of backups must already count as debt and appear in bay health.
+  // Use the inventory timestamp so a completion racing this publication wins.
+  const queuedObservedAt = new Date(listingStartedAt).toISOString();
+  await runWithParallelism(
+    [
+      ...snapshotRows.map((row) => ({ row, kind: "snapshot" as const })),
+      ...backupRows.map((row) => ({ row, kind: "backup" as const })),
+    ],
+    Math.min(8, Math.max(1, parallelism * 8)),
+    async ({ row, kind }) => {
+      const schedule = mergeSchedule(
+        kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+        kind === "snapshot" ? row.snapshots : row.backups,
+      );
+      if (schedule.disabled) return;
+      const dueAt =
+        kind === "snapshot"
+          ? snapshotDueAt(row, schedule)
+          : backupDueAt(row, schedule);
+      if (dueAt == null || dueAt > queuedAt) return;
+      if (
+        kind === "snapshot"
+          ? inFlightSnapshots.has(row.project_id)
+          : inFlightBackups.has(row.project_id)
+      ) {
+        return;
+      }
+      const previousDue = parseTimestampMs(
+        kind === "snapshot"
+          ? row.snapshot_status_due_at
+          : row.backup_status_due_at,
+      );
+      const previousOutcome =
+        kind === "snapshot"
+          ? row.snapshot_status_outcome
+          : row.backup_status_outcome;
+      if (
+        previousDue === dueAt &&
+        (previousOutcome === "deferred" || previousOutcome === "failed")
+      ) {
+        return;
+      }
+      await report({
+        host_id: hostId,
+        project_id: row.project_id,
+        kind,
+        storage_service_class: row.storage_service_class,
+        observed_at: queuedObservedAt,
+        outcome: "deferred",
+        reason: "queued",
+        due_at: new Date(dueAt).toISOString(),
+        attempt_due_at: new Date(dueAt).toISOString(),
+        retry_at: null,
+        consecutive_failures:
+          kind === "snapshot"
+            ? (row.snapshot_failures ?? 0)
+            : (row.backup_failures ?? 0),
+      }).catch((err) =>
+        logger.warn("maintenance queue status report failed", {
+          project_id: row.project_id,
+          kind,
+          err,
+        }),
+      );
+    },
+  );
   const snapshotLane = async () => {
     if (snapshotLaneRunning) return;
     snapshotLaneRunning = true;
