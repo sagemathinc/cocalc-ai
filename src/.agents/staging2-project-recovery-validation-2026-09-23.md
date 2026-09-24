@@ -955,11 +955,12 @@ seven-day canary gate.
    operator-supplied hash attestations and the remote-only restore view are
    deployed on staging2, with four passing shard drills. Automatic fleet
    recovery stop gates run there. A 100-project empty-backup queue produced
-   ten browser start samples below the warm-start threshold; representative
-   large-byte maintenance load and a longer latency window are still required
-   for promotion. The
-   versioned schedule cache, ownership lease, event dispatch, assignment
-   checks, host/bay attempt history, and 24-hour
+   ten browser start samples below the warm-start threshold. Seven later
+   scheduled backups uploaded 1.75 GiB of real file data, with 11 successful
+   interactive exec probes overlapping an upload. Browser-observed latency
+   during sustained large-byte load and a longer comparison window are still
+   required for promotion. The versioned schedule cache, ownership lease,
+   event dispatch, assignment checks, host/bay attempt history, and 24-hour
    timing/byte metrics are deployed. Full inventory still reconciles on a
    15-minute timer; observed load cannot establish the 70% safe budget
    without a longer canary and production baseline.
@@ -977,9 +978,9 @@ seven-day canary gate.
    and due-timer recovery after a restart passed live. A live 525-project
    inventory and backup queue completed on September 24. A later 100-project
    queue allowed same-host browser start and file-open probes, while under-load
-   terminal and Jupyter readiness remain unqualified. The canary event path completed
-   about 97 seconds after bay confirmation; its
-   generation check cached the prior observation for about five minutes, so
+   browser terminal and Jupyter readiness remain unqualified. The canary event
+   path completed about 97 seconds after bay confirmation; its generation
+   check cached the prior observation for about five minutes, so
    edit-to-bay change detection took longer than dispatch.
 6. The staging account hit its 16 active runtime sponsor-slot limit while
    creating the bay-history canary. `project create --start` returned a project
@@ -1664,3 +1665,16 @@ for all nine IDs. At 20:49:08 UTC, project recovery health was healthy with
 zero overdue, unknown, or unaccounted due obligations and no active memory or
 storage telemetry gate. The site's overall health remained warning for other
 checks.
+
+## 2026-09-24 Coverage audit after load testing
+
+Audited read-only query `39af518a-a053-44a7-a535-e471d347d06b` found ten
+consecutive fifteen-minute inventory coverage slots from 18:30 through 20:45
+UTC. Every slot recorded zero unaccounted snapshot or backup due obligations
+and zero blocked hosts. The 19:00 UTC slot retained three unknown snapshot
+and three unknown backup statuses from the earlier temporary inventory tail;
+the other nine slots had zero unknown statuses. Coverage collection began
+after the first due-obligation record at 16:09 UTC. The first-day sample is
+therefore incomplete, and the dirty 19:00 slot must age out of any eventual
+clean 30-day qualification window. A current healthy operator check does not
+rewrite that historical slot.
