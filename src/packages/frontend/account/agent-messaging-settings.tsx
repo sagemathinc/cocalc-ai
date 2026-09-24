@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { Alert, Button, Modal, Space } from "antd";
-import { defineMessage } from "react-intl";
 import type { SetPersonalMessagingStateOptions } from "@cocalc/conat/agents/personal";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import {
@@ -9,14 +8,13 @@ import {
   useNamedAgents,
 } from "@cocalc/frontend/agents/api";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import type { SettingsPageDefinition } from "./settings-page";
 
-export function MyAgentsPage() {
+export function AgentMessagingSettings() {
   const accountId = useTypedRedux("account", "account_id");
-  return accountId ? <AccountAgentsPage key={accountId} /> : null;
+  return accountId ? <AccountAgentMessaging key={accountId} /> : null;
 }
 
-function AccountAgentsPage() {
+function AccountAgentMessaging() {
   const { directory, error: directoryError } = useNamedAgents();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -57,14 +55,11 @@ function AccountAgentsPage() {
       size="large"
       style={{ width: "100%", maxWidth: 1000, minWidth: 0 }}
     >
-      <div>
-        <h1 style={{ marginBottom: 4 }}>Agent messaging</h1>
-        <p>
-          These account-wide controls affect all Agent Networks and external
-          agent installations. Manage individual agents and network tags in the
-          Agents workspace.
-        </p>
-      </div>
+      <p style={{ marginBottom: 0 }}>
+        These account-wide controls affect all Agent Networks and external agent
+        installations. Manage individual agents and network tags in the Agents
+        workspace.
+      </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <Button
           disabled={busy || !directory?.controls}
@@ -110,17 +105,3 @@ function AccountAgentsPage() {
     </Space>
   );
 }
-
-export const MY_AGENTS_SETTINGS_PAGE = {
-  component: MyAgentsPage,
-  description: defineMessage({
-    id: "account.settings.my-agents.description",
-    defaultMessage: "Account-wide messaging and external installations.",
-  }),
-  icon: "robot",
-  key: "my-agents",
-  label: defineMessage({
-    id: "account.settings.my-agents.label",
-    defaultMessage: "Agent messaging",
-  }),
-} satisfies SettingsPageDefinition;

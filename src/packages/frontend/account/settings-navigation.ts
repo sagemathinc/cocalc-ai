@@ -67,12 +67,6 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
   { type: "page", page: "profile", overview: "primary" },
   {
     type: "page",
-    page: "my-agents",
-    overview: "primary",
-    visible: ({ isLite }) => !isLite,
-  },
-  {
-    type: "page",
     page: "membership",
     overview: "primary",
     visible: ({ isLite }) => !isLite,

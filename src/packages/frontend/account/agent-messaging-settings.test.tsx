@@ -6,7 +6,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Modal } from "antd";
-import { MyAgentsPage } from "./my-agents-page";
+import { AgentMessagingSettings } from "./agent-messaging-settings";
 
 const setPersonalMessagingState = jest.fn(async () => undefined);
 const refreshNamedAgents = jest.fn();
@@ -33,9 +33,8 @@ beforeEach(() => {
 
 it("shows only account-wide messaging and installation controls", async () => {
   const user = userEvent.setup();
-  render(<MyAgentsPage />);
+  render(<AgentMessagingSettings />);
 
-  expect(screen.getByRole("heading", { name: "Agent messaging" })).toBeTruthy();
   expect(
     screen.getByRole("button", { name: "Pause all messaging" }),
   ).toBeTruthy();
@@ -58,7 +57,7 @@ it("shows only account-wide messaging and installation controls", async () => {
 it("retains the confirmation for account-wide revocation", async () => {
   const user = userEvent.setup();
   const confirm = jest.spyOn(Modal, "confirm").mockImplementation(jest.fn());
-  render(<MyAgentsPage />);
+  render(<AgentMessagingSettings />);
 
   await user.click(screen.getByRole("button", { name: "Revoke all networks" }));
   expect(confirm).toHaveBeenCalledWith(

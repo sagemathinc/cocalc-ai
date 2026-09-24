@@ -36,6 +36,9 @@ describe("settings-routing", () => {
     expect(parseAccountSettingsRoute("settings/editor")).toEqual({
       page: "editor",
     });
+    expect(parseAccountSettingsRoute("settings/my-agents")).toEqual({
+      page: "ai",
+    });
   });
 
   it("does not map menu groups as settings routes", () => {
@@ -87,6 +90,11 @@ describe("settings-routing", () => {
         active_page: "support",
       }),
     ).toEqual({ page: "support" });
+    expect(
+      getAccountSettingsRouteFromState({
+        active_page: "my-agents",
+      }),
+    ).toEqual({ page: "ai" });
   });
 
   it("normalizes legacy in-memory preference and billing state", () => {
