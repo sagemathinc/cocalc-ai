@@ -6,6 +6,7 @@ import type {
 import {
   DEFAULT_CODEX_MODEL_NAME,
   normalizeCodexSessionId,
+  type CodexPaymentSourcePreference,
 } from "@cocalc/util/ai/codex";
 import { uuid } from "@cocalc/util/misc";
 import type { ChatMessage } from "./types";
@@ -725,10 +726,12 @@ export async function resendCanceledAcpTurn({
   actions,
   message,
   modelRecovery,
+  useCurrentPayment = false,
 }: {
   actions: ChatActions;
   message: ChatMessage;
   modelRecovery?: { model: string; expected_model: string };
+  useCurrentPayment?: boolean;
 }): Promise<boolean> {
   const { store } = actions;
   if (!store) return false;
@@ -739,6 +742,25 @@ export async function resendCanceledAcpTurn({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
+  const config =
+    useCurrentPayment && !modelRecovery
+      ? actions.getCodexConfig?.(threadId)
+      : null;
+  const paymentSource = config?.paymentSource;
+  const paymentRecovery =
+    useCurrentPayment && !modelRecovery && paymentSource
+      ? {
+          payment_source: paymentSource as CodexPaymentSourcePreference,
+          credential_id:
+            paymentSource === "subscription"
+              ? readCodexSubscriptionSelection({
+                  accountId: redux.getStore("account")?.get("account_id"),
+                  projectId: project_id,
+                  threadKey: threadId,
+                })
+              : undefined,
+        }
+      : undefined;
   setAcpMessageState({
     actions,
     message,
@@ -751,8 +773,13 @@ export async function resendCanceledAcpTurn({
       path,
       thread_id: threadId,
       user_message_id: messageId,
-      action: modelRecovery ? "resend_with_model" : "resend",
+      action: modelRecovery
+        ? "resend_with_model"
+        : paymentRecovery
+          ? "resend_with_payment"
+          : "resend",
       ...(modelRecovery ? { model_recovery: modelRecovery } : {}),
+      ...(paymentRecovery ? { payment_recovery: paymentRecovery } : {}),
     });
     if (result?.ok) {
       cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });

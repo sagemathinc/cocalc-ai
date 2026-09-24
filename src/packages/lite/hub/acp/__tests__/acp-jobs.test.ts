@@ -1476,6 +1476,72 @@ describe("acp job queue ordering", () => {
     expect(resendCanceledAcpJob(options)).toBeUndefined();
   });
 
+  it("retries a failed job with only its funding changed", () => {
+    const { job, request } = rejectedModelJob(
+      "ChatGPT usage limit reached",
+      "subscription",
+    );
+    const replacement = {
+      ...request,
+      config: {
+        ...request.config,
+        paymentSource: "subscription-credential" as const,
+        credentialId: "new-subscription",
+      },
+    };
+    const options = {
+      project_id: job.project_id,
+      path: job.path,
+      user_message_id: job.user_message_id,
+      fundingRecovery: {
+        account_id: request.account_id,
+        thread_id: job.thread_id,
+        expected_request: job.request_json,
+        payment_source: replacement.config.paymentSource,
+        credential_id: replacement.config.credentialId,
+      },
+    };
+    const retried = resendCanceledAcpJob(options);
+    expect(retried?.state).toBe("queued");
+    expect(decodeAcpJobRequest(retried!)).toEqual({
+      ...request,
+      request_kind: "codex",
+      config: replacement.config,
+    });
+    expect(resendCanceledAcpJob(options)).toBeUndefined();
+  });
+
+  it("does not replace funding for another account or a changed job", () => {
+    const { job, request } = rejectedModelJob("ChatGPT usage limit reached");
+    const options = {
+      project_id: job.project_id,
+      path: job.path,
+      user_message_id: job.user_message_id,
+      fundingRecovery: {
+        account_id: request.account_id,
+        thread_id: job.thread_id,
+        expected_request: job.request_json,
+        payment_source: "account-api-key" as const,
+      },
+    };
+    expect(
+      resendCanceledAcpJob({
+        ...options,
+        fundingRecovery: { ...options.fundingRecovery, account_id: "other" },
+      }),
+    ).toBeUndefined();
+    expect(
+      resendCanceledAcpJob({
+        ...options,
+        fundingRecovery: {
+          ...options.fundingRecovery,
+          expected_request: "stale",
+        },
+      }),
+    ).toBeUndefined();
+    expect(getAcpJobByOpId(job.op_id)?.state).toBe("error");
+  });
+
   it.each(["account_id", "thread_id", "expected_model"])(
     "rejects stale or mismatched recovery %s",
     (key) => {

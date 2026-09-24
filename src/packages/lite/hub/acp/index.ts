@@ -11856,15 +11856,61 @@ async function handleAcpControlRequest(
       throw err;
     }
   }
-  if (request.action === "resend" || request.action === "resend_with_model") {
+  if (
+    request.action === "resend" ||
+    request.action === "resend_with_model" ||
+    request.action === "resend_with_payment"
+  ) {
     if (request.action === "resend_with_model" && !request.model_recovery) {
       throw new Error("Model recovery requires a replacement model");
+    }
+    if (request.action === "resend_with_payment" && !request.payment_recovery) {
+      throw new Error("Payment recovery requires a replacement source");
     }
     const current = getAcpJob({ project_id, path, user_message_id });
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
     }
     const currentRequest = decodeAcpJobRequest(current);
+    let fundingRecovery:
+      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
+      | undefined;
+    if (request.action === "resend_with_payment") {
+      const payment = request.payment_recovery!;
+      if (
+        current.state !== "error" ||
+        current.account_id !== request.account_id ||
+        current.thread_id !== thread_id ||
+        currentRequest.request_kind === "command" ||
+        ![
+          "auto",
+          "subscription",
+          "project-api-key",
+          "account-api-key",
+          "site-api-key",
+          "shared-home",
+        ].includes(payment.payment_source) ||
+        (payment.credential_id && payment.payment_source !== "subscription")
+      ) {
+        return { ok: false, state: current.state };
+      }
+      const replacement = await pinCodexCredentialAtAdmission({
+        ...currentRequest,
+        config: {
+          ...currentRequest.config,
+          paymentSource: payment.payment_source,
+          credentialId: payment.credential_id,
+        },
+      });
+      fundingRecovery = {
+        account_id: request.account_id,
+        thread_id,
+        expected_request: current.request_json,
+        payment_source:
+          replacement.config?.paymentSource ?? payment.payment_source,
+        credential_id: replacement.config?.credentialId,
+      };
+    }
     throwIfAcpAdmissionDenied(
       admitAcpJobCreation(
         currentRequest,
@@ -11885,6 +11931,7 @@ async function handleAcpControlRequest(
             thread_id,
           }
         : undefined,
+      fundingRecovery,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };

@@ -1,4 +1,7 @@
-import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import type {
+  CodexPaymentSourcePreference,
+  CodexSessionConfig,
+} from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
@@ -223,10 +226,16 @@ export type AcpControlRequest = {
     | "cancel"
     | "send_immediately"
     | "resend"
+    | "resend_with_payment"
     | "resend_with_model"
     | "prepare_fresh_conversation";
   // Only for retrying a confirmed ChatGPT model-unavailable rejection.
   model_recovery?: { model: string; expected_model: string };
+  // Retry a terminal failed job using only a newly selected funding source.
+  payment_recovery?: {
+    payment_source: CodexPaymentSourcePreference;
+    credential_id?: string;
+  };
 };
 
 export type AcpControlResponse = {

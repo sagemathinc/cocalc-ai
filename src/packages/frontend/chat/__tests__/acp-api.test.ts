@@ -60,6 +60,41 @@ describe("processAcpLLM", () => {
     resetAcpApiStateForTests();
   });
 
+  it("resubmits a failed request with the current payment choice", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true, state: "queued" });
+    const acpState = new FakeAcpState();
+    const actions: any = {
+      store: {
+        get: (key: string) =>
+          ({ project_id: "proj", path: "x.chat", acpState })[key],
+        setState: jest.fn(),
+      },
+      syncdb: { set: jest.fn(), commit: jest.fn() },
+      getCodexConfig: jest.fn(() => ({ paymentSource: "account-api-key" })),
+      getMessagesInThread: jest.fn(() => []),
+    };
+    const message: any = {
+      message_id: "failed-user-message",
+      thread_id: "thread-1",
+      history: [{ content: "retry this" }],
+    };
+    await expect(
+      resendCanceledAcpTurn({ actions, message, useCurrentPayment: true }),
+    ).resolves.toBe(true);
+    expect(mockControlAcp).toHaveBeenCalledWith({
+      project_id: "proj",
+      path: "x.chat",
+      thread_id: "thread-1",
+      user_message_id: "failed-user-message",
+      action: "resend_with_payment",
+      payment_recovery: {
+        payment_source: "account-api-key",
+        credential_id: undefined,
+      },
+    });
+    expect(mockStreamAcp).not.toHaveBeenCalled();
+  });
+
   it.each([
     [undefined, false],
     [true, true],

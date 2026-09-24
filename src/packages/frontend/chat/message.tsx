@@ -1217,6 +1217,7 @@ export default function Message({
       const ok = await resendCanceledAcpTurn({
         actions,
         message: acpResubmitParentMessage,
+        useCurrentPayment: true,
       });
       if (!ok) {
         antdMessage.error("Unable to resubmit this request to Agent.");
