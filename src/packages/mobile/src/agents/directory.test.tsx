@@ -6,7 +6,7 @@ import { router } from "expo-router";
 import { MY_AGENTS_ORGANIZATION_SETTING } from "@cocalc/chat-client/agent-organization";
 
 jest.mock("./use-appearance", () => ({
-  useAgentAppearance: () => ({ appearances: {}, siteUrl: "" }),
+  useAgentAppearance: () => ({ appearances: {}, siteUrl: "", ready: true }),
 }));
 jest.mock("./avatar", () => ({ AgentAvatar: "AgentAvatar" }));
 jest.mock("react-native-draggable-flatlist", () => ({

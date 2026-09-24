@@ -4,39 +4,59 @@
  */
 import { useCallback, useState } from "react";
 import { useFocusEffect } from "expo-router";
-import {
-  AgentSessionIndex,
-  type AgentSessionRecord,
-} from "@cocalc/chat-client";
+import { AgentSessionIndex } from "@cocalc/chat-client";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { openProjectHost } from "../cocalc/site-session";
 import { isPreviewProfile } from "../preview/fixtures";
+import {
+  appearanceKey,
+  cachedAppearances,
+  loadAppearanceCache,
+  peekAppearanceCache,
+  sameAppearances,
+  saveAppearanceCache,
+  type AgentAppearance,
+  type AppearanceCache,
+} from "./appearance-cache";
 
-export type AgentAppearance = Partial<
-  Pick<
-    AgentSessionRecord,
-    | "thread_color"
-    | "thread_accent_color"
-    | "thread_icon"
-    | "thread_image"
-    | "title"
-  >
->;
+export type { AgentAppearance } from "./appearance-cache";
+
+const REFRESH_MS = 60_000;
+
 export function useAgentAppearance(profile: string, agents: NamedAgent[]) {
-  const [appearances, setAppearances] = useState<
-    Record<string, AgentAppearance>
-  >({});
-  const [siteUrl, setSiteUrl] = useState("");
+  const [view, setView] = useState(() => {
+    const cache = peekAppearanceCache(profile);
+    return {
+      profile,
+      ready: !!cache || isPreviewProfile(profile),
+      appearances: cache ? cachedAppearances(cache, agents) : {},
+      siteUrl: cache?.siteUrl ?? "",
+    };
+  });
   useFocusEffect(
     useCallback(() => {
       let active = true;
       const indices: AgentSessionIndex[] = [];
-      setAppearances({});
+      const show = (cache: AppearanceCache) => {
+        if (!active) return;
+        const appearances = cachedAppearances(cache, agents);
+        setView((previous) =>
+          previous.profile === profile &&
+          previous.ready &&
+          previous.siteUrl === cache.siteUrl &&
+          sameAppearances(previous.appearances, appearances)
+            ? previous
+            : { profile, ready: true, appearances, siteUrl: cache.siteUrl },
+        );
+      };
       if (isPreviewProfile(profile)) {
-        setAppearances(
-          Object.fromEntries(
+        setView({
+          profile,
+          ready: true,
+          siteUrl: "",
+          appearances: Object.fromEntries(
             agents.map((agent, i) => [
               agent.endpoint.agent_id,
               {
@@ -46,19 +66,36 @@ export function useAgentAppearance(profile: string, agents: NamedAgent[]) {
               },
             ]),
           ),
-        );
+        });
         return;
       }
-      // Read host-owned session indices without starting any project processes.
-      // A missing index/host must never prevent the directory itself from opening.
+      // The persisted cache is shown before a host connection is opened. Host
+      // indices remain the authority; stale entries are replaced on refresh.
       void (async () => {
+        let cache = await loadAppearanceCache(profile);
+        if (!active) return;
+        show(cache);
+        if (!agents.length) return;
+        const missing = agents.some(
+          (agent) =>
+            cache.items[agent.endpoint.agent_id]?.key !== appearanceKey(agent),
+        );
+        if (
+          !missing &&
+          cache.siteUrl &&
+          Date.now() - cache.refreshedAt < REFRESH_MS
+        )
+          return;
         const session = await getActiveSiteSession(profile);
         if (!active) return;
-        setSiteUrl(session.profile.canonical_app_url);
+        cache = { ...cache, siteUrl: session.profile.canonical_app_url };
+        void saveAppearanceCache(profile, cache).catch(() => {});
+        show(cache);
         const projects = [
           ...new Set(agents.map((agent) => agent.endpoint.project_id)),
         ];
         let next = 0;
+        let succeeded = 0;
         const worker = async () => {
           while (active && next < projects.length) {
             const project = projects[next++];
@@ -79,9 +116,14 @@ export function useAgentAppearance(profile: string, agents: NamedAgent[]) {
                 project_id: project,
               });
               indices.push(index);
+              await index.open();
+              if (!active) {
+                index.close();
+                return;
+              }
               index.subscribe((records) => {
                 if (!active) return;
-                const values: Record<string, AgentAppearance> = {};
+                const items = { ...cache.items };
                 for (const agent of agents.filter(
                   (a) => a.endpoint.project_id === project,
                 )) {
@@ -90,31 +132,60 @@ export function useAgentAppearance(profile: string, agents: NamedAgent[]) {
                       r.chat_path === agent.path &&
                       r.thread_key === agent.thread_id,
                   );
-                  if (record) values[agent.endpoint.agent_id] = record;
+                  if (record) {
+                    const appearance: AgentAppearance = {
+                      title: record.title,
+                      thread_color: record.thread_color,
+                      thread_accent_color: record.thread_accent_color,
+                      thread_icon: record.thread_icon,
+                      thread_image: record.thread_image,
+                    };
+                    items[agent.endpoint.agent_id] = {
+                      key: appearanceKey(agent),
+                      appearance,
+                    };
+                  } else {
+                    delete items[agent.endpoint.agent_id];
+                  }
                 }
-                setAppearances((previous) => {
-                  const updated = { ...previous };
-                  for (const agent of agents.filter(
-                    (a) => a.endpoint.project_id === project,
-                  ))
-                    delete updated[agent.endpoint.agent_id];
-                  return { ...updated, ...values };
-                });
+                cache = { ...cache, items };
+                void saveAppearanceCache(profile, cache).catch(() => {});
+                show(cache);
               });
-              await index.open();
-              if (!active) index.close();
+              succeeded++;
             } catch {
-              /* Appearance is optional; directory and chat stay usable. */
+              // Appearance is optional; directory and chat stay usable.
             }
           }
         };
         await Promise.all([worker(), worker(), worker()]);
-      })().catch(() => {});
+        if (active && succeeded === projects.length) {
+          cache = { ...cache, refreshedAt: Date.now() };
+          void saveAppearanceCache(profile, cache).catch(() => {});
+        }
+      })().catch(() => {
+        if (active) setView((previous) => ({ ...previous, ready: true }));
+      });
       return () => {
         active = false;
         indices.forEach((index) => index.close());
       };
     }, [profile, agents]),
   );
-  return { appearances, siteUrl };
+  const cache = peekAppearanceCache(profile);
+  return {
+    ready: !!cache || (view.profile === profile && view.ready),
+    appearances:
+      cache && !isPreviewProfile(profile)
+        ? cachedAppearances(cache, agents)
+        : view.profile === profile
+          ? view.appearances
+          : {},
+    siteUrl:
+      cache && !isPreviewProfile(profile)
+        ? cache.siteUrl
+        : view.profile === profile
+          ? view.siteUrl
+          : "",
+  };
 }

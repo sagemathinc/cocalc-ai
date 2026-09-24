@@ -59,10 +59,11 @@ export default function AgentsScreen() {
   const { profile } = useLocalSearchParams<{ profile: string }>();
   const colors = usePalette();
   const [workspace, setWorkspace] = useState<Workspace>();
-  const { appearances, siteUrl } = useAgentAppearance(
-    profile,
-    workspace?.directory.agents ?? EMPTY_AGENTS,
-  );
+  const {
+    appearances,
+    siteUrl,
+    ready: appearancesReady,
+  } = useAgentAppearance(profile, workspace?.directory.agents ?? EMPTY_AGENTS);
   const [reordering, setReordering] = useState(false);
   const [search, setSearch] = useState("");
   const [showHidden, setShowHidden] = useState(false);
@@ -434,7 +435,7 @@ export default function AgentsScreen() {
           if (from !== to && rows[from] && rows[to])
             reorder(rows[from], rows[to]);
         }}
-        data={rows}
+        data={appearancesReady ? rows : []}
         keyExtractor={(agent) => agent.endpoint.agent_id}
         keyboardShouldPersistTaps="handled"
         refreshControl={
@@ -445,7 +446,7 @@ export default function AgentsScreen() {
         }
         contentContainerStyle={rows.length ? undefined : styles.empty}
         ListEmptyComponent={
-          loading && !workspace ? (
+          !appearancesReady || (loading && !workspace) ? (
             <ActivityIndicator accessibilityLabel="Loading agents" />
           ) : (
             <Text style={{ color: colors.secondary }}>

@@ -3,7 +3,15 @@ const { act, create } = require("react-test-renderer");
 import { useAgentAppearance } from "./use-appearance";
 import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import { openProjectHost } from "../cocalc/site-session";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 const close = jest.fn();
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => {}),
+  },
+}));
 jest.mock("expo-router", () => ({
   useFocusEffect: (callback: () => void) =>
     require("react").useEffect(callback, [callback]),
@@ -17,6 +25,7 @@ jest.mock("@cocalc/chat-client", () => ({
           thread_key: "thread",
           title: "My theme",
           thread_color: "#123456",
+          thread_image: "11111111-1111-4111-8111-111111111111",
         },
         {
           chat_path: "different.chat",
@@ -68,7 +77,21 @@ it("matches appearance by project, chat, and thread and releases the index", asy
     host_id: "host",
   });
   expect(latest.appearances.agent.title).toBe("My theme");
+  expect(latest.appearances.agent.thread_image).toBe(
+    "11111111-1111-4111-8111-111111111111",
+  );
   expect(latest.siteUrl).toBe("https://site");
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+    "cocalc.mobile.agent-appearance.v1.profile",
+    expect.stringContaining("11111111-1111-4111-8111-111111111111"),
+  );
   await act(async () => renderer.unmount());
   expect(close).toHaveBeenCalled();
+  jest.mocked(resolveNamedAgentHost).mockClear();
+  await act(async () => {
+    renderer = create(<Probe />);
+  });
+  expect(latest.appearances.agent.title).toBe("My theme");
+  expect(resolveNamedAgentHost).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
 });

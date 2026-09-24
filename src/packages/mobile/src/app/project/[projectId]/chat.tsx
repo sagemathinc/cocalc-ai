@@ -159,11 +159,13 @@ function Message({
   guidance,
   read,
   speechBusy,
+  viewerAccountId,
 }: {
   item: ProjectedChatMessage;
   guidance: ProjectedChatMessage[];
   read: (item: ProjectedChatMessage) => void;
   speechBusy: boolean;
+  viewerAccountId?: string;
 }) {
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -171,6 +173,15 @@ function Message({
   const thinkingPlaceholder =
     !human &&
     /^\s*(?::robot:|🤖)?\s*Thinking(?:\.{3}|…)\s*$/.test(item.content);
+  const otherHuman =
+    human &&
+    !!viewerAccountId &&
+    !!item.sender_id &&
+    item.sender_id !== viewerAccountId;
+  const exceptionalState =
+    item.state === "error" || item.state === "interrupted"
+      ? item.state
+      : undefined;
 
   if (item.guidance) return <GuidanceCard item={item} />;
 
@@ -181,14 +192,20 @@ function Message({
         human ? styles.humanMessage : styles.agentMessage,
       ]}
     >
-      <View style={styles.messageHeader}>
-        <Text style={styles.messageRole}>
-          {human ? "You" : item.role === "agent" ? "Codex" : "System"}
-        </Text>
-        {!item.generating && item.state ? (
-          <Text style={styles.messageState}>{item.state}</Text>
-        ) : null}
-      </View>
+      {otherHuman || item.role === "system" || exceptionalState ? (
+        <View style={styles.messageHeader}>
+          {otherHuman || item.role === "system" ? (
+            <Text style={styles.messageRole}>
+              {otherHuman
+                ? `Participant ${item.sender_id.slice(0, 8)}`
+                : "System"}
+            </Text>
+          ) : null}
+          {exceptionalState ? (
+            <Text style={styles.messageState}>{exceptionalState}</Text>
+          ) : null}
+        </View>
+      ) : null}
       {item.activity?.markdown ? (
         <View accessibilityLabel="Codex activity" style={styles.activity}>
           <Markdown value={item.activity.markdown} />
@@ -281,6 +298,7 @@ export default function ChatScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [status, setStatus] = useState("Connecting…");
+  const [viewerAccountId, setViewerAccountId] = useState<string>();
   const [error, setError] = useState<string>();
   const snapshot = useChatSnapshot(
     client,
@@ -307,6 +325,7 @@ export default function ChatScreen() {
     if (current !== generation.current) return;
     setError(undefined);
     setStatus("Connecting…");
+    setViewerAccountId(undefined);
     if (!projectId || !profileId || !chatPath || !threadId) {
       setError("The chat route is incomplete.");
       return;
@@ -320,6 +339,8 @@ export default function ChatScreen() {
         return;
       }
       const session = await getActiveSiteSession(profileId);
+      if (current !== generation.current) return;
+      setViewerAccountId(session.profile.account_id);
       const resolvedHost = await resolveNamedAgentHost(
         session.hubApi,
         session.profile.account_id,
@@ -813,6 +834,7 @@ export default function ChatScreen() {
                   item={row.item}
                   guidance={row.guidance}
                   speechBusy={speechBusy}
+                  viewerAccountId={viewerAccountId}
                   read={(item) =>
                     void speech.controller.read(item.content, item.message_id)
                   }

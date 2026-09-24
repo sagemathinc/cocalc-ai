@@ -447,6 +447,48 @@ it("renders the thinking placeholder as a compact running status", async () => {
   ).toHaveLength(0);
 });
 
+it("omits routine author and completion labels but attributes another human", async () => {
+  client.getSnapshot().messages = [
+    {
+      message_id: "mine",
+      sender_id: "account",
+      role: "human",
+      content: "My request",
+      state: "sent",
+      generating: false,
+    },
+    {
+      message_id: "agent",
+      sender_id: "__acp__",
+      role: "agent",
+      content: "The answer",
+      state: "complete",
+      generating: false,
+    },
+    {
+      message_id: "theirs",
+      sender_id: "12345678-1234-1234-1234-123456789abc",
+      role: "human",
+      content: "Another request",
+      state: "sent",
+      generating: false,
+    },
+  ];
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  const labels = renderer.root
+    .findAll(
+      (node: any) =>
+        node.type === "Text" && typeof node.props.children === "string",
+    )
+    .map((node: any) => node.props.children);
+  expect(labels).toContain("Participant 12345678");
+  expect(labels).not.toContain("You");
+  expect(labels).not.toContain("Codex");
+  expect(labels).not.toContain("complete");
+});
+
 it("keeps the running status below streamed agent output", async () => {
   client.getSnapshot().messages = [
     {

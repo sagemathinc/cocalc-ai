@@ -30,10 +30,10 @@ export function AgentAvatar({
     appearance?.thread_icon ?? ""
   ];
   const [failedImage, setFailedImage] = useState<string>();
-  const blob = appearance?.thread_image;
+  const blob = appearance?.thread_image?.trim();
   const uri =
     blob && siteUrl
-      ? `${siteUrl.replace(/\/+$/, "")}/blobs/agent.png?uuid=${encodeURIComponent(blob)}`
+      ? `${siteUrl.replace(/\/+$/, "")}/blobs/theme-image.png?uuid=${encodeURIComponent(blob)}`
       : undefined;
   const icon = (aliases as Record<string, string>)[
     appearance?.thread_icon ?? ""
