@@ -545,8 +545,19 @@ stalled in SSH/SFTP; a clean retry installed release `20260924044209-static`.
 After a hard browser refresh, the [same backup preview](screenshots/staging2-backup-peek-postfix-expanded-2026-09-24.png)
 expanded without an error and showed `Empty directory`, consistent with this
 canary project's empty home. The focused test also covers a nonempty archive
-listing and keyboard opening of a file. This validates the inline route;
-a live nonempty backup file should still be browsed in the UI during review.
+listing and keyboard opening of a file. To exercise the live file path, I wrote
+`recovery-ui-canary/marker.txt` in canary project
+`1793a413-42c9-49cf-8a2e-0abd641e8b28` and created a manual backup. The
+operation succeeded with Rustic ID
+`dc18d24937595e3f3ce69dd3805fa24c55edfe78c8061b1ae79a9c232820a310`
+at 04:50:45 UTC. In the non-admin browser, the [inline preview showed the
+folder](screenshots/staging2-backup-nonempty-peek-2026-09-24.png), and opening
+it listed `marker.txt`. The [backup file preview](screenshots/staging2-backup-nonempty-marker-open-2026-09-24.png)
+showed the exact `staging2-backup-preview-20260924` marker. I used the UI
+Restore to /tmp action, then read
+`/tmp/recovery-ui-canary/marker.txt` inside the project through `project exec`;
+it returned the same marker with exit code 0. The original project file was
+left in place.
 
 At 04:47 UTC, `admin health --wide` marked project recovery healthy: zero unknown
 statuses, zero overdue delay, and recent pressure telemetry on both online
@@ -559,9 +570,9 @@ checks are a point-in-time staging result, not the seven-day canary.
 ## Open findings and release gates
 
 1. Recovery Settings, the project file listing, and the backup catalog now
-   load in the non-admin staging2 browser. The inline backup preview no longer
-   makes an ordinary filesystem request. Overdue, blocked, and unknown warning
-   states still need live UI qualification, including keyboard and narrow-width
+   load in the non-admin staging2 browser. A nonempty backup was browsed,
+   previewed, and restored to a temporary path through the UI. Overdue,
+   blocked, and unknown warning states still need live UI qualification, including keyboard and narrow-width
    review; automated component coverage exists for the key status states.
 2. The plan's full observability and scheduler contract remains broader than
    the current code: a calibrated safe-capacity threshold, operator drill
