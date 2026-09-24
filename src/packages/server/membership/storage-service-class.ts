@@ -10,14 +10,18 @@ export type StorageServiceClass = "paying" | "free";
 export function storageFundingAccountId({
   owner_account_id,
   usage_account_id,
-  users,
+  course,
 }: {
   owner_account_id: string | null;
   usage_account_id: string | null;
-  users: Record<string, { group?: string }> | null;
+  course?: { type?: string; account_id?: string } | null;
 }): string | null {
   const usageId = usage_account_id?.trim();
-  if (usageId && users?.[usageId]?.group) return usageId;
+  if (usageId) return usageId;
+  if (course?.type === "student") {
+    const courseId = course.account_id?.trim();
+    if (courseId) return courseId;
+  }
   return owner_account_id?.trim() || null;
 }
 

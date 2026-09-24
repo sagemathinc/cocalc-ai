@@ -57,6 +57,7 @@ type Candidate = {
 };
 type CurrentProject = {
   usage_account_id: string | null;
+  course: { type?: string; account_id?: string } | null;
   users: Users | null;
 };
 
@@ -347,7 +348,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
         // Read current ownership and collaborators before choosing a payer or
         // recipients. A project can move bays or change collaborators mid-scan.
         const { rows: currentRows } = await getPool().query<CurrentProject>(
-          `SELECT p.usage_account_id::text, p.users
+          `SELECT p.usage_account_id::text, p.course, p.users
              FROM projects p
             WHERE p.project_id=$1 AND p.provisioned IS TRUE
               AND p.deleted IS NOT TRUE AND p.host_id IS NOT NULL
@@ -363,7 +364,7 @@ export async function runProjectRecoveryCustomerWarningCheck({
         const payer = storageFundingAccountId({
           owner_account_id: ownerId ?? null,
           usage_account_id: currentProject.usage_account_id,
-          users,
+          course: currentProject.course,
         });
         if (!payer || !isValidUUID(payer)) continue;
         const membership = await resolveRuntimeMembership(payer);

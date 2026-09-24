@@ -21,7 +21,7 @@ import {
   DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
 } from "@cocalc/server/membership/project-limits";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
 import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
@@ -104,6 +104,7 @@ export async function listHostProjectMaintenanceSchedules({
     backups: HostProjectMaintenanceSchedule["backups"];
     owner_account_id: string | null;
     usage_account_id: string | null;
+    course: { type?: string; account_id?: string } | null;
     users: Record<string, { group?: string }> | null;
   }>(
     `SELECT
@@ -169,6 +170,7 @@ export async function listHostProjectMaintenanceSchedules({
        snapshots,
        backups,
        usage_account_id::text AS usage_account_id,
+       course,
        users,
        (
          SELECT account_id_text::text
@@ -207,10 +209,12 @@ export async function listHostProjectMaintenanceSchedules({
     string,
     { service_class: "paying" | "free"; priority: number }
   >();
+  // An unresolved owner must not fall back to a smaller retention limit.
+  // Let the host retry this page with its bounded cached ownership lease.
   for (let offset = 0; offset < accountIds.length; offset += 16) {
     await Promise.all(
       accountIds.slice(offset, offset + 16).map(async (account_id) => {
-        const resolution = await resolveMembershipForAccount(account_id);
+        const resolution = await resolveRuntimeMembership(account_id);
         const limits = getEffectiveMembershipUsageLimits(resolution);
         limitsByOwner.set(account_id, {
           max_snapshots_per_project:

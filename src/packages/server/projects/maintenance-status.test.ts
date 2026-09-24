@@ -35,6 +35,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     scheduleChanged = false,
     ownerAccountId = null,
     usageAccountId = null,
+    course = null,
     users = null,
     hostMaintenanceGate = null,
   }: {
@@ -43,6 +44,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     scheduleChanged?: boolean;
     ownerAccountId?: string | null;
     usageAccountId?: string | null;
+    course?: { type?: string; account_id?: string } | null;
     users?: Record<string, { group?: string }> | null;
     hostMaintenanceGate?: unknown;
   }) {
@@ -65,6 +67,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
               backups: { disabled: true },
               owner_account_id: ownerAccountId,
               usage_account_id: usageAccountId,
+              course,
               users,
             },
           ],
@@ -159,11 +162,26 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       usageAccountId: "storage-payer",
       users: {
         "owner-account": { group: "owner" },
-        "storage-payer": { group: "collaborator" },
       },
     });
     expect(status.storage_service_class).toBe("paying");
     expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("storage-payer");
+  });
+
+  it("classifies a student course project using its sponsor account", async () => {
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    const status = await statusFor({
+      changedAt: "2026-04-11T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      ownerAccountId: "student-owner",
+      course: { type: "student", account_id: "course-sponsor" },
+      users: { "student-owner": { group: "owner" } },
+    });
+    expect(status.storage_service_class).toBe("paying");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("course-sponsor");
   });
 
   it("rejects a snapshot success report without a recovery point", async () => {

@@ -476,6 +476,7 @@ export async function getProjectRecoveryStatusLocal(
     backups: SnapshotSchedule | null;
     owner_account_id: string | null;
     usage_account_id: string | null;
+    course: { type?: string; account_id?: string } | null;
     users: Record<string, { group?: string }> | null;
   }>(
     `SELECT p.project_id, p.host_id, p.last_backup,
@@ -485,7 +486,7 @@ export async function getProjectRecoveryStatusLocal(
             h.metadata #> '{metrics,current,snapshot_backup_maintenance_gate}'
               AS host_maintenance_gate,
             p.snapshots, p.backups,
-            p.usage_account_id::text AS usage_account_id, p.users,
+            p.usage_account_id::text AS usage_account_id, p.course, p.users,
             (SELECT account_id_text::text
                FROM jsonb_each(COALESCE(p.users, '{}'::jsonb))
                     AS u(account_id_text, user_data)

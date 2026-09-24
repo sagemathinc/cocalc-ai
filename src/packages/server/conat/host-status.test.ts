@@ -3,7 +3,7 @@ export {};
 let createHostStatusServiceMock: jest.Mock;
 let conatMock: jest.Mock;
 let queryMock: jest.Mock;
-let resolveMembershipForAccountMock: jest.Mock;
+let resolveRuntimeMembershipMock: jest.Mock;
 let getEffectiveMembershipUsageLimitsMock: jest.Mock;
 let getLaunchpadLocalConfigMock: jest.Mock;
 let maybeStartLaunchpadOnPremServicesMock: jest.Mock;
@@ -78,10 +78,10 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
   publishProjectAccountFeedEventsBestEffort: jest.fn(),
 }));
 
-jest.mock("@cocalc/server/membership/resolve", () => ({
+jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
   __esModule: true,
-  resolveMembershipForAccount: (...args: any[]) =>
-    resolveMembershipForAccountMock(...args),
+  resolveRuntimeMembership: (...args: any[]) =>
+    resolveRuntimeMembershipMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/effective-limits", () => ({
@@ -114,7 +114,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     createHostStatusServiceMock = jest.fn();
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
-    resolveMembershipForAccountMock = jest.fn(async () => ({
+    resolveRuntimeMembershipMock = jest.fn(async () => ({
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({
@@ -318,12 +318,11 @@ describe("listHostProjectMaintenanceSchedules", () => {
             usage_account_id: "sponsor-1",
             users: {
               "owner-1": { group: "owner" },
-              "sponsor-1": { group: "collaborator" },
             },
           },
         ],
       });
-    resolveMembershipForAccountMock.mockImplementation(async (account_id) =>
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
       account_id === "sponsor-1"
         ? { source: "subscription", subscription_cost: 10 }
         : { source: "free" },
@@ -351,8 +350,61 @@ describe("listHostProjectMaintenanceSchedules", () => {
       max_snapshots_per_project: 8,
       max_backups_per_project: 4,
     });
-    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("owner-1");
-    expect(resolveMembershipForAccountMock).toHaveBeenCalledWith("sponsor-1");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("owner-1");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("sponsor-1");
+  });
+
+  it("uses a non-collaborator student course sponsor for storage priority", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-1",
+            owner_account_id: "owner-1",
+            usage_account_id: null,
+            course: { type: "student", account_id: "course-sponsor-1" },
+            users: { "owner-1": { group: "owner" } },
+          },
+        ],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
+      account_id === "course-sponsor-1"
+        ? { source: "subscription", subscription_cost: 10 }
+        : { source: "free" },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    const rows = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    expect(rows[0]).toMatchObject({
+      storage_account_id: "course-sponsor-1",
+      storage_service_class: "paying",
+    });
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith(
+      "course-sponsor-1",
+    );
+  });
+
+  it("defers a page if the owner's entitlement cannot be resolved", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { project_id: "proj-1", owner_account_id: "remote-owner" },
+          { project_id: "proj-2", owner_account_id: "local-owner" },
+        ],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) => {
+      if (account_id === "remote-owner") throw Error("home bay unavailable");
+      return { source: "free" };
+    });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    await expect(
+      listHostProjectMaintenanceSchedules({ host_id: "host-1" }),
+    ).rejects.toThrow("home bay unavailable");
   });
 
   it("refreshes funding class when a project's storage payer changes", async () => {
@@ -373,7 +425,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
       .mockResolvedValueOnce({
         rows: [{ ...projectRow, usage_account_id: "sponsor-1" }],
       });
-    resolveMembershipForAccountMock.mockImplementation(async (account_id) =>
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
       account_id === "sponsor-1"
         ? { source: "subscription", subscription_cost: 10 }
         : { source: "free" },
@@ -405,7 +457,7 @@ describe("initHostStatusService registerOnPremTunnel", () => {
     createHostStatusServiceMock = jest.fn(({ impl }) => impl);
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
-    resolveMembershipForAccountMock = jest.fn(async () => ({
+    resolveRuntimeMembershipMock = jest.fn(async () => ({
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({

@@ -47,6 +47,7 @@ const projectId = "00000000-0000-4000-8000-000000000001";
 const ownerId = "00000000-0000-4000-8000-000000000002";
 const collaboratorId = "00000000-0000-4000-8000-000000000003";
 const viewerId = "00000000-0000-4000-8000-000000000004";
+const sponsorId = "00000000-0000-4000-8000-000000000005";
 const due = "2026-09-24T12:00:00.000Z";
 const checkedAt = new Date("2026-09-24T12:30:01.000Z");
 
@@ -222,6 +223,41 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
     failures: 0,
   });
   expect(eventGraph).toHaveBeenCalledTimes(2);
+});
+
+test("an external storage payer funds warnings without joining the project", async () => {
+  settings.mockResolvedValue({
+    project_recovery_customer_warnings_enabled: true,
+  });
+  const originalQuery = query.getMockImplementation()!;
+  query.mockImplementation((sql: string, params: unknown[]) => {
+    if (sql.includes("SELECT p.usage_account_id::text")) {
+      return Promise.resolve({
+        rows: [
+          {
+            usage_account_id: sponsorId,
+            users: {
+              [ownerId]: { group: "owner" },
+              [collaboratorId]: { group: "collaborator" },
+            },
+          },
+        ],
+      });
+    }
+    return originalQuery(sql, params);
+  });
+  const { runProjectRecoveryCustomerWarningCheck } =
+    await import("./recovery-customer-warning-maintenance");
+  expect(await runProjectRecoveryCustomerWarningCheck({ checkedAt })).toEqual({
+    enabled: true,
+    scanned: 1,
+    notices_sent: 2,
+    failures: 0,
+  });
+  expect(membership).toHaveBeenCalledWith(sponsorId);
+  expect(accountHome).not.toHaveBeenCalledWith(
+    expect.objectContaining({ account_id: sponsorId }),
+  );
 });
 
 test("the paid snapshot target must actually be exceeded", async () => {
