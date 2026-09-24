@@ -88,6 +88,36 @@ test("Claude account-key selection says its value is not copied into the project
   }
 });
 
+test("Claude subscription selection exposes an explicit disconnect action", () => {
+  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
+    get: () => "account-a",
+  } as any);
+  localStorage.setItem(
+    "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
+    "account-subscription:00000000-0000-4000-8000-000000000001",
+  );
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-a"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Disconnect Claude subscription" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Credential isolation and subscription billing still require live qualification/,
+      ),
+    ).toBeTruthy();
+  } finally {
+    getStore.mockRestore();
+    localStorage.clear();
+  }
+});
+
 test("existing harness settings explain limitations before capability discovery", async () => {
   render(
     <HarnessRuntimeControl

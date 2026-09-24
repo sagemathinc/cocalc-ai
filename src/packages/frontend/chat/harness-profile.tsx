@@ -1,4 +1,12 @@
-import { Button, Input, Modal, Select, Space, Typography } from "antd";
+import {
+  Button,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Typography,
+} from "antd";
 import { useEffect, useId, useState } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
@@ -17,6 +25,10 @@ import { redux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
   readHarnessCredentialSelection,
@@ -67,6 +79,8 @@ function ClaudeCredentialControl({
   }>();
   const [loginCode, setLoginCode] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
+  const [disconnectBusy, setDisconnectBusy] = useState(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const selection = readHarnessCredentialSelection({
     accountId,
     projectId,
@@ -206,6 +220,53 @@ function ClaudeCredentialControl({
           Manage project secret
         </Button>
       )}
+      {value.startsWith("account-subscription:") && (
+        <Popconfirm
+          title="Disconnect Claude subscription?"
+          description="Blocks new project-tool calls and future turns. Inference already in flight may continue."
+          okText="Disconnect"
+          okButtonProps={{ danger: true }}
+          onConfirm={async () => {
+            setDisconnectBusy(true);
+            setError("");
+            try {
+              const credentialId = value.slice("account-subscription:".length);
+              const completed = await runFreshAuthAction(async () => {
+                await webapp_client.conat_client.hub.system.revokeExternalCredential(
+                  {
+                    id: credentialId,
+                    browser_id: webapp_client.browser_id,
+                  },
+                );
+              });
+              if (!completed) return;
+              setCredentials((rows) =>
+                rows.filter((row) => row.id !== credentialId),
+              );
+              const credential = {
+                version: 1 as const,
+                provider: "anthropic" as const,
+                mode: "project-secret" as const,
+              };
+              writeHarnessCredentialSelection({
+                accountId,
+                projectId,
+                threadKey,
+                credential,
+              });
+              setValue("project-secret");
+            } catch (err) {
+              setError(`${err}`);
+            } finally {
+              setDisconnectBusy(false);
+            }
+          }}
+        >
+          <Button danger loading={disconnectBusy}>
+            Disconnect Claude subscription
+          </Button>
+        </Popconfirm>
+      )}
       <Button
         loading={loginBusy}
         onClick={async () => {
@@ -307,6 +368,7 @@ function ClaudeCredentialControl({
         project_id={projectId}
         onClose={() => setSecretsOpen(false)}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }
