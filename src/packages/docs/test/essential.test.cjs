@@ -89,6 +89,18 @@ test("the full registry still requires all registered entry IDs", () => {
     orderDocsEntries([...docs.DOCS_ENTRIES].reverse()),
     docs.DOCS_ENTRIES,
   );
+  assert.throws(
+    () =>
+      orderDocsEntries([
+        ...docs.DOCS_ENTRIES,
+        { ...docs.DOCS_ENTRIES[0], id: "not.in-order" },
+      ]),
+    /Unordered docs entry id: not.in-order/,
+  );
+  assert.throws(
+    () => orderDocsEntries([...docs.DOCS_ENTRIES, docs.DOCS_ENTRIES[0]]),
+    /Duplicate docs entry id/,
+  );
 });
 
 test("loading Essential does not load administrator entries or content", () => {
