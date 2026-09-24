@@ -16,6 +16,7 @@ import RestoreSnapshot from "@cocalc/frontend/project/snapshots/restore";
 import { Datastore } from "./datastore";
 import type { Project } from "./types";
 import { useProjectRuntimeCapabilities } from "../runtime-capabilities";
+import "./recovery-panel.css";
 
 const { Text } = Typography;
 
@@ -75,7 +76,13 @@ function RecoveryAction({
         </div>
         <Space
           wrap
-          style={{ justifyContent: stacked ? "flex-start" : "flex-end" }}
+          className={
+            stacked ? "cc-project-recovery-actions-compact" : undefined
+          }
+          style={{
+            justifyContent: stacked ? "flex-start" : "flex-end",
+            width: stacked ? "100%" : undefined,
+          }}
         >
           {actions}
         </Space>

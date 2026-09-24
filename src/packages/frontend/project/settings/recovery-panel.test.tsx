@@ -9,7 +9,11 @@ const mockCreateSnapshot = jest.fn();
 jest.mock("antd", () => ({
   Card: ({ children }: any) => <section>{children}</section>,
   Grid: { useBreakpoint: () => ({ md: false }) },
-  Space: ({ children, style }: any) => <div style={style}>{children}</div>,
+  Space: ({ children, style, className }: any) => (
+    <div style={style} className={className}>
+      {children}
+    </div>
+  ),
   Typography: { Text: ({ children }: any) => <span>{children}</span> },
 }));
 
@@ -49,6 +53,9 @@ it("stacks recovery actions at narrow widths and keeps them keyboard accessible"
     '[style*="grid-template-columns"]',
   );
   expect(layout?.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+  expect(
+    container.querySelectorAll(".cc-project-recovery-actions-compact"),
+  ).toHaveLength(3);
   expect(screen.getAllByText("Recovery status")).toHaveLength(2);
 
   await user.tab();
