@@ -216,7 +216,7 @@ export function NetworkApproval({
           await personalAgentApi().createAgentNetwork({
             request_id: requestId(key),
             title,
-            delivery_mode: "queued",
+            delivery_mode: "live",
             members: [
               { kind: "registered", endpoint: value.source },
               { kind: "registered", endpoint: value.target },
@@ -394,7 +394,7 @@ export function NetworkApproval({
             <p style={{ margin: 0, color: UI_COLORS.secondary }}>
               Connecting grants permission only. It does not send this draft or
               start any agent. Messages use the selected network&apos;s delivery
-              mode; new networks start with queued delivery.
+              mode; new networks start with live delivery.
             </p>
           )}
           {error && (
