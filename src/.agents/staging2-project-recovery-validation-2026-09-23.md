@@ -636,8 +636,8 @@ flag through both privileged and sandboxed restore paths. The first live
 remote-only attempt exposed the missing sandbox allowlist entry; after the
 second commit and host rollout, all four remote-only restores succeeded.
 
-| Shard repository | Project | Original backup | Remote-only restore operation | Marker SHA-256 |
-| --- | --- | --- | --- | --- |
+| Shard repository                       | Project                                | Original backup                                                    | Remote-only restore operation          | Marker SHA-256                                                     |
+| -------------------------------------- | -------------------------------------- | ------------------------------------------------------------------ | -------------------------------------- | ------------------------------------------------------------------ |
 | `712f48f7-2d11-4a69-9359-2c80ec83f548` | `aa9d72ea-bd4c-460e-b479-2760cc8b9c29` | `21aa4e7d38341c3f240b8bb121b2b130c813daeeb192a084467ef4a28720fa62` | `15b39241-81c0-458a-9485-30a00855fa22` | `07a35b2d36c6a506d333fe49c39a13d3b73c2fea27602d5ce970bef47a96d5e0` |
 | `bea69159-87f7-498e-84a0-5b0560a84f03` | `85793315-15ec-4cab-b062-ee7fcae065c6` | `f2772c1213d69fdd0f4e2136f1dd7293051a373c7a077539809f1ac8e3e867b9` | `46870c18-fef1-423f-9000-6a3e9cd04e97` | `2b79a7230500070ed124c5515fdf8ceae0f8b4fb031ae56bcb9751ef7a72a297` |
 | `f3c8309a-b085-4c5d-905b-ec939a5815d1` | `2bf70bcc-b77e-4288-876f-65250eeab79a` | `9edb08069db3bcd24ace0bc4fba8629086573a6dd8499c485f9d257d1d9744a9` | `bc45acd5-d792-44eb-b656-3ef970164726` | `cde05fbf5644d47e55fd7e8099da0095d748e657cda5070d1b6b0c824f7bf220` |
@@ -709,28 +709,78 @@ targets global `dev`, `candidate`, or `stable` installer channels, not a
 site profile. No channel was promoted. The checked-in and source-built CLI
 contains the new operator command; the installed `/opt` CLI remains older.
 
+## September 24 follow-up: durable drill evidence and responsive Recovery UI
+
+Commits `acc17dbdfa` and `4a86d48bd4` add an immutable bay-side operator
+attestation for a successful remote-only restore. It records the restore
+operation, backup, project, repository and host assignment at attestation time,
+the expected and observed SHA-256 values, the operator, and a reason. The
+operator view labels this evidence `operator_supplied`; it is not a
+host-generated content signature. The view continues to return attested drills
+after operation-record retention deletes the LRO, and its lookback is measured
+from restore completion. A PGlite test deletes the LRO and verifies both
+retention and the 30-day window. Fresh admin authentication and an audit event
+are required to record evidence.
+
+The final hub artifact
+`20260924T081501Z-4a86d48b-20260924T0817Z-4a86d48-drill-window-dirty`
+is active on staging2 as release `20260924082032-hub`. Hub smoke passed.
+I downloaded each restored marker from its stopped project, recalculated SHA-256,
+and recorded four passing attestations, one per active repository shard. The
+audited diagnostic `21db47f3-168a-4452-bd6c-bbf0f42a3f0e` returned all
+four passing attestations plus the earlier failed cache-allowlist restore.
+A repeated attestation returned `created=false`. The source-built CLI
+contains `admin db project-restore-drill-attest`; no global CLI installer
+channel was promoted. Focused PGlite tests, CLI admin tests, touched package
+typechecks, and the earlier full development build passed. The broader CLI
+suite still has unrelated legacy chat-send failures.
+
+Live Chromium testing on staging2 exposed a narrow-width Recovery layout
+defect: descriptions collapsed into one-character lines at 390 CSS pixels.
+Commits `d17f105f4d` and `982446521c` stack the recovery actions and
+constrain their buttons at compact widths. Commits `cdde41ca11` and
+`4f7e79869d` return focus to Create Snapshot after its dialog closes;
+the second commit fixes a stale closure in the shared close listener.
+The final static artifact
+`20260924T085636Z-4f7e7986-20260924T0859Z-4f7e798-focus-owner-dirty`
+is active on staging2. Static smoke, frontend lint, typecheck, and focused
+keyboard tests passed. In the live browser at 320 CSS pixels, the page had no
+document overflow, the Create Snapshot button fit inside its card, Enter opened
+the dialog, and Escape closed it and returned focus to that button. The
+[320-pixel Recovery view](screenshots/staging2-recovery-320-2026-09-24.png)
+and [desktop Recovery view](screenshots/staging2-recovery-1280-2026-09-24.png)
+are saved for review. One earlier browser attempt briefly showed the generic
+CoCalc crash overlay after Escape; subsequent attempts did not reproduce it,
+and its cause is not established.
+
+At 09:04:08 UTC, project-recovery health was healthy with zero unknown statuses,
+zero paying incident-threshold breaches, and recent pressure telemetry on both
+hosts. The shared host reported 505 distinct free snapshot obligations and
+1.48 execution slot-hours over 24 hours; free snapshot due-to-success p95 was
+114 seconds from 597 completions. These staging values do not calibrate a
+production safe-capacity threshold. Overall staging2 health remained warning
+because bay-backup restore/PITR had no completed backup and browser latency
+telemetry had no samples.
+
 ## Open findings and release gates
 
-1. Recovery Settings, the project file listing, and the backup catalog now
-   load in the non-admin staging2 browser. A nonempty backup was browsed,
-   previewed, and restored to a temporary path through the UI. Overdue,
-   blocked, and unknown warning states still need live UI qualification, including keyboard and narrow-width
-   review; automated component coverage exists for the key status states. One
-   backup directory navigation timed out before a successful Refresh, so
-   archive browsing latency and retry behavior need continued observation.
-2. The plan's full observability and scheduler contract remains broader than
-   the current code: a calibrated safe-capacity threshold and durable,
-   hash-attested operator drill reporting are not yet present. The audited
-   remote-only restore attempt view is deployed to staging2. Automatic fleet
-   recovery stop gates now run
-   on staging2, with measured browser latency required for global promotion.
-   A versioned schedule cache with a 10-minute ownership lease, event-triggered due work,
-   mutation-boundary assignment checks, bounded host/bay attempt history, and
-   24-hour timing/byte metrics are now deployed; the full inventory still
-   reconciles on a 15-minute timer. The audited backup-health diagnostic
-   confirmed the latest scheduled ID, and the repo-built one-project
-   diagnostic returned raw attempt rows under an audit ID. The aggregated
-   operator health query returned new completions and due-to-success metrics.
+1. Recovery Settings, project files, and the backup catalog load in the
+   non-admin staging2 browser. A nonempty backup was browsed, previewed, and
+   restored through the UI. A live overdue snapshot warning was visible in
+   the 320-pixel Recovery view, and keyboard navigation, dialog closing, and
+   focus restoration passed in Chromium. Blocked and unknown warning states
+   still need live qualification; focused component tests cover them. One
+   earlier browser attempt briefly showed the generic crash overlay, without
+   a reproducible cause. Archive browsing had one timeout before Refresh.
+2. The plan's safe-capacity threshold is still uncalibrated. Durable
+   operator-supplied hash attestations and the remote-only restore view are
+   deployed on staging2, with four passing shard drills. Automatic fleet
+   recovery stop gates run there, but browser latency samples are required
+   for promotion. The versioned schedule cache, ownership lease, event
+   dispatch, assignment checks, host/bay attempt history, and 24-hour
+   timing/byte metrics are deployed. Full inventory still reconciles on a
+   15-minute timer; observed load cannot establish the 70% safe budget
+   without a longer canary and production baseline.
 3. The requested seven-day canary, 30-day due-to-success objectives, paid/free
    production distributions and interactive latency comparison require
    observation after code review and coordinated rollout. One remote-only
