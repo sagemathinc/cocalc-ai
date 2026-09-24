@@ -2,6 +2,7 @@ import { Button, Popover, Tag, Typography } from "antd";
 import { useState } from "react";
 import type { AcpStreamEvent } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { readablePeerMessage } from "./readable-peer-message";
 
 const { Text } = Typography;
 export type PeerMessageEvent = Extract<AcpStreamEvent, { type: "peerMessage" }>;
@@ -19,6 +20,7 @@ function outcomeColor(outcome: PeerMessageEvent["outcome"]): string {
 
 export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
   const label = targetLabel(event);
+  const body = readablePeerMessage(event.body);
   const [expanded, setExpanded] = useState(false);
   return (
     <section
@@ -39,7 +41,7 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
         To {label}
       </Tag>
       <Text ellipsis style={{ flex: 1, minWidth: 0, color: UI_COLORS.text }}>
-        {event.body}
+        {body.text}
       </Text>
       <Tag
         color={outcomeColor(event.outcome)}
@@ -101,7 +103,15 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
             padding: 10,
           }}
         >
-          {event.body}
+          {body.text}
+          {body.structured && (
+            <details style={{ marginTop: 10 }}>
+              <summary>Raw message</summary>
+              <pre style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+                {event.body}
+              </pre>
+            </details>
+          )}
         </div>
       )}
     </section>

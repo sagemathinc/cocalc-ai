@@ -158,3 +158,22 @@ test("message body expands separately from delivery details", () => {
   ).toHaveAttribute("data-expanded", "true");
   expect(inspectAgentNetworkAttempt).not.toHaveBeenCalled();
 });
+
+test("structured agent messages show their text instead of JSON", () => {
+  const raw = JSON.stringify({
+    kind: "request",
+    text: "Please review",
+    correlation_id: "123",
+  });
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={{ type: "agent-message", children: [{ text: raw }] } as any}
+    >
+      {raw}
+    </AgentMessageElement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read message" }));
+  expect(screen.getByText("Please review")).toBeVisible();
+  expect(screen.getByText("Raw editable message")).toBeInTheDocument();
+});

@@ -2,6 +2,37 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { PeerMessageCard, type PeerMessageEvent } from "./peer-message-card";
+import { readablePeerMessage } from "./readable-peer-message";
+
+test("shows the text of a structured peer message while retaining raw details", () => {
+  const raw = JSON.stringify({
+    kind: "request",
+    text: "Please review the fix",
+    correlation_id: "123",
+  });
+  expect(readablePeerMessage(raw)).toEqual({
+    text: "Please review the fix",
+    structured: true,
+  });
+  render(
+    <PeerMessageCard
+      event={
+        {
+          type: "peerMessage",
+          target_name: "reviewer",
+          body: raw,
+          outcome: "accepted",
+          attempt_id: "attempt-2",
+        } as PeerMessageEvent
+      }
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read message" }));
+  expect(
+    screen.getByRole("document", { name: "Message to @reviewer" }),
+  ).toHaveTextContent("Please review the fix");
+  expect(screen.getByText("Raw message")).toBeInTheDocument();
+});
 
 test("reveals the full peer message without opening delivery details", () => {
   const body = "A long message that should remain readable when expanded.";
