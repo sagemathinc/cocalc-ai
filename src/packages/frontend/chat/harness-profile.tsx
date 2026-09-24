@@ -15,6 +15,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
 import {
   HARNESS_CREDENTIAL_SELECTION_EVENT,
@@ -26,8 +27,10 @@ const HARNESS_LIMITATIONS =
   "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
 
 export function claudeCredentialTrustWarning(
-  mode: "project-secret" | "account-api-key",
+  mode: "project-secret" | "account-api-key" | "account-subscription",
 ): string {
+  if (mode === "account-subscription")
+    return "Experimental Claude Pro/Max: sign-in is account-owned and runs in a separate controller without project files or secrets. Tool access to project code is not yet enabled. Do not treat this as a verified isolation boundary until security qualification is complete.";
   return mode === "account-api-key"
     ? "Full-project-trust preview: CoCalc does not expose the account-stored key value to project code for reading or copying. However, project code can use the key through Claude's active relay and incur Anthropic charges. Use only with trusted collaborators and code."
     : "Full-project-trust preview: the project secret can be read, copied, or used by project collaborators and code Claude runs. Anthropic bills the key owner. Use only with trusted collaborators and code.";
@@ -55,14 +58,24 @@ function ClaudeCredentialControl({
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [error, setError] = useState("");
+  const [login, setLogin] = useState<{
+    id: string;
+    state: string;
+    verificationUrl?: string;
+    credentialId?: string;
+    error?: string;
+  }>();
+  const [loginCode, setLoginCode] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
   const selection = readHarnessCredentialSelection({
     accountId,
     projectId,
     threadKey,
   });
   const [value, setValue] = useState(
-    selection?.mode === "account-api-key"
-      ? `account-api-key:${selection.credentialId}`
+    selection?.mode === "account-api-key" ||
+      selection?.mode === "account-subscription"
+      ? `${selection.mode}:${selection.credentialId}`
       : "project-secret",
   );
   useEffect(() => {
@@ -70,11 +83,18 @@ function ClaudeCredentialControl({
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({
         provider: "anthropic",
-        kind: "anthropic-api-key",
         scope: "account",
       })
       .then((rows) => {
-        if (!disposed) setCredentials(rows.filter((row) => !row.revoked));
+        if (!disposed)
+          setCredentials(
+            rows.filter(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          );
       })
       .catch((err) => {
         if (!disposed) setError(`${err}`);
@@ -86,8 +106,9 @@ function ClaudeCredentialControl({
         threadKey,
       });
       setValue(
-        current?.mode === "account-api-key"
-          ? `account-api-key:${current.credentialId}`
+        current?.mode === "account-api-key" ||
+          current?.mode === "account-subscription"
+          ? `${current.mode}:${current.credentialId}`
           : "project-secret",
       );
     };
@@ -97,6 +118,44 @@ function ClaudeCredentialControl({
       window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     };
   }, [accountId, projectId, threadKey]);
+  useEffect(() => {
+    if (!login || (login.state !== "pending" && login.state !== "verifying"))
+      return;
+    let active = true;
+    const timer = setInterval(() => {
+      void webapp_client.conat_client.hub.projects
+        .claudeSubscriptionLoginStatus({ project_id: projectId, id: login.id })
+        .then(async (next) => {
+          if (!active) return;
+          if (next.state === "completed" && next.credentialId) {
+            const rows =
+              await webapp_client.conat_client.hub.system.listExternalCredentials(
+                {
+                  provider: "anthropic",
+                  scope: "account",
+                },
+              );
+            if (active)
+              setCredentials(
+                rows.filter(
+                  (row) =>
+                    !row.revoked &&
+                    (row.kind === "anthropic-api-key" ||
+                      row.kind === CLAUDE_SUBSCRIPTION_KIND),
+                ),
+              );
+          }
+          if (active) setLogin(next);
+        })
+        .catch((err) => {
+          if (active) setError(`${err}`);
+        });
+    }, 1500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [login?.id, login?.state, projectId]);
   return (
     <Space orientation="vertical" size={4} style={{ width: "100%" }}>
       <Select
@@ -108,23 +167,30 @@ function ClaudeCredentialControl({
             label: "Project secret: ANTHROPIC_API_KEY",
           },
           ...credentials.map((row) => ({
-            value: `account-api-key:${row.id}`,
-            label: `${row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
+            value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
+            label: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "Claude Pro/Max" : row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
           })),
         ]}
         onChange={(next) => {
-          const credential = next.startsWith("account-api-key:")
+          const credential = next.startsWith("account-subscription:")
             ? {
                 version: 1 as const,
                 provider: "anthropic" as const,
-                mode: "account-api-key" as const,
-                credentialId: next.slice("account-api-key:".length),
+                mode: "account-subscription" as const,
+                credentialId: next.slice("account-subscription:".length),
               }
-            : {
-                version: 1 as const,
-                provider: "anthropic" as const,
-                mode: "project-secret" as const,
-              };
+            : next.startsWith("account-api-key:")
+              ? {
+                  version: 1 as const,
+                  provider: "anthropic" as const,
+                  mode: "account-api-key" as const,
+                  credentialId: next.slice("account-api-key:".length),
+                }
+              : {
+                  version: 1 as const,
+                  provider: "anthropic" as const,
+                  mode: "project-secret" as const,
+                };
           writeHarnessCredentialSelection({
             accountId,
             projectId,
@@ -140,14 +206,95 @@ function ClaudeCredentialControl({
           Manage project secret
         </Button>
       )}
+      <Button
+        loading={loginBusy}
+        onClick={async () => {
+          setLoginBusy(true);
+          setError("");
+          try {
+            setLogin(
+              await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
+                { project_id: projectId },
+              ),
+            );
+          } catch (err) {
+            setError(`${err}`);
+          } finally {
+            setLoginBusy(false);
+          }
+        }}
+      >
+        Connect Claude Pro/Max (experimental)
+      </Button>
+      {login && (login.state === "pending" || login.state === "verifying") && (
+        <Space orientation="vertical">
+          {login.verificationUrl && (
+            <a
+              href={login.verificationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open Claude sign-in
+            </a>
+          )}
+          {login.state === "pending" && login.verificationUrl && (
+            <Space>
+              <Input
+                aria-label="Claude sign-in code"
+                autoComplete="off"
+                value={loginCode}
+                onChange={(event) => setLoginCode(event.target.value)}
+              />
+              <Button
+                onClick={async () => {
+                  try {
+                    await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
+                      { project_id: projectId, id: login.id, code: loginCode },
+                    );
+                    setLoginCode("");
+                  } catch (err) {
+                    setError(`${err}`);
+                  }
+                }}
+              >
+                Submit code
+              </Button>
+            </Space>
+          )}
+          <Button
+            onClick={async () => {
+              try {
+                await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
+                  { project_id: projectId, id: login.id },
+                );
+                setLogin(undefined);
+              } catch (err) {
+                setError(`${err}`);
+              }
+            }}
+          >
+            Cancel sign-in
+          </Button>
+        </Space>
+      )}
+      {login?.state === "completed" && (
+        <Typography.Text role="status">
+          Claude subscription connected. Select it above for the next turn.
+        </Typography.Text>
+      )}
+      {login?.state === "failed" && (
+        <div role="alert">{login.error || "Claude sign-in failed"}</div>
+      )}
       <Typography.Text type="secondary">
         This account-local choice is applied when the next turn is admitted.
       </Typography.Text>
       <Typography.Text type="warning">
         {claudeCredentialTrustWarning(
-          value.startsWith("account-api-key:")
-            ? "account-api-key"
-            : "project-secret",
+          value.startsWith("account-subscription:")
+            ? "account-subscription"
+            : value.startsWith("account-api-key:")
+              ? "account-api-key"
+              : "project-secret",
         )}
       </Typography.Text>
       {error && (
@@ -323,10 +470,19 @@ function HarnessRuntimeSummaryContent({
       style={{ width: "100%", minWidth: 0 }}
     >
       <details>
-        <summary>ACP: {profile.id} · Full project access</summary>
+        <summary>
+          ACP: {profile.id} ·{" "}
+          {profile.id === "claude-code"
+            ? "Access depends on credential mode"
+            : "Full project access"}
+        </summary>
         <dl style={{ overflowWrap: "anywhere", margin: 8 }}>
           <dt>Credentials</dt>
-          <dd>Project-managed (not CoCalc billing)</dd>
+          <dd>
+            {profile.id === "claude-code"
+              ? "Selected below; billing and access vary by credential mode"
+              : "Project-managed (not CoCalc billing)"}
+          </dd>
           <dt>Revision</dt>
           <dd>{profile.revision}</dd>
           {profile.version === 1 ? (

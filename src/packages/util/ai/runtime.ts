@@ -60,6 +60,12 @@ export type AcpHarnessCredential =
       provider: "anthropic";
       mode: "account-api-key";
       credentialId: string;
+    }
+  | {
+      version: 1;
+      provider: "anthropic";
+      mode: "account-subscription";
+      credentialId: string;
     };
 
 export function parseAcpHarnessCredential(
@@ -93,7 +99,9 @@ export function parseAcpHarnessCredential(
   if (
     obj.version !== 1 ||
     obj.provider !== "anthropic" ||
-    (obj.mode !== "project-secret" && obj.mode !== "account-api-key")
+    (obj.mode !== "project-secret" &&
+      obj.mode !== "account-api-key" &&
+      obj.mode !== "account-subscription")
   ) {
     throw Error("Unsupported ACP harness credential selection");
   }
@@ -119,7 +127,7 @@ export function parseAcpHarnessCredential(
   return {
     version: 1,
     provider: "anthropic",
-    mode: "account-api-key",
+    mode: obj.mode,
     credentialId: obj.credentialId,
   };
 }

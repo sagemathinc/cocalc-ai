@@ -40,6 +40,7 @@ import getLogger from "@cocalc/backend/logger";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import { createAnthropicAccountCredentialRelay } from "./anthropic-credential-relay";
 import type { CredentialHttpRelay } from "./credential-http-relay";
+import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
@@ -85,6 +86,19 @@ export async function launchHarnessInProject(
   const threadId = conversation?.threadId;
   const profile = parseAcpHarnessProfile(binding.profile);
   const credential = binding.credential;
+  if (credential.mode === "account-subscription") {
+    const candidate = getQualifiedHarnessCandidate("claude-code");
+    if (
+      !isValidUUID(projectId) ||
+      !isValidUUID(accountId) ||
+      !getProject(projectId) ||
+      profile.version !== 2 ||
+      profile.id !== "claude-code" ||
+      candidate?.package.version !== profile.revision
+    )
+      throw Error("Unsupported Claude subscription profile");
+    return await launchClaudeSubscriptionController(binding);
+  }
   const harnessCommand = resolveHarnessCommand(
     profile,
     credential.mode === "account-api-key" ? credential.mode : undefined,

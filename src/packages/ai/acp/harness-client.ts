@@ -411,7 +411,10 @@ export class AcpHarnessClient {
     this.opening = true;
     try {
       const params = {
-        cwd: this.binding.profile.cwd,
+        cwd:
+          this.sessionPolicy === "claude-subscription-controller"
+            ? "/workspace"
+            : this.binding.profile.cwd,
         mcpServers: [],
         ...(this.sessionPolicy === "claude-subscription-controller"
           ? { _meta: claudeSubscriptionSessionMeta() }

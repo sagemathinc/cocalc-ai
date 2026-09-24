@@ -71,4 +71,37 @@ describe("ACP harness credential selection", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, listener);
   });
+
+  it("keeps subscription selection account-local", () => {
+    writeHarnessCredentialSelection({
+      accountId: "account-a",
+      projectId: "project-a",
+      threadKey: "thread-a",
+      credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId,
+      },
+    });
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "account-a",
+        projectId: "project-a",
+        threadKey: "thread-a",
+      }),
+    ).toEqual({
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId,
+    });
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "account-b",
+        projectId: "project-a",
+        threadKey: "thread-a",
+      })?.mode,
+    ).toBe("project-secret");
+  });
 });

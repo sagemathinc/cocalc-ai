@@ -2,8 +2,9 @@
 
 Date: 2026-09-23
 
-Status: offline auth-contract qualification completed; Pro/Max login, billing,
-and credential isolation are not implemented or verified in CoCalc. See
+Status: experimental login and tool-free controller canary implemented on the
+unreleased feature branch; Pro/Max billing and a useful coding-agent tool plane
+are not verified. See
 `src/.agents/claude-subscription-offline-qualification-2026-09-23.md`.
 
 ## Implementation Note (2026-09-23)
@@ -21,8 +22,26 @@ provider billing proof; it can also become stale after a session opens. The
 current sidecar still mounts project data and secrets, so it must not be used
 for personal subscription login. No Connect flow, credential store, isolated
 controller, mediated project tool plane, or live Pro/Max test exists yet.
-Subscription selection must remain disabled until those pieces and the exit
-gates below are complete.
+At this point subscription selection remained disabled; the later experimental
+canary below is not a release qualification.
+
+## Implementation Note (2026-09-24)
+
+The feature branch now has a first-party Claude CLI sign-in action, account-home
+credential storage, account-local credential selection, exact-ID admission, and
+an isolated controller launch path. The controller uses a trusted base image,
+not the project rootfs, with a separate network and no project/secret mount.
+The ACP client sends an empty tool catalog and refuses a prompt without an
+explicit Pro/Max status report. Fake CLI, bundle, controller-argument, and UI
+selection tests pass. This is an **experimental text-only canary**, not coding
+agent subscription support or proof of credential isolation. The adapter status
+is not billing proof and model-controlled tool access has not been qualified.
+
+This development host has neither the pinned 0.81.1 managed harness package nor
+a local Podman image. A live Pro/Max account is also not available to this run.
+Consequently sign-in, container launch, session creation, refresh, billing, and
+adversarial prompts remain untested. Do not release or claim end-to-end support
+until the provider and security exit gates below pass.
 
 ## Goal
 

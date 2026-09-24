@@ -11,3 +11,6 @@ export const ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY =
 export const ANTHROPIC_API_KEY_PROFILE_ID = "anthropic-api-key-v1";
 export const ANTHROPIC_API_KEY_KIND = "anthropic-api-key";
 export const ANTHROPIC_API_PROVIDER = "anthropic";
+
+export const CLAUDE_SUBSCRIPTION_PROFILE_ID = "claude-subscription-v1";
+export const CLAUDE_SUBSCRIPTION_KIND = "claude-subscription-home-v1";

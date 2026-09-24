@@ -6996,6 +6996,54 @@ export async function codexDeviceAuthCancel({
   );
 }
 
+export async function claudeSubscriptionLoginStart({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginSubmitCode({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+  code: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginCancel({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
 export async function codexUploadAuthFile({
   account_id,
   project_id,

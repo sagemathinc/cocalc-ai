@@ -114,6 +114,9 @@ export class HarnessAgent implements AcpAgent {
                 return answers;
               }
             : undefined,
+          this.binding.credential.mode === "account-subscription"
+            ? "claude-subscription-controller"
+            : "default",
         );
         this.client = client;
         // Disposal may race with launch/initialization.

@@ -41,6 +41,17 @@ export function readHarnessCredentialSelection({
       };
     }
   }
+  if (value.startsWith("account-subscription:")) {
+    const credentialId = value.slice("account-subscription:".length);
+    if (isValidUUID(credentialId)) {
+      return {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId,
+      };
+    }
+  }
   return { version: 1, provider: "anthropic", mode: "project-secret" };
 }
 
@@ -60,7 +71,9 @@ export function writeHarnessCredentialSelection({
   const value =
     credential.mode === "account-api-key"
       ? `account-api-key:${credential.credentialId}`
-      : "project-secret";
+      : credential.mode === "account-subscription"
+        ? `account-subscription:${credential.credentialId}`
+        : "project-secret";
   localStorage.setItem(storageKey, value);
   window.dispatchEvent(new Event(HARNESS_CREDENTIAL_SELECTION_EVENT));
 }

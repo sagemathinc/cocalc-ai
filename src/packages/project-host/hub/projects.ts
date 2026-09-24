@@ -69,6 +69,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { getClaudeSubscriptionLoginService } from "../acp/claude-subscription-service";
 import {
   writeManagedAuthorizedKeys,
   deleteVolume,
@@ -3017,6 +3018,75 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { id, canceled };
   }
 
+  async function claudeSubscriptionLoginStart({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }) {
+    assertHostedProjectAccess({ account_id, project_id });
+    return await (
+      await getClaudeSubscriptionLoginService()
+    ).start(project_id, account_id!);
+  }
+
+  async function claudeSubscriptionLoginStatus({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    assertHostedProjectAccess({ account_id, project_id });
+    return (await getClaudeSubscriptionLoginService()).status(
+      id,
+      project_id,
+      account_id!,
+    );
+  }
+
+  async function claudeSubscriptionLoginSubmitCode({
+    account_id,
+    project_id,
+    id,
+    code,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+    code: string;
+  }): Promise<{ accepted: true }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    (await getClaudeSubscriptionLoginService()).submitCode(
+      id,
+      project_id,
+      account_id!,
+      code,
+    );
+    return { accepted: true };
+  }
+
+  async function claudeSubscriptionLoginCancel({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }): Promise<{ canceled: true }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    (await getClaudeSubscriptionLoginService()).cancel(
+      id,
+      project_id,
+      account_id!,
+    );
+    return { canceled: true };
+  }
+
   async function codexUploadAuthFile({
     account_id,
     project_id,
@@ -3628,6 +3698,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     getCodexCredentialSelectionCapability;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
+  hubApi.projects.claudeSubscriptionLoginStart = claudeSubscriptionLoginStart;
+  hubApi.projects.claudeSubscriptionLoginStatus = claudeSubscriptionLoginStatus;
+  hubApi.projects.claudeSubscriptionLoginSubmitCode =
+    claudeSubscriptionLoginSubmitCode;
+  hubApi.projects.claudeSubscriptionLoginCancel = claudeSubscriptionLoginCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
   hubApi.projects.codexUploadAuthFileV2 = codexUploadAuthFileV2;
   hubApi.projects.getCodexUsageStatus = getCodexUsageStatus;
