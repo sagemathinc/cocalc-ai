@@ -3,6 +3,7 @@ import { Modal } from "antd";
 import { Map as ImmutableMap } from "immutable";
 import * as React from "react";
 import { IntlProvider } from "react-intl";
+import { encodeRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { StartButton } from "./start-button";
 
 const mockStartProject = jest.fn();
@@ -236,6 +237,17 @@ describe("StartButton", () => {
   });
 
   it("requires confirmation before stopping another sponsored project and retrying", async () => {
+    mockStartProject.mockRejectedValueOnce(
+      new Error(
+        encodeRuntimeSponsorDenial({
+          code: "runtime_sponsor_slots_exhausted",
+          sponsor_account_id: "user-1",
+          limit: 1,
+          current: 1,
+          active_projects: [],
+        }),
+      ),
+    );
     startLroRecord = {
       toJS: () => ({
         summary: {
@@ -274,16 +286,23 @@ describe("StartButton", () => {
     fireEvent.click(screen.getByRole("button", { name: /^stop$/i }));
     expect(mockStopProject).not.toHaveBeenCalled();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Stop project and continue" }),
+      await screen.findByRole("button", { name: "Stop project" }),
     );
 
     await waitFor(() => {
       expect(mockStopProject).toHaveBeenCalledWith("running-project");
       expect(mockStartProject).toHaveBeenCalledWith("project-1");
+      expect(
+        screen.getByText(
+          "The sponsor is still at the running-project limit. Stop another project or try again shortly.",
+        ),
+      ).toBeTruthy();
     });
+    expect(screen.queryByText(/COCALC_RUNTIME_SPONSOR_DENIAL/)).toBeNull();
+    expect(screen.queryByText(/Runtime sponsor action failed/)).toBeNull();
   });
 
-  it("shows the actual slot count when running projects exceed a reduced limit", () => {
+  it("waits for enough stops before retrying an over-limit start", async () => {
     startLroRecord = {
       toJS: () => ({
         summary: {
@@ -338,9 +357,33 @@ describe("StartButton", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "Stop at least 2 projects below to free a slot. CoCalc will try to start this project after each stop.",
+        "Stop at least 2 projects below to free a slot. CoCalc will try to start this project once a slot is free.",
       ),
     ).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^stop$/i })[0]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stop project" }),
+    );
+    await waitFor(() => {
+      expect(mockStopProject).toHaveBeenCalledWith("running-project");
+      expect(
+        screen.getByText(
+          "William Stein is using 2 sponsored running-project slots (current limit: 2).",
+        ),
+      ).toBeTruthy();
+    });
+    expect(mockStartProject).not.toHaveBeenCalled();
+    expect(screen.queryByText("running-project", { exact: true })).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^stop$/i })[0]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stop project" }),
+    );
+    await waitFor(() => {
+      expect(mockStopProject).toHaveBeenCalledWith("running-project-2");
+      expect(mockStartProject).toHaveBeenCalledWith("project-1");
+    });
   });
 
   it("ignores old async start failures for compact start buttons", async () => {

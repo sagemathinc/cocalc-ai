@@ -5190,8 +5190,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
             }),
         });
       } catch (err) {
-        actions.setState({ control_error: `Error stopping project -- ${err}` });
-        throw err;
+        if (isProjectionConvergenceError(err, "project.stop")) {
+          // The routed stop RPC completed; only this account's projection is late.
+          logger.warn("project stop projection did not converge", {
+            project_id,
+            err,
+          });
+        } else {
+          actions.setState({
+            control_error: `Error stopping project -- ${err}`,
+          });
+          throw err;
+        }
       }
       actions.setState({ control_error: "" });
       this.optimisticProjectStateUpdate(project_id, "opened");

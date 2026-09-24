@@ -948,11 +948,23 @@ function RuntimeSponsorDenialDescription({
   const [changingSponsor, setChangingSponsor] = useState(false);
   const [stopError, setStopError] = useState<string>("");
   const [actionMessage, setActionMessage] = useState<string>("");
-  const visibleProjects = denial.active_projects.filter(
-    (project) => project.visible !== false,
+  const [stoppedProjectIds, setStoppedProjectIds] = useState<
+    Record<string, true>
+  >({});
+  const [refreshedDenial, setRefreshedDenial] =
+    useState<RuntimeSponsorDenial>();
+  const currentDenial = refreshedDenial ?? denial;
+  const remainingCurrent = Math.max(
+    0,
+    currentDenial.current - Object.keys(stoppedProjectIds).length,
   );
-  const nonCollaboratorCount =
-    denial.active_projects.length - visibleProjects.length;
+  const visibleProjects = currentDenial.active_projects.filter(
+    (project) =>
+      project.visible !== false && !stoppedProjectIds[project.project_id],
+  );
+  const nonCollaboratorCount = currentDenial.active_projects.filter(
+    (project) => project.visible === false,
+  ).length;
   const canStopAnyVisibleProject = visibleProjects.some(
     (project) => project.can_stop !== false,
   );
@@ -961,14 +973,34 @@ function RuntimeSponsorDenialDescription({
     setStopError("");
     setActionMessage("Stopping the selected project...");
     setStoppingProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
+    let stopped = false;
     try {
       await redux.getActions("projects").stop_project(projectToStopId);
+      stopped = true;
+      setStoppedProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
+      if (remainingCurrent - 1 >= currentDenial.limit) {
+        setActionMessage("");
+        return;
+      }
       setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
       Modal.destroyAll();
       onStarted?.();
     } catch (err) {
-      setStopError(`${err}`);
+      const updatedDenial = extractRuntimeSponsorDenial(err);
+      if (updatedDenial) {
+        setRefreshedDenial(updatedDenial);
+        setStoppedProjectIds({});
+        setStopError(
+          "The sponsor is still at the running-project limit. Stop another project or try again shortly.",
+        );
+      } else {
+        setStopError(
+          stopped
+            ? "The project stopped, but this project could not be started. Please try again."
+            : "Could not stop that project. Please try again.",
+        );
+      }
       setActionMessage("");
     } finally {
       setStoppingProjectIds((ids) => {
@@ -999,12 +1031,16 @@ function RuntimeSponsorDenialDescription({
     }
   }
 
-  const sponsorName = denial.sponsor_display_name ?? "The runtime sponsor";
+  const sponsorName =
+    currentDenial.sponsor_display_name ?? "The runtime sponsor";
   const slotMessage =
-    denial.limit <= 0 && denial.current === 0
+    currentDenial.limit <= 0 && remainingCurrent === 0
       ? `${sponsorName} does not currently have sponsored running-project slots available.`
-      : `${sponsorName} is using ${denial.current} sponsored running-project ${denial.current === 1 ? "slot" : "slots"} (current limit: ${denial.limit}).`;
-  const projectsToStop = Math.max(1, denial.current - denial.limit + 1);
+      : `${sponsorName} is using ${remainingCurrent} sponsored running-project ${remainingCurrent === 1 ? "slot" : "slots"} (current limit: ${currentDenial.limit}).`;
+  const projectsToStop = Math.max(
+    1,
+    remainingCurrent - currentDenial.limit + 1,
+  );
 
   return (
     <div>
@@ -1019,7 +1055,7 @@ function RuntimeSponsorDenialDescription({
         }
         description={
           canStopAnyVisibleProject
-            ? `Stop at least ${projectsToStop} ${projectsToStop === 1 ? "project" : "projects"} below to free a slot. CoCalc will try to start this project after each stop.`
+            ? `Stop at least ${projectsToStop} ${projectsToStop === 1 ? "project" : "projects"} below to free a slot. CoCalc will try to start this project once a slot is free.`
             : "Free a slot or review membership details, then try starting this project again."
         }
       />
@@ -1043,14 +1079,18 @@ function RuntimeSponsorDenialDescription({
                 {project.can_stop !== false && (
                   <Popconfirm
                     title="Stop this project to free a running slot?"
-                    description="This interrupts all agents and other processes in that project, including collaborators' work. CoCalc will try to start this project afterward; if the limit is still reached, stop another project. No message is resent."
+                    description="Stopping interrupts agents and collaborators in this project. CoCalc will try to start the selected project when a slot is free. No message is resent."
                     onConfirm={() => stopProjectAndRetry(project.project_id)}
-                    okText="Stop project and continue"
+                    okText="Stop project"
                     cancelText="Cancel"
+                    styles={{
+                      root: { width: 360, maxWidth: "calc(100vw - 24px)" },
+                    }}
                   >
                     <Button
                       size="small"
                       loading={!!stoppingProjectIds[project.project_id]}
+                      disabled={Object.keys(stoppingProjectIds).length > 0}
                     >
                       Stop
                     </Button>
@@ -1075,14 +1115,14 @@ function RuntimeSponsorDenialDescription({
           </Space>
         </div>
       )}
-      {(denial.can_upgrade || denial.can_change_sponsor) && (
+      {(currentDenial.can_upgrade || currentDenial.can_change_sponsor) && (
         <Space size="small" style={{ marginTop: "12px" }} wrap>
-          {denial.can_upgrade && (
+          {currentDenial.can_upgrade && (
             <Button size="small" onClick={onOpenMembershipDetails}>
               Open membership details
             </Button>
           )}
-          {denial.can_change_sponsor && (
+          {currentDenial.can_change_sponsor && (
             <Button
               size="small"
               loading={changingSponsor}
@@ -1095,7 +1135,7 @@ function RuntimeSponsorDenialDescription({
       )}
       {stopError && (
         <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>
-          Runtime sponsor action failed: {stopError}
+          {stopError}
         </div>
       )}
       {nonCollaboratorCount > 0 && (
