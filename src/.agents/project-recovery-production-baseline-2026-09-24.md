@@ -34,6 +34,18 @@ bounded first page includes unprovisioned and unchanged projects and does not
 compute due-to-success by funding class. It is unsuitable as the objective
 baseline without a more selective, audited aggregate query.
 
+## 2026-09-24 17:15 UTC operator health
+
+One hour later, the same read-only check reported project-start lifecycle p95
+of 5.3 seconds from 149 starts, below the seven-second target. Backend start
+time was 4.3 seconds p95, admission 639 ms, and convergence 1.2 seconds.
+Terminal readiness was 5.7 seconds, Jupyter 1.2 seconds, exec 5 ms, file
+content paint 1.3 seconds, and file sync 3.2 seconds p95. Bay backup restore
+and PITR checks remained healthy. Overall health was warning for checks other
+than browser latency. The marked change from the preceding hour reinforces
+the need for a multi-day distribution and investigation of the earlier start
+spike; neither sample alone is a stable baseline.
+
 ## Remaining measurements
 
 - Seven days of start, terminal, Jupyter, exec, file, and host pressure
