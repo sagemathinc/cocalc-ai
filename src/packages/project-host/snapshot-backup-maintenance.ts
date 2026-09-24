@@ -494,10 +494,12 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   hostId,
   projectIds,
   onFutureDue,
+  shadow = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
+  shadow?: boolean;
 }): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
@@ -544,13 +546,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     await statusClient.reportProjectMaintenance(value);
     markMaintenanceReportDelivered(value);
   };
-  for (const pending of listPendingMaintenanceReports()) {
-    try {
-      await statusClient.reportProjectMaintenance(pending);
-      markMaintenanceReportDelivered(pending);
-    } catch (err) {
-      logger.warn("maintenance status replay paused", { hostId, err });
-      break;
+  if (!shadow) {
+    for (const pending of listPendingMaintenanceReports()) {
+      try {
+        await statusClient.reportProjectMaintenance(pending);
+        markMaintenanceReportDelivered(pending);
+      } catch (err) {
+        logger.warn("maintenance status replay paused", { hostId, err });
+        break;
+      }
     }
   }
   const activeDays = parseNonNegativeInteger(
@@ -725,6 +729,70 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     rows,
     (row) => row.backup_due_since,
   );
+  if (shadow) {
+    const summarizeLane = (
+      ordered: HostProjectMaintenanceSchedule[],
+      kind: "snapshot" | "backup",
+    ) => {
+      let dueCount = 0;
+      let payingDue = 0;
+      let freeDue = 0;
+      let unclassifiedDue = 0;
+      let retryWaiting = 0;
+      let oldestDelayMs = 0;
+      const firstClasses: string[] = [];
+      for (const row of ordered) {
+        const schedule = mergeSchedule(
+          kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+          kind === "snapshot" ? row.snapshots : row.backups,
+        );
+        if (schedule.disabled) continue;
+        const due =
+          kind === "snapshot"
+            ? snapshotDueAt(row, schedule)
+            : backupDueAt(row, schedule);
+        if (due == null || due > now) continue;
+        dueCount++;
+        if (row.storage_service_class === "paying") payingDue++;
+        else if (row.storage_service_class === "free") freeDue++;
+        else unclassifiedDue++;
+        if (
+          (parseTimestampMs(
+            kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
+          ) ?? 0) > now
+        ) {
+          retryWaiting++;
+        }
+        oldestDelayMs = Math.max(oldestDelayMs, now - due);
+        if (firstClasses.length < 10) {
+          firstClasses.push(
+            row.storage_service_class === "paying" ||
+              row.storage_service_class === "free"
+              ? row.storage_service_class
+              : "unclassified",
+          );
+        }
+      }
+      return {
+        due_count: dueCount,
+        paying_due: payingDue,
+        free_due: freeDue,
+        unclassified_due: unclassifiedDue,
+        retry_waiting: retryWaiting,
+        oldest_delay_ms: oldestDelayMs,
+        first_ten_classes: firstClasses,
+      };
+    };
+    logger.info("snapshot/backup shadow reconciliation", {
+      hostId,
+      inventory_count: rows.length,
+      snapshot: summarizeLane(snapshotRows, "snapshot"),
+      backup: summarizeLane(backupRows, "backup"),
+      admission_pressure_state: admission?.pressure_state ?? "unknown",
+      maintenance_parallelism: parallelism,
+    });
+    return true;
+  }
   const queuedAt = Date.now();
   const snapshotLane = async () => {
     if (snapshotLaneRunning) return;
@@ -1059,15 +1127,18 @@ export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   hostId,
   projectIds,
   onFutureDue,
+  shadow = false,
 }: {
   hostId: string;
   projectIds?: string[];
   onFutureDue?: (projectId: string, at: number) => void;
+  shadow?: boolean;
 }) {
   return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
     hostId,
     projectIds,
     onFutureDue,
+    shadow,
   });
 }
 
@@ -1080,6 +1151,9 @@ export function startProjectSnapshotBackupMaintenance({
     logger.info("snapshot/backup maintenance disabled by env", { hostId });
     return () => {};
   }
+  const shadow = parseBoolean(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SHADOW,
+  );
   const sweepMs = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS,
     DEFAULT_SWEEP_MS,
@@ -1147,6 +1221,7 @@ export function startProjectSnapshotBackupMaintenance({
         hostId,
         projectIds,
         onFutureDue: rememberFutureDue,
+        shadow,
       });
       if (!reconciled || laneBusy) {
         needsRetry = true;
@@ -1182,6 +1257,7 @@ export function startProjectSnapshotBackupMaintenance({
       reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
         hostId,
         onFutureDue: rememberFutureDue,
+        shadow,
       });
     } catch (err) {
       logger.warn("snapshot/backup maintenance sweep failed", {
@@ -1211,6 +1287,7 @@ export function startProjectSnapshotBackupMaintenance({
   };
   logger.info("snapshot/backup maintenance scheduled", {
     hostId,
+    mode: shadow ? "shadow" : "active",
     initial_delay_ms: initialDelayMs,
     sweep_ms: sweepMs,
   });

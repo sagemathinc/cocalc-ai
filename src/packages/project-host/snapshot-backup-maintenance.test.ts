@@ -13,6 +13,7 @@ const saveValidatedMaintenanceSchedulesMock = jest.fn();
 const saveMaintenanceReportMock = jest.fn();
 const markMaintenanceReportDeliveredMock = jest.fn();
 const onProjectChangeReportedMock = jest.fn();
+const loggerInfoMock = jest.fn();
 
 jest.mock("./sqlite/maintenance-ledger", () => ({
   listLeasedMaintenanceSchedules: (...args: any[]) =>
@@ -35,7 +36,7 @@ jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: jest.fn(() => ({
     debug: jest.fn(),
-    info: jest.fn(),
+    info: (...args: any[]) => loggerInfoMock(...args),
     warn: jest.fn(),
     error: jest.fn(),
   })),
@@ -812,6 +813,93 @@ describe("snapshot-backup-maintenance", () => {
     expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
     expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
     expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+  });
+
+  it("calculates shadow due and priority without mutating or publishing status", async () => {
+    const changed = "2026-04-01T00:00:00.000Z";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "paid-project",
+        storage_account_id: "paid-account",
+        storage_service_class: "paying",
+        last_changed: changed,
+        backup_due_since: changed,
+        snapshots: { daily: 1 },
+        backups: { daily: 1 },
+      },
+      {
+        project_id: "free-project",
+        storage_account_id: "free-account",
+        storage_service_class: "free",
+        last_changed: changed,
+        backup_due_since: changed,
+        snapshots: { daily: 1 },
+        backups: { daily: 1 },
+      },
+      {
+        project_id: "unclassified-project",
+        storage_account_id: "unclassified-account",
+        last_changed: changed,
+        backup_due_since: changed,
+        snapshots: { daily: 1 },
+        backups: { daily: 1 },
+      },
+    ]);
+    listPendingMaintenanceReportsMock.mockReturnValue([
+      { project_id: "previous-report" },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    expect(
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+        shadow: true,
+      }),
+    ).toBe(true);
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalled();
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      "snapshot/backup shadow reconciliation",
+      expect.objectContaining({
+        inventory_count: 3,
+        snapshot: expect.objectContaining({
+          due_count: 3,
+          paying_due: 1,
+          free_due: 1,
+          unclassified_due: 1,
+          first_ten_classes: ["paying", "free", "unclassified"],
+        }),
+        backup: expect.objectContaining({
+          due_count: 3,
+          paying_due: 1,
+          free_due: 1,
+          unclassified_due: 1,
+          first_ten_classes: ["paying", "free", "unclassified"],
+        }),
+      }),
+    );
+  });
+
+  it("uses shadow mode for timed host reconciliation when configured", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-10T22:00:00.000Z"));
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SHADOW = "true";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      "snapshot/backup maintenance scheduled",
+      expect.objectContaining({ mode: "shadow" }),
+    );
+    stop();
   });
 
   it("dispatches confirmed project changes in bounded event batches", async () => {
