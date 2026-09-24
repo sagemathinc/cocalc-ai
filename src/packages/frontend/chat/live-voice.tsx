@@ -86,11 +86,19 @@ export function ChatLiveVoice({
   messages,
   onDelegate,
   visible,
+  panelOpen = true,
+  onClose,
+  onDictate,
+  dictationBusy = false,
 }: {
   projectId: string;
   messages: ProjectedChatMessage[];
   onDelegate: (text: string) => Promise<{ message_id: string }>;
   visible: boolean;
+  panelOpen?: boolean;
+  onClose?: () => void;
+  onDictate?: () => void;
+  dictationBusy?: boolean;
 }) {
   const [fundingPreference, setFundingPreference] = useState<"site" | "own">(
     "site",
@@ -363,12 +371,35 @@ export function ChatLiveVoice({
     }
   };
 
-  if (
-    !visible ||
-    !capabilities ||
-    capabilities.reason === "Live voice is not enabled."
-  )
-    return null;
+  if (!visible || (!panelOpen && phase === "idle")) return null;
+  const close = () => {
+    setConfirming(false);
+    onClose?.();
+  };
+  if (!capabilities || capabilities.reason === "Live voice is not enabled.") {
+    return (
+      <div id="cocalc-live-voice-panel" className="cocalc-live-voice">
+        <div className="cocalc-live-voice-main">
+          <strong>Voice options</strong>
+          <div className="cocalc-live-voice-detail">
+            Turn a short recording into text for your message.
+          </div>
+        </div>
+        <div className="cocalc-live-voice-actions">
+          <Button disabled={!onDictate || dictationBusy} onClick={onDictate}>
+            {dictationBusy ? "Dictating…" : "Dictate message"}
+          </Button>
+          <Button
+            className="cocalc-live-voice-close"
+            type="text"
+            onClick={close}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    );
+  }
   const choice =
     capabilities.own_key_available && phase === "idle" ? (
       <Button
@@ -401,7 +432,11 @@ export function ChatLiveVoice({
           : "Talk with your agent";
   const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return (
-    <div className="cocalc-live-voice" style={{ color: UI_COLORS.text }}>
+    <div
+      id="cocalc-live-voice-panel"
+      className="cocalc-live-voice"
+      style={{ color: UI_COLORS.text }}
+    >
       <audio
         ref={audioRef}
         autoPlay
@@ -427,6 +462,10 @@ export function ChatLiveVoice({
                 ? "Preparing your microphone…"
                 : "Listening")}
           </div>
+        ) : dictationBusy ? (
+          <div className="cocalc-live-voice-detail">
+            Dictation in progress. Finish or cancel from the microphone control.
+          </div>
         ) : confirming ? (
           <div className="cocalc-live-voice-detail">
             Uses {included ? "included AI" : "your OpenAI key"} for up to two
@@ -439,7 +478,7 @@ export function ChatLiveVoice({
           </div>
         ) : (
           <div className="cocalc-live-voice-detail">
-            Speak naturally; your agent can keep working after the call.
+            Choose a live conversation or dictate a message to text.
           </div>
         )}
         {caption && active && (
@@ -492,7 +531,11 @@ export function ChatLiveVoice({
         )}
         {!capabilities.enabled ? (
           needsMembership ? (
-            <Button type="primary" onClick={() => setConfirming(true)}>
+            <Button
+              type="primary"
+              disabled={dictationBusy}
+              onClick={() => setConfirming(true)}
+            >
               Live voice
             </Button>
           ) : (
@@ -501,14 +544,22 @@ export function ChatLiveVoice({
         ) : phase === "idle" ? (
           confirming ? (
             <>
-              <Button type="primary" onClick={() => void start()}>
+              <Button
+                type="primary"
+                disabled={dictationBusy}
+                onClick={() => void start()}
+              >
                 Start live call
               </Button>
               <Button onClick={() => setConfirming(false)}>Not now</Button>
             </>
           ) : (
             <>
-              <Button type="primary" onClick={() => setConfirming(true)}>
+              <Button
+                type="primary"
+                disabled={dictationBusy}
+                onClick={() => setConfirming(true)}
+              >
                 Live voice
               </Button>
               {choice}
@@ -531,6 +582,20 @@ export function ChatLiveVoice({
             )}
             <Button danger onClick={() => void stop()}>
               End live call
+            </Button>
+          </>
+        )}
+        {phase === "idle" && (
+          <>
+            <Button disabled={!onDictate || dictationBusy} onClick={onDictate}>
+              {dictationBusy ? "Dictating…" : "Dictate message"}
+            </Button>
+            <Button
+              className="cocalc-live-voice-close"
+              type="text"
+              onClick={close}
+            >
+              Close
             </Button>
           </>
         )}

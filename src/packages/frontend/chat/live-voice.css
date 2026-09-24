@@ -151,6 +151,10 @@
   gap: 6px;
 }
 
+.cocalc-live-voice-close {
+  margin-left: auto;
+}
+
 .cocalc-live-voice-modal-actions {
   display: flex;
   flex-wrap: wrap;

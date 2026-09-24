@@ -93,6 +93,60 @@ it("shows site allowance without a dollar amount and starts from the keyboard", 
   expect(screen.getByRole("button", { name: "Not now" })).toBeInTheDocument();
 });
 
+it("opens and closes voice options and offers one-shot dictation", async () => {
+  mockLiveVoice.mockResolvedValue({
+    enabled: true,
+    max_seconds: 120,
+    funding_source: "site",
+  });
+  const onDictate = jest.fn();
+  const onClose = jest.fn();
+  const user = userEvent.setup();
+  const view = render(
+    <ChatLiveVoice
+      {...props}
+      panelOpen={false}
+      onDictate={onDictate}
+      onClose={onClose}
+    />,
+  );
+  expect(screen.queryByText("Talk with your agent")).not.toBeInTheDocument();
+  view.rerender(
+    <ChatLiveVoice
+      {...props}
+      panelOpen
+      onDictate={onDictate}
+      onClose={onClose}
+    />,
+  );
+  expect(await screen.findByText("Talk with your agent")).toBeInTheDocument();
+  await user.click(
+    await screen.findByRole("button", { name: "Dictate message" }),
+  );
+  expect(onDictate).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  view.rerender(
+    <ChatLiveVoice
+      {...props}
+      panelOpen
+      dictationBusy
+      onDictate={onDictate}
+      onClose={onClose}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Live voice" })).toBeDisabled();
+  view.rerender(
+    <ChatLiveVoice
+      {...props}
+      panelOpen={false}
+      onDictate={onDictate}
+      onClose={onClose}
+    />,
+  );
+  expect(screen.queryByText("Talk with your agent")).not.toBeInTheDocument();
+});
+
 it("offers free users membership or their own key from a dialog", async () => {
   mockLiveVoice.mockImplementation(async ({ funding_preference }) =>
     funding_preference === "own"

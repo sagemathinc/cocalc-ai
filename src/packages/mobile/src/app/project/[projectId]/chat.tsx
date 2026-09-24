@@ -499,6 +499,7 @@ export default function ChatScreen() {
     changeDraft(`${before}${before && !/\s$/.test(before) ? " " : ""}${text}`);
   });
   const live = useLiveVoice(profileId, projectId, threadId, client, snapshot);
+  const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
   const speechBusy = speech.state.phase !== "idle" || live.phase !== "idle";
 
   useEffect(() => {
@@ -847,6 +848,10 @@ export default function ChatScreen() {
           <LiveVoiceControls
             live={live}
             profileId={profileId}
+            open={voiceOptionsOpen}
+            onClose={() => setVoiceOptionsOpen(false)}
+            onDictate={() => void speech.controller.start()}
+            dictationBusy={speech.state.phase !== "idle"}
             disabled={
               speech.state.phase !== "idle" ||
               submitting ||
@@ -969,16 +974,17 @@ export default function ChatScreen() {
             {live.phase === "idle" ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Dictate message"
+                accessibilityLabel="Voice options"
                 accessibilityState={{
+                  expanded: voiceOptionsOpen,
                   disabled:
                     speechBusy || !draftLoaded || submitting || attaching,
                 }}
                 disabled={speechBusy || !draftLoaded || submitting || attaching}
-                onPress={() => void speech.controller.start()}
+                onPress={() => setVoiceOptionsOpen((open) => !open)}
                 style={styles.messageAction}
               >
-                <Text style={styles.link}>Dictate</Text>
+                <Text style={styles.link}>Voice</Text>
               </Pressable>
             ) : null}
             {running && live.phase === "idle" ? (

@@ -903,6 +903,16 @@ function ChatPanelContent({
   ]);
 
   const [composerSession, setComposerSession] = useState(0);
+  const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
+  const [dictationBusy, setDictationBusy] = useState(false);
+  const [dictationAvailable, setDictationAvailable] = useState(false);
+  const dictationStartRef = useRef<(() => void) | undefined>(undefined);
+  const registerDictationStart = useCallback(
+    (start: (() => void) | undefined) => {
+      dictationStartRef.current = start;
+    },
+    [],
+  );
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   );
@@ -1385,6 +1395,7 @@ function ChatPanelContent({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
+  useEffect(() => setVoiceOptionsOpen(false), [selectedThreadId]);
   const selectedAttentionRecords = useMemo(
     () =>
       selectedThreadId
@@ -3136,6 +3147,12 @@ function ChatPanelContent({
           messages={liveVoiceMessages}
           onDelegate={sendVoiceTask}
           visible={isVisible && tabIsVisible && isChatForeground}
+          panelOpen={voiceOptionsOpen && selectedThreadResolved == null}
+          onClose={() => setVoiceOptionsOpen(false)}
+          onDictate={
+            dictationAvailable ? () => dictationStartRef.current?.() : undefined
+          }
+          dictationBusy={dictationBusy}
         />
       )}
       {selectedThreadResolved != null ? (
@@ -3187,6 +3204,15 @@ function ChatPanelContent({
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
             refreshCodexPaymentSource={refreshCodexPaymentSource}
+            voiceOptionsOpen={voiceOptionsOpen}
+            onToggleVoiceOptions={
+              selectedThreadMetadata?.agent_kind === "acp"
+                ? () => setVoiceOptionsOpen((open) => !open)
+                : undefined
+            }
+            onDictationStartReady={registerDictationStart}
+            onDictationBusyChange={setDictationBusy}
+            onDictationAvailabilityChange={setDictationAvailable}
             onOpenCodexPaymentConfig={() => {
               refreshCodexPaymentSource?.();
               setCodexPaymentConfigOpen(true);

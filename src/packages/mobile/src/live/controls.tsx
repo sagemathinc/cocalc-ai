@@ -112,17 +112,27 @@ export function LiveVoiceControls({
   live,
   disabled,
   profileId,
+  open = true,
+  onClose,
+  onDictate,
+  dictationBusy = false,
 }: {
   live: ReturnType<typeof useLiveVoice>;
   disabled: boolean;
   profileId?: string;
+  open?: boolean;
+  onClose?: () => void;
+  onDictate?: () => void;
+  dictationBusy?: boolean;
 }) {
   const colors = usePalette();
   const [confirming, setConfirming] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [settingsError, setSettingsError] = useState<string>();
-  if (!live.capabilities) return null;
-  if (live.capabilities.reason === "Live voice is not enabled.") return null;
+  const close = () => {
+    setConfirming(false);
+    onClose?.();
+  };
   const button = (
     label: string,
     onPress: () => void,
@@ -176,6 +186,36 @@ export function LiveVoiceControls({
       </Text>
     </Pressable>
   );
+  if (!open && live.phase === "idle") return null;
+  if (
+    !live.capabilities ||
+    live.capabilities.reason === "Live voice is not enabled."
+  ) {
+    if (!onDictate) return null;
+    return (
+      <View
+        style={{
+          backgroundColor: colors.inset,
+          borderColor: colors.border,
+          borderWidth: 1,
+          borderRadius: 14,
+          padding: 12,
+          gap: 10,
+        }}
+      >
+        <Text style={{ color: colors.text, fontSize: 16, fontWeight: "700" }}>
+          Voice options
+        </Text>
+        <Text style={{ color: colors.secondary, fontSize: 12 }}>
+          Turn a short recording into text for your message.
+        </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {button("Dictate message", onDictate, disabled || dictationBusy)}
+          {onClose && button("Close voice options", close, false, "link")}
+        </View>
+      </View>
+    );
+  }
   const included = live.capabilities.funding_source === "site";
   const needsMembership =
     !live.capabilities.enabled &&
@@ -309,9 +349,12 @@ export function LiveVoiceControls({
                   : "Listening")
               : confirming
                 ? `Uses ${included ? "included AI" : "your OpenAI key"} for up to ${live.capabilities.max_seconds / 60} minutes. Agent work may continue after the call.`
-                : live.capabilities.enabled
-                  ? "Speak naturally; your agent can keep working after the call."
-                  : (live.capabilities.reason ?? "Live voice is unavailable.")}
+                : dictationBusy
+                  ? "Dictation in progress. Finish or cancel below."
+                  : live.capabilities.enabled
+                    ? "Choose a live conversation or dictate a message to text."
+                    : (live.capabilities.reason ??
+                      "Live voice is unavailable.")}
           </Text>
         </View>
       </View>
@@ -386,6 +429,12 @@ export function LiveVoiceControls({
             {button("End live call", live.end, false, "danger")}
           </>
         )}
+        {live.phase === "idle" &&
+          onDictate &&
+          button("Dictate message", onDictate, disabled || dictationBusy)}
+        {live.phase === "idle" &&
+          onClose &&
+          button("Close voice options", close, false, "link")}
       </View>
       {live.preview && live.phase === "live" && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

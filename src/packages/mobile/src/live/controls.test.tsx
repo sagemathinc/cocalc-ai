@@ -133,3 +133,49 @@ it("does not offer live voice without a server capability", async () => {
   expect(screen.toJSON()).toBeNull();
   await act(async () => screen.unmount());
 });
+
+it("keeps idle voice options hidden until opened and offers dictation and close", async () => {
+  const onDictate = jest.fn();
+  const onClose = jest.fn();
+  const live: any = {
+    capabilities: { enabled: true, max_seconds: 120, funding_source: "site" },
+    phase: "idle",
+  };
+  let screen: any;
+  await act(async () => {
+    screen = create(
+      <LiveVoiceControls
+        live={live}
+        disabled={false}
+        open={false}
+        onDictate={onDictate}
+        onClose={onClose}
+      />,
+    );
+  });
+  expect(screen.toJSON()).toBeNull();
+  await act(async () => {
+    screen.update(
+      <LiveVoiceControls
+        live={live}
+        disabled={false}
+        open
+        onDictate={onDictate}
+        onClose={onClose}
+      />,
+    );
+  });
+  await act(async () =>
+    screen.root
+      .findByProps({ accessibilityLabel: "Dictate message" })
+      .props.onPress(),
+  );
+  expect(onDictate).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    screen.root
+      .findByProps({ accessibilityLabel: "Close voice options" })
+      .props.onPress(),
+  );
+  expect(onClose).toHaveBeenCalledTimes(1);
+  await act(async () => screen.unmount());
+});
