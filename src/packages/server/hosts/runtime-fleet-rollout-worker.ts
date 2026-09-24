@@ -8,7 +8,9 @@ import { conat } from "@cocalc/backend/conat";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { promoteProjectHostRuntimeDeployments } from "@cocalc/database/postgres/project-host-runtime-deployments";
+import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/project-host-metrics";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { LaunchHealthLevel } from "@cocalc/conat/hub/api/system";
 import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
 import {
   getHostRuntimeDeploymentStatus,
@@ -22,6 +24,11 @@ import {
   runtimeFleetDeploymentTargetKeys,
 } from "./runtime-fleet-overrides";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getLaunchHealth } from "@cocalc/server/conat/api/system";
+import {
+  getProjectRecoveryAttemptHealth,
+  getProjectRecoveryHealth,
+} from "@cocalc/server/projects/maintenance-status";
 import {
   claimLroOps,
   getLro,
@@ -56,6 +63,195 @@ type RolloutWave = {
   ids: string[];
   stabilize_seconds: number;
 };
+
+type RecoveryStopGateHost = {
+  failed_attempts: number;
+  oldest_backup_delay_seconds: number;
+  emergency_seconds: number | null;
+  latest_valid_pressure_at: string | null;
+};
+
+type RecoveryStopGateSnapshot = {
+  checked_at: string;
+  recovery_level: LaunchHealthLevel;
+  latency_level: LaunchHealthLevel;
+  hosts: Record<string, RecoveryStopGateHost>;
+};
+
+const PRESSURE_FRESHNESS_MS = 5 * 60_000;
+const BACKUP_AGE_REGRESSION_GRACE_SECONDS = 5 * 60;
+
+async function captureRecoveryStopGate({
+  account_id,
+  host_ids,
+}: {
+  account_id: string;
+  host_ids: string[];
+}): Promise<RecoveryStopGateSnapshot> {
+  const [health, recovery, attempts, pressure] = await Promise.all([
+    getLaunchHealth({ account_id }),
+    getProjectRecoveryHealth(),
+    getProjectRecoveryAttemptHealth(),
+    getProjectHostStoragePressureWindows({ bay_id: getConfiguredBayId() }),
+  ]);
+  const level = (id: string): LaunchHealthLevel =>
+    health.checks.find((check) => check.id === id)?.level ?? "unknown";
+  const hosts: Record<string, RecoveryStopGateHost> = {};
+  for (const host_id of host_ids) {
+    const hostPressure = pressure.find((row) => row.host_id === host_id);
+    hosts[host_id] = {
+      failed_attempts: attempts.by_host
+        .filter((row) => row.host_id === host_id)
+        .reduce((total, row) => total + row.failed, 0),
+      oldest_backup_delay_seconds: Math.max(
+        0,
+        ...recovery.by_host_class
+          .filter((row) => row.host_id === host_id && row.kind === "backup")
+          .map((row) => row.oldest_delay_seconds),
+      ),
+      emergency_seconds: hostPressure?.emergency_seconds ?? null,
+      latest_valid_pressure_at: hostPressure?.latest_valid_sample_at ?? null,
+    };
+  }
+  return {
+    checked_at: health.checked_at,
+    recovery_level: level("project-recovery"),
+    latency_level: level("ux-latency"),
+    hosts,
+  };
+}
+
+async function countFailedRecoveryAttemptsSince({
+  since,
+  host_ids,
+}: {
+  since: string;
+  host_ids: string[];
+}): Promise<number> {
+  if (!host_ids.length) return 0;
+  const { rows } = await getPool().query<{ failed: number }>(
+    `SELECT COUNT(*)::int AS failed
+       FROM project_maintenance_attempts
+      WHERE observed_at > ($1::timestamptz AT TIME ZONE 'UTC')
+        AND host_id = ANY($2::uuid[])
+        AND outcome = 'failed'`,
+    [since, host_ids],
+  );
+  return rows[0]?.failed ?? 0;
+}
+
+function recoveryStopGateFailure({
+  baseline,
+  current,
+  host_ids,
+}: {
+  baseline: RecoveryStopGateSnapshot;
+  current: RecoveryStopGateSnapshot;
+  host_ids: string[];
+}): string | undefined {
+  if (baseline.recovery_level === "unknown") {
+    return "project recovery baseline is unknown";
+  }
+  if (current.recovery_level === "unknown") {
+    return "project recovery health is unknown";
+  }
+  const rank = (level: LaunchHealthLevel) =>
+    level === "critical" ? 2 : level === "warning" ? 1 : 0;
+  if (rank(current.recovery_level) > rank(baseline.recovery_level)) {
+    return `project recovery health worsened from ${baseline.recovery_level} to ${current.recovery_level}`;
+  }
+  if (
+    baseline.latency_level !== "unknown" &&
+    current.latency_level === "unknown"
+  ) {
+    return "interactive latency health became unknown";
+  }
+  if (rank(current.latency_level) > rank(baseline.latency_level)) {
+    return `interactive latency health worsened from ${baseline.latency_level} to ${current.latency_level}`;
+  }
+  const elapsedSeconds = Math.max(
+    0,
+    (Date.parse(current.checked_at) - Date.parse(baseline.checked_at)) / 1000,
+  );
+  for (const host_id of host_ids) {
+    const before = baseline.hosts[host_id];
+    const after = current.hosts[host_id];
+    if (!before || !after) {
+      return `missing recovery stop-gate data for host ${host_id}`;
+    }
+    if (after.failed_attempts > before.failed_attempts) {
+      return `host ${host_id} recorded new failed recovery attempts`;
+    }
+    if (
+      after.oldest_backup_delay_seconds >
+      before.oldest_backup_delay_seconds +
+        elapsedSeconds +
+        BACKUP_AGE_REGRESSION_GRACE_SECONDS
+    ) {
+      return `host ${host_id} backup debt age regressed beyond elapsed time`;
+    }
+    if (
+      after.emergency_seconds != null &&
+      after.emergency_seconds > (before.emergency_seconds ?? 0)
+    ) {
+      return `host ${host_id} entered emergency storage pressure`;
+    }
+    if (
+      before.latest_valid_pressure_at != null &&
+      (after.latest_valid_pressure_at == null ||
+        Date.parse(current.checked_at) -
+          Date.parse(after.latest_valid_pressure_at) >
+          PRESSURE_FRESHNESS_MS)
+    ) {
+      return `host ${host_id} lost fresh storage pressure telemetry`;
+    }
+  }
+  return undefined;
+}
+
+function savedRecoveryStopGateBaseline(
+  value: unknown,
+  host_ids: string[],
+): RecoveryStopGateSnapshot | undefined {
+  if (!value || typeof value !== "object") return;
+  const snapshot = value as RecoveryStopGateSnapshot;
+  if (
+    !Number.isFinite(Date.parse(snapshot.checked_at)) ||
+    !["healthy", "warning", "critical", "unknown"].includes(
+      snapshot.recovery_level,
+    ) ||
+    !["healthy", "warning", "critical", "unknown"].includes(
+      snapshot.latency_level,
+    ) ||
+    !snapshot.hosts ||
+    host_ids.some((id) => !snapshot.hosts[id])
+  ) {
+    return;
+  }
+  return snapshot;
+}
+
+async function assertRecoveryStopGate({
+  baseline,
+  current,
+  host_ids,
+}: {
+  baseline: RecoveryStopGateSnapshot;
+  current: RecoveryStopGateSnapshot;
+  host_ids: string[];
+}): Promise<void> {
+  const failure = recoveryStopGateFailure({ baseline, current, host_ids });
+  if (failure) throw new Error(`fleet rollout health gate stopped: ${failure}`);
+  const newFailures = await countFailedRecoveryAttemptsSince({
+    since: baseline.checked_at,
+    host_ids,
+  });
+  if (newFailures) {
+    throw new Error(
+      `fleet rollout health gate stopped: ${newFailures} new failed recovery attempt(s) on the upgraded hosts`,
+    );
+  }
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -551,6 +747,19 @@ async function handleRollout(op: LroSummary): Promise<void> {
   const resultByHost = new Map(
     results.map((result) => [result.host_id, result]),
   );
+  const priorBaseline = savedRecoveryStopGateBaseline(
+    op.progress_summary?.recovery_stop_gate_baseline,
+    hostIds,
+  );
+  const gatedHostIds = new Set<string>(
+    Array.isArray(op.progress_summary?.recovery_stop_gate_passed_host_ids)
+      ? op.progress_summary.recovery_stop_gate_passed_host_ids.filter(
+          (id): id is string => typeof id === "string" && resultByHost.has(id),
+        )
+      : [],
+  );
+  let recoveryStopGateBaseline = priorBaseline;
+  let recoveryStopGateLatest: RecoveryStopGateSnapshot | undefined;
 
   const publishProgress = async ({
     phase,
@@ -571,6 +780,9 @@ async function handleRollout(op: LroSummary): Promise<void> {
       total: hostIds.length,
       progress,
       hosts: Array.from(resultByHost.values()),
+      recovery_stop_gate_baseline: recoveryStopGateBaseline,
+      recovery_stop_gate_latest: recoveryStopGateLatest,
+      recovery_stop_gate_passed_host_ids: Array.from(gatedHostIds),
       ...(wave ? { wave } : {}),
     };
     const updated = await updateLro({
@@ -601,10 +813,43 @@ async function handleRollout(op: LroSummary): Promise<void> {
   };
 
   try {
+    if (!recoveryStopGateBaseline) {
+      if (resultByHost.size) {
+        throw new Error(
+          "fleet rollout cannot resume upgraded hosts without a saved recovery baseline",
+        );
+      }
+      recoveryStopGateBaseline = await captureRecoveryStopGate({
+        account_id,
+        host_ids: hostIds,
+      });
+    }
+    if (recoveryStopGateBaseline.recovery_level === "unknown") {
+      throw new Error("fleet rollout requires known project recovery health");
+    }
     await publishProgress({
       phase: "starting",
       message: `starting paced rollout of ${components.join(", ")} from ${version}`,
     });
+    const unGatedCompleted = Array.from(resultByHost.keys()).filter(
+      (host_id) => !gatedHostIds.has(host_id),
+    );
+    if (unGatedCompleted.length) {
+      recoveryStopGateLatest = await captureRecoveryStopGate({
+        account_id,
+        host_ids: hostIds,
+      });
+      await assertRecoveryStopGate({
+        baseline: recoveryStopGateBaseline,
+        current: recoveryStopGateLatest,
+        host_ids: unGatedCompleted,
+      });
+      unGatedCompleted.forEach((host_id) => gatedHostIds.add(host_id));
+      await publishProgress({
+        phase: "health_gate_passed",
+        message: `rechecked recovery health after worker restart for ${unGatedCompleted.join(", ")}`,
+      });
+    }
     const waves = buildRolloutWaves({
       host_ids: hostIds,
       completed_host_ids: new Set(resultByHost.keys()),
@@ -640,20 +885,44 @@ async function handleRollout(op: LroSummary): Promise<void> {
       );
       for (const result of settled) resultByHost.set(result.host_id, result);
       results = Array.from(resultByHost.values());
-      await publishProgress({
-        phase: "wave_complete",
-        message: `completed wave ${wave.ids.join(", ")}`,
-        wave: wave.ids,
-      });
       const failure = settled.find((result) => result.status === "failed");
       if (failure) {
         throw new Error(
           `fleet rollout paused after ${failure.host_id} failed: ${failure.error}`,
         );
       }
+      await publishProgress({
+        phase: "health_gate_pending",
+        message: `checking recovery health after ${wave.ids.join(", ")}`,
+        wave: wave.ids,
+      });
+      recoveryStopGateLatest = await captureRecoveryStopGate({
+        account_id,
+        host_ids: hostIds,
+      });
+      await assertRecoveryStopGate({
+        baseline: recoveryStopGateBaseline,
+        current: recoveryStopGateLatest,
+        host_ids: wave.ids,
+      });
+      wave.ids.forEach((host_id) => gatedHostIds.add(host_id));
+      await publishProgress({
+        phase: "wave_complete",
+        message: `completed wave ${wave.ids.join(", ")}; recovery health gate passed`,
+        wave: wave.ids,
+      });
     }
 
     if (input.promote_global === true) {
+      recoveryStopGateLatest = await captureRecoveryStopGate({
+        account_id,
+        host_ids: hostIds,
+      });
+      await assertRecoveryStopGate({
+        baseline: recoveryStopGateBaseline,
+        current: recoveryStopGateLatest,
+        host_ids: hostIds,
+      });
       await publishProgress({
         phase: "promoting",
         message: "promoting successful rollout as the bay default",
@@ -703,6 +972,9 @@ async function handleRollout(op: LroSummary): Promise<void> {
         total: hostIds.length,
         progress: 100,
         hosts: results,
+        recovery_stop_gate_baseline: recoveryStopGateBaseline,
+        recovery_stop_gate_latest: recoveryStopGateLatest,
+        recovery_stop_gate_passed_host_ids: Array.from(gatedHostIds),
       },
       result,
       error: null,
@@ -729,6 +1001,9 @@ async function handleRollout(op: LroSummary): Promise<void> {
         ).length,
         total: hostIds.length,
         hosts: Array.from(resultByHost.values()),
+        recovery_stop_gate_baseline: recoveryStopGateBaseline,
+        recovery_stop_gate_latest: recoveryStopGateLatest,
+        recovery_stop_gate_passed_host_ids: Array.from(gatedHostIds),
       },
       error: `${err instanceof Error ? err.message : err}`,
     });
@@ -809,4 +1084,6 @@ export const __test__ = {
   normalizedRolloutComponents,
   runtimeDeploymentsForPromotion,
   runtimeObservationIsStable,
+  recoveryStopGateFailure,
+  savedRecoveryStopGateBaseline,
 };
