@@ -803,10 +803,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             observed_at: new Date().toISOString(),
             outcome,
             reason,
-            latest_snapshot_at:
-              outcome === "succeeded" || reason === "no_content_change"
-                ? latest_snapshot_at
-                : null,
+            // The host inventory is authoritative for the latest local
+            // recovery point even when a newer change cannot be snapshotted
+            // until the interval expires. Do not publish it if assignment
+            // validation failed after the scan.
+            latest_snapshot_at: result.ran ? latest_snapshot_at : null,
             reconciled_change_at:
               reason === "no_content_change"
                 ? (row.last_changed ?? row.last_edited)

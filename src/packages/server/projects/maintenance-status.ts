@@ -235,6 +235,9 @@ export async function recordProjectMaintenanceStatus(
          WHEN excluded.outcome='succeeded'
            OR (excluded.outcome='skipped' AND excluded.reason='no_content_change')
            THEN excluded.latest_snapshot_at
+         WHEN excluded.outcome='deferred'
+           AND excluded.latest_snapshot_at IS NOT NULL
+           THEN excluded.latest_snapshot_at
          WHEN project_maintenance_status.host_id=excluded.host_id
            THEN project_maintenance_status.latest_snapshot_at
          ELSE NULL END,

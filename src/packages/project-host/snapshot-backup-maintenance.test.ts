@@ -523,6 +523,41 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("reconciles a verified local snapshot when its next interval is not due", async () => {
+    const latest = new Date(Date.now() - 5 * 60_000).toISOString();
+    const changed = new Date(Date.now() - 60_000).toISOString();
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-reconcile",
+        last_changed: changed,
+        last_snapshot: null,
+        snapshots: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+        backups: { disabled: true },
+      },
+    ]);
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: latest,
+      created_snapshot_at: null,
+      changed: true,
+      disabled: false,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-reconcile",
+        kind: "snapshot",
+        outcome: "deferred",
+        reason: "snapshot_not_created",
+        latest_snapshot_at: latest,
+        due_at: new Date(Date.parse(latest) + 15 * 60_000).toISOString(),
+      }),
+    );
+  });
+
   it("skips recently reconciled unchanged content until it changes again", async () => {
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
