@@ -1,9 +1,67 @@
 import { EventEmitter } from "events";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { publishArtifact } from "@cocalc/chat";
-import { ArtifactCards } from "../artifacts";
+import { ArtifactCards, latestArtifactPublications } from "../artifacts";
 
 afterEach(() => jest.restoreAllMocks());
+
+test("a long-running turn keeps artifact publications bounded and groups revisions", () => {
+  const rows: any[] = [];
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+    get: (where) =>
+      rows.filter((row) =>
+        Object.entries(where).every(([key, value]) => row[key] === value),
+      ),
+  });
+  for (let i = 0; i < 50; i++) {
+    publishArtifact(syncdb, {
+      thread_id: "thread",
+      artifact_id: `artifact-${i}`,
+      operation_id: `op-${i}`,
+      message_id: "message",
+      title: `Artifact ${i}`,
+      markdown: "Content",
+    });
+  }
+  publishArtifact(syncdb, {
+    thread_id: "thread",
+    artifact_id: "artifact-0",
+    operation_id: "op-revision",
+    message_id: "message",
+    title: "Revised artifact",
+    markdown: "New content",
+  });
+  expect(
+    latestArtifactPublications(
+      rows.filter((row) => row.event === "chat-artifact-publication"),
+    ),
+  ).toHaveLength(50);
+  render(
+    <ArtifactCards
+      actions={{ syncdb } as any}
+      threadId="thread"
+      messageId="message"
+    />,
+  );
+  expect(screen.getByText("+48 artifacts")).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("group", { name: "Recent message artifacts" }),
+    ).getByText("Revised artifact"),
+  ).toBeVisible();
+  expect(screen.getAllByRole("article")).toHaveLength(2);
+  const expand = screen.getByRole("button", { name: "+48 artifacts" });
+  expand.focus();
+  expect(expand).toHaveFocus();
+  expect(expand).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(expand);
+  expect(screen.getAllByRole("article")).toHaveLength(52);
+  expect(
+    screen.getByRole("button", { name: "Hide artifacts" }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
 
 test("cards wait for SyncDB readiness and recover without a change event", () => {
   let state = "init";
