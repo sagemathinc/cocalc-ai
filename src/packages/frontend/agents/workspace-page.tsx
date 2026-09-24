@@ -138,6 +138,7 @@ import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { AgentProjectStatus } from "./project-status";
+import { AgentHostRecovery } from "./host-recovery";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
@@ -2148,6 +2149,7 @@ function AgentWorkspace({
           }
         />
       )}
+      {active && <AgentHostRecovery projectId={agent.endpoint.project_id} />}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
           selectedNetworkId={selectedNetworkId}
@@ -2950,9 +2952,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 {theme.title}
               </Text>
               <Text type="secondary" ellipsis style={{ display: "block" }}>
-                {showProjectTitle
-                  ? agent.project_title || agent.endpoint.project_id
-                  : `@${agent.name}`}
+                @{agent.name}
+                {showProjectTitle &&
+                  ` · ${agent.project_title || agent.endpoint.project_id}`}
               </Text>
             </span>
           </button>

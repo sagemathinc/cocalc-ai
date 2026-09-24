@@ -175,5 +175,5 @@ test("structured agent messages show their text instead of JSON", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Read message" }));
   expect(screen.getByText("Please review")).toBeVisible();
-  expect(screen.getByText("Raw editable message")).toBeInTheDocument();
+  expect(screen.getByText("Raw message")).toBeInTheDocument();
 });

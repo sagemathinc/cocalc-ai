@@ -69,6 +69,7 @@ jest.mock("./api", () => ({
 jest.mock("./agent-running-indicator", () => ({
   AgentRunningIndicator: ({ children }) => children,
 }));
+jest.mock("./host-recovery", () => ({ AgentHostRecovery: () => null }));
 jest.mock("./open-notification", () => ({
   openAgentNotification: (...args) => navigate(...args),
 }));
@@ -86,6 +87,9 @@ test("project agents are buttons; Browse leaves Agents; settings have one accord
   fireEvent.click(screen.getByRole("button", { name: "Browse" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
   expect(browse).toHaveBeenCalledWith("p", "/home/user");
+  fireEvent.click(screen.getByRole("button", { name: "the files" }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(3));
+  expect(browse).toHaveBeenCalledTimes(2);
   expect(
     screen.getByRole("heading", { name: "Project settings" }),
   ).toBeTruthy();

@@ -277,7 +277,7 @@ export function AgentMessageElement({
                 display: bodyExpanded ? undefined : "none",
               }}
             >
-              <summary contentEditable={false}>Raw editable message</summary>
+              <summary contentEditable={false}>Raw message</summary>
               <div>{children}</div>
             </details>
           </>

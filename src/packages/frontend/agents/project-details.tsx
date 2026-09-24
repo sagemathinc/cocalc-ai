@@ -17,6 +17,7 @@ import { ManagedEgress } from "@cocalc/frontend/project/settings/managed-egress"
 import { useNamedAgents } from "./api";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import { AgentHostRecovery } from "./host-recovery";
 
 export default function ProjectDetails({
   agent,
@@ -58,8 +59,13 @@ function Details({
     directory?.agents.filter(
       (item) => item.endpoint.project_id === projectId,
     ) ?? [];
+  async function browseFiles() {
+    await browseProjectDirectory(projectId, getProjectHomeDirectory(projectId));
+    onClose();
+  }
   return (
     <Space vertical size="large" style={{ width: "100%" }}>
+      <AgentHostRecovery projectId={projectId} />
       {egress && (
         <Alert
           type="error"
@@ -68,9 +74,17 @@ function Details({
         />
       )}
       <Typography.Paragraph>
-        This project supplies the files and computing environment for these
-        agents. Stopping it interrupts all its agents and other work, including
-        collaborators' processes.
+        This project supplies{" "}
+        <Button
+          type="link"
+          size="small"
+          onClick={() => void browseFiles()}
+          style={{ padding: 0, height: "auto", verticalAlign: "baseline" }}
+        >
+          the files
+        </Button>{" "}
+        and computing environment for these agents. Stopping it interrupts all
+        its agents and other work, including collaborators' processes.
       </Typography.Paragraph>
       <Space wrap>
         <RestartProject project_id={projectId} />
@@ -104,7 +118,7 @@ function Details({
           ))}
         </Space>
       </section>
-      <Storage projectId={projectId} onClose={onClose} />
+      <Storage projectId={projectId} onBrowse={browseFiles} />
       <section aria-label="Internet usage">
         <Typography.Title level={5}>Internet usage</Typography.Title>
         <ManagedEgress project_id={projectId} embedded />
@@ -125,10 +139,10 @@ function Details({
 
 function Storage({
   projectId,
-  onClose,
+  onBrowse,
 }: {
   projectId: string;
-  onClose: () => void;
+  onBrowse: () => Promise<void>;
 }) {
   const { quotas, loading, error, collectedAt } = useDiskUsage({
     project_id: projectId,
@@ -159,21 +173,13 @@ function Storage({
           Last measured: {new Date(collectedAt).toLocaleString()}
         </Typography.Paragraph>
       )}
-      <DiskUsage
-        project_id={projectId}
-        buttonText="Inspect storage and free space"
-      />
-      <Button
-        onClick={async () => {
-          await browseProjectDirectory(
-            projectId,
-            getProjectHomeDirectory(projectId),
-          );
-          onClose();
-        }}
-      >
-        Browse
-      </Button>
+      <Space wrap size={8}>
+        <DiskUsage
+          project_id={projectId}
+          buttonText="Inspect storage and free space"
+        />
+        <Button onClick={() => void onBrowse()}>Browse</Button>
+      </Space>
     </section>
   );
 }
