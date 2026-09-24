@@ -2112,8 +2112,9 @@ export async function getLaunchHealth({
   const hostsMissingPressureTelemetry =
     projectRecoveryPressure?.filter(
       (host) =>
-        !host.latest_sample_at ||
-        Date.parse(checkedAt) - Date.parse(host.latest_sample_at) > 5 * 60_000,
+        !host.latest_valid_sample_at ||
+        Date.parse(checkedAt) - Date.parse(host.latest_valid_sample_at) >
+          5 * 60_000,
     ) ?? [];
   const latency =
     latencyResult.status === "fulfilled" ? latencyResult.value : undefined;

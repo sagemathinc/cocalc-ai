@@ -944,6 +944,7 @@ export interface ProjectHostStoragePressureWindow {
   host_id: string;
   host_name: string;
   latest_sample_at: string | null;
+  latest_valid_sample_at: string | null;
   sample_count: number;
   sampled_seconds: number;
   normal_seconds: number;
@@ -963,6 +964,7 @@ export async function getProjectHostStoragePressureWindows({
     host_id: string;
     host_name: string;
     latest_sample_at: Date | string | null;
+    latest_valid_sample_at: Date | string | null;
     sample_count: string | number;
     sampled_seconds: string | number;
     normal_seconds: string | number;
@@ -1009,6 +1011,8 @@ export async function getProjectHostStoragePressureWindows({
      )
      SELECT h.id AS host_id, h.name AS host_name,
             max(s.collected_at) AS latest_sample_at,
+            max(s.collected_at) FILTER
+              (WHERE s.pressure_state <> 'unavailable') AS latest_valid_sample_at,
             count(s.collected_at) AS sample_count,
             coalesce(sum(s.span_seconds), 0) AS sampled_seconds,
             coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'normal'), 0) AS normal_seconds,
@@ -1027,6 +1031,9 @@ export async function getProjectHostStoragePressureWindows({
     host_name: row.host_name,
     latest_sample_at: row.latest_sample_at
       ? new Date(row.latest_sample_at).toISOString()
+      : null,
+    latest_valid_sample_at: row.latest_valid_sample_at
+      ? new Date(row.latest_valid_sample_at).toISOString()
       : null,
     sample_count: Number(row.sample_count),
     sampled_seconds: Number(row.sampled_seconds),

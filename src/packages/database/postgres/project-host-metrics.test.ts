@@ -101,6 +101,9 @@ describe("project host metrics history", () => {
     expect(window.emergency_seconds).toBeGreaterThanOrEqual(119);
     expect(window.recovery_seconds).toBeGreaterThanOrEqual(89);
     expect(window.unavailable_seconds).toBeGreaterThanOrEqual(29);
+    expect(Date.parse(window.latest_sample_at!)).toBeGreaterThan(
+      Date.parse(window.latest_valid_sample_at!),
+    );
   });
 
   it("stores at most one sample per minute and loads history with growth", async () => {
