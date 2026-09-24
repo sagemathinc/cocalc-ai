@@ -437,14 +437,49 @@ its exact cause or whether that specific project recovered. An audited raw
 SQL query to identify it returned `fresh_auth_required`; the first-party
 elevation is still pending. The failure remains an open staging finding.
 
+## September 24 follow-up: shadow mode and lost backup acknowledgement
+
+Commit `e645027217` adds a per-host shadow mode for snapshot and backup
+reconciliation. It walks and orders the complete inventory, then logs bounded
+paying/free/unclassified due counts, retry waits, and oldest delay without
+running maintenance or publishing status. The default remains active. All 33
+focused scheduler tests and the host package build passed. The flag has not yet
+been exercised live on a staging host.
+
+A fresh operator session identified the single failed free backup as project
+`cc7b8e16-ccdc-41b3-88cc-4680924230e5` on the shared host. The failed
+attempt at 02:57:44 UTC was a 408 timeout from `hosts.recordProjectBackup`.
+The bay nevertheless recorded `projects.last_backup=2026-09-24T02:56:54.651Z`.
+The worker's failed status remained after the retry time, because the next
+change-aware due time had moved forward. Commit `7194de8890` fixes this:
+when the bay's confirmed backup time covers the failed due obligation, the
+host reads the matching off-host Rustic snapshot before clearing the stale
+failure. Unrelated failures remain visible. Focused host tests passed 34/34,
+server tests 7/7, and conat, server, and host package builds passed.
+
+Staging2 hub artifact
+`20260924T032427Z-7194de88-recovery-reconcile-7194de88-20260924-dirty`
+passed seven smoke checks. Project-host artifact
+`20260924T032650Z-7194de88-recovery-reconcile-7194de88-20260924-dirty`
+completed canary-first rollout `179985a9-0bd7-447a-86a3-582d10d137d4`
+on both online hosts. Project-host smoke passed. The affected project's live
+backup status became `succeeded` at 03:32:19 UTC with reason
+`confirmed_backup_after_failed_report`, Rustic ID
+`f924d45d391477aed5734d8f6e2d638f90cc583b2e2e849f2dc5c79ec6fbcc0b`,
+and next due `2026-09-25T02:56:54.651Z`. The original failed attempt
+remains in 24-hour history for operational accounting.
+
+The first-party testing browser daemon opened the staging2 canary project twice
+under the designated non-admin account, but its browser session did not
+register before the CLI timeout. The browser UI therefore remains unverified;
+this is a browser automation finding, not a passed UI check.
+
 ## Open findings and release gates
 
-1. Browser UI testing is pending a staging2 CLI browser-approved login and
-   elevation. Frontend automated checks and static smoke passed, but the
-   actual project status UI has not yet been exercised in a browser. A fresh
-   first-party bootstrap flow was started after the older elevation request
-   expired. A designated testing-account browser spawn returned
-   `fresh_auth_required` at 01:13 UTC; no credential workaround was used.
+1. Browser UI testing is still pending. Fresh operator login and elevation
+   succeeded, but two designated testing-account Chromium launches opened the
+   project page without registering a browser session for typed UI actions.
+   The actual status UI needs direct review or a repaired browser session.
 2. The plan's full observability and scheduler contract remains broader than
    the current code: a calibrated safe-capacity threshold, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
@@ -483,11 +518,10 @@ elevation is still pending. The failure remains an open staging finding.
    reproduced through the public snapshot CLI because it labels explicit
    snapshots as manual. Live normal scheduled snapshots and marker readback
    succeeded on the new host artifact.
-8. A free backup failed once on the shared host after the September 24 hub
-   rollout. The aggregate reason is `other`, and the exact project and cause
-   remain unverified pending first-party fresh auth for the audited attempt
-   query. Do not interpret the otherwise healthy recovery summary as proof
-   that this one failure has resolved.
+8. The free backup's lost hub acknowledgement is now reconciled live after
+   repository readback. Its failed attempt remains in the 24-hour historical
+   counter. Continue watching for repeated hub report timeouts and confirm
+   later scheduled backup cycles complete normally.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
