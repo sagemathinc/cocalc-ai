@@ -2217,46 +2217,11 @@ function ChatPanelContent({
       });
       return;
     }
+    const paymentPreference = ((reply_thread_id
+      ? existingThreadMetadata?.acp_config?.paymentSource
+      : newThreadSetup.codexConfig.paymentSource) ??
+      codexPaymentPreference) as CodexPaymentSourcePreference;
     if (isCodexSubmit) {
-      const verifySubscription = opts?.immediate !== true;
-      const paymentPreference = ((reply_thread_id
-        ? existingThreadMetadata?.acp_config?.paymentSource
-        : newThreadSetup.codexConfig.paymentSource) ??
-        codexPaymentPreference) as CodexPaymentSourcePreference;
-      if (verifySubscription && !codexConnectionCheckPendingRef.current) {
-        codexConnectionCheckPendingRef.current = true;
-        void codexConnectionNeedsAttentionAfterSubmit({
-          fetchPaymentSource: () =>
-            fetchCodexPaymentSourceForSubmit({
-              projectId: project_id,
-              preference: paymentPreference,
-              credentialId:
-                paymentPreference === "subscription"
-                  ? codexCredentialId
-                  : undefined,
-            }),
-          fetchUsageStatus: () =>
-            getLiveCodexUsageStatus({
-              projectId: project_id,
-              credentialId:
-                paymentPreference === "subscription"
-                  ? codexCredentialId
-                  : undefined,
-            }),
-        })
-          .then((needsAttention) => {
-            if (!needsAttention) return;
-            refreshCodexPaymentSource?.();
-            setCodexPaymentConfigOpen(true);
-          })
-          .catch(() => {
-            refreshCodexPaymentSource?.();
-            setCodexPaymentConfigOpen(true);
-          })
-          .finally(() => {
-            codexConnectionCheckPendingRef.current = false;
-          });
-      }
       if (opts?.immediate !== true) {
         try {
           const verifiedSource = await fetchCodexPaymentSourceForSubmit({
@@ -2447,6 +2412,44 @@ function ChatPanelContent({
       acpPromptRef.current = rawAcpPrompt;
       setAcpPrompt(rawAcpPrompt);
       return;
+    }
+    if (
+      isCodexSubmit &&
+      opts?.immediate !== true &&
+      !codexConnectionCheckPendingRef.current
+    ) {
+      codexConnectionCheckPendingRef.current = true;
+      void codexConnectionNeedsAttentionAfterSubmit({
+        fetchPaymentSource: () =>
+          fetchCodexPaymentSourceForSubmit({
+            projectId: project_id,
+            preference: paymentPreference,
+            credentialId:
+              paymentPreference === "subscription"
+                ? codexCredentialId
+                : undefined,
+          }),
+        fetchUsageStatus: () =>
+          getLiveCodexUsageStatus({
+            projectId: project_id,
+            credentialId:
+              paymentPreference === "subscription"
+                ? codexCredentialId
+                : undefined,
+          }),
+      })
+        .then((needsAttention) => {
+          if (!needsAttention) return;
+          refreshCodexPaymentSource?.();
+          setCodexPaymentConfigOpen(true);
+        })
+        .catch(() => {
+          refreshCodexPaymentSource?.();
+          setCodexPaymentConfigOpen(true);
+        })
+        .finally(() => {
+          codexConnectionCheckPendingRef.current = false;
+        });
     }
     if (feedback) await artifactFeedback.clear(feedback);
     const threadKey =

@@ -44,6 +44,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { formatCodexErrorForDisplay } from "@cocalc/frontend/chat/codex-error-presentation";
+import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   CodexPaymentSourceInfo,
@@ -262,6 +263,9 @@ function MembershipUsageMeters({
 
 function formatCodexUsageReason(reason?: string): string | undefined {
   if (!reason) return undefined;
+  if (extractRuntimeSponsorDenial(reason)) {
+    return "This project's sponsor has no free running-project slots. Start the project, then refresh Codex usage. Your ChatGPT sign-in has not been checked yet.";
+  }
   if (
     reason.includes("account/rateLimits/read") ||
     reason.includes("authentication required to read rate limits")
@@ -577,7 +581,7 @@ function CodexCredentialsPanelBody({
           checkedAt: new Date().toISOString(),
           paymentSource,
           project_id: authProjectId || undefined,
-          reason: formatCodexUsageReason(getErrorMessage(err)),
+          reason: getErrorMessage(err),
         });
         setCodexUsageCredentialId(credentialId);
       } finally {
@@ -1249,24 +1253,31 @@ function CodexCredentialsPanelBody({
   }, [deviceAuthPending, embedded, openSubscriptionAuthPanel]);
 
   const codexConnection = getCodexSubscriptionConnection(codexUsageStatus);
+  const codexUsageProjectStartBlocked =
+    usageSource === `subscription:${codexUsageCredentialId}` &&
+    !!extractRuntimeSponsorDenial(codexUsageStatus?.reason);
   const codexUsageAuthProblem = codexConnection.status === "needs-sign-in";
   const codexConnectionVerified = codexConnection.status === "connected";
   const codexConnectionChecking =
     codexUsageLoading && !codexUsageStatus && !codexUsageAuthProblem;
-  const codexConnectionLabel = codexUsageAuthProblem
-    ? "Sign-in needs refresh"
-    : codexConnectionVerified
-      ? "Connected"
-      : codexConnectionChecking
-        ? "Checking sign-in"
-        : "Connection not verified";
-  const codexConnectionTitle = codexUsageAuthProblem
-    ? "Refresh your ChatGPT sign-in"
-    : codexConnectionVerified
-      ? "ChatGPT is connected"
-      : codexConnectionChecking
-        ? "Checking your ChatGPT sign-in"
-        : "Could not verify your ChatGPT sign-in";
+  const codexConnectionLabel = codexUsageProjectStartBlocked
+    ? "Project start required"
+    : codexUsageAuthProblem
+      ? "Sign-in needs refresh"
+      : codexConnectionVerified
+        ? "Connected"
+        : codexConnectionChecking
+          ? "Checking sign-in"
+          : "Connection not verified";
+  const codexConnectionTitle = codexUsageProjectStartBlocked
+    ? "Start the project to check Codex usage"
+    : codexUsageAuthProblem
+      ? "Refresh your ChatGPT sign-in"
+      : codexConnectionVerified
+        ? "ChatGPT is connected"
+        : codexConnectionChecking
+          ? "Checking your ChatGPT sign-in"
+          : "Could not verify your ChatGPT sign-in";
 
   const content = (
     <Space
@@ -1296,33 +1307,37 @@ function CodexCredentialsPanelBody({
                 </Text>
               </Space>
               <Text type="secondary">
-                {codexUsageAuthProblem
-                  ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
-                  : codexConnectionVerified
-                    ? "CoCalc is using your ChatGPT subscription for Codex. Usage for each configured payment source is shown below."
-                    : codexConnectionChecking
-                      ? "CoCalc found a stored ChatGPT credential and is checking whether Codex can use it."
-                      : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
+                {codexUsageProjectStartBlocked
+                  ? "The project cannot start until its sponsor has a free running-project slot. This is not a ChatGPT sign-in error."
+                  : codexUsageAuthProblem
+                    ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
+                    : codexConnectionVerified
+                      ? "CoCalc is using your ChatGPT subscription for Codex. Usage for each configured payment source is shown below."
+                      : codexConnectionChecking
+                        ? "CoCalc found a stored ChatGPT credential and is checking whether Codex can use it."
+                        : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
               </Text>
-              <Space wrap>
-                <Button
-                  type={codexUsageAuthProblem ? "primary" : undefined}
-                  onClick={() => void startDeviceAuth()}
-                  loading={deviceAuthActionPending}
-                  disabled={deviceAuth?.state === "pending"}
-                >
-                  {deviceAuthActionPending
-                    ? "Getting sign-in code..."
-                    : "Sign in again with ChatGPT"}
-                </Button>
-                <Button
-                  onClick={() => void startDeviceAuth(undefined, true)}
-                  loading={deviceAuthActionPending}
-                  disabled={deviceAuth?.state === "pending"}
-                >
-                  Add ChatGPT subscription
-                </Button>
-              </Space>
+              {!codexUsageProjectStartBlocked && (
+                <Space wrap>
+                  <Button
+                    type={codexUsageAuthProblem ? "primary" : undefined}
+                    onClick={() => void startDeviceAuth()}
+                    loading={deviceAuthActionPending}
+                    disabled={deviceAuth?.state === "pending"}
+                  >
+                    {deviceAuthActionPending
+                      ? "Getting sign-in code..."
+                      : "Sign in again with ChatGPT"}
+                  </Button>
+                  <Button
+                    onClick={() => void startDeviceAuth(undefined, true)}
+                    loading={deviceAuthActionPending}
+                    disabled={deviceAuth?.state === "pending"}
+                  >
+                    Add ChatGPT subscription
+                  </Button>
+                </Space>
+              )}
               {!authProjectId ? (
                 <Text type="secondary">
                   Device sign-in needs a project to run Codex. Open or create a
