@@ -500,7 +500,22 @@ export default function ChatScreen() {
   });
   const live = useLiveVoice(profileId, projectId, threadId, client, snapshot);
   const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
+  const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const speechBusy = speech.state.phase !== "idle" || live.phase !== "idle";
+
+  useEffect(() => {
+    if (speech.state.phase !== "recording" || !speech.state.startedAt) {
+      setRecordingElapsedSeconds(0);
+      return;
+    }
+    const updateElapsed = () =>
+      setRecordingElapsedSeconds(
+        Math.floor((Date.now() - speech.state.startedAt!) / 1000),
+      );
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 250);
+    return () => clearInterval(interval);
+  }, [speech.state.phase, speech.state.startedAt]);
 
   useEffect(() => {
     void connect();
@@ -866,15 +881,29 @@ export default function ChatScreen() {
           ) : null}
           {speech.state.phase !== "idle" ? (
             <View style={styles.actions}>
+              {speech.state.phase === "recording" ? (
+                <View
+                  style={styles.recordingDot}
+                  accessibilityLabel="Recording"
+                />
+              ) : (
+                <ActivityIndicator size="small" color={colors.primary} />
+              )}
               <Text accessibilityLiveRegion="polite" style={styles.statusText}>
                 {speech.state.phase === "recording"
-                  ? "Recording · up to 90 seconds"
+                  ? "Recording"
                   : speech.state.phase === "transcribing"
                     ? "Transcribing…"
                     : speech.state.phase === "speaking"
                       ? "Read-aloud · preparing or playing"
                       : "Preparing microphone…"}
               </Text>
+              {speech.state.phase === "recording" ? (
+                <Text style={styles.recordingTimer}>
+                  {Math.floor(recordingElapsedSeconds / 60)}:
+                  {String(recordingElapsedSeconds % 60).padStart(2, "0")} / 1:30
+                </Text>
+              ) : null}
               {speech.state.phase === "recording" ? (
                 <Pressable
                   accessibilityRole="button"
@@ -1054,6 +1083,18 @@ const makeStyles = (colors: AppearancePalette) =>
       paddingVertical: 8,
     },
     statusText: { color: colors.secondary, flex: 1, fontSize: 13 },
+    recordingDot: {
+      backgroundColor: colors.danger,
+      borderRadius: 5,
+      height: 10,
+      width: 10,
+    },
+    recordingTimer: {
+      color: colors.danger,
+      fontSize: 13,
+      fontVariant: ["tabular-nums"],
+      fontWeight: "600",
+    },
     loader: { flex: 1 },
     messages: { gap: 10, padding: 12 },
     message: { borderRadius: 12, gap: 8, maxWidth: "94%", padding: 12 },

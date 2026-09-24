@@ -14,6 +14,7 @@ export interface Recording {
   dispose(): Promise<void>;
 }
 export interface SpeechAdapter {
+  recordingContentType?: string;
   capabilities(): Promise<ChatSpeechCapabilities>;
   record(signal: AbortSignal, limitMs: number): Promise<Recording>;
   transcribe(
@@ -63,9 +64,10 @@ export class SpeechController {
   private fail(operation: AbortController, error: unknown) {
     if (this.operation !== operation) return;
     this.cancel();
+    const message = error instanceof Error ? error.message : String(error);
     this.set({
       phase: "idle",
-      error: error instanceof Error ? error.message : String(error),
+      error: message.replace(/\s*- callHub:.*$/s, ""),
     });
   }
   start = async () => {
@@ -80,7 +82,11 @@ export class SpeechController {
         throw new Error(
           caps.input.reason || "Dictation is unavailable for this account.",
         );
-      if (!caps.input.supported_content_types.includes("audio/mp4"))
+      if (
+        !caps.input.supported_content_types.includes(
+          this.adapter.recordingContentType ?? "audio/mp4",
+        )
+      )
         throw new Error("This site does not support iPhone dictation audio.");
       const limit = Math.min(caps.input.max_duration_ms, 90_000);
       if (!(limit > 0))

@@ -332,6 +332,10 @@ export default function ChatInput({
         position: at,
       });
       if (next.value === current) return false;
+      // The Slate editor ignores external value updates while focused unless
+      // this update is explicitly marked as intentional. Dictation often
+      // finishes while focus is still inside the composer.
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
       currentInputRef.current = next.value;
       setInput(next.value);
       sentEchoGuardRef.current = null;

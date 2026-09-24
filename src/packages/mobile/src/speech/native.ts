@@ -3,6 +3,7 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 import { randomUUID } from "expo-crypto";
+import { Platform } from "react-native";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import type { SpeechAdapter, Recording } from "./controller";
 import { markdownToSpeechText, splitSpeechText } from "./text";
@@ -22,6 +23,8 @@ export function nativeSpeechAdapter(
   thread_id: string,
 ): SpeechAdapter {
   const context = { project_id, path, thread_id };
+  const recordingContentType =
+    Platform.OS === "ios" ? "audio/wav" : "audio/mp4";
   const system = async () =>
     (await getActiveSiteSession(profile)).hubApi.system;
   async function request<T>(
@@ -45,11 +48,16 @@ export function nativeSpeechAdapter(
     }
   }
   return {
+    recordingContentType,
     capabilities: async () =>
       (await system()).getChatSpeechCapabilities({ project_id }),
     record: async (signal, limitMs) => {
-      const { AudioModule, RecordingPresets, setAudioModeAsync } =
-        await import("expo-audio");
+      const {
+        AudioModule,
+        IOSOutputFormat,
+        RecordingPresets,
+        setAudioModeAsync,
+      } = await import("expo-audio");
       const { File } = await import("expo-file-system");
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       throwIfAborted(signal);
@@ -63,11 +71,30 @@ export function nativeSpeechAdapter(
         shouldPlayInBackground: false,
       });
       throwIfAborted(signal);
-      const recorder = new AudioModule.AudioRecorder({
-        ...RecordingPresets.HIGH_QUALITY,
-        numberOfChannels: 1,
-        bitRate: 64000,
-      });
+      // AudioModule.AudioRecorder is the native constructor. Unlike the
+      // useAudioRecorder hook, it does not flatten the platform preset.
+      const preset = RecordingPresets.HIGH_QUALITY;
+      const options =
+        Platform.OS === "ios"
+          ? {
+              extension: ".wav",
+              sampleRate: 16000,
+              numberOfChannels: 1,
+              bitRate: 256000,
+              ...preset.ios,
+              outputFormat: IOSOutputFormat.LINEARPCM,
+              linearPCMBitDepth: 16,
+              linearPCMIsBigEndian: false,
+              linearPCMIsFloat: false,
+            }
+          : {
+              extension: preset.extension,
+              sampleRate: preset.sampleRate,
+              numberOfChannels: 1,
+              bitRate: 64000,
+              ...preset.android,
+            };
+      const recorder = new AudioModule.AudioRecorder(options);
       let disposed = false;
       let stop: Promise<void> | undefined;
       const stopOnce = () =>
@@ -89,7 +116,12 @@ export function nativeSpeechAdapter(
       try {
         await recorder.prepareToRecordAsync();
         throwIfAborted(signal);
-        recorder.record({ forDuration: limitMs / 1000 });
+        // The controller enforces the duration limit. A failed native start
+        // otherwise leaves a header-only file that the server cannot read.
+        recorder.record();
+        if (!recorder.isRecording) {
+          throw new Error("The microphone did not start recording.");
+        }
         const started = Date.now();
         return {
           finish: async () => {
@@ -123,8 +155,8 @@ export function nativeSpeechAdapter(
             request_id,
             audio,
             duration_ms: duration,
-            content_type: "audio/mp4",
-            filename: "dictation.m4a",
+            content_type: recordingContentType,
+            filename: Platform.OS === "ios" ? "dictation.wav" : "dictation.m4a",
             timeout: 130_000,
           }),
         )

@@ -103,6 +103,24 @@ test("capability denial avoids requesting microphone access", async () => {
   assert.equal(recorded, false);
   assert.equal(s.controller.getSnapshot().error, "Speech disabled");
 });
+test("checks the recorder's actual audio format and hides transport details", async () => {
+  const unsupported = setup({ recordingContentType: "audio/wav" });
+  await unsupported.controller.start();
+  assert.match(unsupported.controller.getSnapshot().error!, /does not support/);
+  const failed = setup({
+    transcribe: async () => {
+      throw new Error(
+        "The audio recording could not be read. - callHub: subject='hub.account.api', code='400'",
+      );
+    },
+  });
+  await failed.controller.start();
+  await failed.controller.finish();
+  assert.equal(
+    failed.controller.getSnapshot().error,
+    "The audio recording could not be read.",
+  );
+});
 test("oversize audio is rejected before any transcription request", async () => {
   const s = setup({
     record: async () => ({

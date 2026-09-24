@@ -16,7 +16,7 @@ const mockSystem = {
 };
 const mockRecorder = {
   isRecording: false,
-  uri: "file:///dictation.m4a",
+  uri: "file:///dictation.wav",
   prepareToRecordAsync: jest.fn(async () => {}),
   record: jest.fn(() => {
     mockRecorder.isRecording = true;
@@ -49,7 +49,15 @@ jest.mock("expo-audio", () => ({
     requestRecordingPermissionsAsync: () => mockPermission(),
     AudioRecorder: jest.fn(() => mockRecorder),
   },
-  RecordingPresets: { HIGH_QUALITY: {} },
+  RecordingPresets: {
+    HIGH_QUALITY: {
+      extension: ".m4a",
+      sampleRate: 44100,
+      ios: { outputFormat: "aac", audioQuality: 127 },
+      android: { outputFormat: "mpeg4", audioEncoder: "aac" },
+    },
+  },
+  IOSOutputFormat: { LINEARPCM: "lpcm" },
   setAudioModeAsync: jest.fn(async () => {}),
   createAudioPlayer: () => mockPlayer,
 }));
@@ -75,17 +83,28 @@ beforeEach(() => {
   mockPermission.mockResolvedValue({ granted: true });
 });
 
-it("records MP4, handles the native duration limit, and disposes the temporary file", async () => {
+it("records iOS PCM WAV and disposes the temporary file", async () => {
   const recording = await adapter().record(
     new AbortController().signal,
     90_000,
   );
-  expect(mockRecorder.record).toHaveBeenCalledWith({ forDuration: 90 });
-  mockRecorder.isRecording = false; // Native timer stopped before JS resumed.
+  expect(mockRecorder.record).toHaveBeenCalledWith();
+  expect(require("expo-audio").AudioModule.AudioRecorder).toHaveBeenCalledWith(
+    expect.objectContaining({
+      extension: ".wav",
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      outputFormat: "lpcm",
+      audioQuality: 127,
+    }),
+  );
+  expect(
+    require("expo-audio").AudioModule.AudioRecorder.mock.calls[0][0],
+  ).not.toHaveProperty("ios");
   expect((await recording.finish()).audio).toEqual(mockBytes);
   await recording.dispose();
   await recording.dispose();
-  expect(mockRecorder.stop).not.toHaveBeenCalled();
+  expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
   expect(mockDelete).toHaveBeenCalledTimes(1);
   expect(mockRecorder.release).toHaveBeenCalledTimes(1);
 });
@@ -95,6 +114,14 @@ it("does not prepare a recorder after denied microphone permission", async () =>
     adapter().record(new AbortController().signal, 1000),
   ).rejects.toThrow(/Microphone access/);
   expect(mockRecorder.prepareToRecordAsync).not.toHaveBeenCalled();
+});
+it("rejects a failed native recording start before uploading an empty file", async () => {
+  mockRecorder.record.mockImplementationOnce(() => undefined);
+  await expect(
+    adapter().record(new AbortController().signal, 1000),
+  ).rejects.toThrow("The microphone did not start recording.");
+  expect(mockRecorder.release).toHaveBeenCalledTimes(1);
+  expect(mockSystem.transcribeChatAudio).not.toHaveBeenCalled();
 });
 it("routes transcription with conversation context and cancels the exact request", async () => {
   let resolve!: (value: any) => void;
@@ -113,7 +140,8 @@ it("routes transcription with conversation context and cancels the exact request
       project_id: "project",
       path: "agent.chat",
       thread_id: "thread",
-      content_type: "audio/mp4",
+      content_type: "audio/wav",
+      filename: "dictation.wav",
       audio: mockBytes,
       request_id: "request-id",
     }),
