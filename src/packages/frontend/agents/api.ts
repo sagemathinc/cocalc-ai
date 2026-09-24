@@ -21,7 +21,9 @@ export function refreshNamedAgents() {
 
 export const refreshAgentNetworks = refreshNamedAgents;
 
-function loadNamedAgents(accountId: string): Promise<NamedAgentDirectory> {
+export function loadNamedAgents(
+  accountId: string,
+): Promise<NamedAgentDirectory> {
   let request = directoryRequests.get(accountId);
   if (!request) {
     request = personalAgentApi()

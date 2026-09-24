@@ -65,3 +65,8 @@ test("opens a named agent even after the notifications tab replaced Agents", asy
   expect(await openAgentNotification("p", "a.chat", "t")).toBe(true);
   expect(setActiveTab).toHaveBeenCalledWith("agents");
 });
+test("falls back to file navigation when the agent directory is unavailable", async () => {
+  listNamedAgents.mockRejectedValueOnce(new Error("offline"));
+  expect(await openAgentNotification("p", "a.chat", "t")).toBe(false);
+  expect(setActiveTab).not.toHaveBeenCalled();
+});

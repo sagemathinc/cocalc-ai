@@ -22,6 +22,8 @@ import { MentionInfo } from "./types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectAccessRequestStatus } from "@cocalc/conat/hub/api/projects";
 import { codexNotificationFragment } from "../codex-notification-target";
+import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { notificationAgentName } from "@cocalc/frontend/agents/notification-name";
 
 const logger = getLogger("frontend:notifications:notification-row");
 
@@ -58,6 +60,7 @@ interface Props {
   firstTime?: Date;
   latestTime?: Date;
   user_map: any;
+  namedAgents?: NamedAgent[];
 }
 
 function severityIcon(severity?: string): IconName {
@@ -80,6 +83,7 @@ export function NotificationRow(props: Props) {
     firstTime,
     latestTime,
     user_map,
+    namedAgents,
   } = props;
   const {
     kind,
@@ -116,6 +120,12 @@ export function NotificationRow(props: Props) {
           attention_id,
         })
       : Fragment.decode(fragment_id);
+  const agentName = notificationAgentName({
+    agents: namedAgents,
+    projectId: project_id,
+    path,
+    threadId: thread_id ?? fragmentId?.thread,
+  });
   const is_read = mention.getIn(["users", target, "read"]);
 
   const row_style: CSS = {
@@ -396,7 +406,10 @@ export function NotificationRow(props: Props) {
     if (kind === "account_notice") {
       return (
         <>
-          <strong>{title ?? "Notification"}</strong>
+          <strong>
+            {agentName && !title?.includes(agentName) ? `${agentName} · ` : ""}
+            {title ?? "Notification"}
+          </strong>
           {notice_type === "codex_attention" &&
           (attention_state ?? "pending") === "pending" ? (
             <Tag color="gold" style={{ marginLeft: 8 }}>

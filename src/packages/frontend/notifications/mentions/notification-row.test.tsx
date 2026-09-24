@@ -73,6 +73,39 @@ describe("NotificationRow", () => {
     mockEnsureProjectReduxRuntime.mockResolvedValue(undefined);
   });
 
+  it("includes the matching named agent in a Codex notice", () => {
+    render(
+      <NotificationRow
+        id="agent-notice"
+        user_map={{}}
+        namedAgents={[
+          {
+            name: "reviewer",
+            endpoint: { project_id: "project-1", agent_id: "agent-1" },
+            path: "agent.chat",
+            thread_id: "thread-1",
+          } as any,
+        ]}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-09-24T00:00:00.000Z"),
+            project_id: "project-1",
+            path: "agent.chat",
+            thread_id: "thread-1",
+            title: "Codex needs your attention",
+            origin_label: "Codex",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+    expect(
+      screen.getByText("@reviewer · Codex needs your attention"),
+    ).toBeVisible();
+  });
+
   it("does not mark account notices read when they do not target a file", () => {
     render(
       <NotificationRow

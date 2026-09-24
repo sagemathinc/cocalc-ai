@@ -8,7 +8,12 @@ export async function openAgentNotification(
   thread?: string,
 ): Promise<boolean> {
   if (!thread) return false;
-  const { agents } = await personalAgentApi().listNamedAgents({});
+  let agents;
+  try {
+    ({ agents } = await personalAgentApi().listNamedAgents({}));
+  } catch {
+    return false;
+  }
   const agent = agents.find(
     (agent) =>
       agent.endpoint.project_id === project &&
