@@ -160,7 +160,12 @@ describe("ChatRoomComposer resize handle", () => {
   it.each([false, true])(
     "offers agent delivery for a new thread only when Codex is selected (%s)",
     (isNewThreadCodex) => {
-      renderComposer({ isNewThreadCodex, on_post: jest.fn() });
+      renderComposer({
+        isNewThreadCodex,
+        on_post: jest.fn(),
+        hasInput: true,
+        input: "draft",
+      });
       if (isNewThreadCodex) {
         expect(
           screen.getByRole("button", { name: "Message delivery: To Agent" }),
@@ -172,6 +177,13 @@ describe("ChatRoomComposer resize handle", () => {
       }
     },
   );
+
+  it("does not show delivery options for an empty agent composer", () => {
+    renderComposer({ isNewThreadCodex: true, on_post: jest.fn() });
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+  });
 
   it("only offers agent delivery for the selected agent or a new Codex thread", async () => {
     const humanThread = { key: "human", label: "Human", isAI: false } as any;

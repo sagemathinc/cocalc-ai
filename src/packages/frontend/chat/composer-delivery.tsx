@@ -2,6 +2,7 @@ import { Button, Dropdown } from "antd";
 import { useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export type ComposerDelivery = "agent" | "post";
 
@@ -82,6 +83,7 @@ export function ComposerDeliverySelector({
         aria-expanded={open}
         type="text"
         size="small"
+        style={{ color: UI_COLORS.secondary }}
         aria-label={`Message delivery: ${value === "agent" ? "To Agent" : "Post"}`}
       >
         {value === "agent" ? "To Agent" : "Post"} <Icon name="caret-down" />

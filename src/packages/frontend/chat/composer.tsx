@@ -1003,7 +1003,7 @@ export function ChatRoomComposer({
                 </Button>
               </Tooltip>
             ) : null}
-            {canChooseDelivery && (
+            {canChooseDelivery && hasInput && (
               <ComposerDeliverySelector
                 value={delivery}
                 onChange={(value) => {

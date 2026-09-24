@@ -26,6 +26,7 @@ it("offers explicit delivery actions and restores trigger focus on Escape", asyn
   const trigger = screen.getByRole("button", {
     name: "Message delivery: To Agent",
   });
+  expect(trigger).toHaveStyle({ color: "var(--cocalc-ui-secondary)" });
   trigger.focus();
   fireEvent.click(trigger);
   const post = await screen.findByRole("menuitem", {
