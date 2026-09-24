@@ -3,7 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { claudeSubscriptionContainerArgs } from "./claude-subscription-controller";
+import {
+  claudeSubscriptionContainerArgs,
+  cleanupClaudeSubscriptionController,
+} from "./claude-subscription-controller";
 
 jest.mock("@cocalc/backend/podman", () => ({
   mountArg: ({ source, target, readOnly }) =>
@@ -48,4 +51,58 @@ test("subscription controller has no project filesystem, secret or network mount
     "/opt/cocalc/bin/node",
     "/opt/cocalc/harnesses/claude-code/0.81.1/app/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   ]);
+});
+
+test("credential home is removed after a confirmed stop even if refresh fails", async () => {
+  const stopContainer = jest.fn().mockResolvedValue(undefined);
+  const closeBridge = jest.fn().mockResolvedValue(undefined);
+  const refreshCredential = jest
+    .fn()
+    .mockRejectedValue(Error("broker unavailable"));
+  const removeHome = jest.fn().mockResolvedValue(undefined);
+  await expect(
+    cleanupClaudeSubscriptionController({
+      stopContainer,
+      closeBridge,
+      refreshCredential,
+      removeHome,
+      launched: true,
+    }),
+  ).rejects.toThrow("broker unavailable");
+  expect(removeHome).toHaveBeenCalledTimes(1);
+});
+
+test("credential home remains when container removal is uncertain", async () => {
+  const stopContainer = jest
+    .fn()
+    .mockRejectedValue(Error("container may be running"));
+  const closeBridge = jest.fn();
+  const refreshCredential = jest.fn();
+  const removeHome = jest.fn();
+  await expect(
+    cleanupClaudeSubscriptionController({
+      stopContainer,
+      closeBridge,
+      refreshCredential,
+      removeHome,
+      launched: true,
+    }),
+  ).rejects.toThrow("container may be running");
+  expect(closeBridge).not.toHaveBeenCalled();
+  expect(refreshCredential).not.toHaveBeenCalled();
+  expect(removeHome).not.toHaveBeenCalled();
+});
+
+test("failed startup does not overwrite the stored credential", async () => {
+  const refreshCredential = jest.fn();
+  const removeHome = jest.fn().mockResolvedValue(undefined);
+  await cleanupClaudeSubscriptionController({
+    stopContainer: async () => {},
+    closeBridge: async () => {},
+    refreshCredential,
+    removeHome,
+    launched: false,
+  });
+  expect(refreshCredential).not.toHaveBeenCalled();
+  expect(removeHome).toHaveBeenCalledTimes(1);
 });
