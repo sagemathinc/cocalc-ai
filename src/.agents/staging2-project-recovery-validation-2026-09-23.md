@@ -1841,4 +1841,9 @@ one student course project with a separate course payer (audits
 last verified at 22:37:38 UTC, during the rollout, and still showed the
 previous owner payer at the 22:40:37 UTC read (`f221c136-325d-40a7-9a04-4c100a9d8f89`). A post-rollout normal reconciliation must verify that
 this cache changes to the course payer before treating the live case as
-qualified. Customer warnings remain off; production is unchanged.
+qualified. At 22:42:54 UTC the host's normal reconciliation refreshed this
+cache to the separate course account `298d8ab1-b132-4f64-8edf-b1edd6a47e1c`
+with free service class (audited read `9ba407d0-0110-4a46-a462-22467cf807a5`).
+That qualifies the live course-payer routing correction; it does not qualify
+paid-class dispatch or customer warning delivery. Customer warnings remain
+off; production is unchanged.
