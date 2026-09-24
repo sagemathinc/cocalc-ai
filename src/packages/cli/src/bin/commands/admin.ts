@@ -3092,6 +3092,41 @@ Merge comments are private unless their corresponding --*-comment-public flag is
 
   adminDbCommonOptions(
     adminDb
+      .command("project-restore-drill-attest")
+      .description(
+        "record an immutable operator hash attestation for a remote-only restore",
+      )
+      .requiredOption(
+        "--op-id <uuid>",
+        "successful remote-only restore operation",
+      )
+      .requiredOption(
+        "--expected-sha256 <hex>",
+        "SHA-256 of the original marker",
+      )
+      .requiredOption(
+        "--observed-sha256 <hex>",
+        "SHA-256 of the restored marker",
+      )
+      .requiredOption("--reason <reason>", "human-readable audit reason"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(
+      command,
+      "admin db project-restore-drill-attest",
+      async (ctx) => {
+        return await ctx.hub.adminDb.attestProjectRestoreDrill({
+          bay_id: opts.bay,
+          op_id: opts.opId,
+          expected_sha256: opts.expectedSha256,
+          observed_sha256: opts.observedSha256,
+          reason: opts.reason,
+        });
+      },
+    );
+  });
+
+  adminDbCommonOptions(
+    adminDb
       .command("migration-health")
       .description("show legacy migration aggregate health"),
   ).action(async (opts: any, command: Command) => {

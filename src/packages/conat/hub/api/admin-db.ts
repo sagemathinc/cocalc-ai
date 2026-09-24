@@ -55,7 +55,28 @@ export interface AdminDbExecuteResponse {
   executed_sql?: string;
 }
 
+export interface AdminDbRestoreDrillAttestationRequest {
+  bay_id?: string;
+  op_id: string;
+  expected_sha256: string;
+  observed_sha256: string;
+  reason: string;
+}
+
+export interface AdminDbRestoreDrillAttestationResponse {
+  audit_id: string;
+  bay_id: string;
+  op_id: string;
+  project_id: string;
+  backup_id: string;
+  passed: boolean;
+  created: boolean;
+  recorded_at: string;
+  evidence_source: "operator_supplied";
+}
+
 export const adminDb = {
+  attestProjectRestoreDrill: authFirstRequireAccount,
   query: authFirstRequireAccount,
   diagnostic: authFirstRequireAccount,
   exec: authFirstRequireAccount,
@@ -63,6 +84,9 @@ export const adminDb = {
 };
 
 export interface AdminDbApi {
+  attestProjectRestoreDrill: (
+    opts: AdminDbRestoreDrillAttestationRequest,
+  ) => Promise<AdminDbRestoreDrillAttestationResponse>;
   query: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;
   diagnostic: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;
   exec: (opts: AdminDbExecuteRequest) => Promise<AdminDbExecuteResponse>;

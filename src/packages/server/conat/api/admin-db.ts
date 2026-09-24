@@ -14,10 +14,16 @@ import { isValidUUID, uuid } from "@cocalc/util/misc";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { ensureProjectMaintenanceStatusTable } from "@cocalc/server/projects/maintenance-status";
 import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
+import {
+  ensureRestoreDrillAttestationTable,
+  recordRestoreDrillAttestation,
+} from "@cocalc/server/projects/restore-drill-attestation";
 import type {
   AdminDbDiagnostic,
   AdminDbExecuteRequest,
   AdminDbExecuteResponse,
+  AdminDbRestoreDrillAttestationRequest,
+  AdminDbRestoreDrillAttestationResponse,
 } from "@cocalc/conat/hub/api/admin-db";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
@@ -165,15 +171,41 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
            p.host_id AS current_host_id,
            o.status, o.created_at, o.finished_at,
            o.result->>'duration_ms' AS restore_duration_ms,
-           o.result->>'remote_only' AS result_remote_only
+           o.result->>'remote_only' AS result_remote_only,
+           a.backup_repo_id AS attested_backup_repo_id,
+           a.restore_host_id AS attested_restore_host_id,
+           a.expected_sha256, a.observed_sha256, a.passed AS attestation_passed,
+           a.recorded_by AS attested_by, a.recorded_at AS attested_at,
+           CASE WHEN a.op_id IS NULL THEN NULL ELSE 'operator_supplied' END
+             AS evidence_source
     FROM long_running_operations o
     LEFT JOIN projects p ON p.project_id = o.scope_id
+    LEFT JOIN project_restore_drill_attestations a ON a.op_id = o.op_id
     WHERE o.kind = 'project-restore'
       AND o.scope_type = 'project'
       AND o.input->>'remote_only' = 'true'
       AND ($1::uuid IS NULL OR o.scope_id = $1::uuid)
-      AND o.updated_at >= now() - make_interval(secs => $2::double precision)
-    ORDER BY o.updated_at DESC
+      AND (o.updated_at >= now() - make_interval(secs => $2::double precision)
+           OR a.recorded_at >= now() - make_interval(secs => $2::double precision))
+    UNION ALL
+    SELECT a.op_id, a.project_id, a.backup_id,
+           p.backup_repo_id AS current_backup_repo_id,
+           p.host_id AS current_host_id,
+           'succeeded' AS status, NULL::timestamptz AS created_at,
+           a.restore_finished_at AS finished_at,
+           a.restore_duration_ms::text AS restore_duration_ms,
+           'true' AS result_remote_only,
+           a.backup_repo_id AS attested_backup_repo_id,
+           a.restore_host_id AS attested_restore_host_id,
+           a.expected_sha256, a.observed_sha256, a.passed AS attestation_passed,
+           a.recorded_by AS attested_by, a.recorded_at AS attested_at,
+           'operator_supplied' AS evidence_source
+    FROM project_restore_drill_attestations a
+    LEFT JOIN projects p ON p.project_id = a.project_id
+    WHERE NOT EXISTS (SELECT 1 FROM long_running_operations o WHERE o.op_id = a.op_id)
+      AND ($1::uuid IS NULL OR a.project_id = $1::uuid)
+      AND a.recorded_at >= now() - make_interval(secs => $2::double precision)
+    ORDER BY finished_at DESC
   `,
   "migration-health": `
     SELECT 'projects_by_artifact_status' AS section,
@@ -577,6 +609,7 @@ async function executeReadOnly({
   }
   if (diagnostic === "project-restore-drills") {
     await ensureLroSchema();
+    await ensureRestoreDrillAttestationTable();
   }
   const normalizedSql = trimTrailingSemicolon(rawSql);
   rejectClearlyUnsafeSql(normalizedSql);
@@ -775,6 +808,69 @@ export async function diagnostic({
     account_id: accountId,
     mode: "diagnostic",
   });
+}
+
+export async function attestProjectRestoreDrill({
+  account_id,
+  ...opts
+}: AdminAuthOpts &
+  AdminDbRestoreDrillAttestationRequest): Promise<AdminDbRestoreDrillAttestationResponse> {
+  const accountId = await requireFreshAdmin({ account_id, ...opts });
+  const localBay = assertLocalBay(opts.bay_id);
+  const audit_id = uuid();
+  const started = Date.now();
+  await recordAudit({
+    audit_id,
+    account_id: accountId,
+    mode: "write",
+    reason: opts.reason,
+    bay_id: localBay,
+    sql: "record immutable project restore drill SHA-256 attestation",
+    committed: false,
+  });
+  try {
+    await ensureLroSchema();
+    const { attestation, created } = await recordRestoreDrillAttestation({
+      ...opts,
+      bay_id: localBay,
+      recorded_by: accountId,
+    });
+    await recordAudit({
+      audit_id,
+      account_id: accountId,
+      mode: "write",
+      reason: opts.reason,
+      bay_id: localBay,
+      sql: "record immutable project restore drill SHA-256 attestation",
+      duration_ms: Date.now() - started,
+      row_count: created ? 1 : 0,
+      committed: true,
+    });
+    return {
+      audit_id,
+      bay_id: localBay,
+      op_id: attestation.op_id,
+      project_id: attestation.project_id,
+      backup_id: attestation.backup_id,
+      passed: attestation.passed,
+      created,
+      recorded_at: attestation.recorded_at.toISOString(),
+      evidence_source: "operator_supplied",
+    };
+  } catch (err) {
+    await recordAudit({
+      audit_id,
+      account_id: accountId,
+      mode: "write",
+      reason: opts.reason,
+      bay_id: localBay,
+      sql: "record immutable project restore drill SHA-256 attestation",
+      duration_ms: Date.now() - started,
+      committed: false,
+      error: err,
+    });
+    throw err;
+  }
 }
 
 export async function exec({

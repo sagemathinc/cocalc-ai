@@ -298,6 +298,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only curated read-only database diagnostics with server-side caps",
   },
+  "adminDb.attestProjectRestoreDrill": {
+    decision: "fresh-auth-required",
+    reason:
+      "writes an immutable operator hash attestation for a remote-only restore drill",
+  },
   "adminDb.exec": {
     decision: "fresh-auth-required",
     reason: "audited operator SQL write mode against operational data",

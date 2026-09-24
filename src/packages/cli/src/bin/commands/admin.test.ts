@@ -1644,6 +1644,46 @@ test("admin db project-restore-drills scopes the report and lookback", async () 
   });
 });
 
+test("admin db project-restore-drill-attest forwards operator evidence", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        attestProjectRestoreDrill: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-attestation", passed: true };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-restore-drill-attest",
+    "--op-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--expected-sha256",
+    "a".repeat(64),
+    "--observed-sha256",
+    "a".repeat(64),
+    "--reason",
+    "Remote-only canary marker readback",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    op_id: "11111111-1111-4111-8111-111111111111",
+    expected_sha256: "a".repeat(64),
+    observed_sha256: "a".repeat(64),
+    reason: "Remote-only canary marker readback",
+  });
+});
+
 test("admin db host-query forwards audited project-host SQLite options", async () => {
   let capturedArgs: any;
   const program = new Command();
