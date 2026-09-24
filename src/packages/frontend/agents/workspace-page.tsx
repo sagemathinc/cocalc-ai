@@ -139,6 +139,7 @@ import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { AgentProjectStatus } from "./project-status";
 import { AgentHostRecovery } from "./host-recovery";
+import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
@@ -1600,7 +1601,10 @@ function AgentWorkspace({
   onOpenNetwork: (network: AgentNetwork) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [selectedThread, setSelectedThread] = useState(agent.thread_id);
+  const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
+    agent.endpoint.agent_id,
+    agent.thread_id,
+  );
   const [headerAppearance, setHeaderAppearance] = useState<{
     threadId: string;
     value: AgentHeaderAppearance;
@@ -1678,7 +1682,9 @@ function AgentWorkspace({
       }
     },
     [
+      agent.endpoint.agent_id,
       agent.endpoint.project_id,
+      agent.thread_id,
       agent.path,
       onRegisteredThreadSelected,
       workspaceAgents,
