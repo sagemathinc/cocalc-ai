@@ -53,6 +53,7 @@ import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
+import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import { lite } from "@cocalc/frontend/lite";
@@ -644,24 +645,30 @@ function NewAgentPanel({
     return created;
   }
 
-  async function create(requestValue?: string) {
+  const createWithoutTaskRef = useRef(false);
+
+  async function create(requestValue?: string, withoutTask = false) {
     const request = (requestValue ?? firstRequestRef.current()).trim();
-    if (busy || uploading || problem || atLimit || !request) return;
+    if (busy || uploading || problem || atLimit || (!request && !withoutTask))
+      return;
+    createWithoutTaskRef.current = withoutTask;
     setBusy(true);
     setError("");
     setMissingDirectory(undefined);
     try {
-      const source = await fetchCodexPaymentSourceForSubmit({
-        projectId,
-        preference: paymentPreference,
-        credentialId:
-          paymentPreference === "subscription"
-            ? config.credentialId
-            : undefined,
-      });
       boundAccount.assertCurrent();
-      assertCodexFundingModelReady({ config, paymentSource: source });
-      await submitNewAgentRequest(request);
+      if (!withoutTask) {
+        const source = await fetchCodexPaymentSourceForSubmit({
+          projectId,
+          preference: paymentPreference,
+          credentialId:
+            paymentPreference === "subscription"
+              ? config.credentialId
+              : undefined,
+        });
+        assertCodexFundingModelReady({ config, paymentSource: source });
+      }
+      await submitNewAgentRequest(withoutTask ? undefined : request);
     } catch (err) {
       handleCreateError(err);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
@@ -670,7 +677,7 @@ function NewAgentPanel({
     }
   }
 
-  async function submitNewAgentRequest(request: string): Promise<void> {
+  async function submitNewAgentRequest(request?: string): Promise<void> {
     const created = await prepare();
     boundAccount.assertCurrent();
     const api = personalAgentApi();
@@ -698,29 +705,31 @@ function NewAgentPanel({
         | undefined,
       thread_title: name.trim(),
     });
-    const actions = initChat(created.projectId, created.path, {
-      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
-    });
-    await waitForChatReady(actions);
-    const sent = actions.sendChat({
-      input: request,
-      reply_thread_id: created.threadId,
-      acpConfigOverride: config,
-    });
-    if (sent) {
-      await actions.syncdb?.save();
-      await actions.save_to_disk();
-    } else {
-      await writeChatComposerDraft({
-        account_id: boundAccount.accountId,
-        project_id: created.projectId,
-        path: created.path,
-        composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
-        text: request,
+    if (request) {
+      const actions = initChat(created.projectId, created.path, {
+        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
       });
-      antdMessage.warning(
-        "The agent was created, but the first request could not start. It is preserved as a draft.",
-      );
+      await waitForChatReady(actions);
+      const sent = actions.sendChat({
+        input: request,
+        reply_thread_id: created.threadId,
+        acpConfigOverride: config,
+      });
+      if (sent) {
+        await actions.syncdb?.save();
+        await actions.save_to_disk();
+      } else {
+        await writeChatComposerDraft({
+          account_id: boundAccount.accountId,
+          project_id: created.projectId,
+          path: created.path,
+          composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
+          text: request,
+        });
+        antdMessage.warning(
+          "The agent was created, but the first request could not start. It is preserved as a draft.",
+        );
+      }
     }
     rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
     refreshNamedAgents();
@@ -743,7 +752,7 @@ function NewAgentPanel({
   async function createMissingDirectoryAndContinue(): Promise<void> {
     if (!missingDirectory || busy) return;
     const request = firstRequestRef.current().trim();
-    if (!request) return;
+    if (!request && !createWithoutTaskRef.current) return;
     setBusy(true);
     setError("");
     try {
@@ -754,7 +763,9 @@ function NewAgentPanel({
       }
       await createAgentWorkingDirectory(fs, missingDirectory.path);
       setMissingDirectory(undefined);
-      await submitNewAgentRequest(request);
+      await submitNewAgentRequest(
+        createWithoutTaskRef.current ? undefined : request,
+      );
     } catch (err) {
       handleCreateError(err);
     } finally {
@@ -1114,6 +1125,13 @@ function NewAgentPanel({
         >
           <Space size={4} wrap>
             <Text type="secondary">Shift+Enter to start</Text>
+            <Button
+              type="link"
+              disabled={busy || uploading || !!problem || atLimit}
+              onClick={() => void create(undefined, true)}
+            >
+              Create without a task
+            </Button>
           </Space>
           <Space>
             <NamedAgentUsage directory={namedAgentDirectory} />
@@ -2302,6 +2320,18 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  useEffect(() => {
+    if (!active) return;
+    set_window_title(
+      libraryOpen
+        ? "Library"
+        : creating
+          ? "New Agent"
+          : selected
+            ? `@${selected.name} - Agents`
+            : "Agents",
+    );
+  }, [active, libraryOpen, creating, selected?.name]);
   const creatingSourceAgent =
     agents.find(
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,

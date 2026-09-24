@@ -56,9 +56,12 @@ test.each(["a", "another-agent"])(
     );
   },
 );
-test("preserves file navigation outside Agents and for unmatched threads", async () => {
+test("preserves file navigation for unmatched threads", async () => {
   expect(await openAgentNotification("p", "a.chat", "other")).toBe(false);
-  tab = "projects";
-  expect(await openAgentNotification("p", "a.chat", "t")).toBe(false);
   expect(setState).not.toHaveBeenCalled();
+});
+test("opens a named agent even after the notifications tab replaced Agents", async () => {
+  tab = "projects";
+  expect(await openAgentNotification("p", "a.chat", "t")).toBe(true);
+  expect(setActiveTab).toHaveBeenCalledWith("agents");
 });

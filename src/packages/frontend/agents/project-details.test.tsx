@@ -21,6 +21,9 @@ jest.mock("@cocalc/frontend/project/start-button", () => ({
 jest.mock("@cocalc/frontend/project/settings/stop-project", () => ({
   StopProject: () => null,
 }));
+jest.mock("@cocalc/frontend/project/settings/restart-project", () => ({
+  RestartProject: () => <button>Restart project</button>,
+}));
 jest.mock("@cocalc/frontend/project/settings/sections", () => ({
   useProjectSettingsSections: () => ({
     sections: [
@@ -76,6 +79,7 @@ test("project agents are buttons; Browse leaves Agents; settings have one accord
       onClose={close}
     />,
   );
+  expect(screen.getByRole("button", { name: "Restart project" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "@helper" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   expect(navigate).toHaveBeenCalledWith("p", "a.chat", "t");

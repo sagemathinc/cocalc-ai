@@ -2,14 +2,12 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { personalAgentApi } from "./api";
 import { closedLibraryState } from "./library-navigation";
 
-// Only notifications opened from the Agents surface should stay in that surface.
 export async function openAgentNotification(
   project: string,
   path: string,
   thread?: string,
 ): Promise<boolean> {
-  if (!thread || redux.getStore("page")?.get("active_top_tab") !== "agents")
-    return false;
+  if (!thread) return false;
   const { agents } = await personalAgentApi().listNamedAgents({});
   const agent = agents.find(
     (agent) =>
@@ -18,7 +16,6 @@ export async function openAgentNotification(
       agent.thread_id === thread,
   );
   if (!agent) return false;
-  if (redux.getStore("page")?.get("active_top_tab") !== "agents") return false;
   const page = redux.getActions("page");
   page.setState({
     ...closedLibraryState,

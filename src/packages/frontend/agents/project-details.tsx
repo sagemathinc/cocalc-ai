@@ -8,8 +8,8 @@ import {
   ProjectContext,
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
-import { StartButton } from "@cocalc/frontend/project/start-button";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
+import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import { useProjectSettingsSections } from "@cocalc/frontend/project/settings/sections";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
@@ -73,7 +73,7 @@ function Details({
         collaborators' processes.
       </Typography.Paragraph>
       <Space wrap>
-        <StartButton project_id={projectId} style={{ fontSize: 16 }} />
+        <RestartProject project_id={projectId} />
         <StopProject project_id={projectId} disabled={state !== "running"} />
       </Space>
       <Typography.Text type="secondary">
