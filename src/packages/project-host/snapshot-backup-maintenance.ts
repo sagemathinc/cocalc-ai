@@ -1228,11 +1228,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
         const previousDue = parseTimestampMs(row.backup_status_due_at);
         const lastBackup = parseTimestampMs(row.last_backup);
+        const needsConfirmedBackupReconciliation =
+          (row.backup_status_outcome === "failed" &&
+            row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
+          (row.backup_status_outcome === "deferred" &&
+            row.backup_status_reason === "change_generation_changed");
         if (
           project_id &&
           !schedule.disabled &&
-          row.backup_status_outcome === "failed" &&
-          row.backup_status_reason?.includes("hosts.recordProjectBackup") &&
+          needsConfirmedBackupReconciliation &&
           previousDue != null &&
           lastBackup != null &&
           lastBackup >= previousDue &&
@@ -1254,7 +1258,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
                 storage_service_class: row.storage_service_class,
                 observed_at: new Date().toISOString(),
                 outcome: "succeeded",
-                reason: "confirmed_backup_after_failed_report",
+                reason:
+                  row.backup_status_outcome === "failed"
+                    ? "confirmed_backup_after_failed_report"
+                    : "confirmed_backup_after_changed_generation",
                 latest_backup_id: confirmed.id,
                 due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
                 attempt_due_at: new Date(previousDue).toISOString(),

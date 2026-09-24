@@ -1295,6 +1295,49 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("clears a deferred post-upload generation change only after repository confirmation", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-11T00:00:00.000Z"));
+    const backupTime = "2026-04-10T21:01:00.000Z";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-1",
+        storage_service_class: "free",
+        last_edited: "2026-04-10T21:01:10.000Z",
+        last_backup: backupTime,
+        backup_due_since: "2026-04-10T21:01:10.000Z",
+        backup_status_outcome: "deferred",
+        backup_status_reason: "change_generation_changed",
+        backup_status_due_at: "2026-04-10T21:00:00.000Z",
+        last_backup_observed_at: "2026-04-10T21:02:00.000Z",
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalled();
+
+    getBackupsMock.mockResolvedValue([
+      { id: "confirmed-id", time: new Date(backupTime) },
+    ]);
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "backup",
+        outcome: "succeeded",
+        reason: "confirmed_backup_after_changed_generation",
+        latest_backup_id: "confirmed-id",
+        attempt_due_at: "2026-04-10T21:00:00.000Z",
+        due_at: "2026-04-11T21:01:00.000Z",
+      }),
+    );
+  });
+
   it("dispatches confirmed project changes in bounded event batches", async () => {
     jest.useFakeTimers();
     listProjectMaintenanceSchedulesMock.mockResolvedValue([]);
