@@ -33,6 +33,7 @@ import {
   createProjectCliTokenLease,
   applyProjectRuntimeCliEnv,
   resolveProjectRuntimeApiUrl,
+  getBuiltinClaudeSkillMount,
 } from "../codex/codex-project";
 import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
 import { getProject } from "../sqlite/projects";
@@ -301,6 +302,10 @@ export async function launchHarnessInProject(
           readOnly: true,
         }),
       );
+    }
+    if (profile.version === 2 && profile.id === "claude-code") {
+      for (const skill of await getBuiltinClaudeSkillMount(home))
+        args.push(mountArg(skill));
     }
     for (const [source, target] of Object.entries(getCoCalcMounts()))
       args.push(mountArg({ source, target, readOnly: true }));

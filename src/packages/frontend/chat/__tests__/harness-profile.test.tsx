@@ -179,6 +179,9 @@ test("existing harness settings explain limitations before capability discovery"
     ),
   ).toBeTruthy();
   expect(screen.getByText(/Automations are not supported yet/)).toBeTruthy();
+  expect(
+    screen.getByText(/CoCalc does not pause for per-tool approval/),
+  ).toBeTruthy();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(trigger);

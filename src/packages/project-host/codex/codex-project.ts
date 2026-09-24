@@ -903,6 +903,32 @@ export async function getBuiltinLaunchpadSkillMounts(
   return mounts;
 }
 
+export async function getBuiltinClaudeSkillMount(
+  projectHome: string,
+  packagedSkillsRoot?: string,
+): Promise<OptionalBindMount[]> {
+  const projectSkillsRoot = join(projectHome, ".claude", "skills");
+  try {
+    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
+  } catch {
+    // Best effort: project home mount may already provide this path.
+  }
+  const projectSkill = join(projectSkillsRoot, "cocalc");
+  try {
+    if ((await fs.stat(projectSkill)).isDirectory()) return [];
+  } catch {
+    // A missing project override uses the packaged first-party skill.
+  }
+  const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
+  return [
+    {
+      source: join(skillsRoot, "cocalc"),
+      target: join(PROJECT_RUNTIME_HOME, ".claude", "skills", "cocalc"),
+      readOnly: true,
+    },
+  ];
+}
+
 function truncateForLog(value: string | undefined, max = 500): string {
   if (!value) return "";
   const text = value.trim();

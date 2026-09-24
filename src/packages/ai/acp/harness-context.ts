@@ -2,7 +2,10 @@ import type { AcpEvaluateRequest } from "./types";
 
 /** Retained harness processes cannot receive updated per-turn environment values. */
 export function harnessPrompt(
-  request: Pick<AcpEvaluateRequest, "prompt" | "project_id" | "chat">,
+  request: Pick<
+    AcpEvaluateRequest,
+    "prompt" | "project_id" | "chat" | "harness_credential"
+  >,
 ): string {
   // Leave native harness commands intact, as on the Codex path.
   if (/^\s*\/\w+/.test(request.prompt)) return request.prompt;
@@ -14,9 +17,14 @@ export function harnessPrompt(
   };
   if (!context.path || !context.thread_id || !context.message_date)
     return request.prompt;
+  const projectGuidance =
+    request.harness_credential?.mode === "account-subscription"
+      ? "Project files and CLI commands are accessible only through the cocalc_project project_exec tool. Do not assume the controller has project files or credentials."
+      : "Read applicable project CLAUDE.md instructions before editing. The CoCalc skill is at /home/user/.claude/skills/cocalc/SKILL.md; use it for CoCalc-native workflows. The scoped CoCalc CLI token is available in the project runtime.";
   return `[CoCalc project context]
 This turn runs inside a CoCalc project. The installed CoCalc CLI is:
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"
+${projectGuidance}
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.
 Current turn publication context (non-secret metadata, not an authorization grant):
 ${JSON.stringify(context)}

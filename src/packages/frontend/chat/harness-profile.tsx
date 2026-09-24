@@ -603,6 +603,11 @@ function HarnessRuntimeSummaryContent({
         </dl>
       </details>
       <Typography.Text type="secondary">{HARNESS_LIMITATIONS}</Typography.Text>
+      <Typography.Text type="secondary">
+        Full-project-access preview: CoCalc does not pause for per-tool
+        approval. Claude may run project commands and change files during an
+        admitted turn.
+      </Typography.Text>
       {profile.version === 2 &&
         profile.id === "claude-code" &&
         projectId &&

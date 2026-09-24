@@ -34,6 +34,9 @@ jest.mock("node:fs/promises", () => ({
 jest.mock("./anthropic-credential-relay", () => ({
   createAnthropicAccountCredentialRelay: (...args) => mockCreateRelay(...args),
 }));
+jest.mock("./claude-subscription-controller", () => ({
+  launchClaudeSubscriptionController: jest.fn(),
+}));
 jest.mock("./harness-reaper", () => ({
   harnessOwner: async () => "123:00000000-0000-0000-0000-000000000000:100",
   HARNESS_OWNER_LABEL: "cocalc.acp.owner",
@@ -79,6 +82,13 @@ jest.mock("../codex/codex-project", () => ({
   createProjectCliTokenLease: (...args) => mockLease(...args),
   applyProjectRuntimeCliEnv: jest.fn(),
   resolveProjectRuntimeApiUrl: () => "http://project-hub",
+  getBuiltinClaudeSkillMount: async () => [
+    {
+      source: "/packaged-skills/cocalc",
+      target: "/home/user/.claude/skills/cocalc",
+      readOnly: true,
+    },
+  ],
 }));
 jest.mock("../sqlite/projects", () => ({
   getProject: () => ({ state: "running" }),
@@ -167,6 +177,9 @@ test("account credentials are exposed only through a revocable relay mount", asy
   );
   const args = mockExec.mock.calls[0][1];
   expect(args).toContain("mount:/host-relay:/run/cocalc/credential-relay:true");
+  expect(args).toContain(
+    "mount:/packaged-skills/cocalc:/home/user/.claude/skills/cocalc:true",
+  );
   expect(args).toContain(
     `mount:${join(__dirname, "..", "qualified-harness", "index.js")}:/opt/cocalc/acp/qualified-harness-entry.js:true`,
   );
