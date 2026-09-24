@@ -114,16 +114,8 @@ import {
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
-import { AgentNetworkPills } from "./agent-network-pills";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
-import {
-  readAgentNetworkFilter,
-  rememberAgentNetworkFilter,
-} from "./agent-network-filter";
-import {
-  AgentNetworkDetailsModal,
-  AgentNetworkFilterBar,
-} from "./agent-network-details-modal";
+import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
@@ -131,6 +123,7 @@ import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
 import { OrganizationSaveAlert } from "./organization-save-alert";
+import { matchesAgentSidebarSearch } from "./sidebar-search";
 import {
   groupAgentsByProject,
   groupAgentsByRecency,
@@ -1208,7 +1201,6 @@ function NewAgentPanel({
 }
 
 function AgentProjectContext({
-  selectedNetworkId,
   showEditorControls,
   agent,
   workspaceAgents,
@@ -1221,7 +1213,6 @@ function AgentProjectContext({
   onClose,
   onOpenDocs,
 }: {
-  selectedNetworkId?: string;
   showEditorControls: boolean;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1516,7 +1507,6 @@ function AgentProjectContext({
           onBrowseAllArtifacts: () => {
             if (accountId) openLibrary();
           },
-          selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
           hideTopControls: false,
@@ -1575,9 +1565,6 @@ function AgentWorkspace({
   onClose,
   onRegisteredThreadSelected,
   networks,
-  selectedNetworkId,
-  onSelectNetwork,
-  onOpenNetwork,
   onEditNetworkTags,
 }: {
   onCopy: (agent: NamedAgent) => void;
@@ -1599,9 +1586,6 @@ function AgentWorkspace({
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
   networks: AgentNetwork[];
-  selectedNetworkId?: string;
-  onSelectNetwork: (network: AgentNetwork) => void;
-  onOpenNetwork: (network: AgentNetwork) => void;
   onEditNetworkTags: (agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -1652,6 +1636,7 @@ function AgentWorkspace({
     selectedThread,
   );
   const displayedAgent = selectedAgent ?? agent;
+  const networkTagCount = networksForAgent(networks, displayedAgent).length;
   const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
     agent.endpoint.project_id,
     "users",
@@ -1957,15 +1942,6 @@ function AgentWorkspace({
             ) : (
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
             )}
-            {!unregistered && networks.length > 0 && (
-              <AgentNetworkPills
-                networks={networks}
-                maxVisible={2}
-                selectedNetworkId={selectedNetworkId}
-                onSelect={onSelectNetwork}
-                onOpen={onOpenNetwork}
-              />
-            )}
             {!unregistered && (
               <Button
                 type="text"
@@ -1975,6 +1951,7 @@ function AgentWorkspace({
                 style={{ color: "inherit", height: "auto", padding: 0 }}
               >
                 Network tags
+                {networkTagCount ? ` (${networkTagCount})` : ""}
               </Button>
             )}
             <span aria-hidden="true">·</span>
@@ -2173,7 +2150,6 @@ function AgentWorkspace({
       {active && <AgentHostRecovery projectId={agent.endpoint.project_id} />}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
-          selectedNetworkId={selectedNetworkId}
           showEditorControls={showEditorControls}
           agent={agent}
           workspaceAgents={workspaceAgents}
@@ -2261,9 +2237,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | string
     | undefined;
   const [search, setSearch] = useState("");
-  const [networkFilterId, setNetworkFilterId] = useState(
-    readAgentNetworkFilter,
-  );
   const [networkDetailsId, setNetworkDetailsId] = useState<string>();
   const [networkTagsAgent, setNetworkTagsAgent] = useState<NamedAgent>();
   const [creating, setCreating] = useState(activeAgentId === "new");
@@ -2328,9 +2301,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }, [active]);
   const agents = directory?.agents ?? [];
   const networks = networkDirectory?.networks ?? [];
-  const selectedNetwork = networks.find(
-    ({ agent_network_id }) => agent_network_id === networkFilterId,
-  );
   const detailsNetwork = networks.find(
     ({ agent_network_id }) => agent_network_id === networkDetailsId,
   );
@@ -2361,30 +2331,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
     ) ?? selected;
 
-  useEffect(() => {
-    if (!networkDirectory || !networkFilterId) return;
-    if (selectedNetwork) {
-      rememberAgentNetworkFilter(networkFilterId);
-      return;
-    }
-    rememberAgentNetworkFilter();
-    setNetworkFilterId(undefined);
-  }, [networkDirectory, networkFilterId, selectedNetwork]);
-
-  const networkFallback =
-    selectedNetwork &&
-    !creating &&
-    (!selected || !networksForAgent([selectedNetwork], selected).length)
-      ? agents.find(
-          (agent) => networksForAgent([selectedNetwork], agent).length > 0,
-        )
-      : undefined;
   useWorkspaceRoute({
     active: active && !libraryOpen,
     activeAgentId,
     selected,
-    networkFallback,
-    mountAgent,
   });
 
   useEffect(() => {
@@ -2423,33 +2373,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }, [selected?.endpoint.agent_id, libraryOpen, active]);
 
   const visibleGroups = useMemo(() => {
-    const value = search.trim().toLowerCase();
     const filter = (agent: NamedAgent) => {
-      if (
-        selectedNetwork &&
-        !networksForAgent([selectedNetwork], agent).length
-      ) {
-        return false;
-      }
-      return (
-        !value ||
-        [
-          agent.name,
-          agentAppearances.get(agent.endpoint.agent_id)?.name,
-          agent.thread_title,
-          agent.project_title,
-          agent.description,
-        ]
-          .filter(Boolean)
-          .some((part) => `${part}`.toLowerCase().includes(value))
-      );
+      return matchesAgentSidebarSearch({
+        agent,
+        appearanceName: agentAppearances.get(agent.endpoint.agent_id)?.name,
+        networks: networksForAgent(networks, agent),
+        query: search,
+      });
     };
     return {
       pinned: agentOrganization.groups.pinned.filter(filter),
       unpinned: agentOrganization.groups.unpinned.filter(filter),
       hidden: agentOrganization.groups.hidden.filter(filter),
     };
-  }, [agentAppearances, agentOrganization.groups, search, selectedNetwork]);
+  }, [agentAppearances, agentOrganization.groups, networks, search]);
   const recencySections = useMemo(
     () =>
       groupAgentsByRecency(
@@ -2536,12 +2473,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }),
       "",
     );
-  }
-
-  function selectNetwork(network?: AgentNetwork) {
-    const next = network?.agent_network_id;
-    rememberAgentNetworkFilter(next);
-    setNetworkFilterId(next);
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -3210,20 +3141,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           />
           <Input
             allowClear
-            aria-label="Filter agents by name"
-            placeholder="Filter agents by name"
+            aria-label="Filter agents or network tags"
+            placeholder="Filter agents or tag:name"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          {selectedNetwork && (
-            <AgentNetworkFilterBar
-              network={selectedNetwork}
-              onOpen={() =>
-                setNetworkDetailsId(selectedNetwork.agent_network_id)
-              }
-              onClear={() => selectNetwork()}
-            />
-          )}
           {networkError && (
             <Alert
               role="alert"
@@ -3649,12 +3571,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     onAgentActivity={agentOrganization.recordActivity}
                     agentAppearances={agentAppearances}
                     onAgentAppearance={handleAgentAppearance}
-                    networks={networksForAgent(networks, agent)}
-                    selectedNetworkId={networkFilterId}
-                    onSelectNetwork={selectNetwork}
-                    onOpenNetwork={(network) =>
-                      setNetworkDetailsId(network.agent_network_id)
-                    }
+                    networks={networks}
                     onEditNetworkTags={setNetworkTagsAgent}
                     onClose={() => {
                       setMountedWorkspaces((old) => {
@@ -3703,19 +3620,25 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onClose={() => startFresh(undefined)}
         />
       )}
-      <AgentNetworkDetailsModal
-        network={detailsNetwork}
-        networks={networkDirectory?.networks}
-        onClose={() => setNetworkDetailsId(undefined)}
-        onChanged={refreshAgentNetworks}
-      />
       {networkTagsAgent && networkDirectory && (
         <AgentNetworkTagsEditor
           agent={networkTagsAgent}
           directory={networkDirectory}
           onClose={() => setNetworkTagsAgent(undefined)}
+          onOpenNetwork={(network) =>
+            setNetworkDetailsId(network.agent_network_id)
+          }
         />
       )}
+      <AgentNetworkDetailsModal
+        network={detailsNetwork}
+        networks={networkDirectory?.networks}
+        onSelectNetwork={(network) =>
+          setNetworkDetailsId(network.agent_network_id)
+        }
+        onClose={() => setNetworkDetailsId(undefined)}
+        onChanged={refreshAgentNetworks}
+      />
     </main>
   );
 }

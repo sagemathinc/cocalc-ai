@@ -8,14 +8,10 @@ export function useWorkspaceRoute({
   active,
   activeAgentId,
   selected,
-  networkFallback,
-  mountAgent,
 }: {
   active: boolean;
   activeAgentId?: string;
   selected?: NamedAgent;
-  networkFallback?: NamedAgent;
-  mountAgent: (agent: NamedAgent) => void;
 }) {
   useEffect(() => {
     if (!active || !activeAgentId || activeAgentId === "new" || !selected)
@@ -33,14 +29,4 @@ export function useWorkspaceRoute({
       set_url(getPageUrlPath({ page: "agents", agent_id: selected.name }));
     }
   }, [active, activeAgentId, selected?.endpoint.agent_id, selected?.name]);
-
-  useEffect(() => {
-    if (!active || !networkFallback) return;
-    mountAgent(networkFallback);
-    redux.getActions("page").setState({
-      active_agent_id: networkFallback.endpoint.agent_id,
-      active_agent_name: networkFallback.name,
-    });
-    set_url(getPageUrlPath({ page: "agents", agent_id: networkFallback.name }));
-  }, [active, networkFallback]);
 }

@@ -23,6 +23,7 @@ import {
   networkColor,
   networkProjectCount,
 } from "./agent-network-utils";
+import { AgentNetworkPills } from "./agent-network-pills";
 
 const { Text } = Typography;
 
@@ -38,10 +39,12 @@ export function AgentNetworkTagsEditor({
   agent,
   directory,
   onClose,
+  onOpenNetwork,
 }: {
   agent: NamedAgent;
   directory: AgentNetworkDirectory;
   onClose: () => void;
+  onOpenNetwork: (network: AgentNetwork) => void;
 }) {
   const [optimistic, setOptimistic] = useState<string[]>();
   const [busy, setBusy] = useState(false);
@@ -56,6 +59,9 @@ export function AgentNetworkTagsEditor({
     .filter((network) => isMember(network, agent))
     .map(({ agent_network_id }) => agent_network_id);
   const value = optimistic ?? selected;
+  const memberNetworks = networks.filter((network) =>
+    value.includes(network.agent_network_id),
+  );
 
   useEffect(() => {
     setOptimistic(undefined);
@@ -194,7 +200,7 @@ export function AgentNetworkTagsEditor({
     <>
       <Modal
         open
-        title={`Network tags for @${agent.name}`}
+        title={`Network tags${value.length ? ` (${value.length})` : ""} for @${agent.name}`}
         onCancel={() => {
           if (!busy) onClose();
         }}
@@ -206,6 +212,12 @@ export function AgentNetworkTagsEditor({
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <AgentNetworkPills networks={memberNetworks} onOpen={onOpenNetwork} />
+          {memberNetworks.length === 0 && networks.length > 0 && (
+            <Button type="link" onClick={() => onOpenNetwork(networks[0])}>
+              Browse existing network tags
+            </Button>
+          )}
           <Alert
             type="info"
             showIcon

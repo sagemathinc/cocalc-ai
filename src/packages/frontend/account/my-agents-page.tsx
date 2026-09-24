@@ -3,7 +3,6 @@ import { Alert, Button, Card, Input, Modal, Space, Tag } from "antd";
 import { defineMessage } from "react-intl";
 import type { SetPersonalMessagingStateOptions } from "@cocalc/conat/agents/personal";
 import { NameAgent } from "@cocalc/frontend/agents/name-agent";
-import { AgentNetworks } from "@cocalc/frontend/agents/agent-networks";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import {
   personalAgentApi,
@@ -75,9 +74,9 @@ function AccountAgentsPage() {
       <div>
         <h1 style={{ marginBottom: 4 }}>Agents</h1>
         <p>
-          Name reusable agents and put them in Agent Networks. Every active
-          network is a two-way communication group; named agents alone cannot
-          message one another.
+          Manage named agents and account-wide messaging controls here. Edit
+          network tags from an agent in the Agents workspace; agents sharing a
+          tag can message each other in both directions.
         </p>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -230,7 +229,6 @@ function AccountAgentsPage() {
           ))}
         </Space>
       </section>
-      <AgentNetworks key={revision} agents={directory?.agents ?? []} />
       <ExternalAgentInstallations revision={revision} />
     </Space>
   );

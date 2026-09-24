@@ -2,6 +2,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentCommunication } from "../agent-communication";
 
+const mockOpenAgents = jest.fn();
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: {
+    getActions: () => ({ set_active_tab: mockOpenAgents }),
+  },
+}));
+
 const projectId = "11111111-1111-4111-8111-111111111111";
 const agentId = "22222222-2222-4222-8222-222222222222";
 const peerId = "33333333-3333-4333-8333-333333333333";
@@ -72,6 +79,10 @@ test("session inspection is lazy, keyboard operable, and does not submit a paren
   expect(await screen.findByText("Review team")).toBeTruthy();
   expect(screen.getByText("2 members")).toBeTruthy();
   expect(api.listAgentNetworks).toHaveBeenCalledWith({ limit: 100 });
+  await user.click(
+    screen.getByRole("button", { name: "Manage Agent Networks" }),
+  );
+  expect(mockOpenAgents).toHaveBeenCalledWith("agents");
   expect(submit).not.toHaveBeenCalled();
 });
 

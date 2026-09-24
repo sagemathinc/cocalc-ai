@@ -4,6 +4,7 @@
  */
 
 import { Card, Descriptions, Space, Tag, Typography } from "antd";
+import type { ReactNode } from "react";
 import type {
   AgentNetwork,
   AgentNetworkMember,
@@ -30,9 +31,11 @@ function memberLabel(member: AgentNetworkMember): string {
 export function AgentNetworkSummary({
   network,
   compact = false,
+  titleControl,
 }: {
   network: AgentNetwork;
   compact?: boolean;
+  titleControl?: ReactNode;
 }) {
   const projects = networkProjectCount(network);
   const members = activeNetworkMembers(network);
@@ -41,7 +44,9 @@ export function AgentNetworkSummary({
       size="small"
       title={
         <Space wrap>
-          <Tag color={networkColor(network)}>{network.title}</Tag>
+          {titleControl ?? (
+            <Tag color={networkColor(network)}>{network.title}</Tag>
+          )}
           <Tag>{network.delivery_mode}</Tag>
           {network.state !== "active" && (
             <Tag

@@ -154,11 +154,13 @@ test("network identities remain stable and removed members are not active", () =
 
 test("tag selector explains permissions and creates a one-member live network", async () => {
   const user = userEvent.setup();
+  const onOpenNetwork = jest.fn();
   render(
     <AgentNetworkTagsEditor
       agent={agent}
       directory={directory}
       onClose={jest.fn()}
+      onOpenNetwork={onOpenNetwork}
     />,
   );
   expect(
@@ -167,6 +169,10 @@ test("tag selector explains permissions and creates a one-member live network", 
   expect(
     screen.getByText("Network tags are permissions, not just labels."),
   ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Browse existing network tags" }),
+  );
+  expect(onOpenNetwork).toHaveBeenCalledWith(network);
   const selector = screen.getByRole("combobox", {
     name: "Network tags for @builder",
   });
@@ -188,6 +194,7 @@ test("tag selector explains permissions and creates a one-member live network", 
 
 test("a sole member can remove their network tag", async () => {
   const user = userEvent.setup();
+  const onOpenNetwork = jest.fn();
   const withMember: AgentNetwork = {
     ...network,
     members: [
@@ -206,8 +213,18 @@ test("a sole member can remove their network tag", async () => {
       agent={agent}
       directory={{ ...directory, networks: [withMember] }}
       onClose={jest.fn()}
+      onOpenNetwork={onOpenNetwork}
     />,
   );
+  expect(
+    screen.getByRole("dialog", { name: "Network tags (1) for @builder" }),
+  ).toBeInTheDocument();
+  const configure = screen.getByRole("button", {
+    name: "Configure Release network tag",
+  });
+  configure.focus();
+  await user.keyboard("{Enter}");
+  expect(onOpenNetwork).toHaveBeenCalledWith(withMember);
   const remove = screen.getByRole("button", {
     name: "Remove Release network tag",
   });

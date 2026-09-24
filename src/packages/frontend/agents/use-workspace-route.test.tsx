@@ -18,10 +18,9 @@ const agent = {
 beforeEach(() => jest.clearAllMocks());
 
 test("inactive directory refresh cannot overwrite a project URL; reactivation syncs the name", () => {
-  const mountAgent = jest.fn();
   const view = renderHook(
     ({ active, selected }) =>
-      useWorkspaceRoute({ active, selected, activeAgentId: "id", mountAgent }),
+      useWorkspaceRoute({ active, selected, activeAgentId: "id" }),
     {
       initialProps: { active: false, selected: agent },
     },
@@ -31,18 +30,4 @@ test("inactive directory refresh cannot overwrite a project URL; reactivation sy
   expect(setState).not.toHaveBeenCalled();
   view.rerender({ active: true, selected: { ...agent, name: "new-name" } });
   expect(set_url).toHaveBeenCalledWith(expect.stringContaining("new-name"));
-});
-
-test("network fallback neither mounts nor navigates while inactive", () => {
-  const mountAgent = jest.fn();
-  const view = renderHook(
-    ({ active }) =>
-      useWorkspaceRoute({ active, networkFallback: agent, mountAgent }),
-    { initialProps: { active: false } },
-  );
-  expect(set_url).not.toHaveBeenCalled();
-  expect(mountAgent).not.toHaveBeenCalled();
-  view.rerender({ active: true });
-  expect(mountAgent).toHaveBeenCalledWith(agent);
-  expect(set_url).toHaveBeenCalledWith(expect.stringContaining("renamed"));
 });
