@@ -825,7 +825,7 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
                   'legacy_restore_active', 'memory_pressure',
                   'available_memory', 'memory_measurement_unavailable',
                   'io_pressure', 'lifecycle_active',
-                  'lifecycle_settle'
+                  'lifecycle_settle', 'change_generation_changed'
                 ) THEN reason
                 WHEN left(reason, 12) = 'io_pressure_' THEN 'io_pressure'
                 WHEN lower(reason) LIKE '%quota%' THEN 'quota'

@@ -71,6 +71,27 @@ describe("project recovery capacity accounting", () => {
     );
   });
 
+  it("shows a changed generation as a distinct deferral reason", async () => {
+    const host_id = uuid();
+    await getPool().query(
+      `INSERT INTO project_maintenance_attempts
+         (project_id, kind, host_id, storage_service_class, observed_at,
+          outcome, reason)
+       VALUES ($1, 'snapshot', $2, 'free', NOW(), 'deferred',
+               'change_generation_changed')`,
+      [uuid(), host_id],
+    );
+    const report = await getProjectRecoveryAttemptHealth();
+    expect(report.reasons).toContainEqual({
+      host_id,
+      storage_service_class: "free",
+      kind: "snapshot",
+      outcome: "deferred",
+      reason_code: "change_generation_changed",
+      attempts: 1,
+    });
+  });
+
   it("reconciles the host's newer local snapshot without counting an interval wait as debt", async () => {
     const host_id = uuid();
     const project_id = uuid();
