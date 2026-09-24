@@ -772,6 +772,7 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
           storage_pressure_state TEXT,
           storage_admission_mode TEXT,
           storage_pressure_sample_failed BOOLEAN,
+          maintenance_memory_gate_reason TEXT,
           PRIMARY KEY (host_id, collected_at)
         )
       `);
@@ -814,6 +815,9 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
       await pool().query(
         "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS storage_pressure_sample_failed BOOLEAN",
       );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS maintenance_memory_gate_reason TEXT",
+      );
     })().catch((err) => {
       schemaReady = undefined;
       throw err;
@@ -835,6 +839,16 @@ export async function recordProjectHostMetricsSample({
     metrics.collected_at && Number.isFinite(Date.parse(metrics.collected_at))
       ? new Date(metrics.collected_at)
       : new Date();
+  const gate = metrics.snapshot_backup_maintenance_gate;
+  const gateCheckedAt = gate?.checked_at ? Date.parse(gate.checked_at) : NaN;
+  const gateAgeMs = collected_at.getTime() - gateCheckedAt;
+  const maintenanceMemoryGateReason =
+    gate?.blocked_reason &&
+    Number.isFinite(gateCheckedAt) &&
+    gateAgeMs >= -30_000 &&
+    gateAgeMs <= 2 * 60_000
+      ? gate.blocked_reason
+      : null;
   await pool().query(
     `
       INSERT INTO project_host_metrics_samples (
@@ -879,15 +893,16 @@ export async function recordProjectHostMetricsSample({
         conat_persist,
         storage_pressure_state,
         storage_admission_mode,
-        storage_pressure_sample_failed
+        storage_pressure_sample_failed,
+        maintenance_memory_gate_reason
       )
       SELECT
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
       WHERE NOT EXISTS (
         SELECT 1
         FROM project_host_metrics_samples
         WHERE host_id = $1
-          AND collected_at >= $2::timestamptz - ($43::bigint * INTERVAL '1 millisecond')
+          AND collected_at >= $2::timestamptz - ($44::bigint * INTERVAL '1 millisecond')
       )
     `,
     [
@@ -935,6 +950,7 @@ export async function recordProjectHostMetricsSample({
       metrics.storage_admission == null
         ? null
         : metrics.storage_admission.sample_error != null,
+      maintenanceMemoryGateReason,
       SAMPLE_INTERVAL_MS,
     ],
   );
@@ -952,6 +968,9 @@ export interface ProjectHostStoragePressureWindow {
   emergency_seconds: number;
   recovery_seconds: number;
   unavailable_seconds: number;
+  memory_pressure_seconds: number;
+  available_memory_seconds: number;
+  memory_measurement_unavailable_seconds: number;
 }
 
 export async function getProjectHostStoragePressureWindows({
@@ -972,6 +991,9 @@ export async function getProjectHostStoragePressureWindows({
     emergency_seconds: string | number;
     recovery_seconds: string | number;
     unavailable_seconds: string | number;
+    memory_pressure_seconds: string | number;
+    available_memory_seconds: string | number;
+    memory_measurement_unavailable_seconds: string | number;
   }>(
     `WITH relevant_hosts AS (
        SELECT h.id, h.name
@@ -986,6 +1008,7 @@ export async function getProjectHostStoragePressureWindows({
        SELECT s.host_id, s.collected_at,
               s.storage_pressure_state, s.storage_admission_mode,
               s.storage_pressure_sample_failed,
+              s.maintenance_memory_gate_reason,
               lead(s.collected_at) OVER (
                 PARTITION BY s.host_id ORDER BY s.collected_at
               ) AS next_at
@@ -994,6 +1017,7 @@ export async function getProjectHostStoragePressureWindows({
        WHERE s.collected_at >= now() - interval '24 hours'
      ), spans AS (
        SELECT host_id, collected_at,
+              maintenance_memory_gate_reason,
               CASE
                 WHEN storage_pressure_sample_failed IS TRUE
                   OR storage_admission_mode NOT IN ('observe', 'enforce')
@@ -1019,7 +1043,10 @@ export async function getProjectHostStoragePressureWindows({
             coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'contended'), 0) AS contended_seconds,
             coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'emergency'), 0) AS emergency_seconds,
             coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'recovery'), 0) AS recovery_seconds,
-            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'unavailable'), 0) AS unavailable_seconds
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'unavailable'), 0) AS unavailable_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.maintenance_memory_gate_reason = 'memory_pressure'), 0) AS memory_pressure_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.maintenance_memory_gate_reason = 'available_memory'), 0) AS available_memory_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.maintenance_memory_gate_reason = 'memory_measurement_unavailable'), 0) AS memory_measurement_unavailable_seconds
        FROM relevant_hosts h
        LEFT JOIN spans s ON s.host_id = h.id
       GROUP BY h.id, h.name
@@ -1042,6 +1069,11 @@ export async function getProjectHostStoragePressureWindows({
     emergency_seconds: Number(row.emergency_seconds),
     recovery_seconds: Number(row.recovery_seconds),
     unavailable_seconds: Number(row.unavailable_seconds),
+    memory_pressure_seconds: Number(row.memory_pressure_seconds),
+    available_memory_seconds: Number(row.available_memory_seconds),
+    memory_measurement_unavailable_seconds: Number(
+      row.memory_measurement_unavailable_seconds,
+    ),
   }));
 }
 

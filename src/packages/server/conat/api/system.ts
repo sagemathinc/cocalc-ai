@@ -2402,7 +2402,7 @@ export async function getLaunchHealth({
                 ),
                 ...(projectRecoveryPressure?.map(
                   (host) =>
-                    `${host.host_name} storage pressure over 24h: contended ${Math.round(host.contended_seconds / 60)}m, emergency ${Math.round(host.emergency_seconds / 60)}m, recovery ${Math.round(host.recovery_seconds / 60)}m, unavailable ${Math.round(host.unavailable_seconds / 60)}m, sampled ${Math.round(host.sampled_seconds / 60)}m`,
+                    `${host.host_name} pressure over 24h: storage contended ${Math.round(host.contended_seconds / 60)}m, emergency ${Math.round(host.emergency_seconds / 60)}m, recovery ${Math.round(host.recovery_seconds / 60)}m, unavailable ${Math.round(host.unavailable_seconds / 60)}m, sampled ${Math.round(host.sampled_seconds / 60)}m; maintenance memory PSI ${Math.round(host.memory_pressure_seconds / 60)}m, available-memory floor ${Math.round(host.available_memory_seconds / 60)}m, measurement unavailable ${Math.round(host.memory_measurement_unavailable_seconds / 60)}m`,
                 ) ?? []),
                 ...projectRecovery.by_host_class
                   .slice(0, 12)

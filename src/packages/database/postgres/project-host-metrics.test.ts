@@ -60,6 +60,21 @@ describe("project host metrics history", () => {
         host_id,
         metrics: {
           collected_at,
+          snapshot_backup_maintenance_gate: {
+            checked_at:
+              pressure_state === "normal"
+                ? new Date(now - 20 * 60_000).toISOString()
+                : collected_at,
+            ...(pressure_state === "normal"
+              ? { blocked_reason: "memory_pressure" as const }
+              : pressure_state === "contended"
+                ? { blocked_reason: "memory_pressure" as const }
+                : pressure_state === "emergency"
+                  ? {
+                      blocked_reason: "memory_measurement_unavailable" as const,
+                    }
+                  : { blocked_reason: "available_memory" as const }),
+          },
           storage_admission: {
             schema_version: 1,
             collected_at,
@@ -101,6 +116,12 @@ describe("project host metrics history", () => {
     expect(window.emergency_seconds).toBeGreaterThanOrEqual(119);
     expect(window.recovery_seconds).toBeGreaterThanOrEqual(89);
     expect(window.unavailable_seconds).toBeGreaterThanOrEqual(29);
+    expect(window.memory_pressure_seconds).toBeGreaterThanOrEqual(119);
+    expect(window.memory_pressure_seconds).toBeLessThan(180);
+    expect(
+      window.memory_measurement_unavailable_seconds,
+    ).toBeGreaterThanOrEqual(119);
+    expect(window.available_memory_seconds).toBeGreaterThanOrEqual(89);
     expect(Date.parse(window.latest_sample_at!)).toBeGreaterThan(
       Date.parse(window.latest_valid_sample_at!),
     );
