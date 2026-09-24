@@ -2368,6 +2368,7 @@ export async function getLaunchHealth({
               : projectRecoveryAttemptsResult.status === "rejected" ||
                   projectRecovery.unknown_snapshot_status > 0 ||
                   projectRecovery.unknown_backup_status > 0 ||
+                  projectRecovery.host_maintenance_blocks.length > 0 ||
                   projectRecovery.oldest_snapshot_delay_seconds > 0 ||
                   projectRecovery.oldest_backup_delay_seconds > 0 ||
                   projectRecovery.by_host_class.some(
@@ -2377,7 +2378,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2386,6 +2387,10 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...projectRecovery.host_maintenance_blocks.map(
+                  (block) =>
+                    `${block.host_id} maintenance blocked: ${block.reason} checked at ${block.checked_at}${block.memory_psi_full_avg10 == null ? "" : ` (memory PSI full avg10 ${block.memory_psi_full_avg10}%)`}`,
+                ),
                 ...(projectRecoveryPressureResult.status === "rejected"
                   ? [
                       `Unable to read host storage pressure history: ${projectRecoveryPressureResult.reason}`,

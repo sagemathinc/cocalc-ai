@@ -36,6 +36,8 @@ function reasonText(reason: string | null | undefined): string | null {
     return "The host is busy starting or stopping projects.";
   if (text.includes("io_pressure"))
     return "The host is under storage pressure.";
+  if (text.includes("memory_measurement_unavailable"))
+    return "The host cannot verify memory pressure. Maintenance will retry.";
   if (text.includes("memory")) return "The host is under memory pressure.";
   if (text.includes("backup_capacity_busy"))
     return "Backup workers are busy. This backup remains due and will retry.";
@@ -125,7 +127,11 @@ export function ProjectRecoveryStatus({
       ? PAYING_SNAPSHOT_INCIDENT_DELAY_MS
       : PAYING_BACKUP_INCIDENT_DELAY_MS,
   );
-  const reason = reasonText(report?.reason);
+  const reason = reasonText(
+    overdue
+      ? (status.host_maintenance_block?.reason ?? report?.reason)
+      : report?.reason,
+  );
   let title = `${label}: latest confirmed ${formatted(latest)}`;
   let description: string | undefined;
   let type: "info" | "success" | "warning" | "error" = "success";
@@ -135,7 +141,12 @@ export function ProjectRecoveryStatus({
     type = "info";
   } else if (unknown) {
     title = `${label}: current protection status unknown`;
-    description = `Latest confirmed recovery point: ${formatted(latest)}. Host or maintenance reporting is stale.${overdue ? ` Scheduled recovery point was due ${formatted(dueAt)}.` : ""}`;
+    const hostBlock = reasonText(status.host_maintenance_block?.reason);
+    const reportProblem =
+      hostStale == null || hostStale > STALE_HOST_MS
+        ? "Host reporting is stale."
+        : "Maintenance reporting is missing or stale.";
+    description = `Latest confirmed recovery point: ${formatted(latest)}. ${reportProblem}${overdue ? ` Scheduled recovery point was due ${formatted(dueAt)}.` : ""}${hostBlock ? ` ${hostBlock}` : ""}`;
     type = critical ? "error" : "warning";
   } else if (overdue) {
     title = `${label}: scheduled recovery point overdue`;

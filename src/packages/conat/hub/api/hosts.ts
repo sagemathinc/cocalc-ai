@@ -1077,6 +1077,14 @@ export interface HostCurrentMetrics {
   resource_pressure?: HostResourcePressureMetrics;
   io_containment?: HostIoContainmentMetrics;
   storage_admission?: HostStorageAdmissionMetrics;
+  snapshot_backup_maintenance_gate?: {
+    checked_at: string;
+    blocked_reason?:
+      | "available_memory"
+      | "memory_pressure"
+      | "memory_measurement_unavailable";
+    memory_psi_full_avg10?: number;
+  };
   conat_persist?: HostConatPersistMetrics;
 }
 

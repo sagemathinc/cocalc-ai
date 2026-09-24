@@ -101,6 +101,58 @@ it("shows overdue recovery debt even when the host status is unknown", async () 
   expect(container.querySelector('[aria-live="assertive"]')).not.toBeNull();
 });
 
+it("explains a host memory block while project protection is still unknown", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: "2026-09-22T00:00:00.000Z",
+    last_backup: null,
+    snapshot_due_at: "2026-09-22T00:00:00.000Z",
+    backup_due_at: null,
+    snapshot_disabled: false,
+    backup_disabled: false,
+    host_maintenance_block: {
+      reason: "memory_pressure",
+      checked_at: current(),
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="snapshot" />);
+  expect(
+    await screen.findByText(
+      "Local snapshots: current protection status unknown",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/The host is under memory pressure/)).toBeVisible();
+});
+
+it("explains an unavailable memory measurement without claiming protection", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: "2026-09-22T00:00:00.000Z",
+    last_backup: null,
+    snapshot_due_at: "2026-09-22T00:00:00.000Z",
+    backup_due_at: null,
+    snapshot_disabled: false,
+    backup_disabled: false,
+    host_maintenance_block: {
+      reason: "memory_measurement_unavailable",
+      checked_at: current(),
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="snapshot" />);
+  expect(
+    await screen.findByText(
+      "Local snapshots: current protection status unknown",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/cannot verify memory pressure. Maintenance will retry/),
+  ).toBeVisible();
+});
+
 it("does not claim protection when unchanged content has no recovery point", async () => {
   getRecoveryStatus.mockResolvedValue({
     project_id: "project-1",
@@ -156,4 +208,36 @@ it("explains a busy backup queue while keeping the due time visible", async () =
   expect(
     screen.getByText(/Backup workers are busy. This backup remains due/),
   ).toBeVisible();
+});
+
+it("shows a current host memory gate above an older attempt reason", async () => {
+  getRecoveryStatus.mockResolvedValue({
+    project_id: "project-1",
+    host_id: "host-1",
+    host_last_seen: current(),
+    last_changed: "2026-09-22T00:00:00.000Z",
+    last_backup: null,
+    snapshot_due_at: null,
+    backup_due_at: "2026-09-22T00:00:00.000Z",
+    snapshot_disabled: false,
+    backup_disabled: false,
+    host_maintenance_block: {
+      reason: "memory_pressure",
+      checked_at: current(),
+    },
+    backup: {
+      observed_at: current(),
+      outcome: "deferred",
+      reason: "lifecycle_active",
+      due_at: "2026-09-22T00:00:00.000Z",
+    },
+  });
+  render(<ProjectRecoveryStatus project_id="project-1" kind="backup" />);
+  expect(
+    await screen.findByText(
+      "Off-host backups: scheduled recovery point overdue",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/The host is under memory pressure/)).toBeVisible();
+  expect(screen.getByText(/Due .* Latest confirmed/)).toBeVisible();
 });

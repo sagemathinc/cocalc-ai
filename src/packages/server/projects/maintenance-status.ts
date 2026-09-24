@@ -370,6 +370,43 @@ export async function recordProjectMaintenanceStatus(
   return true;
 }
 
+function freshHostMaintenanceBlock(
+  value: unknown,
+  hostLastSeen: Date | null,
+): ProjectRecoveryStatus["host_maintenance_block"] {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const gate = value as Record<string, unknown>;
+  if (
+    gate.blocked_reason !== "available_memory" &&
+    gate.blocked_reason !== "memory_pressure" &&
+    gate.blocked_reason !== "memory_measurement_unavailable"
+  ) {
+    return undefined;
+  }
+  const checkedAt =
+    typeof gate.checked_at === "string" ? Date.parse(gate.checked_at) : NaN;
+  const now = Date.now();
+  if (
+    !Number.isFinite(checkedAt) ||
+    checkedAt > now + 30_000 ||
+    now - checkedAt > 2 * 60_000 ||
+    hostLastSeen == null ||
+    now - hostLastSeen.getTime() > 5 * 60_000
+  ) {
+    return undefined;
+  }
+  return {
+    reason: gate.blocked_reason,
+    checked_at: new Date(checkedAt).toISOString(),
+    ...(typeof gate.memory_psi_full_avg10 === "number" &&
+    Number.isFinite(gate.memory_psi_full_avg10)
+      ? { memory_psi_full_avg10: gate.memory_psi_full_avg10 }
+      : {}),
+  };
+}
+
 export async function getProjectRecoveryStatusLocal(
   project_id: string,
 ): Promise<ProjectRecoveryStatus> {
@@ -380,6 +417,7 @@ export async function getProjectRecoveryStatusLocal(
     last_backup: Date | null;
     last_changed: Date | null;
     host_last_seen: Date | null;
+    host_maintenance_gate: unknown;
     snapshots: SnapshotSchedule | null;
     backups: SnapshotSchedule | null;
     owner_account_id: string | null;
@@ -389,7 +427,10 @@ export async function getProjectRecoveryStatusLocal(
     `SELECT p.project_id, p.host_id, p.last_backup,
             COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
               AS last_changed,
-            h.last_seen AS host_last_seen, p.snapshots, p.backups,
+            h.last_seen AS host_last_seen,
+            h.metadata #> '{metrics,current,snapshot_backup_maintenance_gate}'
+              AS host_maintenance_gate,
+            p.snapshots, p.backups,
             p.usage_account_id::text AS usage_account_id, p.users,
             (SELECT account_id_text::text
                FROM jsonb_each(COALESCE(p.users, '{}'::jsonb))
@@ -432,6 +473,12 @@ export async function getProjectRecoveryStatusLocal(
     snapshot_disabled: project.snapshots?.disabled === true,
     backup_disabled: project.backups?.disabled === true,
   };
+  const hostMaintenanceBlock = freshHostMaintenanceBlock(
+    project.host_maintenance_gate,
+    project.host_last_seen,
+  );
+  if (hostMaintenanceBlock)
+    status.host_maintenance_block = hostMaintenanceBlock;
   for (const report of reports) {
     if (report.host_id !== project.host_id) continue;
     const common = {
@@ -516,6 +563,15 @@ export interface ProjectRecoveryHealth {
   unknown_backup_status: number;
   oldest_snapshot_delay_seconds: number;
   oldest_backup_delay_seconds: number;
+  host_maintenance_blocks: Array<{
+    host_id: string;
+    reason:
+      | "available_memory"
+      | "memory_pressure"
+      | "memory_measurement_unavailable";
+    checked_at: string;
+    memory_psi_full_avg10?: number;
+  }>;
   by_host_class: ProjectRecoveryDebtAggregate[];
   oldest_debt: ProjectRecoveryOldestDebt[];
 }
@@ -667,7 +723,8 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
                   'backup_capacity_busy', 'snapshot_not_created',
                   'backup_not_created', 'snapshot_maintenance_disabled',
                   'legacy_restore_active', 'memory_pressure',
-                  'available_memory', 'io_pressure', 'lifecycle_active',
+                  'available_memory', 'memory_measurement_unavailable',
+                  'io_pressure', 'lifecycle_active',
                   'lifecycle_settle'
                 ) THEN reason
                 WHEN left(reason, 12) = 'io_pressure_' THEN 'io_pressure'
@@ -733,6 +790,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     unknown_backup_status: 0,
     oldest_snapshot_delay_seconds: 0,
     oldest_backup_delay_seconds: 0,
+    host_maintenance_blocks: [],
     by_host_class: [],
     oldest_debt: [],
   };
@@ -980,5 +1038,25 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         b.delay_seconds - a.delay_seconds ||
         a.project_id.localeCompare(b.project_id),
     );
+  const { rows: hostGates } = await getPool().query<{
+    host_id: string;
+    host_last_seen: Date | null;
+    gate: unknown;
+  }>(
+    `SELECT h.id AS host_id, h.last_seen AS host_last_seen,
+            h.metadata #> '{metrics,current,snapshot_backup_maintenance_gate}'
+              AS gate
+       FROM project_hosts h
+      WHERE h.deleted IS NULL
+        AND EXISTS (
+          SELECT 1 FROM projects p
+           WHERE p.host_id=h.id AND p.provisioned IS TRUE
+             AND p.deleted IS NOT TRUE
+        )`,
+  );
+  health.host_maintenance_blocks = hostGates.flatMap((host) => {
+    const block = freshHostMaintenanceBlock(host.gate, host.host_last_seen);
+    return block ? [{ host_id: host.host_id, ...block }] : [];
+  });
   return health;
 }

@@ -30,6 +30,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ownerAccountId = null,
     usageAccountId = null,
     users = null,
+    hostMaintenanceGate = null,
   }: {
     changedAt: string;
     reconciledAt: string;
@@ -37,6 +38,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ownerAccountId?: string | null;
     usageAccountId?: string | null;
     users?: Record<string, { group?: string }> | null;
+    hostMaintenanceGate?: unknown;
   }) {
     const { snapshotScheduleRevision } = await import("./maintenance-status");
     const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
@@ -49,7 +51,10 @@ describe("project recovery status after unchanged-content reconciliation", () =>
               host_id: "host-1",
               last_backup: null,
               last_changed: new Date(changedAt),
-              host_last_seen: new Date("2026-04-11T00:00:00.000Z"),
+              host_last_seen: hostMaintenanceGate
+                ? new Date()
+                : new Date("2026-04-11T00:00:00.000Z"),
+              host_maintenance_gate: hostMaintenanceGate,
               snapshots: schedule,
               backups: { disabled: true },
               owner_account_id: ownerAccountId,
@@ -109,6 +114,31 @@ describe("project recovery status after unchanged-content reconciliation", () =>
       scheduleChanged: true,
     });
     expect(status.snapshot_due_at).toBe("2026-04-10T00:00:00.000Z");
+  });
+
+  it("attaches only a fresh host-wide memory block", async () => {
+    const status = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      hostMaintenanceGate: {
+        checked_at: new Date().toISOString(),
+        blocked_reason: "memory_pressure",
+        memory_psi_full_avg10: 52.48,
+      },
+    });
+    expect(status.host_maintenance_block).toMatchObject({
+      reason: "memory_pressure",
+      memory_psi_full_avg10: 52.48,
+    });
+    const old = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      hostMaintenanceGate: {
+        checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+        blocked_reason: "memory_pressure",
+      },
+    });
+    expect(old.host_maintenance_block).toBeUndefined();
   });
 
   it("classifies a critical recovery breach using the storage payer", async () => {
@@ -543,6 +573,36 @@ describe("project recovery status after unchanged-content reconciliation", () =>
         storage_service_class: "paying",
         kind: "backup",
         repeated_failures: 1,
+      }),
+    ]);
+  });
+
+  it("lists fresh host-wide memory gates once in operator health", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_hosts h")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              host_last_seen: new Date(),
+              gate: {
+                checked_at: new Date().toISOString(),
+                blocked_reason: "memory_pressure",
+                memory_psi_full_avg10: 52.48,
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.host_maintenance_blocks).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        reason: "memory_pressure",
+        memory_psi_full_avg10: 52.48,
       }),
     ]);
   });

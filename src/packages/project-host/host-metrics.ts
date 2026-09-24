@@ -17,6 +17,7 @@ import { readIoContainmentMetrics } from "./io-metrics";
 import { readConatPersistMetrics } from "./conat-persist-metrics";
 import { getStorageAdmissionStatus } from "./storage-admission";
 import { getRusticCacheMaintenanceMetrics } from "./rustic-cache-maintenance";
+import { getSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
 
 const logger = getLogger("project-host:host-metrics");
 
@@ -253,6 +254,7 @@ async function collectSnapshot(
       ...(resource_pressure ? { resource_pressure } : {}),
       io_containment,
       ...(storageAdmission ? { storage_admission: storageAdmission } : {}),
+      snapshot_backup_maintenance_gate: getSnapshotBackupMaintenanceGate(),
       ...(conat_persist ? { conat_persist } : {}),
     },
   };

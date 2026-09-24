@@ -32,6 +32,7 @@ import {
 } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
+import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
 import { onProjectChangeReported } from "./last-edited";
 import {
   listLeasedMaintenanceSchedules,
@@ -164,9 +165,17 @@ function readMemoryPressure(): string | undefined {
   }
 }
 
+function readMemoryInfo(): string | undefined {
+  try {
+    return fs.readFileSync("/proc/meminfo", "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 function maintenanceMemoryDecision({
   configuredParallelism,
-  meminfoText = fs.readFileSync("/proc/meminfo", "utf8"),
+  meminfoText = readMemoryInfo(),
   pressureText = readMemoryPressure(),
 }: {
   configuredParallelism: number;
@@ -183,15 +192,18 @@ function maintenanceMemoryDecision({
     }
   | {
       skip: true;
-      reason: "available_memory" | "memory_pressure";
+      reason:
+        | "available_memory"
+        | "memory_pressure"
+        | "memory_measurement_unavailable";
       availableBytes?: number;
       preferredBytes?: number;
       hardMinBytes?: number;
       pressureFullAvg10?: number;
     } {
-  const memory = parseMeminfo(meminfoText);
+  const memory = meminfoText ? parseMeminfo(meminfoText) : undefined;
   if (!memory) {
-    return { skip: false, parallelism: configuredParallelism };
+    return { skip: true, reason: "memory_measurement_unavailable" };
   }
   const preferredBytes = memoryMaintenanceThresholdBytes(memory.totalBytes);
   // A zero preferred threshold is the documented escape hatch used by tests
@@ -223,6 +235,15 @@ function maintenanceMemoryDecision({
     Number.isFinite(pressureMax) && pressureMax >= 0
       ? pressureMax
       : DEFAULT_MEMORY_PSI_FULL_AVG10_MAX;
+  if (effectivePressureMax > 0 && pressureFullAvg10 == null) {
+    return {
+      skip: true,
+      reason: "memory_measurement_unavailable",
+      availableBytes: memory.availableBytes,
+      preferredBytes,
+      hardMinBytes,
+    };
+  }
   if (
     pressureFullAvg10 != null &&
     effectivePressureMax > 0 &&
@@ -525,8 +546,15 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     DEFAULT_PARALLELISM,
   );
   const memoryDecision = maintenanceMemoryDecision({ configuredParallelism });
+  setSnapshotBackupMaintenanceGate({
+    checked_at: new Date().toISOString(),
+    ...(memoryDecision.skip ? { blocked_reason: memoryDecision.reason } : {}),
+    ...(memoryDecision.pressureFullAvg10 == null
+      ? {}
+      : { memory_psi_full_avg10: memoryDecision.pressureFullAvg10 }),
+  });
   if (memoryDecision.skip) {
-    logger.info("skipping snapshot/backup maintenance under memory pressure", {
+    logger.info("skipping snapshot/backup maintenance at memory safety gate", {
       hostId,
       reason: memoryDecision.reason,
       memory_available_bytes: memoryDecision.availableBytes,

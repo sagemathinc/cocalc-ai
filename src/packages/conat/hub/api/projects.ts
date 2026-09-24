@@ -62,6 +62,14 @@ export interface ProjectRecoveryStatus {
   backup_due_at: string | null;
   snapshot_disabled: boolean;
   backup_disabled: boolean;
+  host_maintenance_block?: {
+    reason:
+      | "available_memory"
+      | "memory_pressure"
+      | "memory_measurement_unavailable";
+    checked_at: string;
+    memory_psi_full_avg10?: number;
+  };
   snapshot?: {
     observed_at: string;
     outcome: string;

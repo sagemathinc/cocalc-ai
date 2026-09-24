@@ -734,6 +734,71 @@ describe("snapshot-backup-maintenance", () => {
       reason: "memory_pressure",
       pressureFullAvg10: 7.5,
     });
+
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    const { getSnapshotBackupMaintenanceGate } =
+      await import("./snapshot-backup-gate");
+    const readFileSyncSpy = jest
+      .spyOn(require("node:fs"), "readFileSync")
+      .mockImplementation((path: unknown) =>
+        `${path}` === "/proc/pressure/memory"
+          ? "full avg10=7.50 avg60=3.00 avg300=1.00 total=1\n"
+          : "MemTotal:       65536000 kB\nMemAvailable:   20971520 kB\n",
+      );
+    try {
+      expect(
+        await runProjectSnapshotBackupMaintenanceSweepOnce({
+          hostId: "host-1",
+        }),
+      ).toBe(false);
+      expect(getSnapshotBackupMaintenanceGate()).toMatchObject({
+        blocked_reason: "memory_pressure",
+        memory_psi_full_avg10: 7.5,
+      });
+      expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+
+      readFileSyncSpy.mockImplementation((path: unknown) =>
+        `${path}` === "/proc/pressure/memory"
+          ? "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+          : "MemTotal:       65536000 kB\nMemAvailable:   20971520 kB\n",
+      );
+      await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId: "host-1",
+      });
+      expect(
+        getSnapshotBackupMaintenanceGate()?.blocked_reason,
+      ).toBeUndefined();
+    } finally {
+      readFileSyncSpy.mockRestore();
+    }
+  });
+
+  it("blocks risky maintenance when host memory measurements are missing", async () => {
+    delete process.env
+      .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;
+    const { _test } = await import("./snapshot-backup-maintenance");
+    expect(
+      _test.maintenanceMemoryDecision({
+        configuredParallelism: 2,
+        meminfoText: "",
+        pressureText: "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+      }),
+    ).toMatchObject({
+      skip: true,
+      reason: "memory_measurement_unavailable",
+    });
+    expect(
+      _test.maintenanceMemoryDecision({
+        configuredParallelism: 2,
+        meminfoText:
+          "MemTotal:       65536000 kB\nMemAvailable:   20971520 kB\n",
+        pressureText: "",
+      }),
+    ).toMatchObject({
+      skip: true,
+      reason: "memory_measurement_unavailable",
+    });
   });
 
   it("starts a repeating timer and can be stopped", () => {
