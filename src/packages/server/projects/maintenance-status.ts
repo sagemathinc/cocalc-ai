@@ -504,6 +504,16 @@ export interface ProjectRecoveryHealth {
   oldest_snapshot_delay_seconds: number;
   oldest_backup_delay_seconds: number;
   by_host_class: ProjectRecoveryDebtAggregate[];
+  oldest_debt: ProjectRecoveryOldestDebt[];
+}
+
+export interface ProjectRecoveryOldestDebt {
+  project_id: string;
+  host_id: string;
+  storage_service_class: "paying" | "free" | "unclassified";
+  kind: "snapshot" | "backup";
+  due_at: string;
+  delay_seconds: number;
 }
 
 export interface ProjectRecoveryDebtAggregate {
@@ -711,6 +721,38 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     oldest_snapshot_delay_seconds: 0,
     oldest_backup_delay_seconds: 0,
     by_host_class: [],
+    oldest_debt: [],
+  };
+  const oldestByClassKind = new Map<string, ProjectRecoveryOldestDebt[]>();
+  const recordOldestDebt = (
+    row: HealthRow,
+    serviceClass: string | null,
+    kind: "snapshot" | "backup",
+    due: string,
+    delaySeconds: number,
+  ) => {
+    if (delaySeconds <= 0) return;
+    const storage_service_class =
+      serviceClass === "paying" || serviceClass === "free"
+        ? serviceClass
+        : "unclassified";
+    const key = `${storage_service_class}:${kind}`;
+    const entries = oldestByClassKind.get(key) ?? [];
+    entries.push({
+      project_id: row.project_id,
+      host_id: row.host_id,
+      storage_service_class,
+      kind,
+      due_at: due,
+      delay_seconds: delaySeconds,
+    });
+    entries.sort(
+      (a, b) =>
+        b.delay_seconds - a.delay_seconds ||
+        a.project_id.localeCompare(b.project_id),
+    );
+    entries.length = Math.min(entries.length, 5);
+    oldestByClassKind.set(key, entries);
   };
   const debtByHostClass = new Map<string, ProjectRecoveryDebtAggregate>();
   const debtGroup = (
@@ -810,6 +852,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
           if (delaySeconds > 0) {
             group.overdue_count++;
+            recordOldestDebt(
+              row,
+              row.snapshot_class,
+              "snapshot",
+              due,
+              delaySeconds,
+            );
             group.oldest_delay_seconds = Math.max(
               group.oldest_delay_seconds,
               delaySeconds,
@@ -861,6 +910,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           const delaySeconds = Math.max(0, (now - Date.parse(due)) / 1000);
           if (delaySeconds > 0) {
             group.overdue_count++;
+            recordOldestDebt(
+              row,
+              row.backup_class,
+              "backup",
+              due,
+              delaySeconds,
+            );
             group.oldest_delay_seconds = Math.max(
               group.oldest_delay_seconds,
               delaySeconds,
@@ -901,6 +957,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         a.host_id.localeCompare(b.host_id) ||
         a.kind.localeCompare(b.kind) ||
         a.storage_service_class.localeCompare(b.storage_service_class),
+    );
+  health.oldest_debt = [...oldestByClassKind.values()]
+    .flat()
+    .sort(
+      (a, b) =>
+        b.delay_seconds - a.delay_seconds ||
+        a.project_id.localeCompare(b.project_id),
     );
   return health;
 }

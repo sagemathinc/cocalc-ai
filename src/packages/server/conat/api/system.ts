@@ -2405,6 +2405,10 @@ export async function getLaunchHealth({
                     (group) =>
                       `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures`,
                   ),
+                ...projectRecovery.oldest_debt.map(
+                  (item) =>
+                    `Project ${item.project_id} on ${item.host_id}: ${item.storage_service_class} ${item.kind} due ${item.due_at}, delayed ${Math.round(item.delay_seconds / 60)} minutes`,
+                ),
                 ...(projectRecoveryAttemptsResult.status === "rejected"
                   ? [
                       `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,

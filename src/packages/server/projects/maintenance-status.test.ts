@@ -403,6 +403,46 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ]);
   });
 
+  it("bounds the oldest overdue projects separately by funding class and kind", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    const now = Date.now();
+    const projects = Array.from({ length: 8 }, (_, index) => ({
+      project_id: `project-${index}`,
+      host_id: "host-1",
+      last_changed: new Date(now - (index + 1) * 60 * 60_000),
+      last_backup: null,
+      host_last_seen: new Date(now),
+      snapshots: { disabled: true },
+      backups: { daily: 1 },
+      backup_observed_at: new Date(now),
+      backup_class: index < 6 ? "paying" : "free",
+    }));
+    queryMock.mockImplementation(async (sql: string) =>
+      sql.includes("FROM projects p") && sql.includes("LIMIT 1000")
+        ? { rows: projects }
+        : { rows: [], rowCount: 0 },
+    );
+
+    const health = await getProjectRecoveryHealth();
+    expect(health.oldest_debt).toHaveLength(7);
+    expect(
+      health.oldest_debt
+        .filter((item) => item.storage_service_class === "paying")
+        .map((item) => item.project_id),
+    ).toEqual([
+      "project-5",
+      "project-4",
+      "project-3",
+      "project-2",
+      "project-1",
+    ]);
+    expect(
+      health.oldest_debt
+        .filter((item) => item.storage_service_class === "free")
+        .map((item) => item.project_id),
+    ).toEqual(["project-7", "project-6"]);
+  });
+
   it("keeps an overdue project with missing host classification visible", async () => {
     const { getProjectRecoveryHealth } = await import("./maintenance-status");
     queryMock.mockImplementation(async (sql: string) => {
