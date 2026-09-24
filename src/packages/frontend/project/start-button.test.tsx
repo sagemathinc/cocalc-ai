@@ -283,6 +283,66 @@ describe("StartButton", () => {
     });
   });
 
+  it("shows the actual slot count when running projects exceed a reduced limit", () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-over-limit",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "runtime sponsor slots exhausted",
+          result: {
+            runtime_sponsor_denial: {
+              code: "runtime_sponsor_slots_exhausted",
+              sponsor_account_id: "user-1",
+              sponsor_display_name: "William Stein",
+              limit: 2,
+              current: 3,
+              active_projects: [
+                {
+                  project_id: "running-project",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+                {
+                  project_id: "running-project-2",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+                {
+                  project_id: "running-project-3",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+              ],
+            },
+          },
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    expect(
+      screen.getByText(
+        "William Stein is using 3 sponsored running-project slots (current limit: 2).",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Stop at least 2 projects below to free a slot. CoCalc will try to start this project after each stop.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("ignores old async start failures for compact start buttons", async () => {
     startLroRecord = {
       toJS: () => ({

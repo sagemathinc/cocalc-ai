@@ -1000,15 +1000,11 @@ function RuntimeSponsorDenialDescription({
   }
 
   const sponsorName = denial.sponsor_display_name ?? "The runtime sponsor";
-  const sponsorPossessive = sponsorName.endsWith("s")
-    ? `${sponsorName}'`
-    : `${sponsorName}'s`;
   const slotMessage =
-    denial.limit <= 0
+    denial.limit <= 0 && denial.current === 0
       ? `${sponsorName} does not currently have sponsored running-project slots available.`
-      : denial.limit === 1
-        ? `${sponsorPossessive} sponsored running-project slot is already in use.`
-        : `${sponsorName} is using all ${denial.limit} sponsored running-project slots.`;
+      : `${sponsorName} is using ${denial.current} sponsored running-project ${denial.current === 1 ? "slot" : "slots"} (current limit: ${denial.limit}).`;
+  const projectsToStop = Math.max(1, denial.current - denial.limit + 1);
 
   return (
     <div>
@@ -1023,7 +1019,7 @@ function RuntimeSponsorDenialDescription({
         }
         description={
           canStopAnyVisibleProject
-            ? "Stop one project below to free a slot. CoCalc will then start this project automatically."
+            ? `Stop at least ${projectsToStop} ${projectsToStop === 1 ? "project" : "projects"} below to free a slot. CoCalc will try to start this project after each stop.`
             : "Free a slot or review membership details, then try starting this project again."
         }
       />
@@ -1047,7 +1043,7 @@ function RuntimeSponsorDenialDescription({
                 {project.can_stop !== false && (
                   <Popconfirm
                     title="Stop this project to free a running slot?"
-                    description="This interrupts all agents and other processes in that project, including collaborators' work. This project will then start; no message is resent."
+                    description="This interrupts all agents and other processes in that project, including collaborators' work. CoCalc will try to start this project afterward; if the limit is still reached, stop another project. No message is resent."
                     onConfirm={() => stopProjectAndRetry(project.project_id)}
                     okText="Stop project and continue"
                     cancelText="Cancel"
