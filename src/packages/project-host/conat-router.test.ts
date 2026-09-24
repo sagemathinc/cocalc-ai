@@ -335,12 +335,13 @@ describe("project-host conat router helpers", () => {
     process.env.PROJECT_HOST_PUBLIC_URL = "https://host-123.example.com";
     const createUpgradeServer = (source: string) => {
       const server = http.createServer();
-      server.on("upgrade", (_req, socket) => {
+      server.on("upgrade", (req, socket) => {
         socket.end(
           "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\n" +
             "Connection: Upgrade\r\n" +
-            `X-Proxy-Source: ${source}\r\n\r\n`,
+            `X-Proxy-Source: ${source}\r\n` +
+            `X-Proxy-Browser-Session: ${req.headers.cookie?.includes("cocalc_project_host_session=browser-session") ? "yes" : "no"}\r\n\r\n`,
         );
       });
       return server;
@@ -378,6 +379,7 @@ describe("project-host conat router helpers", () => {
           `Host: ${host}\r\n` +
           "Connection: Upgrade\r\n" +
           "Upgrade: websocket\r\n" +
+          "Cookie: cocalc_project_host_session=browser-session\r\n" +
           "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n" +
           "Sec-WebSocket-Version: 13\r\n\r\n",
       );
@@ -387,9 +389,11 @@ describe("project-host conat router helpers", () => {
     };
 
     try {
-      expect(
-        (await requestUpgrade("host-123.example.com")).toLowerCase(),
-      ).toContain("x-proxy-source: outer-conat");
+      const hostResponse = (
+        await requestUpgrade("host-123.example.com")
+      ).toLowerCase();
+      expect(hostResponse).toContain("x-proxy-source: outer-conat");
+      expect(hostResponse).toContain("x-proxy-browser-session: yes");
       expect(
         (await requestUpgrade("dev-123.example.com")).toLowerCase(),
       ).toContain("x-proxy-source: project-host-upstream");

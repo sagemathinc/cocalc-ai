@@ -34,6 +34,8 @@ import {
   PROJECT_SECRET_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
 import { conatPassword } from "@cocalc/backend/data";
+import getLogger from "@cocalc/backend/logger";
+import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
@@ -45,6 +47,10 @@ import {
   isBrowserRuntimePresenceSubject,
   parseBrowserRuntimePresenceSubject,
 } from "@cocalc/conat/project-host/browser-runtime-presence";
+
+const logger = getLogger("project-host:conat-auth");
+const MISSING_AUTH_DIAGNOSTIC_INTERVAL_MS = 60_000;
+let lastMissingAuthDiagnosticAt = 0;
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -329,6 +335,22 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         throw new Error("invalid secret token for project");
       }
       return { project_id };
+    }
+    const now = Date.now();
+    if (
+      now - lastMissingAuthDiagnosticAt >=
+      MISSING_AUTH_DIAGNOSTIC_INTERVAL_MS
+    ) {
+      lastMissingAuthDiagnosticAt = now;
+      logger.warn(
+        "project-host conat connection has no valid browser authentication",
+        {
+          host_id,
+          cookie_header_present: !!socket?.handshake?.headers?.cookie,
+          browser_session_cookie_present:
+            cookies?.[PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME] != null,
+        },
+      );
     }
     throw new Error("missing project-host bearer token");
   };
