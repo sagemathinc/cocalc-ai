@@ -67,7 +67,7 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
         project_id UUID NOT NULL,
         kind TEXT NOT NULL CHECK (kind IN ('snapshot', 'backup')),
         host_id UUID NOT NULL,
-        storage_service_class TEXT NOT NULL DEFAULT 'free',
+        storage_service_class TEXT NOT NULL DEFAULT 'unclassified',
         observed_at TIMESTAMP NOT NULL,
         outcome TEXT NOT NULL,
         reason TEXT,
@@ -121,7 +121,11 @@ export async function ensureProjectMaintenanceStatusTable(): Promise<void> {
       );
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS
-          storage_service_class TEXT NOT NULL DEFAULT 'free'`,
+          storage_service_class TEXT NOT NULL DEFAULT 'unclassified'`,
+      );
+      await getPool().query(
+        `ALTER TABLE project_maintenance_status ALTER COLUMN storage_service_class
+          SET DEFAULT 'unclassified'`,
       );
       await getPool().query(
         `ALTER TABLE project_maintenance_status ADD COLUMN IF NOT EXISTS retry_at TIMESTAMP`,
@@ -192,6 +196,15 @@ function boundedBytes(value: number | undefined): number | null {
   return value != null && Number.isSafeInteger(value) && value >= 0
     ? value
     : null;
+}
+
+function reportedServiceClass(
+  report: ProjectMaintenanceReport,
+): ProjectRecoveryStatus["storage_service_class"] {
+  return report.storage_service_class === "paying" ||
+    report.storage_service_class === "free"
+    ? report.storage_service_class
+    : "unclassified";
 }
 
 export async function recordProjectMaintenanceStatus(
@@ -305,7 +318,7 @@ export async function recordProjectMaintenanceStatus(
       dueAt,
       latestSnapshot,
       duration,
-      report.storage_service_class === "paying" ? "paying" : "free",
+      reportedServiceClass(report),
       retryAt,
       Math.max(0, Math.min(1000, Math.floor(report.consecutive_failures ?? 0))),
       reconciledChange,
@@ -329,7 +342,7 @@ export async function recordProjectMaintenanceStatus(
       report.project_id,
       report.kind,
       report.host_id,
-      report.storage_service_class === "paying" ? "paying" : "free",
+      reportedServiceClass(report),
       observedAt,
       report.outcome,
       report.reason?.slice(0, 500) ?? null,
@@ -528,7 +541,7 @@ export interface ProjectRecoveryDebtAggregate {
 
 export interface ProjectRecoveryAttemptAggregate {
   host_id: string;
-  storage_service_class: "paying" | "free";
+  storage_service_class: ProjectRecoveryStatus["storage_service_class"];
   kind: "snapshot" | "backup";
   succeeded: number;
   deferred: number;
@@ -543,7 +556,7 @@ export interface ProjectRecoveryAttemptAggregate {
 }
 
 export interface ProjectRecoveryStageAggregate {
-  storage_service_class: "paying" | "free";
+  storage_service_class: ProjectRecoveryStatus["storage_service_class"];
   kind: "snapshot" | "backup";
   stage: string;
   samples: number;
@@ -552,7 +565,7 @@ export interface ProjectRecoveryStageAggregate {
 }
 
 export interface ProjectRecoveryDelayAggregate {
-  storage_service_class: "paying" | "free";
+  storage_service_class: ProjectRecoveryStatus["storage_service_class"];
   kind: "snapshot" | "backup";
   samples: number;
   p95_seconds: number;
@@ -561,7 +574,7 @@ export interface ProjectRecoveryDelayAggregate {
 
 export interface ProjectRecoveryReasonAggregate {
   host_id: string;
-  storage_service_class: "paying" | "free";
+  storage_service_class: ProjectRecoveryStatus["storage_service_class"];
   kind: "snapshot" | "backup";
   outcome: "deferred" | "failed";
   reason_code: string;
@@ -578,7 +591,7 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
   const [outcomes, stages, delays, reasons] = await Promise.all([
     getPool().query<{
       host_id: string;
-      storage_service_class: "paying" | "free";
+      storage_service_class: ProjectRecoveryStatus["storage_service_class"];
       kind: "snapshot" | "backup";
       succeeded: number;
       deferred: number;
@@ -874,7 +887,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           ) {
             health.paying_snapshot_overdue++;
           } else if (
-            row.snapshot_class == null &&
+            row.snapshot_class !== "paying" &&
+            row.snapshot_class !== "free" &&
             delaySeconds > PAYING_SNAPSHOT_INCIDENT_DELAY_MS / 1000
           ) {
             health.unclassified_snapshot_overdue++;
@@ -932,7 +946,8 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           ) {
             health.paying_backup_overdue++;
           } else if (
-            row.backup_class == null &&
+            row.backup_class !== "paying" &&
+            row.backup_class !== "free" &&
             delaySeconds > PAYING_BACKUP_INCIDENT_DELAY_MS / 1000
           ) {
             health.unclassified_backup_overdue++;

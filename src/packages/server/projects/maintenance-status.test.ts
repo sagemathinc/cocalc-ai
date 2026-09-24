@@ -148,6 +148,31 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("records an omitted host funding class as unclassified", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id: "host-1",
+        project_id: "project-1",
+        kind: "snapshot",
+        observed_at: new Date().toISOString(),
+        outcome: "failed",
+        reason: "legacy host report",
+      }),
+    ).toBe(true);
+    const statusInsert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    const attemptInsert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_attempts"),
+    );
+    expect(statusInsert?.[1][9]).toBe("unclassified");
+    expect(attemptInsert?.[1][3]).toBe("unclassified");
+  });
+
   it("replaces a stale latest snapshot after confirmed empty inventory", async () => {
     const { recordProjectMaintenanceStatus } =
       await import("./maintenance-status");
@@ -443,44 +468,47 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     ).toEqual(["project-7", "project-6"]);
   });
 
-  it("keeps an overdue project with missing host classification visible", async () => {
-    const { getProjectRecoveryHealth } = await import("./maintenance-status");
-    queryMock.mockImplementation(async (sql: string) => {
-      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
-        return {
-          rows: [
-            {
-              project_id: "project-1",
-              host_id: "host-1",
-              last_changed: new Date(Date.now() - 3 * 60 * 60_000),
-              last_backup: null,
-              host_last_seen: null,
-              snapshots: { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
-              backups: { disabled: true },
-              snapshot_at: null,
-              snapshot_observed_at: null,
-              snapshot_class: null,
-              reconciled_change_at: null,
-              reconciled_schedule_revision: null,
-            },
-          ],
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const health = await getProjectRecoveryHealth();
-    expect(health.unclassified_snapshot_overdue).toBe(1);
-    expect(health.unknown_snapshot_status).toBe(1);
-    expect(health.by_host_class).toEqual([
-      expect.objectContaining({
-        host_id: "host-1",
-        storage_service_class: "unclassified",
-        kind: "snapshot",
-        overdue_count: 1,
-        unknown_count: 1,
-      }),
-    ]);
-  });
+  it.each([null, "unclassified"])(
+    "keeps an overdue project with host classification %s visible",
+    async (serviceClass) => {
+      const { getProjectRecoveryHealth } = await import("./maintenance-status");
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+          return {
+            rows: [
+              {
+                project_id: "project-1",
+                host_id: "host-1",
+                last_changed: new Date(Date.now() - 3 * 60 * 60_000),
+                last_backup: null,
+                host_last_seen: null,
+                snapshots: { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+                backups: { disabled: true },
+                snapshot_at: null,
+                snapshot_observed_at: null,
+                snapshot_class: serviceClass,
+                reconciled_change_at: null,
+                reconciled_schedule_revision: null,
+              },
+            ],
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const health = await getProjectRecoveryHealth();
+      expect(health.unclassified_snapshot_overdue).toBe(1);
+      expect(health.unknown_snapshot_status).toBe(1);
+      expect(health.by_host_class).toEqual([
+        expect.objectContaining({
+          host_id: "host-1",
+          storage_service_class: "unclassified",
+          kind: "snapshot",
+          overdue_count: 1,
+          unknown_count: 1,
+        }),
+      ]);
+    },
+  );
 
   it("counts repeated paid failures before the due-age incident threshold", async () => {
     const { getProjectRecoveryHealth } = await import("./maintenance-status");
