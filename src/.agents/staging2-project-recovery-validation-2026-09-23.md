@@ -997,12 +997,12 @@ seven-day canary gate.
    later scheduled backup cycles complete normally.
 
 9. A bay-local five-minute recovery notification worker, named on-call
-   setting, incident grouping, and daily oldest-debt report are now deployed
-   on staging2. Delivery is disabled by default and no on-call account is
-   configured. The worker's alert selection and durable-message integration
-   passed focused automated tests; live delivery, recipient acknowledgement,
-   and external paging remain unvalidated. Production alert activation is a
-   separate operational gate.
+   setting, incident grouping, and daily oldest-debt report are deployed on
+   staging2. Trusted incidents now queue immediate critical-lane email even
+   when ordinary maintenance email is disabled. Delivery remains disabled by
+   default and no on-call account is configured. Live email delivery, recipient
+   acknowledgement, and any external paging integration remain unvalidated.
+   Production alert activation is a separate operational gate.
 
 ## 2026-09-24 recovery notification staging rollout
 
@@ -1045,6 +1045,33 @@ seven-day canary, 30-day objectives, production restore drills, safe-capacity
 calibration, and remaining UI/live-load findings are complete. The disposable
 staging test project `94d31e68-cec6-4e0b-aebf-d05ac1930d5d` is stopped;
 permanent deletion awaits first-party fresh-auth approval.
+
+## 2026-09-24 critical operator email staging rollout
+
+Commit `d713ec27d762` closes a delivery-policy gap: ordinary support or
+maintenance email preferences could previously disable immediate email for a
+recovery incident. A trusted system incident now creates an in-app error notice
+and queues required, immediate email on the critical lane. User-authored
+messages cannot request this priority. The daily debt report keeps its normal
+policy. This strengthens delivery routing but does not prove that an email was
+sent, received, acknowledged, or connected to an external paging service.
+
+The full development build passed. Focused tests passed: 11 util policy tests,
+12 database projection tests, and 9 server message/worker tests. The database
+test follows an incident through the account-notice projection to a queued
+critical-lane email despite disabled ordinary email preferences. The immutable
+hub artifact `20260924T124426Z-d713ec27-20260924-recovery-critical-email-d713ec2-dirty`
+was deployed to staging2 as release `20260924124616-hub`. Worker health and
+hub smoke passed. No frontend or project-host artifact changed.
+
+At 2026-09-24 12:46 UTC, live project-recovery health was healthy, with no
+paying threshold breaches, unclassified late debt, unknown statuses, or hosts
+missing pressure telemetry. The switch remained off and the on-call account ID
+empty. The critical email lane was configured to inherit the site SendGrid
+backend. No test incident was sent. The next operational check needs a named
+staging on-call account with a verified email address, a controlled enabled
+incident, and inspection of the email outbox plus recipient receipt and
+acknowledgement. Production remains unchanged.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
