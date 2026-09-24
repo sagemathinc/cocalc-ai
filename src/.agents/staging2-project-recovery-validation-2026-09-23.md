@@ -2023,3 +2023,30 @@ health was healthy with zero paying queues lacking a recent completion and
 currently has no genuine paid-funded queue, so the critical live branch is
 covered by the shared focused test and still needs a paid staging case.
 Production is unchanged.
+
+## 2026-09-24 owning-bay recovery-health scope
+
+Commit `cb9d223ddb` scopes the project-recovery inventory to projects owned
+by the current bay. It treats a missing or blank stored owner bay as local
+for legacy one-bay rows, matching the existing ownership compatibility rule.
+The same filter now controls active restore-drill shard coverage. This avoids
+counting foreign project shadows as local debt and avoids dropping legacy
+local backup shards from drill coverage.
+
+Before deployment, audited read `76fce94f-493c-4335-ac28-a4af1be6dc18`
+found 24 active, provisioned projects on staging2, all explicitly owned by
+`bay-0` and all with a confirmed last backup. Two focused PGlite suites
+passed 17/17, including foreign-row exclusion and legacy-null inclusion for
+both inventory and drill coverage; the server TypeScript build passed.
+Staging2 hub artifact
+`20260924T235235Z-cb9d223d-20260924T2352Z-cb9d223d-bay-recovery-scope-dirty`
+deployed as release `20260924235405-hub`. Migration, worker health, and all
+seven hub smoke checks passed. At 23:54:48 UTC, recovery health briefly
+reported a free-work warning with zero critical debt or unknown status. By
+23:55:04 UTC it was healthy: zero oldest snapshot and backup delay, zero
+paying or unclassified critical debt, zero unknown/unaccounted status, zero
+stalled paying queues, and 4/4 active backup shards with recent passing
+remote-only drills. Fresh operator auth expired before a post-deployment
+audited project-count query, so no post-deploy row count is claimed. The
+PGlite tests verify the ownership boundary; staging2 has no foreign-owned
+project sample. Production is unchanged.
