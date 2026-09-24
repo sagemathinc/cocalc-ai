@@ -271,6 +271,10 @@ it.each([
     "managed_backup_egress_policy_blocked",
     "Backup uploads are temporarily blocked by the account's upload allowance.",
   ],
+  [
+    "replacement_capacity_blocked",
+    "The backup store has no space for a replacement. The existing backup is preserved while an administrator resolves capacity.",
+  ],
 ])("explains a blocked backup with reason %s", async (reason, message) => {
   getRecoveryStatus.mockResolvedValue({
     project_id: "project-1",

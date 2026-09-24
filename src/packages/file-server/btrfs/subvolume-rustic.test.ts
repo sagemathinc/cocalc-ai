@@ -150,6 +150,28 @@ describe("scheduled backup replacement", () => {
     expect(snapshots.map((item) => item.id)).toEqual(["new"]);
   });
 
+  it("uses the normal limit when no replacement slot is needed", async () => {
+    const { rustic, snapshots } = volume();
+    snapshots.pop();
+    (rustic as any).backup = jest.fn(async ({ limit, tags }) => {
+      expect(limit).toBe(1);
+      const created = {
+        id: "first",
+        time: new Date(),
+        tags,
+        summary: {},
+        snapshotGeneration: 1,
+      };
+      snapshots.push(created);
+      return created;
+    });
+    await rustic.update(
+      { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+      { limit: 1 },
+    );
+    expect(snapshots.map((item) => item.id)).toEqual(["first"]);
+  });
+
   it("retains the old copy when uploading the replacement fails", async () => {
     const { rustic, snapshots } = volume();
     (rustic as any).backup = jest.fn(async () => {
@@ -162,6 +184,42 @@ describe("scheduled backup replacement", () => {
       ),
     ).rejects.toThrow("upload failed");
     expect(snapshots.map((item) => item.id)).toEqual(["old"]);
+  });
+
+  it("reports repository capacity blocking replacement and preserves the old copy", async () => {
+    const { rustic, snapshots } = volume();
+    (rustic as any).backup = jest.fn(async () => {
+      throw new Error("rustic s3 repository: QuotaExceeded");
+    });
+    await expect(
+      rustic.update(
+        { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+        { limit: 1 },
+      ),
+    ).rejects.toMatchObject({ message: "replacement_capacity_blocked" });
+    expect(snapshots.map((item) => item.id)).toEqual(["old"]);
+  });
+
+  it("rejects a replacement if repository inventory changes before upload", async () => {
+    const { rustic, snapshots } = volume();
+    (rustic as any).listSnapshotsFresh = jest.fn(async () => {
+      snapshots.push({
+        id: "competing",
+        time: new Date(),
+        tags: [],
+        summary: {},
+      });
+      return snapshots;
+    });
+    (rustic as any).backup = jest.fn();
+    await expect(
+      rustic.update(
+        { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+        { limit: 1 },
+      ),
+    ).rejects.toThrow("backup repository inventory changed before replacement");
+    expect(rustic.backup).not.toHaveBeenCalled();
+    expect(snapshots.map((item) => item.id)).toContain("old");
   });
 
   it("keeps tagged manual backups while replacing at a four-backup limit", async () => {

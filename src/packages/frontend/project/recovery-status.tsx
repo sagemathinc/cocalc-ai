@@ -47,6 +47,8 @@ function reasonText(reason: string | null | undefined): string | null {
   if (text.includes("memory")) return "The host is under memory pressure.";
   if (text.includes("backup_capacity_busy"))
     return "Backup workers are busy. This backup remains due and will retry.";
+  if (text.includes("replacement_capacity_blocked"))
+    return "The backup store has no space for a replacement. The existing backup is preserved while an administrator resolves capacity.";
   if (text.includes("project_volume_unavailable"))
     return "Project data is temporarily unavailable. Maintenance will retry.";
   if (text.includes("project_volume_archiving"))

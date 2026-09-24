@@ -18,6 +18,10 @@ export function recoveryFailureReason(
   }
   if (kind !== "backup") return;
 
+  if (message.includes("replacement_capacity_blocked")) {
+    return "replacement_capacity_blocked";
+  }
+
   if (
     message.includes("Managed backup upload limit reached for this account.")
   ) {

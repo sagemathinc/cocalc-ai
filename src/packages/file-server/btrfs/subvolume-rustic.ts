@@ -62,6 +62,16 @@ const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 const MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP = 32;
 
+function isRepositoryCapacityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /rustic|repository|\bs3\b|bucket|object[ -]stor(?:e|age)/i.test(message) &&
+    /InsufficientStorage|QuotaExceeded|storage (?:quota|limit) exceeded|no space left on device/i.test(
+      message,
+    )
+  );
+}
+
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
@@ -335,7 +345,7 @@ export class SubvolumeRustic {
     runner,
   }: RusticBackupOptions = {}): Promise<CreatedSnapshot> => {
     await this.cleanupStaleTempBackupSnapshots();
-    if (limit != null && (await this.snapshots()).length >= limit) {
+    if (limit != null && (await this.listSnapshotsFresh()).length >= limit) {
       // 507 = "insufficient storage" for http
       throw new ConatError(`there is a limit of ${limit} backups`, {
         code: 507,
@@ -607,25 +617,59 @@ export class SubvolumeRustic {
         }
       });
     };
+    let currentSnapshots = snapshots;
     if (normalizedLimit != null && snapshots.length > normalizedLimit) {
       await pruneToLimit(normalizedLimit);
+      currentSnapshots = await this.listSnapshotsFresh();
     }
-    await updateRollingSnapshots({
-      snapshots: this,
-      counts: { ...DEFAULT_BACKUP_COUNTS, ...counts },
-      opts: {
-        ...opts,
-        tags: ["cocalc-automatic", ...(opts?.tags ?? [])],
-        limit: normalizedLimit == null ? undefined : normalizedLimit + 1,
-        afterCreate: async (created: unknown) => {
-          const id = (created as CreatedSnapshot | undefined)?.id;
-          if (!id || !(await this.snapshotExists({ id }))) {
-            throw new Error("new backup is not confirmed in the repository");
-          }
-          await opts?.afterCreate?.(created);
+    const replacementAtLimit =
+      normalizedLimit != null && currentSnapshots.length === normalizedLimit;
+    try {
+      await updateRollingSnapshots({
+        snapshots: this,
+        counts: { ...DEFAULT_BACKUP_COUNTS, ...counts },
+        opts: {
+          ...opts,
+          tags: ["cocalc-automatic", ...(opts?.tags ?? [])],
+          // The caller holds the per-project backup lock. Reserve exactly one
+          // temporary slot, only when this project is at its normal limit.
+          limit:
+            normalizedLimit == null
+              ? undefined
+              : normalizedLimit + (replacementAtLimit ? 1 : 0),
+          beforeCreate: async () => {
+            await opts?.beforeCreate?.();
+            if (!replacementAtLimit) return;
+            const fresh = await this.listSnapshotsFresh();
+            const expected = new Set(currentSnapshots.map(({ id }) => id));
+            if (
+              fresh.length !== normalizedLimit ||
+              fresh.some(({ id }) => !expected.has(id))
+            ) {
+              throw new Error(
+                "backup repository inventory changed before replacement",
+              );
+            }
+          },
+          afterCreate: async (created: unknown) => {
+            const id = (created as CreatedSnapshot | undefined)?.id;
+            if (!id || !(await this.snapshotExists({ id }))) {
+              throw new Error("new backup is not confirmed in the repository");
+            }
+            await opts?.afterCreate?.(created);
+          },
         },
-      },
-    });
+      });
+    } catch (err) {
+      if (replacementAtLimit && isRepositoryCapacityError(err)) {
+        logger.warn("backup replacement repository capacity unavailable", {
+          subvolume: this.subvolume.name,
+          err,
+        });
+        throw new ConatError("replacement_capacity_blocked", { code: 507 });
+      }
+      throw err;
+    }
     if (normalizedLimit != null) await pruneToLimit(normalizedLimit);
   };
 

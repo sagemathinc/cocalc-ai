@@ -7,6 +7,7 @@ import { recoveryFailureReason } from "./recovery-failure-reason";
 
 it.each([
   ["snapshot", "Disk quota exceeded", "storage_quota_exceeded"],
+  ["backup", "replacement_capacity_blocked", "replacement_capacity_blocked"],
   [
     "backup",
     "Managed backup upload limit reached for this account. Reset tomorrow.",
