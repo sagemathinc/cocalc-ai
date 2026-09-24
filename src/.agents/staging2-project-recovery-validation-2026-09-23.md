@@ -1847,3 +1847,30 @@ with free service class (audited read `9ba407d0-0110-4a46-a462-22467cf807a5`).
 That qualifies the live course-payer routing correction; it does not qualify
 paid-class dispatch or customer warning delivery. Customer warnings remain
 off; production is unchanged.
+
+## 2026-09-24 current-payer health follow-up
+
+Commit `7ad99e017f` makes overdue operator health and repeated-failure counts
+resolve the current storage payer on its account home bay. A prior host attempt
+can carry a stale funding class after a subscription, grant, or usage payer
+change; the health query now refreshes classes for projects with debt or
+repeated failures. Lookups are deduplicated by payer, limited to 16 concurrent
+requests, and cached for five minutes across operator probes. Failed lookups
+remain visible as unclassified instead of inheriting an old free class. The
+project recovery status also classifies a paying breach when it crosses the
+30-minute snapshot or 6-hour backup customer objective, before the 2-hour or
+12-hour incident threshold.
+
+Focused server tests passed 35/35 across status, database integration, and
+notification suites; the server TypeScript build passed. Tests cover a host
+report marked free whose current usage payer is paying, unresolved home-bay
+membership, and per-project classification at the objective boundary.
+Staging2 hub artifact
+`20260924T225052Z-7ad99e01-recovery-health-payer-7ad99e0-dirty` deployed as
+release `20260924225226-hub`. Migration and worker health passed, followed by
+all seven hub smoke checks. At 22:52:59 UTC project recovery health was
+healthy: zero paying critical debt, unclassified critical debt, unknown
+statuses, and unaccounted due obligations. The staging inventory has no
+genuinely paying project yet, so the live promoted-payer case is covered by
+focused tests rather than an end-to-end paid notification drill. Customer
+warnings remain off; production is unchanged.
