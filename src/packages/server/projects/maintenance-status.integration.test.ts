@@ -9,6 +9,8 @@ import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryRecentPayingCompletions,
+  getProjectRecoveryStatusLocal,
+  recordProjectMaintenanceStatus,
 } from "./maintenance-status";
 
 describe("project recovery capacity accounting", () => {
@@ -62,6 +64,73 @@ describe("project recovery capacity accounting", () => {
         bytes_uploaded: 1024,
       }),
     );
+  });
+
+  it("reconciles the host's newer local snapshot without counting an interval wait as debt", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    const now = Date.now();
+    const older = new Date(now - 20 * 60_000).toISOString();
+    const newer = new Date(now - 5 * 60_000).toISOString();
+    const changed = new Date(now - 60_000).toISOString();
+    const due = new Date(now + 10 * 60_000).toISOString();
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned,
+          last_edited, snapshots)
+       VALUES ($1, 'snapshot interval test', 'bay-0', $2, true, $3, $4)`,
+      [
+        project_id,
+        host_id,
+        changed,
+        { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      ],
+    );
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id,
+        project_id,
+        kind: "snapshot",
+        observed_at: new Date(now - 2_000).toISOString(),
+        outcome: "succeeded",
+        latest_snapshot_at: older,
+      }),
+    ).toBe(true);
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id,
+        project_id,
+        kind: "snapshot",
+        observed_at: new Date(now - 1_000).toISOString(),
+        outcome: "skipped",
+        reason: "snapshot_interval_wait",
+        latest_snapshot_at: newer,
+        due_at: due,
+      }),
+    ).toBe(true);
+    const { rows } = await getPool().query(
+      `SELECT outcome, reason, latest_snapshot_at, due_at
+         FROM project_maintenance_status
+        WHERE project_id=$1 AND kind='snapshot'`,
+      [project_id],
+    );
+    expect(rows[0]).toMatchObject({
+      outcome: "skipped",
+      reason: "snapshot_interval_wait",
+      latest_snapshot_at: new Date(newer),
+      due_at: new Date(due),
+    });
+    const status = await getProjectRecoveryStatusLocal(project_id);
+    expect(status.snapshot?.latest_snapshot_at).toBe(newer);
+    expect(status.snapshot?.outcome).toBe("skipped");
+    expect(status.snapshot_due_at).toBe(due);
+    const attempts = await getPool().query(
+      `SELECT COUNT(*)::int AS deferred
+         FROM project_maintenance_attempts
+        WHERE project_id=$1 AND outcome='deferred'`,
+      [project_id],
+    );
+    expect(attempts.rows[0].deferred).toBe(0);
   });
 
   it("uses lane-specific recent paying completion windows", async () => {

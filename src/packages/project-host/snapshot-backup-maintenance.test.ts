@@ -536,12 +536,56 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
-  it("reconciles a verified local snapshot when its next interval is not due", async () => {
+  it("reconciles a verified local snapshot and wakes when its next interval is due", async () => {
     const latest = new Date(Date.now() - 5 * 60_000).toISOString();
     const changed = new Date(Date.now() - 60_000).toISOString();
+    const onFutureDue = jest.fn();
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
         project_id: "proj-reconcile",
+        last_changed: changed,
+        last_snapshot: null,
+        snapshots: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+        backups: { disabled: true },
+      },
+    ]);
+    runScheduledSnapshotMaintenanceMock.mockResolvedValue({
+      latest_snapshot_at: latest,
+      created_snapshot_at: null,
+      changed: true,
+      disabled: false,
+    });
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({
+      hostId: "host-1",
+      onFutureDue,
+    });
+
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-reconcile",
+        kind: "snapshot",
+        outcome: "skipped",
+        reason: "snapshot_interval_wait",
+        latest_snapshot_at: latest,
+        due_at: new Date(Date.parse(latest) + 15 * 60_000).toISOString(),
+        retry_at: null,
+      }),
+    );
+    expect(onFutureDue).toHaveBeenCalledWith(
+      "proj-reconcile",
+      Date.parse(latest) + 15 * 60_000,
+    );
+  });
+
+  it("keeps snapshot debt visible when the host has no new snapshot after the interval", async () => {
+    const latest = new Date(Date.now() - 20 * 60_000).toISOString();
+    const changed = new Date(Date.now() - 60_000).toISOString();
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-still-due",
         last_changed: changed,
         last_snapshot: null,
         snapshots: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
@@ -561,12 +605,12 @@ describe("snapshot-backup-maintenance", () => {
 
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        project_id: "proj-reconcile",
+        project_id: "proj-still-due",
         kind: "snapshot",
         outcome: "deferred",
         reason: "snapshot_not_created",
         latest_snapshot_at: latest,
-        due_at: new Date(Date.parse(latest) + 15 * 60_000).toISOString(),
+        due_at: changed,
       }),
     );
   });

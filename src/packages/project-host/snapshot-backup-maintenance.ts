@@ -884,13 +884,31 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             (changed === false &&
               latestSnapshotAt != null &&
               (changedAt == null || latestSnapshotAt >= changedAt));
+          const nextSnapshotDueAt = result.ran
+            ? snapshotDueAt(
+                { ...row, last_snapshot: latest_snapshot_at },
+                schedule,
+              )
+            : dueAt;
+          // The bay can have an old snapshot timestamp while the host has a
+          // newer local one. If the replacement interval has not elapsed,
+          // publish the verified inventory and wake at the actual due time
+          // instead of retrying the same Btrfs scan every minute.
+          const intervalWaiting =
+            result.ran &&
+            !disabled &&
+            !confirmedRecoveryPoint &&
+            changed === true &&
+            latestSnapshotAt != null &&
+            nextSnapshotDueAt != null &&
+            nextSnapshotDueAt > Date.now();
           const outcome = !result.ran
             ? "deferred"
             : disabled
               ? "deferred"
               : confirmedRecoveryPoint
                 ? "succeeded"
-                : changed === false
+                : changed === false || intervalWaiting
                   ? "skipped"
                   : "deferred";
           const reason =
@@ -898,13 +916,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             skippedReason ??
             (disabled
               ? "snapshot_maintenance_disabled"
-              : outcome === "skipped"
-                ? "no_content_change"
-                : outcome === "deferred"
-                  ? "snapshot_not_created"
-                  : undefined);
+              : intervalWaiting
+                ? "snapshot_interval_wait"
+                : outcome === "skipped"
+                  ? "no_content_change"
+                  : outcome === "deferred"
+                    ? "snapshot_not_created"
+                    : undefined);
           const nextRetry = retryAt(outcome, row.snapshot_failures ?? 0);
           if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+          if (intervalWaiting && nextSnapshotDueAt != null) {
+            onFutureDue?.(project_id, nextSnapshotDueAt);
+          }
           await report({
             host_id: hostId,
             project_id,
@@ -929,13 +952,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             due_at: result.ran
               ? reason === "no_content_change"
                 ? null
-                : (() => {
-                    const next = snapshotDueAt(
-                      { ...row, last_snapshot: latest_snapshot_at },
-                      schedule,
-                    );
-                    return next == null ? null : new Date(next).toISOString();
-                  })()
+                : nextSnapshotDueAt == null
+                  ? null
+                  : new Date(nextSnapshotDueAt).toISOString()
               : dueAt == null
                 ? null
                 : new Date(dueAt).toISOString(),
