@@ -1539,3 +1539,33 @@ obligations and no active memory gate or missing recent storage telemetry.
 The new error wording is covered by focused component tests and deployment
 smoke checks; a genuine live credential or object-store failure was not
 induced on the shared staging repositories.
+
+## 2026-09-24 Jupyter during a shared-host backup queue
+
+I created 36 disposable free-class projects on `staging2-shared-1`, the same
+host as the existing smoke project's Jupyter kernel. The new projects entered
+the scheduled off-host backup queue. At 20:03:19 UTC, an audited read-only
+query (`e149745b-7c6c-44a8-b8f3-170da38033e5`) found only 14 of 36 with a
+confirmed `last_backup`, establishing that the queue was active during the
+20:02:17–20:02:39 UTC notebook runs. The temporary notebook used the typed
+live Jupyter API and a Python 3 kernel; every run returned `42` and a completed
+run event. Twelve consecutive runs passed, with CLI round-trip p95 3,241 ms.
+
+Eight more checks restarted the same kernel and then ran the cell while the
+queue continued. All passed, with combined restart-and-run p95 4,431 ms. At
+20:04:23 UTC, 25 of 36 projects had confirmed backups (audit
+`9575732d-7265-4053-a26a-65c546bbe2d4`), so the cold-path checks at
+20:03:45–20:04:15 UTC also overlapped backup completion. These timings include
+CLI and network round trips and are backend execution probes; they do not
+replace browser-observed Jupyter readiness metrics.
+
+All 36 projects had `last_backup` by 20:05:25 UTC (audit
+`36afa07b-c29a-40b3-919e-99a91ac0b4ba`). Individual typed repository
+listings found 36 distinct backup IDs with matching project IDs. The smoke
+project was stopped, its temporary notebook removed, and all 36 disposable
+projects were deleted with normal seven-day backup retention and no immediate
+purge. The creation and deletion journals match exactly. The live project list
+and audited project-row query `300b1194-0b86-461b-ac44-aa7eb37d8325` both
+found zero remaining projects under the test prefix. At 20:13:38 UTC, project
+recovery health returned healthy with zero overdue, unknown, or unaccounted
+due obligations and no active memory or storage telemetry gate.
