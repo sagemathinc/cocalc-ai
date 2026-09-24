@@ -18,6 +18,7 @@ import { startCopyLroWorker } from "@cocalc/server/projects/copy-worker";
 import { startCourseCollectLroWorker } from "@cocalc/server/projects/course-collect-worker";
 import { startCourseReconfigureLroWorker } from "@cocalc/server/projects/course-reconfigure-worker";
 import { startProjectHardDeleteWorker } from "@cocalc/server/projects/hard-delete-worker";
+import { startProjectRecoveryNotificationMaintenance } from "@cocalc/server/projects/recovery-notification-maintenance";
 import { startMoveLroWorker } from "@cocalc/server/projects/move-worker";
 import { startRootfsPublishLroWorker } from "@cocalc/server/projects/rootfs-publish-worker";
 import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
@@ -185,6 +186,7 @@ export function startConatApiBackgroundWorkers(): void {
     });
   }
   if (isPrimaryBayWorker()) {
+    startProjectRecoveryNotificationMaintenance();
     startBayBackupHealthMaintenance();
     startBayBackupMaintenance();
     startBayWalArchiveMaintenance();

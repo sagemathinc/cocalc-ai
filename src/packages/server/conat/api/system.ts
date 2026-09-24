@@ -2387,6 +2387,9 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                settings?.project_recovery_notifications_enabled
+                  ? `Operator notifications enabled; on-call administrator ${settings.project_recovery_oncall_account_id || "not configured"}`
+                  : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
                 ...projectRecovery.host_maintenance_blocks.map(
                   (block) =>
                     `${block.host_id} maintenance blocked: ${block.reason} checked at ${block.checked_at}${block.memory_psi_full_avg10 == null ? "" : ` (memory PSI full avg10 ${block.memory_psi_full_avg10}%)`}`,

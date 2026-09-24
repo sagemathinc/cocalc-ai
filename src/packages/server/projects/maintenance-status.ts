@@ -637,6 +637,25 @@ export interface ProjectRecoveryReasonAggregate {
   attempts: number;
 }
 
+export async function getProjectRecoveryRecentPayingCompletions(): Promise<
+  Array<{ host_id: string; kind: "snapshot" | "backup"; succeeded: number }>
+> {
+  await ensureProjectMaintenanceStatusTable();
+  const { rows } = await getPool().query<{
+    host_id: string;
+    kind: "snapshot" | "backup";
+    succeeded: number;
+  }>(
+    `SELECT host_id, kind, COUNT(*)::int AS succeeded
+       FROM project_maintenance_attempts
+      WHERE storage_service_class='paying' AND outcome='succeeded'
+        AND ((kind='snapshot' AND observed_at >= NOW() - INTERVAL '30 minutes')
+          OR (kind='backup' AND observed_at >= NOW() - INTERVAL '2 hours'))
+      GROUP BY host_id, kind`,
+  );
+  return rows;
+}
+
 export async function getProjectRecoveryAttemptHealth(): Promise<{
   by_host: ProjectRecoveryAttemptAggregate[];
   stages: ProjectRecoveryStageAggregate[];

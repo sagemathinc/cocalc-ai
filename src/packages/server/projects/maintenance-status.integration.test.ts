@@ -8,6 +8,7 @@ import { uuid } from "@cocalc/util/misc";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryAttemptHealth,
+  getProjectRecoveryRecentPayingCompletions,
 } from "./maintenance-status";
 
 describe("project recovery capacity accounting", () => {
@@ -61,5 +62,40 @@ describe("project recovery capacity accounting", () => {
         bytes_uploaded: 1024,
       }),
     );
+  });
+
+  it("uses lane-specific recent paying completion windows", async () => {
+    const host_id = uuid();
+    for (const [kind, serviceClass, outcome, minutesAgo] of [
+      ["snapshot", "paying", "succeeded", 29],
+      ["snapshot", "paying", "succeeded", 31],
+      ["backup", "paying", "succeeded", 119],
+      ["backup", "paying", "succeeded", 121],
+      ["snapshot", "free", "succeeded", 1],
+      ["backup", "paying", "failed", 1],
+    ] as const) {
+      await getPool().query(
+        `INSERT INTO project_maintenance_attempts
+           (project_id, kind, host_id, storage_service_class, observed_at,
+            outcome)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          uuid(),
+          kind,
+          host_id,
+          serviceClass,
+          new Date(Date.now() - minutesAgo * 60_000),
+          outcome,
+        ],
+      );
+    }
+    const rows = await getProjectRecoveryRecentPayingCompletions();
+    expect(rows.filter((row) => row.host_id === host_id)).toEqual(
+      expect.arrayContaining([
+        { host_id, kind: "snapshot", succeeded: 1 },
+        { host_id, kind: "backup", succeeded: 1 },
+      ]),
+    );
+    expect(rows.filter((row) => row.host_id === host_id)).toHaveLength(2);
   });
 });
