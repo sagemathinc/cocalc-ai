@@ -7,7 +7,10 @@ import type {
   NamedAgent,
 } from "@cocalc/conat/agents/personal";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
-import { duplicateNetworkTitle } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  duplicateNetworkTitle,
+} from "./agent-network-utils";
 
 const mockApi = {
   createAgentNetwork: jest.fn(),
@@ -35,19 +38,68 @@ jest.mock("./api", () => ({
   ) => a.project_id === b.project_id && a.agent_id === b.agent_id,
 }));
 
+jest.mock("antd", () => {
+  const actual = jest.requireActual("antd");
+  const Select = ({
+    "aria-label": ariaLabel,
+    mode,
+    value,
+    onChange,
+    options,
+    tagRender,
+  }: any) => {
+    const [draft, setDraft] = require("react").useState("");
+    return (
+      <div data-mode={mode}>
+        <input
+          role="combobox"
+          aria-label={ariaLabel}
+          aria-controls="test-network-tag-options"
+          aria-expanded="false"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || !draft) return;
+            onChange([...value, draft]);
+            setDraft("");
+          }}
+        />
+        {value.map((id: string) =>
+          tagRender({
+            value: id,
+            label:
+              options.find((option: any) => option.value === id)?.label ?? id,
+            closable: true,
+            onClose: () =>
+              onChange(value.filter((selected: string) => selected !== id)),
+          }),
+        )}
+        <div id="test-network-tag-options">
+          {options.map((option: any) => (
+            <button
+              key={option.value}
+              type="button"
+              disabled={option.disabled}
+              onClick={() => onChange([...value, option.value])}
+            >
+              Select {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+  return { ...actual, Select };
+});
+
 const agent: NamedAgent = {
   account_id: "account",
   name: "builder",
-  endpoint: { project_id: "other-project", agent_id: "builder-id" },
+  endpoint: { project_id: "project", agent_id: "builder-id" },
   path: "/agents.chat",
   thread_id: "thread",
   available: true,
   updated_at: "2026-09-24T00:00:00.000Z",
-};
-const peer: NamedAgent = {
-  ...agent,
-  name: "reviewer",
-  endpoint: { project_id: "project", agent_id: "reviewer-id" },
 };
 const network: AgentNetwork = {
   agent_network_id: "11111111-1111-4111-8111-111111111111",
@@ -59,24 +111,7 @@ const network: AgentNetwork = {
   created_by: "account",
   created_at: "2026-09-24T00:00:00.000Z",
   updated_at: "2026-09-24T00:00:00.000Z",
-  members: [
-    {
-      kind: "registered",
-      member_id: "reviewer-id",
-      endpoint: peer.endpoint,
-      name: "reviewer",
-      available: true,
-      added_at: "2026-09-24T00:00:00.000Z",
-    },
-    {
-      kind: "registered",
-      member_id: "writer-id",
-      endpoint: { project_id: "project", agent_id: "writer-id" },
-      name: "writer",
-      available: true,
-      added_at: "2026-09-24T00:00:00.000Z",
-    },
-  ],
+  members: [],
 };
 const directory: AgentNetworkDirectory = {
   enabled: true,
@@ -95,109 +130,96 @@ beforeEach(() => {
   });
 });
 
-test("network tag titles compare case-insensitively but retain distinct IDs", () => {
+test("network identities remain stable and removed members are not active", () => {
   expect(duplicateNetworkTitle([network], " release ")).toBe(true);
   expect(
     duplicateNetworkTitle([network], "release", network.agent_network_id),
   ).toBe(false);
+  expect(
+    activeNetworkMembers({
+      ...network,
+      members: [
+        {
+          kind: "registered",
+          member_id: agent.endpoint.agent_id,
+          endpoint: agent.endpoint,
+          available: true,
+          added_at: "2026-09-24T00:00:00.000Z",
+          removed_at: "2026-09-24T01:00:00.000Z",
+        },
+      ],
+    }),
+  ).toHaveLength(0);
 });
 
-test("editor explains permissions, warns on duplicate titles, and adds with fresh auth", async () => {
+test("tag selector explains permissions and creates a one-member live network", async () => {
   const user = userEvent.setup();
   render(
     <AgentNetworkTagsEditor
       agent={agent}
-      agents={[agent, peer]}
       directory={directory}
       onClose={jest.fn()}
     />,
   );
-
   expect(
     screen.getByRole("dialog", { name: "Network tags for @builder" }),
   ).toBeInTheDocument();
   expect(
     screen.getByText("Network tags are permissions, not just labels."),
   ).toBeInTheDocument();
-  await user.type(
-    screen.getByRole("textbox", { name: "Tag name" }),
-    " release ",
-  );
-  expect(
-    screen.getByText(/already exists\. Choose a distinct name/),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Create network tag" }),
-  ).toBeDisabled();
-
-  const addButton = screen.getByRole("button", {
-    name: "Add @builder to Release network tag",
+  const selector = screen.getByRole("combobox", {
+    name: "Network tags for @builder",
   });
-  addButton.focus();
-  expect(addButton).toHaveFocus();
-  await user.keyboard("{Enter}");
-  await waitFor(() =>
-    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agent_network_id: network.agent_network_id,
-        action: "add-member",
-        member: { kind: "registered", endpoint: agent.endpoint },
-      }),
-    ),
-  );
-  expect(mockFresh).toHaveBeenCalledTimes(1);
-  expect(mockRefresh).toHaveBeenCalledTimes(1);
-});
-
-test("editor does not offer removal when only two members remain", () => {
-  render(
-    <AgentNetworkTagsEditor
-      agent={peer}
-      agents={[agent, peer]}
-      directory={directory}
-      onClose={jest.fn()}
-    />,
-  );
-  expect(
-    screen.getByRole("button", {
-      name: "Remove @reviewer from Release network tag",
-    }),
-  ).toBeDisabled();
-});
-
-test("creating a network tag explicitly requests live delivery", async () => {
-  const user = userEvent.setup();
-  render(
-    <AgentNetworkTagsEditor
-      agent={agent}
-      agents={[agent, peer]}
-      directory={directory}
-      onClose={jest.fn()}
-    />,
-  );
-  await user.type(
-    screen.getByRole("textbox", { name: "Tag name" }),
-    "Planning",
-  );
-  await user.selectOptions(
-    screen.getByRole("combobox", { name: "Second agent" }),
-    peer.endpoint.agent_id,
-  );
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Create network tag" }),
-    ).toBeEnabled(),
-  );
-  await user.click(screen.getByRole("button", { name: "Create network tag" }));
+  expect(selector.parentElement).toHaveAttribute("data-mode", "tags");
+  await user.click(selector);
+  expect(selector).toHaveFocus();
+  await user.type(selector, "Planning{enter}");
   await waitFor(() =>
     expect(mockApi.createAgentNetwork).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Planning",
         delivery_mode: "live",
-        members: [
-          { kind: "registered", endpoint: agent.endpoint },
-          { kind: "registered", endpoint: peer.endpoint },
-        ],
+        members: [{ kind: "registered", endpoint: agent.endpoint }],
+      }),
+    ),
+  );
+  expect(mockRefresh).toHaveBeenCalledTimes(1);
+});
+
+test("a sole member can remove their network tag", async () => {
+  const user = userEvent.setup();
+  const withMember: AgentNetwork = {
+    ...network,
+    members: [
+      {
+        kind: "registered",
+        member_id: agent.endpoint.agent_id,
+        endpoint: agent.endpoint,
+        name: agent.name,
+        available: true,
+        added_at: "2026-09-24T00:00:00.000Z",
+      },
+    ],
+  };
+  render(
+    <AgentNetworkTagsEditor
+      agent={agent}
+      directory={{ ...directory, networks: [withMember] }}
+      onClose={jest.fn()}
+    />,
+  );
+  const remove = screen.getByRole("button", {
+    name: "Remove Release network tag",
+  });
+  remove.focus();
+  expect(remove).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "remove-member",
+        agent_network_id: network.agent_network_id,
+        member: { kind: "registered", endpoint: agent.endpoint },
       }),
     ),
   );

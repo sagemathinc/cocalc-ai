@@ -9,7 +9,11 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 export { networkColor, networkProjectCount } from "./agent-network-utils";
-import { networkColor, networkProjectCount } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  networkColor,
+  networkProjectCount,
+} from "./agent-network-utils";
 
 function NetworkPill({
   network,
@@ -24,7 +28,7 @@ function NetworkPill({
 }) {
   const projects = networkProjectCount(network);
   const interactive = !!onSelect || (selected && !!onOpen);
-  const tooltip = `${network.members.length} members · ${network.delivery_mode} delivery · ${projects} project${projects === 1 ? "" : "s"}${selected && onOpen ? " · Open network details" : ""}`;
+  const tooltip = `${activeNetworkMembers(network).length} members · ${network.delivery_mode} delivery · ${projects} project${projects === 1 ? "" : "s"}${selected && onOpen ? " · Open network details" : ""}`;
   const activate = () => {
     if (selected && onOpen) {
       onOpen(network);

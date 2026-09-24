@@ -12,7 +12,11 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import { isExternalAgentSource } from "@cocalc/conat/agents/rpc";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { networkColor, networkProjectCount } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  networkColor,
+  networkProjectCount,
+} from "./agent-network-utils";
 
 const { Text } = Typography;
 
@@ -31,6 +35,7 @@ export function AgentNetworkSummary({
   compact?: boolean;
 }) {
   const projects = networkProjectCount(network);
+  const members = activeNetworkMembers(network);
   return (
     <Card
       size="small"
@@ -57,12 +62,16 @@ export function AgentNetworkSummary({
         style={{ width: "100%" }}
       >
         <Text type="secondary">
-          {network.members.length} members across {projects} project
-          {projects === 1 ? "" : "s"}; every member can communicate with every
-          other member.
+          {members.length} members across {projects} project
+          {projects === 1 ? "" : "s"}
+          {members.length > 1
+            ? "; every member can communicate with every other member."
+            : members.length === 1
+              ? ". Add another member to enable agent-to-agent messaging."
+              : ". Add members to enable agent-to-agent messaging."}
         </Text>
         <Space wrap size={[4, 4]}>
-          {network.members.map((member) => (
+          {members.map((member) => (
             <Tag
               key={member.member_id}
               icon={

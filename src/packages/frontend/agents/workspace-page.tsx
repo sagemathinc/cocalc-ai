@@ -3715,7 +3715,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       {networkTagsAgent && networkDirectory && (
         <AgentNetworkTagsEditor
           agent={networkTagsAgent}
-          agents={agents}
           directory={networkDirectory}
           onClose={() => setNetworkTagsAgent(undefined)}
         />

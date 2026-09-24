@@ -40,9 +40,13 @@ export function duplicateNetworkTitle(
   );
 }
 
+export function activeNetworkMembers(network: AgentNetwork) {
+  return network.members.filter(({ removed_at }) => !removed_at);
+}
+
 export function networkProjectCount(network: AgentNetwork): number {
   return new Set(
-    network.members.flatMap((member) =>
+    activeNetworkMembers(network).flatMap((member) =>
       member.kind === "registered" ? [member.endpoint.project_id] : [],
     ),
   ).size;

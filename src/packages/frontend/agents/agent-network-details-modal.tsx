@@ -19,6 +19,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
 import {
+  activeNetworkMembers,
   duplicateNetworkTitle,
   networkProjectCount,
 } from "./agent-network-utils";
@@ -66,7 +67,10 @@ export function AgentNetworkFilterBar({
       <Icon name="network" style={{ color: UI_COLORS.info }} />
       <Text style={{ flex: "1 1 130px", minWidth: 0 }} ellipsis>
         Showing <strong>{network.title}</strong>
-        <Text type="secondary"> · {network.members.length} agents</Text>
+        <Text type="secondary">
+          {" "}
+          · {activeNetworkMembers(network).length} agents
+        </Text>
       </Text>
       <Space size={2} wrap>
         <Button type="link" size="small" onClick={onOpen}>

@@ -95,6 +95,58 @@ describeDb("account-home Agent Networks", () => {
       await store.name(account, { endpoint, name });
   });
 
+  test("a network can be created empty, populated, and emptied again", async () => {
+    const network = await store.createNetwork(
+      account,
+      { request_id: randomUUID(), title: "Solo tag", members: [] },
+      8,
+    );
+    expect(network.members).toHaveLength(0);
+
+    const member = { kind: "registered" as const, endpoint: source };
+    const withMember = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "add-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      withMember.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(1);
+
+    const emptyAgain = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "remove-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      emptyAgain.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(0);
+
+    const rejoined = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "add-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      rejoined.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(1);
+  });
+
   test("one network authorizes every direction but no nonmember", async () => {
     const network = await store.createNetwork(
       account,

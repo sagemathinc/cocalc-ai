@@ -3,8 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Space, Tag, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Modal, Select, Space, Tag, Typography } from "antd";
 import type {
   AgentNetwork,
   AgentNetworkDirectory,
@@ -16,9 +16,9 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { uuid } from "@cocalc/util/misc";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import {
+  activeNetworkMembers,
   duplicateNetworkTitle,
   networkColor,
   networkProjectCount,
@@ -26,19 +26,24 @@ import {
 
 const { Text } = Typography;
 
+function isMember(network: AgentNetwork, agent: NamedAgent): boolean {
+  return activeNetworkMembers(network).some(
+    (member) =>
+      member.kind === "registered" &&
+      sameEndpoint(member.endpoint, agent.endpoint),
+  );
+}
+
 export function AgentNetworkTagsEditor({
   agent,
-  agents,
   directory,
   onClose,
 }: {
   agent: NamedAgent;
-  agents: NamedAgent[];
   directory: AgentNetworkDirectory;
   onClose: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [peerId, setPeerId] = useState<string>();
+  const [optimistic, setOptimistic] = useState<string[]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -47,10 +52,14 @@ export function AgentNetworkTagsEditor({
   const networks = directory.networks.filter(
     (network) => network.state !== "closed",
   );
-  const peers = agents.filter(
-    (candidate) => !sameEndpoint(candidate.endpoint, agent.endpoint),
-  );
-  const duplicate = duplicateNetworkTitle(directory.networks, title);
+  const selected = networks
+    .filter((network) => isMember(network, agent))
+    .map(({ agent_network_id }) => agent_network_id);
+  const value = optimistic ?? selected;
+
+  useEffect(() => {
+    setOptimistic(undefined);
+  }, [directory]);
 
   function requestId(key: string): string {
     let id = requestIds.current.get(key);
@@ -63,12 +72,14 @@ export function AgentNetworkTagsEditor({
 
   async function mutate(
     key: string,
+    next: string[],
     action: () => Promise<unknown>,
     success: string,
     requireFresh: boolean,
   ) {
-    if (busy) return false;
+    if (busy) return;
     setBusy(true);
+    setOptimistic(next);
     setError("");
     setNotice("");
     try {
@@ -81,67 +92,102 @@ export function AgentNetworkTagsEditor({
         requestIds.current.delete(key);
         setNotice(success);
         refreshAgentNetworks();
+      } else {
+        setOptimistic(undefined);
       }
-      return completed;
     } catch (err) {
+      setOptimistic(undefined);
       setError(`${err}`);
-      return false;
     } finally {
       setBusy(false);
     }
   }
 
-  function setMembership(network: AgentNetwork, member: boolean) {
-    const key = `${network.agent_network_id}:${member ? "remove" : "add"}:${agent.endpoint.agent_id}:${network.generation}`;
-    const projects = networkProjectCount(network);
+  function changeMembership(
+    network: AgentNetwork,
+    remove: boolean,
+    next: string[],
+  ) {
+    const key = `${network.agent_network_id}:${remove ? "remove" : "add"}:${agent.endpoint.agent_id}:${network.generation}`;
+    const members = activeNetworkMembers(network);
     void mutate(
       key,
+      next,
       () =>
         personalAgentApi().updateAgentNetwork({
           request_id: requestId(key),
           agent_network_id: network.agent_network_id,
-          action: member ? "remove-member" : "add-member",
+          action: remove ? "remove-member" : "add-member",
           member: { kind: "registered", endpoint: agent.endpoint },
         }),
-      member
+      remove
         ? `Removed @${agent.name} from ${network.title}.`
-        : `Added @${agent.name} to ${network.title}. Members can now message each other.`,
-      !member &&
-        projects > 0 &&
-        !network.members.some(
-          (existing) =>
-            existing.kind === "registered" &&
-            !existing.removed_at &&
-            existing.endpoint.project_id === agent.endpoint.project_id,
+        : `Added @${agent.name} to ${network.title}.`,
+      !remove &&
+        networkProjectCount(network) > 0 &&
+        !members.some(
+          (member) =>
+            member.kind === "registered" &&
+            member.endpoint.project_id === agent.endpoint.project_id,
         ),
     );
   }
 
-  async function create() {
-    const peer = peers.find(
-      (candidate) => candidate.endpoint.agent_id === peerId,
+  function onTagsChange(next: string[]) {
+    if (busy) return;
+    const added = next.filter((id) => !value.includes(id));
+    const removed = value.filter((id) => !next.includes(id));
+    if (added.length + removed.length !== 1) return;
+    if (removed.length) {
+      const network = networks.find(
+        ({ agent_network_id }) => agent_network_id === removed[0],
+      );
+      if (network) changeMembership(network, true, next);
+      return;
+    }
+    const candidate = added[0];
+    const existing = networks.find(
+      ({ agent_network_id }) => agent_network_id === candidate,
     );
-    if (!peer || !title.trim() || duplicate) return;
-    const key = `create:${title.trim()}:${agent.endpoint.agent_id}:${peer.endpoint.agent_id}`;
-    const completed = await mutate(
+    if (existing) {
+      changeMembership(existing, false, next);
+      return;
+    }
+    const title = candidate.trim();
+    if (!title || title.length > 120) {
+      setError("A network tag name must contain 1 to 120 characters.");
+      return;
+    }
+    const matching = directory.networks.filter(
+      (network) =>
+        network.title.trim().toLocaleLowerCase() === title.toLocaleLowerCase(),
+    );
+    if (matching.length) {
+      setError(
+        matching.length === 1
+          ? "This network tag already exists. Select it from the list instead."
+          : "Several network tags have this name. Select the intended one from the list.",
+      );
+      return;
+    }
+    if (directory.usage.active_networks >= directory.usage.network_limit) {
+      setError("The active network tag limit has been reached.");
+      return;
+    }
+    const key = `create:${title}:${agent.endpoint.project_id}:${agent.endpoint.agent_id}`;
+    void mutate(
       key,
+      next,
       () =>
         personalAgentApi().createAgentNetwork({
           request_id: requestId(key),
-          title: title.trim(),
+          title,
           delivery_mode: "live",
-          members: [
-            { kind: "registered", endpoint: agent.endpoint },
-            { kind: "registered", endpoint: peer.endpoint },
-          ],
+          members: [{ kind: "registered", endpoint: agent.endpoint }],
         }),
-      `Created live network tag ${title.trim()} for @${agent.name} and @${peer.name}.`,
-      peer.endpoint.project_id !== agent.endpoint.project_id,
+      `Created live network tag ${title} for @${agent.name}.`,
+      false,
     );
-    if (completed) {
-      setTitle("");
-      setPeerId(undefined);
-    }
   }
 
   return (
@@ -164,149 +210,84 @@ export function AgentNetworkTagsEditor({
             type="info"
             showIcon
             title="Network tags are permissions, not just labels."
-            description="Every agent sharing a network tag can message every other member in both directions. Live delivery can interrupt a running turn. Removing a tag blocks future messages, but does not cancel work already accepted."
+            description="Agents sharing a tag can message each other in both directions. Live delivery may interrupt a running turn; removing a tag blocks future messages, not work already accepted."
           />
+          <div style={{ width: "100%" }}>
+            <label htmlFor="agent-network-tags">Network tags</label>
+            <Select
+              id="agent-network-tags"
+              aria-label={`Network tags for @${agent.name}`}
+              mode="tags"
+              value={value}
+              disabled={busy}
+              onChange={onTagsChange}
+              placeholder="Select a tag or type a new name"
+              style={{ width: "100%", marginTop: 6 }}
+              filterOption={(input, option) =>
+                `${option?.label ?? ""}`
+                  .toLocaleLowerCase()
+                  .includes(input.toLocaleLowerCase())
+              }
+              getPopupContainer={(node) => node.parentElement ?? document.body}
+              options={networks.map((network) => ({
+                value: network.agent_network_id,
+                label: duplicateNetworkTitle(
+                  networks,
+                  network.title,
+                  network.agent_network_id,
+                )
+                  ? `${network.title} · ${network.agent_network_id.slice(0, 8)}`
+                  : network.title,
+                disabled:
+                  !isMember(network, agent) &&
+                  activeNetworkMembers(network).length >=
+                    directory.usage.member_limit,
+              }))}
+              tagRender={({ label, value: tagValue, closable, onClose }) => {
+                const network = networks.find(
+                  ({ agent_network_id }) => agent_network_id === tagValue,
+                );
+                return (
+                  <Tag
+                    color={network ? networkColor(network) : undefined}
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                      if (!(event.target as HTMLElement).closest("button"))
+                        event.preventDefault();
+                    }}
+                    style={{ marginInlineEnd: 4 }}
+                  >
+                    {label}
+                    {closable && (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${label} network tag`}
+                        onClick={onClose}
+                        style={{
+                          border: 0,
+                          background: "transparent",
+                          color: "inherit",
+                          cursor: "pointer",
+                          marginInlineStart: 4,
+                          padding: 0,
+                        }}
+                      >
+                        <span aria-hidden="true">&times;</span>
+                      </button>
+                    )}
+                  </Tag>
+                );
+              }}
+            />
+            <Text type="secondary">
+              Select an existing tag, or type a new name and press Enter to
+              create a live tag.
+            </Text>
+          </div>
           {error && <Alert role="alert" type="error" showIcon title={error} />}
           {notice && (
             <Alert role="status" type="success" showIcon title={notice} />
           )}
-          <section
-            aria-label="Available network tags"
-            style={{ width: "100%" }}
-          >
-            <Space orientation="vertical" style={{ width: "100%" }}>
-              <Text strong>Available network tags</Text>
-              {networks.length === 0 && (
-                <Text type="secondary">No network tags yet.</Text>
-              )}
-              {networks.map((network) => {
-                const member = network.members.some(
-                  (existing) =>
-                    existing.kind === "registered" &&
-                    !existing.removed_at &&
-                    sameEndpoint(existing.endpoint, agent.endpoint),
-                );
-                const cannotRemove = member && network.members.length <= 2;
-                const cannotAdd =
-                  !member &&
-                  network.members.length >= directory.usage.member_limit;
-                return (
-                  <div
-                    key={network.agent_network_id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Tag
-                      color={
-                        network.state === "paused"
-                          ? undefined
-                          : networkColor(network)
-                      }
-                    >
-                      {network.title}
-                    </Tag>
-                    <Text type="secondary">
-                      {network.delivery_mode} · {network.members.length} members
-                      {network.state === "paused" ? " · paused" : ""}
-                    </Text>
-                    <Button
-                      size="small"
-                      disabled={busy || cannotRemove || cannotAdd}
-                      title={
-                        cannotRemove
-                          ? "A network must retain at least two members"
-                          : undefined
-                      }
-                      aria-label={`${member ? "Remove" : "Add"} @${agent.name} ${member ? "from" : "to"} ${network.title} network tag`}
-                      onClick={() => setMembership(network, member)}
-                    >
-                      {member ? "Remove" : "Add"}
-                    </Button>
-                    {duplicateNetworkTitle(
-                      networks,
-                      network.title,
-                      network.agent_network_id,
-                    ) && (
-                      <Text type="warning">
-                        Same name as another tag; ID{" "}
-                        {network.agent_network_id.slice(0, 8)}
-                      </Text>
-                    )}
-                  </div>
-                );
-              })}
-            </Space>
-          </section>
-          <section aria-label="Create network tag">
-            <Space orientation="vertical" style={{ width: "100%" }}>
-              <Text strong>Create a live network tag</Text>
-              <Text type="secondary">
-                A new network needs at least two agents. Its color is assigned
-                from its stable ID.
-              </Text>
-              <label htmlFor="new-network-tag-title">Tag name</label>
-              <Input
-                id="new-network-tag-title"
-                value={title}
-                maxLength={120}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Release review"
-                status={duplicate ? "error" : undefined}
-                aria-describedby={
-                  duplicate ? "network-tag-duplicate" : undefined
-                }
-              />
-              {duplicate && (
-                <Text id="network-tag-duplicate" type="danger">
-                  A network tag with this name already exists. Choose a distinct
-                  name.
-                </Text>
-              )}
-              <label htmlFor="new-network-tag-peer">Second agent</label>
-              <select
-                id="new-network-tag-peer"
-                value={peerId ?? ""}
-                onChange={(event) => setPeerId(event.target.value || undefined)}
-                style={{
-                  width: "100%",
-                  minHeight: 34,
-                  border: `1px solid ${UI_COLORS.border}`,
-                  borderRadius: 6,
-                  background: UI_COLORS.surface,
-                  color: UI_COLORS.text,
-                  paddingInline: 8,
-                }}
-              >
-                <option value="">Choose another agent</option>
-                {peers.map((peer) => (
-                  <option
-                    key={peer.endpoint.agent_id}
-                    value={peer.endpoint.agent_id}
-                  >
-                    @{peer.name} - {peer.project_title ?? "Project"}
-                  </option>
-                ))}
-              </select>
-              <Button
-                type="primary"
-                disabled={
-                  busy ||
-                  !title.trim() ||
-                  duplicate ||
-                  !peerId ||
-                  directory.usage.active_networks >=
-                    directory.usage.network_limit
-                }
-                onClick={() => void create()}
-              >
-                Create network tag
-              </Button>
-            </Space>
-          </section>
         </Space>
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />

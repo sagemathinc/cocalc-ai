@@ -301,8 +301,7 @@ export class PersonalAgentStore {
     members: AgentNetworkMemberLocator[],
     memberLimit: number,
   ) {
-    if (!Array.isArray(members) || members.length < 2)
-      throw new Error("agent_network_requires_two_members");
+    if (!Array.isArray(members)) throw new Error("invalid_network_members");
     if (members.length > Math.min(memberLimit, 64))
       throw new Error(`agent_network_member_limit_reached:${memberLimit}`);
     const seen = new Set<string>();
@@ -1116,8 +1115,6 @@ export class PersonalAgentStore {
           );
           if (!result.rows.length)
             throw new Error("agent_network_member_not_found");
-          if (activeMembers.length - 1 < 2)
-            throw new Error("agent_network_requires_two_members");
         } else if (options.action === "pause") {
           row.state = "paused";
         } else if (options.action === "resume") {

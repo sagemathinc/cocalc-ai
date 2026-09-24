@@ -20,7 +20,10 @@ import { useSourceAgentName } from "./source-agent-name";
 import type { AgentNameContext } from "./name-context";
 import { cachedAgentNameContext } from "./name-context";
 import { AgentNetworkSummary } from "./agent-network-summary";
-import { duplicateNetworkTitle } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  duplicateNetworkTitle,
+} from "./agent-network-utils";
 
 const NEW_NETWORK = "new";
 
@@ -39,7 +42,7 @@ function registeredMember(
   network: AgentNetwork,
   endpoint: AgentEndpoint,
 ): AgentNetworkMember | undefined {
-  return network.members.find(
+  return activeNetworkMembers(network).find(
     (member) =>
       member.kind === "registered" && sameEndpoint(member.endpoint, endpoint),
   );
@@ -107,15 +110,18 @@ export function NetworkApproval({
   const joinableNetworks = targetNetworks.filter(
     (network) =>
       !registeredMember(network, value.source) &&
-      network.members.length < (directory?.usage.member_limit ?? 0),
+      activeNetworkMembers(network).length <
+        (directory?.usage.member_limit ?? 0),
   );
   const selectedNetwork = joinableNetworks.find(
     ({ agent_network_id }) => agent_network_id === selection,
   );
   const selectedProjects = new Set(
-    selectedNetwork?.members.flatMap((member) =>
-      member.kind === "registered" ? [member.endpoint.project_id] : [],
-    ) ?? [],
+    selectedNetwork
+      ? activeNetworkMembers(selectedNetwork).flatMap((member) =>
+          member.kind === "registered" ? [member.endpoint.project_id] : [],
+        )
+      : [],
   );
   const crossesProject = selectedNetwork
     ? selectedProjects.size > 0 &&
@@ -166,7 +172,7 @@ export function NetworkApproval({
       const firstJoinable = activeForTarget.find(
         (network) =>
           !registeredMember(network, value.source) &&
-          network.members.length < next.usage.member_limit,
+          activeNetworkMembers(network).length < next.usage.member_limit,
       );
       setSelection(
         shared?.agent_network_id ??

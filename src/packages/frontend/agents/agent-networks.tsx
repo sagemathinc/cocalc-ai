@@ -27,7 +27,10 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import { openAgentThread } from "./open-agent";
-import { duplicateNetworkTitle } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  duplicateNetworkTitle,
+} from "./agent-network-utils";
 import {
   AgentNetworkProposalSummary,
   AgentNetworkSummary,
@@ -210,7 +213,7 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
         <Space wrap>
           <Button
             type="primary"
-            disabled={agents.length < 2 || busy}
+            disabled={busy}
             onClick={() => setCreateOpen(true)}
           >
             New Agent Network
@@ -322,13 +325,13 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
           })}
         {active.length === 0 && directory && (
           <Card size="small">
-            No Agent Networks yet. Select at least two named agents to create a
-            two-way communication network.
+            No Agent Networks yet. Create a network tag now and add agents
+            later.
           </Card>
         )}
         {active.map((network) => {
           const projects = new Set(
-            network.members.flatMap((member) =>
+            activeNetworkMembers(network).flatMap((member) =>
               member.kind === "registered" ? [member.endpoint.project_id] : [],
             ),
           );
@@ -442,7 +445,7 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
                 </Space>
                 <details>
                   <summary>Members and controls</summary>
-                  {network.members.map((member) => (
+                  {activeNetworkMembers(network).map((member) => (
                     <div
                       key={member.member_id}
                       style={{
@@ -477,51 +480,48 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
                           Open agent
                         </Button>
                       )}
-                      {network.members.length > 2 && (
-                        <Button
-                          size="small"
-                          danger
-                          disabled={busy}
-                          onClick={() => {
-                            const locator =
-                              member.kind === "registered"
-                                ? {
-                                    kind: "registered" as const,
-                                    endpoint: member.endpoint,
-                                  }
-                                : {
-                                    kind: "external" as const,
-                                    agent_id: member.source.agent_id,
-                                    installation_id:
-                                      member.source.installation_id,
-                                  };
-                            Modal.confirm({
-                              title: `Remove ${networkMemberLabel(network, member.member_id)}?`,
-                              content:
-                                "This removes every communication direction between this member and every other network member. It does not cancel work already accepted.",
-                              okText: "Remove member",
-                              okButtonProps: { danger: true },
-                              onOk: () => {
-                                const key = `${network.agent_network_id}:remove:${member.member_id}:${network.generation}`;
-                                return mutate(
-                                  key,
-                                  () =>
-                                    personalAgentApi().updateAgentNetwork({
-                                      request_id: requestId(key),
-                                      agent_network_id:
-                                        network.agent_network_id,
-                                      action: "remove-member",
-                                      member: locator,
-                                    }),
-                                  "Member removed from the network.",
-                                );
-                              },
-                            });
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      )}
+                      <Button
+                        size="small"
+                        danger
+                        disabled={busy}
+                        onClick={() => {
+                          const locator =
+                            member.kind === "registered"
+                              ? {
+                                  kind: "registered" as const,
+                                  endpoint: member.endpoint,
+                                }
+                              : {
+                                  kind: "external" as const,
+                                  agent_id: member.source.agent_id,
+                                  installation_id:
+                                    member.source.installation_id,
+                                };
+                          Modal.confirm({
+                            title: `Remove ${networkMemberLabel(network, member.member_id)}?`,
+                            content:
+                              "This removes every communication direction between this member and every other network member. It does not cancel work already accepted.",
+                            okText: "Remove member",
+                            okButtonProps: { danger: true },
+                            onOk: () => {
+                              const key = `${network.agent_network_id}:remove:${member.member_id}:${network.generation}`;
+                              return mutate(
+                                key,
+                                () =>
+                                  personalAgentApi().updateAgentNetwork({
+                                    request_id: requestId(key),
+                                    agent_network_id: network.agent_network_id,
+                                    action: "remove-member",
+                                    member: locator,
+                                  }),
+                                "Member removed from the network.",
+                              );
+                            },
+                          });
+                        }}
+                      >
+                        Remove
+                      </Button>
                     </div>
                   ))}
                   {network.state !== "closed" && (
@@ -531,13 +531,13 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
                       style={{ minWidth: 260, marginTop: 12 }}
                       disabled={
                         busy ||
-                        network.members.length >=
+                        activeNetworkMembers(network).length >=
                           (directory?.usage.member_limit ?? 0)
                       }
                       options={agents
                         .filter(
                           (agent) =>
-                            !network.members.some(
+                            !activeNetworkMembers(network).some(
                               (member) =>
                                 member.kind === "registered" &&
                                 sameEndpoint(member.endpoint, agent.endpoint),
@@ -638,7 +638,6 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
           disabled:
             !title.trim() ||
             duplicateTitle ||
-            selected.length < 2 ||
             selected.length > (directory?.usage.member_limit ?? 0),
         }}
         onOk={() => void create()}
@@ -669,15 +668,15 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
             value={selected}
             onChange={setSelected}
             style={{ width: "100%" }}
-            placeholder="Select at least two agents"
+            placeholder="Optionally select agents"
             options={agents.map((agent) => ({
               value: memberKey(agent),
               label: `@${agent.name} - ${agent.project_title ?? "Project"}`,
             }))}
           />
           <div>
-            Every selected agent can message every other selected agent in both
-            directions. Adding members later expands that complete graph.
+            A network may start empty. Once agents are added, every member can
+            message every other member in both directions.
           </div>
           <Radio.Group
             aria-label="Agent Network delivery mode"
