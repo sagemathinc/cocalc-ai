@@ -80,6 +80,10 @@ import {
 } from "@cocalc/frontend/chat/harness-credential-selection";
 import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
 import {
+  NewAgentRuntimeSelect,
+  type NewAgentRuntimeKind,
+} from "./new-agent-runtime-select";
+import {
   newAgentClaudeCredentialOptions,
   newAgentClaudeCredentialValue,
 } from "./claude-credential-options";
@@ -539,9 +543,7 @@ function NewAgentPanel({
       ?.getThreadMetadata?.(sourceAgent.thread_id)?.agent_runtime;
     return raw == null ? undefined : raw;
   });
-  const [runtimeKind, setRuntimeKind] = useState<
-    "codex-native" | "claude-code" | "acp"
-  >(() => {
+  const [runtimeKind, setRuntimeKind] = useState<NewAgentRuntimeKind>(() => {
     if (sourceRuntime == null) return "codex-native";
     try {
       const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
@@ -1655,17 +1657,7 @@ function NewAgentPanel({
                     disabled={busy || !!pending}
                   />
                 </Popover>
-                <Select
-                  aria-label="Agent runtime"
-                  value={runtimeKind}
-                  disabled={busy || !!pending}
-                  options={[
-                    { value: "codex-native", label: "Codex" },
-                    { value: "claude-code", label: "Claude Code (preview)" },
-                    { value: "acp", label: "Custom ACP harness (experimental)" },
-                  ]}
-                  onChange={setRuntimeKind}
-                />
+                <NewAgentRuntimeSelect value={runtimeKind} disabled={busy || !!pending} onChange={setRuntimeKind} />
                 {runtimeKind === "codex-native" && <span
                   style={{
                     alignItems: "center",
