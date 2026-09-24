@@ -581,6 +581,38 @@ readback, while its attempt remains counted. The separate bay-backup restore
 check still warned, and browser latency had insufficient samples. These
 checks are a point-in-time staging result, not the seven-day canary.
 
+## September 24 follow-up: automatic fleet recovery stop gates
+
+Commits `f801a3d360` and `2e6b962d36` add a durable recovery health
+baseline to each bay-local host runtime fleet rollout. The worker checks
+project-recovery health, browser latency health, failed maintenance attempts,
+backup debt age, emergency storage pressure, and pressure telemetry after each
+wave. It saves upgraded and health-gated host IDs separately so a worker
+restart checks a completed host before advancing. A global default promotion
+also requires measured browser latency; an unmeasured cohort pauses instead of
+being promoted.
+
+The server package typecheck, 17 focused PGlite tests, and full development
+build passed. Hub artifact
+`20260924T054144Z-2e6b962d-recovery-latency-gate-2e6b962-dirty`
+is active on staging2 as release `20260924054330-hub`; all seven hub smoke
+checks passed. A same-version, two-host canary campaign with global promotion
+disabled succeeded as operation
+`76fb590e-d063-453f-9e21-dd5ffac035f6`. Its durable record contains
+baseline and post-wave snapshots plus both passed host IDs. A second
+same-version campaign requested global promotion and paused as intended:
+operation `06c46d8d-fee6-43c6-8147-a02d4f30a221` reported that
+interactive latency was unmeasured and global promotion required browser
+latency samples. The existing global project-host version and previous rollout ID
+were unchanged. At 05:44:53 UTC, post-test project-recovery health was healthy
+with zero unknown or overdue statuses; browser latency still had no samples.
+The negative test used the same already-deployed host artifact, so it tested
+the gate without introducing a new project-host build.
+
+This proves live admission and fail-closed promotion behavior for the unknown
+latency case. It does not prove the latency regression threshold under actual
+load, a seven-day canary, or a 30-day due-to-success objective.
+
 ## Open findings and release gates
 
 1. Recovery Settings, the project file listing, and the backup catalog now
@@ -591,9 +623,10 @@ checks are a point-in-time staging result, not the seven-day canary.
    backup directory navigation timed out before a successful Refresh, so
    archive browsing latency and retry behavior need continued observation.
 2. The plan's full observability and scheduler contract remains broader than
-   the current code: a calibrated safe-capacity threshold, operator drill
-   reporting, and gated automatic rollout are not yet present. A versioned
-   schedule cache with a 10-minute ownership lease, event-triggered due work,
+   the current code: a calibrated safe-capacity threshold and operator drill
+   reporting are not yet present. Automatic fleet recovery stop gates now run
+   on staging2, with measured browser latency required for global promotion.
+   A versioned schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
    reconciles on a 15-minute timer. The audited backup-health diagnostic
