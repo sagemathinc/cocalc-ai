@@ -8,6 +8,7 @@ import { testCleanup } from "@cocalc/database/test-utils";
 import { uuid } from "@cocalc/util/misc";
 import {
   clearProjectHostMetrics,
+  getProjectHostStoragePressureWindows,
   loadProjectHostMetricsHistory,
   pruneProjectHostMetricsSamples,
   recordProjectHostMetricsSample,
@@ -27,11 +28,79 @@ describe("project host metrics history", () => {
 
   afterEach(async () => {
     await getPool().query("DELETE FROM project_host_metrics_samples");
+    await getPool().query("DELETE FROM projects WHERE title='pressure test'");
     await getPool().query("DELETE FROM project_hosts");
   });
 
   afterAll(async () => {
     await testCleanup();
+  });
+
+  it("measures storage pressure time from bounded host samples", async () => {
+    const host_id = uuid();
+    const project_id = uuid();
+    await insertProjectHost(host_id);
+    await getPool().query(
+      "UPDATE project_hosts SET bay_id='bay-0' WHERE id=$1",
+      [host_id],
+    );
+    await getPool().query(
+      "INSERT INTO projects (project_id, title, host_id, provisioned) VALUES ($1, 'pressure test', $2, true)",
+      [project_id, host_id],
+    );
+    const now = Date.now();
+    for (const [minutes, pressure_state] of [
+      [8, "normal"],
+      [6, "contended"],
+      [4, "emergency"],
+      [2, "recovery"],
+    ] as const) {
+      const collected_at = new Date(now - minutes * 60_000).toISOString();
+      await recordProjectHostMetricsSample({
+        host_id,
+        metrics: {
+          collected_at,
+          storage_admission: {
+            schema_version: 1,
+            collected_at,
+            mode: "enforce",
+            pressure_state,
+            state_since: collected_at,
+            lifecycle_active: 0,
+            starting_projects: 0,
+            stopping_projects: 0,
+            active_by_priority: {
+              lifecycle: 0,
+              interactive: 0,
+              scheduled: 0,
+              scavenger: 0,
+            },
+            btrfs_mutation_locks: 0,
+            btrfs_mutation_waiters: 0,
+            admitted_total: 0,
+            deferred_total: 0,
+            observed_deferral_total: 0,
+            transition_count: 0,
+          },
+        },
+      });
+    }
+    await getPool().query(
+      `INSERT INTO project_host_metrics_samples
+         (host_id, collected_at, storage_pressure_state,
+          storage_admission_mode, storage_pressure_sample_failed)
+       VALUES ($1, now() - interval '30 seconds', 'normal', 'enforce', true)`,
+      [host_id],
+    );
+    const [window] = await getProjectHostStoragePressureWindows({
+      bay_id: "bay-0",
+    });
+    expect(window.host_id).toBe(host_id);
+    expect(window.sample_count).toBe(5);
+    expect(window.contended_seconds).toBeGreaterThanOrEqual(119);
+    expect(window.emergency_seconds).toBeGreaterThanOrEqual(119);
+    expect(window.recovery_seconds).toBeGreaterThanOrEqual(89);
+    expect(window.unavailable_seconds).toBeGreaterThanOrEqual(29);
   });
 
   it("stores at most one sample per minute and loads history with growth", async () => {

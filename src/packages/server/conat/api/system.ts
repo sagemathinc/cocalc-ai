@@ -197,6 +197,7 @@ import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
 } from "@cocalc/server/projects/maintenance-status";
+import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/project-host-metrics";
 import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
@@ -2065,6 +2066,7 @@ export async function getLaunchHealth({
     backupsResult,
     projectRecoveryResult,
     projectRecoveryAttemptsResult,
+    projectRecoveryPressureResult,
     latencyResult,
     setupResult,
     configResult,
@@ -2077,6 +2079,7 @@ export async function getLaunchHealth({
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
     getProjectRecoveryHealth(),
     getProjectRecoveryAttemptHealth(),
+    getProjectHostStoragePressureWindows({ bay_id: currentBay.bay_id }),
     getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
     getSiteSetupStatus({ account_id }),
     getGlobalConfigPropagationStatus({
@@ -2102,6 +2105,16 @@ export async function getLaunchHealth({
     projectRecoveryAttemptsResult.status === "fulfilled"
       ? projectRecoveryAttemptsResult.value
       : undefined;
+  const projectRecoveryPressure =
+    projectRecoveryPressureResult.status === "fulfilled"
+      ? projectRecoveryPressureResult.value
+      : undefined;
+  const hostsMissingPressureTelemetry =
+    projectRecoveryPressure?.filter(
+      (host) =>
+        !host.latest_sample_at ||
+        Date.parse(checkedAt) - Date.parse(host.latest_sample_at) > 5 * 60_000,
+    ) ?? [];
   const latency =
     latencyResult.status === "fulfilled" ? latencyResult.value : undefined;
   const setup =
@@ -2338,7 +2351,9 @@ export async function getLaunchHealth({
       id: "project-recovery",
       label: "Project snapshots and backups",
       level:
-        projectRecoveryResult.status === "rejected"
+        projectRecoveryResult.status === "rejected" ||
+        projectRecoveryPressureResult.status === "rejected" ||
+        hostsMissingPressureTelemetry.length > 0
           ? "critical"
           : !projectRecovery
             ? "unknown"
@@ -2370,6 +2385,19 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...(projectRecoveryPressureResult.status === "rejected"
+                  ? [
+                      `Unable to read host storage pressure history: ${projectRecoveryPressureResult.reason}`,
+                    ]
+                  : []),
+                ...hostsMissingPressureTelemetry.map(
+                  (host) =>
+                    `${host.host_name} storage pressure telemetry missing or older than five minutes`,
+                ),
+                ...(projectRecoveryPressure?.map(
+                  (host) =>
+                    `${host.host_name} storage pressure over 24h: contended ${Math.round(host.contended_seconds / 60)}m, emergency ${Math.round(host.emergency_seconds / 60)}m, recovery ${Math.round(host.recovery_seconds / 60)}m, unavailable ${Math.round(host.unavailable_seconds / 60)}m, sampled ${Math.round(host.sampled_seconds / 60)}m`,
+                ) ?? []),
                 ...projectRecovery.by_host_class
                   .slice(0, 12)
                   .map(

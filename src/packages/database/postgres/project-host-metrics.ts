@@ -769,6 +769,9 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
           stopping_project_count INTEGER,
           io_containment JSONB,
           conat_persist JSONB,
+          storage_pressure_state TEXT,
+          storage_admission_mode TEXT,
+          storage_pressure_sample_failed BOOLEAN,
           PRIMARY KEY (host_id, collected_at)
         )
       `);
@@ -801,6 +804,15 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
       );
       await pool().query(
         "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS root_disk_used_percent DOUBLE PRECISION",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS storage_pressure_state TEXT",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS storage_admission_mode TEXT",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS storage_pressure_sample_failed BOOLEAN",
       );
     })().catch((err) => {
       schemaReady = undefined;
@@ -864,15 +876,18 @@ export async function recordProjectHostMetricsSample({
         starting_project_count,
         stopping_project_count,
         io_containment,
-        conat_persist
+        conat_persist,
+        storage_pressure_state,
+        storage_admission_mode,
+        storage_pressure_sample_failed
       )
       SELECT
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
       WHERE NOT EXISTS (
         SELECT 1
         FROM project_host_metrics_samples
         WHERE host_id = $1
-          AND collected_at >= $2::timestamptz - ($40::bigint * INTERVAL '1 millisecond')
+          AND collected_at >= $2::timestamptz - ($43::bigint * INTERVAL '1 millisecond')
       )
     `,
     [
@@ -915,9 +930,112 @@ export async function recordProjectHostMetricsSample({
       metrics.stopping_project_count ?? null,
       metrics.io_containment ?? null,
       metrics.conat_persist ?? null,
+      metrics.storage_admission?.pressure_state ?? null,
+      metrics.storage_admission?.mode ?? null,
+      metrics.storage_admission == null
+        ? null
+        : metrics.storage_admission.sample_error != null,
       SAMPLE_INTERVAL_MS,
     ],
   );
+}
+
+export interface ProjectHostStoragePressureWindow {
+  host_id: string;
+  host_name: string;
+  latest_sample_at: string | null;
+  sample_count: number;
+  sampled_seconds: number;
+  normal_seconds: number;
+  contended_seconds: number;
+  emergency_seconds: number;
+  recovery_seconds: number;
+  unavailable_seconds: number;
+}
+
+export async function getProjectHostStoragePressureWindows({
+  bay_id,
+}: {
+  bay_id: string;
+}): Promise<ProjectHostStoragePressureWindow[]> {
+  await ensureProjectHostMetricsSamplesSchema();
+  const { rows } = await pool().query<{
+    host_id: string;
+    host_name: string;
+    latest_sample_at: Date | string | null;
+    sample_count: string | number;
+    sampled_seconds: string | number;
+    normal_seconds: string | number;
+    contended_seconds: string | number;
+    emergency_seconds: string | number;
+    recovery_seconds: string | number;
+    unavailable_seconds: string | number;
+  }>(
+    `WITH relevant_hosts AS (
+       SELECT h.id, h.name
+       FROM project_hosts h
+       WHERE h.bay_id = $1
+         AND h.deleted IS NULL
+         AND EXISTS (
+           SELECT 1 FROM projects p
+           WHERE p.host_id = h.id AND p.deleted IS NULL AND p.provisioned
+         )
+     ), ordered AS (
+       SELECT s.host_id, s.collected_at,
+              s.storage_pressure_state, s.storage_admission_mode,
+              s.storage_pressure_sample_failed,
+              lead(s.collected_at) OVER (
+                PARTITION BY s.host_id ORDER BY s.collected_at
+              ) AS next_at
+       FROM project_host_metrics_samples s
+       JOIN relevant_hosts h ON h.id = s.host_id
+       WHERE s.collected_at >= now() - interval '24 hours'
+     ), spans AS (
+       SELECT host_id, collected_at,
+              CASE
+                WHEN storage_pressure_sample_failed IS TRUE
+                  OR storage_admission_mode NOT IN ('observe', 'enforce')
+                  OR storage_admission_mode IS NULL
+                  OR storage_pressure_state NOT IN
+                    ('normal', 'contended', 'emergency', 'recovery')
+                  OR storage_pressure_state IS NULL
+                THEN 'unavailable'
+                ELSE storage_pressure_state
+              END AS pressure_state,
+              least(180, greatest(0,
+                extract(epoch FROM least(coalesce(next_at, now()), now()) - collected_at)
+              )) AS span_seconds
+       FROM ordered
+     )
+     SELECT h.id AS host_id, h.name AS host_name,
+            max(s.collected_at) AS latest_sample_at,
+            count(s.collected_at) AS sample_count,
+            coalesce(sum(s.span_seconds), 0) AS sampled_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'normal'), 0) AS normal_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'contended'), 0) AS contended_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'emergency'), 0) AS emergency_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'recovery'), 0) AS recovery_seconds,
+            coalesce(sum(s.span_seconds) FILTER (WHERE s.pressure_state = 'unavailable'), 0) AS unavailable_seconds
+       FROM relevant_hosts h
+       LEFT JOIN spans s ON s.host_id = h.id
+      GROUP BY h.id, h.name
+      ORDER BY h.name`,
+    [bay_id],
+  );
+  return rows.map((row) => ({
+    host_id: row.host_id,
+    host_name: row.host_name,
+    latest_sample_at: row.latest_sample_at
+      ? new Date(row.latest_sample_at).toISOString()
+      : null,
+    sample_count: Number(row.sample_count),
+    sampled_seconds: Number(row.sampled_seconds),
+    normal_seconds: Number(row.normal_seconds),
+    contended_seconds: Number(row.contended_seconds),
+    emergency_seconds: Number(row.emergency_seconds),
+    recovery_seconds: Number(row.recovery_seconds),
+    unavailable_seconds: Number(row.unavailable_seconds),
+  }));
 }
 
 export async function clearProjectHostMetrics({
