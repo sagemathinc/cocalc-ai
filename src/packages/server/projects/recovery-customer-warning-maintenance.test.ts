@@ -20,6 +20,11 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/server/bay-directory", () => ({
   getSingleBayInfo: () => ({ bay_id: "bay-1" }),
 }));
+jest.mock("@cocalc/server/hub/site-url", () => ({
+  __esModule: true,
+  default: (path: string) =>
+    Promise.resolve(`https://staging2.cocalc.dev/${path}`),
+}));
 jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: (...args: unknown[]) => membership(...args),
 }));
@@ -120,7 +125,9 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
     expect.objectContaining({
       to_ids: [ownerId],
       subject: `Project recovery warning: snapshot: ${projectId}: ${due}`,
-      body: expect.stringContaining(`/projects/${projectId}/settings#recovery`),
+      body: expect.stringContaining(
+        `https://staging2.cocalc.dev/projects/${projectId}/settings#recovery`,
+      ),
       dedupMinutes: 30 * 24 * 60,
       dedupBySubject: true,
       requireAccountNoticeDelivery: true,
@@ -128,6 +135,13 @@ test("an overdue paid snapshot warns current owners and collaborators with a Rec
   );
   expect(sendMessage).toHaveBeenCalledWith(
     expect.objectContaining({ to_ids: [collaboratorId] }),
+  );
+  const { renderNotificationEmailMarkdownText } =
+    await import("@cocalc/server/notifications/email-format");
+  expect(
+    renderNotificationEmailMarkdownText(sendMessage.mock.calls[0][0].body),
+  ).toContain(
+    `https://staging2.cocalc.dev/projects/${projectId}/settings#recovery`,
   );
   expect(sendMessage).not.toHaveBeenCalledWith(
     expect.objectContaining({ to_ids: [viewerId] }),

@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getSingleBayInfo } from "@cocalc/server/bay-directory";
+import siteUrl from "@cocalc/server/hub/site-url";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   storageFundingAccountId,
@@ -88,7 +89,7 @@ function warningDueTimes(row: Candidate, checkedAt: Date) {
   );
 }
 
-function notice({
+async function notice({
   projectId,
   kind,
   due,
@@ -99,9 +100,12 @@ function notice({
 }) {
   const target = kind === "snapshot" ? "30 minutes" : "6 hours";
   const copy = kind === "snapshot" ? "local snapshot" : "off-host backup";
+  const recoveryUrl = await siteUrl(
+    `projects/${encodeURIComponent(projectId)}/settings#recovery`,
+  );
   return {
     subject: `Project recovery warning: ${kind}: ${projectId}: ${due}`,
-    body: `A new ${copy} for project ${projectId} was due at ${due} and has not been confirmed within the paid-project target of ${target}. Recent changes may have less recovery coverage than expected. [Review this project's Recovery settings](/projects/${projectId}/settings#recovery) for current status and any reported block. This notice does not mean that older recovery points are unavailable.`,
+    body: `A new ${copy} for project ${projectId} was due at ${due} and has not been confirmed within the paid-project target of ${target}. Recent changes may have less recovery coverage than expected. Review this project's Recovery settings for current status and any reported block:\n\n${recoveryUrl}\n\nThis notice does not mean that older recovery points are unavailable.`,
   };
 }
 
@@ -196,7 +200,11 @@ export async function runProjectRecoveryCustomerWarningCheck({
               ? current.snapshot_due_at
               : current.backup_due_at;
           if (currentDue !== due) continue;
-          const message = notice({ projectId: row.project_id, kind, due });
+          const message = await notice({
+            projectId: row.project_id,
+            kind,
+            due,
+          });
           for (const recipient of recipients) {
             try {
               await sendMessage({
