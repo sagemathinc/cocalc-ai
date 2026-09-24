@@ -1073,5 +1073,23 @@ staging on-call account with a verified email address, a controlled enabled
 incident, and inspection of the email outbox plus recipient receipt and
 acknowledgement. Production remains unchanged.
 
+## 2026-09-24 operator delivery readiness health gate
+
+Commit `d05ebe82dd72` makes the project-recovery operator health check
+critical if notifications are enabled without a named on-call administrator or
+without a usable critical email backend. Invalid backend settings are reported
+as a configuration fault instead of crashing the entire health query. The
+disabled default remains healthy. Three focused configuration tests and the
+server package build passed. The immutable hub artifact
+`20260924T125123Z-d05ebe82-20260924-recovery-alert-readiness-d05ebe8-dirty`
+was deployed to staging2 as release `20260924125314-hub`. Its worker health
+and hub smoke check passed.
+
+At 2026-09-24 12:53 UTC, live recovery health remained healthy with zero paid
+threshold breaches, unknown states, or hosts missing pressure telemetry. The
+notification switch was still off. The enabled-state critical health path was
+validated by focused tests, not by changing live site settings. A named staging
+recipient and controlled delivery drill are still required before enabling it.
+
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
