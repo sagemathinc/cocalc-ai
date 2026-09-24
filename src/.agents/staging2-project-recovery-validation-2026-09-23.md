@@ -680,6 +680,35 @@ status query at 06:43:47 UTC recorded new successful local snapshots, and
 `admin health` returned project-recovery=healthy with no overdue debt at
 06:44:26 UTC. The short warning and gate stop remain real staging observations.
 
+## September 24 follow-up: audited remote restore attempts
+
+Commit `9bb79f9fce` adds `admin db project-restore-drills`, an audited,
+bounded operator view of remote-only project restore operations. It can filter
+one project and a 1-to-365-day lookback and reports the operation status,
+backup ID, current repository shard and host assignment, and timing. It does
+not display restored file paths or contents, and it does not label an operation
+as externally hash-attested. The current repository/host columns describe the
+project assignment when the diagnostic runs, not a historical assignment
+snapshot. Operation retention limits how far back the view can actually see;
+a durable drill ledger and automatic content attestation remain open.
+
+The focused CLI suite passed 59 tests; Conat, server, and CLI typechecks and the
+full development build passed. Hub artifact
+`20260924T070322Z-9bb79f9f-20260924T0655Z-9bb79f9f-restore-view-dirty`
+is active on staging2 as release `20260924070847-hub`. The first deploy
+attempt ended when SSH closed during `scp`, before staging the release; a
+retry of the same immutable artifact succeeded. All seven hub smoke checks
+passed. The source-built CLI returned five audited rows under audit ID
+`170d36a9-4b11-41c2-87d9-a072388f4015`: the four successful shard
+restores and the first failed cache-allowlist attempt. The four successful
+rows map to four distinct current backup repository IDs.
+
+CLI artifact `20260924T070953Z-9bb79f9f-20260924T0710Z-9bb79f9f-restore-view-dirty`
+built successfully. A staging2 CLI deploy was rejected because CLI deployment
+targets global `dev`, `candidate`, or `stable` installer channels, not a
+site profile. No channel was promoted. The checked-in and source-built CLI
+contains the new operator command; the installed `/opt` CLI remains older.
+
 ## Open findings and release gates
 
 1. Recovery Settings, the project file listing, and the backup catalog now
@@ -690,8 +719,10 @@ status query at 06:43:47 UTC recorded new successful local snapshots, and
    backup directory navigation timed out before a successful Refresh, so
    archive browsing latency and retry behavior need continued observation.
 2. The plan's full observability and scheduler contract remains broader than
-   the current code: a calibrated safe-capacity threshold and operator drill
-   reporting are not yet present. Automatic fleet recovery stop gates now run
+   the current code: a calibrated safe-capacity threshold and durable,
+   hash-attested operator drill reporting are not yet present. The audited
+   remote-only restore attempt view is deployed to staging2. Automatic fleet
+   recovery stop gates now run
    on staging2, with measured browser latency required for global promotion.
    A versioned schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
