@@ -53,6 +53,7 @@ export function AgentNameInput({
   autoFocus = true,
   label = "Agent name",
   showRetirementWarning = false,
+  sideFeedback = false,
 }: {
   id: string;
   value: string;
@@ -63,6 +64,7 @@ export function AgentNameInput({
   autoFocus?: boolean;
   label?: string;
   showRetirementWarning?: boolean;
+  sideFeedback?: boolean;
 }) {
   const [showRequirements, setShowRequirements] = useState(false);
   const requirementsId = `${id}-requirements`;
@@ -76,60 +78,66 @@ export function AgentNameInput({
     .filter(Boolean)
     .join(" ");
   return (
-    <>
-      <div
-        style={{
-          alignItems: "baseline",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          justifyContent: "space-between",
-        }}
-      >
-        <label htmlFor={id}>{label}</label>
-        <Button
-          type="link"
-          size="small"
-          htmlType="button"
-          icon={<InfoCircleOutlined />}
-          aria-label="Agent name requirements"
-          aria-expanded={showRequirements}
-          aria-controls={requirementsId}
-          title="Name requirements"
-          onClick={() => setShowRequirements((value) => !value)}
-          style={{ height: "auto", padding: 0 }}
+    <div
+      className={sideFeedback ? "agent-name-input-side-feedback" : undefined}
+    >
+      <div>
+        <div
+          style={{
+            alignItems: "baseline",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            justifyContent: "space-between",
+          }}
+        >
+          <label htmlFor={id}>{label}</label>
+          <Button
+            type="link"
+            size="small"
+            htmlType="button"
+            icon={<InfoCircleOutlined />}
+            aria-label="Agent name requirements"
+            aria-expanded={showRequirements}
+            aria-controls={requirementsId}
+            title="Name requirements"
+            onClick={() => setShowRequirements((value) => !value)}
+            style={{ height: "auto", padding: 0 }}
+          />
+        </div>
+        <Input
+          id={id}
+          autoFocus={autoFocus}
+          value={value}
+          maxLength={32}
+          disabled={busy}
+          aria-invalid={!!problem}
+          aria-describedby={describedBy || undefined}
+          onChange={(event) => onChange(event.target.value)}
+          onPressEnter={onEnter}
         />
       </div>
-      <Input
-        id={id}
-        autoFocus={autoFocus}
-        value={value}
-        maxLength={32}
-        disabled={busy}
-        aria-invalid={!!problem}
-        aria-describedby={describedBy || undefined}
-        onChange={(event) => onChange(event.target.value)}
-        onPressEnter={onEnter}
-      />
-      <div id={requirementsId} hidden={!showRequirements}>
-        Use 1-32 letters, digits, or internal hyphens, beginning with a letter.
-        Availability is checked again when saved.
+      <div className={sideFeedback ? "agent-name-input-feedback" : undefined}>
+        <div id={requirementsId} hidden={!showRequirements}>
+          Use 1-32 letters, digits, or internal hyphens, beginning with a
+          letter. Availability is checked again when saved.
+        </div>
+        {showRetirementWarning && (
+          <div id={retirementId} role="status" aria-live="polite">
+            The old name will be retired when you save this rename.
+          </div>
+        )}
+        {problem && (
+          <div
+            id={problemId}
+            role="status"
+            aria-live="polite"
+            style={{ color: UI_COLORS.danger }}
+          >
+            {problem}
+          </div>
+        )}
       </div>
-      {showRetirementWarning && (
-        <div id={retirementId} role="status" aria-live="polite">
-          The old name will be retired when you save this rename.
-        </div>
-      )}
-      {problem && (
-        <div
-          id={problemId}
-          role="status"
-          aria-live="polite"
-          style={{ color: UI_COLORS.danger }}
-        >
-          {problem}
-        </div>
-      )}
-    </>
+    </div>
   );
 }

@@ -108,6 +108,29 @@ test("keeps validation errors visible and associated with the input", async () =
   ]);
 });
 
+test("places new-agent validation and name guidance in the side feedback area", async () => {
+  const user = userEvent.setup();
+  renderInput({
+    label: "Name",
+    problem: "That agent name is already used.",
+    sideFeedback: true,
+  });
+
+  const input = screen.getByRole("textbox", { name: "Name" });
+  const feedback = screen.getByRole("status").parentElement;
+  expect(feedback).toHaveClass("agent-name-input-feedback");
+  expect(input).toHaveAttribute("aria-describedby", "agent-name-problem");
+
+  await user.click(
+    screen.getByRole("button", { name: "Agent name requirements" }),
+  );
+  expect(screen.getByText(/Use 1-32 letters/).parentElement).toBe(feedback);
+  expect(input).toHaveAttribute(
+    "aria-describedby",
+    "agent-name-requirements agent-name-problem",
+  );
+});
+
 test("preserves input change, Enter, autofocus, length, and busy behavior", () => {
   const onChange = jest.fn();
   const onEnter = jest.fn();

@@ -52,7 +52,13 @@ import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-op
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { AgentFileAttachment } from "@cocalc/frontend/chat/agent-file-attachment";
-import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
+import ChatInput, { type ChatInputControl } from "@cocalc/frontend/chat/input";
+import { DictateButton } from "@cocalc/frontend/chat/audio/dictate-button";
+import {
+  ComposerPillButton,
+  ComposerProjectDirectoryButton,
+  displayComposerWorkingDirectory,
+} from "@cocalc/frontend/chat/composer-codex-controls";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
@@ -101,7 +107,6 @@ import {
   Input,
   Modal,
   Popover,
-  Select,
   Space,
   Tag,
   Typography,
@@ -497,9 +502,11 @@ function NewAgentPanel({
   );
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
-  const firstRequestRef = useRef<() => string>(() => "");
+  const inputControlRef = useRef<ChatInputControl | null>(null);
+  const [composerSession, setComposerSession] = useState(0);
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const createProjectMounted = useRef(false);
@@ -551,6 +558,7 @@ function NewAgentPanel({
   const atLimit = namedAgentLimitReached(namedAgentDirectory);
 
   function selectProject(nextProjectId: string) {
+    setComposerSession((session) => session + 1);
     setMissingDirectory(undefined);
     setError("");
     setProjectId(nextProjectId);
@@ -684,7 +692,11 @@ function NewAgentPanel({
   const createWithoutTaskRef = useRef(false);
 
   async function create(requestValue?: string, withoutTask = false) {
-    const request = (requestValue ?? firstRequestRef.current()).trim();
+    const request = (
+      requestValue ??
+      inputControlRef.current?.getValue?.() ??
+      firstRequest
+    ).trim();
     if (busy || uploading || problem || atLimit || (!request && !withoutTask))
       return;
     createWithoutTaskRef.current = withoutTask;
@@ -808,7 +820,9 @@ function NewAgentPanel({
 
   async function createMissingDirectoryAndContinue(): Promise<void> {
     if (!missingDirectory || busy) return;
-    const request = firstRequestRef.current().trim();
+    const request = (
+      inputControlRef.current?.getValue?.() ?? firstRequest
+    ).trim();
     if (!request && !createWithoutTaskRef.current) return;
     setBusy(true);
     setError("");
@@ -841,37 +855,48 @@ function NewAgentPanel({
     directory,
     projectHome,
   });
-  const directoryLabel =
-    relativeAgentWorkingDirectory(effectiveDirectory, projectHome) ??
-    (effectiveDirectory || "~/");
+  const directoryLabel = displayComposerWorkingDirectory(
+    effectiveDirectory,
+    projectHome,
+  );
   const subscriptions =
     (paymentSource as PaymentSourceWithSubscriptions | undefined)
       ?.subscriptions ?? [];
-  const paymentOptions = getCodexPaymentSourceOptions(paymentSource).flatMap(
-    (option) => {
-      if (option.value !== "subscription" || subscriptions.length === 0) {
-        return [option];
-      }
-      return subscriptions.map((subscription) => ({
-        value: `subscription:${subscription.id}`,
-        label:
-          subscription.label?.trim() ||
-          (() => {
-            const index = [...subscriptions]
-              .sort((left, right) => left.id.localeCompare(right.id))
-              .findIndex(({ id }) => id === subscription.id);
-            return index > 0 ? `ChatGPT ${index + 1}` : "ChatGPT";
-          })(),
-        description: subscription.plan
-          ? `Use this ChatGPT ${subscription.plan} subscription.`
-          : option.description,
-      }));
-    },
-  );
+  const paymentOptions: {
+    value: string;
+    label: string;
+    description: string;
+    disabled?: boolean;
+  }[] = getCodexPaymentSourceOptions(paymentSource).flatMap((option) => {
+    if (option.value !== "subscription" || subscriptions.length === 0) {
+      return [option];
+    }
+    return subscriptions.map((subscription) => ({
+      value: `subscription:${subscription.id}`,
+      label:
+        subscription.label?.trim() ||
+        (() => {
+          const index = [...subscriptions]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .findIndex(({ id }) => id === subscription.id);
+          return index > 0 ? `ChatGPT ${index + 1}` : "ChatGPT";
+        })(),
+      description: subscription.plan
+        ? `Use this ChatGPT ${subscription.plan} subscription.`
+        : option.description,
+    }));
+  });
   const selectedPaymentValue =
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
       : paymentPreference;
+  const selectedPaymentLabel =
+    paymentOptions.find(({ value }) => value === selectedPaymentValue)?.label ??
+    selectedPaymentValue;
+  const selectedReasoningLabel =
+    reasoningOptions.find(({ id }) => id === config.reasoning)?.label ??
+    config.reasoning ??
+    "Reasoning";
   const siteFundedPolicy = shouldUseExplicitMembershipModel({
     preference: paymentPreference,
     paymentSource,
@@ -896,6 +921,7 @@ function NewAgentPanel({
           onChange={selectProject}
           onCreate={() => {
             setSettingsOpen(false);
+            setMoreSettingsOpen(false);
             setCreateProjectOpen(true);
           }}
         />
@@ -922,6 +948,7 @@ function NewAgentPanel({
             disabled={!projectId || busy || !!pending}
             onClick={() => {
               setSettingsOpen(false);
+              setMoreSettingsOpen(false);
               setDirectorySelectorOpen(true);
             }}
           >
@@ -970,6 +997,7 @@ function NewAgentPanel({
             problem={name.trim() ? problem : undefined}
             busy={busy || !!pending}
             autoFocus={false}
+            sideFeedback
           />
         </div>
         <div
@@ -987,171 +1015,230 @@ function NewAgentPanel({
             className="new-agent-composer-input"
             inert={busy ? true : undefined}
           >
-            <MarkdownInput
-              project_id={projectId}
+            <ChatInput
+              projectId={projectId}
+              date={0}
+              syncdb={undefined}
+              inputControlRef={inputControlRef}
+              sessionToken={composerSession}
               cacheId={`new-agent:${boundAccount.accountId ?? "account"}`}
-              value={firstRequest}
-              getValueRef={firstRequestRef}
+              input={firstRequest}
               onChange={setFirstRequest}
-              onShiftEnter={(value) => void create(value)}
-              onCtrlEnter={() => undefined}
+              on_send={(value) => void create(value)}
               autoFocus
               fontSize={16}
-              autoGrow
               autoGrowMinHeight={40}
               autoGrowMaxHeight={420}
               enableUpload
               onUploadStart={() => setUploading(true)}
               onUploadEnd={() => setUploading(false)}
               hideHelp
-              modeSwitchPlacement="toolbar"
-              reserveModeSwitchSpace
               compactModeSwitch
               softFocus
-              undoMode="local"
-              redoMode="local"
               placeholder="Ask your agent to build, research, debug, or explain…"
               style={{ fontSize: 16 }}
             />
           </div>
           <div
             style={{
-              alignItems: "center",
-              borderTop: 0,
+              alignItems: "flex-end",
               display: "flex",
-              flexWrap: "wrap",
-              gap: 6,
+              flexWrap: "nowrap",
+              gap: 4,
               paddingTop: 2,
             }}
           >
-            {projectId ? (
-              <AgentFileAttachment
-                projectId={projectId}
-                workingDirectory={effectiveDirectory}
-                disabled={busy || !!pending}
-                onInsert={(markdown) =>
-                  setFirstRequest(
-                    (current) =>
-                      `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
-                  )
-                }
-              />
-            ) : (
-              <Button
-                aria-label="Add files and more"
-                disabled
-                icon={<Icon name="plus" />}
-                shape="circle"
-                style={{ height: 32, minWidth: 32, width: 32 }}
-                title="Choose a project before adding files"
-                type="text"
-              />
-            )}
-            <Popover
-              content={advancedSettings}
-              open={settingsOpen}
-              placement="bottomLeft"
-              trigger="click"
-              onOpenChange={setSettingsOpen}
-            >
-              <Button
-                ref={projectSettingsButton}
-                icon={<Icon name="folder-open" />}
-                style={{ height: "auto", maxWidth: 280, overflow: "hidden" }}
-                title={`${projectTitle} / ${effectiveDirectory}`}
-              >
-                <span
-                  style={{
-                    alignItems: "flex-start",
-                    display: "flex",
-                    flexDirection: "column",
-                    lineHeight: 1.25,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textAlign: "left",
-                  }}
-                >
-                  <span
-                    style={{
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {projectTitle}
-                  </span>
-                  <span
-                    style={{
-                      color: UI_COLORS.secondary,
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {directoryLabel}
-                  </span>
-                </span>
-              </Button>
-            </Popover>
-            <Select
-              aria-label="Payment source"
-              value={selectedPaymentValue}
-              loading={paymentSourceLoading}
-              disabled={busy || !!pending}
-              options={paymentOptions}
-              style={{ minWidth: 150 }}
-              onChange={(value: string) => {
-                if (value.startsWith("subscription:")) {
-                  setConfig((current) => ({
-                    ...current,
-                    paymentSource: "subscription",
-                    credentialId: value.slice("subscription:".length),
-                  }));
-                  return;
-                }
-                setConfig((current) => ({
-                  ...current,
-                  paymentSource: value as CodexPaymentSourcePreference,
-                  credentialId: undefined,
-                }));
+            <div
+              role="group"
+              aria-label="Message options"
+              style={{
+                alignItems: "center",
+                display: "flex",
+                flex: "1 1 0",
+                flexWrap: "wrap",
+                gap: 4,
+                minHeight: 32,
+                minWidth: 0,
               }}
-            />
-            <Select
-              aria-label="Model"
-              value={config.model}
-              disabled={busy || !!pending || !!siteFundedPolicy}
-              options={modelOptions}
-              showSearch
-              optionFilterProp="label"
-              style={{ minWidth: 150 }}
-              onChange={(model) =>
-                setConfig((current) =>
-                  reconcileAgentConfig({ ...current, model }, modelOptions),
-                )
-              }
-            />
-            <Select
-              aria-label="Reasoning level"
-              value={config.reasoning}
-              disabled={
-                busy ||
-                !!pending ||
-                !!siteFundedPolicy ||
-                reasoningOptions.length === 0
-              }
-              options={reasoningOptions.map(({ id, label }) => ({
-                value: id,
-                label,
-              }))}
-              placeholder="Reasoning"
-              style={{ minWidth: 120 }}
-              onChange={(reasoning: CodexReasoningId) =>
-                setConfig((current) => ({ ...current, reasoning }))
-              }
-            />
-            <span style={{ flex: 1 }} />
+            >
+              {projectId ? (
+                <AgentFileAttachment
+                  projectId={projectId}
+                  workingDirectory={effectiveDirectory}
+                  disabled={busy || !!pending}
+                  onInsert={(markdown) => {
+                    if (!inputControlRef.current?.insertText(markdown)) {
+                      setFirstRequest(
+                        (current) =>
+                          `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
+                      );
+                    }
+                    inputControlRef.current?.focus();
+                  }}
+                />
+              ) : (
+                <Button
+                  aria-label="Add files and more"
+                  disabled
+                  icon={<Icon name="plus" />}
+                  shape="circle"
+                  style={{ height: 32, minWidth: 32, width: 32 }}
+                  title="Choose a project before adding files"
+                  type="text"
+                />
+              )}
+              <DictateButton
+                borderless
+                inputControlRef={inputControlRef}
+                projectId={projectId}
+                session={composerSession}
+              />
+              <Popover
+                content={advancedSettings}
+                open={settingsOpen}
+                placement="bottomLeft"
+                trigger="click"
+                onOpenChange={(open) => {
+                  setSettingsOpen(open);
+                  if (open) setMoreSettingsOpen(false);
+                }}
+              >
+                <ComposerProjectDirectoryButton
+                  ref={projectSettingsButton}
+                  projectTitle={projectTitle}
+                  directory={effectiveDirectory}
+                  displayedDirectory={directoryLabel}
+                  disabled={busy || !!pending}
+                />
+              </Popover>
+              <span
+                style={{
+                  alignItems: "center",
+                  display: "inline-flex",
+                  flex: "0 1 auto",
+                  minWidth: 0,
+                  overflow: "hidden",
+                }}
+              >
+                <Dropdown
+                  menu={{
+                    items: modelOptions.map(({ value, label, disabled }) => ({
+                      key: value,
+                      label,
+                      disabled,
+                    })),
+                    selectedKeys: config.model ? [config.model] : [],
+                    onClick: ({ key }) =>
+                      setConfig((current) =>
+                        reconcileAgentConfig(
+                          { ...current, model: key },
+                          modelOptions,
+                        ),
+                      ),
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change model. Current model: ${config.model}`}
+                    disabled={busy || !!pending || !!siteFundedPolicy}
+                    style={{
+                      maxWidth: 150,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {config.model}
+                  </ComposerPillButton>
+                </Dropdown>
+                <Text type="secondary">·</Text>
+                <Dropdown
+                  menu={{
+                    items: reasoningOptions.map(({ id, label }) => ({
+                      key: id,
+                      label,
+                    })),
+                    selectedKeys: config.reasoning ? [config.reasoning] : [],
+                    onClick: ({ key }) =>
+                      setConfig((current) => ({
+                        ...current,
+                        reasoning: key as CodexReasoningId,
+                      })),
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                    disabled={
+                      busy ||
+                      !!pending ||
+                      !!siteFundedPolicy ||
+                      reasoningOptions.length === 0
+                    }
+                  >
+                    {selectedReasoningLabel}
+                  </ComposerPillButton>
+                </Dropdown>
+                <Text type="secondary">·</Text>
+                <Dropdown
+                  menu={{
+                    items: paymentOptions.map(({ value, label, disabled }) => ({
+                      key: value,
+                      label,
+                      disabled,
+                    })),
+                    selectedKeys: [selectedPaymentValue],
+                    onClick: ({ key }) => {
+                      if (key.startsWith("subscription:")) {
+                        setConfig((current) => ({
+                          ...current,
+                          paymentSource: "subscription",
+                          credentialId: key.slice("subscription:".length),
+                        }));
+                      } else {
+                        setConfig((current) => ({
+                          ...current,
+                          paymentSource: key as CodexPaymentSourcePreference,
+                          credentialId: undefined,
+                        }));
+                      }
+                    },
+                  }}
+                  trigger={["click"]}
+                >
+                  <ComposerPillButton
+                    aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                    disabled={busy || !!pending || paymentSourceLoading}
+                    style={{
+                      maxWidth: 120,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {selectedPaymentLabel}
+                  </ComposerPillButton>
+                </Dropdown>
+              </span>
+              <Popover
+                content={advancedSettings}
+                open={moreSettingsOpen}
+                placement="bottomRight"
+                trigger="click"
+                onOpenChange={(open) => {
+                  setMoreSettingsOpen(open);
+                  if (open) setSettingsOpen(false);
+                }}
+              >
+                <Button
+                  aria-label="More agent settings"
+                  aria-haspopup="dialog"
+                  icon={<Icon name="sliders" />}
+                  size="small"
+                  type="text"
+                  disabled={busy || !!pending}
+                />
+              </Popover>
+              <span style={{ flex: 1 }} />
+            </div>
             <Button
               type="primary"
               shape="circle"

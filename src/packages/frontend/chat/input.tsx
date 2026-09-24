@@ -25,6 +25,7 @@ import { useNarrowChatViewport } from "./use-chat-viewport";
 import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/types";
 
 interface Props {
+  projectId?: string;
   on_send: (value: string) => void;
   on_queue?: (value: string) => void;
   on_post?: (value: string) => void;
@@ -58,6 +59,8 @@ interface Props {
   inputControlRef?: MutableRefObject<ChatInputControl | null>;
   onControlReady?: (control: ChatInputControl | null) => void;
   enableUpload?: boolean;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
   enableMentions?: boolean;
   toolbarRightContent?: ReactNode;
   compactModeSwitch?: boolean;
@@ -141,6 +144,7 @@ export function insertTranscriptAtMarkdownPosition({
 }
 
 export default function ChatInput({
+  projectId,
   autoFocus,
   cacheId,
   date,
@@ -171,6 +175,8 @@ export default function ChatInput({
   inputControlRef,
   onControlReady,
   enableUpload = true,
+  onUploadStart,
+  onUploadEnd,
   enableMentions = true,
   toolbarRightContent,
   compactModeSwitch,
@@ -413,6 +419,7 @@ export default function ChatInput({
 
   return (
     <MarkdownInput
+      project_id={projectId}
       key={`chat-input-session-${sessionToken ?? "default"}-${editorResetEpoch}`}
       fixedMode={fixedMode}
       slateExternalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}
@@ -431,6 +438,8 @@ export default function ChatInput({
       controlRef={controlRef}
       getValueRef={getValueRef}
       enableUpload={enableUpload}
+      onUploadStart={onUploadStart}
+      onUploadEnd={onUploadEnd}
       enableMentions={enableMentions}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {

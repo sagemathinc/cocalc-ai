@@ -823,6 +823,7 @@ export function ChatRoomComposer({
           <div ref={inputContainerRef} data-testid="chat-composer-input">
             {isActive && (
               <ChatInput
+                projectId={project_id}
                 key={`${path}${project_id}-draft-${composerDraftKey}`}
                 inputControlRef={chatInputControlRef}
                 onControlReady={(control) =>
