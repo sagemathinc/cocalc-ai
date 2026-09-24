@@ -167,19 +167,21 @@ describe("CreateSnapshot", () => {
     ).toBeInTheDocument();
   });
 
-  it("returns keyboard focus to the create button when Escape closes the modal", async () => {
+  it("returns keyboard focus after repeated Escape closes", async () => {
     const user = userEvent.setup();
     render(<CreateSnapshot />);
     const trigger = screen.getByRole("button", { name: /Create Snapshot/i });
-    await user.click(trigger);
-    await screen.findByPlaceholderText("Name of snapshot to create...");
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(
-        screen.queryByPlaceholderText("Name of snapshot to create..."),
-      ).not.toBeInTheDocument(),
-    );
-    await waitFor(() => expect(trigger).toHaveFocus());
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await user.click(trigger);
+      await screen.findByPlaceholderText("Name of snapshot to create...");
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByPlaceholderText("Name of snapshot to create..."),
+        ).not.toBeInTheDocument(),
+      );
+      await waitFor(() => expect(trigger).toHaveFocus());
+    }
   });
 
   it("closes every open create snapshot modal after one successful create", async () => {
