@@ -507,13 +507,62 @@ purchase/site/team-license-backed membership grant. Staging2 therefore has
 no genuine paying-funded project sample for a live priority check. Do not
 substitute an admin-assigned membership for a paid funding contract.
 
+## September 24 follow-up: browser authentication and virtual backup preview
+
+Commit `3786059f1c` preserves the browser session cookie across the
+project-host Conat WebSocket upgrade and adds a rate-limited diagnostic that
+records only whether authentication headers are present. The host package
+build and 52 focused tests passed. Project-host artifact
+`20260924T041938Z-3786059f-recovery-auth-diagnostic-3786059-20260924-dirty`
+completed canary-first rollout `e0a864d1-77bd-41c2-8d07-38863794cdfc`
+on both online hosts. The browser still showed the old authentication failure
+until the separately managed Conat router was rolled out on the canary host
+(`442c8a78-2839-4c96-a035-cad00fd0640e`) and shared host
+(`dd74de8a-d009-4a98-af8c-573b5864d3dd`). Both router rollouts succeeded.
+The testing account then authenticated and loaded the file listing. This
+shows that a project-host artifact rollout alone left the router running its
+older bundle; the deployment procedure must update or explicitly check the
+router component when its code changes.
+
+The non-admin testing account then showed live confirmed recovery points in
+[Project Settings](screenshots/staging2-recovery-status-settings-testing-account-2026-09-24.png):
+latest local snapshot at September 23 21:16:09 browser time and latest off-host
+backup at September 23 00:07:35 browser time, with next due times alongside.
+The [backup catalog](screenshots/staging2-recovery-backup-browser-testing-account-2026-09-24.png)
+listed four dated backups, including the same latest off-host point. Expanding
+that backup exposed a separate UI defect: the inline preview tried to read
+`.backups/<timestamp>` through the ordinary filesystem and displayed [an `ENOENT` error](screenshots/staging2-recovery-backup-catalog-testing-account-2026-09-24.png).
+
+Commit `3f5ee76525` routes inline backup previews through the existing Rustic
+archive listing hook, resolves snapshot preview paths through the explorer's
+virtual-path mapping, and keeps virtual recovery previews read only. It also
+makes preview entries keyboard operable and labels the close control. Two
+focused component tests, the frontend package typecheck, and frontend lint
+passed. Static artifact
+`20260924T043908Z-3f5ee765-20260924T0445Z-3f5ee765-recovery-peek-dirty`
+deployed to staging2 and passed bay health checks. A first upload attempt
+stalled in SSH/SFTP; a clean retry installed release `20260924044209-static`.
+After a hard browser refresh, the [same backup preview](screenshots/staging2-backup-peek-postfix-expanded-2026-09-24.png)
+expanded without an error and showed `Empty directory`, consistent with this
+canary project's empty home. The focused test also covers a nonempty archive
+listing and keyboard opening of a file. This validates the inline route;
+a live nonempty backup file should still be browsed in the UI during review.
+
+At 04:47 UTC, `admin health --wide` marked project recovery healthy: zero unknown
+statuses, zero overdue delay, and recent pressure telemetry on both online
+hosts. The 24-hour history contained 336 succeeded, 53 deferred, and one
+historical failed attempt; that failed backup was reconciled after repository
+readback, while its attempt remains counted. The separate bay-backup restore
+check still warned, and browser latency had insufficient samples. These
+checks are a point-in-time staging result, not the seven-day canary.
+
 ## Open findings and release gates
 
-1. Browser UI qualification is partial. The testing account reached Project
-   Settings, the Recovery summary, and the read-only backup schedule. The file
-   listing and backup browser could not connect to either project host because
-   the browser lacked a project-host bearer token. Diagnose this auth path,
-   then retest the full recovery interface and warning states.
+1. Recovery Settings, the project file listing, and the backup catalog now
+   load in the non-admin staging2 browser. The inline backup preview no longer
+   makes an ordinary filesystem request. Overdue, blocked, and unknown warning
+   states still need live UI qualification, including keyboard and narrow-width
+   review; automated component coverage exists for the key status states.
 2. The plan's full observability and scheduler contract remains broader than
    the current code: a calibrated safe-capacity threshold, operator drill
    reporting, and gated automatic rollout are not yet present. A versioned
