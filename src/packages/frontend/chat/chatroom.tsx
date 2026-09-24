@@ -177,9 +177,9 @@ import {
   isCodexPaymentSourceNeedsUserConfiguration,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
-import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
 import { registerDirectlyWatchedCodexThread } from "./codex-watch-presence";
-import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
+import { showCodexProjectStartFailure } from "./codex-project-start-failure";
+import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import { useCodexAttentionSummary } from "./use-codex-attention";
 import type { ChatInputControl } from "./input";
@@ -1008,6 +1008,7 @@ function ChatPanelContent({
     }));
   }, [aiAgentPolicyAllowed, newThreadSetup.agentMode]);
   const [codexPaymentConfigOpen, setCodexPaymentConfigOpen] = useState(false);
+  const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const codexConnectionCheckPendingRef = useRef(false);
   const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [automationDetailsOpen, setAutomationDetailsOpen] = useState(false);
@@ -2290,19 +2291,11 @@ function ChatPanelContent({
         }
         await ensureProjectRunningForCodex({ project_id, redux });
       } catch (err) {
-        const block = getProjectStartPolicyBlockFromError(err);
-        if (block) {
-          showProjectStartRequiredModal({
-            project_id,
-            title: "Start project to use Codex",
-            block,
-          });
-        } else {
-          Modal.error({
-            title: "Unable to start project for Codex",
-            content: `${err}`,
-          });
-        }
+        showCodexProjectStartFailure({
+          error: err,
+          projectId: project_id,
+          onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+        });
         return;
       }
     }
@@ -3165,6 +3158,10 @@ function ChatPanelContent({
             projectId={project_id}
             refreshPaymentSource={refreshCodexPaymentSource}
             onClose={() => setCodexPaymentConfigOpen(false)}
+          />
+          <MembershipDetailsModal
+            open={membershipDetailsOpen}
+            onClose={() => setMembershipDetailsOpen(false)}
           />
           <Modal
             title="Thread automation"

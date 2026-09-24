@@ -190,13 +190,16 @@ export function StartButton({
       return;
     }
     minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
+    if (runtimeSponsorDenial) {
+      showRuntimeSponsorDenialModal({
+        denial: runtimeSponsorDenial,
+        project_id: resolvedProjectId,
+        onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+      });
+      return;
+    }
     Modal.info({
-      title: runtimeSponsorDenial
-        ? "Choose how to start this project"
-        : "Project start failed",
-      icon: runtimeSponsorDenial ? (
-        <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />
-      ) : undefined,
+      title: "Project start failed",
       content: renderStartFailureDescription(),
       okText: "Close",
       width: 720,
@@ -229,10 +232,7 @@ export function StartButton({
       <RuntimeSponsorDenialDescription
         denial={runtimeSponsorDenial}
         project_id={resolvedProjectId}
-        onOpenMembershipDetails={() => {
-          Modal.destroyAll();
-          setMembershipDetailsOpen(true);
-        }}
+        onOpenMembershipDetails={() => setMembershipDetailsOpen(true)}
       />
     ) : (
       <ProjectStartFailureDescription
@@ -244,17 +244,7 @@ export function StartButton({
   }
 
   function renderStartErrorDescription(err: unknown) {
-    const denial = extractRuntimeSponsorDenial(err);
-    return denial ? (
-      <RuntimeSponsorDenialDescription
-        denial={denial}
-        project_id={resolvedProjectId}
-        onOpenMembershipDetails={() => {
-          Modal.destroyAll();
-          setMembershipDetailsOpen(true);
-        }}
-      />
-    ) : err instanceof Error ? (
+    return err instanceof Error ? (
       <ProjectStartFailureDescription
         error={err.message}
         project_id={resolvedProjectId}
@@ -272,11 +262,10 @@ export function StartButton({
   function showStartError(err: unknown) {
     const denial = extractRuntimeSponsorDenial(err);
     if (denial) {
-      Modal.info({
-        title: "Choose how to start this project",
-        icon: <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />,
-        content: renderStartErrorDescription(err),
-        width: 720,
+      showRuntimeSponsorDenialModal({
+        denial,
+        project_id: resolvedProjectId,
+        onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
       });
       return;
     }
@@ -557,7 +546,7 @@ export function StartButton({
   );
 }
 
-function MembershipDetailsModal({
+export function MembershipDetailsModal({
   open,
   onClose,
 }: {
@@ -577,6 +566,35 @@ function MembershipDetailsModal({
       <MembershipStatusPanel showHeader={false} />
     </Modal>
   );
+}
+
+export function showRuntimeSponsorDenialModal({
+  denial,
+  project_id,
+  onOpenMembershipDetails,
+  onStarted,
+}: {
+  denial: RuntimeSponsorDenial;
+  project_id: string;
+  onOpenMembershipDetails: () => void;
+  onStarted?: () => void;
+}): void {
+  Modal.info({
+    title: "Choose how to start this project",
+    icon: <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />,
+    content: (
+      <RuntimeSponsorDenialDescription
+        denial={denial}
+        project_id={project_id}
+        onOpenMembershipDetails={() => {
+          Modal.destroyAll();
+          onOpenMembershipDetails();
+        }}
+        onStarted={onStarted}
+      />
+    ),
+    width: 720,
+  });
 }
 
 function ProjectStartFailureDescription({
@@ -917,10 +935,12 @@ function RuntimeSponsorDenialDescription({
   denial,
   project_id,
   onOpenMembershipDetails,
+  onStarted,
 }: {
   denial: RuntimeSponsorDenial;
   project_id: string;
   onOpenMembershipDetails: () => void;
+  onStarted?: () => void;
 }) {
   const [stoppingProjectIds, setStoppingProjectIds] = useState<
     Record<string, true>
@@ -946,6 +966,7 @@ function RuntimeSponsorDenialDescription({
       setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
       Modal.destroyAll();
+      onStarted?.();
     } catch (err) {
       setStopError(`${err}`);
       setActionMessage("");
@@ -969,6 +990,7 @@ function RuntimeSponsorDenialDescription({
       setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
       Modal.destroyAll();
+      onStarted?.();
     } catch (err) {
       setStopError(`${err}`);
       setActionMessage("");
