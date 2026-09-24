@@ -915,7 +915,7 @@ async function handleRollout(op: LroSummary): Promise<void> {
       await assertRecoveryStopGate({
         baseline: recoveryStopGateBaseline,
         current: recoveryStopGateLatest,
-        host_ids: wave.ids,
+        host_ids: Array.from(new Set([...gatedHostIds, ...wave.ids])),
       });
       wave.ids.forEach((host_id) => gatedHostIds.add(host_id));
       await publishProgress({
