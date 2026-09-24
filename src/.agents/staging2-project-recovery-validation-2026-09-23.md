@@ -410,6 +410,17 @@ Both restore operations returned `succeeded`, and byte comparisons returned
 zero. These are two host samples, not evidence of coverage across every
 repository shard or paying class.
 
+The repo-built operator CLI's audited `admin db project-recovery` diagnostic
+worked against staging2 for the confirmed-ID canary. Audit ID
+`2755029a-c391-4828-9161-8a88617b7528` returned five recent attempt
+rows in 1 ms, including outcome, due time, bounded stage durations, host,
+service class, and backup identity. Commit `f184c3964d` adds focused tests
+showing that a storage payer change is reflected by the next host inventory
+and that paid backup work retries after a running free backup releases the
+nonpreemptible lane. The server and project-host package builds passed, as
+did all seven host-status and 31 scheduler tests. This commit changes tests
+only, so the staged runtime remains the preceding hub and host artifacts.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
@@ -425,9 +436,9 @@ repository shard or paying class.
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
    reconciles on a 15-minute timer. The audited backup-health diagnostic
-   confirmed the latest scheduled ID; raw attempt rows still require fresh
-   operator auth. The aggregated operator health query returned new
-   completions and due-to-success metrics.
+   confirmed the latest scheduled ID, and the repo-built one-project
+   diagnostic returned raw attempt rows under an audit ID. The aggregated
+   operator health query returned new completions and due-to-success metrics.
 3. The requested seven-day canary, 30-day due-to-success objectives, paid/free
    production distributions, interactive latency comparison, and restore
    drills across repository shards require observation after code review and
