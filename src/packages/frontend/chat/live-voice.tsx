@@ -46,6 +46,39 @@ async function waitForIce(peer: RTCPeerConnection) {
   });
 }
 
+export async function requestMicrophoneWithTimeout(
+  request: () => Promise<MediaStream>,
+  timeoutMs = 15_000,
+): Promise<MediaStream> {
+  const pending = request();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "Microphone access timed out. Check your browser and system microphone permissions.",
+              ),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } catch (error) {
+    // A permission prompt may resolve after the call has already been closed.
+    void pending.then(
+      (stream) => stream.getTracks().forEach((track) => track.stop()),
+      () => {},
+    );
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function ChatLiveVoice({
   projectId,
   messages,
@@ -247,7 +280,9 @@ export function ChatLiveVoice({
         throw new Error(
           "This browser cannot use the microphone for live voice.",
         );
-      call.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      call.stream = await requestMicrophoneWithTimeout(() =>
+        navigator.mediaDevices.getUserMedia({ audio: true }),
+      );
       if (call.stopped) {
         call.stream.getTracks().forEach((track) => track.stop());
         return;

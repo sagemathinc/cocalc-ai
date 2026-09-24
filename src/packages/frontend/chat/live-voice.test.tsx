@@ -5,7 +5,7 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatLiveVoice } from "./live-voice";
+import { ChatLiveVoice, requestMicrophoneWithTimeout } from "./live-voice";
 
 const mockLiveVoice = jest.fn();
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -30,6 +30,31 @@ const props = {
 
 beforeEach(() => {
   mockLiveVoice.mockReset();
+});
+
+it("times out a stalled microphone prompt and stops a late stream", async () => {
+  jest.useFakeTimers();
+  try {
+    let resolveStream!: (stream: MediaStream) => void;
+    const request = jest.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveStream = resolve;
+        }),
+    );
+    const pending = requestMicrophoneWithTimeout(request, 25);
+    const timedOut = expect(pending).rejects.toThrow(
+      /Microphone access timed out/,
+    );
+    jest.advanceTimersByTime(25);
+    await timedOut;
+    const stop = jest.fn();
+    resolveStream({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+    await Promise.resolve();
+    expect(stop).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("shows site allowance without a dollar amount and starts from the keyboard", async () => {
