@@ -73,6 +73,21 @@ project-start latency. The four observed lifecycle p95 values are now 81,
 investigation. Production still runs without the project recovery scheduler
 changes, so this sample cannot be attributed to them.
 
+## 2026-09-24 20:50 UTC operator health
+
+A fifth read-only 60-minute window reported project-start lifecycle p95 of
+20 seconds from 176 starts, above the existing seven-second target. Admission
+p95 was 1.5 seconds from 177 observations, backend p95 8.4 seconds from 177,
+and frontend convergence p95 7.9 seconds from 177. Terminal readiness was
+7.2 seconds, Jupyter 905 ms, exec 5 ms, file-content paint 1.3 seconds from
+390 opens, and file sync 2.5 seconds from 309 opens. Bay backup restore and
+PITR checks remained healthy. Overall health was critical because of
+project-start latency. The five observed lifecycle p95 values are now 81,
+5.3, 10, 22, and 20 seconds. The recovery scheduler has not been deployed to
+production, so these measurements cannot be attributed to it. This remains
+five rolling windows sampled over several hours, not the required seven-day
+baseline.
+
 ## Remaining measurements
 
 - Seven days of start, terminal, Jupyter, exec, file, and host pressure

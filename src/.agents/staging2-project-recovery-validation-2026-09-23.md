@@ -1619,3 +1619,48 @@ positive-cost subscription account or active membership grant. A genuinely
 paying-funded staging2 canary therefore remains unqualified. The recipient
 has separately confirmed receiving the daily recovery-debt email; the
 critical-incident test email's inbox receipt remains unconfirmed.
+
+## 2026-09-24 Scheduled large-byte queue and interactive exec probes
+
+On `staging2-shared-1`, seven disposable projects each wrote a distinct
+268,435,456-byte high-entropy file. Two additional projects were created but
+remained unopened when the host had 16 running projects; their exec requests
+timed out, so they were excluded from the data test and deleted. The seven
+data projects produced seven distinct scheduled repository backups, each of
+which listed the expected file at 268,435,456 bytes. Their durable attempt
+rows reported 1,879,692,957 uploaded bytes in total (1.75 GiB), with backup
+creation stages from 17,143 to 27,286 ms. The first group of four uploaded
+1.00 GiB and the second group of three uploaded 0.75 GiB. The read-only
+attempt audits are `a384758e-0fd0-4df0-9eae-cd721ebc0587` and
+`61128e96-7247-4340-99a5-c51e78af6ea2`, respectively.
+
+The first upload in each group committed a repository backup but initially
+reported `deferred/change_generation_changed` because another change report
+arrived during validation. Normal reconciliation later attached each exact
+backup ID and marked both obligations `succeeded`. One project in the second
+group deferred before upload and completed on its retry. A final audited
+projection (`cf5aaf2b-b050-4de1-9ad8-ab48ac755041`) showed all seven with
+`succeeded` backup status and the corresponding repository IDs. This extends
+the post-upload reconciliation test from one file to a bounded queue.
+
+The existing shared-host smoke project ran 70 timed typed `project exec true`
+checks during the second queue. All succeeded. Matching probe start/end times
+to the durable backup attempt intervals found 11 that overlapped an upload;
+their CLI round-trip p95 was 1,060 ms and maximum was 1,060 ms. Across all 70,
+CLI round-trip p95 was 1,038 ms and maximum 1,180 ms. The overlap sample is
+small, includes CLI/network time, and measures command execution rather than
+browser start, terminal paint, file sync, or Jupyter readiness. It cannot
+qualify the plan's full interactive p95/p99 gate. The host reported normal
+storage admission and no maintenance I/O pressure at sampled checks. The
+24-hour operator view showed 2.00 GiB uploaded on the shared host after this
+test, including the earlier 256 MiB canary; its safe sustained maintenance
+budget still needs calibration.
+
+The smoke project was stopped again. All seven data projects and the two
+unopened projects were deleted with normal seven-day backup retention and no
+immediate purge. Both live title-prefix lists were empty, and audited query
+`d8a00d07-e983-4fc4-8c6b-6e9f329803b1` found zero remaining project rows
+for all nine IDs. At 20:49:08 UTC, project recovery health was healthy with
+zero overdue, unknown, or unaccounted due obligations and no active memory or
+storage telemetry gate. The site's overall health remained warning for other
+checks.
