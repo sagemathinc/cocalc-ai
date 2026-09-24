@@ -926,13 +926,19 @@ shell prompt. Project-recovery health stayed healthy with zero unknown,
 overdue, or paying incident-threshold statuses. The canary was stopped
 afterward.
 
-A new notebook opened in the same browser, but the disposable project's
-base image has no Jupyter kernel, pip, or ensurepip. No cell ran, so there
-is no `project_jupyter_ready` sample and operator UX-latency health
-remains `unknown`. These low-load, single-project traces establish
-telemetry and basic interactive behavior. They do not compare against a
-production baseline, exercise sustained maintenance contention, or satisfy
-the seven-day canary gate.
+The disposable project's base image initially had no Jupyter kernel,
+pip, or ensurepip. I installed Ubuntu's `python3-ipykernel` package in
+that project only, confirmed the live notebook recognized the Python 3
+kernelspec, and ran its prepared cell through the browser. The output
+matched `staging2-jupyter-readiness`; the live notebook was saved.
+At 11:58:43 UTC, operator UX-latency health was healthy: Jupyter readiness
+176 ms, lifecycle p95 2.7 seconds from 11 starts, terminal 351 ms, exec
+2 ms, file-content paint 561 ms and file sync 709 ms from five opens.
+Project-recovery health remained healthy, and the canary was stopped.
+These low-load, single-project traces establish the full telemetry path
+and basic interactive behavior. They do not compare against a production
+baseline, exercise sustained maintenance contention, or satisfy the
+seven-day canary gate.
 
 ## Open findings and release gates
 
@@ -948,9 +954,10 @@ the seven-day canary gate.
 2. The plan's safe-capacity threshold is still uncalibrated. Durable
    operator-supplied hash attestations and the remote-only restore view are
    deployed on staging2, with four passing shard drills. Automatic fleet
-   recovery stop gates run there, but a representative, complete set of browser latency samples is
-   required for promotion. The versioned schedule cache, ownership lease, event
-   dispatch, assignment checks, host/bay attempt history, and 24-hour
+   recovery stop gates run there, but representative browser latency samples
+   under sustained maintenance load are required for promotion. The
+   versioned schedule cache, ownership lease, event dispatch, assignment
+   checks, host/bay attempt history, and 24-hour
    timing/byte metrics are deployed. Full inventory still reconciles on a
    15-minute timer; observed load cannot establish the 70% safe budget
    without a longer canary and production baseline.
