@@ -1569,3 +1569,53 @@ and audited project-row query `300b1194-0b86-461b-ac44-aa7eb37d8325` both
 found zero remaining projects under the test prefix. At 20:13:38 UTC, project
 recovery health returned healthy with zero overdue, unknown, or unaccounted
 due obligations and no active memory or storage telemetry gate.
+
+## 2026-09-24 Nonempty backup, byte restore, and delayed-report reconciliation
+
+A disposable project on `staging2-shared-1` stored a 268,435,456-byte
+high-entropy file. The scheduled off-host upload scanned 273,544,767 bytes,
+uploaded 268,534,693 bytes, and committed repository backup
+`ef25b2ba3ce462303b73d3d3b8ca7cde1e6cfaf8400fa45994bf8b7f09054ecf`
+at 20:17:28 UTC. The typed backup browser listed the file at its expected
+size. This qualifies an actual byte transfer beyond the earlier empty-project
+queue canaries.
+
+The host reported a newer change while validating the uploaded backup. The
+repository and `projects.last_backup` showed success, but the maintenance
+projection remained `deferred/change_generation_changed` for more than five
+minutes. Commit `4500a4ffad` extends the existing lost-report reconciliation:
+the host marks this case `succeeded` only after it independently finds the
+exact later backup in the repository and confirms the previous due obligation
+has been met. An absent repository copy does not reconcile. Forty-five focused
+scheduler tests and the project-host TypeScript build passed.
+
+The immutable host artifact
+`20260924T202325Z-4500a4ff-recovery-postupload-reconcile-20260924-dirty`
+was deployed to the pinned staging2 canary host and then the shared host.
+Both passed project-host smoke checks after startup. The shared host's first
+sweep was skipped by its transient memory safety gate. Its normal retry at
+20:28:47 UTC, with no gate active, changed the disposable project's status to
+`succeeded/confirmed_backup_after_changed_generation`, attached the exact
+repository backup ID above, and retained the next due time of September 25
+20:17:28 UTC (audited query `f5df7983-0bbb-44eb-ab15-bbe263600ea2`). The
+fix did not force a maintenance run through the safety gate.
+
+The typed restore operation `f07fe13d-1224-4770-a779-49490ec3b24e` restored
+the backed-up file to a separate path in the same disposable project. Both
+original and restored files had SHA-256
+`e04b642fcef58a61e756434c0a26e45d82f57ddf4ca34b9396e2d59db345d21e`.
+This verifies saved bytes through the standard restore path. It was not a
+remote-only or cross-host restore drill; four earlier remote-only shard drills
+cover that separate path. The project was stopped and deleted successfully
+with seven-day backup retention and no immediate purge (delete operation
+`95b66689-bda7-4144-b100-8adb525dd24e`). A live project-list query for its
+unique title returned zero. Project recovery health subsequently reported
+healthy: zero overdue, unknown, or unaccounted due obligations and no active
+memory or storage telemetry gate.
+
+Read-only staging2 membership audits `f6c9c643-6596-470f-adff-a61d2ac5cdd2`
+and `0112b748-6537-4804-97a8-8463d5a6973d` still found no active
+positive-cost subscription account or active membership grant. A genuinely
+paying-funded staging2 canary therefore remains unqualified. The recipient
+has separately confirmed receiving the daily recovery-debt email; the
+critical-incident test email's inbox receipt remains unconfirmed.
