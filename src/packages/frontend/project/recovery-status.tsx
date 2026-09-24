@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Alert } from "antd";
+import { Alert, Grid } from "antd";
 import type { ProjectRecoveryStatus as RecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -67,6 +67,8 @@ export function ProjectRecoveryStatus({
   project_id: string;
   kind: "snapshot" | "backup";
 }) {
+  const screens = Grid.useBreakpoint();
+  const compact = !screens.sm;
   const [status, setStatus] = useState<RecoveryStatus | null>(null);
   const [error, setError] = useState(false);
 
@@ -176,7 +178,12 @@ export function ProjectRecoveryStatus({
       aria-live={overdue ? "assertive" : "polite"}
       style={{ marginBottom: 10 }}
     >
-      <Alert type={type} title={title} description={description} showIcon />
+      <Alert
+        type={type}
+        title={title}
+        description={description}
+        showIcon={!compact}
+      />
     </div>
   );
 }
