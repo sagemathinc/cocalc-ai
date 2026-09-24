@@ -46,6 +46,19 @@ than browser latency. The marked change from the preceding hour reinforces
 the need for a multi-day distribution and investigation of the earlier start
 spike; neither sample alone is a stable baseline.
 
+## 2026-09-24 18:40 UTC operator health
+
+A third read-only 60-minute window reported project-start lifecycle p95 of
+10 seconds from 148 starts, again above the seven-second target. Admission
+p95 was 1.1 seconds, backend p95 4.5 seconds, and convergence p95 1.9
+seconds. Terminal readiness was 4.0 seconds, Jupyter 1.1 seconds, exec 7 ms,
+file-content paint 1.7 seconds from 358 opens, and file sync 3.2 seconds
+from 292 opens. Bay backup restore and PITR checks remained healthy. The
+overall operator health was warning, including the project-start latency
+warning. Three point-in-time windows remain insufficient for a seven-day
+baseline; the 81-second, 5.3-second, and 10-second lifecycle p95 values
+demonstrate substantial hour-to-hour variation.
+
 ## Remaining measurements
 
 - Seven days of start, terminal, Jupyter, exec, file, and host pressure
