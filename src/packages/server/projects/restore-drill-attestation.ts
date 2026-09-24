@@ -22,6 +22,69 @@ export interface RestoreDrillAttestation {
   reason: string;
 }
 
+export interface ProjectRestoreDrillShardHealth {
+  backup_repo_id: string;
+  backed_up_projects: number;
+  latest_restore_at: Date | null;
+  latest_passed: boolean | null;
+  latest_backup_id: string | null;
+}
+
+const RESTORE_DRILL_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+
+export function summarizeProjectRestoreDrills(
+  shards: ProjectRestoreDrillShardHealth[],
+  now: Date = new Date(),
+): {
+  level: "healthy" | "warning" | "critical";
+  current: number;
+  missing: number;
+  stale: number;
+  failed: number;
+  details: string[];
+} {
+  let current = 0;
+  let missing = 0;
+  let stale = 0;
+  let failed = 0;
+  const problems: string[] = [];
+  for (const shard of shards) {
+    const age = shard.latest_restore_at
+      ? now.getTime() - shard.latest_restore_at.getTime()
+      : Infinity;
+    if (shard.latest_passed === false) {
+      failed++;
+      problems.push(
+        `${shard.backup_repo_id}: latest remote-only restore drill failed at ${shard.latest_restore_at?.toISOString() ?? "unknown time"}`,
+      );
+    } else if (!shard.latest_restore_at) {
+      missing++;
+      problems.push(
+        `${shard.backup_repo_id}: no attested remote-only restore drill`,
+      );
+    } else if (
+      shard.latest_passed !== true ||
+      age > RESTORE_DRILL_MAX_AGE_MS ||
+      age < 0
+    ) {
+      stale++;
+      problems.push(
+        `${shard.backup_repo_id}: latest passing remote-only restore drill is outside the 30-day window (${shard.latest_restore_at.toISOString()})`,
+      );
+    } else {
+      current++;
+    }
+  }
+  return {
+    level: failed ? "critical" : missing || stale ? "warning" : "healthy",
+    current,
+    missing,
+    stale,
+    failed,
+    details: problems.slice(0, 12),
+  };
+}
+
 let ensurePromise: Promise<void> | undefined;
 
 export async function ensureRestoreDrillAttestationTable(): Promise<void> {
@@ -54,12 +117,48 @@ export async function ensureRestoreDrillAttestationTable(): Promise<void> {
         CREATE INDEX IF NOT EXISTS project_restore_drill_attestations_finished_idx
           ON project_restore_drill_attestations(restore_finished_at DESC)
       `);
+      await getPool().query(`
+        CREATE INDEX IF NOT EXISTS project_restore_drill_attestations_repo_finished_idx
+          ON project_restore_drill_attestations(backup_repo_id, restore_finished_at DESC)
+      `);
     })
     .catch((err) => {
       ensurePromise = undefined;
       throw err;
     });
   await ensurePromise;
+}
+
+// The owning bay reports its active repository shards. A shard only enters this
+// check after a project has a confirmed off-host backup on it.
+export async function getProjectRestoreDrillHealth(
+  bay_id: string,
+): Promise<ProjectRestoreDrillShardHealth[]> {
+  await ensureRestoreDrillAttestationTable();
+  const { rows } = await getPool().query<ProjectRestoreDrillShardHealth>(
+    `WITH active_shards AS (
+       SELECT backup_repo_id, COUNT(*)::integer AS backed_up_projects
+         FROM projects
+        WHERE owning_bay_id = $1 AND deleted IS NOT TRUE
+          AND provisioned IS TRUE AND last_backup IS NOT NULL
+          AND backup_repo_id IS NOT NULL
+        GROUP BY backup_repo_id
+     )
+     SELECT s.backup_repo_id, s.backed_up_projects,
+            d.restore_finished_at AS latest_restore_at,
+            d.passed AS latest_passed, d.backup_id AS latest_backup_id
+       FROM active_shards s
+       LEFT JOIN LATERAL (
+         SELECT restore_finished_at, passed, backup_id
+           FROM project_restore_drill_attestations
+          WHERE backup_repo_id = s.backup_repo_id
+          ORDER BY restore_finished_at DESC, recorded_at DESC
+          LIMIT 1
+       ) d ON true
+      ORDER BY s.backup_repo_id`,
+    [bay_id],
+  );
+  return rows;
 }
 
 function sha256(value: string, label: string): string {

@@ -198,6 +198,10 @@ import {
   getProjectRecoveryAttemptHealth,
   getProjectRecoveryHealth,
 } from "@cocalc/server/projects/maintenance-status";
+import {
+  getProjectRestoreDrillHealth,
+  summarizeProjectRestoreDrills,
+} from "@cocalc/server/projects/restore-drill-attestation";
 import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
 import {
   getProjectRecoveryCustomerWarningScanStatus,
@@ -2072,6 +2076,7 @@ export async function getLaunchHealth({
     loadResult,
     backupsResult,
     projectRecoveryResult,
+    projectRestoreDrillsResult,
     projectRecoveryAttemptsResult,
     projectRecoveryObjectivesResult,
     projectRecoveryPressureResult,
@@ -2086,6 +2091,7 @@ export async function getLaunchHealth({
     getBayLoad({ account_id, bay_id: currentBay.bay_id }),
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
     getProjectRecoveryHealth(),
+    getProjectRestoreDrillHealth(currentBay.bay_id),
     getProjectRecoveryAttemptHealth(),
     getProjectRecoveryServiceObjectives(),
     getProjectHostStoragePressureWindows({ bay_id: currentBay.bay_id }),
@@ -2133,6 +2139,13 @@ export async function getLaunchHealth({
   const projectRecovery =
     projectRecoveryResult.status === "fulfilled"
       ? projectRecoveryResult.value
+      : undefined;
+  const projectRestoreDrills =
+    projectRestoreDrillsResult.status === "fulfilled"
+      ? summarizeProjectRestoreDrills(
+          projectRestoreDrillsResult.value,
+          new Date(checkedAt),
+        )
       : undefined;
   const projectRecoveryAttempts =
     projectRecoveryAttemptsResult.status === "fulfilled"
@@ -2390,6 +2403,8 @@ export async function getLaunchHealth({
       label: "Project snapshots and backups",
       level:
         projectRecoveryResult.status === "rejected" ||
+        projectRestoreDrillsResult.status === "rejected" ||
+        projectRestoreDrills?.level === "critical" ||
         projectRecoveryPressureResult.status === "rejected" ||
         hostsMissingPressureTelemetry.length > 0 ||
         recoveryNotificationConfigurationIssues.length > 0 ||
@@ -2405,6 +2420,7 @@ export async function getLaunchHealth({
                 projectRecovery.paying_backup_repeated_failures > 0
               ? "critical"
               : projectRecoveryAttemptsResult.status === "rejected" ||
+                  projectRestoreDrills?.level === "warning" ||
                   projectRecoveryObjectivesResult.status === "rejected" ||
                   (projectRecoveryObjectives?.ready &&
                     projectRecoveryObjectives.rows.some((row) => {
@@ -2433,7 +2449,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2442,6 +2458,11 @@ export async function getLaunchHealth({
                 `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...(projectRestoreDrillsResult.status === "rejected"
+                  ? [
+                      `Unable to read project restore drill coverage: ${projectRestoreDrillsResult.reason}`,
+                    ]
+                  : (projectRestoreDrills?.details ?? [])),
                 settings?.project_recovery_notifications_enabled
                   ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
                   : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
