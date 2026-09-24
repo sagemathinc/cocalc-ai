@@ -50,6 +50,7 @@ function DictationLiveStatus({ label }: { label: string }) {
 }
 
 interface DictateButtonProps {
+  borderless?: boolean;
   projectId?: string;
   path?: string;
   threadId?: string;
@@ -62,6 +63,7 @@ export function DictateButton(props: DictateButtonProps) {
 }
 
 function EnabledDictateButton({
+  borderless,
   projectId,
   path,
   threadId,
@@ -224,6 +226,7 @@ function EnabledDictateButton({
           }
           onClick={requestStart}
           size="small"
+          type={borderless ? "text" : "default"}
         />
       </Tooltip>
       <DictationLiveStatus

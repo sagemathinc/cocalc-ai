@@ -950,6 +950,7 @@ export function ChatRoomComposer({
               }}
             />
             <DictateButton
+              borderless={embeddingOptions.agentWorkspace}
               inputControlRef={chatInputControlRef}
               path={path}
               projectId={project_id}

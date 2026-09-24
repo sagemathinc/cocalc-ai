@@ -140,7 +140,7 @@ export default function MultiMarkdownInput({
     modeSwitchPlacement === "toolbar" &&
     !fixedMode &&
     (showToolbarModeSwitch || reserveModeSwitchSpace);
-  const toolbarInset = reserveToolbarModeSwitch ? 28 : 0;
+  const toolbarInset = reserveToolbarModeSwitch && !compactModeSwitch ? 28 : 0;
   const editorHeight =
     reserveToolbarModeSwitch && height != null && height !== "auto"
       ? "100%" // The flex body already excludes the toolbar height.
@@ -253,6 +253,19 @@ export default function MultiMarkdownInput({
 
   return (
     <div
+      onClick={(event) => {
+        if (!compactModeSwitch) return;
+        const target = event.target;
+        if (
+          target instanceof Element &&
+          target.closest(
+            "textarea, input, button, [contenteditable], [role='textbox'], [data-markdown-mode-switch]",
+          )
+        ) {
+          return;
+        }
+        focusActiveEditor();
+      }}
       style={{
         position: "relative",
         width: "100%",
@@ -287,8 +300,11 @@ export default function MultiMarkdownInput({
             alignItems: "center",
             justifyContent: "space-between",
             minHeight: `${toolbarInset}px`,
-            paddingBottom: "4px",
+            paddingBottom: compactModeSwitch ? 0 : "4px",
             flexShrink: 0,
+            ...(compactModeSwitch
+              ? { position: "absolute" as const, top: 0, right: 0, zIndex: 1 }
+              : undefined),
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }} />
