@@ -90,6 +90,9 @@ export async function listHostProjectMaintenanceSchedules({
     snapshot_reconciled_change_at: Date | string | null;
     snapshot_reconciled_schedule_revision: string | null;
     last_backup_observed_at: Date | string | null;
+    backup_status_outcome: HostProjectMaintenanceSchedule["backup_status_outcome"];
+    backup_status_reason: string | null;
+    backup_status_due_at: Date | string | null;
     snapshot_retry_at: Date | string | null;
     backup_retry_at: Date | string | null;
     snapshot_failures: number | null;
@@ -121,6 +124,15 @@ export async function listHostProjectMaintenanceSchedules({
        (SELECT observed_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='backup'
            AND host_id=projects.host_id) AS last_backup_observed_at,
+       (SELECT outcome FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_outcome,
+       (SELECT reason FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_reason,
+       (SELECT due_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_due_at,
        (SELECT retry_at FROM project_maintenance_status
          WHERE project_id=projects.project_id AND kind='snapshot'
            AND host_id=projects.host_id) AS snapshot_retry_at,
@@ -273,6 +285,14 @@ export async function listHostProjectMaintenanceSchedules({
         : row.last_backup_observed_at instanceof Date
           ? row.last_backup_observed_at.toISOString()
           : `${row.last_backup_observed_at}`;
+    schedule.backup_status_outcome = row.backup_status_outcome ?? null;
+    schedule.backup_status_reason = row.backup_status_reason ?? null;
+    schedule.backup_status_due_at =
+      row.backup_status_due_at == null
+        ? null
+        : row.backup_status_due_at instanceof Date
+          ? row.backup_status_due_at.toISOString()
+          : `${row.backup_status_due_at}`;
     schedule.snapshot_retry_at =
       row.snapshot_retry_at == null
         ? null

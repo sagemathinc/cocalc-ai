@@ -3,6 +3,7 @@ const confirmProjectMaintenanceAssignmentMock = jest.fn();
 const getMasterConatClientMock = jest.fn();
 const runScheduledSnapshotMaintenanceMock = jest.fn();
 const runScheduledBackupMaintenanceMock = jest.fn();
+const getBackupsMock = jest.fn();
 const admitStorageOperationMock = jest.fn();
 const getStorageAdmissionStatusMock = jest.fn();
 const releaseStorageOperationMock = jest.fn();
@@ -61,6 +62,7 @@ jest.mock("./master-status", () => ({
 
 jest.mock("./file-server", () => ({
   __esModule: true,
+  getBackups: (...args: any[]) => getBackupsMock(...args),
   runScheduledSnapshotMaintenance: (...args: any[]) =>
     runScheduledSnapshotMaintenanceMock(...args),
   runScheduledBackupMaintenance: (...args: any[]) =>
@@ -113,6 +115,7 @@ describe("snapshot-backup-maintenance", () => {
     ]);
     runScheduledSnapshotMaintenanceMock.mockResolvedValue(undefined);
     runScheduledBackupMaintenanceMock.mockResolvedValue(undefined);
+    getBackupsMock.mockResolvedValue([]);
     reportProjectMaintenanceMock.mockResolvedValue(undefined);
     listPendingMaintenanceReportsMock.mockReturnValue([]);
     listLeasedMaintenanceSchedulesMock.mockReturnValue([]);
@@ -900,6 +903,50 @@ describe("snapshot-backup-maintenance", () => {
       expect.objectContaining({ mode: "shadow" }),
     );
     stop();
+  });
+
+  it("reconciles a failed acknowledgement only after the backup is still in the repository", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-04-11T00:00:00.000Z"));
+    const backupTime = "2026-04-10T21:01:00.000Z";
+    listProjectMaintenanceSchedulesMock.mockResolvedValue([
+      {
+        project_id: "proj-1",
+        storage_service_class: "free",
+        last_edited: "2026-04-10T21:05:00.000Z",
+        last_backup: backupTime,
+        backup_due_since: "2026-04-10T21:05:00.000Z",
+        backup_status_outcome: "failed",
+        backup_status_reason: "timeout - hosts.recordProjectBackup",
+        backup_status_due_at: "2026-04-10T21:00:00.000Z",
+        last_backup_observed_at: "2026-04-10T21:02:00.000Z",
+        snapshots: { disabled: true },
+        backups: { daily: 1 },
+      },
+    ]);
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(getBackupsMock).toHaveBeenCalledWith({ project_id: "proj-1" });
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalled();
+
+    getBackupsMock.mockResolvedValue([
+      { id: "confirmed-id", time: new Date(backupTime) },
+    ]);
+    await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "backup",
+        outcome: "succeeded",
+        reason: "confirmed_backup_after_failed_report",
+        latest_backup_id: "confirmed-id",
+        attempt_due_at: "2026-04-10T21:00:00.000Z",
+        due_at: "2026-04-11T21:01:00.000Z",
+      }),
+    );
   });
 
   it("dispatches confirmed project changes in bounded event batches", async () => {

@@ -1052,6 +1052,14 @@ export interface HostProjectMaintenanceSchedule {
   snapshot_schedule_revision?: string | null;
   snapshot_reconciled_schedule_revision?: string | null;
   last_backup_observed_at?: string | null;
+  backup_status_outcome?:
+    | "succeeded"
+    | "deferred"
+    | "failed"
+    | "skipped"
+    | null;
+  backup_status_reason?: string | null;
+  backup_status_due_at?: string | null;
   snapshot_retry_at?: string | null;
   backup_retry_at?: string | null;
   snapshot_failures?: number;

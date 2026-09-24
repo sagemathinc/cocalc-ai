@@ -19,6 +19,7 @@ import {
 } from "@cocalc/util/consts/snapshots";
 import { getMasterConatClient } from "./master-status";
 import {
+  getBackups,
   runScheduledBackupMaintenance,
   runScheduledSnapshotMaintenance,
 } from "./file-server";
@@ -969,11 +970,56 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         const lastObserved = parseTimestampMs(row.last_backup_observed_at);
         const reconciliationDue =
           lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
+        const previousDue = parseTimestampMs(row.backup_status_due_at);
+        const lastBackup = parseTimestampMs(row.last_backup);
+        if (
+          project_id &&
+          !schedule.disabled &&
+          row.backup_status_outcome === "failed" &&
+          row.backup_status_reason?.includes("hosts.recordProjectBackup") &&
+          previousDue != null &&
+          lastBackup != null &&
+          lastBackup >= previousDue &&
+          (dueAt == null || dueAt > Date.now())
+        ) {
+          try {
+            // The bay may have committed recordProjectBackup even when its RPC
+            // acknowledgement timed out. Verify that exact recovery point is
+            // still visible in the off-host repository before clearing debt.
+            const backups = await getBackups({ project_id });
+            const confirmed = backups.find(
+              (backup) => Math.abs(backup.time.getTime() - lastBackup) < 1_000,
+            );
+            if (confirmed) {
+              await report({
+                host_id: hostId,
+                project_id,
+                kind: "backup",
+                storage_service_class: row.storage_service_class,
+                observed_at: new Date().toISOString(),
+                outcome: "succeeded",
+                reason: "confirmed_backup_after_failed_report",
+                latest_backup_id: confirmed.id,
+                due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+                attempt_due_at: new Date(previousDue).toISOString(),
+                retry_at: null,
+                consecutive_failures: 0,
+              });
+              return;
+            }
+          } catch (err) {
+            logger.warn("backup failure reconciliation paused", {
+              project_id,
+              err: `${err}`,
+            });
+          }
+        }
         if (
           project_id &&
           !schedule.disabled &&
           (dueAt == null || dueAt > Date.now()) &&
-          reconciliationDue
+          reconciliationDue &&
+          row.backup_status_outcome !== "failed"
         ) {
           await report({
             host_id: hostId,
