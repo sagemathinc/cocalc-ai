@@ -117,6 +117,7 @@ import {
 } from "@cocalc/server/launch/kill-switches";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
+import { getProjectRecoveryNotificationConfiguration } from "@cocalc/server/projects/recovery-notification-configuration";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import {
@@ -2094,6 +2095,11 @@ export async function getLaunchHealth({
     settingsResult.status === "fulfilled"
       ? (settingsResult.value as Record<string, any>)
       : undefined;
+  const {
+    oncallAccountId: recoveryOncallAccountId,
+    criticalEmailBackend: recoveryCriticalEmailBackend,
+    issues: recoveryNotificationConfigurationIssues,
+  } = getProjectRecoveryNotificationConfiguration(settings);
   const load = loadResult.status === "fulfilled" ? loadResult.value : undefined;
   const backups =
     backupsResult.status === "fulfilled" ? backupsResult.value : undefined;
@@ -2354,7 +2360,8 @@ export async function getLaunchHealth({
       level:
         projectRecoveryResult.status === "rejected" ||
         projectRecoveryPressureResult.status === "rejected" ||
-        hostsMissingPressureTelemetry.length > 0
+        hostsMissingPressureTelemetry.length > 0 ||
+        recoveryNotificationConfigurationIssues.length > 0
           ? "critical"
           : !projectRecovery
             ? "unknown"
@@ -2378,7 +2385,7 @@ export async function getLaunchHealth({
                 : "healthy",
       summary: !projectRecovery
         ? "Unable to read project recovery status."
-        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.`,
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry.${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}`,
       details:
         projectRecoveryResult.status === "rejected"
           ? [`${projectRecoveryResult.reason}`]
@@ -2388,8 +2395,9 @@ export async function getLaunchHealth({
                 `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
                 `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
                 settings?.project_recovery_notifications_enabled
-                  ? `Operator notifications enabled; on-call administrator ${settings.project_recovery_oncall_account_id || "not configured"}`
+                  ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
                   : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
+                ...recoveryNotificationConfigurationIssues,
                 ...projectRecovery.host_maintenance_blocks.map(
                   (block) =>
                     `${block.host_id} maintenance blocked: ${block.reason} checked at ${block.checked_at}${block.memory_psi_full_avg10 == null ? "" : ` (memory PSI full avg10 ${block.memory_psi_full_avg10}%)`}`,
