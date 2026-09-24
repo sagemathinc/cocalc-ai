@@ -1945,3 +1945,26 @@ unaccounted due obligations, memory gates, or missing storage telemetry.
 The live test establishes the below-limit backup path and byte recovery;
 at-limit replacement and capacity-denial preservation have focused tests but
 still lack a live staged repository-capacity drill.
+
+## 2026-09-24 active-shard restore-drill health
+
+Commit `126b7dd340` adds remote-only restore-drill coverage to the regular
+project-recovery operator check. The owning bay counts repository shards with
+active projects and confirmed off-host backups, then reads each shard's latest
+durable hash attestation. A failed latest drill is critical; missing evidence
+or a passing drill older than 30 days is a warning. Health includes bounded
+per-shard problem details. The query is scoped to the owning bay, and the
+attestation table has a repository/time index.
+
+The focused PGlite suite passed 5/5, including current, failed, missing, and
+stale shard cases; the server TypeScript build passed. Staging2 hub artifact
+`20260924T232606Z-126b7dd3-20260924T2327Z-126b7dd3-restore-drill-health-dirty`
+deployed as release `20260924232738-hub`. Migration and worker health passed,
+and all seven hub smoke checks passed. At 23:28:14 UTC, live project-recovery
+health was healthy: **4/4 active backup shards** had passing remote-only
+restore drills within 30 days, with zero failed, missing, or stale latest
+drills. No paying or unclassified critical debt, unknown status, unaccounted
+due work, memory gate, or missing recent storage-pressure telemetry was
+reported. Overall site health was warning because of separate existing
+checks, including recent admin alerts and insufficient browser-latency
+samples. Production is unchanged.
