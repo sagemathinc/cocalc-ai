@@ -189,6 +189,11 @@ import {
   assertCodexFundingModelReady,
   shouldUseExplicitMembershipModel,
 } from "@cocalc/frontend/chat/codex-submit-preflight";
+import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
+import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
+import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
+import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import { preflightNewAgentProjectStart } from "./new-agent-project-start";
 import { namedAgentExecutionState } from "./agent-execution-state";
 import {
   readAgentSubscriptionSelection,
@@ -496,6 +501,7 @@ function NewAgentPanel({
   const firstRequestRef = useRef<() => string>(() => "");
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const createProjectMounted = useRef(false);
   if (createProjectOpen) createProjectMounted.current = true;
@@ -698,6 +704,15 @@ function NewAgentPanel({
               : undefined,
         });
         assertCodexFundingModelReady({ config, paymentSource: source });
+        if (
+          projectId &&
+          !(await preflightNewAgentProjectStart({
+            projectId,
+            onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+          }))
+        ) {
+          return;
+        }
       }
       await submitNewAgentRequest(withoutTask ? undefined : request);
     } catch (err) {
@@ -768,6 +783,18 @@ function NewAgentPanel({
   }
 
   function handleCreateError(err: unknown): void {
+    if (
+      projectId &&
+      (extractRuntimeSponsorDenial(err) ||
+        getProjectStartPolicyBlockFromError(err))
+    ) {
+      showCodexProjectStartFailure({
+        error: err,
+        projectId,
+        onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+      });
+      return;
+    }
     if (err instanceof MissingAgentWorkingDirectoryError && projectId) {
       setMissingDirectory({ path: err.path, projectId });
       setError("");
@@ -1241,6 +1268,10 @@ function NewAgentPanel({
           </Suspense>
         </CocalcErrorBoundary>
       )}
+      <MembershipDetailsModal
+        open={membershipDetailsOpen}
+        onClose={() => setMembershipDetailsOpen(false)}
+      />
     </div>
   );
 }
