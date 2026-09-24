@@ -254,14 +254,21 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(queryMock).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("FROM project_hosts"),
-      ["host-1"],
+      ["host-1", expect.any(String)],
     );
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("provisioned IS TRUE"),
-      ["host-1", "proj-0", 100],
+      ["host-1", "proj-0", 100, expect.any(String)],
     );
+    expect(queryMock.mock.calls[0][0]).toContain(
+      "COALESCE(NULLIF(BTRIM(bay_id), ''), $2)=$2",
+    );
+    expect(queryMock.mock.calls[0][1][1]).toBe(queryMock.mock.calls[1][1][3]);
     const maintenanceSql = queryMock.mock.calls[1][0];
+    expect(maintenanceSql).toContain(
+      "COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $4)=$4",
+    );
     expect(maintenanceSql).toContain("last_backup IS NULL");
     expect(maintenanceSql).toContain("> last_backup");
     expect(maintenanceSql).toContain("backups->>'disabled'");
@@ -283,7 +290,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("$2::uuid IS NULL"),
-      ["host-1", null, 100],
+      ["host-1", null, 100, expect.any(String)],
     );
   });
 
@@ -302,8 +309,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
 
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("project_id = ANY($4::uuid[])"),
-      ["host-1", null, 50, ["proj-1", "proj-2"]],
+      expect.stringContaining("project_id = ANY($5::uuid[])"),
+      ["host-1", null, 50, expect.any(String), ["proj-1", "proj-2"]],
     );
   });
 

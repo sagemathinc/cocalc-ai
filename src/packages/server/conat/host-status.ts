@@ -54,9 +54,13 @@ export async function listHostProjectMaintenanceSchedules({
   if (!host_id) {
     throw Error("host_id is required");
   }
+  const bayId = getConfiguredBayId();
   const { rows: hostRows } = await getPool().query<{ id: string }>(
-    `SELECT id FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
-    [host_id],
+    `SELECT id FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL
+        AND COALESCE(NULLIF(BTRIM(bay_id), ''), $2)=$2
+      LIMIT 1`,
+    [host_id, bayId],
   );
   if (!hostRows.length) {
     throw Error("host not found");
@@ -72,6 +76,8 @@ export async function listHostProjectMaintenanceSchedules({
   );
   params.push(normalizedLimit);
   const limitParam = `$${params.length}`;
+  params.push(bayId);
+  const bayParam = `$${params.length}`;
   if (project_ids && project_ids.length > 100) {
     throw Error("too many maintenance project ids");
   }
@@ -182,6 +188,7 @@ export async function listHostProjectMaintenanceSchedules({
      WHERE host_id=$1
        AND provisioned IS TRUE
        AND deleted IS NOT TRUE
+       AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), ${bayParam})=${bayParam}
        AND ($2::uuid IS NULL OR project_id > $2::uuid)
        ${projectFilter}
      ORDER BY project_id ASC
