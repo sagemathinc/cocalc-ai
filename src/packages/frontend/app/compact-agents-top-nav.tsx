@@ -33,6 +33,7 @@ export function CompactAgentsTopNav({
   foregroundColor,
   workspaceItems = [],
   onOpenDocs,
+  onOpenTerminal,
 }: {
   isLoggedIn: boolean;
   pageStyle: PageStyle;
@@ -40,6 +41,7 @@ export function CompactAgentsTopNav({
   foregroundColor?: string;
   workspaceItems?: MenuProps["items"];
   onOpenDocs?: () => void;
+  onOpenTerminal?: () => void;
 }) {
   const pageActions = useActions("page");
   const groups = useTypedRedux("account", "groups");
@@ -155,6 +157,20 @@ export function CompactAgentsTopNav({
         hideWhenConnected
         pageStyle={pageStyle}
       />
+      {onOpenTerminal && (
+        <Button
+          aria-label="Open terminal"
+          title="Open terminal"
+          type="text"
+          onClick={onOpenTerminal}
+          style={{
+            color: foregroundColor ?? UI_COLORS.text,
+            height: pageStyle.height,
+            width: pageStyle.height,
+          }}
+          icon={<Icon name="terminal" />}
+        />
+      )}
       <Dropdown
         menu={{ items, onClick: onMenuClick }}
         open={menuOpen}

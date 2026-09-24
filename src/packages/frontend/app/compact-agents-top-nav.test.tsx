@@ -4,6 +4,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const setActiveTab = jest.fn();
 const showConnection = jest.fn();
@@ -188,5 +189,42 @@ describe("compact Agents navigation", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Documentation" }));
     expect(onOpenDocs).toHaveBeenCalledTimes(1);
     expect(setActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("offers Open terminal directly when a workspace is active", async () => {
+    const user = userEvent.setup();
+    const openTerminal = jest.fn();
+    render(
+      <CompactAgentsTopNav
+        isLoggedIn
+        pageStyle={pageStyle}
+        onOpenTerminal={openTerminal}
+        workspaceItems={[
+          {
+            key: "workspace-terminal",
+            label: "Open terminal",
+            onClick: openTerminal,
+          },
+        ]}
+      />,
+    );
+
+    const terminalButton = screen.getByRole("button", {
+      name: "Open terminal",
+    });
+    await user.tab();
+    expect(terminalButton).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await user.click(terminalButton);
+    expect(openTerminal).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole("button", { name: "More navigation" }));
+    await user.click(screen.getByRole("menuitem", { name: "Open terminal" }));
+    expect(openTerminal).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not show a terminal button outside an agent workspace", () => {
+    render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
+    expect(screen.queryByRole("button", { name: "Open terminal" })).toBeNull();
   });
 });

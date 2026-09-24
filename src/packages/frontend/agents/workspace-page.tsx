@@ -1601,11 +1601,13 @@ function AgentProjectContext({
 
 function AgentsWorkspaceNavigation({
   onOpenInProject,
+  onOpenTerminal,
   foregroundColor,
   workspaceItems,
   onOpenDocs,
 }: {
   onOpenInProject?: () => void;
+  onOpenTerminal?: () => void;
   foregroundColor?: string;
   workspaceItems?: import("antd").MenuProps["items"];
   onOpenDocs?: () => void;
@@ -1617,6 +1619,7 @@ function AgentsWorkspaceNavigation({
       isLoggedIn={!!accountId}
       pageStyle={pageStyle}
       onOpenInProject={onOpenInProject}
+      onOpenTerminal={onOpenTerminal}
       foregroundColor={foregroundColor}
       workspaceItems={workspaceItems}
       onOpenDocs={onOpenDocs}
@@ -2080,6 +2083,7 @@ function AgentWorkspace({
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
             onOpenDocs={openDocs}
+            onOpenTerminal={() => runFrameAction("terminal")}
             workspaceItems={[
               {
                 key: "workspace-terminal",
