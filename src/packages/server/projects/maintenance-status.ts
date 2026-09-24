@@ -16,7 +16,9 @@ import {
 } from "@cocalc/util/consts/snapshots";
 import {
   PAYING_BACKUP_INCIDENT_DELAY_MS,
+  PAYING_BACKUP_OBJECTIVE_MS,
   PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
+  PAYING_SNAPSHOT_OBJECTIVE_MS,
   recoveryDelayExceeds,
 } from "@cocalc/util/consts/project-recovery";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
@@ -586,9 +588,9 @@ export async function getProjectRecoveryStatusLocal(
   if (
     recoveryDelayExceeds(
       status.snapshot_due_at,
-      PAYING_SNAPSHOT_INCIDENT_DELAY_MS,
+      PAYING_SNAPSHOT_OBJECTIVE_MS,
     ) ||
-    recoveryDelayExceeds(status.backup_due_at, PAYING_BACKUP_INCIDENT_DELAY_MS)
+    recoveryDelayExceeds(status.backup_due_at, PAYING_BACKUP_OBJECTIVE_MS)
   ) {
     const payer = storageFundingAccountId(project);
     if (payer) {
@@ -855,6 +857,59 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
   };
 }
 
+// Health is queried by several operator paths. Share short-lived payer lookups
+// across them while bounding both the number of account-home RPCs and memory.
+const HEALTH_PAYER_CLASS_TTL_MS = 5 * 60_000;
+const HEALTH_PAYER_CLASS_CACHE_LIMIT = 10_000;
+const healthPayerClassCache = new Map<
+  string,
+  {
+    serviceClass: ProjectRecoveryStatus["storage_service_class"];
+    expiresAt: number;
+  }
+>();
+const healthPayerClassPending = new Map<
+  string,
+  Promise<ProjectRecoveryStatus["storage_service_class"]>
+>();
+
+async function currentHealthPayerClass(
+  accountId: string,
+): Promise<ProjectRecoveryStatus["storage_service_class"]> {
+  const cached = healthPayerClassCache.get(accountId);
+  if (cached && cached.expiresAt > Date.now()) return cached.serviceClass;
+  const pending = healthPayerClassPending.get(accountId);
+  if (pending) return pending;
+  const lookup = (async () => {
+    try {
+      const serviceClass = storageServiceClassFromMembership(
+        await resolveRuntimeMembership(accountId),
+      );
+      healthPayerClassCache.delete(accountId);
+      healthPayerClassCache.set(accountId, {
+        serviceClass,
+        expiresAt: Date.now() + HEALTH_PAYER_CLASS_TTL_MS,
+      });
+      if (healthPayerClassCache.size > HEALTH_PAYER_CLASS_CACHE_LIMIT) {
+        healthPayerClassCache.delete(
+          healthPayerClassCache.keys().next().value!,
+        );
+      }
+      return serviceClass;
+    } catch (err) {
+      logger.warn("unable to classify recovery health funding", {
+        account_id: accountId,
+        err,
+      });
+      return "unclassified" as const;
+    } finally {
+      healthPayerClassPending.delete(accountId);
+    }
+  })();
+  healthPayerClassPending.set(accountId, lookup);
+  return lookup;
+}
+
 export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth> {
   await ensureProjectMaintenanceStatusTable();
   type HealthRow = {
@@ -865,6 +920,9 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
     host_last_seen: Date | null;
     snapshots: SnapshotSchedule | null;
     backups: SnapshotSchedule | null;
+    owner_account_id: string | null;
+    usage_account_id: string | null;
+    course: { type?: string; account_id?: string } | null;
     snapshot_at: Date | null;
     snapshot_observed_at: Date | null;
     snapshot_class: string | null;
@@ -967,7 +1025,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
               COALESCE((to_jsonb(p)->>'last_changed')::TIMESTAMP, p.last_edited)
                 AS last_changed,
               p.last_backup, h.last_seen AS host_last_seen,
-              p.snapshots, p.backups,
+              p.snapshots, p.backups, p.usage_account_id::text AS usage_account_id,
+              p.course,
+              (SELECT account_id_text::text
+                 FROM jsonb_each(COALESCE(p.users, '{}'::jsonb))
+                      AS u(account_id_text, user_data)
+                WHERE COALESCE(u.user_data->>'group', '')='owner'
+                LIMIT 1) AS owner_account_id,
               s.latest_snapshot_at AS snapshot_at,
               s.observed_at AS snapshot_observed_at,
               s.storage_service_class AS snapshot_class,
@@ -1000,18 +1064,84 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
         ORDER BY p.project_id LIMIT 1000`,
       [cursor],
     );
+    const currentClassByProject = new Map<
+      string,
+      ProjectRecoveryStatus["storage_service_class"]
+    >();
+    const payersByProject = new Map<string, string>();
     for (const row of rows) {
+      const snapshotDue =
+        row.snapshots?.disabled === true ||
+        (row.last_changed != null &&
+          row.reconciled_change_at != null &&
+          row.last_changed <= row.reconciled_change_at &&
+          row.reconciled_schedule_revision ===
+            snapshotScheduleRevision(row.snapshots))
+          ? null
+          : projectRecoveryDueAt(
+              row.last_changed,
+              row.snapshot_at,
+              { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots },
+              true,
+            );
+      const backupDue =
+        row.backups?.disabled === true
+          ? null
+          : projectRecoveryDueAt(
+              row.last_changed,
+              row.last_backup,
+              { ...DEFAULT_BACKUP_COUNTS, ...row.backups },
+              false,
+            );
+      const overdue =
+        (snapshotDue != null && Date.parse(snapshotDue) < now) ||
+        (backupDue != null && Date.parse(backupDue) < now);
+      const repeatedFailure =
+        (row.snapshots?.disabled !== true &&
+          row.snapshot_outcome === "failed" &&
+          (row.snapshot_failures ?? 0) >= 3) ||
+        (row.backups?.disabled !== true &&
+          row.backup_outcome === "failed" &&
+          (row.backup_failures ?? 0) >= 3);
+      if (!overdue && !repeatedFailure) continue;
+      const payer = storageFundingAccountId(row);
+      if (payer) payersByProject.set(row.project_id, payer);
+      else currentClassByProject.set(row.project_id, "unclassified");
+    }
+    const uniquePayers = [...new Set(payersByProject.values())];
+    const classesByPayer = new Map<
+      string,
+      ProjectRecoveryStatus["storage_service_class"]
+    >();
+    for (let offset = 0; offset < uniquePayers.length; offset += 16) {
+      await Promise.all(
+        uniquePayers.slice(offset, offset + 16).map(async (accountId) => {
+          classesByPayer.set(
+            accountId,
+            await currentHealthPayerClass(accountId),
+          );
+        }),
+      );
+    }
+    for (const [projectId, payer] of payersByProject) {
+      currentClassByProject.set(projectId, classesByPayer.get(payer)!);
+    }
+    for (const row of rows) {
+      const snapshotClass =
+        currentClassByProject.get(row.project_id) ?? row.snapshot_class;
+      const backupClass =
+        currentClassByProject.get(row.project_id) ?? row.backup_class;
       const hostUnknown =
         row.host_last_seen == null ||
         now - row.host_last_seen.getTime() > 5 * 60_000;
       if (row.snapshots?.disabled !== true) {
         health.eligible_snapshot_projects++;
-        const group = debtGroup(row.host_id, row.snapshot_class, "snapshot");
+        const group = debtGroup(row.host_id, snapshotClass, "snapshot");
         if (
           row.snapshot_outcome === "failed" &&
           (row.snapshot_failures ?? 0) >= 3
         ) {
-          if (row.snapshot_class === "paying") {
+          if (snapshotClass === "paying") {
             health.paying_snapshot_repeated_failures++;
           }
           group.repeated_failures++;
@@ -1056,13 +1186,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           if (delaySeconds > 0) {
             group.overdue_count++;
-            recordOldestDebt(
-              row,
-              row.snapshot_class,
-              "snapshot",
-              due,
-              delaySeconds,
-            );
+            recordOldestDebt(row, snapshotClass, "snapshot", due, delaySeconds);
             group.oldest_delay_seconds = Math.max(
               group.oldest_delay_seconds,
               delaySeconds,
@@ -1073,13 +1197,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             delaySeconds,
           );
           if (
-            row.snapshot_class === "paying" &&
+            snapshotClass === "paying" &&
             delaySeconds > PAYING_SNAPSHOT_INCIDENT_DELAY_MS / 1000
           ) {
             health.paying_snapshot_overdue++;
           } else if (
-            row.snapshot_class !== "paying" &&
-            row.snapshot_class !== "free" &&
+            snapshotClass !== "paying" &&
+            snapshotClass !== "free" &&
             delaySeconds > PAYING_SNAPSHOT_INCIDENT_DELAY_MS / 1000
           ) {
             health.unclassified_snapshot_overdue++;
@@ -1088,12 +1212,12 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
       }
       if (row.backups?.disabled !== true) {
         health.eligible_backup_projects++;
-        const group = debtGroup(row.host_id, row.backup_class, "backup");
+        const group = debtGroup(row.host_id, backupClass, "backup");
         if (
           row.backup_outcome === "failed" &&
           (row.backup_failures ?? 0) >= 3
         ) {
-          if (row.backup_class === "paying") {
+          if (backupClass === "paying") {
             health.paying_backup_repeated_failures++;
           }
           group.repeated_failures++;
@@ -1127,13 +1251,7 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
           }
           if (delaySeconds > 0) {
             group.overdue_count++;
-            recordOldestDebt(
-              row,
-              row.backup_class,
-              "backup",
-              due,
-              delaySeconds,
-            );
+            recordOldestDebt(row, backupClass, "backup", due, delaySeconds);
             group.oldest_delay_seconds = Math.max(
               group.oldest_delay_seconds,
               delaySeconds,
@@ -1144,13 +1262,13 @@ export async function getProjectRecoveryHealth(): Promise<ProjectRecoveryHealth>
             delaySeconds,
           );
           if (
-            row.backup_class === "paying" &&
+            backupClass === "paying" &&
             delaySeconds > PAYING_BACKUP_INCIDENT_DELAY_MS / 1000
           ) {
             health.paying_backup_overdue++;
           } else if (
-            row.backup_class !== "paying" &&
-            row.backup_class !== "free" &&
+            backupClass !== "paying" &&
+            backupClass !== "free" &&
             delaySeconds > PAYING_BACKUP_INCIDENT_DELAY_MS / 1000
           ) {
             health.unclassified_backup_overdue++;
