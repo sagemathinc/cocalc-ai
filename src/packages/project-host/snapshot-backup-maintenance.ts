@@ -45,7 +45,8 @@ const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 // scans amplify latency without increasing useful mutation throughput (the
 // mutation lock is global). Operators can raise this only after qualification.
 const DEFAULT_PARALLELISM = 1;
-const DEFAULT_INITIAL_DELAY_MS = DEFAULT_SWEEP_MS;
+const DEFAULT_INITIAL_DELAY_MS = 60_000;
+const INITIAL_DELAY_JITTER_MS = 60_000;
 const DEFAULT_CANDIDATE_LIMIT = 250;
 const MAX_CANDIDATE_LIMIT = 500;
 const CHANGE_EVENT_BATCH_LIMIT = 50;
@@ -75,6 +76,14 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
 function parseNonNegativeInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function initialDelayJitterMs(hostId: string): number {
+  let hash = 0;
+  for (const character of hostId) {
+    hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+  }
+  return hash % INITIAL_DELAY_JITTER_MS;
 }
 
 function parseBoolean(value: string | undefined): boolean {
@@ -1073,7 +1082,7 @@ export function startProjectSnapshotBackupMaintenance({
   );
   const initialDelayMs = parseNonNegativeInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS,
-    DEFAULT_INITIAL_DELAY_MS,
+    DEFAULT_INITIAL_DELAY_MS + initialDelayJitterMs(hostId),
   );
   let closed = false;
   const changedProjects = new Set<string>();

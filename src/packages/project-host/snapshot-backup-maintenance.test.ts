@@ -762,6 +762,21 @@ describe("snapshot-backup-maintenance", () => {
     stop();
   });
 
+  it("reconciles soon after startup with a stable per-host delay", async () => {
+    jest.useFakeTimers();
+    delete process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS;
+    const { startProjectSnapshotBackupMaintenance } =
+      await import("./snapshot-backup-maintenance");
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+
+    await jest.advanceTimersByTimeAsync(59_999);
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(60_001);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
   it("can disable maintenance entirely", () => {
     jest.useFakeTimers();
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_DISABLE = "true";
