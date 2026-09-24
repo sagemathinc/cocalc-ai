@@ -1765,3 +1765,26 @@ returned to false and read back as false; final operator recovery health was
 healthy and displayed "Customer warnings disabled." This confirms the
 enabled scan path and its freshness monitor, while genuine paid-recipient
 delivery remains untested. Production is unchanged.
+
+Commit `fc1120a3b0` makes classification and recipient delivery errors visible
+in the durable scan row and critical operator health while customer warnings
+are enabled. The focused server suites passed 36/36 and the server TypeScript
+build passed. Staging2 hub artifact
+`20260924T220150Z-fc1120a3-recovery-warning-failures-fc1120a-dirty` was
+deployed as release `20260924220321-hub`; schema migration, worker health,
+host routing, and all seven hub smoke checks passed. An audited schema query
+`ee160fe2-29cd-4bfc-9891-67193631e98e` confirmed the additive `failures`
+column on the existing scan table. Focused tests inject a recipient home-bay
+lookup failure and verify the persisted count and critical health condition.
+The live canary did not inject a customer delivery failure.
+
+An updated read-only funding audit found zero active positive-cost
+subscriptions and zero current membership grants (`90362d9f-9004-40a2-9c52-fbca1ee5185f`). With customer warnings briefly enabled, the new worker
+completed a scan at `2026-09-24T22:08:43.059Z`: 23 projects scanned, zero
+notices, zero failures (audit `27d2acab-f73a-45db-902f-4abb2d2507c5`). The
+switch was returned to false and read back as false. Recovery health displayed
+"Customer warnings disabled" afterward. One immediate health sample was
+`warning` during a transient free-project delay; a later sample was `healthy`
+with zero current delay, unknown statuses, or unaccounted due obligations.
+The customer-delivery qualification remains open until a genuinely paying
+staging project crosses an objective and a recipient confirms the notice.
