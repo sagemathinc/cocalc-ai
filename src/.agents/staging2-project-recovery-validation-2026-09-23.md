@@ -880,6 +880,37 @@ a live blocked-state capture remains an open UI qualification. The previous
 80-project pressure event and this shared-host block verify the scheduler guard
 and operator warning.
 
+## September 24 follow-up: restart due timer and memory-gate duration
+
+Commit `bab90ad289` adds a focused scheduler test that reconstructs a
+known future due timer after host scheduler restart. Its project-host test file
+passed all 37 tests. A live staging2 check then created disposable canary
+project `94d31e68-cec6-4e0b-aebf-d05ac1930d5d`, changed its marker
+after its first scheduled snapshot, and restarted only the canary project-host
+daemon with rollout `e557efce-a390-4f21-9480-ee195a6f4e0a`.
+The first full reconciliation after restart ran at 11:21:20 UTC; the next
+would not run until roughly 11:36. The existing due time was 11:32:39 UTC.
+Polls found one snapshot through 11:32:31, then a second Btrfs snapshot at
+11:32:40.460 UTC. The project file still contained the changed marker after
+restart, and the browser Recovery view showed the new confirmed snapshot.
+This verifies that the rebuilt due timer dispatched before the next full
+reconciliation. The test project remains for cleanup pending staging2
+fresh-auth approval for permanent deletion with backup purge.
+
+Commit `417ccd17db` stores a bounded sample of fresh host-wide memory
+maintenance gate decisions and reports their 24-hour duration by reason in
+operator recovery health. The PGlite metrics tests passed 12/12; database and
+server package typechecks passed. Hub release `20260924113527-hub` deployed
+to staging2; hub health and all seven smoke checks passed. At 11:37 UTC,
+project-recovery health was healthy with zero unknown statuses, zero paying
+incident-threshold breaches, zero hosts at the memory gate, and zero hosts
+missing recent pressure telemetry. Its detail now lists memory PSI,
+available-memory floor, and measurement-unavailable minutes for each active
+host. All three were zero in that check. The 24-hour metric starts when the
+new samples are collected; historical blocked time before this release is
+not reconstructed. Browser-observed UX latency still had no qualifying
+samples, so this check does not establish the canary latency gate.
+
 ## Open findings and release gates
 
 1. Recovery Settings, project files, and the backup catalog load in the
@@ -911,9 +942,9 @@ and operator warning.
    15-minute full reconciliation sweep, with one-minute retries after a skipped
    sweep. A pressure-blocked startup followed by a successful full-sweep
    retry was observed live. A bounded 80-project inventory canary completed,
-   but due-timer recovery after a restart, a live inventory above 500 projects,
-   and sustained interactive responsiveness remain to be validated. The
-   canary event path completed about 97 seconds after bay confirmation; its
+   and due-timer recovery after a restart passed live. A live inventory above
+   500 projects and sustained interactive responsiveness remain to be
+   validated. The canary event path completed about 97 seconds after bay confirmation; its
    generation check cached the prior observation for about five minutes, so
    edit-to-bay change detection took longer than dispatch.
 6. The staging account hit its 16 active runtime sponsor-slot limit while
