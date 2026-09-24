@@ -1,4 +1,5 @@
 import { Button, Popover, Tag, Typography } from "antd";
+import { useState } from "react";
 import type { AcpStreamEvent } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
@@ -18,6 +19,7 @@ function outcomeColor(outcome: PeerMessageEvent["outcome"]): string {
 
 export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
   const label = targetLabel(event);
+  const [expanded, setExpanded] = useState(false);
   return (
     <section
       aria-label={`Message sent to ${label}`}
@@ -30,15 +32,13 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
         gap: 8,
         minWidth: 0,
         padding: "5px 8px",
+        flexWrap: "wrap",
       }}
     >
       <Tag color="green" style={{ flex: "0 0 auto", margin: 0 }}>
         To {label}
       </Tag>
-      <Text
-        ellipsis={{ tooltip: event.body }}
-        style={{ flex: 1, minWidth: 0, color: UI_COLORS.text }}
-      >
+      <Text ellipsis style={{ flex: 1, minWidth: 0, color: UI_COLORS.text }}>
         {event.body}
       </Text>
       <Tag
@@ -47,6 +47,14 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
       >
         {event.outcome}
       </Tag>
+      <Button
+        type="link"
+        size="small"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? "Hide message" : "Read message"}
+      </Button>
       <Popover
         placement="bottomRight"
         trigger="click"
@@ -76,6 +84,26 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
           Inspect
         </Button>
       </Popover>
+      {expanded && (
+        <div
+          role="document"
+          aria-label={`Message to ${label}`}
+          style={{
+            flex: "1 0 100%",
+            minWidth: 0,
+            maxHeight: "55vh",
+            overflow: "auto",
+            overflowWrap: "anywhere",
+            whiteSpace: "pre-wrap",
+            color: UI_COLORS.text,
+            background: UI_COLORS.inset,
+            borderRadius: 6,
+            padding: 10,
+          }}
+        >
+          {event.body}
+        </div>
+      )}
     </section>
   );
 }

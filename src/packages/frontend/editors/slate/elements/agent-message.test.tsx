@@ -130,3 +130,31 @@ test("missing evidence degrades to an explicit unavailable state", async () => {
     "Delivery details are unavailable",
   );
 });
+
+test("message body expands separately from delivery details", () => {
+  inspectAgentNetworkAttempt.mockClear();
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={
+        {
+          type: "agent-message",
+          children: [{ text: "Full peer message" }],
+        } as any
+      }
+    >
+      Full peer message
+    </AgentMessageElement>,
+  );
+  const read = screen.getByRole("button", { name: "Read message" });
+  expect(read).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(read);
+  expect(screen.getByRole("button", { name: "Hide message" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(
+    screen.getByText("Full peer message").closest("[data-expanded]"),
+  ).toHaveAttribute("data-expanded", "true");
+  expect(inspectAgentNetworkAttempt).not.toHaveBeenCalled();
+});
