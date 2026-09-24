@@ -138,6 +138,25 @@ Production was not changed.
   verifies a recent local snapshot but a newer edit must wait for the
   interval, its deferred report now updates the bay's latest local snapshot
   time. A focused worker test checks the resulting next due time.
+- Debt by host and storage funding class: `5a995de11511`. Staging hub
+  artifact `20260924T004104Z-5a995de1-20260924T0040Z-5a995de1-recovery-debt-groups-dirty`
+  passed smoke. The owning bay aggregates overdue count, oldest delay,
+  unknown status, and repeated failures by host, class, and operation. At
+  00:43:47 UTC, operator health identified two overdue free snapshot
+  obligations on shared host `8cd90870-e58f-4979-b87f-cf85f3622324`,
+  oldest three minutes; those obligations were no longer overdue at the
+  00:47:58 UTC check.
+- Atomic backup success ownership fence: `23a157e59034`. Staging hub
+  artifact `20260924T004410Z-23a157e5-20260924T0045Z-23a157e5-backup-assignment-fence-dirty`
+  passed smoke. The `last_backup` database update now requires the reporting
+  host to remain assigned at write time. A focused test changes assignment
+  between preliminary validation and the update. A manual backup on canary
+  project `b528cb8d-797c-464c-8f60-1508789595c2` succeeded under this
+  build at 00:46:57 UTC: Rustic snapshot
+  `87e4d20d64038ec72aab53488e0e3607b6f49a74b8aef8443a022cfba274cbbc`
+  was listed from the repository. Restoring
+  `recovery-canary/reconcile-latest.txt` to a separate file and comparing
+  bytes returned the original `2026-09-24T00:30:28Z` marker.
 
 The `-dirty` artifact suffix came from unrelated, pre-existing untracked files;
 the source commits above identify the tracked code used for the builds.
@@ -218,11 +237,24 @@ coverage, but its exact stale-bay scenario remains unverified live. At
 00:36 UTC, operator project recovery health was healthy: 54 successful, 39
 deferred, and 0 failed attempts in 24 hours, with zero unknown statuses.
 
+At 00:44 UTC, both online hosts reported normal storage admission with no
+admission deferrals since their most recent restart. The canary had 5 assigned
+projects and 4 running; the shared host had 16 assigned and 13 running. Both
+reported healthy disk and Btrfs metadata capacity with no derived host
+capacity alerts. These are point-in-time safety checks; staging2's operator
+UX-latency check lacked enough samples for a p95 comparison. At 00:47:58 UTC,
+project recovery health was healthy again, with 70 successful, 41 deferred,
+and 0 failed attempts in the preceding 24 hours, no overdue project, and no
+unknown status. The cumulative `snapshot_not_created` counter remained 36;
+its post-rollout rate still requires a longer observation window.
+
 ## Open findings and release gates
 
-1. Browser UI testing is pending the staging2 CLI fresh-auth approval. Frontend
-   automated checks and static smoke passed, but the actual project status UI
-   has not yet been exercised in a browser.
+1. Browser UI testing is pending a staging2 CLI browser-approved login and
+   elevation. Frontend automated checks and static smoke passed, but the
+   actual project status UI has not yet been exercised in a browser. A fresh
+   first-party bootstrap flow was started after the older elevation request
+   expired.
 2. The bay backup file index was not produced by the scheduled path. The
    recoverable Rustic snapshot and `last_backup` report were confirmed, but
    any release criterion requiring a bay file index for each backup remains
