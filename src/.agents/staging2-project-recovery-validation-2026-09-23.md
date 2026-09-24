@@ -421,6 +421,22 @@ nonpreemptible lane. The server and project-host package builds passed, as
 did all seven host-status and 31 scheduler tests. This commit changes tests
 only, so the staged runtime remains the preceding hub and host artifacts.
 
+Commit `9297945372` treats a report without an explicit funding class from
+an older host as `unclassified` in both the bay projection and attempt
+history. Operator health now counts explicit unclassified critical debt,
+instead of silently classing it as free. Fifteen focused server tests and the
+package build passed. Hub deployment
+`20260924T030021Z-20260924T025857Z-92979453-9297945372-recovery-unclassified-dirty`
+passed all seven smoke checks. The post-deployment project recovery check
+showed zero paying critical debt, zero unclassified critical debt, zero
+unknown statuses, and zero hosts missing pressure telemetry. Its 24-hour
+attempt counts were 218 succeeded, 41 deferred, and one failed; the next
+check counted 219 succeeded. The single failed attempt was a free backup on
+the shared host, grouped as reason `other`. This report does not establish
+its exact cause or whether that specific project recovered. An audited raw
+SQL query to identify it returned `fresh_auth_required`; the first-party
+elevation is still pending. The failure remains an open staging finding.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
@@ -467,6 +483,11 @@ only, so the staged runtime remains the preceding hub and host artifacts.
    reproduced through the public snapshot CLI because it labels explicit
    snapshots as manual. Live normal scheduled snapshots and marker readback
    succeeded on the new host artifact.
+8. A free backup failed once on the shared host after the September 24 hub
+   rollout. The aggregate reason is `other`, and the exact project and cause
+   remain unverified pending first-party fresh auth for the audited attempt
+   query. Do not interpret the otherwise healthy recovery summary as proof
+   that this one failure has resolved.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
