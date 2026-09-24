@@ -1325,3 +1325,32 @@ still be absent from the historical denominator. Unknown/stale host and
 project health remains a separate stop signal. A durable coverage audit over
 the full 30-day window is required before objective percentages can be
 qualified as complete.
+
+## 2026-09-24 critical email delivery drill
+
+Commit `0350f1070d` adds a fresh-auth, admin-only critical email drill. It
+requires a valid drill UUID, a named local administrator on-call, and an
+available critical email backend. It sends a plainly labeled test through the
+same required account-notice critical lane as project recovery incidents,
+independent of the routine notification switch. The UUID identifies the test
+and deduplicates retries within the one-hour message deduplication window. It
+does not manufacture project debt or enable routine alerts.
+
+Focused server tests passed 2/2, dangerous-RPC registry tests passed 5/5, CLI
+admin tests passed 61/61, the conat and CLI builds passed, and the full
+development build passed. The immutable hub artifact
+`20260924T181255Z-0350f107-20260924-recovery-critical-drill-0350f10-dirty`
+was deployed as staging2 release `20260924181543-hub`. Migration, worker
+health, host route checks, and hub smoke passed.
+
+One live staging2 drill used ID
+`85d5d9cf-eab5-48bb-90b3-d8695434a9ca` and returned message ID 41 for
+the named on-call account `cc82e1f9-b452-42ae-9904-4c29ac1f24a4`. Audited
+read-only query `17c61d56-e257-4899-8a91-4a4c6708bb0b` found exactly one
+matching transactional outbox row: `lane=critical`,
+`delivery_mode=immediate`, `status=sent`, `attempt_count=1`,
+`sent_at=2026-09-24T18:17:14.322Z`, and no error. The recipient was asked to
+confirm inbox receipt; that confirmation is pending. The named on-call remains
+configured, and `project_recovery_notifications_enabled` was verified false
+after the drill. This validates the staging send path and provider acceptance;
+it does not establish recipient receipt until the on-call confirms it.
