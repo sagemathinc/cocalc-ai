@@ -300,6 +300,22 @@ pressure in the sampled period. Earlier metrics rows lacked the new pressure
 field, so approximately 1,431 minutes appeared as unavailable; a complete
 24-hour pressure baseline begins only after the rollout. Hub smoke passed.
 
+At 01:53 UTC, hub release `20260924015326-hub` from commit `744b5ed1b3`
+deployed as artifact
+`20260924T015155Z-744b5ed1-20260924T-recovery-load-744b5ed1-dirty`.
+The hub route probe and all seven smoke checks passed. Operator recovery
+health was healthy with zero unknown statuses, zero paying critical debt,
+zero hosts missing recent storage pressure telemetry, 145 successful,
+41 deferred, and zero failed attempts in 24 hours. The new observed-load
+view counted 116 distinct free snapshot due obligations on the shared host,
+with 0.35 execution slot-hours and 0.37 queue-wait hours; the canary host
+had 39 distinct free snapshot obligations and 0.07 execution slot-hours.
+The local PGlite integration test verified that two attempts for the same
+due obligation count once while their execution and wait costs both count.
+These are observed costs, not a calibrated safe maintenance budget or proof
+of sustainable capacity. The backup and paid-class samples remain too small
+for a capacity threshold.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
@@ -309,8 +325,8 @@ field, so approximately 1,431 minutes appeared as unavailable; a complete
    expired. A designated testing-account browser spawn returned
    `fresh_auth_required` at 01:13 UTC; no credential workaround was used.
 2. The plan's full observability and scheduler contract remains broader than
-   the current code: capacity reports, operator drill reporting, and gated
-   automatic rollout are not yet present. A versioned
+   the current code: a calibrated safe-capacity threshold, operator drill
+   reporting, and gated automatic rollout are not yet present. A versioned
    schedule cache with a 10-minute ownership lease, event-triggered due work,
    mutation-boundary assignment checks, bounded host/bay attempt history, and
    24-hour timing/byte metrics are now deployed; the full inventory still
