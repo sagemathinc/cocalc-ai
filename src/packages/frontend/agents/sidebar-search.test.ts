@@ -1,5 +1,9 @@
 import type { AgentNetwork, NamedAgent } from "@cocalc/conat/agents/personal";
-import { matchesAgentSidebarSearch } from "./sidebar-search";
+import {
+  agentNetworkLookupKey,
+  indexAgentNetworks,
+  matchesAgentSidebarSearch,
+} from "./sidebar-search";
 
 const agent = {
   name: "reviewer",
@@ -44,4 +48,41 @@ test("tag: search matches only network tags, case-insensitively", () => {
   expect(
     matchesAgentSidebarSearch({ agent, networks: [], query: "tag:" }),
   ).toBe(false);
+});
+
+test("indexes active memberships without closed, removed, or duplicate tags", () => {
+  const member = {
+    kind: "registered",
+    endpoint: { project_id: "project-1", agent_id: "agent-1" },
+  } as AgentNetwork["members"][number];
+  const active = {
+    title: "Sagejs",
+    state: "active",
+    members: [member, member],
+  } as AgentNetwork;
+  const removed = {
+    ...member,
+    removed_at: "2026-09-24T00:00:00Z",
+  } as AgentNetwork["members"][number];
+  const paused = {
+    title: "Review",
+    state: "paused",
+    members: [member],
+  } as AgentNetwork;
+  const closed = {
+    title: "Old",
+    state: "closed",
+    members: [member],
+  } as AgentNetwork;
+  const index = indexAgentNetworks([
+    active,
+    { title: "Removed", state: "active", members: [removed] } as AgentNetwork,
+    paused,
+    closed,
+  ]);
+
+  expect(index.get(agentNetworkLookupKey("project-1", "agent-1"))).toEqual([
+    active,
+    paused,
+  ]);
 });

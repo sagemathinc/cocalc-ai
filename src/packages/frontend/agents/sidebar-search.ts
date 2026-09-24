@@ -5,6 +5,28 @@
 
 import type { AgentNetwork, NamedAgent } from "@cocalc/conat/agents/personal";
 
+export function agentNetworkLookupKey(projectId: string, agentId: string) {
+  return `${projectId}:${agentId}`;
+}
+
+export function indexAgentNetworks(networks: AgentNetwork[]) {
+  const byAgent = new Map<string, AgentNetwork[]>();
+  for (const network of networks) {
+    if (network.state === "closed") continue;
+    for (const member of network.members) {
+      if (member.kind !== "registered" || member.removed_at) continue;
+      const key = agentNetworkLookupKey(
+        member.endpoint.project_id,
+        member.endpoint.agent_id,
+      );
+      const matches = byAgent.get(key) ?? [];
+      if (!matches.includes(network)) matches.push(network);
+      byAgent.set(key, matches);
+    }
+  }
+  return byAgent;
+}
+
 export function matchesAgentSidebarSearch({
   agent,
   appearanceName,
