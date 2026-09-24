@@ -7,12 +7,15 @@
 Register the TimeTravel frame tree editor
 */
 
-import { Editor } from "./editor";
-import { TimeTravelActions } from "./actions";
 import { register_file_editor } from "../frame-tree/register";
 
 register_file_editor({
   ext: "time-travel",
-  component: Editor,
-  Actions: TimeTravelActions,
+  asyncData: async () => {
+    const [{ Editor }, { TimeTravelActions }] = await Promise.all([
+      import("./editor"),
+      import("./actions"),
+    ]);
+    return { component: Editor, Actions: TimeTravelActions };
+  },
 });
