@@ -846,6 +846,7 @@ export default function ChatScreen() {
         <View style={styles.composer}>
           <LiveVoiceControls
             live={live}
+            profileId={profileId}
             disabled={
               speech.state.phase !== "idle" ||
               submitting ||

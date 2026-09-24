@@ -2,6 +2,9 @@ import React from "react";
 const { act, create } = require("react-test-renderer");
 import { LiveVoiceControls } from "./controls";
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+jest.mock("../cocalc/session-registry", () => ({
+  getActiveSiteSession: jest.fn(),
+}));
 
 it("requires explicit start without exposing prices and names mute/end controls", async () => {
   const start = jest.fn(),
@@ -72,14 +75,51 @@ it("shows included AI windows and allows an explicit own-key choice", async () =
   const labels = screen.root
     .findAllByType("Text")
     .map((node: any) => node.children.join(""));
-  expect(labels).toContain("5-hour AI remaining: 67%");
-  expect(labels).toContain("7-day AI remaining: 42%");
-  const choice = screen.root.findByProps({
+  expect(labels).toContain("5-hour");
+  expect(labels).toContain("7-day");
+  expect(labels).toContain("67%");
+  expect(labels).toContain("42%");
+  const meter = screen.root.findByProps({
+    accessibilityRole: "progressbar",
+    accessibilityLabel: "5-hour limit",
+  });
+  expect(meter.props.accessibilityValue.now).toBe(67);
+  const choice = screen.root.findAllByProps({
     accessibilityRole: "button",
     accessibilityLabel: "Use my OpenAI key",
-  });
+  })[0];
   await act(async () => choice.props.onPress());
   expect(chooseFunding).toHaveBeenCalledWith("own");
+  await act(async () => screen.unmount());
+});
+
+it("shows a membership or own-key dialog for free users", async () => {
+  const chooseFunding = jest.fn();
+  const live: any = {
+    capabilities: {
+      enabled: false,
+      max_seconds: 120,
+      own_key_available: true,
+      reason: "Included live voice requires a paid membership.",
+    },
+    fundingPreference: "site",
+    chooseFunding,
+    phase: "idle",
+  };
+  let screen: any;
+  await act(async () => {
+    screen = create(<LiveVoiceControls live={live} disabled={false} />);
+  });
+  const button = (name: string) =>
+    screen.root.findByProps({
+      accessibilityRole: "button",
+      accessibilityLabel: name,
+    });
+  await act(async () => button("Live voice").props.onPress());
+  expect(screen.root.findByType("Modal").props.visible).toBe(true);
+  await act(async () => button("Use my OpenAI key").props.onPress());
+  expect(chooseFunding).toHaveBeenCalledWith("own");
+  expect(screen.root.findByType("Modal").props.visible).toBe(false);
   await act(async () => screen.unmount());
 });
 

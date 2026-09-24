@@ -12,6 +12,25 @@ module.exports = {
   PlatformColor: (name) => name,
   KeyboardAvoidingView: "KeyboardAvoidingView",
   Alert: { alert: jest.fn() },
+  AccessibilityInfo: {
+    isReduceMotionEnabled: async () => false,
+    addEventListener: () => ({ remove() {} }),
+  },
+  Animated: {
+    Value: class {
+      interpolate() {
+        return 0;
+      }
+      stopAnimation() {}
+      setValue() {}
+    },
+    View: "AnimatedView",
+    timing: () => ({ start() {}, stop() {} }),
+    sequence: () => ({ start() {}, stop() {} }),
+    loop: () => ({ start() {}, stop() {} }),
+  },
+  Easing: { ease: 0, inOut: () => 0 },
+  Linking: { openURL: jest.fn(async () => {}) },
   ScrollView: "ScrollView",
   View: "View",
   Image: "Image",

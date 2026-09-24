@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Space } from "antd";
+import { Button, Modal, Progress } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LiveDelegation,
@@ -14,7 +14,9 @@ import type {
   LiveVoiceResult,
 } from "@cocalc/conat/hub/api/live-voice";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import "./live-voice.css";
 
 interface Call {
   peer: RTCPeerConnection;
@@ -380,82 +382,140 @@ export function ChatLiveVoice({
           : "Use included AI instead"}
       </Button>
     ) : null;
+  const included = capabilities.funding_source === "site";
+  const active = phase !== "idle";
+  const needsMembership =
+    !capabilities.enabled && !!capabilities.reason?.includes("paid membership");
+  const heading = !capabilities.enabled
+    ? needsMembership
+      ? "Talk with your agent"
+      : "Live voice unavailable"
+    : phase === "connecting"
+      ? "Connecting voice"
+      : phase === "live"
+        ? muted
+          ? "Microphone muted"
+          : "Voice is live"
+        : confirming
+          ? "Start a voice conversation"
+          : "Talk with your agent";
+  const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return (
-    <div style={{ padding: "4px 8px", color: UI_COLORS.text }}>
+    <div className="cocalc-live-voice" style={{ color: UI_COLORS.text }}>
       <audio
         ref={audioRef}
         autoPlay
         aria-hidden="true"
         style={{ display: "none" }}
       />
-      {capabilities.funding_source === "site" && (
-        <Space size="middle" wrap>
-          {capabilities.allowance?.map((window) => (
-            <span key={window.window}>
-              {window.window === "5h" ? "5-hour" : "7-day"} AI remaining:{" "}
-              {window.remaining_percent}%
-            </span>
+      <div
+        className={`cocalc-live-voice-orb${active && !muted ? " cocalc-live-voice-orb-active" : ""}`}
+        aria-hidden="true"
+      >
+        <span className="cocalc-live-voice-orb-halo" />
+        <span className="cocalc-live-voice-orb-core" />
+      </div>
+      <div className="cocalc-live-voice-main">
+        <div className="cocalc-live-voice-heading" aria-live="polite">
+          <strong>{heading}</strong>
+          {active && <span className="cocalc-live-voice-timer">{elapsed}</span>}
+        </div>
+        {active ? (
+          <div className="cocalc-live-voice-detail" aria-live="polite">
+            {status ||
+              (phase === "connecting"
+                ? "Preparing your microphone…"
+                : "Listening")}
+          </div>
+        ) : confirming ? (
+          <div className="cocalc-live-voice-detail">
+            Uses {included ? "included AI" : "your OpenAI key"} for up to two
+            minutes. Agent work may use a separate payment source and continue
+            after you hang up.
+          </div>
+        ) : !capabilities.enabled ? (
+          <div className="cocalc-live-voice-detail">
+            {capabilities.reason ?? "Live voice is unavailable."}
+          </div>
+        ) : (
+          <div className="cocalc-live-voice-detail">
+            Speak naturally; your agent can keep working after the call.
+          </div>
+        )}
+        {caption && active && (
+          <div className="cocalc-live-voice-caption" aria-live="polite">
+            {caption}
+          </div>
+        )}
+        {error && (
+          <div role="alert" style={{ color: UI_COLORS.danger }}>
+            {error}
+          </div>
+        )}
+      </div>
+      {included && !!capabilities.allowance?.length && (
+        <div
+          className="cocalc-live-voice-meters"
+          aria-label="Included AI allowance"
+        >
+          {capabilities.allowance.map((window) => (
+            <div className="cocalc-live-voice-meter" key={window.window}>
+              <div className="cocalc-live-voice-meter-label">
+                <span>{window.window === "5h" ? "5-hour" : "7-day"}</span>
+                <strong>{window.remaining_percent}%</strong>
+              </div>
+              <Progress
+                aria-label={`${window.window === "5h" ? "5-hour" : "7-day"} limit: ${window.remaining_percent}% remaining`}
+                percent={window.remaining_percent}
+                showInfo={false}
+                size="small"
+                strokeColor={UI_COLORS.info}
+              />
+            </div>
           ))}
-        </Space>
-      )}
-      {error && (
-        <div role="alert" style={{ color: UI_COLORS.danger }}>
-          {error}
         </div>
       )}
-      {playbackBlocked && phase === "live" && (
-        <Button
-          onClick={() => {
-            void callRef.current?.audio
-              .play()
-              .then(() => setPlaybackBlocked(false))
-              .catch(() =>
-                setError("Browser audio playback is still blocked."),
-              );
-          }}
-        >
-          Enable call audio
-        </Button>
-      )}
-      {!capabilities.enabled ? (
-        <Space wrap>
-          <span>{capabilities.reason ?? "Live voice is unavailable."}</span>
-          {choice}
-        </Space>
-      ) : phase === "idle" ? (
-        confirming ? (
-          <Space direction="vertical">
-            <span>
-              Live voice uses{" "}
-              {capabilities.funding_source === "site"
-                ? "your included AI allowance"
-                : "your OpenAI API key"}
-              . Calls last up to two minutes. Agent work may use a separate
-              payment source and continues in chat after hangup.
-            </span>
-            <Space>
+      <div className="cocalc-live-voice-actions">
+        {playbackBlocked && phase === "live" && (
+          <Button
+            onClick={() => {
+              void callRef.current?.audio
+                .play()
+                .then(() => setPlaybackBlocked(false))
+                .catch(() =>
+                  setError("Browser audio playback is still blocked."),
+                );
+            }}
+          >
+            Enable call audio
+          </Button>
+        )}
+        {!capabilities.enabled ? (
+          needsMembership ? (
+            <Button type="primary" onClick={() => setConfirming(true)}>
+              Live voice
+            </Button>
+          ) : (
+            choice
+          )
+        ) : phase === "idle" ? (
+          confirming ? (
+            <>
               <Button type="primary" onClick={() => void start()}>
                 Start live call
               </Button>
               <Button onClick={() => setConfirming(false)}>Not now</Button>
-            </Space>
-          </Space>
+            </>
+          ) : (
+            <>
+              <Button type="primary" onClick={() => setConfirming(true)}>
+                Live voice
+              </Button>
+              {choice}
+            </>
+          )
         ) : (
-          <Space>
-            <Button onClick={() => setConfirming(true)}>Live voice</Button>
-            {choice}
-          </Space>
-        )
-      ) : (
-        <Space direction="vertical">
-          <span aria-live="polite">
-            {phase === "connecting"
-              ? "Connecting live voice…"
-              : `Live · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`}
-          </span>
-          {status && <span aria-live="polite">{status}</span>}
-          {caption && <span>{caption}</span>}
-          <Space>
+          <>
             {phase === "live" && (
               <Button
                 onClick={() => {
@@ -469,10 +529,49 @@ export function ChatLiveVoice({
                 {muted ? "Unmute microphone" : "Mute microphone"}
               </Button>
             )}
-            <Button onClick={() => void stop()}>End live call</Button>
-          </Space>
-        </Space>
-      )}
+            <Button danger onClick={() => void stop()}>
+              End live call
+            </Button>
+          </>
+        )}
+      </div>
+      <Modal
+        title="Live voice needs a paid plan or your own API key"
+        open={needsMembership && confirming}
+        onCancel={() => setConfirming(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        <p>
+          Included live voice is available with a paid CoCalc membership. You
+          can also use your own OpenAI API key and pay OpenAI directly.
+        </p>
+        <div className="cocalc-live-voice-modal-actions">
+          <Button
+            type="primary"
+            onClick={() => {
+              setConfirming(false);
+              openAccountSettings({ page: "membership" });
+            }}
+          >
+            View membership plans
+          </Button>
+          <Button
+            onClick={() => {
+              setConfirming(false);
+              if (capabilities.own_key_available) {
+                setFundingPreference("own");
+              } else {
+                openAccountSettings({ page: "ai" });
+              }
+            }}
+          >
+            {capabilities.own_key_available
+              ? "Use my OpenAI key"
+              : "Add an OpenAI key"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

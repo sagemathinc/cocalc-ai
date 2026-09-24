@@ -8,6 +8,10 @@ import userEvent from "@testing-library/user-event";
 import { ChatLiveVoice, requestMicrophoneWithTimeout } from "./live-voice";
 
 const mockLiveVoice = jest.fn();
+const mockOpenAccountSettings = jest.fn();
+jest.mock("@cocalc/frontend/account/settings-routing", () => ({
+  openAccountSettings: (...args: any[]) => mockOpenAccountSettings(...args),
+}));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -30,6 +34,7 @@ const props = {
 
 beforeEach(() => {
   mockLiveVoice.mockReset();
+  mockOpenAccountSettings.mockReset();
 });
 
 it("times out a stalled microphone prompt and stops a late stream", async () => {
@@ -71,8 +76,13 @@ it("shows site allowance without a dollar amount and starts from the keyboard", 
   const user = userEvent.setup();
   render(<ChatLiveVoice {...props} />);
   const button = await screen.findByRole("button", { name: "Live voice" });
-  expect(screen.getByText("5-hour AI remaining: 67%")).toBeInTheDocument();
-  expect(screen.getByText("7-day AI remaining: 42%")).toBeInTheDocument();
+  expect(
+    screen.getByLabelText("5-hour limit: 67% remaining"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByLabelText("7-day limit: 42% remaining"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Talk with your agent")).toBeInTheDocument();
   expect(screen.queryByText(/\$|per minute/i)).not.toBeInTheDocument();
   button.focus();
   expect(button).toHaveFocus();
@@ -83,7 +93,7 @@ it("shows site allowance without a dollar amount and starts from the keyboard", 
   expect(screen.getByRole("button", { name: "Not now" })).toBeInTheDocument();
 });
 
-it("keeps included voice off for free users while exposing explicit own-key choice", async () => {
+it("offers free users membership or their own key from a dialog", async () => {
   mockLiveVoice.mockImplementation(async ({ funding_preference }) =>
     funding_preference === "own"
       ? { enabled: true, max_seconds: 120, funding_source: "account" }
@@ -99,6 +109,13 @@ it("keeps included voice off for free users while exposing explicit own-key choi
   expect(
     await screen.findByText(/requires a paid membership/),
   ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Live voice" }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "View membership plans" }),
+  );
+  expect(mockOpenAccountSettings).toHaveBeenCalledWith({ page: "membership" });
+  await user.click(screen.getByRole("button", { name: "Live voice" }));
   await user.click(screen.getByRole("button", { name: "Use my OpenAI key" }));
   await waitFor(() =>
     expect(
@@ -112,4 +129,18 @@ it("keeps included voice off for free users while exposing explicit own-key choi
       project_id: "project-1",
     }),
   );
+});
+
+it("sends free users without a key to AI settings", async () => {
+  mockLiveVoice.mockResolvedValue({
+    enabled: false,
+    max_seconds: 120,
+    own_key_available: false,
+    reason: "Live voice requires a paid membership or your own OpenAI API key.",
+  });
+  const user = userEvent.setup();
+  render(<ChatLiveVoice {...props} />);
+  await user.click(await screen.findByRole("button", { name: "Live voice" }));
+  await user.click(screen.getByRole("button", { name: "Add an OpenAI key" }));
+  expect(mockOpenAccountSettings).toHaveBeenCalledWith({ page: "ai" });
 });
