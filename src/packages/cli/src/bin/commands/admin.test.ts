@@ -2730,3 +2730,37 @@ test("admin message send-system-notice forwards the system notice payload", asyn
     dedupMinutes: 30,
   });
 });
+
+test("admin critical recovery drill forwards a stable drill id", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        hub: {
+          messages: {
+            sendProjectRecoveryCriticalEmailDrill: async (opts: any) => {
+              captured = opts;
+              return { message_id: 123 };
+            },
+          },
+        },
+      }),
+    resolveAccountByIdentifier: async () => {
+      throw new Error("not used");
+    },
+    normalizeUrl: (value: string) => value,
+    isValidUUID: () => false,
+  } as any);
+  const drill_id = "55555555-5555-4555-8555-555555555555";
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "message",
+    "drill-project-recovery-critical-email",
+    "--drill-id",
+    drill_id,
+  ]);
+  assert.deepEqual(captured, { drill_id });
+});

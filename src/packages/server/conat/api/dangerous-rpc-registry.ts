@@ -897,6 +897,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "admin-only notification send",
   },
+  "messages.sendProjectRecoveryCriticalEmailDrill": {
+    decision: "fresh-auth-required",
+    reason: "admin-triggered critical operational email drill",
+  },
   "notifications.archive": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

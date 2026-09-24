@@ -4443,5 +4443,25 @@ Run "cocalc admin entitlement-override schema" for the accepted JSON payload.
       },
     );
 
+  adminMessage
+    .command("drill-project-recovery-critical-email")
+    .description(
+      "send one labeled critical-lane delivery drill to the configured recovery on-call administrator",
+    )
+    .requiredOption(
+      "--drill-id <uuid>",
+      "stable UUID identifying this drill and deduplicating retries",
+    )
+    .action(async (opts: { drillId: string }, command: Command) => {
+      await withContext(
+        command,
+        "admin message drill-project-recovery-critical-email",
+        async (ctx) =>
+          await ctx.hub.messages.sendProjectRecoveryCriticalEmailDrill({
+            drill_id: opts.drillId,
+          }),
+      );
+    });
+
   return admin;
 }
