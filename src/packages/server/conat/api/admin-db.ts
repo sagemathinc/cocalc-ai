@@ -185,8 +185,8 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
       AND o.scope_type = 'project'
       AND o.input->>'remote_only' = 'true'
       AND ($1::uuid IS NULL OR o.scope_id = $1::uuid)
-      AND (o.updated_at >= now() - make_interval(secs => $2::double precision)
-           OR a.recorded_at >= now() - make_interval(secs => $2::double precision))
+      AND COALESCE(o.finished_at, o.updated_at) >=
+          now() - make_interval(secs => $2::double precision)
     UNION ALL
     SELECT a.op_id, a.project_id, a.backup_id,
            p.backup_repo_id AS current_backup_repo_id,
@@ -204,7 +204,7 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
     LEFT JOIN projects p ON p.project_id = a.project_id
     WHERE NOT EXISTS (SELECT 1 FROM long_running_operations o WHERE o.op_id = a.op_id)
       AND ($1::uuid IS NULL OR a.project_id = $1::uuid)
-      AND a.recorded_at >= now() - make_interval(secs => $2::double precision)
+      AND a.restore_finished_at >= now() - make_interval(secs => $2::double precision)
     ORDER BY finished_at DESC
   `,
   "migration-health": `
@@ -224,6 +224,9 @@ const DIAGNOSTIC_SQL: Record<AdminDbDiagnostic, string> = {
     ORDER BY section, count DESC
   `,
 };
+
+export const PROJECT_RESTORE_DRILLS_SQL =
+  DIAGNOSTIC_SQL["project-restore-drills"];
 
 function normalizePositiveInt({
   value,

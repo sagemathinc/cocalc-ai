@@ -50,6 +50,10 @@ export async function ensureRestoreDrillAttestationTable(): Promise<void> {
         CREATE INDEX IF NOT EXISTS project_restore_drill_attestations_recorded_idx
           ON project_restore_drill_attestations(recorded_at DESC)
       `);
+      await getPool().query(`
+        CREATE INDEX IF NOT EXISTS project_restore_drill_attestations_finished_idx
+          ON project_restore_drill_attestations(restore_finished_at DESC)
+      `);
     })
     .catch((err) => {
       ensurePromise = undefined;

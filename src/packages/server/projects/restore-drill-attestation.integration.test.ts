@@ -6,6 +6,7 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
+import { PROJECT_RESTORE_DRILLS_SQL } from "@cocalc/server/conat/api/admin-db";
 import { recordRestoreDrillAttestation } from "./restore-drill-attestation";
 
 const bay_id = "bay-0";
@@ -109,5 +110,43 @@ describe("restore drill operator attestation", () => {
         bay_id,
       }),
     ).rejects.toThrow("not a successful remote-only project restore");
+  });
+
+  it("keeps the drill visible after its operation record is removed", async () => {
+    const { op_id, project_id } = await seedRestore();
+    await recordRestoreDrillAttestation({
+      op_id,
+      expected_sha256: expected,
+      observed_sha256: expected,
+      recorded_by: uuid(),
+      reason: "retention test",
+      bay_id,
+    });
+    await getPool().query(
+      "DELETE FROM long_running_operations WHERE op_id = $1",
+      [op_id],
+    );
+    const report = await getPool().query(PROJECT_RESTORE_DRILLS_SQL, [
+      project_id,
+      30 * 24 * 60 * 60,
+    ]);
+    expect(report.rows).toEqual([
+      expect.objectContaining({
+        op_id,
+        project_id,
+        status: "succeeded",
+        attestation_passed: true,
+        evidence_source: "operator_supplied",
+      }),
+    ]);
+    await getPool().query(
+      "UPDATE project_restore_drill_attestations SET restore_finished_at = now() - interval '31 days' WHERE op_id = $1",
+      [op_id],
+    );
+    const outsideWindow = await getPool().query(PROJECT_RESTORE_DRILLS_SQL, [
+      project_id,
+      30 * 24 * 60 * 60,
+    ]);
+    expect(outsideWindow.rows).toEqual([]);
   });
 });
