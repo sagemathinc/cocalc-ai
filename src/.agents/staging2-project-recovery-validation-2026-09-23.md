@@ -1874,3 +1874,24 @@ statuses, and unaccounted due obligations. The staging inventory has no
 genuinely paying project yet, so the live promoted-payer case is covered by
 focused tests rather than an end-to-end paid notification drill. Customer
 warnings remain off; production is unchanged.
+
+## 2026-09-24 changed-generation deferral visibility
+
+A live, audited 24-hour attempt query (`da124662-00eb-41c3-b286-3264bf2c9ae0`)
+identified `change_generation_changed` as the cause of 63 snapshot and eight
+backup deferrals that operator health had grouped under `other`. A second
+audit (`63b7c8ae-42ac-43db-9b99-7d5c9ff38b60`) found that the
+`snapshot_not_created` attempts were historical and concentrated on a small
+set of projects. Current status reads for three repeatedly affected projects
+(`3220da7f-7963-422b-80cb-464fe9b836b3`) showed subsequent successful
+snapshots and zero consecutive failures.
+
+Commit `461c734a79` gives changed-generation deferrals their own bounded
+operator reason code. A database integration test verifies the grouping;
+the two focused status suites passed 32/32 and the server TypeScript build
+passed. Staging2 hub artifact
+`20260924T225646Z-461c734a-recovery-change-generation-461c734-dirty`
+deployed as release `20260924225816-hub`; worker health and all seven hub
+smoke checks passed. At 22:58:51 UTC, live operator health was healthy and
+listed 60 free snapshot and seven free backup
+`change_generation_changed` deferrals by name rather than `other`.
