@@ -59,6 +59,8 @@ interface Props {
   enableUpload?: boolean;
   enableMentions?: boolean;
   toolbarRightContent?: ReactNode;
+  compactModeSwitch?: boolean;
+  softFocus?: boolean;
 }
 
 export interface ChatInputControl {
@@ -169,6 +171,8 @@ export default function ChatInput({
   enableUpload = true,
   enableMentions = true,
   toolbarRightContent,
+  compactModeSwitch,
+  softFocus,
 }: Props) {
   const narrow = useNarrowChatViewport();
   const intl = useIntl();
@@ -494,6 +498,8 @@ export default function ChatInput({
       hideModeSwitch={!showModeSwitch}
       modeSwitchPlacement="toolbar"
       reserveModeSwitchSpace
+      compactModeSwitch={compactModeSwitch}
+      softFocus={softFocus}
       disableModeSwitchShortcuts
       modeSwitchRightContent={
         <>

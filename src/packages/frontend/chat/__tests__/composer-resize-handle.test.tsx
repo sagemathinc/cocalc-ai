@@ -109,6 +109,20 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it("centers a compact auto-growing Agents composer", () => {
+    renderComposer(
+      { hasInput: true, input: "draft" },
+      { agentWorkspace: true },
+    );
+    const composer = screen.getByTestId("chat-composer");
+    expect(composer.style.maxWidth).toBe("1120px");
+    expect(composer.style.margin).toBe("0px auto 8px");
+    expect(lastChatInputProps.height).toBe(60);
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(44);
+    expect(lastChatInputProps.compactModeSwitch).toBe(true);
+    expect(lastChatInputProps.softFocus).toBe(true);
+  });
+
   it("keeps the Agents outer shell neutral while the editor is focused", () => {
     renderComposer({}, { agentWorkspace: true });
     const composer = screen.getByTestId("chat-composer");

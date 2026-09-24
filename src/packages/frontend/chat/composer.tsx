@@ -155,7 +155,9 @@ export function ChatRoomComposer({
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
   const visualViewport = useChatVisualViewport(mobile);
-  const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
+  const HEIGHT_STORAGE_KEY = embeddingOptions.agentWorkspace
+    ? "agents-chat-composer-height-px"
+    : "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
@@ -315,7 +317,7 @@ export function ChatRoomComposer({
       return;
     }
     set_local_storage(HEIGHT_STORAGE_KEY, String(manualHeightPx));
-  }, [manualHeightPx]);
+  }, [HEIGHT_STORAGE_KEY, manualHeightPx]);
 
   useEffect(() => {
     if (manualHeightPx == null) return;
@@ -610,9 +612,18 @@ export function ChatRoomComposer({
   const composerStyle: CSSProperties = {
     display: "flex",
     flexDirection: "column",
-    margin: isZenMode && isFullscreen ? 0 : "0 8px 8px",
+    margin:
+      isZenMode && isFullscreen
+        ? 0
+        : embeddingOptions.agentWorkspace && !mobile
+          ? "0 auto 8px"
+          : "0 8px 8px",
     overflow: "hidden",
     width: isZenMode && isFullscreen ? "100%" : "calc(100% - 16px)",
+    maxWidth:
+      embeddingOptions.agentWorkspace && !mobile && !isZenMode
+        ? 1120
+        : undefined,
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
     background: UI_COLORS.surface,
@@ -661,11 +672,12 @@ export function ChatRoomComposer({
               title={
                 isZenMode
                   ? "Exit zen mode to resize"
-                  : "Drag to resize the composer"
+                  : "Drag to resize the composer; double-click to reset"
               }
             >
               <div
                 onMouseDown={startDrag}
+                onDoubleClick={() => setManualHeightPx(null)}
                 style={{
                   height: "8px",
                   cursor: isZenMode ? "default" : "row-resize",
@@ -829,7 +841,12 @@ export function ChatRoomComposer({
                 on_post={on_post ? handlePost : undefined}
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
+                autoGrowMinHeight={
+                  embeddingOptions.agentWorkspace ? 44 : undefined
+                }
                 autoGrowMaxHeight={autoGrowMaxHeight}
+                compactModeSwitch={embeddingOptions.agentWorkspace}
+                softFocus={embeddingOptions.agentWorkspace}
                 onChange={(value) => {
                   setInput(value, composerSession);
                 }}

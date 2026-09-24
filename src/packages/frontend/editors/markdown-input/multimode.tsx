@@ -50,6 +50,8 @@ export default function MultiMarkdownInput({
   minimal,
   modeSwitchPlacement = "float",
   reserveModeSwitchSpace = false,
+  compactModeSwitch = false,
+  softFocus = false,
   modeSwitchRightContent,
   modeSwitchStyle,
   noVfill,
@@ -267,7 +269,14 @@ export default function MultiMarkdownInput({
               overflow: unboundedAutoGrow ? "visible" : "hidden",
               background: UI_COLORS.surface,
               color: UI_COLORS.text,
-              ...(focused ? FOCUSED_STYLE : BLURED_STYLE),
+              ...(softFocus
+                ? {
+                    border: `1px solid ${focused ? UI_COLORS.focus : UI_COLORS.border}`,
+                    borderRadius: 8,
+                  }
+                : focused
+                  ? FOCUSED_STYLE
+                  : BLURED_STYLE),
             }),
       }}
     >
@@ -300,6 +309,7 @@ export default function MultiMarkdownInput({
               hideHelp={hideHelp}
               hidden={!showToolbarModeSwitch}
               overflowEllipsis={overflowEllipsis}
+              compactModeSwitch={compactModeSwitch}
               style={modeSwitchStyle}
               editBarContentRef={editBar2}
               onSelectMode={(nextMode) => {
@@ -327,6 +337,7 @@ export default function MultiMarkdownInput({
           hideHelp={hideHelp}
           hidden={!!fixedMode || !!hideModeSwitch}
           overflowEllipsis={overflowEllipsis}
+          compactModeSwitch={compactModeSwitch}
           style={modeSwitchStyle}
           editBarContentRef={editBar2}
           onSelectMode={(nextMode) => {
