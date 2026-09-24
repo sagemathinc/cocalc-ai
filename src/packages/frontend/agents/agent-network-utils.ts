@@ -24,6 +24,22 @@ export function networkColor(network: AgentNetwork) {
   return COLORS[hash(network.agent_network_id) % COLORS.length];
 }
 
+export function duplicateNetworkTitle(
+  networks: AgentNetwork[],
+  title: string,
+  exceptId?: string,
+): boolean {
+  const normalized = title.trim().toLocaleLowerCase();
+  return (
+    !!normalized &&
+    networks.some(
+      (network) =>
+        network.agent_network_id !== exceptId &&
+        network.title.trim().toLocaleLowerCase() === normalized,
+    )
+  );
+}
+
 export function networkProjectCount(network: AgentNetwork): number {
   return new Set(
     network.members.flatMap((member) =>

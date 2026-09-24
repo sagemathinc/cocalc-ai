@@ -115,6 +115,7 @@ import {
   useNamedAgents,
 } from "./api";
 import { AgentNetworkPills } from "./agent-network-pills";
+import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
 import {
   readAgentNetworkFilter,
   rememberAgentNetworkFilter,
@@ -1576,6 +1577,7 @@ function AgentWorkspace({
   selectedNetworkId,
   onSelectNetwork,
   onOpenNetwork,
+  onEditNetworkTags,
 }: {
   onCopy: (agent: NamedAgent) => void;
   onFresh: (agent: NamedAgent) => void;
@@ -1599,6 +1601,7 @@ function AgentWorkspace({
   selectedNetworkId?: string;
   onSelectNetwork: (network: AgentNetwork) => void;
   onOpenNetwork: (network: AgentNetwork) => void;
+  onEditNetworkTags: (agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
@@ -1962,6 +1965,17 @@ function AgentWorkspace({
                 onOpen={onOpenNetwork}
               />
             )}
+            {!unregistered && (
+              <Button
+                type="text"
+                size="small"
+                aria-label={`Edit network tags for @${displayedAgent.name}`}
+                onClick={() => onEditNetworkTags(displayedAgent)}
+                style={{ color: "inherit", height: "auto", padding: 0 }}
+              >
+                Network tags
+              </Button>
+            )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
             {workingDirectoryLabel && (
@@ -2250,6 +2264,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     readAgentNetworkFilter,
   );
   const [networkDetailsId, setNetworkDetailsId] = useState<string>();
+  const [networkTagsAgent, setNetworkTagsAgent] = useState<NamedAgent>();
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -3643,6 +3658,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     onOpenNetwork={(network) =>
                       setNetworkDetailsId(network.agent_network_id)
                     }
+                    onEditNetworkTags={setNetworkTagsAgent}
                     onClose={() => {
                       setMountedWorkspaces((old) => {
                         const next = new Set(old);
@@ -3692,9 +3708,18 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       )}
       <AgentNetworkDetailsModal
         network={detailsNetwork}
+        networks={networkDirectory?.networks}
         onClose={() => setNetworkDetailsId(undefined)}
         onChanged={refreshAgentNetworks}
       />
+      {networkTagsAgent && networkDirectory && (
+        <AgentNetworkTagsEditor
+          agent={networkTagsAgent}
+          agents={agents}
+          directory={networkDirectory}
+          onClose={() => setNetworkTagsAgent(undefined)}
+        />
+      )}
     </main>
   );
 }

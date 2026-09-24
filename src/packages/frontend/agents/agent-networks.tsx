@@ -27,6 +27,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import { openAgentThread } from "./open-agent";
+import { duplicateNetworkTitle } from "./agent-network-utils";
 import {
   AgentNetworkProposalSummary,
   AgentNetworkSummary,
@@ -69,6 +70,11 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
     (network) =>
       network.title.trim().toLocaleLowerCase() ===
       title.trim().toLocaleLowerCase(),
+  );
+  const duplicateRenameTitle = duplicateNetworkTitle(
+    directory?.networks ?? [],
+    renameTitle,
+    renaming?.agent_network_id,
   );
 
   async function refresh() {
@@ -709,12 +715,14 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
         title="Rename Agent Network"
         okText="Rename"
         confirmLoading={busy}
-        okButtonProps={{ disabled: !renameTitle.trim() }}
+        okButtonProps={{
+          disabled: !renameTitle.trim() || duplicateRenameTitle,
+        }}
         onCancel={() => {
           if (!busy) setRenaming(undefined);
         }}
         onOk={() => {
-          if (!renaming || !renameTitle.trim()) return;
+          if (!renaming || !renameTitle.trim() || duplicateRenameTitle) return;
           const key = `${renaming.agent_network_id}:title:${renameTitle.trim()}:${renaming.generation}`;
           void mutate(
             key,
@@ -741,6 +749,13 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
           onChange={(event) => setRenameTitle(event.target.value)}
           style={{ marginTop: 6 }}
         />
+        {duplicateRenameTitle && (
+          <Alert
+            type="error"
+            title="Another network tag already uses this name. Choose a distinct name."
+            style={{ marginTop: 8 }}
+          />
+        )}
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </section>

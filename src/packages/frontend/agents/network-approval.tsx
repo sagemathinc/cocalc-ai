@@ -20,6 +20,7 @@ import { useSourceAgentName } from "./source-agent-name";
 import type { AgentNameContext } from "./name-context";
 import { cachedAgentNameContext } from "./name-context";
 import { AgentNetworkSummary } from "./agent-network-summary";
+import { duplicateNetworkTitle } from "./agent-network-utils";
 
 const NEW_NETWORK = "new";
 
@@ -124,6 +125,10 @@ export function NetworkApproval({
   const atNetworkLimit =
     !!directory &&
     directory.usage.active_networks >= directory.usage.network_limit;
+  const duplicateTitle = duplicateNetworkTitle(
+    directory?.networks ?? [],
+    newTitle,
+  );
   const canSubmit =
     !busy &&
     !loading &&
@@ -131,7 +136,7 @@ export function NetworkApproval({
     sourceNaming.canApprove &&
     (!!sharedNetwork ||
       !!selectedNetwork ||
-      (creating && !!newTitle.trim() && !atNetworkLimit));
+      (creating && !!newTitle.trim() && !duplicateTitle && !atNetworkLimit));
 
   function requestId(key: string): string {
     let request = requestIds.current.get(key);
@@ -369,7 +374,19 @@ export function NetworkApproval({
                         onChange={(event) => setNewTitle(event.target.value)}
                         placeholder="Illustration work"
                         style={{ marginTop: 5 }}
+                        status={duplicateTitle ? "error" : undefined}
+                        aria-describedby={
+                          duplicateTitle
+                            ? "connect-network-duplicate"
+                            : undefined
+                        }
                       />
+                      {duplicateTitle && (
+                        <div id="connect-network-duplicate" role="alert">
+                          A network tag with this name already exists. Choose a
+                          distinct name.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

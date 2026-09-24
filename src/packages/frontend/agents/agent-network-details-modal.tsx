@@ -18,7 +18,10 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
-import { networkProjectCount } from "./agent-network-utils";
+import {
+  duplicateNetworkTitle,
+  networkProjectCount,
+} from "./agent-network-utils";
 import { AgentNetworkSummary } from "./agent-network-summary";
 
 const { Text } = Typography;
@@ -79,10 +82,12 @@ export function AgentNetworkFilterBar({
 
 export function AgentNetworkDetailsModal({
   network,
+  networks = [],
   onClose,
   onChanged,
 }: {
   network?: AgentNetwork;
+  networks?: AgentNetwork[];
   onClose: () => void;
   onChanged?: () => void | Promise<void>;
 }) {
@@ -165,6 +170,11 @@ export function AgentNetworkDetailsModal({
 
   if (!network) return null;
   const projects = networkProjectCount(network);
+  const duplicateTitle = duplicateNetworkTitle(
+    networks,
+    title,
+    network.agent_network_id,
+  );
 
   const setDelivery = (deliveryMode: "queued" | "live") => {
     const key = `${network.agent_network_id}:delivery:${deliveryMode}:${network.generation}`;
@@ -218,7 +228,8 @@ export function AgentNetworkDetailsModal({
                   onChange={(event) => setTitle(event.target.value)}
                   onPressEnter={() => {
                     const next = title.trim();
-                    if (!next || next === network.title) return;
+                    if (!next || next === network.title || duplicateTitle)
+                      return;
                     const key = `${network.agent_network_id}:title:${next}:${network.generation}`;
                     void mutate(
                       key,
@@ -235,7 +246,10 @@ export function AgentNetworkDetailsModal({
                 />
                 <Button
                   disabled={
-                    busy || !title.trim() || title.trim() === network.title
+                    busy ||
+                    !title.trim() ||
+                    title.trim() === network.title ||
+                    duplicateTitle
                   }
                   onClick={() => {
                     const next = title.trim();
@@ -256,6 +270,12 @@ export function AgentNetworkDetailsModal({
                   Rename
                 </Button>
               </Space.Compact>
+              {duplicateTitle && (
+                <Text role="alert" type="danger">
+                  Another network tag already uses this name. Choose a distinct
+                  name.
+                </Text>
+              )}
               <Space wrap>
                 <Button
                   disabled={busy || network.state === "closed"}
