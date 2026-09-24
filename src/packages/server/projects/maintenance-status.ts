@@ -459,13 +459,23 @@ export interface ProjectRecoveryDelayAggregate {
   p99_seconds: number;
 }
 
+export interface ProjectRecoveryReasonAggregate {
+  host_id: string;
+  storage_service_class: "paying" | "free";
+  kind: "snapshot" | "backup";
+  outcome: "deferred" | "failed";
+  reason_code: string;
+  attempts: number;
+}
+
 export async function getProjectRecoveryAttemptHealth(): Promise<{
   by_host: ProjectRecoveryAttemptAggregate[];
   stages: ProjectRecoveryStageAggregate[];
   due_to_success: ProjectRecoveryDelayAggregate[];
+  reasons: ProjectRecoveryReasonAggregate[];
 }> {
   await ensureProjectMaintenanceStatusTable();
-  const [outcomes, stages, delays] = await Promise.all([
+  const [outcomes, stages, delays, reasons] = await Promise.all([
     getPool().query<{
       host_id: string;
       storage_service_class: "paying" | "free";
@@ -517,6 +527,32 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
         GROUP BY storage_service_class, kind
         ORDER BY storage_service_class, kind`,
     ),
+    getPool().query<ProjectRecoveryReasonAggregate>(
+      `SELECT host_id, storage_service_class, kind, outcome,
+              CASE
+                WHEN reason IN (
+                  'assignment_changed', 'assignment_unverified',
+                  'schedule_changed', 'observed_change_changed',
+                  'project_volume_unavailable', 'project_volume_archiving',
+                  'project_volume_lifecycle_changed',
+                  'backup_capacity_busy', 'snapshot_not_created',
+                  'backup_not_created', 'snapshot_maintenance_disabled',
+                  'legacy_restore_active', 'memory_pressure',
+                  'available_memory', 'io_pressure', 'lifecycle_active'
+                ) THEN reason
+                WHEN lower(reason) LIKE '%quota%' THEN 'quota'
+                WHEN lower(reason) LIKE '%retention%' THEN 'retention'
+                WHEN lower(reason) LIKE '%egress%' THEN 'egress'
+                WHEN lower(reason) LIKE '%repository%' THEN 'repository'
+                ELSE 'other'
+              END AS reason_code,
+              COUNT(*)::int AS attempts
+         FROM project_maintenance_attempts
+        WHERE observed_at >= NOW() - INTERVAL '24 hours'
+          AND outcome IN ('deferred', 'failed')
+        GROUP BY host_id, storage_service_class, kind, outcome, reason_code
+        ORDER BY attempts DESC, host_id, kind, reason_code`,
+    ),
   ]);
   return {
     by_host: outcomes.rows.map((row) => ({
@@ -526,6 +562,7 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
     })),
     stages: stages.rows,
     due_to_success: delays.rows,
+    reasons: reasons.rows,
   };
 }
 

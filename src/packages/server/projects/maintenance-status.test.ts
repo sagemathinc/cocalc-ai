@@ -240,6 +240,20 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           ],
         };
       }
+      if (sql.includes("AS reason_code")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              storage_service_class: "paying",
+              kind: "backup",
+              outcome: "deferred",
+              reason_code: "backup_capacity_busy",
+              attempts: 1,
+            },
+          ],
+        };
+      }
       return { rows: [], rowCount: 0 };
     });
     expect(await getProjectRecoveryAttemptHealth()).toEqual({
@@ -273,6 +287,16 @@ describe("project recovery status after unchanged-content reconciliation", () =>
           samples: 2,
           p95_seconds: 120,
           p99_seconds: 140,
+        },
+      ],
+      reasons: [
+        {
+          host_id: "host-1",
+          storage_service_class: "paying",
+          kind: "backup",
+          outcome: "deferred",
+          reason_code: "backup_capacity_busy",
+          attempts: 1,
         },
       ],
     });

@@ -2386,6 +2386,12 @@ export async function getLaunchHealth({
                           (item) =>
                             `${item.host_id} ${item.storage_service_class} ${item.kind}: ${item.succeeded} succeeded, ${item.deferred} deferred, ${item.failed} failed`,
                         ),
+                      ...projectRecoveryAttempts.reasons
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind} ${item.outcome}: ${item.reason_code} (${item.attempts})`,
+                        ),
                       ...projectRecoveryAttempts.stages
                         .filter((item) => item.samples >= 5)
                         .sort((a, b) => b.p99_ms - a.p99_ms)
