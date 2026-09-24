@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Card, Space, Typography } from "antd";
+import { Card, Grid, Space, Typography } from "antd";
 import type { ReactNode } from "react";
 
 import { Icon, type IconName } from "@cocalc/frontend/components";
@@ -45,16 +45,18 @@ function RecoveryAction({
   mode,
 }: RecoveryActionProps) {
   const isFlyout = mode === "flyout";
+  const screens = Grid.useBreakpoint();
+  const stacked = isFlyout || !screens.md;
   return (
     <Card size="small" styles={{ body: { padding: 12 } }}>
       <div
         style={{
           display: "grid",
           gap: isFlyout ? 10 : 12,
-          gridTemplateColumns: isFlyout
+          gridTemplateColumns: stacked
             ? "minmax(0, 1fr)"
             : "minmax(0, 1fr) auto",
-          alignItems: isFlyout ? "stretch" : "center",
+          alignItems: stacked ? "stretch" : "center",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -73,7 +75,7 @@ function RecoveryAction({
         </div>
         <Space
           wrap
-          style={{ justifyContent: isFlyout ? "flex-start" : "flex-end" }}
+          style={{ justifyContent: stacked ? "flex-start" : "flex-end" }}
         >
           {actions}
         </Space>
