@@ -30,6 +30,8 @@ test("subscription controller has no project filesystem, secret or network mount
     gid: 1000,
   });
   expect(args).toContain("--read-only");
+  expect(args).toContain("/workspace:mode=1777");
+  expect(args).toContain("/tmp:mode=1777");
   expect(args).toContain("cocalc.runtime=acp");
   expect(args).toContain(
     "cocalc.acp.owner=123:00000000-0000-4000-8000-000000000002:456",

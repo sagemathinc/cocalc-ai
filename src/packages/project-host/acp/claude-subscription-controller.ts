@@ -113,9 +113,9 @@ export function claudeSubscriptionContainerArgs(options: {
     "--workdir",
     CONTROLLER_WORKSPACE,
     "--tmpfs",
-    `${CONTROLLER_WORKSPACE}:mode=0700`,
+    `${CONTROLLER_WORKSPACE}:mode=1777`,
     "--tmpfs",
-    "/tmp:mode=0700",
+    "/tmp:mode=1777",
     mountArg({ source: home, target: CONTROLLER_HOME }),
     mountArg({
       source: managedHarnesses,
