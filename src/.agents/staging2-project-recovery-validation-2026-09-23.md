@@ -996,11 +996,55 @@ seven-day canary gate.
    counter. Continue watching for repeated hub report timeouts and confirm
    later scheduled backup cycles complete normally.
 
-9. Project-recovery debt and failures appear in `admin health`, and the
-   fleet rollout gates query that health. Current code inspection found no
-   periodic project-recovery incident alert, named on-call routing, or daily
-   oldest-debt report. Those plan requirements remain implementation work;
-   a healthy on-demand operator check does not prove paging is active.
+9. A bay-local five-minute recovery notification worker, named on-call
+   setting, incident grouping, and daily oldest-debt report are now deployed
+   on staging2. Delivery is disabled by default and no on-call account is
+   configured. The worker's alert selection and durable-message integration
+   passed focused automated tests; live delivery, recipient acknowledgement,
+   and external paging remain unvalidated. Production alert activation is a
+   separate operational gate.
+
+## 2026-09-24 recovery notification staging rollout
+
+Commit `8592bca8ce61ed6b21a6f4e75ed9f0483844fcc2` adds a bay-local
+five-minute notification worker. It considers paid snapshot and backup
+threshold breaches, repeated paid failures, paid queues with no recent
+completion, missing host pressure telemetry, and overdue work whose funding
+class is unknown. Incidents are grouped by affected host lanes and deduplicated
+by durable message subject. A once-per-UTC-day report includes oldest free and
+paid debt. Configuration requires an administrator account on the owning bay;
+the feature switch defaults to off. Messages use the account-notice delivery
+path. An external pager or acknowledgement flow has not been tested.
+
+Validation before rollout: the full development build passed; the server and
+util package typechecks passed; three focused suites passed all 10 tests; the
+frontend lint and formatting checks passed. The staging2 hub artifact
+`20260924T122351Z-8592bca8-20260924-recovery-notifications-8592bca-dirty`
+was deployed as release `20260924122550-hub`. Migration and worker health
+passed, followed by the hub smoke check. The matching static artifact
+`20260924T122625Z-8592bca8-20260924-recovery-notifications-8592bca-dirty`
+was deployed as release `20260924122723-static`; its smoke check passed,
+including 3,400 current and previous content-addressed assets. No project-host
+artifact changed in this rollout.
+
+The live `admin settings get` response showed
+`project_recovery_notifications_enabled=false` and an empty
+`project_recovery_oncall_account_id`. At 2026-09-24 12:26 UTC, the
+`project-recovery` health check was healthy and explicitly said operator
+notifications were disabled pending configuration. It counted zero paying
+threshold breaches, zero unknown-class overdue projects, zero unknown statuses,
+and zero hosts missing recent pressure telemetry. Overall site health remained
+warning from other existing checks; this is not a recovery-health failure.
+No notification was sent as part of this test.
+
+To finish the notification gate, select a named staging on-call administrator,
+enable the switch only for a controlled incident drill, verify account notice
+delivery and acknowledgement, then decide whether a distinct external paging
+integration is required. Keep production disabled until that gate and the
+seven-day canary, 30-day objectives, production restore drills, safe-capacity
+calibration, and remaining UI/live-load findings are complete. The disposable
+staging test project `94d31e68-cec6-4e0b-aebf-d05ac1930d5d` is stopped;
+permanent deletion awaits first-party fresh-auth approval.
 
 Do not promote this change to production until the open code and UI findings
 are reviewed and the operational gates are planned with the maintainer.
