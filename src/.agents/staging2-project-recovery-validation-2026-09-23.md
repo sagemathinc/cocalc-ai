@@ -1695,10 +1695,9 @@ report has arrived. It compares live debt against the paid objectives of 30
 minutes after snapshot due time and 6 hours after off-host backup due time.
 Before delivery, it rechecks bay ownership, current collaborators, current
 funding, and current recovery status. It sends owners and collaborators a
-durable account notice with a direct Recovery-settings link. Message subject
-and recipient deduplication suppress repeats for the same due event for 30
-days; the customer switch is independent of operator incident and daily debt
-mail.
+durable account notice with a direct Recovery-settings link. A stable event ID
+suppresses retries for the same project, recipient, operation, and due event;
+the customer switch is independent of operator incident and daily debt mail.
 
 Focused PGlite tests passed 37/37, including the paid objective boundaries,
 recipient selection, funding downgrade, recovery completion, and ownership
@@ -1734,3 +1733,35 @@ assertion, and the server package typecheck passed. Hub artifact
 `20260924T212936Z-0c3b13a8-recovery-customer-links-0c3b13a-dirty` was
 deployed as staging2 release `20260924213119-hub`; worker health and all
 seven hub smoke checks passed. The customer warning switch remained false.
+
+Commit `fa4c3bc60d` corrects multibay delivery: payer membership now
+resolves on the account home bay, and customer warnings use the durable
+account-notice outbox, addressed to each collaborator's home bay. The local
+internal message sender required a local account row and could reject remote
+collaborators. A deterministic notification event ID makes retries and
+overlapping worker startups idempotent. Focused tests cover a remote
+collaborator and a competing worker's committed event. This was deployed as
+staging2 hub release `20260924214105-hub` and passed seven hub smoke checks.
+
+Commits `f675d0a8c8`, `cd307a6d11`, and `e5d5dada6a` add count-only scan
+logging, a durable last-completed scan record, and an operator health check
+for a missing or stale enabled worker. The final staging2 hub release is
+`20260924215537-hub`; worker health and all seven hub smoke checks passed.
+The five focused PGlite suites passed 42/42 and the server package typecheck
+passed. A read-only inventory query counted 23 eligible host-owned projects
+(audit `5ce4b930-02fe-4111-a29d-2aba93f44b24`); the live projection query
+also succeeded (audit `a42fbe97-fd5d-4fae-9d8f-391b78aedddc`). A
+read-only funding audit found zero active positive-cost membership
+subscriptions and zero funded grants (audit
+`bff14472-2473-4463-a4b6-06737a0da648`).
+
+The customer switch was briefly enabled for a worker canary. Before the
+first scan, operator recovery health was critical and said the scan had not
+completed. At `2026-09-24T21:53:06.448Z`, the worker recorded a completed
+scan of all 23 projects and zero notices sent (audit
+`01bf247e-6647-4fc0-92ef-4b26aa074580`). Operator recovery health then
+became healthy and displayed that timestamp and counts. The switch was
+returned to false and read back as false; final operator recovery health was
+healthy and displayed "Customer warnings disabled." This confirms the
+enabled scan path and its freshness monitor, while genuine paid-recipient
+delivery remains untested. Production is unchanged.
