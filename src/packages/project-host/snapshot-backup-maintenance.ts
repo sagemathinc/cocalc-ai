@@ -501,7 +501,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hostId,
       lifecycle_active: admission.lifecycle_active,
       pressure_state: admission.pressure_state,
-      policy: "overdue-backup-only",
+      policy: "per-operation-admission",
     });
   }
   const configuredParallelism = parsePositiveInteger(
@@ -730,7 +730,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         if (
           !project_id ||
           schedule.disabled ||
-          sweepRestricted ||
           (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
           ((dueAt == null || dueAt > Date.now()) && !reconciliationDue) ||
           inFlightSnapshots.has(project_id)
@@ -931,7 +930,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
           starved &&
           starvationOverrideEligible &&
           starvationOverrideReservations < starvationOverrideLimit;
-        if (sweepRestricted && !allowStarvationOverride) return;
         if (allowStarvationOverride) starvationOverrideReservations += 1;
         inFlightBackups.add(project_id);
         const startedAt = Date.now();

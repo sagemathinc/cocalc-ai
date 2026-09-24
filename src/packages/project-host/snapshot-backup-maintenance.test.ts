@@ -129,12 +129,20 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
-  it("keeps emergency sweeps bounded and fail-closed", async () => {
+  it("records due work deferred by emergency pressure without running it", async () => {
     getStorageAdmissionStatusMock.mockReturnValue({
       mode: "enforce",
       lifecycle_active: 0,
       pressure_state: "emergency",
     });
+    admitStorageOperationMock.mockImplementation(({ operation_kind }) => ({
+      admitted: false,
+      would_defer: true,
+      starvation_override: false,
+      reason: "io_pressure_emergency",
+      operation_id: operation_kind,
+      release: releaseStorageOperationMock,
+    }));
     const { runProjectSnapshotBackupMaintenanceSweepOnce } =
       await import("./snapshot-backup-maintenance");
 
@@ -145,7 +153,24 @@ describe("snapshot-backup-maintenance", () => {
       active_days: 2,
       limit: 250,
     });
-    expect(admitStorageOperationMock).not.toHaveBeenCalled();
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        kind: "snapshot",
+        outcome: "deferred",
+        reason: "io_pressure_emergency",
+      }),
+    );
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-2",
+        kind: "backup",
+        outcome: "deferred",
+        reason: "io_pressure_emergency",
+      }),
+    );
   });
 
   afterEach(() => {
@@ -814,6 +839,17 @@ describe("snapshot-backup-maintenance", () => {
       lifecycle_active: 1,
       pressure_state: "normal",
     });
+    admitStorageOperationMock.mockImplementation(
+      ({ operation_kind, allow_starvation_override }) => ({
+        admitted:
+          operation_kind === "scheduled_backup" && !!allow_starvation_override,
+        would_defer: true,
+        starvation_override: !!allow_starvation_override,
+        reason: "lifecycle_active",
+        operation_id: operation_kind,
+        release: releaseStorageOperationMock,
+      }),
+    );
     listProjectMaintenanceSchedulesMock.mockResolvedValue([
       {
         project_id: "old-1",
@@ -849,6 +885,14 @@ describe("snapshot-backup-maintenance", () => {
       project_id: "old-1",
       allow_starvation_override: true,
     });
+    expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "old-2",
+        kind: "backup",
+        outcome: "deferred",
+        reason: "lifecycle_active",
+      }),
+    );
   });
 
   it("does not overlap sweeps", async () => {

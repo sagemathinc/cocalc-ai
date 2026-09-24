@@ -538,8 +538,10 @@ export async function getProjectRecoveryAttemptHealth(): Promise<{
                   'backup_capacity_busy', 'snapshot_not_created',
                   'backup_not_created', 'snapshot_maintenance_disabled',
                   'legacy_restore_active', 'memory_pressure',
-                  'available_memory', 'io_pressure', 'lifecycle_active'
+                  'available_memory', 'io_pressure', 'lifecycle_active',
+                  'lifecycle_settle'
                 ) THEN reason
+                WHEN left(reason, 12) = 'io_pressure_' THEN 'io_pressure'
                 WHEN lower(reason) LIKE '%quota%' THEN 'quota'
                 WHEN lower(reason) LIKE '%retention%' THEN 'retention'
                 WHEN lower(reason) LIKE '%egress%' THEN 'egress'
