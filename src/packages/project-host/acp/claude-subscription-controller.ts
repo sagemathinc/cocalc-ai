@@ -11,6 +11,7 @@ import { mountArg } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
+import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
@@ -44,6 +45,12 @@ const CONTROLLER_HOME = "/home/claude";
 const CONTROLLER_WORKSPACE = "/workspace";
 const MANAGED_HARNESSES = "/opt/cocalc/harnesses";
 const logger = getLogger("project-host:acp:claude-subscription-controller");
+
+// Project startup normalizes image references before caching them. Use the
+// same cache key or a first Claude turn unnecessarily pulls the base image.
+export const CLAUDE_CONTROLLER_BASE_IMAGE = normalizeRootfsImageName(
+  DEFAULT_PROJECT_IMAGE,
+);
 
 export async function cleanupClaudeSubscriptionController(options: {
   stopContainer: () => Promise<void>;
@@ -172,7 +179,7 @@ export async function launchClaudeSubscriptionController(
     credentialId,
   });
   await ensureProjectContainerRunning({ projectId, accountId });
-  const rootfs = await extractBaseImage(DEFAULT_PROJECT_IMAGE);
+  const rootfs = await extractBaseImage(CLAUDE_CONTROLLER_BASE_IMAGE);
   const home = await mkdtemp(claudeControllerHomePrefix());
   const launcher = projectPoolPodmanLauncher(projectId);
   const name = `claude-controller-${projectId}-${randomUUID()}`;

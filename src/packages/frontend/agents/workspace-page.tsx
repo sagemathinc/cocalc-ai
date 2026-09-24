@@ -78,7 +78,7 @@ import {
   readHarnessCredentialSelection,
   writeHarnessCredentialSelection,
 } from "@cocalc/frontend/chat/harness-credential-selection";
-import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
+import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import {
   NewAgentRuntimeSelect,
   type NewAgentRuntimeKind,
@@ -1869,16 +1869,17 @@ function NewAgentPanel({
             </Text>
           </Space>
         )}
-        {runtimeKind === "claude-code" && (
-          <Text type="warning">
-            {claudeCredentialTrustWarning(
-              claudeCredential.mode === "account-api-key" ||
-                claudeCredential.mode === "account-subscription"
-                ? claudeCredential.mode
-                : "project-secret",
-            )}
-          </Text>
-        )}
+        {runtimeKind === "claude-code" &&
+          claudeCredential.mode !== "project-secret" && (
+            <Text type="warning">
+              {claudeCredentialTrustWarning(
+                claudeCredential.mode === "account-api-key" ||
+                  claudeCredential.mode === "account-subscription"
+                  ? claudeCredential.mode
+                  : "project-secret",
+              )}
+            </Text>
+          )}
         {runtimeKind === "claude-code" && projectId && (
           <ClaudeSubscriptionConnect
             key={`${boundAccount.accountId}:${projectId}`}
@@ -1926,11 +1927,14 @@ function NewAgentPanel({
                 The key is mounted read-only at runtime and is not stored in
                 this chat. Claude Code has full access to this project.
               </Text>
-              <ProjectSecretsModal
-                open={projectSecretsOpen}
-                project_id={projectId}
-                onClose={() => setProjectSecretsOpen(false)}
-              />
+              {projectSecretsOpen && (
+                <ClaudeProjectSecretModal
+                  open
+                  projectId={projectId}
+                  onClose={() => setProjectSecretsOpen(false)}
+                  warning={claudeCredentialTrustWarning("project-secret")}
+                />
+              )}
             </Space>
           )}
         {(isFirstRun || busy) && (

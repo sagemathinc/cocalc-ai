@@ -41,7 +41,7 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
   expect(runtime.profile).not.toHaveProperty("executable");
 });
 
-test("Claude settings distinguish account-key usage from readable project secrets", () => {
+test("Claude project-key warning is shown only in its focused dialog", async () => {
   render(
     <HarnessRuntimeSummary
       runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
@@ -50,8 +50,8 @@ test("Claude settings distinguish account-key usage from readable project secret
     />,
   );
   expect(
-    screen.getByText(/project secret can be read, copied, or used/),
-  ).toBeTruthy();
+    screen.queryByText(/project secret can be read, copied, or used/),
+  ).toBeNull();
   expect(claudeCredentialTrustWarning("account-api-key")).toMatch(
     /does not expose the account-stored key value.*reading or copying/,
   );
@@ -61,6 +61,16 @@ test("Claude settings distinguish account-key usage from readable project secret
   expect(
     screen.getByRole("combobox", { name: "Claude credential" }),
   ).toBeTruthy();
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Manage project secret" }),
+  );
+  expect(await screen.findByText("Claude Code project API key")).toBeTruthy();
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(
+    screen.getByText(/project secret can be read, copied, or used/),
+  ).toBeTruthy();
+  expect(screen.getByLabelText("ANTHROPIC_API_KEY")).toBeTruthy();
 });
 
 test("Claude account-key selection says its value is not copied into the project", () => {

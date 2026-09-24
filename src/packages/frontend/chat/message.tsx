@@ -543,13 +543,6 @@ export default function Message({
   const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
   const isGenericAgentMessage =
     isCodexAgentMessage && field(message, "acp_runtime_kind") === "acp";
-  const senderName = rpcAttribution
-    ? rpcAttribution.label
-    : isGenericAgentMessage
-      ? "ACP agent"
-    : isCodexAgentMessage
-      ? codexAgentName(senderId)
-      : get_user_name(senderId);
   const showHumanAvatar = showParticipantAvatar({
     showAvatar: show_avatar,
     senderId,
@@ -1295,6 +1288,17 @@ export default function Message({
     });
   }, [actions, threadLookup]);
   const threadCodexConfig = threadMetadata?.acp_config;
+  const acpDisplayName =
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code"
+      ? "Claude Code"
+      : "ACP agent";
+  const senderName = rpcAttribution
+    ? rpcAttribution.label
+    : isGenericAgentMessage
+      ? acpDisplayName
+      : isCodexAgentMessage
+        ? codexAgentName(senderId)
+        : get_user_name(senderId);
   const messageRuntimeKind =
     (field(message, "acp_runtime_kind") ??
       threadMetadata?.agent_runtime?.kind) === "acp"
@@ -3149,6 +3153,7 @@ export default function Message({
       state: acpStateToRender,
       runtimeKind: messageRuntimeKind,
       isViewersMessage: is_viewers_message,
+      agentName: acpDisplayName,
     });
     if (acpStateToRender === "queue") {
       return (

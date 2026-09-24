@@ -27,7 +27,7 @@ import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
   CLAUDE_SUBSCRIPTION_KIND,
 } from "@cocalc/util/ai/external-credential-profiles";
-import { ProjectSecretsModal } from "@cocalc/frontend/project/settings/secrets";
+import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -276,23 +276,26 @@ function ClaudeCredentialControl({
             choose another credential.
           </div>
         )}
-      <Typography.Text type="warning">
-        {claudeCredentialTrustWarning(
-          value.startsWith("account-subscription:")
-            ? "account-subscription"
-            : value.startsWith("account-api-key:")
-              ? "account-api-key"
-              : "project-secret",
-        )}
-      </Typography.Text>
+      {value !== "project-secret" && (
+        <Typography.Text type="warning">
+          {claudeCredentialTrustWarning(
+            value.startsWith("account-subscription:")
+              ? "account-subscription"
+              : "account-api-key",
+          )}
+        </Typography.Text>
+      )}
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>
       )}
-      <ProjectSecretsModal
-        open={secretsOpen}
-        project_id={projectId}
-        onClose={() => setSecretsOpen(false)}
-      />
+      {secretsOpen && (
+        <ClaudeProjectSecretModal
+          open
+          projectId={projectId}
+          onClose={() => setSecretsOpen(false)}
+          warning={claudeCredentialTrustWarning("project-secret")}
+        />
+      )}
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );

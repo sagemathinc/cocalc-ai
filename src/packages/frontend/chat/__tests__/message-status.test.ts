@@ -56,6 +56,24 @@ describe("runtime-aware message state", () => {
       }),
     ).toEqual({ label: "queue", canSteer: true });
   });
+  it("names Claude Code rather than the generic ACP agent", () => {
+    expect(
+      acpMessageStatePresentation({
+        state: "running",
+        runtimeKind: "acp",
+        isViewersMessage: true,
+        agentName: "Claude Code",
+      }).label,
+    ).toBe("Claude Code is working");
+    expect(
+      acpMessageStatePresentation({
+        state: "sending",
+        runtimeKind: "acp",
+        isViewersMessage: true,
+        agentName: "Claude Code",
+      }).label,
+    ).toBe("submitting to Claude Code");
+  });
 });
 
 describe("codexActivityBlocksToSelectableMarkdown", () => {

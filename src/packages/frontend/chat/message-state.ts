@@ -16,12 +16,14 @@ export function acpMessageStatePresentation({
   state,
   runtimeKind,
   isViewersMessage,
+  agentName,
 }: {
   state: string;
   runtimeKind: "acp" | "codex";
   isViewersMessage: boolean;
+  agentName?: string;
 }): { label: string; canSteer: boolean } {
-  const name = runtimeKind === "acp" ? "ACP agent" : "Codex";
+  const name = runtimeKind === "acp" ? agentName || "ACP agent" : "Codex";
   return {
     label:
       state === "sending"

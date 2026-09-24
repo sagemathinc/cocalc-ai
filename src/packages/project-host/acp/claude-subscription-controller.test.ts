@@ -4,9 +4,14 @@
  */
 
 import {
+  CLAUDE_CONTROLLER_BASE_IMAGE,
   claudeSubscriptionContainerArgs,
   cleanupClaudeSubscriptionController,
 } from "./claude-subscription-controller";
+
+test("controller uses the same normalized image cache key as project startup", () => {
+  expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
+});
 
 jest.mock("@cocalc/backend/podman", () => ({
   mountArg: ({ source, target, readOnly }) =>
