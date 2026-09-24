@@ -1968,3 +1968,34 @@ due work, memory gate, or missing recent storage-pressure telemetry was
 reported. Overall site health was warning because of separate existing
 checks, including recent admin alerts and insufficient browser-latency
 samples. Production is unchanged.
+
+## 2026-09-24 retention-limit staging canary
+
+Disposable staging project `1206f6cb-0624-4d42-8062-cdc693638932` was
+created on the upgraded canary host under the staging administrator. Its
+effective entitlement allows 15 backups. The normal worker made the first
+backup, and 14 manual backups filled the repository to exactly 15. A further
+manual create failed with `there is a limit of 15 backups`, leaving the
+inventory at 15. This verifies the live ordinary upload limit.
+
+To exercise the scheduled worker without waiting a day, an audited,
+project-ID/host/repository-scoped database write temporarily aged only this
+disposable project's bay `last_backup` value by 25 hours. The dry run returned
+exactly one row (`c23a4980-26fc-48f2-b360-593d886210be`); the committed
+write is audit `1060206f-3d56-46e3-b1f6-38a7891a88b7`. After a marker edit,
+the worker reconciled against the fresher repository copy from 23:34:52 UTC
+and restored the true `last_backup` time. It reported a deferred
+`backup_not_created` attempt instead of deleting a copy or claiming an
+unmade backup. All 15 backup IDs remained listed. A retained older backup
+(`4f7c54c1eda155d5cf99d4cb63aa9b566608bb69a56e705e65086d875cd623e3`)
+restored `recovery-canary/marker.txt` to another path, and its bytes matched
+`retention-limit-marker-20260924T2331Z`. At 23:37:09 UTC project-recovery
+health was healthy, including 4/4 restore-drill shard coverage.
+
+The canary remains in staging with 15 backups and later file edits. Its
+ordinary daily due time is approximately 2026-09-25 23:34 UTC. Observe the
+natural scheduled replacement then, verify the newest marker and older-copy
+preservation, and delete the canary under normal seven-day backup retention
+afterward. The induced stale-bay reconciliation is useful safety evidence but
+is not evidence that an at-limit replacement completed. A controlled
+repository-capacity-denial drill remains open. Production is unchanged.
