@@ -10,6 +10,11 @@
 import debug from "debug";
 debug.log = console.log.bind(console); // see https://github.com/debug-js/debug#output-streams
 
+// Register editors before a restored project can initialize its Redux actions.
+// Importing the registry only from ProjectActions leaves a circular import with
+// file editors that use project actions during their own module initialization.
+import "./editors/register-all";
+
 import { COCALC_MINIMAL } from "./fullscreen";
 
 // Load/initialize Redux-based react functionality
