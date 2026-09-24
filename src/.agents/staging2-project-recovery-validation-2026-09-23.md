@@ -362,6 +362,54 @@ recent pressure telemetry, 175 succeeded, 41 deferred, and zero failed
 maintenance attempts in 24 hours. The staging account still has no paying
 recovery sample, so this does not validate paying priority or objectives.
 
+## September 24 paying warnings, operator debt report, and restore drills
+
+Commit `2fb546cf38` adds a project-level warning for critical local snapshot
+or off-host backup delay. The owning bay resolves the current storage payer
+when a due time crosses the two-hour snapshot or 12-hour backup incident
+threshold. The warning links to the appropriate project recovery view. A
+focused server test checks usage-account funding, frontend tests check paid
+and free visibility and keyboard navigation, and the server and frontend
+builds plus frontend lint passed. Staging2 hub artifact
+`20260924T023958Z-20260924T023833Z-2fb546cf-2fb546cf38-recovery-warning-dirty`
+and static artifact
+`20260924T024128Z-20260924T024052Z-2fb546cf-2fb546cf38-recovery-warning-dirty`
+deployed successfully. The hub passed seven smoke checks, and static smoke
+verified 3,301 current or previous content-addressed assets. A real paid
+breach has not been induced on staging2, and browser UI testing is still
+waiting for the first-party staging2 login approval.
+
+Commit `3db7b894bf` adds the five oldest overdue projects per storage class
+and recovery kind to operator health, with project ID, host, due time, and
+delay. The list remains bounded while walking the entire bay inventory.
+The focused server test and build passed. Hub artifact
+`20260924T024628Z-20260924T024503Z-3db7b894-3db7b894bf-recovery-oldest-debt-dirty`
+deployed, and all seven hub smoke checks passed. At about 02:48 UTC,
+`admin health --wide` listed a newly due free snapshot for project
+`b528cb8d-797c-464c-8f60-1508789595c2`, with its exact due time and
+host, confirming that the new operator detail is live. The overall project
+recovery level was warning for that brief delay: zero paying critical debt,
+zero unknown statuses, zero hosts missing recent pressure telemetry, and
+204 succeeded, 41 deferred, zero failed attempts in the prior 24 hours.
+The next check returned healthy with the project absent from the debt list
+and 205 succeeded attempts, confirming that the brief warning cleared after
+recovery.
+
+Fresh remote-only restore drills succeeded on both staging2 project hosts.
+On the canary host, Rustic backup
+`46b41ca02c9891ff178699fed31876c4c64cdf98c51f05b79d755342ed03eadb`
+restored `recovery-canary/confirmed-id.txt` into a separate file in project
+`3441c07a-894a-4080-bf8b-acf2bc27d043`; both files had SHA-256
+`c3a848943654991ef2de9d997efc29873b6415c5b688b29b21874dada231f3f6`.
+On the shared host, Rustic backup
+`3e575fd771127b3e233c408d30d4663a11a2a68efc54f3edf1d12cba2d7ab67d`
+restored `recovery-canary/marker.txt` into a separate file in project
+`ac76eb98-13fc-43f5-b207-30c70313b5e8`; both files had SHA-256
+`db3f6c46072e81a7817771def53035af3535bb4067581ac48026c0cb55a6b1a2`.
+Both restore operations returned `succeeded`, and byte comparisons returned
+zero. These are two host samples, not evidence of coverage across every
+repository shard or paying class.
+
 ## Open findings and release gates
 
 1. Browser UI testing is pending a staging2 CLI browser-approved login and
