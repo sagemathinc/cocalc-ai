@@ -121,8 +121,8 @@ describeDb("account-home Agent Networks", () => {
         "remote",
       ]);
       await expect(
-        store.name(account, { endpoint: source, name: "replacement" }, 2),
-      ).resolves.toMatchObject({ name: "replacement" });
+        store.name(account, { endpoint: remote, name: "builder" }, 2),
+      ).resolves.toMatchObject({ name: "builder", endpoint: remote });
     } finally {
       projectWasDeleted.mockReset().mockResolvedValue(false);
       identity.mockImplementation(identityResult);
@@ -139,6 +139,87 @@ describeDb("account-home Agent Networks", () => {
       projectWasDeleted.mockReset().mockResolvedValue(false);
       identity.mockImplementation(identityResult);
     }
+  });
+
+  test("retirement releases all aliases without reserving a deleted endpoint", async () => {
+    await store.name(account, { endpoint: source, name: "renamed" });
+    await expect(store.resolveName(account, "builder")).rejects.toThrow(
+      "name_renamed:renamed",
+    );
+    await expect(
+      store.name(account, { endpoint: peer, name: "builder" }),
+    ).rejects.toThrow("name_reserved");
+    await store.retire(account, { endpoint: source });
+    await expect(store.resolveName(account, "builder")).rejects.toThrow(
+      "name_not_found",
+    );
+    await expect(store.resolveName(account, "renamed")).rejects.toThrow(
+      "name_not_found",
+    );
+    await expect(
+      store.name(account, { endpoint: peer, name: "builder" }),
+    ).resolves.toMatchObject({ endpoint: peer });
+    await expect(
+      store.name(account, { endpoint: remote, name: "renamed" }),
+    ).resolves.toMatchObject({ endpoint: remote });
+  });
+
+  test("reclaims legacy retired names but preserves live rename redirects", async () => {
+    await db.query(
+      "UPDATE agent_personal_names SET retired_at=now() WHERE account_id=$1 AND agent_id=$2",
+      [account, source.agent_id],
+    );
+    await store.name(account, { endpoint: peer, name: "reviewer-new" });
+    await expect(
+      store.name(account, { endpoint: remote, name: "builder" }),
+    ).resolves.toMatchObject({ endpoint: remote });
+    await expect(store.resolveName(account, "builder")).resolves.toMatchObject({
+      endpoint: remote,
+    });
+    await expect(
+      store.name(account, { endpoint: source, name: "reviewer" }),
+    ).rejects.toThrow("name_reserved");
+    await expect(store.resolveName(account, "reviewer")).rejects.toThrow(
+      "name_renamed:reviewer-new",
+    );
+  });
+
+  test("reusing a retired name does not transfer network membership", async () => {
+    const network = await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Original endpoints",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+        ],
+      },
+      8,
+    );
+    await store.retire(account, { endpoint: source });
+    await store.name(account, { endpoint: secondPeer, name: "builder" });
+    await expect(
+      store.checkNetwork(
+        account,
+        network.agent_network_id,
+        secondPeer,
+        run_id,
+        peer,
+      ),
+    ).rejects.toThrow("not_a_member");
+    await expect(
+      store.checkNetwork(
+        account,
+        network.agent_network_id,
+        source,
+        run_id,
+        peer,
+      ),
+    ).rejects.toThrow("not_a_member");
+    await expect(store.resolveName(account, "builder")).resolves.toMatchObject({
+      endpoint: secondPeer,
+    });
   });
 
   test("a network can be created empty, populated, and emptied again", async () => {

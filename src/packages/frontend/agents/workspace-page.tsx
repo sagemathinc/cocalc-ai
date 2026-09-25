@@ -44,6 +44,7 @@ import {
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
 import { agentProjectTitle } from "./project-title";
+import { claimOnboardingName } from "./claim-onboarding-name";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
@@ -546,7 +547,7 @@ function NewAgentPanel({
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
-  const [firstRunName] = useState(() =>
+  const [firstRunName, setFirstRunName] = useState(() =>
     isFirstRun
       ? (restoredPreparation?.name ??
         (agents.some((agent) => agent.name === "agent")
@@ -555,6 +556,7 @@ function NewAgentPanel({
       : name,
   );
   const agentName = isFirstRun ? firstRunName : name;
+  const claimedNameRef = useRef<string | undefined>(undefined);
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
   const automaticProjectPromise = useRef<
@@ -644,7 +646,7 @@ function NewAgentPanel({
     modelOptions.find(({ value }) => value === config.model)?.reasoning ?? [];
   const problem = agentNameProblem(
     agentName,
-    agents,
+    isFirstRun ? [] : agents,
     pending
       ? {
           project_id: pending.projectId,
@@ -808,7 +810,7 @@ function NewAgentPanel({
       if (isFirstRun)
         writePreparedFirstAgent(boundAccount.accountId, {
           ...created,
-          name: agentName,
+          name: claimedNameRef.current ?? agentName,
           automaticProjectTitle: automaticProjectCreated.current?.title,
         });
       writeAgentSubscriptionSelection({
@@ -952,21 +954,37 @@ function NewAgentPanel({
         (await api.registerIdentity(locator));
       if (!identity) throw new Error("Unable to register this agent thread");
       boundAccount.assertCurrent();
-      await api.nameAgent({
-        endpoint: {
-          project_id: created.projectId,
-          agent_id: identity.agent_id,
-        },
-        name: normalizeAgentName(agentName),
-        description,
-        ...cachedAgentNameContext(locator),
-        project_title:
-          projectTitleOverride ??
-          (projectMap?.getIn([created.projectId, "title"]) as
-            | string
-            | undefined),
-        thread_title: agentName.trim(),
-      });
+      const claim = (candidate: string) => {
+        boundAccount.assertCurrent();
+        return api.nameAgent({
+          endpoint: {
+            project_id: created.projectId,
+            agent_id: identity.agent_id,
+          },
+          name: candidate,
+          description,
+          ...cachedAgentNameContext(locator),
+          project_title:
+            projectTitleOverride ??
+            (projectMap?.getIn([created.projectId, "title"]) as
+              | string
+              | undefined),
+          thread_title: candidate,
+        });
+      };
+      const preferred = normalizeAgentName(claimedNameRef.current ?? agentName);
+      const claimedName = isFirstRun
+        ? (await claimOnboardingName(preferred, claim)).name
+        : (await claim(preferred), preferred);
+      claimedNameRef.current = claimedName;
+      if (isFirstRun) {
+        setFirstRunName(claimedName);
+        writePreparedFirstAgent(boundAccount.accountId, {
+          ...created,
+          name: claimedName,
+          automaticProjectTitle: automaticProjectCreated.current?.title,
+        });
+      }
       return identity.agent_id;
     });
   }
@@ -1146,7 +1164,10 @@ function NewAgentPanel({
         );
       }
     }
-    rememberAgentName(normalizeAgentName(agentName), boundAccount.accountId);
+    rememberAgentName(
+      claimedNameRef.current ?? normalizeAgentName(agentName),
+      boundAccount.accountId,
+    );
     if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();

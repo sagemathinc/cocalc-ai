@@ -187,6 +187,20 @@ export class PersonalAgentStore {
       thread_title: opts.thread_title,
     };
     return this.locked(account, async (db) => {
+      // Older retirements kept every alias reserved. Reclaim those rows, but
+      // preserve redirects when the endpoint still has an active name.
+      await db.query(
+        `DELETE FROM agent_personal_names AS retired
+         WHERE retired.account_id=$1 AND retired.retired_at IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_personal_names AS active
+             WHERE active.account_id=retired.account_id
+               AND active.project_id=retired.project_id
+               AND active.agent_id=retired.agent_id
+               AND active.retired_at IS NULL
+           )`,
+        [account],
+      );
       const currentForEndpoint = (
         await db.query(
           "SELECT name FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
@@ -249,7 +263,7 @@ export class PersonalAgentStore {
     validateAgentEndpoint(opts.endpoint);
     await this.locked(account, async (db) => {
       await db.query(
-        "UPDATE agent_personal_names SET retired_at=now(),updated_at=now() WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+        "DELETE FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3",
         [account, opts.endpoint.project_id, opts.endpoint.agent_id],
       );
     });
