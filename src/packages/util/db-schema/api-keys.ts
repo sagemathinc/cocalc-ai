@@ -17,6 +17,18 @@ export const API_KEY_CAPABILITIES = [
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];
 
+export interface ApiKeyProjectGrant {
+  project_id: string;
+  capabilities: ApiKeyCapability[];
+  viewer_read_roots?: string[];
+}
+
+export interface ApiKeyScope {
+  version: 1;
+  account: ApiKeyCapability[];
+  projects: ApiKeyProjectGrant[];
+}
+
 export interface ApiKey {
   id: number;
   key_id?: string;
@@ -28,6 +40,8 @@ export interface ApiKey {
   name: string;
   capabilities: ApiKeyCapability[];
   allowed_project_ids: string[];
+  scope?: ApiKeyScope;
+  scope_revision?: number;
   last_active?: Date;
   secret?: string; // only when initially creating the key (and never in database)
 }
@@ -74,6 +88,15 @@ Table({
       type: "array",
       pg_type: "UUID[]",
       desc: "Explicit allow-list of project IDs this API key can access for project-scoped capabilities.",
+    },
+    scope: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Versioned per-project privileges for new scoped API keys.",
+    },
+    scope_revision: {
+      type: "integer",
+      desc: "Monotonically increasing revision invalidating derived credentials.",
     },
     last_active: {
       type: "timestamp",
