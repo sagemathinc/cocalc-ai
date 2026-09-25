@@ -285,6 +285,28 @@ test("new accounts without invitations go to new agent instead of project onboar
   expect(screen.queryByTestId("first-run-onboarding")).toBeNull();
 });
 
+test("Projects remains available after the first agent redirect in this session", () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "escape-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+
+  const firstVisit = render(<ProjectsPage />);
+  expect(mockLoadTarget).toHaveBeenCalledWith("agents/new", false, false);
+  firstVisit.unmount();
+  mockLoadTarget.mockClear();
+  mockProjectMap = ImmutableMap({
+    "new-project": ImmutableMap({ title: "My first project" }),
+  });
+
+  render(<ProjectsPage />);
+
+  expect(mockLoadTarget).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem("cocalc:agent-first-run:escape-account")).toBe(
+    "1",
+  );
+});
+
 test("invited accounts keep invitation onboarding", async () => {
   mockActiveTopTab = "projects";
   mockAccountId = "invited-account";

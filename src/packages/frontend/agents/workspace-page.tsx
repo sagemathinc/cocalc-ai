@@ -97,7 +97,10 @@ import {
   useEmailVerificationRequired,
   VerifyEmailRequiredPanel,
 } from "@cocalc/frontend/app/verify-email-banner";
-import { completeFirstRunWithAgent } from "@cocalc/frontend/projects/onboarding/agent-completion";
+import {
+  agentFirstRunStarted,
+  completeFirstRunWithAgent,
+} from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
@@ -211,7 +214,9 @@ import {
 } from "./agent-subscription-selection";
 import {
   assertAgentWorkingDirectory,
+  AgentProjectHomeNotReadyError,
   createAgentWorkingDirectory,
+  ensureAgentProjectHomeReady,
   effectiveNewAgentWorkingDirectory,
   MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
@@ -462,6 +467,8 @@ function NewAgentPanel({
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
   const boundAccount = useBoundAgentAccount();
+  const isFirstRun =
+    !sourceAgent && agentFirstRunStarted(boundAccount.accountId);
   const sourceConfig = useMemo(
     () => freshAgentExecutionConfig(selectedAgentCodexConfig(sourceAgent)),
     [sourceAgent?.endpoint.agent_id],
@@ -511,6 +518,11 @@ function NewAgentPanel({
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
+  const agentName = isFirstRun
+    ? agents.some((agent) => agent.name === "agent")
+      ? suggestedAgentName(agents, boundAccount.accountId)
+      : "agent"
+    : name;
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
   const inputControlRef = useRef<ChatInputControl | null>(null);
@@ -559,7 +571,7 @@ function NewAgentPanel({
   const reasoningOptions =
     modelOptions.find(({ value }) => value === config.model)?.reasoning ?? [];
   const problem = agentNameProblem(
-    name,
+    agentName,
     agents,
     pending
       ? {
@@ -679,9 +691,13 @@ function NewAgentPanel({
       directoryProjectId === targetProjectId
         ? directory.trim() || projectHome
         : projectHome;
-    await assertAgentWorkingDirectory(fs, workingDirectory);
+    if (workingDirectory === projectHome) {
+      await ensureAgentProjectHomeReady(fs, projectHome);
+    } else {
+      await assertAgentWorkingDirectory(fs, workingDirectory);
+    }
     const path = joinAbsolutePath(
-      getProjectHomeDirectory(targetProjectId),
+      projectHome,
       `.local/share/cocalc/agents/${uuid()}.chat`,
     );
     await projectActions.ensureContainingDirectoryExists(path);
@@ -691,7 +707,7 @@ function NewAgentPanel({
     });
     await waitForChatReady(chatActions);
     const threadId = chatActions.createEmptyThread({
-      name: name.trim(),
+      name: agentName.trim(),
       threadAgent: {
         mode: "codex",
         model: executionConfig.model,
@@ -729,9 +745,9 @@ function NewAgentPanel({
     setBusy(true);
     setError("");
     setMissingDirectory(undefined);
+    let targetProjectId = projectId;
     try {
       boundAccount.assertCurrent();
-      let targetProjectId = projectId;
       let createdProjectTitle: string | undefined;
       let executionConfig = config;
       if (!targetProjectId) {
@@ -799,7 +815,7 @@ function NewAgentPanel({
         executionConfig,
       );
     } catch (err) {
-      handleCreateError(err);
+      handleCreateError(err, targetProjectId);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
       setBusy(false);
@@ -831,13 +847,13 @@ function NewAgentPanel({
         project_id: created.projectId,
         agent_id: identity.agent_id,
       },
-      name: normalizeAgentName(name),
+      name: normalizeAgentName(agentName),
       description,
       ...cachedAgentNameContext(locator),
       project_title:
         projectTitleOverride ??
         (projectMap?.getIn([created.projectId, "title"]) as string | undefined),
-      thread_title: name.trim(),
+      thread_title: agentName.trim(),
     });
     if (request) {
       const actions = initChat(created.projectId, created.path, {
@@ -865,34 +881,39 @@ function NewAgentPanel({
         );
       }
     }
-    rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
+    rememberAgentName(normalizeAgentName(agentName), boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
     onCreated(identity.agent_id);
   }
 
-  function handleCreateError(err: unknown): void {
+  function handleCreateError(
+    err: unknown,
+    targetProjectId: string | undefined = projectId,
+  ): void {
     if (
-      projectId &&
+      targetProjectId &&
       (extractRuntimeSponsorDenial(err) ||
         getProjectStartPolicyBlockFromError(err))
     ) {
       showCodexProjectStartFailure({
         error: err,
-        projectId,
+        projectId: targetProjectId,
         onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
       });
       return;
     }
-    if (err instanceof MissingAgentWorkingDirectoryError && projectId) {
-      setMissingDirectory({ path: err.path, projectId });
+    if (err instanceof MissingAgentWorkingDirectoryError && targetProjectId) {
+      setMissingDirectory({ path: err.path, projectId: targetProjectId });
       setError("");
       return;
     }
     setError(
       isNamedAgentLimitError(err)
         ? "Your membership's named-agent limit was reached."
-        : `${err}`,
+        : err instanceof AgentProjectHomeNotReadyError
+          ? err.message
+          : `${err}`,
     );
   }
 
@@ -1052,45 +1073,55 @@ function NewAgentPanel({
       >
         <div style={{ textAlign: "center" }}>
           <Title level={2} style={{ marginBottom: 4 }}>
-            What should your new agent do?
+            {isFirstRun
+              ? "What would you like to work on?"
+              : "What should your new agent do?"}
           </Title>
-          <Text type="secondary">
-            {sourceAgent
-              ? `Using @${sourceAgent.name}'s project and settings as defaults. This starts a new conversation.`
-              : "Choose a name and describe the first task for your agent."}
-          </Text>
+          {!isFirstRun && (
+            <Text type="secondary">
+              {sourceAgent
+                ? `Using @${sourceAgent.name}'s project and settings as defaults. This starts a new conversation.`
+                : "Choose a name and describe the first task for your agent."}
+            </Text>
+          )}
         </div>
-        <NamedAgentLimitAlert directory={namedAgentDirectory} />
-        {!projectId && projectMap && (
-          <div>
-            {emailVerificationRequired ? (
-              <VerifyEmailRequiredPanel
-                title="Verify your email to create a project"
-                description="Your agent needs a project. Verify your email, then start your agent; we will create a project for it automatically."
-                compact
-              />
-            ) : (
-              <Alert
-                type="info"
-                showIcon
-                title="Your first project will be created automatically"
-                description="Describe a task and start your agent. You can also choose or create a project from the project selector."
-              />
-            )}
+        {(!isFirstRun || atLimit) && (
+          <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        )}
+        {!projectId &&
+          projectMap &&
+          (emailVerificationRequired || !isFirstRun) && (
+            <div>
+              {emailVerificationRequired ? (
+                <VerifyEmailRequiredPanel
+                  title="Verify your email to create a project"
+                  description="Your agent needs a project. Verify your email, then start your agent; we will create a project for it automatically."
+                  compact
+                />
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="Your first project will be created automatically"
+                  description="Describe a task and start your agent. You can also choose or create a project from the project selector."
+                />
+              )}
+            </div>
+          )}
+        {!isFirstRun && (
+          <div style={{ maxWidth: 320, width: "100%" }}>
+            <AgentNameInput
+              id="new-agent-name"
+              label="Name"
+              value={name}
+              onChange={setName}
+              problem={name.trim() ? problem : undefined}
+              busy={busy || !!pending}
+              autoFocus={false}
+              sideFeedback
+            />
           </div>
         )}
-        <div style={{ maxWidth: 320, width: "100%" }}>
-          <AgentNameInput
-            id="new-agent-name"
-            label="Name"
-            value={name}
-            onChange={setName}
-            problem={name.trim() ? problem : undefined}
-            busy={busy || !!pending}
-            autoFocus={false}
-            sideFeedback
-          />
-        </div>
         <div
           style={{
             background: UI_COLORS.surface,
@@ -1120,13 +1151,18 @@ function NewAgentPanel({
               fontSize={16}
               autoGrowMinHeight={40}
               autoGrowMaxHeight={420}
-              enableUpload
+              enableUpload={!isFirstRun}
               onUploadStart={() => setUploading(true)}
               onUploadEnd={() => setUploading(false)}
               hideHelp
               compactModeSwitch
+              fixedMode={isFirstRun ? "editor" : undefined}
               softFocus
-              placeholder="Ask your agent to build, research, debug, or explain…"
+              placeholder={
+                isFirstRun
+                  ? "Describe what you'd like to work on…"
+                  : "Ask your agent to build, research, debug, or explain…"
+              }
               style={{ fontSize: 16 }}
             />
           </div>
@@ -1136,204 +1172,209 @@ function NewAgentPanel({
               display: "flex",
               flexWrap: "nowrap",
               gap: 4,
+              justifyContent: isFirstRun ? "flex-end" : undefined,
               paddingTop: 2,
             }}
           >
-            <div
-              role="group"
-              aria-label="Message options"
-              style={{
-                alignItems: "center",
-                display: "flex",
-                flex: "1 1 0",
-                flexWrap: "wrap",
-                gap: 4,
-                minHeight: 32,
-                minWidth: 0,
-              }}
-            >
-              {projectId ? (
-                <AgentFileAttachment
-                  projectId={projectId}
-                  workingDirectory={effectiveDirectory}
-                  disabled={busy || !!pending}
-                  onInsert={(markdown) => {
-                    if (!inputControlRef.current?.insertText(markdown)) {
-                      setFirstRequest(
-                        (current) =>
-                          `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
-                      );
-                    }
-                    inputControlRef.current?.focus();
-                  }}
-                />
-              ) : (
-                <Button
-                  aria-label="Add files and more"
-                  disabled
-                  icon={<Icon name="plus" />}
-                  shape="circle"
-                  style={{ height: 32, minWidth: 32, width: 32 }}
-                  title="Choose a project before adding files"
-                  type="text"
-                />
-              )}
-              <DictateButton
-                borderless
-                inputControlRef={inputControlRef}
-                projectId={projectId}
-                session={composerSession}
-              />
-              <Popover
-                content={advancedSettings}
-                open={settingsOpen}
-                placement="bottomLeft"
-                trigger="click"
-                onOpenChange={(open) => {
-                  setSettingsOpen(open);
-                  if (open) setMoreSettingsOpen(false);
-                }}
-              >
-                <ComposerProjectDirectoryButton
-                  ref={projectSettingsButton}
-                  projectTitle={projectTitle}
-                  directory={effectiveDirectory}
-                  displayedDirectory={directoryLabel}
-                  disabled={busy || !!pending}
-                />
-              </Popover>
-              <span
+            {!isFirstRun && (
+              <div
+                role="group"
+                aria-label="Message options"
                 style={{
                   alignItems: "center",
-                  display: "inline-flex",
-                  flex: "0 1 auto",
+                  display: "flex",
+                  flex: "1 1 0",
+                  flexWrap: "wrap",
+                  gap: 4,
+                  minHeight: 32,
                   minWidth: 0,
-                  overflow: "hidden",
                 }}
               >
-                <Dropdown
-                  menu={{
-                    items: modelOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: config.model ? [config.model] : [],
-                    onClick: ({ key }) => {
-                      modelCustomized.current = true;
-                      setConfig((current) =>
-                        reconcileAgentConfig(
-                          { ...current, model: key },
-                          modelOptions,
-                        ),
-                      );
-                    },
-                  }}
-                  trigger={["click"]}
-                >
-                  <ComposerPillButton
-                    aria-label={`Change model. Current model: ${config.model}`}
-                    disabled={busy || !!pending || !!siteFundedPolicy}
-                    style={{
-                      maxWidth: 150,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {config.model}
-                  </ComposerPillButton>
-                </Dropdown>
-                <Text type="secondary">·</Text>
-                <Dropdown
-                  menu={{
-                    items: reasoningOptions.map(({ id, label }) => ({
-                      key: id,
-                      label,
-                    })),
-                    selectedKeys: config.reasoning ? [config.reasoning] : [],
-                    onClick: ({ key }) => {
-                      modelCustomized.current = true;
-                      setConfig((current) => ({
-                        ...current,
-                        reasoning: key as CodexReasoningId,
-                      }));
-                    },
-                  }}
-                  trigger={["click"]}
-                >
-                  <ComposerPillButton
-                    aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
-                    disabled={
-                      busy ||
-                      !!pending ||
-                      !!siteFundedPolicy ||
-                      reasoningOptions.length === 0
-                    }
-                  >
-                    {selectedReasoningLabel}
-                  </ComposerPillButton>
-                </Dropdown>
-                <Text type="secondary">·</Text>
-                <Dropdown
-                  menu={{
-                    items: paymentOptions.map(({ value, label, disabled }) => ({
-                      key: value,
-                      label,
-                      disabled,
-                    })),
-                    selectedKeys: [selectedPaymentValue],
-                    onClick: ({ key }) => {
-                      if (key.startsWith("subscription:")) {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: "subscription",
-                          credentialId: key.slice("subscription:".length),
-                        }));
-                      } else {
-                        setConfig((current) => ({
-                          ...current,
-                          paymentSource: key as CodexPaymentSourcePreference,
-                          credentialId: undefined,
-                        }));
+                {projectId ? (
+                  <AgentFileAttachment
+                    projectId={projectId}
+                    workingDirectory={effectiveDirectory}
+                    disabled={busy || !!pending}
+                    onInsert={(markdown) => {
+                      if (!inputControlRef.current?.insertText(markdown)) {
+                        setFirstRequest(
+                          (current) =>
+                            `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
+                        );
                       }
-                    },
-                  }}
-                  trigger={["click"]}
-                >
-                  <ComposerPillButton
-                    aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                    disabled={busy || !!pending || paymentSourceLoading}
-                    style={{
-                      maxWidth: 120,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      inputControlRef.current?.focus();
                     }}
-                  >
-                    {selectedPaymentLabel}
-                  </ComposerPillButton>
-                </Dropdown>
-              </span>
-              <Popover
-                content={advancedSettings}
-                open={moreSettingsOpen}
-                placement="bottomRight"
-                trigger="click"
-                onOpenChange={(open) => {
-                  setMoreSettingsOpen(open);
-                  if (open) setSettingsOpen(false);
-                }}
-              >
-                <Button
-                  aria-label="More agent settings"
-                  aria-haspopup="dialog"
-                  icon={<Icon name="sliders" />}
-                  size="small"
-                  type="text"
-                  disabled={busy || !!pending}
+                  />
+                ) : (
+                  <Button
+                    aria-label="Add files and more"
+                    disabled
+                    icon={<Icon name="plus" />}
+                    shape="circle"
+                    style={{ height: 32, minWidth: 32, width: 32 }}
+                    title="Choose a project before adding files"
+                    type="text"
+                  />
+                )}
+                <DictateButton
+                  borderless
+                  inputControlRef={inputControlRef}
+                  projectId={projectId}
+                  session={composerSession}
                 />
-              </Popover>
-              <span style={{ flex: 1 }} />
-            </div>
+                <Popover
+                  content={advancedSettings}
+                  open={settingsOpen}
+                  placement="bottomLeft"
+                  trigger="click"
+                  onOpenChange={(open) => {
+                    setSettingsOpen(open);
+                    if (open) setMoreSettingsOpen(false);
+                  }}
+                >
+                  <ComposerProjectDirectoryButton
+                    ref={projectSettingsButton}
+                    projectTitle={projectTitle}
+                    directory={effectiveDirectory}
+                    displayedDirectory={directoryLabel}
+                    disabled={busy || !!pending}
+                  />
+                </Popover>
+                <span
+                  style={{
+                    alignItems: "center",
+                    display: "inline-flex",
+                    flex: "0 1 auto",
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <Dropdown
+                    menu={{
+                      items: modelOptions.map(({ value, label, disabled }) => ({
+                        key: value,
+                        label,
+                        disabled,
+                      })),
+                      selectedKeys: config.model ? [config.model] : [],
+                      onClick: ({ key }) => {
+                        modelCustomized.current = true;
+                        setConfig((current) =>
+                          reconcileAgentConfig(
+                            { ...current, model: key },
+                            modelOptions,
+                          ),
+                        );
+                      },
+                    }}
+                    trigger={["click"]}
+                  >
+                    <ComposerPillButton
+                      aria-label={`Change model. Current model: ${config.model}`}
+                      disabled={busy || !!pending || !!siteFundedPolicy}
+                      style={{
+                        maxWidth: 150,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {config.model}
+                    </ComposerPillButton>
+                  </Dropdown>
+                  <Text type="secondary">·</Text>
+                  <Dropdown
+                    menu={{
+                      items: reasoningOptions.map(({ id, label }) => ({
+                        key: id,
+                        label,
+                      })),
+                      selectedKeys: config.reasoning ? [config.reasoning] : [],
+                      onClick: ({ key }) => {
+                        modelCustomized.current = true;
+                        setConfig((current) => ({
+                          ...current,
+                          reasoning: key as CodexReasoningId,
+                        }));
+                      },
+                    }}
+                    trigger={["click"]}
+                  >
+                    <ComposerPillButton
+                      aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                      disabled={
+                        busy ||
+                        !!pending ||
+                        !!siteFundedPolicy ||
+                        reasoningOptions.length === 0
+                      }
+                    >
+                      {selectedReasoningLabel}
+                    </ComposerPillButton>
+                  </Dropdown>
+                  <Text type="secondary">·</Text>
+                  <Dropdown
+                    menu={{
+                      items: paymentOptions.map(
+                        ({ value, label, disabled }) => ({
+                          key: value,
+                          label,
+                          disabled,
+                        }),
+                      ),
+                      selectedKeys: [selectedPaymentValue],
+                      onClick: ({ key }) => {
+                        if (key.startsWith("subscription:")) {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: "subscription",
+                            credentialId: key.slice("subscription:".length),
+                          }));
+                        } else {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: key as CodexPaymentSourcePreference,
+                            credentialId: undefined,
+                          }));
+                        }
+                      },
+                    }}
+                    trigger={["click"]}
+                  >
+                    <ComposerPillButton
+                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                      disabled={busy || !!pending || paymentSourceLoading}
+                      style={{
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {selectedPaymentLabel}
+                    </ComposerPillButton>
+                  </Dropdown>
+                </span>
+                <Popover
+                  content={advancedSettings}
+                  open={moreSettingsOpen}
+                  placement="bottomRight"
+                  trigger="click"
+                  onOpenChange={(open) => {
+                    setMoreSettingsOpen(open);
+                    if (open) setSettingsOpen(false);
+                  }}
+                >
+                  <Button
+                    aria-label="More agent settings"
+                    aria-haspopup="dialog"
+                    icon={<Icon name="sliders" />}
+                    size="small"
+                    type="text"
+                    disabled={busy || !!pending}
+                  />
+                </Popover>
+                <span style={{ flex: 1 }} />
+              </div>
+            )}
             <Button
               type="primary"
               shape="circle"
@@ -1343,40 +1384,46 @@ function NewAgentPanel({
               style={{ height: 32, minWidth: 32, width: 32 }}
               loading={busy}
               disabled={
-                uploading || !!problem || !firstRequest.trim() || atLimit
+                uploading ||
+                !!problem ||
+                !firstRequest.trim() ||
+                atLimit ||
+                (!projectId && (!projectMap || emailVerificationRequired))
               }
               onClick={() => void create()}
             />
           </div>
         </div>
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            justifyContent: "space-between",
-          }}
-        >
-          <Space size={4} wrap>
-            <Text type="secondary">Shift+Enter to start</Text>
-            <Button
-              type="link"
-              disabled={busy || uploading || !!problem || atLimit}
-              onClick={() => void create(undefined, true)}
-            >
-              Create without a task
-            </Button>
-          </Space>
-          <Space>
-            <NamedAgentUsage directory={namedAgentDirectory} />
-            {agents.length > 0 && (
-              <Button type="text" disabled={busy} onClick={onCancel}>
-                Cancel
+        {!isFirstRun && (
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              justifyContent: "space-between",
+            }}
+          >
+            <Space size={4} wrap>
+              <Text type="secondary">Shift+Enter to start</Text>
+              <Button
+                type="link"
+                disabled={busy || uploading || !!problem || atLimit}
+                onClick={() => void create(undefined, true)}
+              >
+                Create without a task
               </Button>
-            )}
-          </Space>
-        </div>
+            </Space>
+            <Space>
+              <NamedAgentUsage directory={namedAgentDirectory} />
+              {agents.length > 0 && (
+                <Button type="text" disabled={busy} onClick={onCancel}>
+                  Cancel
+                </Button>
+              )}
+            </Space>
+          </div>
+        )}
         {paymentSourceError && (
           <Alert
             role="alert"

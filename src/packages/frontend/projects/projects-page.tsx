@@ -60,7 +60,10 @@ import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/le
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { load_target } from "@cocalc/frontend/history";
-import { beginAgentFirstRun } from "./onboarding/agent-completion";
+import {
+  agentFirstRunStarted,
+  beginAgentFirstRun,
+} from "./onboarding/agent-completion";
 import {
   classifyFirstRunOnboarding,
   FIRST_RUN_ONBOARDING_SETTING,
@@ -310,7 +313,12 @@ export const ProjectsPage: React.FC = () => {
         savedFirstRunOnboarding.intent === "project-invite")
     );
   useEffect(() => {
-    if (!useAgentOnboarding || !accountId || activeTopTab !== "projects") {
+    if (
+      !useAgentOnboarding ||
+      !accountId ||
+      activeTopTab !== "projects" ||
+      agentFirstRunStarted(accountId)
+    ) {
       return;
     }
     beginAgentFirstRun(accountId);

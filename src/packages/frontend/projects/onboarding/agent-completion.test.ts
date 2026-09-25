@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import {
+  agentFirstRunStarted,
   beginAgentFirstRun,
   completeFirstRunWithAgent,
 } from "./agent-completion";
@@ -34,8 +35,11 @@ test("only agent-onboarding sessions complete first run", async () => {
   await completeFirstRunWithAgent("unrelated", "project");
   expect(mockSetOtherSettings).not.toHaveBeenCalled();
 
+  expect(agentFirstRunStarted("new-account")).toBe(false);
   beginAgentFirstRun("new-account");
+  expect(agentFirstRunStarted("new-account")).toBe(true);
   await completeFirstRunWithAgent("new-account", "project");
+  expect(agentFirstRunStarted("new-account")).toBe(false);
   expect(mockSetOtherSettings).toHaveBeenCalledWith(
     "first_run_onboarding_v1",
     expect.objectContaining({

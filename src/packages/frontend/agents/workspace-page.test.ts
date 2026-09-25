@@ -18,7 +18,9 @@ import {
 } from "./agent-subscription-selection";
 import {
   assertAgentWorkingDirectory,
+  AgentProjectHomeNotReadyError,
   createAgentWorkingDirectory,
+  ensureAgentProjectHomeReady,
   effectiveNewAgentWorkingDirectory,
   MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
@@ -235,6 +237,17 @@ describe("agent workspace paths", () => {
         "/home/user/file",
       ),
     ).rejects.toThrow('Working directory "/home/user/file" is not a directory');
+
+    await expect(
+      assertAgentWorkingDirectory(
+        {
+          stat: jest.fn(async () =>
+            Promise.reject(new Error("RPC unavailable")),
+          ),
+        },
+        "/home/user",
+      ),
+    ).rejects.toThrow("RPC unavailable");
   });
 
   it("creates and revalidates a missing working directory", async () => {
@@ -247,5 +260,53 @@ describe("agent workspace paths", () => {
       recursive: true,
     });
     expect(stat).toHaveBeenCalledWith("/home/user/scratch2");
+  });
+
+  it("prepares a new project home after transient filesystem startup failures", async () => {
+    const stat = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("ENOENT"))
+      .mockRejectedValueOnce(new Error("project starting"))
+      .mockResolvedValue({ isDirectory: () => true });
+    const mkdir = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("project starting"));
+
+    await ensureAgentProjectHomeReady({ mkdir, stat }, "/home/user", {
+      attempts: 3,
+      retryDelayMs: 0,
+    });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user", { recursive: true });
+    expect(stat).toHaveBeenCalledTimes(3);
+  });
+
+  it("creates the default home automatically when it does not exist yet", async () => {
+    const stat = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("ENOENT"))
+      .mockResolvedValue({ isDirectory: () => true });
+    const mkdir = jest.fn(async () => undefined);
+
+    await ensureAgentProjectHomeReady({ mkdir, stat }, "/home/user", {
+      attempts: 2,
+      retryDelayMs: 0,
+    });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user", { recursive: true });
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a workspace readiness problem rather than a missing chosen directory", async () => {
+    const fs = {
+      mkdir: jest.fn(async () => Promise.reject(new Error("project starting"))),
+      stat: jest.fn(async () => Promise.reject(new Error("ENOENT"))),
+    };
+    await expect(
+      ensureAgentProjectHomeReady(fs, "/home/user", {
+        attempts: 2,
+        retryDelayMs: 0,
+      }),
+    ).rejects.toBeInstanceOf(AgentProjectHomeNotReadyError);
   });
 });

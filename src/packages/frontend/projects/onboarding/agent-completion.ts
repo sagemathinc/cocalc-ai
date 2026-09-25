@@ -29,6 +29,20 @@ export function beginAgentFirstRun(accountId: string): void {
   }
 }
 
+export function agentFirstRunStarted(accountId: string | undefined): boolean {
+  if (!accountId) return false;
+  if (activeFirstRuns.has(accountId)) return true;
+  try {
+    return (
+      globalThis.sessionStorage?.getItem(
+        `${AGENT_FIRST_RUN_KEY}${accountId}`,
+      ) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function completeFirstRunWithAgent(
   accountId: string | undefined,
   projectId: string,
