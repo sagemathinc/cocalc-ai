@@ -2093,3 +2093,23 @@ health was healthy: zero oldest snapshot and backup delay, zero paying critical
 debt, unknown statuses, or unaccounted due work, and 4/4 active backup shards
 with passing recent remote-only restore drills. Overall site health remained
 warning for separate checks. Production is unchanged.
+
+## 2026-09-25 recovery-status read after rehome
+
+Commit `1bcf12ff3e` requires the current bay to own a project before reading
+its local recovery status. This closes a race in which a customer-warning scan
+could recheck a project after it rehomed and read a foreign shadow row from the
+old bay. The regular routed project view also gets a safe failure if ownership
+changes between directory resolution and the local read. Legacy rows with no
+explicit owner bay remain local.
+
+The focused recovery-status, customer-warning, and PGlite suites passed
+45/45 tests, including foreign and rehomed row rejection; the server
+TypeScript build passed. Staging2 hub artifact
+`20260925T001635Z-1bcf12ff-20260925T0016Z-1bcf12ff-recovery-status-bay-dirty`
+deployed as release `20260925001806-hub`. Migration, worker health, and all
+seven hub smoke checks passed. At 00:18:47 UTC, live project-recovery health
+was healthy with zero oldest snapshot and backup delay, zero paying critical
+debt, unknown status, or unaccounted due work, and 4/4 active backup shards
+covered by recent passing remote-only restore drills. Overall site health
+remained warning for separate checks. Production is unchanged.
