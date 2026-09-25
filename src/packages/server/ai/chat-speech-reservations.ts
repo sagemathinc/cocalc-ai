@@ -41,7 +41,7 @@ export async function reserveChatSpeechUsage({
 }: {
   accountId: string;
   requestId: string;
-  operation: "transcription" | "speech";
+  operation: "transcription" | "speech" | "live";
   model: string;
   reservedMicrousd: number;
 }): Promise<ChatSpeechUsageReservation> {
@@ -67,6 +67,7 @@ export async function reserveChatSpeechUsage({
     accountId,
     requestId,
     reservedMicrousd,
+    persistent: operation === "live",
   });
 
   const pool = getPool();
@@ -83,6 +84,7 @@ export async function reserveChatSpeechUsage({
     await client.query(
       `DELETE FROM ai_usage_log
        WHERE account_id=$1 AND tag=$2
+         AND media_operation IS DISTINCT FROM 'live'
          AND time < NOW() - ($3::BIGINT * INTERVAL '1 millisecond')`,
       [accountId, RESERVATION_TAG, RESERVATION_TTL_MS],
     );
@@ -159,7 +161,7 @@ export async function settleChatSpeechUsage({
   reservation: ChatSpeechUsageReservation;
   projectId?: string;
   path?: string;
-  operation: "transcription" | "speech";
+  operation: "transcription" | "speech" | "live";
   model: string;
   costMicrousd: number;
   durationMs: number;
@@ -202,8 +204,24 @@ export async function settleChatSpeechUsage({
       RESERVATION_TAG,
     ],
   );
-  if (rows.length !== 1)
-    throw new Error("speech usage reservation was not found");
+  if (rows.length !== 1) {
+    // A live lease can be retried after the global hold was committed and the
+    // usage row updated, but before its own row was marked ended.
+    const existing = await getPool().query(
+      `SELECT cost_microusd FROM ai_usage_log
+       WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
+      [
+        reservation.accountId,
+        reservation.requestId,
+        `chat-speech-${operation}`,
+      ],
+    );
+    if (
+      existing.rows.length !== 1 ||
+      Number(existing.rows[0].cost_microusd) !== costMicrousd
+    )
+      throw new Error("speech usage reservation was not found");
+  }
 }
 
 export async function releaseChatSpeechUsage(

@@ -12,7 +12,7 @@ TEST:
  - This should always work:  "mypy workspaces.py"
 """
 
-import argparse, json, os, platform, shlex, shutil, subprocess, sys, tempfile, time
+import argparse, json, os, platform, re, shlex, shutil, subprocess, sys, tempfile, time
 
 from typing import Any, Optional, Callable, List
 
@@ -66,10 +66,35 @@ def restore_package_test_tmpdir(tmpdir: str,
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def is_jest_backed_package(package_json: dict[str, Any], path: str) -> bool:
+def selected_test_script(scripts: dict[str, str],
+                         test_github_ci: bool) -> str:
+    if test_github_ci and 'test-github-ci' in scripts:
+        return 'test-github-ci'
+    if 'test:all' in scripts:
+        return 'test:all'
+    return 'test'
+
+
+def is_jest_backed_package(package_json: dict[str, Any], path: str,
+                           test_script: str) -> bool:
     scripts = package_json.get("scripts", {})
-    return path.endswith("packages/project-host") or any(
-        "jest" in command for command in scripts.values())
+    if path.endswith("packages/project-host"):
+        return True
+
+    def uses_jest(script: str, visited: set[str]) -> bool:
+        if script in visited:
+            return False
+        visited.add(script)
+        command = scripts.get(script, "")
+        if re.search(r"\bjest\b", command):
+            return True
+        return any(
+            uses_jest(match.group(1), visited)
+            for match in re.finditer(
+                r"\b(?:pnpm|npm|yarn)\s+(?:run\s+)?([\w:.-]+)", command)
+            if match.group(1) in scripts)
+
+    return uses_jest(test_script, set())
 
 
 def failed_jest_test_paths(report_path: str) -> List[str]:
@@ -569,7 +594,9 @@ def test(args) -> None:
         with open(os.path.join(package_path, 'package.json')) as package_file:
             package_data = json.load(package_file)
         package_scripts = package_data.get("scripts", {})
-        jest_backed = is_jest_backed_package(package_data, path)
+        test_script = selected_test_script(package_scripts,
+                                           args.test_github_ci)
+        jest_backed = is_jest_backed_package(package_data, path, test_script)
         if shard and not jest_backed:
             raise ValueError('--shard requires a Jest-backed package')
         if report_root:
@@ -593,9 +620,9 @@ def test(args) -> None:
             print("*" * 40)
             sys.stdout.flush(
             )  # Ensure output appears before subprocess starts
-            if args.test_github_ci and 'test-github-ci' in package_scripts:
+            if test_script == 'test-github-ci':
                 test_cmd = "pnpm run test-github-ci"
-            elif 'test:all' in package_scripts:
+            elif test_script == 'test:all':
                 test_cmd = "pnpm run --if-present test:all"
             else:
                 test_cmd = "pnpm run --if-present test"

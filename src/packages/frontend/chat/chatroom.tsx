@@ -44,6 +44,8 @@ import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
 import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
+import { ChatLiveVoice } from "./live-voice";
+import type { ProjectedChatMessage } from "@cocalc/chat-client";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
@@ -901,6 +903,16 @@ function ChatPanelContent({
   ]);
 
   const [composerSession, setComposerSession] = useState(0);
+  const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
+  const [dictationBusy, setDictationBusy] = useState(false);
+  const [dictationAvailable, setDictationAvailable] = useState(false);
+  const dictationStartRef = useRef<(() => void) | undefined>(undefined);
+  const registerDictationStart = useCallback(
+    (start: (() => void) | undefined) => {
+      dictationStartRef.current = start;
+    },
+    [],
+  );
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
   );
@@ -1383,6 +1395,7 @@ function ChatPanelContent({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
+  useEffect(() => setVoiceOptionsOpen(false), [selectedThreadId]);
   const selectedAttentionRecords = useMemo(
     () =>
       selectedThreadId
@@ -1726,6 +1739,29 @@ function ChatPanelContent({
         ? (actions.getMessagesInThread(selectedThreadLookupKey) ?? [])
         : [],
     [actions, selectedThreadLookupKey, messages],
+  );
+  const liveVoiceMessages = useMemo<ProjectedChatMessage[]>(
+    () =>
+      selectedThreadMessages.map((message) => {
+        const history = field<{ content: string; date: string }[]>(
+          message,
+          "history",
+        );
+        const latest = history?.[history.length - 1];
+        const generating = field<boolean>(message, "generating") === true;
+        return {
+          message_id: field<string>(message, "message_id") ?? "",
+          thread_id: selectedThreadId ?? "",
+          parent_message_id: field<string>(message, "parent_message_id"),
+          sender_id: field<string>(message, "sender_id") ?? "",
+          role: isAcpAssistantMessage(message) ? "agent" : "human",
+          content: latest?.content ?? "",
+          date: dateValue(message)?.toISOString() ?? latest?.date ?? "",
+          generating,
+          state: generating ? "running" : "complete",
+        };
+      }),
+    [selectedThreadMessages, selectedThreadId],
   );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
@@ -2165,6 +2201,45 @@ function ChatPanelContent({
       };
     };
     return resolveFromThreadKey(selectedThreadKey);
+  }
+
+  async function sendVoiceTask(
+    text: string,
+    isCurrentThread: () => boolean,
+  ): Promise<{ message_id: string }> {
+    if (
+      readOnly ||
+      !selectedThreadId ||
+      !isCurrentThread() ||
+      selectedThreadMetadata?.agent_kind !== "acp" ||
+      !aiAgentPolicyAllowed
+    ) {
+      throw new Error(
+        "Select an available Codex thread before speaking a task.",
+      );
+    }
+    if (isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource)) {
+      refreshCodexPaymentSource?.();
+      setCodexPaymentConfigOpen(true);
+      throw new Error("Configure this agent's payment source in chat first.");
+    }
+    await ensureProjectRunningForCodex({ project_id, redux });
+    if (!isCurrentThread())
+      throw new Error("The selected agent changed. Start a new voice call.");
+    const { parent_message_id } = resolveReplyTarget();
+    const chatIdentity = actions.reserveChatSendIdentity({
+      reply_thread_id: selectedThreadId,
+    });
+    const sent = actions.sendChat({
+      reply_thread_id: selectedThreadId,
+      parent_message_id,
+      input: text,
+      acpConfigOverride: selectedThreadMetadata.acp_config ?? undefined,
+      chatIdentity,
+      skipDraftDelete: true,
+    });
+    if (!sent) throw new Error("The agent did not accept the spoken task.");
+    return { message_id: chatIdentity.message_id };
   }
 
   async function sendMessage(
@@ -3072,6 +3147,21 @@ function ChatPanelContent({
         projectId={project_id}
         threadId={selectedThreadId ?? undefined}
       />
+      {selectedThreadMetadata?.agent_kind === "acp" && !effectiveReadOnly && (
+        <ChatLiveVoice
+          projectId={project_id}
+          threadId={selectedThreadId ?? ""}
+          messages={liveVoiceMessages}
+          onDelegate={sendVoiceTask}
+          visible={isVisible && tabIsVisible && isChatForeground}
+          panelOpen={voiceOptionsOpen && selectedThreadResolved == null}
+          onClose={() => setVoiceOptionsOpen(false)}
+          onDictate={
+            dictationAvailable ? () => dictationStartRef.current?.() : undefined
+          }
+          dictationBusy={dictationBusy}
+        />
+      )}
       {selectedThreadResolved != null ? (
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (
@@ -3121,6 +3211,15 @@ function ChatPanelContent({
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
             refreshCodexPaymentSource={refreshCodexPaymentSource}
+            voiceOptionsOpen={voiceOptionsOpen}
+            onToggleVoiceOptions={
+              selectedThreadMetadata?.agent_kind === "acp"
+                ? () => setVoiceOptionsOpen((open) => !open)
+                : undefined
+            }
+            onDictationStartReady={registerDictationStart}
+            onDictationBusyChange={setDictationBusy}
+            onDictationAvailabilityChange={setDictationAvailable}
             onOpenCodexPaymentConfig={() => {
               refreshCodexPaymentSource?.();
               setCodexPaymentConfigOpen(true);

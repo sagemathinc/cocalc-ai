@@ -784,6 +784,27 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...adHocEntries(["live_voice_sessions"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id: "Project context for the call, not lifecycle ownership.",
+    },
+    source: "server live-voice session schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Account-home provider lifecycle state. Unconfirmed sessions and their funding holds must remain durable for closure retries; account rehome needs explicit active-session handling.",
+  }),
+  ...adHocEntries(["live_voice_start_limits"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    source: "server live-voice admission schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Per-bay rolling admission and provider-failure counters. Account and credential identifiers are rate-limit scopes; rows expire after the admission window.",
+  }),
   ...adHocEntries(["notification_course_credit_states"], {
     ownership: "account-home",
     authority: "account_id",

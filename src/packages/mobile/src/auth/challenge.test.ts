@@ -38,3 +38,35 @@ test("identifies a browser login challenge as a mobile app request", async () =>
     globalThis.fetch = previousFetch;
   }
 });
+
+test("continues the same approval challenge after a suspended-browser network timeout", async () => {
+  const oldFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    if (++calls === 1) throw new TypeError("Network request timed out");
+    return new Response(
+      JSON.stringify({
+        state: "approved",
+        redeem_token: "redeem",
+        expires_at: "2099-01-01",
+      }),
+    );
+  };
+  try {
+    const { waitForLoginApproval } = await import("./challenge");
+    const result = await waitForLoginApproval({
+      site: normalizeSiteUrl("https://cocalc.test"),
+      challenge: {
+        challenge_id: "same",
+        poll_token: "poll",
+        approval_url: "https://cocalc.test",
+        expires_at: "2099-01-01",
+      },
+      pollIntervalMs: 0,
+    });
+    assert.equal(result.redeem_token, "redeem");
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = oldFetch;
+  }
+});

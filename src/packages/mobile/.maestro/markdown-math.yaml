@@ -1,0 +1,26 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- openLink: "cocalc:///"
+- openLink: "cocalc:///markdown-preview?sample=math"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Inline mathematics"
+    timeout: 30000
+- takeScreenshot: markdown-math-inline
+- scrollUntilVisible:
+    element: "CoCalc macro compatibility"
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: markdown-math-macros
+- scrollUntilVisible:
+    element: "Details summary"
+    direction: DOWN
+    centerElement: true
+- tapOn: "Details summary"
+- takeScreenshot: markdown-details-image
+- scrollUntilVisible:
+    element: "End of sample"
+    direction: DOWN
+- takeScreenshot: markdown-image

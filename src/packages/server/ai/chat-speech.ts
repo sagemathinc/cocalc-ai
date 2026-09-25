@@ -33,18 +33,35 @@ import {
 
 const log = getLogger("server:ai:chat-speech");
 
-// Keep the ESM-only parser as a native lazy import in this CommonJS package.
-const importMusicMetadata = new Function(
-  "return import('music-metadata')",
-) as () => Promise<typeof import("music-metadata")>;
-
-async function parseAudioMetadata(audio: Uint8Array, contentType: string) {
-  const { parseBuffer } = await importMusicMetadata();
-  return await parseBuffer(
-    audio,
-    { mimeType: contentType, size: audio.length },
-    { duration: true, skipCovers: true },
-  );
+async function measureContainerSpeechDuration(
+  audio: Uint8Array,
+  contentType: string,
+): Promise<number> {
+  const { BufferSource, Input, MP3, MP4, OGG, WAVE } =
+    await import("mediabunny");
+  const format =
+    contentType === "audio/mp4"
+      ? MP4
+      : contentType === "audio/mpeg" || contentType === "audio/mp3"
+        ? MP3
+        : contentType === "audio/ogg"
+          ? OGG
+          : WAVE;
+  const input = new Input({
+    source: new BufferSource(audio),
+    formats: [format],
+  });
+  try {
+    const tracks = await input.getAudioTracks();
+    if (tracks.length !== 1 || (await input.getVideoTracks()).length !== 0) {
+      throw Error("Expected one audio track and no video tracks");
+    }
+    // Compute from the actual packets, not caller metadata or a container
+    // duration that can understate the audio being billed.
+    return await input.computeDuration(tracks);
+  } finally {
+    input.dispose();
+  }
 }
 
 export const CHAT_SPEECH_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
@@ -218,8 +235,7 @@ export async function measureChatSpeechAudioDuration({
           CHAT_SPEECH_MAX_DURATION_MS,
         )) / 1_000;
     } else {
-      const metadata = await parseAudioMetadata(audio, contentType);
-      duration = metadata.format.duration;
+      duration = await measureContainerSpeechDuration(audio, contentType);
     }
   } catch {
     throw codedError("The audio recording could not be read.", 400);

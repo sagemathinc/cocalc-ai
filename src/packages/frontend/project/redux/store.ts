@@ -15,12 +15,7 @@ import {
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import { remove } from "@cocalc/frontend/project-file";
 import { ProjectLogMap } from "@cocalc/frontend/project/history/types";
-import {
-  FILE_ACTIONS,
-  ProjectActions,
-  QUERIES,
-  type FileAction,
-} from "./actions";
+import { FILE_ACTIONS, ProjectActions, type FileAction } from "./actions";
 import {
   Available as AvailableFeatures,
   isMainConfiguration,
@@ -53,7 +48,6 @@ import type {
   FindScopeMode,
   FindSnapshotsState,
 } from "@cocalc/frontend/project/find/types";
-import { registerProjectStoreInitializer } from "@cocalc/frontend/app-framework/project-runtime";
 
 export type ModalInfo = TypedMap<{
   title: string | React.JSX.Element;
@@ -445,12 +439,23 @@ export class ProjectStore extends Store<ProjectStoreState> {
   }
 }
 
-export function init(project_id: string, redux: AppRedux): ProjectStore {
+export function init(
+  project_id: string,
+  redux: AppRedux,
+  projectActions: Pick<
+    typeof import("./actions"),
+    "ProjectActions" | "QUERIES"
+  >,
+): ProjectStore {
   const name = project_redux_name(project_id);
   if (redux.hasStore(name)) {
     const store: ProjectStore | undefined = redux.getProjectStore(name);
     // this makes TS happy. we already check that it exists due to "hasStore()"
     if (store != null) return store;
+  }
+
+  if (typeof projectActions.ProjectActions !== "function") {
+    throw Error("project actions class is not ready");
   }
 
   // Initialize everything
@@ -460,13 +465,13 @@ export function init(project_id: string, redux: AppRedux): ProjectStore {
   >(name, ProjectStore);
   const actions = redux.createActions<ProjectStoreState, ProjectActions>(
     name,
-    ProjectActions,
+    projectActions.ProjectActions,
   );
   store.project_id = project_id;
   actions.project_id = project_id; // so actions can assume this is available on the object
   store._init();
 
-  const queries = deep_copy(QUERIES);
+  const queries = deep_copy(projectActions.QUERIES);
 
   const create_table = function (table_name, q) {
     //console.log("create_table", table_name)
@@ -523,5 +528,3 @@ export function init(project_id: string, redux: AppRedux): ProjectStore {
 
   return store;
 }
-
-registerProjectStoreInitializer(init);

@@ -233,8 +233,14 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     ) {
       throw new Error("The selected thread is not an existing Codex thread.");
     }
+    // ImmerDB merges fields by key. Replaying the full row can rewrite unrelated
+    // nested metadata (notably a goal snapshot whose goal is null).
     db.set({
-      ...existing,
+      date: existing.date,
+      sender_id: existing.sender_id,
+      event: existing.event,
+      message_id: existing.message_id,
+      thread_id: existing.thread_id,
       acp_config: opts.acp_config,
       agent_model: opts.acp_config.model ?? existing.agent_model,
       updated_at: new Date().toISOString(),
