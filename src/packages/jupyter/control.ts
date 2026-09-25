@@ -7,6 +7,7 @@ import type { Kernels } from "@cocalc/jupyter/util/misc";
 import { syncdbPath, ipynbPath } from "@cocalc/util/jupyter/names";
 import { once } from "@cocalc/util/async-utils";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
+import { OutputBudget } from "@cocalc/jupyter/execute/output-budget";
 import { get_kernels_by_name_or_language } from "@cocalc/jupyter/util/misc";
 import {
   readFile as readFileAbsolute,
@@ -554,6 +555,7 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
     yield lifecycle("run_start");
     try {
       for (const cell of cells) {
+        const budget = new OutputBudget(actions.get_output_limit_bytes());
         yield lifecycle("cell_start", cell.id);
         actions.ensureKernelIsReady();
         const kernel = actions.jupyter_kernel!;
@@ -582,14 +584,16 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
         let haltAfterCell = false;
         try {
           for await (const mesg0 of output.iter()) {
-            const content = mesg0?.content;
+            const limited = budget.accept(mesg0);
+            const content = limited?.content;
             if (content != null) {
               // this mutates content, removing large base64/svg, etc. images, pdf's, etc.
               await actions.processOutput(content);
             }
-            const mesg = { ...mesg0, id: cell.id, run_id };
-            yield mesg;
-            if (!noHalt && mesg.msg_type == "error") {
+            if (limited != null) {
+              yield { ...limited, id: cell.id, run_id };
+            }
+            if (!noHalt && mesg0.msg_type == "error") {
               // done running code because there was an error.
               haltAfterCell = true;
               break;

@@ -15,6 +15,7 @@ import type { Command } from "@cocalc/frontend/frame-editors/frame-tree/commands
 import { addEditorMenus } from "@cocalc/frontend/frame-editors/frame-tree/commands";
 import { minimapMenuChildren } from "@cocalc/frontend/frame-editors/frame-tree/commands/minimap-menu";
 import { minimapSettingsFor } from "@cocalc/frontend/jupyter/minimap-settings";
+import { outputLimitMenu } from "@cocalc/frontend/jupyter/output-limit-menu";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
 import { labels, menu } from "@cocalc/frontend/i18n";
 import { editor, jupyter } from "@cocalc/frontend/i18n/common";
@@ -474,6 +475,16 @@ const JUPYTER_MENUS = {
         },
       ],
       "run-cells-adjacent": ["run all cells above", "run all cells below"],
+      "output-limit": [
+        {
+          name: "output-limit",
+          label: "Output limit",
+          title:
+            "Maximum output per cell execution. Changes apply to the next execution.",
+          children: ({ props }) =>
+            outputLimitMenu(props.actions.jupyter_actions),
+        },
+      ],
       keys: ["tab key", "shift+tab key"],
       nbgrader: ["nbgrader validate", "nbgrader assign"],
     },

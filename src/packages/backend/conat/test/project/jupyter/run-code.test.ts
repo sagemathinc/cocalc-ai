@@ -1093,4 +1093,52 @@ describe("lifecycle messages are explicit and survive limit/disconnect flows", (
   });
 });
 
+it("delivers the truncation notice even after the display message limit", async () => {
+  const conat = connect();
+  const project_id = uuid();
+  const notice = {
+    id: "cell",
+    msg_type: "stream",
+    output_truncated: true,
+    content: { name: "stderr", text: "Output truncated" },
+  };
+  const server = jupyterServer({
+    client: conat,
+    project_id,
+    getKernelStatus,
+    run: async () =>
+      (async function* () {
+        yield {
+          id: "cell",
+          msg_type: "stream",
+          content: { name: "stdout", text: "first" },
+        };
+        yield notice;
+        yield { id: "cell", lifecycle: "cell_done" as const };
+      })(),
+  });
+  const client = jupyterClient({
+    client: conat,
+    project_id,
+    path: "limit.ipynb",
+  });
+  try {
+    const messages: any[] = [];
+    for await (const batch of await client.run([{ id: "cell", input: "" }], {
+      limit: 1,
+    }))
+      messages.push(...batch);
+    expect(
+      messages.some(
+        (m) => m.output_truncated && m.content.text === "Output truncated",
+      ),
+    ).toBe(true);
+    expect(messages.at(-1).lifecycle).toBe("cell_done");
+  } finally {
+    client.close();
+    server.close();
+    conat.close();
+  }
+});
+
 afterAll(after);
