@@ -96,6 +96,35 @@ it("does not use a recovered full activity log as voice progress", () => {
   expect(progress.text).not.toContain("I found the issue");
 });
 
+it("reads only agent text from a legacy phone preview, never later activity sections", () => {
+  const legacy = {
+    ...agent,
+    activity: {
+      state: "ready" as const,
+      events: [],
+      markdown:
+        "**Codex activity**\n\nI found the issue.\n\nI am checking tests.\n\n---\n\n**Terminal**\n\nprivate command output",
+    },
+  };
+  const current = snapshot(legacy);
+  expect(buildLiveProgress(current, "thread-1").text).not.toContain(
+    "I found the issue",
+  );
+  const progress = buildLiveProgress(current, "thread-1", true);
+  expect(progress.text).toContain("I found the issue");
+  expect(progress.text).toContain("I am checking tests");
+  expect(progress.text).not.toMatch(/Terminal|private command output/);
+  const append = jest.fn();
+  const context = new LiveProgressContext(append, false, true);
+  context.observe(current, "thread-1");
+  expect(append).toHaveBeenCalledWith(
+    "session.thinking.append",
+    expect.stringContaining("I am checking tests"),
+    null,
+  );
+  context.close();
+});
+
 it("answers status questions without delegating work and ignores instructions", () => {
   expect(isProgressQuestion("What happened recently?")).toBe(true);
   expect(isProgressQuestion("Please run tests")).toBe(false);

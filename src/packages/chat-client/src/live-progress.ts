@@ -51,10 +51,31 @@ function reportedCommentary(message?: ProjectedChatMessage) {
     .slice(-MAX_COMMENTARY);
 }
 
+// Project-hosts from before the structured preview projection sent only this
+// rendered preview. The prefix and section boundary are produced by
+// projectAcpActivityMarkdown; never include later terminal/error sections.
+function legacyPreviewCommentary(message?: ProjectedChatMessage): string[] {
+  if (
+    !message?.generating ||
+    message.activity?.source ||
+    message.activity?.events?.length
+  )
+    return [];
+  const prefix = "**Codex activity**\n\n";
+  const markdown = message.activity?.markdown;
+  if (!markdown?.startsWith(prefix)) return [];
+  return (markdown.slice(prefix.length).split("\n\n---\n\n", 1)[0] ?? "")
+    .split(/\n\s*\n/)
+    .map((paragraph) => concise(paragraph, MAX_COMMENTARY_CHARS))
+    .filter(Boolean)
+    .slice(-MAX_COMMENTARY);
+}
+
 /** Only compact, user-visible agent messages enter the voice context. */
 export function buildLiveProgress(
   snapshot: ChatSnapshot,
   threadId: string,
+  allowLegacyPreviewMarkdown = false,
 ): LiveProgressSnapshot {
   const thread = snapshot.threads.find((item) => item.thread_id === threadId);
   const messages = snapshot.messages.filter(
@@ -66,7 +87,11 @@ export function buildLiveProgress(
     thread?.state ?? agent?.state ?? latest?.state ?? "unknown";
   const canGuide = runtimeState === "running";
   const commentary =
-    agent?.activity?.source === "live-preview" ? reportedCommentary(agent) : [];
+    agent?.activity?.source === "live-preview"
+      ? reportedCommentary(agent)
+      : allowLegacyPreviewMarkdown
+        ? legacyPreviewCommentary(agent)
+        : [];
   const state =
     snapshot.connection !== "connected" ? "disconnected" : runtimeState;
   const details = [...commentary.map((text) => `Reported: ${text}`)].filter(
@@ -121,6 +146,7 @@ export class LiveProgressContext {
       delegationId: null,
     ) => void,
     private proactive = false,
+    private allowLegacyPreviewMarkdown = false,
   ) {}
 
   setProactive(proactive: boolean) {
@@ -130,7 +156,11 @@ export class LiveProgressContext {
   observe(snapshot: ChatSnapshot, threadId: string) {
     if (this.closed) return;
     const previous = this.latest;
-    const next = buildLiveProgress(snapshot, threadId);
+    const next = buildLiveProgress(
+      snapshot,
+      threadId,
+      this.allowLegacyPreviewMarkdown,
+    );
     this.latest = next;
     if (next.signature === this.lastSent) return;
     const urgent =

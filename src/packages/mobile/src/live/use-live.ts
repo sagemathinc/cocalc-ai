@@ -151,9 +151,13 @@ export function useLiveVoice(
     setStatus("");
     setSeconds(0);
     setPhase("connecting");
-    const progress = new LiveProgressContext((type, content, id) => {
-      call.connection?.send({ type, content, delegation_id: id });
-    }, proactive);
+    const progress = new LiveProgressContext(
+      (type, content, id) => {
+        call.connection?.send({ type, content, delegation_id: id });
+      },
+      proactive,
+      true,
+    );
     const bridge = new LiveDelegation(
       async (text) => {
         if (
