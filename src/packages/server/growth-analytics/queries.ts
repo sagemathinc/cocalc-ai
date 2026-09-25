@@ -77,16 +77,20 @@ function percent(numerator: number, denominator: number): number | null {
 const METRIC_LABELS: Record<string, string> = {
   eligible_signups: "Eligible signups",
   verified_accounts: "Verified accounts",
-  activated_24h: "Activated within 24 hours",
+  activated_24h: "First recorded work within 24h",
   project_created: "Created a project",
   project_surface_visible: "Saw a usable project surface",
-  first_meaningful_work: "Performed meaningful work",
+  first_meaningful_work: "Recorded first work",
   project_engaged_v1: "Project-engaged active users",
-  project_work_v1: "Meaningful-work active users",
+  project_work_v1: "Recorded work active users",
   app_foreground_v1: "Foreground app users",
   ai_engaged_v1: "AI-engaged users",
   self_directed_work_v1: "Self-directed work users",
 };
+
+function metricLabel(metricName: string): string {
+  return METRIC_LABELS[metricName] ?? metricName;
+}
 
 async function readSeries({
   metricNames,
@@ -123,7 +127,7 @@ async function readSeries({
     byMetric.set(metricName, {
       metric_name: metricName,
       metric_version: GROWTH_METRIC_VERSION,
-      label: METRIC_LABELS[metricName] ?? metricName,
+      label: metricLabel(metricName),
       points: [],
     });
   }
@@ -168,7 +172,7 @@ function buildFunnelFromSeries({
     const accounts = counts.get(milestone) ?? 0;
     const step = {
       milestone,
-      label: METRIC_LABELS[milestone] ?? milestone,
+      label: metricLabel(milestone),
       accounts,
       conversion_from_previous_pct:
         index === 0 ? null : percent(accounts, previous),
@@ -487,4 +491,9 @@ export async function getGrowthDashboard(
   };
 }
 
-export const __test__ = { normalizeRange, percent, buildFunnelFromSeries };
+export const __test__ = {
+  normalizeRange,
+  percent,
+  metricLabel,
+  buildFunnelFromSeries,
+};
