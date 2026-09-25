@@ -2222,7 +2222,14 @@ fallback. The same file listing completed in 0.85 seconds with
 Audited host resource samples spanning the queue showed CPU at 8.6–35.8%,
 at least 11.6 GB available memory, and zero sampled general or maintenance
 I/O full pressure. The temporary notebook and terminal were removed, and
-the smoke project was returned to its prior stopped state. The 40
-disposable projects await deletion with ordinary seven-day backup
-retention; staging2 requires fresh browser-approved admin authentication
-for that operation. Production is unchanged.
+the smoke project was returned to its prior stopped state. After the
+administrator completed staging2 fresh authentication, all 40 disposable
+projects were hard-deleted with `backup_retention_days=7` and
+`purge_backups_now=false`. The deletion journal recorded 40 distinct
+successful operations. The live project list returned no matching titles;
+an audited bay query (`22c006fc-1b27-4ad6-8473-e855aeb0c7a8`) independently
+counted zero remaining project rows. At 01:23:33 UTC, project-recovery
+health was healthy with zero current delay, unknown status, or unaccounted
+due work and 4/4 active shards covered by passing remote-only drills.
+Overall site health remained warning for separate checks. Production is
+unchanged.
