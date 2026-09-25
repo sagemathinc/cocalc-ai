@@ -15,16 +15,26 @@ export async function assertScopeProjectsCollaborator({
   scope: ApiKeyScope;
 }): Promise<void> {
   for (const { project_id } of scope.projects) {
-    const reference = await resolveProjectReferenceForMemberAllowRemote({
-      account_id,
-      project_id,
-    });
-    const member = reference?.users?.[account_id];
-    const group = typeof member === "string" ? member : member?.group;
-    if (!isProjectCollaboratorRole(group)) {
-      throw new Error(
-        `full collaborator access required for project ${project_id}`,
-      );
-    }
+    await assertProjectFullCollaborator({ account_id, project_id });
+  }
+}
+
+export async function assertProjectFullCollaborator({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  const reference = await resolveProjectReferenceForMemberAllowRemote({
+    account_id,
+    project_id,
+  });
+  const member = reference?.users?.[account_id];
+  const group = typeof member === "string" ? member : member?.group;
+  if (!isProjectCollaboratorRole(group)) {
+    throw new Error(
+      `full collaborator access required for project ${project_id}`,
+    );
   }
 }

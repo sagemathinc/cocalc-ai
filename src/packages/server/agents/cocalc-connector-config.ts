@@ -12,7 +12,10 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import { assertScopeProjectsCollaborator } from "@cocalc/server/api/scope-project-access";
+import {
+  assertProjectFullCollaborator,
+  assertScopeProjectsCollaborator,
+} from "@cocalc/server/api/scope-project-access";
 import { getIdentity } from "./api";
 
 function accountIdForLocator({
@@ -79,6 +82,10 @@ export async function getCocalcConnectorConfig({
     source_project_id,
   });
   await assertAccountHome(owner);
+  await assertProjectFullCollaborator({
+    account_id: owner,
+    project_id: source_project_id,
+  });
   await assertNativeAgent({ account_id: owner, agent_id, source_project_id });
   const { rows } = await getPool().query<CocalcConnectorConfig>(
     `SELECT config_id,account_id,agent_id,source_project_id,scope,
@@ -125,6 +132,10 @@ export async function saveCocalcConnectorConfig({
     session_hash,
     require_second_factor: true,
     allow_actor_impersonation: false,
+  });
+  await assertProjectFullCollaborator({
+    account_id: owner,
+    project_id: source_project_id,
   });
   await assertNativeAgent({ account_id: owner, agent_id, source_project_id });
   const canonical = normalizeApiKeyScopeV1(scope);

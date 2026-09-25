@@ -13,6 +13,7 @@ const homeMock = jest.fn();
 const freshAuthMock = jest.fn();
 const identityMock = jest.fn();
 const projectsMock = jest.fn();
+const sourceMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -29,6 +30,7 @@ jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
 }));
 jest.mock("@cocalc/server/api/scope-project-access", () => ({
   assertScopeProjectsCollaborator: (...args: any[]) => projectsMock(...args),
+  assertProjectFullCollaborator: (...args: any[]) => sourceMock(...args),
 }));
 jest.mock("./api", () => ({
   getIdentity: (...args: any[]) => identityMock(...args),
@@ -65,6 +67,7 @@ describe("CoCalc connector configuration", () => {
       disabled_at: null,
     });
     projectsMock.mockReset().mockResolvedValue(undefined);
+    sourceMock.mockReset().mockResolvedValue(undefined);
   });
 
   it("reads only from the account home for an accessible native agent", async () => {
@@ -80,10 +83,28 @@ describe("CoCalc connector configuration", () => {
       agent_id: agentId,
       project_id: projectId,
     });
+    expect(sourceMock).toHaveBeenCalledWith({
+      account_id: accountId,
+      project_id: projectId,
+    });
     homeMock.mockResolvedValueOnce({ home_bay_id: "bay-1" });
     await expect(getCocalcConnectorConfig(locator)).rejects.toThrow(
       "not on account home",
     );
+  });
+
+  it("rejects source-project access loss on read and save", async () => {
+    const { getCocalcConnectorConfig, saveCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    sourceMock.mockRejectedValue(new Error("full collaborator required"));
+    await expect(getCocalcConnectorConfig(locator)).rejects.toThrow(
+      "full collaborator required",
+    );
+    await expect(
+      saveCocalcConnectorConfig({ ...locator, scope, enabled: true }),
+    ).rejects.toThrow("full collaborator required");
+    expect(identityMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("requires bound fresh auth and a native agent before saving", async () => {
