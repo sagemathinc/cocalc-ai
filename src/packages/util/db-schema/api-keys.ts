@@ -36,7 +36,7 @@ export interface ApiKey {
   created: Date;
   hash?: string; // usually NOT available
   trunc: string;
-  expire?: Date;
+  expire?: Date | null;
   name: string;
   capabilities: ApiKeyCapability[];
   allowed_project_ids: string[];

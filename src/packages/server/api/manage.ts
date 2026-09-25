@@ -163,7 +163,7 @@ interface Options {
   account_id: string;
   action: ApiKeyAction;
   name?: string;
-  expire?: Date;
+  expire?: Date | null;
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];
   scope?: ApiKeyScope;
@@ -273,7 +273,7 @@ async function createApiKey({
   scope: requestedScope,
 }: {
   account_id: string;
-  expire?: Date;
+  expire?: Date | null;
   name: string;
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];

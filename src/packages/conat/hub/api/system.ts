@@ -2427,7 +2427,7 @@ export interface System {
     session_hash?: string | null;
     action: ApiKeyAction;
     name?: string;
-    expire?: Date;
+    expire?: Date | null;
     capabilities?: ApiKeyCapability[];
     allowed_project_ids?: string[];
     scope?: ApiKeyScope;
