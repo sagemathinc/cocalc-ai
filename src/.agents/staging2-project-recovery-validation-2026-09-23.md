@@ -2156,3 +2156,33 @@ Restore Snapshot, and Create Backup buttons were visible and enabled. The
 preserves the rendered result. This confirms one current live UI state; it
 does not qualify under-load terminal or Jupyter latency, a live blocked reason,
 or a paid-project warning. Production is unchanged.
+
+## 2026-09-25 staging membership and browser readiness follow-up
+
+The staging administrator `cc82e1f9-b452-42ae-9904-4c29ac1f24a4` has
+membership class `admin` from source `admin`, not a purchased subscription.
+The live membership-tier catalog lists only that hidden, non-purchasable
+admin tier, and a read-only quote for a one-seat monthly `member` team
+package failed because that tier is unavailable. No purchase or account
+mutation was made. This environment cannot presently provide a genuine
+paid-funded project for the dispatch-priority or customer-warning delivery
+drill. A test account with a purchased membership or a deliberately configured
+staging purchase tier is required for that gate.
+
+In the signed-in Chromium session, opening a project terminal recorded a
+369 ms browser-observed terminal-ready sample, with a 1 ms project-exec
+readiness sample. Opening a new notebook recorded 399 ms file-content paint
+and 586 ms sync readiness, but its Python 3 kernel was unavailable in this
+project's base image. The browser recorded no Jupyter-ready sample. These
+were low-load probes and do not qualify the under-load latency gate. The
+terminal and notebook tabs were closed, and their newly created scratch
+files were removed after the probe.
+
+At 00:39:59 UTC, staging2 project-recovery health was healthy: zero current
+snapshot or backup debt, unknown statuses, unaccounted due work, or active
+memory gates, with 4/4 active backup shards covered by recent passing
+remote-only restore drills. The 30-day objective collector began on
+September 24 and has not yet accrued a mature window. Overall site health
+remained warning for separate checks. The 15-backup canary still awaits its
+natural scheduled replacement around September 25 23:34 UTC; a live
+repository-capacity-denial drill also remains open. Production is unchanged.
