@@ -721,6 +721,38 @@ test("agent applies admitted settings and publishes controls while retaining its
   assert.equal(launches(), 1);
 });
 
+test("invalid saved settings publish the live catalog without starting inference", async (t) => {
+  const { agent, request, events, stops } = adapter(t, ["--config-options"]);
+  await assert.rejects(
+    agent.evaluate({
+      ...request,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile,
+        settings: { configOptions: [{ id: "model", value: "opus[1m]" }] },
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, "unsupported");
+      assert.match(error.message, /"model" value "opus\[1m\]"/);
+      return true;
+    },
+  );
+  const controls = events.find((event) => event.event?.kind === "controls")
+    .event.data.controls;
+  assert.deepEqual(controls.configOptions[0].options, [
+    { value: "fast", name: "Fast" },
+    { value: "deep", name: "Deep" },
+  ]);
+  assert.ok(
+    !events.some(
+      (event) => event.type === "summary" || event.event?.type === "message",
+    ),
+  );
+  assert.equal(stops(), 1);
+});
+
 test("agent adapter never summarizes or relaunches an uncertain prompt", async (t) => {
   const { agent, request, events, launches } = adapter(t);
   await assert.rejects(agent.evaluate({ ...request, prompt: "crash" }), {

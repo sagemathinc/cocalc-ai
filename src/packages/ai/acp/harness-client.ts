@@ -316,7 +316,7 @@ export class AcpHarnessClient {
         if (!control?.options.some(({ value }) => value === choice.value))
           throw new HarnessError(
             "unsupported",
-            "Selected ACP configuration value is not advertised by this session",
+            `Selected ACP configuration ${JSON.stringify(choice.id)} value ${JSON.stringify(choice.value)} is not advertised by this session. Choose an available value in agent settings.`,
           );
         if (control.currentValue === choice.value) continue;
         const response = await this.request(

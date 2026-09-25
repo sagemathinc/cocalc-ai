@@ -141,7 +141,6 @@ export class HarnessAgent implements AcpAgent {
         turnId: `acp-${randomUUID()}`,
         stream: request.stream,
       };
-      await client.configure(request.runtime?.settings ?? {});
       const publishControls = () =>
         request.stream({
           type: "event",
@@ -155,6 +154,14 @@ export class HarnessAgent implements AcpAgent {
             },
           },
         });
+      try {
+        await client.configure(request.runtime?.settings ?? {});
+      } catch (error) {
+        // A different credential or model can invalidate saved choices. Publish
+        // the live catalog even on failure so the user can repair the selection.
+        await publishControls();
+        throw error;
+      }
       await request.stream({
         type: "status",
         state: "running",
