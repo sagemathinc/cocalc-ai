@@ -1,4 +1,5 @@
 import {
+  chooseAutomaticProjectRootfs,
   chooseNewProjectRootfsDefault,
   isNewProjectRootfsSelectable,
 } from "./create-project-rootfs";
@@ -118,5 +119,74 @@ describe("new project image selection", () => {
     });
 
     expect(selected?.id).toBe("base");
+  });
+
+  it("chooses an official managed CPU image when no onboarding tags are configured", () => {
+    const selected = chooseAutomaticProjectRootfs({
+      images: [
+        image("legacy", "buildpack-deps:noble-scm", { official: true }),
+        image("gpu", "cocalc.local/rootfs/gpu", {
+          official: true,
+          gpu: true,
+          release_id: "release-gpu",
+        }),
+        image("community", "cocalc.local/rootfs/community", {
+          release_id: "release-community",
+          tags: ["standard"],
+        }),
+        image("official", "cocalc.local/rootfs/standard", {
+          official: true,
+          release_id: "release-standard",
+          label: "standard",
+          created: "2026-04-01T00:00:00Z",
+        }),
+        image("code-server", "cocalc.local/rootfs/code-server", {
+          official: true,
+          release_id: "release-code-server",
+          created: "2026-05-01T00:00:00Z",
+        }),
+      ],
+    });
+
+    expect(selected?.id).toBe("official");
+  });
+
+  it("honors a selectable configured default but not hidden or legacy defaults", () => {
+    const images = [
+      image("hidden", "cocalc.local/rootfs/hidden", {
+        hidden: true,
+        release_id: "release-hidden",
+      }),
+      image("preferred", "cocalc.local/rootfs/preferred", {
+        release_id: "release-preferred",
+      }),
+      image("official", "cocalc.local/rootfs/official", {
+        official: true,
+        release_id: "release-official",
+      }),
+    ];
+    expect(
+      chooseAutomaticProjectRootfs({
+        images,
+        preferredImages: ["cocalc.local/rootfs/preferred"],
+      })?.id,
+    ).toBe("preferred");
+    expect(
+      chooseAutomaticProjectRootfs({
+        images,
+        preferredImages: [
+          "buildpack-deps:noble-scm",
+          "cocalc.local/rootfs/hidden",
+        ],
+      })?.id,
+    ).toBe("official");
+  });
+
+  it("does not create an unusable legacy project when the catalog has no selectable image", () => {
+    expect(
+      chooseAutomaticProjectRootfs({
+        images: [image("legacy", "buildpack-deps:noble-scm")],
+      }),
+    ).toBeUndefined();
   });
 });

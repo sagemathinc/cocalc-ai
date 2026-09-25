@@ -20,13 +20,41 @@ export function suggestedAgentProjectTitle(request: string): string {
 export async function createDefaultAgentProject({
   request,
   createProject,
+  start = false,
+  image,
 }: {
   request: string;
-  createProject: (opts: { title: string; start: false }) => Promise<string>;
+  createProject: (opts: {
+    title: string;
+    start: boolean;
+    rootfs_image?: string;
+    rootfs_image_id?: string;
+  }) => Promise<string>;
+  start?: boolean;
+  image?: { image: string; id: string };
 }): Promise<{ projectId: string; title: string }> {
   const title = suggestedAgentProjectTitle(request);
-  const projectId = await createProject({ title, start: false });
+  const projectId = await createProject({
+    title,
+    start,
+    ...(image && { rootfs_image: image.image, rootfs_image_id: image.id }),
+  });
   return { projectId, title };
+}
+
+export function createAgentProjectOnce<T>(
+  pending: { current: Promise<T> | undefined },
+  create: () => Promise<T>,
+): Promise<T> {
+  if (!pending.current) {
+    pending.current = Promise.resolve()
+      .then(create)
+      .catch((error) => {
+        pending.current = undefined;
+        throw error;
+      });
+  }
+  return pending.current;
 }
 
 export function newAgentFundingConfig<T extends CodexThreadConfig>({

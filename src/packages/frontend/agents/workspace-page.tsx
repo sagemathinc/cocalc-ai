@@ -78,6 +78,7 @@ import {
   type ProjectDocsOpenDetail,
 } from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
 import "./new-agent-composer.css";
@@ -89,6 +90,13 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { getProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-capabilities";
+import {
+  loadRootfsImages,
+  managedRootfsCatalogUrl,
+} from "@cocalc/frontend/rootfs/manifest";
+import { chooseAutomaticProjectRootfs } from "@cocalc/frontend/projects/create-project-rootfs";
+import { chooseOnboardingRootfs } from "@cocalc/frontend/projects/onboarding/rootfs";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
@@ -194,6 +202,7 @@ import {
 } from "@cocalc/frontend/chat/codex-model-discovery";
 import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
 import {
+  createAgentProjectOnce,
   createDefaultAgentProject,
   freshAgentExecutionConfig,
   newAgentFundingConfig,
@@ -466,6 +475,11 @@ function NewAgentPanel({
   onCreated: (agentId: string) => void;
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
+  const siteDefaultRootfs = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image",
+  );
+  const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
   const boundAccount = useBoundAgentAccount();
   const isFirstRun =
     !sourceAgent && agentFirstRunStarted(boundAccount.accountId);
@@ -525,6 +539,13 @@ function NewAgentPanel({
     : name;
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
+  const automaticProjectPromise = useRef<
+    Promise<{ projectId: string; title: string }> | undefined
+  >(undefined);
+  const automaticProjectAttempted = useRef(false);
+  const automaticProjectCreated = useRef<
+    { projectId: string; title: string } | undefined
+  >(undefined);
   const inputControlRef = useRef<ChatInputControl | null>(null);
   const [composerSession, setComposerSession] = useState(0);
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
@@ -733,6 +754,72 @@ function NewAgentPanel({
 
   const createWithoutTaskRef = useRef(false);
 
+  function ensureAutomaticProject(request: string, start: boolean) {
+    return createAgentProjectOnce(automaticProjectPromise, async () => {
+      const needsImage =
+        getProjectRuntimeCapabilities().rootfs &&
+        cocalc_setup_profile !== "star";
+      const images = needsImage
+        ? await loadRootfsImages([managedRootfsCatalogUrl()], undefined, {
+            limit: 1000,
+          })
+        : [];
+      const fallback = chooseAutomaticProjectRootfs({
+        images,
+        preferredImages: [accountDefaultRootfs, siteDefaultRootfs],
+      });
+      const image = chooseOnboardingRootfs({
+        images,
+        kind: "codex",
+        fallback: fallback
+          ? { image: fallback.image, image_id: fallback.id }
+          : undefined,
+        isAdmin: false,
+      })?.entry;
+      if (needsImage && !image) {
+        throw new Error(
+          "No usable project image is available. Please contact the site administrator.",
+        );
+      }
+      const created = await createDefaultAgentProject({
+        request: start ? "" : request,
+        start,
+        image,
+        createProject: (opts) =>
+          redux.getActions("projects").create_project(opts),
+      });
+      automaticProjectCreated.current = created;
+      const home = getProjectHomeDirectory(created.projectId);
+      setProjectId(created.projectId);
+      setDirectory(home);
+      setDirectoryProjectId(created.projectId);
+      return created;
+    });
+  }
+
+  useEffect(() => {
+    if (
+      !isFirstRun ||
+      !firstRequest.trim() ||
+      projectId ||
+      !projectMap ||
+      emailVerificationRequired ||
+      automaticProjectAttempted.current
+    ) {
+      return;
+    }
+    automaticProjectAttempted.current = true;
+    void ensureAutomaticProject(firstRequest, true).catch((error) => {
+      setError(`${error}`);
+    });
+  }, [
+    isFirstRun,
+    firstRequest,
+    projectId,
+    projectMap,
+    emailVerificationRequired,
+  ]);
+
   async function create(requestValue?: string, withoutTask = false) {
     const request = (
       requestValue ??
@@ -755,17 +842,30 @@ function NewAgentPanel({
         if (!projectMap) {
           throw new Error("Your projects are still loading. Please try again.");
         }
-        const createdProject = await createDefaultAgentProject({
+        const createdProject = await ensureAutomaticProject(
           request,
-          createProject: (opts) =>
-            redux.getActions("projects").create_project(opts),
-        });
+          isFirstRun,
+        );
         createdProjectTitle = createdProject.title;
         targetProjectId = createdProject.projectId;
-        const home = getProjectHomeDirectory(targetProjectId);
-        setProjectId(targetProjectId);
-        setDirectory(home);
-        setDirectoryProjectId(targetProjectId);
+      }
+      if (
+        isFirstRun &&
+        request &&
+        automaticProjectCreated.current?.projectId === targetProjectId
+      ) {
+        const finalTitle = suggestedAgentProjectTitle(request);
+        if (finalTitle !== automaticProjectCreated.current.title) {
+          try {
+            await redux
+              .getActions("projects")
+              .set_project_title(targetProjectId, finalTitle);
+            automaticProjectCreated.current.title = finalTitle;
+          } catch {
+            // A title update must not prevent the first agent turn.
+          }
+        }
+        createdProjectTitle = automaticProjectCreated.current.title;
       }
       if (!withoutTask) {
         const source = await fetchCodexPaymentSourceForSubmit({

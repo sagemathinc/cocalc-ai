@@ -5,6 +5,7 @@
 
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
+  createAgentProjectOnce,
   createDefaultAgentProject,
   freshAgentExecutionConfig,
   newAgentFundingConfig,
@@ -71,6 +72,43 @@ describe("new agent defaults", () => {
       title: "Build a weather dashboard",
       start: false,
     });
+  });
+
+  it("starts a provisional first-run project with the selected managed image", async () => {
+    const createProject = jest.fn(async () => "project-new");
+    await expect(
+      createDefaultAgentProject({
+        request: "",
+        start: true,
+        image: { id: "official", image: "cocalc.local/rootfs/standard" },
+        createProject,
+      }),
+    ).resolves.toEqual({ projectId: "project-new", title: "My first project" });
+    expect(createProject).toHaveBeenCalledWith({
+      title: "My first project",
+      start: true,
+      rootfs_image: "cocalc.local/rootfs/standard",
+      rootfs_image_id: "official",
+    });
+  });
+
+  it("shares an in-flight automatic creation and retries only after failure", async () => {
+    const pending: { current: Promise<string> | undefined } = {
+      current: undefined,
+    };
+    const create = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("no host"))
+      .mockResolvedValue("project-new");
+    const first = createAgentProjectOnce(pending, create);
+    const concurrent = createAgentProjectOnce(pending, create);
+    expect(concurrent).toBe(first);
+    await expect(first).rejects.toThrow("no host");
+    expect(create).toHaveBeenCalledTimes(1);
+    await expect(createAgentProjectOnce(pending, create)).resolves.toBe(
+      "project-new",
+    );
+    expect(create).toHaveBeenCalledTimes(2);
   });
 
   it("does not carry Codex runtime identity into a fresh agent", () => {

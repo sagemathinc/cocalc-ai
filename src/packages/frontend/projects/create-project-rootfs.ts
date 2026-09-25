@@ -2,6 +2,7 @@ import {
   isManagedRootfsImageName,
   type RootfsImageEntry,
 } from "@cocalc/util/rootfs-images";
+import { ROOTFS_PROJECT_PRESET_TAGS } from "@cocalc/frontend/rootfs/project-presets";
 
 export function isNewProjectRootfsSelectable({
   entry,
@@ -61,4 +62,40 @@ export function chooseNewProjectRootfsDefault({
     selectable.find((entry) => entry.image === fallbackImage) ??
     selectable[0]
   );
+}
+
+export function chooseAutomaticProjectRootfs({
+  images,
+  preferredImages = [],
+}: {
+  images: RootfsImageEntry[];
+  preferredImages?: Array<string | undefined>;
+}): RootfsImageEntry | undefined {
+  const selectable = images.filter((entry) =>
+    isNewProjectRootfsSelectable({ entry, isGpu: false, isAdmin: false }),
+  );
+  for (const preferredImage of preferredImages) {
+    const image = preferredImage?.trim();
+    if (!image) continue;
+    const match = selectable.find((entry) => entry.image === image);
+    if (match) return match;
+  }
+  const standardTags = ROOTFS_PROJECT_PRESET_TAGS.standard;
+  return selectable.sort((a, b) => {
+    const rank = (entry: RootfsImageEntry) => {
+      const tags = (entry.tags ?? []).map((tag) => tag.trim().toLowerCase());
+      const index = standardTags.findIndex((tag) => tags.includes(tag));
+      return index < 0 ? standardTags.length : index;
+    };
+    return (
+      Number(!!b.official) - Number(!!a.official) ||
+      Number(!!a.deprecated) - Number(!!b.deprecated) ||
+      rank(a) - rank(b) ||
+      Number((a.slug || a.label).trim().toLowerCase() !== "standard") -
+        Number((b.slug || b.label).trim().toLowerCase() !== "standard") ||
+      (b.priority ?? 0) - (a.priority ?? 0) ||
+      (Date.parse(b.created ?? "") || 0) - (Date.parse(a.created ?? "") || 0) ||
+      a.id.localeCompare(b.id)
+    );
+  })[0];
 }
