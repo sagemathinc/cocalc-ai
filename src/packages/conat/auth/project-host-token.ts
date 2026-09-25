@@ -173,7 +173,7 @@ function validateApiKeyBinding(binding: ProjectHostApiKeyBinding): void {
     !Number.isSafeInteger(binding.scope_revision) ||
     binding.scope_revision < 1 ||
     !Number.isSafeInteger(binding.placement_revision) ||
-    binding.placement_revision < 1 ||
+    binding.placement_revision < 0 ||
     !Array.isArray(binding.capabilities) ||
     binding.capabilities.length === 0 ||
     binding.capabilities.some((c) => !API_KEY_PROJECT_CAPABILITIES.has(c)) ||

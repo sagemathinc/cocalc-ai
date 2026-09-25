@@ -232,9 +232,15 @@ describe("project-host API key child tokens", () => {
     expect(() =>
       issueProjectHostApiKeyAuthToken({
         ...input,
-        placement_revision: 0,
+        placement_revision: -1,
       }),
     ).toThrow("project-host binding");
+    expect(
+      issueProjectHostApiKeyAuthToken({
+        ...input,
+        placement_revision: 0,
+      }).claims.api_key.placement_revision,
+    ).toBe(0);
   });
 
   it("rejects a modified child audience even with a valid parent identity", () => {

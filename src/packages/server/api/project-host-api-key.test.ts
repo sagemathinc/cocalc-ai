@@ -113,6 +113,24 @@ describe("scoped API key project-host issuance", () => {
     expect(issueTokenMock.mock.calls[0][0].viewer_policy_hash).toBeUndefined();
   });
 
+  it("accepts the initial project-host placement revision", async () => {
+    resolveProjectReferenceMock.mockResolvedValue({
+      host_id: hostId,
+      runtime_lifecycle_revision: 0,
+      users: { [accountId]: { group: "collaborator" } },
+    });
+    const { issueProjectHostApiKeyTokenLocal } =
+      await import("./project-host-api-key");
+    await expect(issueProjectHostApiKeyTokenLocal(request)).resolves.toEqual({
+      host_id: hostId,
+      token: "child",
+      expires_at: 12345,
+    });
+    expect(issueTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ placement_revision: 0 }),
+    );
+  });
+
   it("binds a viewer key to its actual read policy", async () => {
     getApiKeyAuthorizationStateMock.mockResolvedValue(
       state(["file:read"], ["data"]),

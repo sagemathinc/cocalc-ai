@@ -79,7 +79,7 @@ export async function issueProjectHostApiKeyTokenLocal({
     throw new Error("not authorized for project-host API key access");
   }
   const placement_revision = Number(reference.runtime_lifecycle_revision);
-  if (!Number.isSafeInteger(placement_revision) || placement_revision < 1) {
+  if (!Number.isSafeInteger(placement_revision) || placement_revision < 0) {
     throw new Error("project-host placement revision is unavailable");
   }
   if (
