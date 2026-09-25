@@ -25,6 +25,7 @@ import {
 import { isProjectViewerRole } from "@cocalc/util/project-access";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import { isProjectHostApiKeySubjectAllowed } from "@cocalc/conat/auth/project-host-api-key-policy";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
@@ -135,6 +136,26 @@ function userFromBearerToken({
   });
   if (claims.act === "hub") {
     return { hub_id: claims.sub || "hub" };
+  }
+  if (claims.api_key) {
+    const project = getProject(claims.api_key.project_id);
+    const member = project?.users?.[claims.sub];
+    const group = typeof member === "string" ? member : member?.group;
+    if (
+      Number(project?.runtime_lifecycle_revision) !==
+        claims.api_key.placement_revision ||
+      (!isProjectCollaboratorGroup(group) && !isProjectViewerRole(group)) ||
+      (claims.api_key.capabilities.includes("project:exec") &&
+        !isProjectCollaboratorGroup(group))
+    ) {
+      throw new Error("API key project-host binding is no longer valid");
+    }
+    return {
+      account_id: claims.sub,
+      auth_iat_s: claims.iat,
+      auth_lease_exp_s: claims.exp,
+      auth_api_key: claims.api_key,
+    } satisfies CoCalcUser;
   }
   restrictedBrowserSessionTtlSeconds(claims.browser_session_exp_s);
   if (
@@ -368,6 +389,22 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     if (userType === "hub") {
       // Local internal services authenticate using the system account.
       return true;
+    }
+    if (user.auth_api_key) {
+      const binding = user.auth_api_key;
+      const project = getProject(binding.project_id);
+      const member = project?.users?.[user.account_id!];
+      const group = typeof member === "string" ? member : member?.group;
+      return (
+        userType === "account" &&
+        Date.now() < Number(user.auth_lease_exp_s) * 1000 &&
+        Number(project?.runtime_lifecycle_revision) ===
+          binding.placement_revision &&
+        (isProjectCollaboratorGroup(group) || isProjectViewerRole(group)) &&
+        (!binding.capabilities.includes("project:exec") ||
+          isProjectCollaboratorGroup(group)) &&
+        isProjectHostApiKeySubjectAllowed({ binding, subject, type })
+      );
     }
     if (isFileServerManagementSubject(subject)) {
       return false;

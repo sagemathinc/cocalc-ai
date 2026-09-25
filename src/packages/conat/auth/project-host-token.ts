@@ -6,6 +6,7 @@ import {
   randomUUID,
 } from "crypto";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 
 /*
 Project-host auth token protocol (overview):
@@ -35,6 +36,8 @@ const TOKEN_TYPE = "JWT";
 const TOKEN_ALG = "EdDSA";
 const TOKEN_VERSION = "phat-v1";
 const RESTRICTED_BROWSER_SESSION_TOKEN_VERSION = "phat-v2";
+const API_KEY_TOKEN_VERSION = "phat-v3";
+const API_KEY_TOKEN_TTL_SECONDS = 25;
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
 const MAX_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -57,6 +60,183 @@ export interface ProjectHostAuthClaims {
   auth_actor?: "account" | "agent";
   sid?: string;
   browser_session_exp_s?: number;
+  api_key?: ProjectHostApiKeyBinding;
+}
+
+export interface ProjectHostApiKeyBinding {
+  key_id: string;
+  scope_revision: number;
+  project_id: string;
+  placement_revision: number;
+  capabilities: ApiKeyCapability[];
+  viewer_policy_hash?: string;
+  subjects: string[];
+  reply_prefix: string;
+}
+
+export interface IssueProjectHostApiKeyTokenOptions {
+  host_id: string;
+  account_id: string;
+  project_id: string;
+  key_id: string;
+  scope_revision: number;
+  placement_revision: number;
+  capabilities: ApiKeyCapability[];
+  viewer_policy_hash?: string;
+  parent_exp_s?: number;
+  private_key: string;
+  issuer?: string;
+  now_ms?: number;
+}
+
+const API_KEY_PROJECT_CAPABILITIES = new Set<ApiKeyCapability>([
+  "project:read",
+  "project:write",
+  "file:read",
+  "file:write",
+  "project:exec",
+  "codex:run",
+]);
+
+function apiKeySubjects({
+  project_id,
+  key_id,
+  scope_revision,
+  capabilities,
+}: Pick<
+  ProjectHostApiKeyBinding,
+  "project_id" | "key_id" | "scope_revision" | "capabilities"
+>): string[] {
+  const grants = new Set(capabilities);
+  const subjects: string[] = [];
+  if (grants.has("project:exec")) {
+    subjects.push(
+      `project.${project_id}.`,
+      `terminal.project-${project_id}.`,
+      `jupyter.project-${project_id}.`,
+      `persist.project-${project_id}`,
+    );
+  }
+  if (grants.has("file:write") || grants.has("project:exec")) {
+    subjects.push(`fs.project-${project_id}`);
+  } else if (grants.has("file:read")) {
+    subjects.push(
+      `fs-api-key.project-${project_id}.key-${key_id}.rev-${scope_revision}`,
+    );
+  }
+  return subjects.sort();
+}
+
+function validateApiKeyBinding(binding: ProjectHostApiKeyBinding): void {
+  if (
+    !binding ||
+    !/^[A-Za-z0-9_-]{8,128}$/.test(binding.key_id) ||
+    !isValidUUID(binding.project_id) ||
+    !Number.isSafeInteger(binding.scope_revision) ||
+    binding.scope_revision < 1 ||
+    !Number.isSafeInteger(binding.placement_revision) ||
+    binding.placement_revision < 1 ||
+    !Array.isArray(binding.capabilities) ||
+    binding.capabilities.length === 0 ||
+    binding.capabilities.some((c) => !API_KEY_PROJECT_CAPABILITIES.has(c)) ||
+    new Set(binding.capabilities).size !== binding.capabilities.length
+  ) {
+    throw new Error("invalid API key project-host binding");
+  }
+  const needsViewerPolicy =
+    binding.capabilities.includes("file:read") &&
+    !binding.capabilities.includes("file:write") &&
+    !binding.capabilities.includes("project:exec");
+  if (
+    needsViewerPolicy !== (binding.viewer_policy_hash != null) ||
+    (binding.viewer_policy_hash != null &&
+      !/^[a-f0-9]{64}$/.test(binding.viewer_policy_hash))
+  ) {
+    throw new Error("invalid API key viewer policy binding");
+  }
+  const expected = apiKeySubjects(binding);
+  if (
+    !Array.isArray(binding.subjects) ||
+    JSON.stringify(binding.subjects) !== JSON.stringify(expected)
+  ) {
+    throw new Error("invalid API key service audience");
+  }
+}
+
+export function issueProjectHostApiKeyAuthToken({
+  host_id,
+  account_id,
+  project_id,
+  key_id,
+  scope_revision,
+  placement_revision,
+  capabilities,
+  viewer_policy_hash,
+  parent_exp_s,
+  private_key,
+  issuer = "cocalc-hub",
+  now_ms = Date.now(),
+}: IssueProjectHostApiKeyTokenOptions): {
+  token: string;
+  expires_at: number;
+  claims: ProjectHostAuthClaims;
+} {
+  ensureValidHostId(host_id);
+  if (!isValidUUID(account_id)) {
+    throw new Error("invalid account_id");
+  }
+  const iat = Math.floor(now_ms / 1000);
+  const exp = Math.min(
+    iat + API_KEY_TOKEN_TTL_SECONDS,
+    parent_exp_s ?? Number.MAX_SAFE_INTEGER,
+  );
+  if (!Number.isSafeInteger(exp) || exp <= iat) {
+    throw new Error("API key parent has expired");
+  }
+  const jti = randomUUID();
+  const binding: ProjectHostApiKeyBinding = {
+    key_id,
+    scope_revision,
+    project_id,
+    placement_revision,
+    capabilities: [...capabilities].sort(),
+    ...(viewer_policy_hash ? { viewer_policy_hash } : {}),
+    subjects: apiKeySubjects({
+      project_id,
+      key_id,
+      scope_revision,
+      capabilities,
+    }),
+    reply_prefix: `_INBOX.api-key-${jti}`,
+  };
+  validateApiKeyBinding(binding);
+  const claims: ProjectHostAuthClaims = {
+    iss: issuer,
+    sub: account_id,
+    aud: `project-host:${host_id}`,
+    iat,
+    exp,
+    jti,
+    v: API_KEY_TOKEN_VERSION,
+    act: "account",
+    api_key: binding,
+  };
+  const token = signClaims(claims, private_key);
+  return { token, expires_at: exp * 1000, claims };
+}
+
+function signClaims(
+  claims: ProjectHostAuthClaims,
+  private_key: string,
+): string {
+  const key = getPrivateKey(private_key);
+  const encHeader = base64UrlEncode(
+    JSON.stringify({ typ: TOKEN_TYPE, alg: TOKEN_ALG }),
+  );
+  const encClaims = base64UrlEncode(JSON.stringify(claims));
+  const signingInput = `${encHeader}.${encClaims}`;
+  const sig = cryptoSign(null, Buffer.from(signingInput), key);
+  return `${encHeader}.${encClaims}.${base64UrlEncode(sig)}`;
 }
 
 export interface IssueProjectHostTokenOptions {
@@ -172,7 +352,6 @@ export function issueProjectHostAuthToken({
   if (session_id != null && !isValidUUID(session_id)) {
     throw new Error("invalid session_id");
   }
-  const key = getPrivateKey(private_key);
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
   const browserSessionExp =
@@ -206,19 +385,8 @@ export function issueProjectHostAuthToken({
       : { browser_session_exp_s: browserSessionExp }),
   };
 
-  const header = {
-    typ: TOKEN_TYPE,
-    alg: TOKEN_ALG,
-  };
-
-  const encHeader = base64UrlEncode(JSON.stringify(header));
-  const encClaims = base64UrlEncode(JSON.stringify(claims));
-  const signingInput = `${encHeader}.${encClaims}`;
-  const sig = cryptoSign(null, Buffer.from(signingInput), key);
-  const encSig = base64UrlEncode(sig);
-
   return {
-    token: `${encHeader}.${encClaims}.${encSig}`,
+    token: signClaims(claims, private_key),
     expires_at: exp * 1000,
     claims,
   };
@@ -266,7 +434,8 @@ export function verifyProjectHostAuthToken({
 
   if (
     claims?.v !== TOKEN_VERSION &&
-    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION
+    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION &&
+    claims?.v !== API_KEY_TOKEN_VERSION
   ) {
     throw new Error("invalid token version");
   }
@@ -285,7 +454,10 @@ export function verifyProjectHostAuthToken({
   }
   if (
     typeof claims.exp !== "number" ||
-    claims.exp < nowSec - CLOCK_TOLERANCE_SECONDS
+    (claims.v === API_KEY_TOKEN_VERSION
+      ? claims.exp <= nowSec ||
+        claims.exp > claims.iat + API_KEY_TOKEN_TTL_SECONDS
+      : claims.exp < nowSec - CLOCK_TOLERANCE_SECONDS)
   ) {
     throw new Error("token expired");
   }
@@ -327,6 +499,19 @@ export function verifyProjectHostAuthToken({
     }
   } else if (claims.browser_session_exp_s != null) {
     throw new Error("invalid browser session token version");
+  }
+  if (claims.v === API_KEY_TOKEN_VERSION) {
+    if (
+      actor !== "account" ||
+      claims.auth_actor != null ||
+      claims.sid != null ||
+      claims.api_key?.reply_prefix !== `_INBOX.api-key-${claims.jti}`
+    ) {
+      throw new Error("invalid API key project-host identity");
+    }
+    validateApiKeyBinding(claims.api_key);
+  } else if (claims.api_key != null) {
+    throw new Error("invalid API key token version");
   }
 
   return claims;

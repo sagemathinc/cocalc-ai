@@ -19,6 +19,8 @@ export type CoCalcUser =
       auth_project_id?: string;
       auth_token_fingerprint?: string;
       auth_exp_s?: number;
+      auth_lease_exp_s?: number;
+      auth_api_key?: import("./project-host-token").ProjectHostApiKeyBinding;
     }
   | {
       account_id?: string;

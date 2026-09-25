@@ -6,6 +6,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import {
   issueProjectHostAuthToken,
+  issueProjectHostApiKeyAuthToken,
   verifyProjectHostAuthToken,
 } from "./project-host-token";
 
@@ -112,5 +113,105 @@ describe("project-host agent session tokens", () => {
         now_ms: 1_000_000,
       }),
     ).toThrow("invalid browser session expiration");
+  });
+});
+
+describe("project-host API key child tokens", () => {
+  const projectId = "00000000-0000-4000-8000-000000000004";
+  const nowMs = 1_000_000;
+  const input = {
+    host_id: hostId,
+    account_id: accountId,
+    project_id: projectId,
+    key_id: "key-id-123",
+    scope_revision: 3,
+    placement_revision: 7,
+    capabilities: ["file:read" as const],
+    viewer_policy_hash: "a".repeat(64),
+    private_key: privateKeyPem,
+    now_ms: nowMs,
+  };
+
+  it("binds parent, placement, viewer policy, service audience and reply prefix", () => {
+    const issued = issueProjectHostApiKeyAuthToken(input);
+    const claims = verifyProjectHostAuthToken({
+      token: issued.token,
+      host_id: hostId,
+      public_key: publicKeyPem,
+      now_ms: nowMs,
+    });
+    expect(claims).toMatchObject({
+      v: "phat-v3",
+      sub: accountId,
+      exp: 1025,
+      api_key: {
+        key_id: "key-id-123",
+        scope_revision: 3,
+        project_id: projectId,
+        placement_revision: 7,
+        capabilities: ["file:read"],
+        viewer_policy_hash: "a".repeat(64),
+        subjects: [`fs-api-key.project-${projectId}.key-key-id-123.rev-3`],
+        reply_prefix: `_INBOX.api-key-${claims.jti}`,
+      },
+    });
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: "00000000-0000-4000-8000-000000000005",
+        public_key: publicKeyPem,
+        now_ms: nowMs,
+      }),
+    ).toThrow("invalid token audience");
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: hostId,
+        public_key: publicKeyPem,
+        now_ms: issued.expires_at,
+      }),
+    ).toThrow("token expired");
+  });
+
+  it("never outlives the parent and rejects invalid viewer bindings", () => {
+    const issued = issueProjectHostApiKeyAuthToken({
+      ...input,
+      parent_exp_s: 1004,
+    });
+    expect(issued.claims.exp).toBe(1004);
+    expect(() =>
+      issueProjectHostApiKeyAuthToken({
+        ...input,
+        parent_exp_s: 1000,
+      }),
+    ).toThrow("parent has expired");
+    expect(() =>
+      issueProjectHostApiKeyAuthToken({
+        ...input,
+        viewer_policy_hash: undefined,
+      }),
+    ).toThrow("viewer policy binding");
+    expect(() =>
+      issueProjectHostApiKeyAuthToken({
+        ...input,
+        placement_revision: 0,
+      }),
+    ).toThrow("project-host binding");
+  });
+
+  it("rejects a modified child audience even with a valid parent identity", () => {
+    const issued = issueProjectHostApiKeyAuthToken(input);
+    const parts = issued.token.split(".");
+    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    claims.api_key.subjects.push(`fs.project-${projectId}`);
+    parts[1] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: parts.join("."),
+        host_id: hostId,
+        public_key: publicKeyPem,
+        now_ms: nowMs,
+      }),
+    ).toThrow("invalid token signature");
   });
 });

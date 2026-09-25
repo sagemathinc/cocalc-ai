@@ -1797,11 +1797,24 @@ export class ConatServer extends EventEmitter {
     }
     this.stats[socket.id].user = user;
     const id = socket.id;
+    const leaseExpiry = Number(user?.auth_lease_exp_s) * 1000;
+    const leaseTimer =
+      !user?.error && Number.isFinite(leaseExpiry) && leaseExpiry > 0
+        ? setTimeout(
+            () => {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+            },
+            Math.max(0, leaseExpiry - Date.now()),
+          )
+        : undefined;
+    leaseTimer?.unref?.();
     this.log("new connection", { id, user });
     if (this.subscriptions[id] == null) {
       this.subscriptions[id] = new Set<string>();
     }
     socket.on("disconnecting", async () => {
+      if (leaseTimer) clearTimeout(leaseTimer);
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);
       socket.conn?.off?.("packetCreate", onServerPacketCreate);

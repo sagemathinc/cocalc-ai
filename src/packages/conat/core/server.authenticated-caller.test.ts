@@ -34,6 +34,24 @@ describe("authenticated Conat caller metadata", () => {
     await ConatServer.closeAllForTests();
   });
 
+  it("closes a credential-backed socket when its authorization lease expires", async () => {
+    const server = init({
+      port: 0,
+      getUser: async () => ({
+        account_id: "00000000-0000-4000-8000-000000000001",
+        auth_lease_exp_s: (Date.now() + 1_000) / 1_000,
+      }),
+      isAllowed: async () => true,
+    });
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    expect(client.conn.connected).toBe(true);
+    await delay(1_300);
+    expect(client.conn.connected).toBe(false);
+    client.close();
+    await server.close();
+  });
+
   it("requires a distinct link credential for authenticated clusters", () => {
     expect(() =>
       init({
