@@ -93,6 +93,11 @@ import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
+import { completeFirstRunWithAgent } from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
@@ -188,6 +193,7 @@ import {
   freshAgentExecutionConfig,
   rememberAgentName,
   suggestedAgentName,
+  suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
 import {
   assertCodexFundingModelReady,
@@ -509,6 +515,10 @@ function NewAgentPanel({
   const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectCreationTitle, setProjectCreationTitle] = useState("");
+  const [projectCreatorInstance, setProjectCreatorInstance] = useState(0);
+  const projectCreatorTrigger = useRef<HTMLElement | null>(null);
+  const emailVerificationRequired = useEmailVerificationRequired();
   const createProjectMounted = useRef(false);
   if (createProjectOpen) createProjectMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
@@ -569,7 +579,28 @@ function NewAgentPanel({
 
   function closeProjectCreator() {
     setCreateProjectOpen(false);
-    requestAnimationFrame(() => projectSettingsButton.current?.focus());
+    requestAnimationFrame(() => {
+      const trigger = projectCreatorTrigger.current;
+      if (trigger?.isConnected) trigger.focus();
+      else projectSettingsButton.current?.focus();
+    });
+  }
+
+  function openProjectCreator() {
+    if (emailVerificationRequired) return;
+    projectCreatorTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setProjectCreationTitle(
+      suggestedAgentProjectTitle(
+        inputControlRef.current?.getValue?.() ?? firstRequest,
+      ),
+    );
+    setProjectCreatorInstance((instance) => instance + 1);
+    setSettingsOpen(false);
+    setMoreSettingsOpen(false);
+    setCreateProjectOpen(true);
   }
 
   useEffect(() => {
@@ -633,15 +664,8 @@ function NewAgentPanel({
 
   async function prepare(): Promise<PendingAgent> {
     if (pending) return pending;
-    let targetProjectId = projectId;
-    if (!targetProjectId) {
-      targetProjectId = await redux.getActions("projects").create_project({
-        title: "Agents",
-        description: "Workspace for CoCalc agents",
-        start: true,
-      });
-      setProjectId(targetProjectId);
-    }
+    const targetProjectId = projectId;
+    if (!targetProjectId) throw new Error("Create or select a project first.");
     await ensureProjectReduxRuntime();
     const projectActions = redux.getProjectActions(targetProjectId);
     const fs = projectActions?.fs?.();
@@ -699,6 +723,10 @@ function NewAgentPanel({
     ).trim();
     if (busy || uploading || problem || atLimit || (!request && !withoutTask))
       return;
+    if (!projectId) {
+      openProjectCreator();
+      return;
+    }
     createWithoutTaskRef.current = withoutTask;
     setBusy(true);
     setError("");
@@ -789,6 +817,7 @@ function NewAgentPanel({
       }
     }
     rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
+    void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
     onCreated(identity.agent_id);
   }
@@ -919,15 +948,11 @@ function NewAgentPanel({
           value={projectId}
           disabled={busy || !!pending}
           onChange={selectProject}
-          onCreate={() => {
-            setSettingsOpen(false);
-            setMoreSettingsOpen(false);
-            setCreateProjectOpen(true);
-          }}
+          onCreate={openProjectCreator}
         />
         {!projectId && (
           <Text type="secondary">
-            A project named “Agents” will be created when you start.
+            Create a project before starting your agent.
           </Text>
         )}
         <label htmlFor="new-agent-directory">Working directory</label>
@@ -988,6 +1013,31 @@ function NewAgentPanel({
           </Text>
         </div>
         <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        {!projectId && projectMap && (
+          <div>
+            {emailVerificationRequired ? (
+              <VerifyEmailRequiredPanel
+                title="Verify your email to create a project"
+                description="Your agent needs a project. Verify your email, then create a project here to start your agent."
+                compact
+              />
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                title="Your agent needs a project"
+                description={
+                  <Space wrap>
+                    <span>
+                      Create one now; your task will stay in the composer.
+                    </span>
+                    <Button onClick={openProjectCreator}>Create project</Button>
+                  </Space>
+                }
+              />
+            )}
+          </div>
+        )}
         <div style={{ maxWidth: 320, width: "100%" }}>
           <AgentNameInput
             id="new-agent-name"
@@ -1346,7 +1396,8 @@ function NewAgentPanel({
         >
           <Suspense fallback={null}>
             <NewProjectCreator
-              default_value=""
+              key={projectCreatorInstance}
+              default_value={projectCreationTitle}
               open={createProjectOpen}
               onClose={closeProjectCreator}
               onCreated={selectProject}

@@ -8,6 +8,13 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 
 const AGENT_NAME_COUNTER_PREFIX = "cocalc-agent-name-counter-v1";
 
+export function suggestedAgentProjectTitle(request: string): string {
+  const firstLine = request.split(/\r?\n/, 1)[0].trim();
+  const title = firstLine.replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+  if (!title) return "My first project";
+  return title.length <= 80 ? title : `${title.slice(0, 77).trimEnd()}...`;
+}
+
 function agentNameCounterKey(accountId?: string): string {
   return `${AGENT_NAME_COUNTER_PREFIX}:${accountId ?? "anonymous"}`;
 }

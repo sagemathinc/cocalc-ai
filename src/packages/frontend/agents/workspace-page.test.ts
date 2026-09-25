@@ -7,6 +7,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
   freshAgentExecutionConfig,
   suggestedAgentName,
+  suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
 import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
 import {
@@ -41,6 +42,14 @@ describe("new agent defaults", () => {
     expect(
       suggestedAgentName([agent("agent-1"), agent("agent-4")], "account"),
     ).toBe("agent-5");
+  });
+
+  it("suggests a project title from the first line of the task", () => {
+    expect(
+      suggestedAgentProjectTitle("Build a weather dashboard.\nUse maps"),
+    ).toBe("Build a weather dashboard");
+    expect(suggestedAgentProjectTitle("  ")).toBe("My first project");
+    expect(suggestedAgentProjectTitle("A".repeat(100))).toHaveLength(80);
   });
 
   it("does not carry Codex runtime identity into a fresh agent", () => {

@@ -24,10 +24,23 @@ let mockSelectedHashtags: any = mockEmptyMap;
 let mockEmailVerificationRequired = false;
 let mockActiveTopTab: string | undefined;
 let mockProjectMap: any = mockEmptyMap;
+let mockOtherSettings: any = mockCompletedOnboardingSettings;
+let mockAccountId: string | undefined;
+let mockAccountCreated: string | undefined;
+let mockInviteState: any = {
+  incoming: [],
+  loading: false,
+  loaded: true,
+  error: "",
+};
+const mockLoadTarget = jest.fn();
 const mockLoadProjectListWindow = jest.fn();
 const mockEnsureHostInfo = jest.fn();
 
 jest.mock("./actions", () => ({}));
+jest.mock("@cocalc/frontend/history", () => ({
+  load_target: (...args: unknown[]) => mockLoadTarget(...args),
+}));
 
 jest.mock("antd", () => {
   const React = require("react");
@@ -109,7 +122,7 @@ jest.mock("@cocalc/frontend/i18n", () => ({
 
 jest.mock("@cocalc/frontend/collaborators", () => ({
   IncomingInviteBanner: () => <div data-testid="invite-banner" />,
-  useInviteInboxState: () => ({ incoming: [], loading: false }),
+  useInviteInboxState: () => mockInviteState,
 }));
 
 jest.mock("./create-project", () => ({
@@ -216,6 +229,7 @@ jest.mock("./project-rootfs-badge", () => ({
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
   mockVisibleProjects.length = 0;
   mockProjectListWindow = undefined;
   mockHidden = false;
@@ -224,6 +238,11 @@ beforeEach(() => {
   mockEmailVerificationRequired = false;
   mockActiveTopTab = undefined;
   mockProjectMap = mockEmptyMap;
+  mockOtherSettings = mockCompletedOnboardingSettings;
+  mockAccountId = undefined;
+  mockAccountCreated = undefined;
+  mockInviteState = { incoming: [], loading: false, loaded: true, error: "" };
+  mockLoadTarget.mockClear();
   mockLoadProjectListWindow.mockClear();
   mockEnsureHostInfo.mockReset();
   mockEnsureHostInfo.mockResolvedValue(ImmutableMap());
@@ -243,9 +262,82 @@ beforeEach(() => {
       return mockProjectListWindow;
     if (store === "page" && key === "active_top_tab") return mockActiveTopTab;
     if (store === "account" && key === "other_settings")
-      return mockCompletedOnboardingSettings;
+      return mockOtherSettings;
+    if (store === "account" && key === "account_id") return mockAccountId;
+    if (store === "account" && key === "created") return mockAccountCreated;
     return undefined;
   });
+});
+
+test("new accounts without invitations go to new agent instead of project onboarding", () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "new-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+
+  render(<ProjectsPage />);
+
+  expect(mockLoadTarget).toHaveBeenCalledWith("agents/new", false, false);
+  expect(window.location.pathname).toContain("/agents/new");
+  expect(sessionStorage.getItem("cocalc:agent-first-run:new-account")).toBe(
+    "1",
+  );
+  expect(screen.queryByTestId("first-run-onboarding")).toBeNull();
+});
+
+test("invited accounts keep invitation onboarding", async () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "invited-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+  mockInviteState = {
+    incoming: [{ invite_id: "invite", scope: "project" }],
+    loading: false,
+    loaded: true,
+    error: "",
+  };
+
+  render(<ProjectsPage />);
+
+  expect(await screen.findByTestId("first-run-onboarding")).toBeTruthy();
+  expect(mockLoadTarget).not.toHaveBeenCalled();
+});
+
+test("new accounts wait for the first invitation fetch before routing", async () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "new-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+  mockInviteState = { incoming: [], loading: false, loaded: false, error: "" };
+
+  render(<ProjectsPage />);
+
+  expect(await screen.findByTestId("first-run-onboarding")).toBeTruthy();
+  expect(mockLoadTarget).not.toHaveBeenCalled();
+});
+
+test("new accounts wait for project data before routing", () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "new-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = mockEmptyMap;
+  mockProjectMap = undefined;
+
+  render(<ProjectsPage />);
+
+  expect(mockLoadTarget).not.toHaveBeenCalled();
+});
+
+test("AI-disabled accounts retain project onboarding", async () => {
+  mockActiveTopTab = "projects";
+  mockAccountId = "new-account";
+  mockAccountCreated = new Date().toISOString();
+  mockOtherSettings = ImmutableMap({ openai_disabled: true });
+
+  render(<ProjectsPage />);
+
+  expect(await screen.findByTestId("first-run-onboarding")).toBeTruthy();
+  expect(mockLoadTarget).not.toHaveBeenCalled();
 });
 
 test("projects page uses the application page surface instead of fixed white", () => {
