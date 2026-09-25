@@ -44,6 +44,7 @@ import type { Client } from "@cocalc/sync/client/types";
 import latexEnvs from "@cocalc/util/latex-envs";
 import { type AKV, akv } from "@cocalc/conat/sync/akv";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { outputLimitBytes } from "@cocalc/jupyter/execute/output-budget";
 import {
   JUPYTER_MIMETYPES,
   isJupyterBase64MimeType,
@@ -2364,6 +2365,23 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (save) {
       this.syncdb.commit();
     }
+  }
+
+  public get_output_limit_bytes(): number {
+    return outputLimitBytes(
+      this.store.getIn(["metadata", "cocalc", "output_limit_bytes"]),
+    );
+  }
+
+  public set_output_limit_bytes(bytes: number): void {
+    const cocalc =
+      this.syncdb
+        .get_one({ type: "settings" })
+        ?.getIn(["metadata", "cocalc"])
+        ?.toJS() ?? {};
+    this.set_global_metadata({
+      cocalc: { ...cocalc, output_limit_bytes: outputLimitBytes(bytes) },
+    });
   }
 
   public set_cell_metadata(opts: {
