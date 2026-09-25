@@ -100,6 +100,23 @@ const API_KEY_PROJECT_CAPABILITIES = new Set<ApiKeyCapability>([
   "codex:run",
 ]);
 
+// A runtime key may use reviewed project data-plane services, not every
+// present or future subject beneath project.<id>.
+const API_KEY_RUNTIME_SERVICES = [
+  "api",
+  "archive-info",
+  "document-build-events",
+  "exec-job-events",
+  "exec-job-snapshot",
+  "jupyter-live-run",
+  "project-info",
+  "project-status",
+  "run",
+  "storage-info",
+  "touch",
+  "usage-info",
+] as const;
+
 function apiKeySubjects({
   account_id,
   project_id,
@@ -120,7 +137,10 @@ function apiKeySubjects({
   const subjects: string[] = [];
   if (grants.has("project:exec")) {
     subjects.push(
-      `project.${project_id}.`,
+      ...API_KEY_RUNTIME_SERVICES.map(
+        (service) => `project.${project_id}.${service}.`,
+      ),
+      `project.${project_id}.run`,
       `terminal.project-${project_id}.`,
       `jupyter.project-${project_id}.`,
       `persist.project-${project_id}`,

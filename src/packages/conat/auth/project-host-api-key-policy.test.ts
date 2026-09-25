@@ -55,7 +55,8 @@ describe("project-host API key subject confinement", () => {
         `fs.project-${projectId}`,
         `jupyter.project-${projectId}.`,
         `persist.project-${projectId}`,
-        `project.${projectId}.`,
+        `project.${projectId}.api.`,
+        `project.${projectId}.run`,
         `terminal.project-${projectId}.`,
       ],
     };
@@ -63,6 +64,7 @@ describe("project-host API key subject confinement", () => {
     expect(allowed(full, `terminal.project-${projectId}.0`)).toBe(true);
     expect(allowed(full, `jupyter.project-${projectId}.0`)).toBe(true);
     expect(allowed(full, `project.${otherProjectId}.run`)).toBe(false);
+    expect(allowed(full, `project.${projectId}.future-control.-`)).toBe(false);
     expect(allowed(full, `hub.project.${projectId}.api`)).toBe(false);
     expect(allowed(full, `file-server.${projectId}.api`)).toBe(false);
     expect(allowed(full, `project.${projectId}.>`, "sub")).toBe(false);
