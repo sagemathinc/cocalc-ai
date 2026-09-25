@@ -144,6 +144,17 @@ describe("project-host Conat auth", () => {
     expect(
       await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
     ).toBe(true);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "viewer" } },
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(false);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "collaborator" } },
+    });
     for (const subject of [
       `fs.project-${project_id}`,
       `project.${project_id}.run`,
