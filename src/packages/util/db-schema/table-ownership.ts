@@ -391,12 +391,8 @@ export const TABLE_OWNERSHIP = {
     ownership: "account-home",
     authority: "account_id",
     portability: "unsupported",
-    secondary_reference_fields: {
-      project_id:
-        "Source project locator; project ownership is checked separately.",
-    },
     notes:
-      "Human-owned connector configuration is authoritative only at the account home. Account rehome requires explicit migration before this table is portable.",
+      "Human-owned connector configuration is authoritative only at the account home. Its source project locator is checked through project ownership; account rehome requires explicit migration before this table is portable.",
   }),
 
   ...entries(["agent_rpc_admission_state"], {
