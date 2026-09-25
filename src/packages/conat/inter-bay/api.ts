@@ -885,6 +885,8 @@ export interface AccountApiKeyDirectoryUpsertRequest {
 
 export interface AccountApiKeyDirectoryDeleteRequest {
   key_id: string;
+  account_id?: string;
+  home_bay_id?: string;
 }
 
 export interface AccountApiKeyDirectoryUpdateHomeBayRequest {

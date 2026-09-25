@@ -93,7 +93,7 @@ function randomBase64Url(bytes: number): string {
   return randomBytes(bytes).toString("base64url");
 }
 
-function createApiKeySecret({ key_id }: { key_id: string }): string {
+export function createApiKeySecret({ key_id }: { key_id: string }): string {
   return `${API_KEY_V2_PREFIX}.${key_id}.${randomBase64Url(API_KEY_SECRET_BYTES)}`;
 }
 
@@ -118,7 +118,7 @@ function truncApiKey(secret: string): string {
   return `${secret.slice(0, 5)}...${secret.slice(-8)}`;
 }
 
-async function syncAccountApiKeyDirectory({
+export async function syncAccountApiKeyDirectory({
   key_id,
   account_id,
   hash,
@@ -236,13 +236,23 @@ async function getApiKey({ id, account_id }) {
 async function deleteApiKey({ account_id, id }) {
   const pool = getPool();
   const existing = await getApiKey({ id, account_id });
+  const account = existing?.key_id
+    ? await getClusterAccountById(account_id)
+    : undefined;
+  if (existing?.key_id && !account?.home_bay_id) {
+    throw new Error(`unable to resolve home bay for account ${account_id}`);
+  }
   await pool.query("DELETE FROM api_keys WHERE account_id=$1 AND id=$2", [
     account_id,
     id,
   ]);
-  await deleteClusterAccountApiKeyDirectoryEntry({
-    key_id: `${existing?.key_id ?? ""}`.trim(),
-  });
+  if (existing?.key_id) {
+    await deleteClusterAccountApiKeyDirectoryEntry({
+      key_id: existing.key_id,
+      account_id,
+      home_bay_id: account!.home_bay_id,
+    });
+  }
   if (existing != null) {
     await recordApiKeyAuditEvent({
       event: "api_key_deleted",
@@ -699,7 +709,11 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     return undefined;
   }
   if (entry.expire != null && entry.expire <= Date.now()) {
-    await deleteClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+    await deleteClusterAccountApiKeyDirectoryEntry({
+      key_id: v2.key_id,
+      account_id: entry.account_id,
+      home_bay_id: entry.home_bay_id,
+    });
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
       value: {

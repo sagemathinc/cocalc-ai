@@ -387,13 +387,16 @@ export const TABLE_OWNERSHIP = {
       "Agent runs derive authority from their project-owned identity and account execution principal. They must use agent routing helpers.",
   }),
 
-  ...entries(["agent_cocalc_connector_configs"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    notes:
-      "Human-owned connector configuration is authoritative only at the account home. Its source project locator is checked through project ownership; account rehome requires explicit migration before this table is portable.",
-  }),
+  ...entries(
+    ["agent_cocalc_connector_configs", "agent_cocalc_connector_turns"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      notes:
+        "Human-owned connector consent and turn-key lifecycle are authoritative only at the account home. Source project/run authority is checked through project ownership; account rehome requires explicit migration before these tables are portable.",
+    },
+  ),
 
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",

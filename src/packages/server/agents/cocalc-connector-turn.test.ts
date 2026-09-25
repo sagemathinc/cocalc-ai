@@ -1,0 +1,334 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+
+export {};
+
+const accountId = "00000000-0000-4000-8000-000000000001";
+const agentId = "00000000-0000-4000-8000-000000000002";
+const projectId = "00000000-0000-4000-8000-000000000003";
+const hostId = "00000000-0000-4000-8000-000000000004";
+const runId = "00000000-0000-4000-8000-000000000005";
+const idempotencyKey = "00000000-0000-4000-8000-000000000006";
+const configId = "00000000-0000-4000-8000-000000000007";
+const scope = { version: 1, account: ["project:list"], projects: [] };
+const config = { config_id: configId, scope, revision: 2, enabled: true };
+
+const poolQuery = jest.fn();
+const clientQuery = jest.fn();
+const release = jest.fn();
+const sourceHost = jest.fn();
+const sourceMember = jest.fn();
+const targets = jest.fn();
+const liveRun = jest.fn();
+const accountHome = jest.fn();
+const directory = jest.fn();
+const audit = jest.fn();
+const trust = jest.fn();
+const encrypt = jest.fn();
+const decrypt = jest.fn();
+const ensureSchema = jest.fn();
+const deleteDirectory = jest.fn();
+const clusterAccount = jest.fn();
+
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({
+    query: (...args: any[]) => poolQuery(...args),
+    connect: async () => ({ query: clientQuery, release }),
+  }),
+}));
+jest.mock("@cocalc/backend/auth/password-hash", () => ({
+  __esModule: true,
+  default: () => "test-hash",
+  verifyPassword: (secret: string, hash: string) =>
+    secret.startsWith("test.") && hash === "test-hash",
+}));
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  encryptSecretStorageValue: (...args: any[]) => encrypt(...args),
+  decryptSecretStorageValue: (...args: any[]) => decrypt(...args),
+}));
+jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
+  assertAccountProjectHostTokenProjectAccess: (...args: any[]) =>
+    sourceHost(...args),
+}));
+jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
+  assertAccountTrustedForProductAccess: (...args: any[]) => trust(...args),
+}));
+jest.mock("@cocalc/server/api/manage", () => ({
+  createApiKeySecret: ({ key_id }) => `test.${key_id}.secret`,
+  ensureApiKeysV2Schema: (...args: any[]) => ensureSchema(...args),
+  syncAccountApiKeyDirectory: (...args: any[]) => directory(...args),
+}));
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  deleteClusterAccountApiKeyDirectoryEntry: (...args: any[]) =>
+    deleteDirectory(...args),
+  getClusterAccountById: (...args: any[]) => clusterAccount(...args),
+}));
+jest.mock("@cocalc/server/api/scope-project-access", () => ({
+  assertProjectFullCollaborator: (...args: any[]) => sourceMember(...args),
+  assertScopeProjectsCollaborator: (...args: any[]) => targets(...args),
+}));
+jest.mock("@cocalc/server/api/api-key-audit", () => ({
+  recordApiKeyAuditEvent: (...args: any[]) => audit(...args),
+}));
+jest.mock("./identity-routing", () => ({
+  verifyActiveAgentRun: (...args: any[]) => liveRun(...args),
+}));
+jest.mock("./cocalc-connector-config", () => ({
+  assertAccountHome: (...args: any[]) => accountHome(...args),
+}));
+
+const request = {
+  account_id: accountId,
+  host_id: hostId,
+  agent_id: agentId,
+  source_project_id: projectId,
+  run_id: runId,
+  idempotency_key: idempotencyKey,
+};
+
+let savedTurn: any;
+let savedKey: any;
+let lockedConfig: any;
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  savedTurn = undefined;
+  savedKey = undefined;
+  lockedConfig = config;
+  poolQuery.mockImplementation(async (sql) => ({
+    rows: `${sql}`.includes("agent_cocalc_connector_configs") ? [config] : [],
+  }));
+  clientQuery.mockImplementation(async (sql, args) => {
+    const text = `${sql}`;
+    if (text.includes("FROM agent_cocalc_connector_configs")) {
+      return { rows: [lockedConfig] };
+    }
+    if (text.includes("AS recent_minute")) {
+      return {
+        rows: [{ active: "0", recent_minute: "0", recent_burst: "0" }],
+      };
+    }
+    if (text.includes("FROM agent_cocalc_connector_turns")) {
+      return { rows: savedTurn ? [savedTurn] : [] };
+    }
+    if (text.includes("DELETE FROM api_keys")) {
+      savedKey = undefined;
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes("FROM api_keys")) {
+      return { rows: savedKey ? [savedKey] : [] };
+    }
+    if (text.includes("INSERT INTO api_keys")) {
+      savedKey = {
+        id: 42,
+        key_id: args[3],
+        hash: args[4],
+        scope: JSON.parse(args[6]),
+        scope_revision: 1,
+        expire: args[1],
+      };
+      return { rows: [savedKey] };
+    }
+    if (text.includes("INSERT INTO agent_cocalc_connector_turns")) {
+      savedTurn = {
+        turn_id: args[0],
+        account_id: args[1],
+        agent_id: args[2],
+        source_project_id: args[3],
+        source_host_id: args[4],
+        run_id: args[5],
+        config_id: args[7],
+        config_revision: args[8],
+        key_id: args[9],
+        secret_ciphertext: args[10],
+        expires_at: args[11],
+        ended_at: null,
+      };
+      return { rows: [savedTurn] };
+    }
+    if (text.includes("UPDATE api_keys SET expire")) {
+      if (savedKey) savedKey.expire = args[2];
+      return { rows: [], rowCount: savedKey ? 1 : 0 };
+    }
+    if (text.includes("UPDATE agent_cocalc_connector_turns")) {
+      if (text.includes("renewed_at")) {
+        savedTurn.expires_at = args[1];
+        savedTurn.renewed_at = new Date();
+      } else {
+        savedTurn.ended_at = new Date();
+        savedTurn.secret_ciphertext = "";
+      }
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [] };
+  });
+  for (const mock of [
+    sourceHost,
+    sourceMember,
+    targets,
+    liveRun,
+    accountHome,
+    directory,
+    audit,
+    trust,
+    ensureSchema,
+    deleteDirectory,
+  ]) {
+    mock.mockResolvedValue(undefined);
+  }
+  encrypt.mockImplementation(async (_name, secret) => `encrypted:${secret}`);
+  decrypt.mockImplementation(async (_name, ciphertext) => ({
+    value: ciphertext.slice("encrypted:".length),
+    needsMigration: false,
+  }));
+  clusterAccount.mockResolvedValue({ home_bay_id: "bay-0" });
+});
+
+test("an enabled config atomically binds one ordinary key to a verified run", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  expect(issued).toMatchObject({
+    turn_id: savedTurn.turn_id,
+    key_id: savedKey.key_id,
+    config_id: configId,
+    config_revision: 2,
+  });
+  expect(issued?.secret).toBe(`test.${savedKey.key_id}.secret`);
+  expect(sourceHost).toHaveBeenCalledWith({
+    account_id: accountId,
+    host_id: hostId,
+    project_id: projectId,
+  });
+  expect(liveRun).toHaveBeenCalledWith({
+    account_id: accountId,
+    agent_id: agentId,
+    project_id: projectId,
+    run_id: runId,
+  });
+  expect(clientQuery.mock.calls.map(([sql]) => `${sql}`)).toEqual(
+    expect.arrayContaining(["BEGIN", "COMMIT"]),
+  );
+  expect(directory).toHaveBeenCalledWith(
+    expect.objectContaining({ key_id: savedKey.key_id, scope }),
+  );
+});
+
+test("idempotent retry returns the same key without allocating another", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const first = await beginManagedCocalcConnectorTurn(request);
+  const second = await beginManagedCocalcConnectorTurn(request);
+  expect(second).toEqual(first);
+  expect(
+    clientQuery.mock.calls.filter(([sql]) =>
+      `${sql}`.includes("INSERT INTO api_keys"),
+    ),
+  ).toHaveLength(1);
+  expect(directory).toHaveBeenCalledTimes(2);
+});
+
+test("disabled consent, host mismatch, and revision change cannot issue", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  poolQuery.mockResolvedValueOnce({ rows: [{ ...config, enabled: false }] });
+  await expect(
+    beginManagedCocalcConnectorTurn(request),
+  ).resolves.toBeUndefined();
+  expect(clientQuery).not.toHaveBeenCalled();
+
+  sourceHost.mockRejectedValueOnce(new Error("wrong source host"));
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "wrong source host",
+  );
+  expect(clientQuery).not.toHaveBeenCalled();
+
+  lockedConfig = { ...config, revision: 3 };
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "configuration changed",
+  );
+  expect(clientQuery.mock.calls.map(([sql]) => `${sql}`)).toContain("ROLLBACK");
+  expect(directory).not.toHaveBeenCalled();
+  expect(savedKey).toBeUndefined();
+});
+
+test("revoked ordinary key cannot be resurrected by a trusted retry", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  await beginManagedCocalcConnectorTurn(request);
+  savedKey = undefined;
+  directory.mockClear();
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "changed or revoked",
+  );
+  expect(directory).not.toHaveBeenCalled();
+});
+
+test("idempotent retry rejects a stored secret that does not match the key", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  await beginManagedCocalcConnectorTurn(request);
+  savedTurn.secret_ciphertext = "encrypted:wrong-secret";
+  directory.mockClear();
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "credential is unavailable",
+  );
+  expect(directory).not.toHaveBeenCalled();
+});
+
+test("renewal extends the existing key without exposing a new secret", async () => {
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  directory.mockClear();
+  const expiry = await renewManagedCocalcConnectorTurn({
+    ...request,
+    turn_id: issued!.turn_id,
+  });
+  expect(expiry).toBeGreaterThanOrEqual(issued!.expires_at);
+  expect(directory).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key_id: issued!.key_id,
+      expire: savedKey.expire,
+    }),
+  );
+});
+
+test("renewal rolls back when the ordinary key expires during update", async () => {
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  directory.mockClear();
+  const original = clientQuery.getMockImplementation()!;
+  clientQuery.mockImplementation(async (sql, args) => {
+    if (`${sql}`.includes("UPDATE api_keys SET expire")) {
+      return { rows: [], rowCount: 0 };
+    }
+    return await original(sql, args);
+  });
+  await expect(
+    renewManagedCocalcConnectorTurn({ ...request, turn_id: issued!.turn_id }),
+  ).rejects.toThrow("expired during renewal");
+  expect(directory).not.toHaveBeenCalled();
+  expect(clientQuery.mock.calls.map(([sql]) => `${sql}`)).toContain("ROLLBACK");
+});
+
+test("ending a turn revokes its ordinary key and tombstones the directory", async () => {
+  const { beginManagedCocalcConnectorTurn, endManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  await endManagedCocalcConnectorTurn({
+    ...request,
+    turn_id: issued!.turn_id,
+  });
+  expect(savedKey).toBeUndefined();
+  expect(savedTurn.ended_at).toBeInstanceOf(Date);
+  expect(deleteDirectory).toHaveBeenCalledWith({
+    key_id: issued!.key_id,
+    account_id: accountId,
+    home_bay_id: "bay-0",
+  });
+});

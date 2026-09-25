@@ -38,7 +38,7 @@ function accountIdForLocator({
   return account_id;
 }
 
-async function assertAccountHome(account_id: string): Promise<void> {
+export async function assertAccountHome(account_id: string): Promise<void> {
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: account_id,

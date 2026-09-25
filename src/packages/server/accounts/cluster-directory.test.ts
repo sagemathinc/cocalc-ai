@@ -141,6 +141,29 @@ describe("accounts.cluster-directory", () => {
     ).toContain("revoked_at IS NULL");
   });
 
+  it("creates a tombstone when revocation wins the race with first upsert", async () => {
+    queryMock.mockImplementation(async (sql: string) => ({
+      rows: [],
+      rowCount: sql.includes("INSERT INTO cluster_account_api_key_directory")
+        ? 1
+        : 0,
+    }));
+    const { deleteClusterAccountApiKeyDirectoryEntryDirect } =
+      await import("./cluster-directory");
+    await deleteClusterAccountApiKeyDirectoryEntryDirect("key-2", {
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-2",
+    });
+    const sql = queryMock.mock.calls
+      .map(([statement]) => `${statement}`)
+      .find((statement) =>
+        statement.includes("INSERT INTO cluster_account_api_key_directory"),
+      );
+    expect(sql).toContain("revoked_at");
+    expect(sql).toContain("ON CONFLICT (key_id) DO UPDATE");
+    expect(sql).toContain("account_id=EXCLUDED.account_id");
+  });
+
   it("uses directory identity fields after an account moves to another bay", async () => {
     const { getClusterAccountByIdDirect } = await import("./cluster-directory");
     const account = await getClusterAccountByIdDirect(

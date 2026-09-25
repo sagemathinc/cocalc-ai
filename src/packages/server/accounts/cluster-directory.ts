@@ -1392,12 +1392,35 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
 
 export async function deleteClusterAccountApiKeyDirectoryEntryDirect(
   key_id: string,
+  owner?: { account_id: string; home_bay_id: string },
 ): Promise<void> {
   const normalized = `${key_id ?? ""}`.trim();
   if (!normalized) {
     return;
   }
   await ensureClusterAccountApiKeyDirectorySchema();
+  if (owner) {
+    if (!isValidUUID(owner.account_id) || !owner.home_bay_id?.trim()) {
+      throw new Error("valid account_id and home_bay_id are required");
+    }
+    const { rowCount } = await getPool().query(
+      `INSERT INTO ${API_KEY_TABLE}
+         (key_id,account_id,home_bay_id,hash,revoked_at)
+       VALUES($1,$2,$3,'',NOW())
+       ON CONFLICT (key_id) DO UPDATE SET
+         revoked_at=COALESCE(${API_KEY_TABLE}.revoked_at,NOW()),
+         hash='',capabilities='{}'::TEXT[],
+         allowed_project_ids='{}'::UUID[],scope=NULL,
+         scope_revision=${API_KEY_TABLE}.scope_revision+
+           CASE WHEN ${API_KEY_TABLE}.revoked_at IS NULL THEN 1 ELSE 0 END
+       WHERE ${API_KEY_TABLE}.account_id=EXCLUDED.account_id`,
+      [normalized, owner.account_id, owner.home_bay_id.trim()],
+    );
+    if (rowCount !== 1) {
+      throw new Error("API key directory owner mismatch");
+    }
+    return;
+  }
   await getPool().query(
     `UPDATE ${API_KEY_TABLE}
         SET revoked_at=NOW(), hash='', capabilities='{}'::TEXT[],

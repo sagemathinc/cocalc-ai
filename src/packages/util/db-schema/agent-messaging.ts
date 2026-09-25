@@ -202,3 +202,44 @@ Table({
     updated_at: created("Last configuration update."),
   },
 });
+
+Table({
+  name: "agent_cocalc_connector_turns",
+  rules: {
+    primary_key: "turn_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_cocalc_connector_turns_idempotency_key",
+        unique: true,
+        query: "(account_id,agent_id,source_project_id,run_id,idempotency_key)",
+      },
+      {
+        name: "agent_cocalc_connector_turns_owner_expiry_idx",
+        query: "(account_id,expires_at)",
+      },
+    ],
+  },
+  fields: {
+    turn_id: required("uuid", "Server-allocated turn credential binding ID."),
+    account_id: required("uuid", "Human who owns the ordinary API key."),
+    agent_id: required("uuid", "Registered native agent."),
+    source_project_id: required("uuid", "Agent source project."),
+    source_host_id: required("uuid", "Authenticated source host at issuance."),
+    run_id: required(
+      "uuid",
+      "Live native-agent run attested by its owner bay.",
+    ),
+    idempotency_key: required("uuid", "Trusted runtime's per-turn retry key."),
+    config_id: required("uuid", "Saved human consent configuration."),
+    config_revision: required("integer", "Consent revision at issuance."),
+    key_id: required("string", "Ordinary account API-key lookup ID."),
+    secret_ciphertext: {
+      ...required("string", "Encrypted key for idempotent trusted retries."),
+      pg_type: "TEXT",
+    },
+    expires_at: { ...timestamp("Short managed key expiry."), not_null: true },
+    ended_at: timestamp("Explicit lifecycle revocation time."),
+    created_at: created("Turn credential issuance time."),
+    renewed_at: created("Last successful renewal time."),
+  },
+});
