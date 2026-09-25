@@ -18,15 +18,25 @@ export function readHarnessCredentialSelection({
   accountId,
   projectId,
   threadKey,
+  forNewAgent = false,
 }: {
   accountId?: string;
   projectId?: string;
   threadKey?: string;
+  forNewAgent?: boolean;
 }): AcpHarnessCredential | undefined {
-  if (typeof localStorage === "undefined" || !accountId || !projectId) return;
-  const value = localStorage.getItem(
-    key(accountId, projectId, threadKey ?? ""),
-  );
+  if (typeof localStorage === "undefined" || !accountId) return;
+  if (!projectId && !forNewAgent) return;
+  const stored = projectId
+    ? localStorage.getItem(key(accountId, projectId, threadKey ?? ""))
+    : null;
+  // Defaults apply only when creating agents, never to existing conversations.
+  const value =
+    stored ??
+    (forNewAgent
+      ? localStorage.getItem(`${PREFIX}:${accountId}:default`)
+      : null);
+  if (value == null && forNewAgent) return;
   if (!value || value === "project-secret") {
     return { version: 1, provider: "anthropic", mode: "project-secret" };
   }
@@ -75,5 +85,6 @@ export function writeHarnessCredentialSelection({
         ? `account-subscription:${credential.credentialId}`
         : "project-secret";
   localStorage.setItem(storageKey, value);
+  localStorage.setItem(`${PREFIX}:${accountId}:default`, value);
   window.dispatchEvent(new Event(HARNESS_CREDENTIAL_SELECTION_EVENT));
 }

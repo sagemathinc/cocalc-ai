@@ -85,6 +85,7 @@ import {
 } from "./new-agent-runtime-select";
 import {
   newAgentClaudeCredentialOptions,
+  newAgentClaudeCredentialDefault,
   newAgentClaudeCredentialValue,
 } from "./claude-credential-options";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
@@ -652,16 +653,22 @@ function NewAgentPanel({
   const [anthropicCredentials, setAnthropicCredentials] = useState<
     ExternalCredentialInfo[]
   >([]);
+  const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
+  const initialClaudeCredential = useRef(
+    readHarnessCredentialSelection({
+      accountId: boundAccount.accountId,
+      projectId: sourceAgent?.endpoint.project_id,
+      threadKey: sourceAgent?.thread_id,
+      forNewAgent: true,
+    }),
+  );
+  const claudeCredentialChosen = useRef(
+    initialClaudeCredential.current != null,
+  );
   const [claudeCredential, setClaudeCredential] =
     useState<AcpHarnessCredential>(
       () =>
-        (sourceAgent
-          ? readHarnessCredentialSelection({
-              accountId: boundAccount.accountId,
-              projectId: sourceAgent.endpoint.project_id,
-              threadKey: sourceAgent.thread_id,
-            })
-          : undefined) ?? {
+        initialClaudeCredential.current ?? {
           version: 1,
           provider: "anthropic",
           mode: "project-secret",
@@ -789,13 +796,14 @@ function NewAgentPanel({
     if (runtimeKind !== "claude-code") return;
     let disposed = false;
     setAnthropicCredentials([]);
+    setClaudeCredentialsLoaded(false);
     void webapp_client.conat_client.hub.system
       .listExternalCredentials({
         provider: "anthropic",
         scope: "account",
       })
       .then((rows) => {
-        if (!disposed)
+        if (!disposed) {
           setAnthropicCredentials(
             rows.filter(
               (row) =>
@@ -804,6 +812,10 @@ function NewAgentPanel({
                   row.kind === CLAUDE_SUBSCRIPTION_KIND),
             ),
           );
+          if (!claudeCredentialChosen.current)
+            setClaudeCredential(newAgentClaudeCredentialDefault(rows));
+          setClaudeCredentialsLoaded(true);
+        }
       })
       .catch((err) => {
         if (!disposed) setError(`${err}`);
@@ -1117,6 +1129,7 @@ function NewAgentPanel({
   }
 
   async function create(requestValue?: string, withoutTask = false) {
+    if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
@@ -1798,9 +1811,10 @@ function NewAgentPanel({
               <Select
                 aria-label="Claude credential"
                 value={newAgentClaudeCredentialValue(claudeCredential)}
-                disabled={busy || !!pending}
+                disabled={busy || !!pending || !claudeCredentialsLoaded}
                 options={newAgentClaudeCredentialOptions(anthropicCredentials)}
-                onChange={(value) =>
+                onChange={(value) => {
+                  claudeCredentialChosen.current = true;
                   setClaudeCredential(
                     value.startsWith("account-subscription:")
                       ? {
@@ -1825,8 +1839,8 @@ function NewAgentPanel({
                             provider: "anthropic",
                             mode: "project-secret",
                           },
-                  )
-                }
+                  );
+                }}
                 style={{ minWidth: 180 }}
               />
             )}
@@ -1844,7 +1858,8 @@ function NewAgentPanel({
                 !!problem ||
                 !firstRequest.trim() ||
                 atLimit ||
-                (!projectId && (!projectMap || emailVerificationRequired))
+                (!projectId && (!projectMap || emailVerificationRequired)) ||
+                (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
               }
               onClick={() => void create()}
             />
@@ -1885,7 +1900,11 @@ function NewAgentPanel({
             key={`${boundAccount.accountId}:${projectId}`}
             projectId={projectId}
             disabled={busy || !!pending}
+            hasConnection={anthropicCredentials.some(
+              (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
+            )}
             onConnected={async (credentialId) => {
+              claudeCredentialChosen.current = true;
               const rows =
                 await webapp_client.conat_client.hub.system.listExternalCredentials(
                   { provider: "anthropic", scope: "account" },
@@ -1907,6 +1926,7 @@ function NewAgentPanel({
                 )
               )
                 throw Error("Connected Claude subscription is not available");
+              setClaudeCredentialsLoaded(true);
               setClaudeCredential({
                 version: 1,
                 provider: "anthropic",

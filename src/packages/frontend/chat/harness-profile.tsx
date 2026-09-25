@@ -239,6 +239,9 @@ function ClaudeCredentialControl({
         </Popconfirm>
       )}
       <ClaudeSubscriptionConnect
+        hasConnection={credentials.some(
+          (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
+        )}
         projectId={projectId}
         onConnected={async () => {
           const rows =

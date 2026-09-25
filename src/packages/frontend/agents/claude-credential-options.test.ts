@@ -5,6 +5,7 @@
 
 import {
   newAgentClaudeCredentialOptions,
+  newAgentClaudeCredentialDefault,
   newAgentClaudeCredentialValue,
 } from "./claude-credential-options";
 
@@ -45,4 +46,26 @@ test("new agents list subscriptions and retain the selected billing source", () 
       credentialId: "subscription-1",
     }),
   ).toBe("account-subscription:subscription-1");
+});
+
+test("new agents reuse a unique connected subscription, not a revoked or ambiguous one", () => {
+  const sub = {
+    id: "sub",
+    kind: "claude-subscription-home-v1",
+    revoked: null,
+  } as any;
+  expect(newAgentClaudeCredentialDefault([sub])).toMatchObject({
+    mode: "account-subscription",
+    credentialId: "sub",
+  });
+  expect(
+    newAgentClaudeCredentialDefault([{ ...sub, revoked: "today" }]).mode,
+  ).toBe("project-secret");
+  expect(
+    newAgentClaudeCredentialDefault([sub, { ...sub, id: "other" }]).mode,
+  ).toBe("project-secret");
+  expect(
+    newAgentClaudeCredentialDefault([{ ...sub, kind: "anthropic-api-key" }])
+      .mode,
+  ).toBe("project-secret");
 });

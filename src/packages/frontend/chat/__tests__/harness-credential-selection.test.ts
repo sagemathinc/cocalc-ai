@@ -11,6 +11,60 @@ describe("ACP harness credential selection", () => {
 
   beforeEach(() => localStorage.clear());
 
+  it("remembers a credential for new agents without changing existing agents", () => {
+    const credential = {
+      version: 1 as const,
+      provider: "anthropic" as const,
+      mode: "account-subscription" as const,
+      credentialId,
+    };
+    writeHarnessCredentialSelection({
+      accountId: "a",
+      projectId: "p",
+      threadKey: "t",
+      credential,
+    });
+    expect(
+      readHarnessCredentialSelection({ accountId: "a", forNewAgent: true }),
+    ).toEqual(credential);
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "a",
+        projectId: "other",
+        threadKey: "new",
+        forNewAgent: true,
+      }),
+    ).toEqual(credential);
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "a",
+        projectId: "other",
+        threadKey: "existing",
+      })?.mode,
+    ).toBe("project-secret");
+    expect(
+      readHarnessCredentialSelection({ accountId: "b", forNewAgent: true }),
+    ).toBeUndefined();
+    writeHarnessCredentialSelection({
+      accountId: "a",
+      projectId: "p",
+      threadKey: "explicit",
+      credential: { version: 1, provider: "anthropic", mode: "project-secret" },
+    });
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "a",
+        projectId: "p",
+        threadKey: "t",
+        forNewAgent: true,
+      }),
+    ).toEqual(credential);
+    expect(
+      readHarnessCredentialSelection({ accountId: "a", forNewAgent: true })
+        ?.mode,
+    ).toBe("project-secret");
+  });
+
   it("defaults to a project secret and isolates account-key choices", () => {
     expect(
       readHarnessCredentialSelection({

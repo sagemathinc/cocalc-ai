@@ -40,3 +40,20 @@ export function newAgentClaudeCredentialOptions(
       })),
   ];
 }
+
+/** Reuse an unambiguous existing subscription; never guess between accounts. */
+export function newAgentClaudeCredentialDefault(
+  credentials: ExternalCredentialInfo[],
+): AcpHarnessCredential {
+  const subscriptions = credentials.filter(
+    (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
+  );
+  return subscriptions.length === 1
+    ? {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: subscriptions[0].id,
+      }
+    : { version: 1, provider: "anthropic", mode: "project-secret" };
+}

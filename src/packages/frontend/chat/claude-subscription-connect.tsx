@@ -19,9 +19,11 @@ export function ClaudeSubscriptionConnect({
   projectId,
   disabled,
   onConnected,
+  hasConnection = false,
 }: {
   projectId: string;
   disabled?: boolean;
+  hasConnection?: boolean;
   onConnected: (credentialId: string) => Promise<void> | void;
 }) {
   const [login, setLogin] = useState<LoginStatus>();
@@ -58,6 +60,12 @@ export function ClaudeSubscriptionConnect({
 
   return (
     <Space orientation="vertical" size={4}>
+      {hasConnection && (
+        <Typography.Text type="secondary">
+          Already connected. Choose an existing subscription in the Claude
+          credential selector; you do not need to sign in for each agent.
+        </Typography.Text>
+      )}
       <Button
         disabled={
           disabled || login?.state === "pending" || login?.state === "verifying"
@@ -79,7 +87,9 @@ export function ClaudeSubscriptionConnect({
           }
         }}
       >
-        Connect Claude Pro/Max (experimental)
+        {hasConnection
+          ? "Connect another Claude subscription (experimental)"
+          : "Connect Claude Pro/Max (experimental)"}
       </Button>
       {login && (login.state === "pending" || login.state === "verifying") && (
         <Space orientation="vertical">

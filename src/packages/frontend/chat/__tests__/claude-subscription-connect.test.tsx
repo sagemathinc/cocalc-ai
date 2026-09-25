@@ -4,6 +4,28 @@ import userEvent from "@testing-library/user-event";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ClaudeSubscriptionConnect } from "../claude-subscription-connect";
 
+test("an existing connection labels sign-in as optional and remains keyboard accessible", async () => {
+  render(
+    <ClaudeSubscriptionConnect
+      projectId="project-a"
+      hasConnection
+      onConnected={jest.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.tab();
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", {
+      name: "Connect another Claude subscription (experimental)",
+    }),
+  );
+  expect(
+    screen.queryByRole("button", {
+      name: "Connect Claude Pro/Max (experimental)",
+    }),
+  ).toBeNull();
+});
+
 test("connects a Claude subscription and reports its credential to the caller", async () => {
   jest.useFakeTimers();
   const start = jest
