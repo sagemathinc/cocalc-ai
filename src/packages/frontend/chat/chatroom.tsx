@@ -45,7 +45,8 @@ import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { ChatLiveVoice } from "./live-voice";
-import type { ProjectedChatMessage } from "@cocalc/chat-client";
+import { projectLiveVoiceMessages } from "./live-voice-messages";
+import { waitForCommentAcceptance } from "./comment-send-status";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
@@ -1740,28 +1741,14 @@ function ChatPanelContent({
         : [],
     [actions, selectedThreadLookupKey, messages],
   );
-  const liveVoiceMessages = useMemo<ProjectedChatMessage[]>(
+  const liveVoiceMessages = useMemo(
     () =>
-      selectedThreadMessages.map((message) => {
-        const history = field<{ content: string; date: string }[]>(
-          message,
-          "history",
-        );
-        const latest = history?.[history.length - 1];
-        const generating = field<boolean>(message, "generating") === true;
-        return {
-          message_id: field<string>(message, "message_id") ?? "",
-          thread_id: selectedThreadId ?? "",
-          parent_message_id: field<string>(message, "parent_message_id"),
-          sender_id: field<string>(message, "sender_id") ?? "",
-          role: isAcpAssistantMessage(message) ? "agent" : "human",
-          content: latest?.content ?? "",
-          date: dateValue(message)?.toISOString() ?? latest?.date ?? "",
-          generating,
-          state: generating ? "running" : "complete",
-        };
-      }),
-    [selectedThreadMessages, selectedThreadId],
+      projectLiveVoiceMessages(
+        selectedThreadMessages,
+        selectedThreadId ?? "",
+        acpState,
+      ),
+    [selectedThreadMessages, selectedThreadId, acpState],
   );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
@@ -2206,6 +2193,7 @@ function ChatPanelContent({
   async function sendVoiceTask(
     text: string,
     isCurrentThread: () => boolean,
+    signal: AbortSignal,
   ): Promise<{ message_id: string }> {
     if (
       readOnly ||
@@ -2239,6 +2227,7 @@ function ChatPanelContent({
       skipDraftDelete: true,
     });
     if (!sent) throw new Error("The agent did not accept the spoken task.");
+    await waitForCommentAcceptance(actions, chatIdentity.message_id, signal);
     return { message_id: chatIdentity.message_id };
   }
 

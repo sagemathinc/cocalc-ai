@@ -89,6 +89,88 @@ interface FrameTreeProps {
   value?: string;
 }
 
+function EmbeddedTimeTravelLeaf(
+  props: React.ComponentProps<typeof FrameTreeLeaf>,
+) {
+  const { actions, path, project_id } = props;
+  const [runtime, setRuntime] = useState<
+    { name: string; actions: TimeTravelActions } | undefined
+  >();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    const editor = get_file_editor("time-travel");
+    let cancelled = false;
+    let initialized: typeof runtime;
+    setRuntime(undefined);
+    setError(undefined);
+
+    function release() {
+      if (initialized == null) return;
+      editor.remove(path, redux, project_id);
+      if (
+        actions.timeTravelActions === initialized.actions &&
+        redux.getActions(initialized.name) !== initialized.actions
+      ) {
+        delete actions.timeTravelActions;
+      }
+      initialized = undefined;
+    }
+
+    void (async () => {
+      try {
+        if (actions.isClosed()) return;
+        if (editor == null) throw Error("TimeTravel editor is not registered");
+        const name: string =
+          editor.init != null
+            ? editor.init(path, redux, project_id)
+            : await editor.initAsync(path, redux, project_id);
+        const history = redux.getActions(name);
+        if (!(history instanceof TimeTravelActions)) {
+          editor.remove(path, redux, project_id);
+          throw Error("TimeTravel actions were not initialized");
+        }
+        initialized = { name, actions: history };
+        if (cancelled || actions.isClosed()) {
+          release();
+          return;
+        }
+        history.ambient_actions = actions;
+        // Keep the existing parent-editor cleanup contract as well as this
+        // frame's registry reference (which may be shared with a history tab).
+        actions.timeTravelActions = history;
+        history.init_frame_tree();
+        setRuntime(initialized);
+      } catch (err) {
+        release();
+        if (!cancelled) setError(String(err));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      release();
+    };
+  }, [actions, path, project_id]);
+
+  if (error != null)
+    return <div role="alert">Unable to load TimeTravel: {error}</div>;
+  if (runtime == null) {
+    return (
+      <div role="status" aria-label="Loading TimeTravel">
+        <Loading />
+      </div>
+    );
+  }
+  return (
+    <FrameTreeLeaf
+      {...props}
+      name={runtime.name}
+      actions={runtime.actions as Actions}
+    />
+  );
+}
+
 function shouldMemoize(prev, next) {
   return !is_different(prev, next, [
     "active_id",
@@ -236,7 +318,11 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       spec: EditorDescription,
       editor_actions: Actions,
     ): Rendered {
-      if (hideSingleFrameToolbar && is_only && desc.get("type") === "chatroom") {
+      if (
+        hideSingleFrameToolbar &&
+        is_only &&
+        desc.get("type") === "chatroom"
+      ) {
         return <></>;
       }
       const id = desc.get("id");
@@ -281,51 +367,26 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
         path_leaf = spec.path(path_leaf);
       }
 
-      // UGLY/TODO: This approach to TimeTravel as a frame is not sufficiently
-      // generic and is a **temporary** hack.  It'll be rewritten
-      // someday in a more generic way that also will support multifile
-      // latex editing. See https://github.com/sagemathinc/cocalc/issues/904
-      // Note that this does NOT reference count the actions properly
-      // right now... We need to switch to something like we do with
-      // CodeEditorManager.
       let is_subframe: boolean = false;
-      let name_leaf = name;
-      let actions_leaf = actions;
-      if (
+      const embeddedTimeTravel =
         spec.type === "timetravel" &&
-        !(actions instanceof TimeTravelActions)
-      ) {
-        if (path_leaf.slice(path_leaf.length - 12) != ".time-travel") {
-          path_leaf = hidden_meta_file(path_leaf, "time-travel");
-          const editor = get_file_editor("time-travel");
-          if (editor == null) throw Error("bug -- editor must exist");
-          name_leaf = editor.init(path_leaf, redux, project_id_leaf);
-          const actions2: TimeTravelActions = redux.getActions(name_leaf);
-          actions2.ambient_actions = actions;
-
-          // Store these actions so that we can remove the actions and
-          // store and clean up when the entire frame editor is closed.
-          // This is very important!
-          actions.timeTravelActions = actions2;
-
-          // [j3] Assuming this is part of the hackiness above
-          // Or just that Actions in the frame tree are confusing
-          actions_leaf = actions2 as Actions;
-          is_subframe = true;
-          // this is particularly hacky for now:
-          // ensures time travel params are set.
-          // setTimeout is needed since this can change redux store,
-          // and we are in a render function.
-          setTimeout(() => actions2.init_frame_tree(), 50);
-        }
+        !(actions instanceof TimeTravelActions) &&
+        !path_leaf.endsWith(".time-travel");
+      if (embeddedTimeTravel) {
+        path_leaf = hidden_meta_file(path_leaf, "time-travel");
+        is_subframe = true;
       } else if (type == "cm" && path != path_leaf) {
         // A code editor inside some other editor frame tree
         is_subframe = true;
       }
 
+      const Leaf = embeddedTimeTravel ? EmbeddedTimeTravelLeaf : FrameTreeLeaf;
       return (
-        <FrameTreeLeaf
-          actions={actions_leaf}
+        <Leaf
+          key={
+            embeddedTimeTravel ? `${project_id_leaf}:${path_leaf}` : undefined
+          }
+          actions={actions}
           active_id={active_id}
           available_features={available_features}
           component={component}
@@ -339,7 +400,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
           is_subframe={is_subframe}
           is_visible={is_visible}
           local_view_state={local_view_state}
-          name={name_leaf}
+          name={name}
           path={path_leaf}
           project_id={project_id_leaf}
           reload={reload.get(type)}

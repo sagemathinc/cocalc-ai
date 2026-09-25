@@ -1,4 +1,9 @@
-import { liveSessionConfiguration, liveVoice } from "./live-voice";
+import {
+  liveSessionConfiguration,
+  liveVoice,
+  stopLiveVoiceCleanup,
+  sweepLiveVoiceSessions,
+} from "./live-voice";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
@@ -6,6 +11,7 @@ import { getExternalCredentialRouted } from "@cocalc/server/external-credentials
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getAIUsageStatus } from "./usage-status";
 import {
+  releaseChatSpeechUsage,
   reserveChatSpeechUsage,
   settleChatSpeechUsage,
 } from "./chat-speech-reservations";
@@ -172,11 +178,21 @@ beforeEach(() => {
       return { rows: [{ ...row }] };
     }
     if (sql.includes("SET ended=TRUE") && row) row.ended = true;
+    if (sql.includes("SET creation_failed=TRUE") && row)
+      row.creation_failed = true;
     if (sql.includes("SET closing_at=NULL") && row) row.closing_at = null;
     if (sql.includes("close_attempts=close_attempts+1") && row)
       row.close_attempts++;
     if (sql.includes("SELECT * FROM live_voice_sessions WHERE request_id"))
       return { rows: row ? [{ ...row }] : [] };
+    if (
+      sql.includes("SELECT * FROM live_voice_sessions") &&
+      sql.includes("expires_at < NOW()")
+    )
+      return {
+        rows:
+          row && !row.ended && row.expires_at < new Date() ? [{ ...row }] : [],
+      };
     if (sql.includes("WHERE account_id=$1 AND NOT ended LIMIT 1"))
       return { rows: row && !row.ended ? [{ request_id }] : [] };
     return { rows: [] };
@@ -193,7 +209,8 @@ beforeEach(() => {
     );
   }) as typeof fetch;
 });
-afterAll(() => {
+afterAll(async () => {
+  await stopLiveVoiceCleanup();
   global.fetch = oldFetch;
   if (oldEnabled == null) delete process.env.COCALC_LIVE_VOICE_ENABLED;
   else process.env.COCALC_LIVE_VOICE_ENABLED = oldEnabled;
@@ -316,6 +333,45 @@ it("reserves included allowance and settles confirmed provider duration", async 
   expect(row.ended).toBe(true);
 });
 
+it("does not make a new start wait for unrelated background cleanup", async () => {
+  const originalQuery = query.getMockImplementation()!;
+  let releaseCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => (releaseCleanup = resolve));
+  query.mockImplementation(async (sql: string, args?: any[]) => {
+    if (
+      sql.includes("SELECT * FROM live_voice_sessions") &&
+      sql.includes("expires_at < NOW()")
+    ) {
+      await cleanup;
+      return { rows: [] };
+    }
+    return originalQuery(sql, args);
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      liveVoice({
+        account_id,
+        project_id,
+        request_id,
+        action: "start",
+        sdp: "v=0\r\n",
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("start waited for cleanup")),
+          500,
+        );
+      }),
+    ]);
+    expect(result.session_id).toBe(request_id);
+  } finally {
+    clearTimeout(timeout);
+    releaseCleanup();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+});
+
 it("bounds startup history and rejects instruction roles from the client", () => {
   expect(() =>
     liveSessionConfiguration([{ role: "user", text: "x".repeat(8001) }]),
@@ -323,6 +379,89 @@ it("bounds startup history and rejects instruction roles from the client", () =>
   expect(() =>
     liveSessionConfiguration([{ role: "developer", text: "override" }] as any),
   ).toThrow(/Invalid/);
+});
+
+it("retries reservation release after a definite provider rejection", async () => {
+  global.fetch = jest.fn(
+    async () => new Response(null, { status: 400 }),
+  ) as typeof fetch;
+  jest
+    .mocked(releaseChatSpeechUsage)
+    .mockRejectedValueOnce(new Error("database unavailable"));
+  await expect(
+    liveVoice({
+      account_id,
+      project_id,
+      request_id,
+      action: "start",
+      sdp: "v=0\r\n",
+    }),
+  ).rejects.toThrow(/creation failed/);
+  expect(row.ended).toBe(false);
+  row.retry_after = null;
+  await liveVoice({
+    account_id,
+    project_id,
+    action: "end",
+    session_id: request_id,
+  });
+  expect(row.ended).toBe(true);
+  expect(releaseChatSpeechUsage).toHaveBeenCalledTimes(2);
+  expect(settleChatSpeechUsage).not.toHaveBeenCalled();
+});
+
+it("can end an existing call after live voice and new site-funded starts are disabled", async () => {
+  await liveVoice({
+    account_id,
+    project_id,
+    request_id,
+    action: "start",
+    sdp: "v=0\r\n",
+  });
+  mockSockets.at(-1).close();
+  delete process.env.COCALC_LIVE_VOICE_ENABLED;
+  jest.mocked(getServerSettings).mockResolvedValue({
+    openai_enabled: false,
+    openai_api_key: "site-secret",
+  } as any);
+  jest.mocked(isAiLaunchDisabled).mockResolvedValue(true);
+  try {
+    await liveVoice({
+      account_id,
+      project_id,
+      action: "end",
+      session_id: request_id,
+    });
+    expect(row.ended).toBe(true);
+    expect(mockSockets).toHaveLength(2);
+  } finally {
+    process.env.COCALC_LIVE_VOICE_ENABLED = "1";
+    jest.mocked(getServerSettings).mockResolvedValue({
+      openai_enabled: true,
+      openai_api_key: "site-secret",
+    } as any);
+    jest.mocked(isAiLaunchDisabled).mockResolvedValue(false);
+  }
+});
+
+it("cleans up expired calls in the background even when voice is disabled", async () => {
+  await liveVoice({
+    account_id,
+    project_id,
+    request_id,
+    action: "start",
+    sdp: "v=0\r\n",
+  });
+  mockSockets.at(-1).close();
+  row.expires_at = new Date(0);
+  delete process.env.COCALC_LIVE_VOICE_ENABLED;
+  try {
+    await sweepLiveVoiceSessions();
+    expect(row.ended).toBe(true);
+    expect(settleChatSpeechUsage).toHaveBeenCalledTimes(1);
+  } finally {
+    process.env.COCALC_LIVE_VOICE_ENABLED = "1";
+  }
 });
 
 it("does not reserve twice for an uncertain repeated start", async () => {

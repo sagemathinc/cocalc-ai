@@ -42,7 +42,9 @@ const FAILURE_WINDOW_SECONDS = 5 * 60;
 const FAILURE_LIMITS = { credential_failure: 5, bay_failure: 20 } as const;
 const base = { max_seconds: MAX_SECONDS, usd_per_minute: 0.05 };
 let schema: Promise<void> | undefined;
-let sweeping = false;
+let sweeping: Promise<void> | undefined;
+let cleanupStopped = false;
+let cleanupNeeded: boolean | undefined;
 
 type FundingSource = "site" | "account" | "project";
 interface Lease {
@@ -60,6 +62,7 @@ interface Lease {
   provider_closed: boolean;
   close_attempts: number;
   credential_hash?: string;
+  creation_failed: boolean;
 }
 
 interface Monitor {
@@ -71,9 +74,9 @@ interface Monitor {
 const monitors = new Map<string, Monitor>();
 
 async function ensureSchema() {
-  schema ??= getPool()
-    .query(
-      `
+  cleanupNeeded = true;
+  schema ??= (async () => {
+    const statements = `
       CREATE TABLE IF NOT EXISTS live_voice_sessions (
         request_id UUID PRIMARY KEY,
         account_id UUID NOT NULL,
@@ -91,7 +94,8 @@ async function ensureSchema() {
         close_attempts INTEGER NOT NULL DEFAULT 0,
         retry_after TIMESTAMPTZ,
         credential_hash TEXT,
-        credential_slot SMALLINT
+        credential_slot SMALLINT,
+        creation_failed BOOLEAN NOT NULL DEFAULT FALSE
       );
       ALTER TABLE live_voice_sessions
         ADD COLUMN IF NOT EXISTS provider_closed BOOLEAN NOT NULL DEFAULT FALSE;
@@ -103,6 +107,8 @@ async function ensureSchema() {
         ADD COLUMN IF NOT EXISTS credential_hash TEXT;
       ALTER TABLE live_voice_sessions
         ADD COLUMN IF NOT EXISTS credential_slot SMALLINT;
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS creation_failed BOOLEAN NOT NULL DEFAULT FALSE;
       CREATE UNIQUE INDEX IF NOT EXISTS live_voice_one_account
         ON live_voice_sessions(account_id) WHERE NOT ended;
       CREATE UNIQUE INDEX IF NOT EXISTS live_voice_credential_slots
@@ -119,13 +125,15 @@ async function ensureSchema() {
       );
       CREATE INDEX IF NOT EXISTS live_voice_start_limits_retention
         ON live_voice_start_limits(window_start);
-    `,
-    )
-    .then(() => {})
-    .catch((error) => {
-      schema = undefined;
-      throw error;
-    });
+    `;
+    // PGlite prepares queries and requires one statement per call.
+    for (const statement of statements.split(";")) {
+      if (statement.trim()) await getPool().query(statement);
+    }
+  })().catch((error) => {
+    schema = undefined;
+    throw error;
+  });
   await schema;
 }
 
@@ -223,9 +231,15 @@ async function siteCredential() {
 }
 
 async function credentialForLease(row: Lease) {
+  // Admission switches must not prevent cleanup of sessions already created.
+  const settings =
+    row.funding_source === "site" ? await getServerSettings() : undefined;
+  const siteKey = String(settings?.openai_api_key ?? "").trim();
   const credential =
     row.funding_source === "site"
-      ? await siteCredential()
+      ? siteKey
+        ? { apiKey: siteKey, source: "site" as const }
+        : undefined
       : await ownCredential(row.account_id, row.project_id, row.funding_source);
   if (!credential) throw new Error("Live voice credential is unavailable.");
   return credential;
@@ -502,6 +516,7 @@ async function finishSession(request_id: string, knownFailure = false) {
   );
   const row = rows[0];
   if (!row) return;
+  knownFailure ||= row.creation_failed;
   let monitor = monitors.get(request_id);
   try {
     if (row.provider_id) {
@@ -637,10 +652,29 @@ async function finishSession(request_id: string, knownFailure = false) {
   }
 }
 
-async function sweep() {
-  if (sweeping) return;
-  sweeping = true;
+export function sweepLiveVoiceSessions(): Promise<void> {
+  if (cleanupStopped) return Promise.resolve();
+  return (sweeping ??= runSweep().finally(() => {
+    sweeping = undefined;
+  }));
+}
+
+async function runSweep() {
   try {
+    if (cleanupNeeded === false) return;
+    if (
+      cleanupNeeded == null &&
+      process.env.COCALC_LIVE_VOICE_ENABLED !== "1" &&
+      process.env.COCALC_LIVE_VOICE_DEV !== "1"
+    ) {
+      // A disabled deployment still owns outstanding calls from before restart.
+      // Do not create tables or keep polling on sites that never enabled voice.
+      const { rows } = await getPool().query(
+        "SELECT to_regclass('live_voice_sessions') AS sessions",
+      );
+      cleanupNeeded = rows[0]?.sessions != null;
+      if (!cleanupNeeded) return;
+    }
     await ensureSchema();
     const { rows } = await getPool().query<Lease>(`
       SELECT * FROM live_voice_sessions
@@ -670,17 +704,17 @@ async function sweep() {
     );
   } catch (error) {
     log.warn("live voice cleanup failed", { error: String(error) });
-  } finally {
-    sweeping = false;
   }
 }
 
-if (
-  process.env.COCALC_LIVE_VOICE_ENABLED === "1" ||
-  process.env.COCALC_LIVE_VOICE_DEV === "1"
-) {
-  const timer = setInterval(() => void sweep(), 5000);
-  timer.unref();
+const cleanupTimer = setInterval(() => void sweepLiveVoiceSessions(), 5000);
+cleanupTimer.unref();
+
+/** Drain cleanup before closing its database connection (including in tests). */
+export async function stopLiveVoiceCleanup() {
+  cleanupStopped = true;
+  clearInterval(cleanupTimer);
+  await sweeping;
 }
 
 export async function liveVoice(
@@ -694,7 +728,7 @@ export async function liveVoice(
   const enabled =
     process.env.COCALC_LIVE_VOICE_ENABLED === "1" ||
     (process.env.COCALC_LIVE_VOICE_DEV === "1" && (await isAdmin(account_id)));
-  if (!enabled) {
+  if (!enabled && action !== "end") {
     if (action === "capabilities")
       return { ...base, enabled: false, reason: "Live voice is not enabled." };
     throw new Error("Live voice is not enabled.");
@@ -740,7 +774,9 @@ export async function liveVoice(
     if (!key) throw new Error(choice.reason ?? "Live voice is unavailable.");
     const keyId = credentialHash(key.apiKey);
     await limitStartAttempts(account_id, keyId);
-    await sweep();
+    // Cleanup may be waiting on an unrelated provider. Admission stays bounded;
+    // active-account and credential-slot constraints still protect old calls.
+    void sweepLiveVoiceSessions();
     const expires_at = Date.now() + MAX_SECONDS * 1000;
     let inserted = false;
     for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
@@ -816,6 +852,11 @@ export async function liveVoice(
       });
       if (!response.ok) {
         knownFailure = true;
+        // Preserve a definite rejection across release failures and restarts.
+        await getPool().query(
+          "UPDATE live_voice_sessions SET creation_failed=TRUE WHERE request_id=$1",
+          [opts.request_id],
+        );
         throw new Error(
           "OpenAI live voice creation failed (" +
             response.status +
@@ -851,6 +892,7 @@ export async function liveVoice(
           final_usage: false,
           provider_closed: false,
           close_attempts: 0,
+          creation_failed: false,
         },
         key.apiKey,
       );

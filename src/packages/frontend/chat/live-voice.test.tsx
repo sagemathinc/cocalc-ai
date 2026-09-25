@@ -3,7 +3,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatLiveVoice, requestMicrophoneWithTimeout } from "./live-voice";
 
@@ -313,4 +313,293 @@ it("sends free users without a key to AI settings", async () => {
   await user.click(await screen.findByRole("button", { name: "Live voice" }));
   await user.click(screen.getByRole("button", { name: "Add an OpenAI key" }));
   expect(mockOpenAccountSettings).toHaveBeenCalledWith({ page: "ai" });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("call-scoped cancellation", () => {
+  let peers: any[];
+  let streams: any[];
+  let priorPeer: typeof RTCPeerConnection;
+  let priorDevices: MediaDevices;
+  let intervals: jest.SpyInstance;
+
+  beforeEach(() => {
+    peers = [];
+    streams = [];
+    priorPeer = global.RTCPeerConnection;
+    priorDevices = navigator.mediaDevices;
+    intervals = jest.spyOn(global, "setInterval");
+    jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    jest
+      .spyOn(HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+    Object.defineProperty(global, "RTCPeerConnection", {
+      configurable: true,
+      value: jest.fn(() => {
+        const channel = {
+          readyState: "open",
+          send: jest.fn(),
+          close: jest.fn(),
+          onmessage: undefined,
+        };
+        const peer = {
+          channel,
+          iceGatheringState: "complete",
+          localDescription: { sdp: "offer" },
+          createDataChannel: () => channel,
+          createOffer: async () => ({ sdp: "offer" }),
+          setLocalDescription: jest.fn(async () => {}),
+          setRemoteDescription: jest.fn(async () => {}),
+          addTrack: jest.fn(),
+          close: jest.fn(),
+        };
+        peers.push(peer);
+        return peer;
+      }),
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: jest.fn(async () => {
+          const track = { enabled: false, stop: jest.fn() };
+          const stream = {
+            getTracks: () => [track],
+            getAudioTracks: () => [track],
+          };
+          streams.push(stream);
+          return stream;
+        }),
+      },
+    });
+    let session = 0;
+    mockLiveVoice.mockImplementation(async ({ action }) =>
+      action === "start"
+        ? {
+            enabled: true,
+            session_id: `session-${++session}`,
+            sdp: "answer",
+            expires_at: Date.now() + 120_000,
+          }
+        : { enabled: true, max_seconds: 120, funding_source: "site" },
+    );
+  });
+
+  afterEach(() => {
+    Object.defineProperty(global, "RTCPeerConnection", {
+      configurable: true,
+      value: priorPeer,
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: priorDevices,
+    });
+    jest.restoreAllMocks();
+  });
+
+  async function startCall(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "Live voice" }));
+    await user.click(screen.getByRole("button", { name: "Start live call" }));
+    const peer = peers.at(-1);
+    await waitFor(() => expect(peer.setRemoteDescription).toHaveBeenCalled());
+    act(() =>
+      peer.channel.onmessage({
+        data: JSON.stringify({ type: "session.started" }),
+      }),
+    );
+    await screen.findByText("Voice is live");
+    return peer;
+  }
+
+  it("waits for delegation acceptance and replays a result received while waiting", async () => {
+    const acceptance = deferred<{ message_id: string }>();
+    const onDelegate = jest.fn(() => acceptance.promise);
+    const user = userEvent.setup();
+    const view = render(<ChatLiveVoice {...props} onDelegate={onDelegate} />);
+    const peer = await startCall(user);
+    act(() => {
+      peer.channel.onmessage({
+        data: JSON.stringify({
+          type: "session.input_transcript.delta",
+          delta: "Run a task",
+          end_ms: 1,
+        }),
+      });
+      peer.channel.onmessage({
+        data: JSON.stringify({
+          type: "session.delegation.created",
+          offset_ms: 1,
+          delegation: { id: "d1", target: "client" },
+        }),
+      });
+    });
+    await waitFor(() => expect(onDelegate).toHaveBeenCalledTimes(1));
+    expect(peer.channel.send).not.toHaveBeenCalled();
+    view.rerender(
+      <ChatLiveVoice
+        {...props}
+        onDelegate={onDelegate}
+        messages={[
+          {
+            message_id: "response-1",
+            parent_message_id: "request-1",
+            thread_id: props.threadId,
+            sender_id: "agent-1",
+            role: "agent",
+            generating: false,
+            state: "complete",
+            content: "Finished result",
+            date: "2026-09-25T00:00:00.000Z",
+          },
+        ]}
+      />,
+    );
+    await act(async () => acceptance.resolve({ message_id: "request-1" }));
+    await waitFor(() =>
+      expect(peer.channel.send).toHaveBeenCalledWith(
+        expect.stringContaining("Finished result"),
+      ),
+    );
+    view.unmount();
+  });
+
+  it.each(["hang-up", "thread switch", "unmount"])(
+    "invalidates pending dispatch on %s",
+    async (reason) => {
+      const prepare = deferred<void>();
+      const dispatch = jest.fn();
+      let signal!: AbortSignal;
+      const onDelegate = jest.fn(async (_text, isCurrentCall, callSignal) => {
+        signal = callSignal;
+        await prepare.promise;
+        if (!isCurrentCall()) throw Error("Call cancelled");
+        dispatch();
+        return { message_id: "request-1" };
+      });
+      const user = userEvent.setup();
+      const view = render(<ChatLiveVoice {...props} onDelegate={onDelegate} />);
+      const peer = await startCall(user);
+      act(() => {
+        peer.channel.onmessage({
+          data: JSON.stringify({
+            type: "session.input_transcript.delta",
+            delta: "Run a task",
+            end_ms: 1,
+          }),
+        });
+        peer.channel.onmessage({
+          data: JSON.stringify({
+            type: "session.delegation.created",
+            offset_ms: 1,
+            delegation: { id: "d1", target: "client" },
+          }),
+        });
+      });
+      await waitFor(() => expect(onDelegate).toHaveBeenCalledTimes(1));
+      if (reason === "hang-up")
+        await user.click(screen.getByRole("button", { name: "End live call" }));
+      else if (reason === "unmount") view.unmount();
+      else {
+        view.rerender(
+          <ChatLiveVoice
+            {...props}
+            threadId="other-thread"
+            onDelegate={onDelegate}
+          />,
+        );
+        view.rerender(<ChatLiveVoice {...props} onDelegate={onDelegate} />);
+      }
+      expect(signal.aborted).toBe(true);
+      await act(async () => prepare.resolve());
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(streams[0].getTracks()[0].stop).toHaveBeenCalled();
+      view.unmount();
+    },
+  );
+
+  it.each(["reject", "resolve"])(
+    "does not stop a replacement call when old startup settles: %s",
+    async (settlement) => {
+      const startup = deferred<any>();
+      const defaultRpc = mockLiveVoice.getMockImplementation()!;
+      let first = true;
+      mockLiveVoice.mockImplementation((request) => {
+        if (request.action === "start" && first) {
+          first = false;
+          return startup.promise;
+        }
+        return defaultRpc(request);
+      });
+      const user = userEvent.setup();
+      const view = render(<ChatLiveVoice {...props} />);
+      await user.click(
+        await screen.findByRole("button", { name: "Live voice" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Start live call" }));
+      await waitFor(() => expect(first).toBe(false));
+      await user.click(screen.getByRole("button", { name: "End live call" }));
+      const replacement = await startCall(user);
+      await act(async () => {
+        if (settlement === "reject")
+          startup.reject(Error("Old startup failed"));
+        else
+          startup.resolve({
+            session_id: "old-session",
+            sdp: "old-answer",
+            expires_at: Date.now() + 120_000,
+          });
+      });
+      expect(screen.getByText("Voice is live")).toBeInTheDocument();
+      expect(replacement.close).not.toHaveBeenCalled();
+      expect(streams[1].getTracks()[0].stop).not.toHaveBeenCalled();
+      if (settlement === "resolve")
+        expect(mockLiveVoice).toHaveBeenCalledWith(
+          expect.objectContaining({ action: "end", session_id: "old-session" }),
+        );
+      view.unmount();
+    },
+  );
+
+  it("ignores old heartbeat failures, audio events and playback rejections", async () => {
+    const heartbeat = deferred<any>();
+    const playback = deferred<void>();
+    const defaultRpc = mockLiveVoice.getMockImplementation()!;
+    mockLiveVoice.mockImplementation((request) =>
+      request.action === "heartbeat" ? heartbeat.promise : defaultRpc(request),
+    );
+    const user = userEvent.setup();
+    const view = render(<ChatLiveVoice {...props} />);
+    const old = await startCall(user);
+    const tick = intervals.mock.calls.find(([, delay]) => delay === 8_000)![0];
+    act(() => tick());
+    jest
+      .mocked(HTMLMediaElement.prototype.play)
+      .mockReturnValueOnce(playback.promise);
+    act(() => old.ontrack({ streams: [streams[0]] }));
+    await user.click(screen.getByRole("button", { name: "End live call" }));
+    const replacement = await startCall(user);
+    const plays = jest.mocked(HTMLMediaElement.prototype.play).mock.calls
+      .length;
+    await act(async () => {
+      heartbeat.reject(Error("Old heartbeat failed"));
+      playback.reject(Error("Old playback failed"));
+      old.ontrack({ streams: [streams[0]] });
+    });
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(plays);
+    expect(screen.getByText("Voice is live")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Enable call audio" }),
+    ).toBeNull();
+    expect(replacement.close).not.toHaveBeenCalled();
+    expect(streams[1].getTracks()[0].stop).not.toHaveBeenCalled();
+    view.unmount();
+  });
 });

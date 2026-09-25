@@ -5,11 +5,25 @@
 
 /** Serialize storage writes per conversation, including a send's final removal. */
 export class DraftWriter {
-  private pending = new Map<string, Promise<void>>();
+  private pending = new Map<string, Promise<unknown>>();
   constructor(private write: (key: string, value: string) => Promise<void>) {}
 
   save(key: string, value: string): Promise<void> {
     return this.enqueue(key, () => this.write(key, value));
+  }
+
+  read(key: string, read: () => Promise<string>): Promise<string> {
+    return this.enqueue(key, read);
+  }
+
+  update(
+    key: string,
+    read: () => Promise<string>,
+    change: (value: string) => string,
+  ): Promise<void> {
+    return this.enqueue(key, async () => {
+      await this.write(key, change(await read()));
+    });
   }
 
   clearIfUnchanged(
@@ -22,7 +36,7 @@ export class DraftWriter {
     });
   }
 
-  private enqueue(key: string, operation: () => Promise<void>): Promise<void> {
+  private enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const next = (this.pending.get(key) ?? Promise.resolve())
       .catch(() => undefined)
       .then(operation);

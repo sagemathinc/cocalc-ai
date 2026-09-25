@@ -70,13 +70,67 @@ function key(parts: {
 }
 
 export async function loadChatDraft(parts: Parameters<typeof key>[0]) {
-  return decodeDraft(await AsyncStorage.getItem(key(parts)));
+  return decodeDraft(
+    await writer.read(
+      key(parts),
+      async () => (await AsyncStorage.getItem(key(parts))) ?? "",
+    ),
+  );
 }
 
 const writer = new DraftWriter(async (storageKey, value) => {
   if (value) await AsyncStorage.setItem(storageKey, value);
   else await AsyncStorage.removeItem(storageKey);
 });
+
+const attachmentListeners = new Map<
+  string,
+  Set<(attachment: ChatAttachment) => Promise<void>>
+>();
+
+export function withChatAttachment(
+  draft: ChatDraft,
+  attachment: ChatAttachment,
+): ChatDraft {
+  if (draft.attachments.some((item) => item.markdown === attachment.markdown))
+    return draft;
+  return { ...draft, attachments: [...draft.attachments, attachment] };
+}
+
+export function subscribeChatDraftAttachments(
+  parts: Parameters<typeof key>[0],
+  receive: (attachment: ChatAttachment) => Promise<void>,
+): () => void {
+  const storageKey = key(parts);
+  const listeners = attachmentListeners.get(storageKey) ?? new Set();
+  listeners.add(receive);
+  attachmentListeners.set(storageKey, listeners);
+  return () => {
+    listeners.delete(receive);
+    if (!listeners.size) attachmentListeners.delete(storageKey);
+  };
+}
+
+/** Recover a completed upload without writing an abandoned screen's draft. */
+export async function appendChatDraftAttachment(
+  parts: Parameters<typeof key>[0],
+  attachment: ChatAttachment,
+): Promise<void> {
+  // Update mounted composers synchronously before queueing storage work, so
+  // further edits retain the attachment even if the composer then unmounts.
+  const saves = [...(attachmentListeners.get(key(parts)) ?? [])].map(
+    (receive) => receive(attachment),
+  );
+  saves.push(
+    writer.update(
+      key(parts),
+      async () => (await AsyncStorage.getItem(key(parts))) ?? "",
+      (value) =>
+        encodeDraft(withChatAttachment(decodeDraft(value), attachment)),
+    ),
+  );
+  await Promise.all(saves);
+}
 
 export async function saveChatDraft(
   parts: Parameters<typeof key>[0],

@@ -17,7 +17,7 @@ import type { AppearancePalette } from "@cocalc/util/appearance-palette";
 import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
 import { posix } from "path-browserify";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useLiveVoice } from "../../../live/use-live";
 import { LiveVoiceControls } from "../../../live/controls";
 import { useSpeech } from "../../../speech/use-speech";
@@ -32,6 +32,7 @@ import {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   FlatList,
   KeyboardAvoidingView,
@@ -62,10 +63,13 @@ import {
   pickLibraryPhotos,
 } from "../../../chat/pick-attachment";
 import {
+  appendChatDraftAttachment,
   clearChatDraftIfUnchanged,
   composeChatDraft,
   loadChatDraft,
   saveChatDraft,
+  subscribeChatDraftAttachments,
+  withChatAttachment,
   type ChatDraft,
 } from "../../../chat/drafts";
 import { ensureProjectRunning } from "../../../cocalc/project-runtime";
@@ -292,6 +296,7 @@ export default function ChatScreen() {
   const [attaching, setAttaching] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string>();
   const pendingAttachmentPicker = useRef<(() => void) | undefined>(undefined);
+  const attachmentGeneration = useRef(0);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [draftRevision, setDraftRevision] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -310,6 +315,17 @@ export default function ChatScreen() {
   const draftKey = useMemo(
     () => ({ profileId, projectId, path: chatPath, threadId }),
     [chatPath, profileId, projectId, threadId],
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        attachmentGeneration.current++;
+        pendingAttachmentPicker.current = undefined;
+        setAttaching(false);
+      },
+      [draftKey],
+    ),
   );
 
   const disconnect = useCallback(async () => {
@@ -376,24 +392,53 @@ export default function ChatScreen() {
     }
   }, [chatPath, disconnect, profileId, projectId, threadId]);
 
-  useEffect(() => {
-    let active = true;
-    setDraftLoaded(false);
-    setDraft({ text: "", attachments: [] });
-    void loadChatDraft(draftKey)
-      .then((value) => {
-        if (active) {
-          setDraft(value);
-          setDraftLoaded(true);
-        }
-      })
-      .catch((err) => {
-        if (active) setError(`Could not restore your draft: ${err}`);
-      });
-    return () => {
-      active = false;
-    };
-  }, [draftKey, draftRevision]);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      let loaded = false;
+      const completed: ChatDraft["attachments"] = [];
+      const unsubscribe = subscribeChatDraftAttachments(
+        draftKey,
+        async (attachment) => {
+          if (!loaded) {
+            completed.push(attachment);
+            return;
+          }
+          const next = withChatAttachment(draftRef.current, attachment);
+          draftRef.current = next;
+          setDraft(next);
+          await saveChatDraft(draftKey, next).catch((err) => {
+            if (active)
+              setError(`Could not save your attachment draft: ${err}`);
+            throw err;
+          });
+        },
+      );
+      setDraftLoaded(false);
+      setDraft({ text: "", attachments: [] });
+      void loadChatDraft(draftKey)
+        .then((value) => {
+          if (active) {
+            const next = completed.reduce(withChatAttachment, value);
+            draftRef.current = next;
+            setDraft(next);
+            setDraftLoaded(true);
+            loaded = true;
+            if (completed.length)
+              void saveChatDraft(draftKey, next).catch((err) =>
+                setError(`Could not save your attachment draft: ${err}`),
+              );
+          }
+        })
+        .catch((err) => {
+          if (active) setError(`Could not restore your draft: ${err}`);
+        });
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    }, [draftKey, draftRevision]),
+  );
 
   // Inverted layout starts at the newest message without measuring or scrolling
   // through older Markdown. Never mutate the shared chronological snapshot.
@@ -440,10 +485,13 @@ export default function ChatScreen() {
     kind: "photo" | "file",
   ) => {
     if (attaching || isPreviewProfile(profileId)) return;
+    const current = attachmentGeneration.current;
+    const isCurrent = () => current === attachmentGeneration.current;
     setAttaching(true);
     setAttachmentError(undefined);
     try {
       const assets = await picker();
+      if (!isCurrent()) return;
       for (const asset of assets) {
         if (draftRef.current.attachments.length >= MAX_DRAFT_ATTACHMENTS) {
           throw new Error("Add at most 8 attachments to one message.");
@@ -454,14 +502,23 @@ export default function ChatScreen() {
           ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
             asset.mimeType ?? "",
           );
-        addAttachment(
-          image
-            ? await uploadChatImage({ profileId, projectId, asset })
-            : await uploadChatFile({ profileId, projectId, chatPath, asset }),
-        );
+        const attachment = image
+          ? await uploadChatImage({ profileId, projectId, asset })
+          : await uploadChatFile({ profileId, projectId, chatPath, asset });
+        if (!isCurrent()) {
+          await appendChatDraftAttachment(draftKey, attachment).catch((err) => {
+            Alert.alert(
+              "Could not save uploaded attachment",
+              `The upload completed, but could not be added to its conversation draft. The uploaded file is still available at:\n${attachment.markdown}\n${err}`,
+            );
+          });
+          return;
+        }
+        addAttachment(attachment);
       }
       if (assets.length) setStatus("Attachment ready to send");
     } catch (err) {
+      if (!isCurrent()) return;
       const detail = err instanceof Error ? err.message : `${err}`;
       setAttachmentError(
         /native module|ExpoImagePicker|ExpoDocumentPicker|ExpoImageManipulator/i.test(
@@ -474,7 +531,7 @@ export default function ChatScreen() {
         "Attachment upload stopped; files already added remain in your draft",
       );
     } finally {
-      setAttaching(false);
+      if (isCurrent()) setAttaching(false);
     }
   };
 

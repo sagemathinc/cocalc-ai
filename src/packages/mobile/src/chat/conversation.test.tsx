@@ -5,14 +5,37 @@ import { createRemoteHeadlessChatClient } from "@cocalc/chat-client";
 import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
 import { ensureProjectRunning } from "../cocalc/project-runtime";
 import {
+  appendChatDraftAttachment,
   clearChatDraftIfUnchanged,
   loadChatDraft,
   saveChatDraft,
+  subscribeChatDraftAttachments,
 } from "./drafts";
 import { uploadChatFile, uploadChatImage } from "./attachments";
 import { pickFiles, pickLibraryPhotos } from "./pick-attachment";
 
 let mockLivePhase = "idle";
+let mockFocused = true;
+const mockDraftStorage = new Map<string, string>();
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  __esModule: true,
+  default: {
+    getItem: async (key: string) => mockDraftStorage.get(key) ?? null,
+    setItem: async (key: string, value: string) => {
+      mockDraftStorage.set(key, value);
+    },
+    removeItem: async (key: string) => {
+      mockDraftStorage.delete(key);
+    },
+  },
+}));
+let mockRoute = {
+  projectId: "project",
+  profile: "profile",
+  chatPath: "agent.chat",
+  thread: "thread",
+  title: "Research",
+};
 jest.mock("../live/use-live", () => ({
   useLiveVoice: () => ({ phase: mockLivePhase }),
 }));
@@ -35,15 +58,11 @@ jest.mock("expo-router/react-navigation", () => ({
 }));
 jest.mock("expo-router", () => ({
   useFocusEffect: (callback: () => void) =>
-    require("react").useEffect(callback, [callback]),
+    require("react").useEffect(() => {
+      if (mockFocused) return callback();
+    }, [callback, mockFocused]),
   Stack: { Screen: () => null },
-  useLocalSearchParams: () => ({
-    projectId: "project",
-    profile: "profile",
-    chatPath: "agent.chat",
-    thread: "thread",
-    title: "Research",
-  }),
+  useLocalSearchParams: () => mockRoute,
 }));
 jest.mock("@cocalc/chat-client", () => ({
   createRemoteHeadlessChatClient: jest.fn(),
@@ -84,6 +103,12 @@ jest.mock("./drafts", () => ({
       .filter(Boolean)
       .join("\n\n"),
   clearChatDraftIfUnchanged: jest.fn(),
+  appendChatDraftAttachment: jest.fn(),
+  subscribeChatDraftAttachments: jest.fn(() => () => {}),
+  withChatAttachment: (draft: any, attachment: any) =>
+    draft.attachments.some((item: any) => item.markdown === attachment.markdown)
+      ? draft
+      : { ...draft, attachments: [...draft.attachments, attachment] },
   loadChatDraft: jest.fn(),
   saveChatDraft: jest.fn(),
 }));
@@ -111,6 +136,17 @@ const input = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockLivePhase = "idle";
+  mockFocused = true;
+  mockDraftStorage.clear();
+  mockRoute = {
+    projectId: "project",
+    profile: "profile",
+    chatPath: "agent.chat",
+    thread: "thread",
+    title: "Research",
+  };
+  jest.mocked(subscribeChatDraftAttachments).mockImplementation(() => () => {});
+  jest.mocked(appendChatDraftAttachment).mockResolvedValue();
   const snapshot = {
     revision: 1,
     ready: true,
@@ -197,6 +233,182 @@ it("attaches a photo as a saved draft chip and sends it with the message", async
     thread_id: "thread",
     text: "saved draft\n\n![photo.png](/blobs/photo.png?uuid=one)",
   });
+});
+
+it.each(["unmount", "blur-refocus", "blur-retained"])(
+  "merges a late upload into the latest draft after %s",
+  async (change) => {
+    let finish!: (value: any) => void;
+    const attachment = {
+      kind: "image" as const,
+      name: "photo.png",
+      markdown: "![photo](url)",
+    };
+    jest.mocked(pickLibraryPhotos).mockResolvedValue([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+      { uri: "file:///next.png", name: "next.png", mimeType: "image/png" },
+    ]);
+    jest.mocked(uploadChatImage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const drafts = jest.requireActual<typeof import("./drafts")>("./drafts");
+    jest
+      .mocked(subscribeChatDraftAttachments)
+      .mockImplementation(drafts.subscribeChatDraftAttachments);
+    jest
+      .mocked(appendChatDraftAttachment)
+      .mockImplementation(drafts.appendChatDraftAttachment);
+    jest.mocked(loadChatDraft).mockImplementation(drafts.loadChatDraft);
+    jest.mocked(saveChatDraft).mockImplementation(drafts.saveChatDraft);
+    const key = {
+      profileId: "profile",
+      projectId: "project",
+      path: "agent.chat",
+      threadId: "thread",
+    };
+    await drafts.saveChatDraft(key, {
+      text: "Abandoned draft",
+      attachments: [],
+    });
+    await act(async () => {
+      renderer = create(<ChatScreen />);
+    });
+    await act(async () => button("Attach photo or file").props.onPress());
+    await act(async () => button("Choose photos").props.onPress());
+    await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+    let retained: any;
+    if (change === "unmount") {
+      await act(async () => renderer.unmount());
+      await act(async () => {
+        renderer = create(<ChatScreen />);
+      });
+    } else {
+      mockFocused = false;
+      await act(async () => renderer.update(<ChatScreen />));
+      mockFocused = true;
+      if (change === "blur-retained") {
+        retained = renderer;
+        await act(async () => {
+          renderer = create(<ChatScreen />);
+        });
+      } else {
+        await act(async () => renderer.update(<ChatScreen />));
+      }
+    }
+    await act(async () =>
+      input().props.onChangeText("New text after reopening"),
+    );
+    await act(async () => finish(attachment));
+    expect(appendChatDraftAttachment).toHaveBeenCalledWith(
+      {
+        profileId: "profile",
+        projectId: "project",
+        path: "agent.chat",
+        threadId: "thread",
+      },
+      attachment,
+    );
+    expect(input().props.value).toBe("New text after reopening");
+    expect(button("Remove attachment photo.png")).toBeDefined();
+    if (retained) {
+      expect(
+        retained.root.findByProps({ accessibilityLabel: "Message Codex" }).props
+          .value,
+      ).toBe("Abandoned draft");
+      expect(
+        retained.root.findAllByProps({
+          accessibilityLabel: "Remove attachment photo.png",
+        }),
+      ).toHaveLength(0);
+    }
+    expect(saveChatDraft).toHaveBeenLastCalledWith(expect.anything(), {
+      text: "New text after reopening",
+      attachments: [attachment],
+    });
+    expect(uploadChatImage).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+    await act(async () => {
+      renderer = create(<ChatScreen />);
+    });
+    expect(input().props.value).toBe("New text after reopening");
+    expect(button("Remove attachment photo.png")).toBeDefined();
+    if (retained) {
+      await act(async () => renderer.unmount());
+      renderer = retained;
+      await act(async () => renderer.update(<ChatScreen />));
+      expect(input().props.value).toBe("New text after reopening");
+      expect(button("Remove attachment photo.png")).toBeDefined();
+    }
+  },
+);
+
+it("keeps a late upload associated with its original conversation after route changes", async () => {
+  let finish!: (value: any) => void;
+  const attachment = {
+    kind: "image" as const,
+    name: "photo.png",
+    markdown: "![photo](url)",
+  };
+  jest
+    .mocked(pickLibraryPhotos)
+    .mockResolvedValue([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+    ]);
+  jest.mocked(uploadChatImage).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose photos").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  mockRoute = {
+    ...mockRoute,
+    thread: "other-thread",
+    profile: "other-profile",
+  };
+  await act(async () => renderer.update(<ChatScreen />));
+  await act(async () => input().props.onChangeText("Other account's draft"));
+  await act(async () => finish(attachment));
+  expect(appendChatDraftAttachment).toHaveBeenCalledWith(
+    expect.objectContaining({ profileId: "profile", threadId: "thread" }),
+    attachment,
+  );
+  expect(input().props.value).toBe("Other account's draft");
+  expect(button("Remove attachment photo.png")).toBeUndefined();
+  expect(input().props.editable).toBe(true);
+});
+
+it("does not upload a picker result returned after leaving the conversation", async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(pickLibraryPhotos).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => button("Attach photo or file").props.onPress());
+  await act(async () => button("Choose photos").props.onPress());
+  await act(async () => renderer.root.findByType("Modal").props.onDismiss());
+  await act(async () => renderer.unmount());
+  renderer = undefined;
+  await act(async () =>
+    finish([
+      { uri: "file:///photo.png", name: "photo.png", mimeType: "image/png" },
+    ]),
+  );
+  expect(uploadChatImage).not.toHaveBeenCalled();
+  expect(appendChatDraftAttachment).not.toHaveBeenCalled();
 });
 
 it("allows an attachment-only message and removes it without touching typed text", async () => {

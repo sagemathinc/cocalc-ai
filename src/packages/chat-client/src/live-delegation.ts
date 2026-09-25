@@ -117,17 +117,35 @@ export class LiveDelegation {
   observe(messages: ProjectedChatMessage[]) {
     if (this.closed) return;
     for (const message of messages) {
+      const taskId =
+        message.role === "human"
+          ? message.message_id
+          : message.parent_message_id;
+      const failedId = taskId ? this.tasks.get(taskId) : undefined;
+      if (
+        failedId &&
+        (message.state === "error" || message.state === "interrupted")
+      ) {
+        this.tasks.delete(taskId!);
+        this.progress.delete(taskId!);
+        const interrupted = message.state === "interrupted";
+        this.append(
+          "session.commentary.append",
+          interrupted
+            ? "The submitted agent request was interrupted. Tell the user to inspect chat. Do not claim completion or retry."
+            : "The submitted agent request failed. Tell the user to inspect the error in chat and check payment settings. Do not claim completion or retry.",
+          failedId,
+        );
+        this.report(
+          interrupted
+            ? "Agent request was interrupted. Check chat."
+            : "Agent request failed. Check chat and payment settings.",
+        );
+        continue;
+      }
       const pendingId = this.tasks.get(message.message_id);
       if (pendingId && message.role === "human") {
-        if (message.state === "error") {
-          this.tasks.delete(message.message_id);
-          this.append(
-            "session.commentary.append",
-            "The submitted agent request failed. Tell the user to inspect the error in chat and check payment settings. Do not claim completion or retry.",
-            pendingId,
-          );
-          this.report("Agent request failed. Check chat and payment settings.");
-        } else if (
+        if (
           ["queued", "running"].includes(message.state ?? "") &&
           this.progress.get(message.message_id) !== message.state
         ) {

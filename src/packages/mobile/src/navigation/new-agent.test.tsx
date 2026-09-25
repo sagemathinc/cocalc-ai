@@ -8,13 +8,19 @@ import { openProjectHost } from "../cocalc/site-session";
 import { fsClient } from "@cocalc/conat/files/fs";
 import { Keyboard } from "react-native";
 
+let mockFocused = true;
+let mockProfile = "site";
 jest.mock("expo-router", () => ({
   router: { replace: jest.fn() },
   Stack: {
     Screen: ({ options }: any) =>
       require("react").createElement("StackScreen", { options }),
   },
-  useLocalSearchParams: () => ({ profile: "site" }),
+  useLocalSearchParams: () => ({ profile: mockProfile }),
+  useFocusEffect: (callback: () => void) =>
+    require("react").useEffect(() => {
+      if (mockFocused) return callback();
+    }, [callback, mockFocused]),
 }));
 jest.mock("expo-crypto", () => ({ randomUUID: jest.fn(() => "test-uuid") }));
 jest.mock("@cocalc/chat-client", () => ({
@@ -49,7 +55,10 @@ function control(renderer: any, role: string, name: string) {
   );
 }
 
-it("lets a user name an agent, choose a project, and open its new chat", async () => {
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockFocused = true;
+  mockProfile = "site";
   const project = {
     project_id: "project-id",
     title: "Math notes",
@@ -68,6 +77,9 @@ it("lets a user name an agent, choose a project, and open its new chat", async (
   jest
     .mocked(createNamedAgent)
     .mockResolvedValue({ agent_id: "agent-id" } as any);
+});
+
+it("lets a user name an agent, choose a project, and open its new chat", async () => {
   let renderer: any;
   await act(async () => {
     renderer = create(<NewAgentScreen />);
@@ -114,4 +126,72 @@ it("lets a user name an agent, choose a project, and open its new chat", async (
     }),
   );
   await act(async () => renderer.unmount());
+});
+
+async function beginCreation() {
+  let renderer: any;
+  await act(async () => {
+    renderer = create(<NewAgentScreen />);
+  });
+  await act(async () =>
+    control(renderer, "button", "Choose project").props.onPress(),
+  );
+  await act(async () =>
+    control(renderer, "button", "Select Math notes").props.onPress(),
+  );
+  await act(async () =>
+    renderer.root
+      .findByProps({ accessibilityLabel: "Agent name" })
+      .props.onChangeText("Research"),
+  );
+  await act(async () => {
+    control(renderer, "button", "Create agent").props.onPress();
+  });
+  return renderer;
+}
+
+it.each(["unmount", "blur", "blur-refocus", "profile-change"])(
+  "does not navigate when creation completes after %s",
+  async (change) => {
+    let finish!: (value: any) => void;
+    jest.mocked(createNamedAgent).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const renderer = await beginCreation();
+    expect(createNamedAgent).toHaveBeenCalledTimes(1);
+    if (change === "unmount") {
+      await act(async () => renderer.unmount());
+    } else if (change === "profile-change") {
+      mockProfile = "other-site";
+      await act(async () => renderer.update(<NewAgentScreen />));
+    } else {
+      mockFocused = false;
+      await act(async () => renderer.update(<NewAgentScreen />));
+      if (change === "blur-refocus") {
+        mockFocused = true;
+        await act(async () => renderer.update(<NewAgentScreen />));
+      }
+    }
+    await act(async () => finish({ agent_id: "agent-id" }));
+    expect(router.replace).not.toHaveBeenCalled();
+    if (change !== "unmount") await act(async () => renderer.unmount());
+  },
+);
+
+it("does not begin agent creation if the host lease arrives after leaving", async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(openProjectHost).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const renderer = await beginCreation();
+  await act(async () => renderer.unmount());
+  await act(async () => finish({ client: {} }));
+  expect(createNamedAgent).not.toHaveBeenCalled();
+  expect(router.replace).not.toHaveBeenCalled();
 });

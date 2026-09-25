@@ -9,7 +9,12 @@ import { fsClient } from "@cocalc/conat/files/fs";
 import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import * as Crypto from "expo-crypto";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import {
+  router,
+  Stack,
+  useFocusEffect,
+  useLocalSearchParams,
+} from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -72,6 +77,16 @@ export default function NewAgentScreen() {
   const pending = useRef<PendingAgentCreation | undefined>(undefined);
   const inFlight = useRef(false);
   const requestGeneration = useRef(0);
+  const creationGeneration = useRef(0);
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        creationGeneration.current++;
+        setCreating(false);
+      },
+      [profile, params.projectId, params.host],
+    ),
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(query.trim()), 300);
@@ -144,12 +159,16 @@ export default function NewAgentScreen() {
     }
     inFlight.current = true;
     setCreating(true);
+    const current = creationGeneration.current;
+    const isCurrent = () => current === creationGeneration.current;
     try {
       const session = await getActiveSiteSession(profile);
+      if (!isCurrent()) return;
       const lease = await openProjectHost(session, {
         project_id: target.project_id,
         host_id: target.host_id || "",
       });
+      if (!isCurrent()) return;
       pending.current ??= {
         projectId: target.project_id,
         path: `${DEFAULT_PROJECT_RUNTIME_HOME}/.local/share/cocalc/agents/${Crypto.randomUUID()}.chat`,
@@ -177,6 +196,7 @@ export default function NewAgentScreen() {
         projectTitle: target.title,
         workingDirectory,
       });
+      if (!isCurrent()) return;
       router.replace({
         pathname: "/project/[projectId]/chat",
         params: {
@@ -188,10 +208,10 @@ export default function NewAgentScreen() {
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${err}`);
+      if (isCurrent()) setError(err instanceof Error ? err.message : `${err}`);
     } finally {
       inFlight.current = false;
-      setCreating(false);
+      if (isCurrent()) setCreating(false);
     }
   };
 
