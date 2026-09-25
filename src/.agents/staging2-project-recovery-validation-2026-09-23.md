@@ -2286,3 +2286,16 @@ to the relevant tabs. That banner appears only when its threshold is crossed.
 Operator recovery health, restore-drill coverage, and debt reports are
 available through CLI and email; there is no new standalone admin Recovery
 page in this change.
+
+The corrected classifier was committed as `69c891c03e`. Four focused server
+test suites passed (46 tests), the server package build and full development
+build passed, and the hub-only artifact
+`20260925T052057Z-69c891c0-20260925T0522Z-69c891c0-nonfree-recovery-dirty`
+was deployed as staging2 release `20260925052254-hub`. All seven hub software
+smoke checks and project-host route health passed. At 05:23 UTC, project
+recovery health was healthy with zero current delay, unknown statuses, or
+unaccounted due obligations and 4/4 active backup shards covered by recent
+passing remote-only restore drills. The 24-hour attempt history still carries
+the old `free` classification from before this rollout; it must not be read as
+evidence about new admin-tier dispatch. Customer warnings remain disabled, and
+a live admin-tier overdue notice still needs a controlled staging drill.
