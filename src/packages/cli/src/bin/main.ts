@@ -89,7 +89,10 @@ import {
   managedConnectorCredentialFromEnv,
   type ManagedConnectorCredential,
 } from "./core/managed-connector-auth";
-import { effectiveDaemonGlobals } from "./core/daemon-globals";
+import {
+  effectiveDaemonGlobals,
+  shouldUseFileOpsDaemon,
+} from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
 import {
   listHosts as listHostsCore,
@@ -2949,10 +2952,7 @@ const { serveDaemon, runDaemonRequestFromCommand } =
   });
 
 function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
-  if (process.env.COCALC_CONNECTOR_API_KEY_FILE) return false;
-  if (process.env.COCALC_CLI_DAEMON_MODE === "1") return false;
-  if (globals.daemon === false) return false;
-  return globals.noDaemon !== true;
+  return shouldUseFileOpsDaemon(globals);
 }
 
 function emitWorkspaceFileCatHumanContent(content: string): void {

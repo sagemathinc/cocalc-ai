@@ -6,12 +6,23 @@ export type DaemonGlobalAuthOptions = {
   accountId?: string;
   account_id?: string;
   apiKey?: string;
+  apiKeyFile?: string;
   cookie?: string;
   bearer?: string;
   hubPassword?: string;
   noDaemon?: boolean;
   disableEnvAuthDefaults?: boolean;
 };
+
+export function shouldUseFileOpsDaemon(
+  globals: DaemonGlobalAuthOptions & { daemon?: boolean },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (env.COCALC_CONNECTOR_API_KEY_FILE || globals.apiKeyFile) return false;
+  if (env.COCALC_CLI_DAEMON_MODE === "1") return false;
+  if (globals.daemon === false) return false;
+  return globals.noDaemon !== true;
+}
 
 export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   globals: T,

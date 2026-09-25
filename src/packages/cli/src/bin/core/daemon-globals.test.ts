@@ -4,7 +4,30 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { effectiveDaemonGlobals } from "./daemon-globals";
+import {
+  effectiveDaemonGlobals,
+  shouldUseFileOpsDaemon,
+} from "./daemon-globals";
+
+test("file-backed API keys never reuse a daemon authentication context", () => {
+  assert.equal(
+    shouldUseFileOpsDaemon(
+      { apiKeyFile: "/tmp/scoped-key" },
+      {} as NodeJS.ProcessEnv,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldUseFileOpsDaemon(
+      {},
+      {
+        COCALC_CONNECTOR_API_KEY_FILE: "/tmp/rotating-key",
+      },
+    ),
+    false,
+  );
+  assert.equal(shouldUseFileOpsDaemon({}, {} as NodeJS.ProcessEnv), true);
+});
 
 test("effectiveDaemonGlobals propagates env-backed api and auth into daemon requests", () => {
   const globals = effectiveDaemonGlobals(
