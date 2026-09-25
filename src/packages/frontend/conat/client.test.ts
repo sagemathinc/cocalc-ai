@@ -3110,7 +3110,7 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(hubClient.conn.io.engine.close).toHaveBeenCalledTimes(1);
   });
 
-  it("waits for a fresh project-host auth token before connecting the routed host", async () => {
+  it("preserves the explicit project when authenticating and retrying without an open project tab", async () => {
     jest.useFakeTimers();
 
     const connectCalls: any[] = [];
@@ -3293,6 +3293,18 @@ describe("ConatClient routed project-host reconnect", () => {
     await jest.advanceTimersByTimeAsync(3_600);
     expect(routedClient.connect).toHaveBeenCalledTimes(1);
     expect(client.projectHostTokens["host-1"]?.token).toBe("token-2");
+    const tokenRequests = hubClient.request.mock.calls.filter(
+      ([, mesg]) => mesg?.name === "hosts.issueProjectHostAuthToken",
+    );
+    expect(tokenRequests).toHaveLength(2);
+    for (const [, mesg] of tokenRequests) {
+      expect(mesg.args).toEqual([
+        {
+          host_id: "host-1",
+          project_id: "00000000-0000-4000-8000-000000000001",
+        },
+      ]);
+    }
     expect(global.fetch).toHaveBeenCalledWith(
       "http://project-host/.cocalc/project-host/session",
       expect.objectContaining({

@@ -46,9 +46,10 @@ export class MissingAgentWorkingDirectoryError extends Error {
 }
 
 export class AgentProjectHomeNotReadyError extends Error {
-  constructor() {
+  constructor(cause?: unknown) {
     super(
-      "The project workspace is still being prepared. Please try again shortly.",
+      "The project workspace is still being prepared. Please try again shortly." +
+        (cause == null ? "" : ` Last filesystem error: ${cause}`),
     );
     this.name = "AgentProjectHomeNotReadyError";
   }
@@ -61,6 +62,19 @@ function isMissingPathError(error: unknown): boolean {
   return (
     code === "ENOENT" ||
     /\bENOENT\b|no such file|does not exist/i.test(`${error}`)
+  );
+}
+
+function isFilesystemAccessDenied(error: unknown): boolean {
+  const code = (error as { code?: string | number } | null)?.code;
+  return (
+    code === "EACCES" ||
+    code === "EPERM" ||
+    `${code}` === "401" ||
+    `${code}` === "403" ||
+    /not authorized|unauthorized|forbidden|permission denied|account is banned/i.test(
+      `${error}`,
+    )
   );
 }
 
@@ -89,17 +103,25 @@ export async function ensureAgentProjectHomeReady(
   path: string,
   { attempts = 30, retryDelayMs = 1000 } = {},
 ): Promise<void> {
+  let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       await assertAgentWorkingDirectory(fs, path);
       return;
     } catch (error) {
-      if (error instanceof AgentWorkingDirectoryNotDirectoryError) throw error;
+      if (
+        error instanceof AgentWorkingDirectoryNotDirectoryError ||
+        isFilesystemAccessDenied(error)
+      )
+        throw error;
+      lastError = error;
       if (error instanceof MissingAgentWorkingDirectoryError) {
         try {
           await createAgentWorkingDirectory(fs, path);
           return;
-        } catch {
+        } catch (error) {
+          if (isFilesystemAccessDenied(error)) throw error;
+          lastError = error;
           // A newly started project's filesystem may not be ready yet.
         }
       }
@@ -108,7 +130,7 @@ export async function ensureAgentProjectHomeReady(
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
-  throw new AgentProjectHomeNotReadyError();
+  throw new AgentProjectHomeNotReadyError(lastError);
 }
 
 export async function createAgentWorkingDirectory(

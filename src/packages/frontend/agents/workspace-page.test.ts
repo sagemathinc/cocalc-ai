@@ -347,4 +347,38 @@ describe("agent workspace paths", () => {
       }),
     ).rejects.toBeInstanceOf(AgentProjectHomeNotReadyError);
   });
+
+  it.each(["stat", "mkdir"])(
+    "does not retry or hide %s permission failures",
+    async (method) => {
+      const denied = new Error("not authorized for project-host access token");
+      const fs = {
+        mkdir: jest.fn().mockRejectedValue(denied),
+        stat: jest
+          .fn()
+          .mockRejectedValue(method === "stat" ? denied : new Error("ENOENT")),
+      };
+      await expect(
+        ensureAgentProjectHomeReady(fs, "/home/user", {
+          attempts: 3,
+          retryDelayMs: 0,
+        }),
+      ).rejects.toBe(denied);
+      expect(fs.stat).toHaveBeenCalledTimes(1);
+      expect(fs.mkdir).toHaveBeenCalledTimes(method === "mkdir" ? 1 : 0);
+    },
+  );
+
+  it("includes the last filesystem failure when readiness retries run out", async () => {
+    await expect(
+      ensureAgentProjectHomeReady(
+        {
+          stat: jest.fn().mockRejectedValue(new Error("RPC unavailable")),
+          mkdir: jest.fn(),
+        },
+        "/home/user",
+        { attempts: 2, retryDelayMs: 0 },
+      ),
+    ).rejects.toThrow("Last filesystem error: Error: RPC unavailable");
+  });
 });

@@ -319,6 +319,44 @@ describe("initCodexProjectRunner", () => {
     expect(hubApi.agent.endIdentityRun).toHaveBeenCalledTimes(1);
   });
 
+  it("disables hosted search for metered site-funded app-server sessions", async () => {
+    const proc = new FakeProc();
+    spawnMock.mockReturnValue(proc);
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-site-funded-tools-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "site-api-key",
+      contextId: "site-funded-tools",
+      env: { OPENAI_API_KEY: "real-site-key" },
+    });
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      siteFundedTurn: {
+        fundedTurnId: "00000000-0000-4000-8000-000000000002",
+        idempotencyKey: "site-funded-tools",
+        path: "/home/user/send.chat",
+      },
+    });
+    try {
+      const args = spawnMock.mock.calls[0][1];
+      expect(args).toContain('web_search="disabled"');
+      expect(args).toContain('model_provider="cocalc-openai-api-key"');
+      expect(args).toContain("model_context_window=128000");
+      expect(args).toContain("OPENAI_API_KEY=site-funded-proxy-token");
+      expect(args).not.toContain("OPENAI_API_KEY=real-site-key");
+      expect(spawned.runtimeEnv?.OPENAI_API_KEY).toBeUndefined();
+    } finally {
+      for (const listener of proc.listeners("exit")) await listener(0);
+    }
+  });
+
   it("releases a site-funded reservation when agent identity setup fails", async () => {
     process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
@@ -501,6 +539,7 @@ describe("initCodexProjectRunner", () => {
       ]),
     );
     expect(args).not.toContain("OPENAI_API_KEY=secret-key");
+    expect(args).not.toContain('web_search="disabled"');
     expect(args).toContain("COCALC_AGENT_MENTION_REFERENCES_FILE=");
     expect(args.join(" ")).not.toContain("/stale/previous-turn.json");
     expect(args).not.toContain(
