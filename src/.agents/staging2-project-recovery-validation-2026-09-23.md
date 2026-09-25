@@ -2307,8 +2307,9 @@ caller-supplied host ID for schedule listing, assignment confirmation, and
 maintenance reports. Commit `0fceffc216c08603eb9cf82e306ac09e7622056f`
 moved those three calls to the host-scoped Hub API, which binds the host ID to
 the authenticated project-host principal. The fix remains in a draft private
-security advisory and [private PR](https://github.com/sagemathinc/cocalc-ai-ghsa-j69v-vvhv-576p/pull/1)
-pending a second review. No production deployment has been made.
+security advisory and [private PR](https://github.com/sagemathinc/cocalc-ai-ghsa-j69v-vvhv-576p/pull/1).
+The second review found no further code or security findings in the fix. No
+production deployment has been made.
 
 The full 39-workspace development build passed. Focused tests passed: 44 Conat
 client and principal-policy tests, 45 project-host maintenance tests, and 69
@@ -2361,3 +2362,42 @@ The live functional checks do not complete the longer observation windows in
 the plan. The natural at-limit backup replacement, controlled repository
 capacity-denial drill, sustained latency measurements, and week-long canary
 still need their planned evidence before a production rollout decision.
+
+## 2026-09-25 private release-base merge and staging alignment
+
+The private advisory fork's release base was advanced to public main
+`5e6c87d5ec049d07e48ba4ceec0db9d6887dbd87`. The recovery review branch
+merged that base without rewriting feature history. The only manual conflict
+resolutions preserved independent additions in
+`conat/hub/api/index.test.ts` and `conat/inter-bay/api.ts`. GitHub reported
+the draft private PR mergeable and clean at head
+`52f6113585fb2e177fe7de4be2fe20bc7a88d331`. A review of that exact
+merged head was requested from the independent reviewer.
+
+The merged head passed the full 39-workspace development build and 181
+focused tests: 49 Conat API/client tests, 65 project-host scheduler/router
+tests, and 67 server host-status/socket authorization tests.
+
+Staging2 Hub artifact
+`20260925T165857Z-52f61135-20260925T1700Z-recovery-merge-52f611`
+was deployed as release `20260925170309-hub`; all seven Hub smoke checks
+passed. Project-host artifact
+`20260925T170114Z-52f61135-20260925T1700Z-recovery-merge-52f611`
+was installed explicitly on the canary host (operation
+`3715b098-0154-40ca-b694-5f4c33253c9a`) and shared host (operation
+`deab7809-c3be-40f0-9951-17762c0c13c0`). The canary host smoke passed.
+The shared host's first smoke immediately after upgrade reported an unhealthy
+rollout while the service settled; its deployment state showed the new
+version running and aligned, and the repeat smoke passed all checks, including
+the exact version and rootfs RPC.
+
+At 17:06 UTC, staging2 recovery health reported zero non-free snapshot or
+backup incidents, zero unknown status and unaccounted due work, and recent
+passing remote-only restore drills for all four active backup shards. The
+canary host was briefly at the memory safety gate (memory PSI full avg10
+6.42%), so the check was warning rather than healthy. This gate defers
+maintenance under memory pressure. At 17:07 UTC the gate had cleared and
+project recovery health was healthy again, with 1,433 successful and no failed
+maintenance attempts over the preceding 24 hours.
+The longer production rollout gates above remain open. Production remains
+unchanged.
