@@ -12,6 +12,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import { deleteClusterAccountApiKeyDirectoryEntry } from "@cocalc/server/inter-bay/accounts";
 import {
   assertProjectFullCollaborator,
   assertScopeProjectsCollaborator,
@@ -145,8 +146,12 @@ export async function saveCocalcConnectorConfig({
       scope: canonical,
     });
   }
-  const { rows } = await getPool().query<CocalcConnectorConfig>(
-    `INSERT INTO agent_cocalc_connector_configs
+  const client = await getPool().connect();
+  let result: CocalcConnectorConfig | undefined;
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<CocalcConnectorConfig>(
+      `INSERT INTO agent_cocalc_connector_configs
        (config_id,account_id,agent_id,source_project_id,scope,enabled)
      VALUES($1,$2,$3,$4,$5::JSONB,$6)
      ON CONFLICT(account_id,agent_id,source_project_id)
@@ -156,18 +161,52 @@ export async function saveCocalcConnectorConfig({
        WHERE agent_cocalc_connector_configs.revision=$7
      RETURNING config_id,account_id,agent_id,source_project_id,scope,
                revision,enabled,created_at,updated_at`,
-    [
-      randomUUID(),
-      owner,
-      agent_id,
-      source_project_id,
-      JSON.stringify(canonical),
-      enabled,
-      expected_revision ?? null,
-    ],
-  );
-  if (!rows[0]) {
-    throw new Error("CoCalc connector changed; reload before saving");
+      [
+        randomUUID(),
+        owner,
+        agent_id,
+        source_project_id,
+        JSON.stringify(canonical),
+        enabled,
+        expected_revision ?? null,
+      ],
+    );
+    result = rows[0];
+    if (!result) {
+      throw new Error("CoCalc connector changed; reload before saving");
+    }
+    const { rows: active } = await client.query<{ key_id: string }>(
+      `SELECT key_id FROM agent_cocalc_connector_turns
+        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+          AND ended_at IS NULL AND expires_at>now() FOR UPDATE`,
+      [owner, agent_id, source_project_id],
+    );
+    for (const { key_id } of active) {
+      await deleteClusterAccountApiKeyDirectoryEntry({
+        key_id,
+        account_id: owner,
+        home_bay_id: getConfiguredBayId(),
+      });
+    }
+    if (active.length) {
+      await client.query(
+        `UPDATE agent_cocalc_connector_turns
+            SET ended_at=now(),secret_ciphertext=''
+          WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+            AND ended_at IS NULL AND expires_at>now()`,
+        [owner, agent_id, source_project_id],
+      );
+      await client.query(
+        `DELETE FROM api_keys WHERE account_id=$1 AND key_id=ANY($2::TEXT[])`,
+        [owner, active.map(({ key_id }) => key_id)],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  return rows[0];
+  return result;
 }

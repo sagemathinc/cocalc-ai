@@ -379,7 +379,15 @@ async function updateApiKey({ apiKey, account_id }) {
     last_active,
   } = apiKey;
   const { rows: updatedRows } = await pool.query(
-    "UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,allowed_project_ids=$6,scope=$7::JSONB,last_active=$8,scope_revision=scope_revision+1 WHERE id=$1 AND account_id=$2 RETURNING scope_revision",
+    `UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,
+            allowed_project_ids=$6,scope=$7::JSONB,last_active=$8,
+            scope_revision=scope_revision+1
+      WHERE id=$1 AND account_id=$2
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_cocalc_connector_turns
+            WHERE key_id=api_keys.key_id AND account_id=$2
+        )
+      RETURNING scope_revision`,
     [
       id,
       account_id,
@@ -392,7 +400,7 @@ async function updateApiKey({ apiKey, account_id }) {
     ],
   );
   if (!updatedRows[0]) {
-    throw Error("API key was deleted during edit");
+    throw Error("API key was deleted or is managed by a connector");
   }
   const { rows } = await pool.query(
     "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",

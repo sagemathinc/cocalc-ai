@@ -14,10 +14,20 @@ const freshAuthMock = jest.fn();
 const identityMock = jest.fn();
 const projectsMock = jest.fn();
 const sourceMock = jest.fn();
+const directoryDeleteMock = jest.fn();
+const releaseMock = jest.fn();
+let activeKeyIds: string[] = [];
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: (...args: any[]) => queryMock(...args) })),
+  default: jest.fn(() => ({
+    query: (...args: any[]) => queryMock(...args),
+    connect: async () => ({ query: queryMock, release: releaseMock }),
+  })),
+}));
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  deleteClusterAccountApiKeyDirectoryEntry: (...args: any[]) =>
+    directoryDeleteMock(...args),
 }));
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => homeMock(...args),
@@ -58,7 +68,16 @@ describe("CoCalc connector configuration", () => {
   };
 
   beforeEach(() => {
-    queryMock.mockReset().mockResolvedValue({ rows: [saved] });
+    activeKeyIds = [];
+    queryMock.mockReset().mockImplementation(async (sql) => {
+      const text = `${sql}`;
+      if (text.includes("FROM agent_cocalc_connector_turns")) {
+        return { rows: activeKeyIds.map((key_id) => ({ key_id })) };
+      }
+      return { rows: [saved] };
+    });
+    directoryDeleteMock.mockReset().mockResolvedValue(undefined);
+    releaseMock.mockReset();
     homeMock.mockReset().mockResolvedValue({ home_bay_id: "bay-0" });
     freshAuthMock.mockReset().mockResolvedValue(undefined);
     identityMock.mockReset().mockResolvedValue({
@@ -147,8 +166,17 @@ describe("CoCalc connector configuration", () => {
       account_id: accountId,
       scope,
     });
-    expect(queryMock.mock.calls[0][1][6]).toBe(1);
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    expect(
+      queryMock.mock.calls.find(([sql]) =>
+        `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs"),
+      )?.[1][6],
+    ).toBe(1);
+    const original = queryMock.getMockImplementation()!;
+    queryMock.mockImplementation(async (sql, args) =>
+      `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs")
+        ? { rows: [] }
+        : await original(sql, args),
+    );
     await expect(
       saveCocalcConnectorConfig({
         ...locator,
@@ -157,5 +185,47 @@ describe("CoCalc connector configuration", () => {
         enabled: true,
       }),
     ).rejects.toThrow("reload before saving");
+  });
+
+  it("revokes active turn keys before a configuration change commits", async () => {
+    activeKeyIds = ["key-a", "key-b"];
+    const { saveCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    await saveCocalcConnectorConfig({
+      ...locator,
+      expected_revision: 1,
+      scope,
+      enabled: false,
+    });
+    expect(directoryDeleteMock).toHaveBeenCalledTimes(2);
+    expect(directoryDeleteMock).toHaveBeenCalledWith({
+      key_id: "key-a",
+      account_id: accountId,
+      home_bay_id: "bay-0",
+    });
+    const statements = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(statements.indexOf("COMMIT")).toBeGreaterThan(
+      statements.findIndex((sql) => sql.includes("DELETE FROM api_keys")),
+    );
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back a configuration change if revocation cannot be confirmed", async () => {
+    activeKeyIds = ["key-a"];
+    directoryDeleteMock.mockRejectedValue(new Error("directory unavailable"));
+    const { saveCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    await expect(
+      saveCocalcConnectorConfig({
+        ...locator,
+        expected_revision: 1,
+        scope,
+        enabled: false,
+      }),
+    ).rejects.toThrow("directory unavailable");
+    expect(queryMock.mock.calls.map(([sql]) => `${sql}`)).toContain("ROLLBACK");
+    expect(queryMock.mock.calls.map(([sql]) => `${sql}`)).not.toContain(
+      "COMMIT",
+    );
   });
 });

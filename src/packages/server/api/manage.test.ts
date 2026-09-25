@@ -253,6 +253,43 @@ describe("manageApiKeys local bay access", () => {
     });
   });
 
+  it("does not let manual editing extend a managed turn key", async () => {
+    queryMock = jest.fn(async (sql) => {
+      const text = `${sql}`;
+      if (text.includes("SELECT id,key_id,account_id")) {
+        return {
+          rows: [
+            {
+              id: 17,
+              key_id: "managed-key",
+              account_id: ACCOUNT_ID,
+              name: "CoCalc connector turn",
+              expire: new Date("2026-09-25T00:00:00Z"),
+              capabilities: [],
+              allowed_project_ids: [],
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { default: manageApiKeys } = await import("./manage");
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        action: "edit",
+        id: 17,
+        expire: new Date("2027-09-25T00:00:00Z"),
+      }),
+    ).rejects.toThrow("managed by a connector");
+    expect(
+      queryMock.mock.calls.find(([sql]) =>
+        `${sql}`.includes("UPDATE api_keys SET expire="),
+      )?.[0],
+    ).toContain("NOT EXISTS");
+    expect(upsertClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
   it("rejects api key creation without explicit capabilities", async () => {
     const { default: manageApiKeys } = await import("./manage");
     await expect(
