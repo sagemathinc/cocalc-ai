@@ -2050,3 +2050,27 @@ remote-only drills. Fresh operator auth expired before a post-deployment
 audited project-count query, so no post-deploy row count is claimed. The
 PGlite tests verify the ownership boundary; staging2 has no foreign-owned
 project sample. Production is unchanged.
+
+## 2026-09-25 host maintenance schedule ownership
+
+Commit `d9ae08b5a4` applies the same owning-bay boundary to the paged host
+maintenance schedule. The bay verifies that the requesting host belongs to the
+local bay, then serves only projects assigned to that host and owned locally.
+Legacy host and project rows without an explicit bay remain local under the
+one-bay compatibility rule. The new PGlite integration case includes a local
+project, a legacy project, a foreign shadow on the local host, and a foreign
+host. Both focused suites passed 10/10 tests, and the server TypeScript build
+passed.
+
+Staging2 hub artifact
+`20260924T235945Z-d9ae08b5-20260925T0010Z-d9ae08b5-host-schedule-bay-dirty`
+deployed as release `20260925000118-hub`. Migration, worker health, and all
+seven hub smoke checks passed. At 00:02:52 UTC, live project-recovery health
+had zero paying critical debt, unknown status, unaccounted due work, or
+stalled paying queues; 4/4 active backup shards had passing remote-only
+restore drills. Two free snapshot obligations were temporarily overdue,
+oldest five minutes, so the recovery check was warning at that sample. By
+00:03:30 UTC, the recovery check was healthy again with zero oldest snapshot
+or backup delay. Overall site health remained warning for separate checks.
+Staging2 has no foreign-owned project sample for an end-to-end ownership
+negative case. Production is unchanged.
