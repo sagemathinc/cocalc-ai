@@ -13,6 +13,7 @@ import { uuid } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
 import { durationToMs } from "../../../core/utils";
+import { listProjectsWithApiKey } from "../../core/api-key-hub";
 import {
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
@@ -208,6 +209,47 @@ export function registerProjectBasicCommands(
         command: Command,
       ) => {
         await withContext(command, "project list", async (ctx) => {
+          const apiKeySession = ctx.remote.user?.auth_method === "api_key";
+          if (apiKeySession) {
+            const apiKey = ctx.globals.apiKey ?? process.env.COCALC_API_KEY;
+            if (!apiKey) throw Error("API key credential is unavailable");
+            const limitNum = Math.max(
+              1,
+              Math.min(10000, Number(opts.limit ?? "100") || 100),
+            );
+            const hostId = opts.host ? opts.host.trim() : undefined;
+            if (hostId && !isValidUUID(hostId)) {
+              throw Error("API key project listing requires a host ID");
+            }
+            const prefix = opts.prefix?.trim().toLowerCase() ?? "";
+            const rows: Array<{
+              project_id: string;
+              title: string;
+              host_id: string | null;
+              state: string | null;
+              last_edited: string | null;
+            }> = [];
+            let offset = 0;
+            while (rows.length < limitNum) {
+              const page = await listProjectsWithApiKey({
+                apiBaseUrl: ctx.apiBaseUrl,
+                apiKey,
+                limit: Math.min(500, limitNum - rows.length),
+                offset,
+                search: prefix || undefined,
+              });
+              rows.push(
+                ...page.projects.filter(
+                  (row) =>
+                    (!hostId || row.host_id === hostId) &&
+                    (!prefix || row.title.toLowerCase().startsWith(prefix)),
+                ),
+              );
+              if (page.next_offset == null || page.next_offset <= offset) break;
+              offset = page.next_offset;
+            }
+            return rows.slice(0, limitNum);
+          }
           const hostId = opts.host
             ? (await resolveHost(ctx, opts.host)).id
             : null;

@@ -45,6 +45,7 @@ import type {
   ApiKey,
   Action as ApiKeyAction,
   ApiKeyCapability,
+  ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import getName from "@cocalc/server/accounts/get-name";
@@ -1505,6 +1506,7 @@ export async function manageApiKeys({
   expire,
   capabilities,
   allowed_project_ids,
+  scope,
   id,
 }: {
   account_id?: string;
@@ -1515,6 +1517,7 @@ export async function manageApiKeys({
   expire?: Date;
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];
+  scope?: ApiKeyScope;
   id?: number;
 }): Promise<ApiKey[] | undefined> {
   if (!account_id) {
@@ -1535,6 +1538,7 @@ export async function manageApiKeys({
     expire,
     capabilities,
     allowed_project_ids,
+    scope,
     id,
   });
 }

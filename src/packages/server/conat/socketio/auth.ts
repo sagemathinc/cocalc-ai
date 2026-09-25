@@ -926,6 +926,7 @@ async function isApiKeyAllowed({
       {
         capabilities: user.capabilities ?? [],
         allowed_project_ids: user.allowed_project_ids ?? [],
+        scope: user.scope,
       },
       requiredCapability,
       project_id,

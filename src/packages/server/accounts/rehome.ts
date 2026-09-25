@@ -230,6 +230,12 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
     await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
     );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
+    );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
+    );
   })();
   accountRehomeApiKeysSchemaReady.set(bay, pending);
   try {

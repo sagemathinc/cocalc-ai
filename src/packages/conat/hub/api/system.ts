@@ -17,6 +17,7 @@ import type {
   ApiKey,
   Action as ApiKeyAction,
   ApiKeyCapability,
+  ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { AccountEntitlementOverride } from "./purchases";
@@ -2429,6 +2430,7 @@ export interface System {
     expire?: Date;
     capabilities?: ApiKeyCapability[];
     allowed_project_ids?: string[];
+    scope?: ApiKeyScope;
     id?: number;
   }) => Promise<ApiKey[] | undefined>;
 

@@ -1,4 +1,12 @@
-import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
+import type {
+  ApiKeyCapability,
+  ApiKeyScope,
+} from "@cocalc/util/db-schema/api-keys";
+import {
+  apiKeyScopeAllows,
+  legacyApiKeyScope,
+  normalizeApiKeyScopeV1,
+} from "@cocalc/util/api-key-scope";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const CAPABILITY_SET = new Set<string>([
@@ -29,6 +37,21 @@ export interface ApiKeyPrincipal {
   auth_method: "api_key";
   capabilities: ApiKeyCapability[];
   allowed_project_ids: string[];
+  scope?: ApiKeyScope;
+  scope_revision?: number;
+}
+
+export function effectiveApiKeyScope({
+  scope,
+  capabilities,
+  allowed_project_ids,
+}: Pick<
+  ApiKeyPrincipal,
+  "scope" | "capabilities" | "allowed_project_ids"
+>): ApiKeyScope {
+  return scope == null
+    ? legacyApiKeyScope({ capabilities, allowed_project_ids })
+    : normalizeApiKeyScopeV1(scope);
 }
 
 export function normalizeApiKeyCapabilities(
@@ -101,25 +124,30 @@ export function normalizeApiKeyScope({
 }
 
 export function hasApiKeyCapability(
-  principal: Pick<ApiKeyPrincipal, "capabilities">,
+  principal: Pick<ApiKeyPrincipal, "capabilities" | "scope">,
   capability: ApiKeyCapability,
 ): boolean {
-  return principal.capabilities.includes(capability);
+  return principal.scope != null
+    ? apiKeyScopeAllows(principal.scope, capability)
+    : principal.capabilities.includes(capability);
 }
 
 export function hasApiKeyProjectCapability(
-  principal: Pick<ApiKeyPrincipal, "capabilities" | "allowed_project_ids">,
+  principal: Pick<
+    ApiKeyPrincipal,
+    "capabilities" | "allowed_project_ids" | "scope"
+  >,
   capability: ApiKeyCapability,
   project_id: string,
 ): boolean {
-  return (
-    principal.capabilities.includes(capability) &&
-    principal.allowed_project_ids.includes(project_id)
-  );
+  return principal.scope != null
+    ? apiKeyScopeAllows(principal.scope, capability, project_id)
+    : principal.capabilities.includes(capability) &&
+        principal.allowed_project_ids.includes(project_id);
 }
 
 export function requireApiKeyCapability(
-  principal: Pick<ApiKeyPrincipal, "capabilities">,
+  principal: Pick<ApiKeyPrincipal, "capabilities" | "scope">,
   capability: ApiKeyCapability,
 ): void {
   if (!hasApiKeyCapability(principal, capability)) {
@@ -134,7 +162,10 @@ export function requireApiKeyCapability(
 }
 
 export function requireApiKeyProjectCapability(
-  principal: Pick<ApiKeyPrincipal, "capabilities" | "allowed_project_ids">,
+  principal: Pick<
+    ApiKeyPrincipal,
+    "capabilities" | "allowed_project_ids" | "scope"
+  >,
   capability: ApiKeyCapability,
   project_id: string,
 ): void {

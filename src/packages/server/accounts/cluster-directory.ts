@@ -269,6 +269,8 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
       hash TEXT NOT NULL,
       capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
       allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[],
+      scope JSONB,
+      scope_revision INTEGER NOT NULL DEFAULT 1,
       expire TIMESTAMPTZ,
       last_active TIMESTAMPTZ
     )
@@ -278,6 +280,12 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
   );
   await pool.query(
     `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope JSONB`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_account_idx ON ${API_KEY_TABLE} (account_id)`,
@@ -359,6 +367,8 @@ function canonicalApiKeyDirectoryEntry(row: any): AccountApiKeyDirectoryEntry {
     allowed_project_ids: Array.isArray(row.allowed_project_ids)
       ? row.allowed_project_ids
       : [],
+    scope: row.scope ?? null,
+    scope_revision: Number(row.scope_revision ?? 1),
     expire:
       row.expire instanceof Date ? row.expire.valueOf() : (row.expire ?? null),
     last_active:
@@ -464,7 +474,7 @@ export async function getClusterAccountApiKeyByKeyIdDirect(
   }
   await ensureClusterAccountApiKeyDirectorySchema();
   const { rows } = await getPool().query(
-    `SELECT key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, expire, last_active
+    `SELECT key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, scope, scope_revision, expire, last_active
        FROM ${API_KEY_TABLE}
       WHERE key_id=$1
       LIMIT 1`,
@@ -1316,6 +1326,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   hash,
   capabilities,
   allowed_project_ids,
+  scope,
+  scope_revision,
   expire,
   last_active,
 }: {
@@ -1325,6 +1337,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   hash: string;
   capabilities?: string[];
   allowed_project_ids?: string[];
+  scope?: import("@cocalc/util/db-schema/api-keys").ApiKeyScope | null;
+  scope_revision?: number;
   expire?: number | null;
   last_active?: number | null;
 }): Promise<void> {
@@ -1341,17 +1355,20 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   await ensureClusterAccountApiKeyDirectorySchema();
   await getPool().query(
     `INSERT INTO ${API_KEY_TABLE}
-       (key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, expire, last_active)
+       (key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, scope, scope_revision, expire, last_active)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8)
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (key_id) DO UPDATE SET
        account_id=EXCLUDED.account_id,
        home_bay_id=EXCLUDED.home_bay_id,
        hash=EXCLUDED.hash,
        capabilities=EXCLUDED.capabilities,
        allowed_project_ids=EXCLUDED.allowed_project_ids,
+       scope=EXCLUDED.scope,
+       scope_revision=EXCLUDED.scope_revision,
        expire=EXCLUDED.expire,
-       last_active=EXCLUDED.last_active`,
+       last_active=EXCLUDED.last_active
+     WHERE ${API_KEY_TABLE}.scope_revision <= EXCLUDED.scope_revision`,
     [
       normalizedKeyId,
       account_id,
@@ -1359,6 +1376,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
       hash,
       capabilities ?? [],
       allowed_project_ids ?? [],
+      scope == null ? null : JSON.stringify(scope),
+      scope_revision ?? 1,
       expire == null ? null : new Date(expire),
       last_active == null ? null : new Date(last_active),
     ],

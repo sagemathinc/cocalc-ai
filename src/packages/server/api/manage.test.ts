@@ -248,6 +248,8 @@ describe("manageApiKeys local bay access", () => {
       auth_method: "api_key",
       capabilities: ["account:read"],
       allowed_project_ids: [],
+      scope: { version: 1, account: ["account:read"], projects: [] },
+      scope_revision: 1,
     });
     await flushAuditEvents();
     expect(centralLogMock).toHaveBeenCalledWith({
@@ -260,9 +262,83 @@ describe("manageApiKeys local bay access", () => {
       },
     });
     expect(nonSchemaQueries()[0]).toEqual([
-      "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids FROM api_keys WHERE key_id=$1",
+      "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids,scope,scope_revision FROM api_keys WHERE key_id=$1",
       ["key-id-123"],
     ]);
+  });
+
+  it("keeps mixed per-project grants separate when authenticating a versioned key", async () => {
+    const b = "22222222-2222-4222-8222-222222222222";
+    const c = "33333333-3333-4333-8333-333333333333";
+    const scope = {
+      version: 1,
+      account: ["project:list"],
+      projects: [
+        { project_id: b, capabilities: ["project:exec"] },
+        {
+          project_id: c,
+          capabilities: ["file:read"],
+          viewer_read_roots: ["docs"],
+        },
+      ],
+    };
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
+        return {
+          rows: [
+            {
+              id: 12,
+              key_id: "mixed-key",
+              account_id: ACCOUNT_ID,
+              hash: "hash",
+              expire: null,
+              capabilities: [],
+              allowed_project_ids: [],
+              scope,
+              scope_revision: 4,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    const principal = await getAccountWithApiKey(
+      "sk-cocalc-v2.mixed-key.secret-part",
+    );
+    expect(principal?.scope).toEqual(scope);
+    expect(principal?.scope_revision).toBe(4);
+    expect(principal?.capabilities).toEqual([]);
+    expect(principal?.allowed_project_ids).toEqual([]);
+    expect(getClusterAccountApiKeyByKeyIdMock).not.toHaveBeenCalled();
+  });
+
+  it("denies an invalid local scope revision without directory fallback", async () => {
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
+        return {
+          rows: [
+            {
+              id: 12,
+              key_id: "bad-revision",
+              account_id: ACCOUNT_ID,
+              hash: "hash",
+              expire: null,
+              capabilities: [],
+              allowed_project_ids: [],
+              scope: { version: 1, account: ["project:list"], projects: [] },
+              scope_revision: 0,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(
+      getAccountWithApiKey("sk-cocalc-v2.bad-revision.secret-part"),
+    ).resolves.toBeUndefined();
+    expect(getClusterAccountApiKeyByKeyIdMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the cluster api key directory when the local bay lacks the key row", async () => {
@@ -285,6 +361,17 @@ describe("manageApiKeys local bay access", () => {
       auth_method: "api_key",
       capabilities: ["project:exec"],
       allowed_project_ids: ["22222222-2222-4222-8222-222222222222"],
+      scope: {
+        version: 1,
+        account: [],
+        projects: [
+          {
+            project_id: "22222222-2222-4222-8222-222222222222",
+            capabilities: ["project:exec"],
+          },
+        ],
+      },
+      scope_revision: 1,
     });
     expect(getClusterAccountApiKeyByKeyIdMock).toHaveBeenCalledWith(
       "key-id-remote",
@@ -329,6 +416,7 @@ describe("manageApiKeys local bay access", () => {
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
     expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(isAccountBannedCachedMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(getClusterAccountApiKeyByKeyIdMock).not.toHaveBeenCalled();
     await flushAuditEvents();
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "api_key_denied",
@@ -422,6 +510,7 @@ describe("manageApiKeys local bay access", () => {
     });
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(getClusterAccountApiKeyByKeyIdMock).not.toHaveBeenCalled();
     await flushAuditEvents();
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "api_key_denied",

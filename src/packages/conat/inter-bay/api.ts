@@ -852,6 +852,8 @@ export interface AccountApiKeyDirectoryEntry {
   hash: string;
   capabilities?: string[];
   allowed_project_ids?: string[];
+  scope?: import("@cocalc/util/db-schema/api-keys").ApiKeyScope | null;
+  scope_revision?: number;
   expire?: number | null;
   last_active?: number | null;
 }
@@ -867,6 +869,8 @@ export interface AccountApiKeyDirectoryUpsertRequest {
   hash: string;
   capabilities?: string[];
   allowed_project_ids?: string[];
+  scope?: import("@cocalc/util/db-schema/api-keys").ApiKeyScope | null;
+  scope_revision?: number;
   expire?: number | null;
   last_active?: number | null;
 }

@@ -9,6 +9,7 @@ import { recordApiKeyAuditEventSoon } from "./api-key-audit";
 const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getNames": "account:read",
   "projects.createProject": "project:create",
+  "projects.listProjectSummaries": "project:list",
 };
 
 const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);

@@ -221,7 +221,10 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { normalizeStudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
-import { listAccountProjectWindow as listAccountProjectWindowLocal } from "@cocalc/server/projects/list-account-window";
+import {
+  listAccountProjectWindow as listAccountProjectWindowLocal,
+  listProjectSummaries as listProjectSummariesLocal,
+} from "@cocalc/server/projects/list-account-window";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import type { ProjectSecretsRuntimeRefreshResult } from "@cocalc/util/project-secrets";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
@@ -3381,6 +3384,25 @@ export async function listAccountProjectWindow({
     hidden,
     search,
     sort,
+  });
+}
+
+export async function listProjectSummaries({
+  account_id,
+  limit,
+  offset,
+  search,
+}: {
+  account_id: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  return await listProjectSummariesLocal({
+    account_id,
+    limit,
+    offset,
+    search,
   });
 }
 

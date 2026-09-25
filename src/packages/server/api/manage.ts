@@ -21,7 +21,9 @@ import type {
   ApiKey as ApiKeyType,
   Action as ApiKeyAction,
   ApiKeyCapability,
+  ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
+import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
@@ -33,7 +35,11 @@ import {
   upsertClusterAccountApiKeyDirectoryEntry,
   deleteClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
-import { type ApiKeyPrincipal, normalizeApiKeyScope } from "./api-key-scope";
+import {
+  type ApiKeyPrincipal,
+  effectiveApiKeyScope,
+  normalizeApiKeyScope,
+} from "./api-key-scope";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import {
   recordApiKeyAuditEvent,
@@ -65,6 +71,12 @@ async function ensureApiKeysV2Schema(): Promise<void> {
     );
     await pool.query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
     );
     await pool.query(
       "CREATE INDEX IF NOT EXISTS api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
@@ -111,6 +123,8 @@ async function syncAccountApiKeyDirectory({
   hash,
   capabilities,
   allowed_project_ids,
+  scope,
+  scope_revision,
   expire,
   last_active,
 }: {
@@ -119,6 +133,8 @@ async function syncAccountApiKeyDirectory({
   hash: string;
   capabilities: ApiKeyCapability[];
   allowed_project_ids: string[];
+  scope?: ApiKeyScope | null;
+  scope_revision?: number;
   expire?: Date | null;
   last_active?: Date | null;
 }): Promise<void> {
@@ -136,6 +152,8 @@ async function syncAccountApiKeyDirectory({
     hash,
     capabilities,
     allowed_project_ids,
+    scope,
+    scope_revision,
     expire: expire == null ? null : new Date(expire).valueOf(),
     last_active: last_active == null ? null : new Date(last_active).valueOf(),
   });
@@ -148,6 +166,7 @@ interface Options {
   expire?: Date;
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];
+  scope?: ApiKeyScope;
   id?: number;
 }
 
@@ -159,6 +178,7 @@ export default async function manageApiKeys({
   expire,
   capabilities,
   allowed_project_ids,
+  scope,
   id,
 }: Options): Promise<undefined | ApiKeyType[]> {
   log.debug("manage", {
@@ -168,6 +188,7 @@ export default async function manageApiKeys({
     expire,
     capabilities,
     allowed_project_ids,
+    scope,
     id,
   });
   if (!(await isValidAccount(account_id))) {
@@ -181,6 +202,7 @@ export default async function manageApiKeys({
     expire,
     capabilities,
     allowed_project_ids,
+    scope,
     id,
   });
 }
@@ -192,7 +214,7 @@ async function getApiKeys(account_id: string): Promise<ApiKeyType[]> {
   const pool = getPool();
   await ensureApiKeysV2Schema();
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,last_active FROM api_keys WHERE account_id=$1::UUID ORDER BY created DESC",
+    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,scope,scope_revision,last_active FROM api_keys WHERE account_id=$1::UUID ORDER BY created DESC",
     [account_id],
   );
   return rows;
@@ -202,7 +224,7 @@ async function getApiKey({ id, account_id }) {
   const pool = getPool();
   await ensureApiKeysV2Schema();
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
+    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,scope,scope_revision,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
     [id, account_id],
   );
   return rows[0];
@@ -248,24 +270,39 @@ async function createApiKey({
   name,
   capabilities,
   allowed_project_ids,
+  scope: requestedScope,
 }: {
   account_id: string;
   expire?: Date;
   name: string;
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];
+  scope?: ApiKeyScope;
 }): Promise<ApiKeyType> {
   await assertAccountTrustedForProductAccess(account_id, "create API keys");
   const pool = getPool();
   await ensureApiKeysV2Schema();
-  const scope = normalizeApiKeyScope({ capabilities, allowed_project_ids });
+  if (
+    requestedScope != null &&
+    (capabilities != null || allowed_project_ids != null)
+  ) {
+    throw Error(
+      "provide either versioned scope or legacy capabilities, not both",
+    );
+  }
+  const scope =
+    requestedScope == null
+      ? normalizeApiKeyScope({ capabilities, allowed_project_ids })
+      : { capabilities: [], allowed_project_ids: [] };
+  const canonicalScope =
+    requestedScope == null ? null : normalizeApiKeyScopeV1(requestedScope);
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids) VALUES($1,NOW(),$2,$3,$4,$5,$6) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,last_active",
+    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids,scope) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7::JSONB) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,scope,scope_revision,last_active",
     [
       account_id,
       expire,
@@ -273,6 +310,7 @@ async function createApiKey({
       randomBase64Url(API_KEY_ID_BYTES),
       scope.capabilities,
       scope.allowed_project_ids,
+      canonicalScope == null ? null : JSON.stringify(canonicalScope),
     ],
   );
   const { id, key_id } = rows[0];
@@ -293,6 +331,8 @@ async function createApiKey({
     hash,
     capabilities: scope.capabilities,
     allowed_project_ids: scope.allowed_project_ids,
+    scope: canonicalScope,
+    scope_revision: 1,
     expire: expire ?? null,
     last_active: null,
   });
@@ -318,10 +358,11 @@ async function updateApiKey({ apiKey, account_id }) {
     name,
     capabilities,
     allowed_project_ids,
+    scope,
     last_active,
   } = apiKey;
-  await pool.query(
-    "UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,allowed_project_ids=$6,last_active=$7 WHERE id=$1 AND account_id=$2",
+  const { rows: updatedRows } = await pool.query(
+    "UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,allowed_project_ids=$6,scope=$7::JSONB,last_active=$8,scope_revision=scope_revision+1 WHERE id=$1 AND account_id=$2 RETURNING scope_revision",
     [
       id,
       account_id,
@@ -329,9 +370,13 @@ async function updateApiKey({ apiKey, account_id }) {
       name,
       capabilities,
       allowed_project_ids,
+      scope == null ? null : JSON.stringify(scope),
       last_active,
     ],
   );
+  if (!updatedRows[0]) {
+    throw Error("API key was deleted during edit");
+  }
   const { rows } = await pool.query(
     "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
     [id, account_id],
@@ -344,6 +389,8 @@ async function updateApiKey({ apiKey, account_id }) {
       hash,
       capabilities,
       allowed_project_ids,
+      scope,
+      scope_revision: Number(updatedRows[0].scope_revision),
       expire: expire ?? null,
       last_active: last_active ?? null,
     });
@@ -359,6 +406,7 @@ async function doManageApiKeys({
   expire,
   capabilities,
   allowed_project_ids,
+  scope,
   id,
 }) {
   switch (action) {
@@ -383,6 +431,7 @@ async function doManageApiKeys({
           expire,
           capabilities,
           allowed_project_ids,
+          scope,
         }),
       ];
 
@@ -400,7 +449,26 @@ async function doManageApiKeys({
         apiKey.expire = expire;
         changed = true;
       }
-      if (capabilities !== undefined || allowed_project_ids !== undefined) {
+      if (
+        scope !== undefined &&
+        (capabilities !== undefined || allowed_project_ids !== undefined)
+      ) {
+        throw Error(
+          "provide either versioned scope or legacy capabilities, not both",
+        );
+      }
+      if (scope !== undefined) {
+        apiKey.scope = normalizeApiKeyScopeV1(scope);
+        apiKey.capabilities = [];
+        apiKey.allowed_project_ids = [];
+        changed = true;
+      } else if (
+        capabilities !== undefined ||
+        allowed_project_ids !== undefined
+      ) {
+        if (apiKey.scope != null) {
+          throw Error("edit versioned keys using the versioned scope");
+        }
         const scope = normalizeApiKeyScope({
           capabilities: capabilities ?? apiKey.capabilities,
           allowed_project_ids:
@@ -444,16 +512,16 @@ export async function getAccountWithApiKey(
     return undefined;
   }
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids FROM api_keys WHERE key_id=$1",
+    "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids,scope,scope_revision FROM api_keys WHERE key_id=$1",
     [v2.key_id],
   );
-  return (
-    (await checkApiKeyRows({ rows, secret, key_id: v2.key_id })) ??
-    (await checkClusterAccountApiKeyDirectoryEntry({
-      secret,
-      key_id: v2.key_id,
-    }))
-  );
+  if (rows.length > 0) {
+    return await checkApiKeyRows({ rows, secret, key_id: v2.key_id });
+  }
+  return await checkClusterAccountApiKeyDirectoryEntry({
+    secret,
+    key_id: v2.key_id,
+  });
 }
 
 async function checkApiKeyRows({
@@ -501,6 +569,30 @@ async function checkApiKeyRows({
       });
       return undefined;
     }
+    let scope: ApiKeyScope;
+    const scopeRevision = Number(rows[0].scope_revision ?? 1);
+    try {
+      if (!Number.isSafeInteger(scopeRevision) || scopeRevision < 1) {
+        throw Error("invalid API key scope revision");
+      }
+      scope = effectiveApiKeyScope({
+        scope: rows[0].scope,
+        capabilities: rows[0].capabilities ?? [],
+        allowed_project_ids: rows[0].allowed_project_ids ?? [],
+      });
+    } catch {
+      recordApiKeyAuditEventSoon({
+        event: "api_key_denied",
+        value: {
+          account_id: rows[0].account_id,
+          api_key_id: rows[0].id,
+          key_id,
+          source: "api-key-auth-local",
+          code: "api_key_invalid_scope",
+        },
+      });
+      return undefined;
+    }
 
     // Yes, caller definitely has a valid key.
     await getPool("medium").query(
@@ -514,6 +606,8 @@ async function checkApiKeyRows({
         hash: rows[0].hash,
         capabilities: rows[0].capabilities ?? [],
         allowed_project_ids: rows[0].allowed_project_ids ?? [],
+        scope: rows[0].scope,
+        scope_revision: rows[0].scope_revision,
         expire: rows[0].expire ?? null,
         last_active: new Date(),
       });
@@ -533,6 +627,8 @@ async function checkApiKeyRows({
         auth_method: "api_key",
         capabilities: rows[0].capabilities ?? [],
         allowed_project_ids: rows[0].allowed_project_ids ?? [],
+        scope,
+        scope_revision: scopeRevision,
       };
     }
   }
@@ -614,6 +710,29 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     });
     return undefined;
   }
+  let scope: ApiKeyScope;
+  const scopeRevision = Number(entry.scope_revision ?? 1);
+  try {
+    if (!Number.isSafeInteger(scopeRevision) || scopeRevision < 1) {
+      throw Error("invalid API key scope revision");
+    }
+    scope = effectiveApiKeyScope({
+      scope: entry.scope ?? undefined,
+      capabilities: (entry.capabilities ?? []) as ApiKeyCapability[],
+      allowed_project_ids: entry.allowed_project_ids ?? [],
+    });
+  } catch {
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        account_id: entry.account_id,
+        key_id: entry.key_id,
+        source: "api-key-auth-directory",
+        code: "api_key_invalid_scope",
+      },
+    });
+    return undefined;
+  }
   await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
   recordApiKeyAuditEventSoon({
     event: "api_key_used",
@@ -631,5 +750,7 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     auth_method: "api_key",
     capabilities: (entry.capabilities ?? []) as ApiKeyCapability[],
     allowed_project_ids: entry.allowed_project_ids ?? [],
+    scope,
+    scope_revision: scopeRevision,
   };
 }

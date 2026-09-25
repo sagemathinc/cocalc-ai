@@ -73,4 +73,64 @@ describe("HTTP API key policy audit", () => {
       },
     });
   });
+
+  it("does not flatten mixed project grants into legacy capabilities", () => {
+    const mixed = {
+      ...principal,
+      capabilities: [] as typeof principal.capabilities,
+      allowed_project_ids: [],
+      scope: {
+        version: 1 as const,
+        account: ["project:list" as const],
+        projects: [
+          {
+            project_id: "11111111-1111-4111-8111-111111111111",
+            capabilities: ["project:exec" as const],
+          },
+          {
+            project_id: "22222222-2222-4222-8222-222222222222",
+            capabilities: ["file:read" as const],
+            viewer_read_roots: ["data"],
+          },
+        ],
+      },
+    };
+    expect(() =>
+      assertHttpProjectApiKeyAllowed({
+        principal: mixed,
+        project_id: mixed.scope.projects[0].project_id,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertHttpProjectApiKeyAllowed({
+        principal: mixed,
+        project_id: mixed.scope.projects[1].project_id,
+      }),
+    ).toThrow("API key lacks required capability 'project:exec'");
+  });
+
+  it("allows only the bounded project summary RPC with project:list", () => {
+    const listOnly = {
+      ...principal,
+      scope: {
+        version: 1 as const,
+        account: ["project:list" as const],
+        projects: [],
+      },
+    };
+    expect(() =>
+      assertHttpHubApiKeyAllowed({
+        principal: listOnly,
+        name: "projects.listProjectSummaries",
+        args: [{ limit: 20 }],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertHttpHubApiKeyAllowed({
+        principal: listOnly,
+        name: "projects.listAccountProjectWindow",
+        args: [],
+      }),
+    ).toThrow(/not allowed/);
+  });
 });
