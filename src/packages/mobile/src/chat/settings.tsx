@@ -59,6 +59,7 @@ export function ChatSettings({
   }));
   const [source, setSource] = useState<CodexPaymentSourceInfo>();
   const [models, setModels] = useState<CodexModelCapabilityInfo[]>([]);
+  const [modelRefresh, setModelRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -98,6 +99,7 @@ export function ChatSettings({
           session,
           project,
           payment.credentialId,
+          modelRefresh > 0,
         );
         // Reject a catalog fetched while the account credential was changing.
         const current = await session.hubApi.system.getCodexPaymentSource({
@@ -133,7 +135,7 @@ export function ChatSettings({
     return () => {
       active = false;
     };
-  }, [profile, project, draft.paymentSource, draft.credentialId]);
+  }, [profile, project, draft.paymentSource, draft.credentialId, modelRefresh]);
 
   const modelName = draft.model ?? DEFAULT_CODEX_MODEL_NAME;
   const model = models.find((m) => m.model === modelName);
@@ -328,6 +330,18 @@ export function ChatSettings({
             </Text>
           )}
           {heading("Model")}
+          {source?.source === "subscription" && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh ChatGPT models"
+              accessibilityState={{ disabled: loading }}
+              disabled={loading}
+              onPress={() => setModelRefresh((value) => value + 1)}
+              style={{ minHeight: 44, justifyContent: "center" }}
+            >
+              <Text style={{ color: colors.link }}>Refresh models</Text>
+            </Pressable>
+          )}
           {!model && !loading && (
             <Text style={{ color: colors.secondary }}>
               Current: {modelName}. Select an available model below.

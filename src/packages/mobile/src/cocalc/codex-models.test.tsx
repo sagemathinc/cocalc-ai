@@ -42,3 +42,25 @@ it("discovers subscription models through the owning project host, not the hub p
   });
   expect(hub.projects.getCodexUsageStatus).not.toHaveBeenCalled();
 });
+
+it("bypasses the project-host model cache when explicitly refreshed", async () => {
+  const session = {
+    profile: { account_id: "account" },
+    hubApi: {},
+  } as any;
+  jest.mocked(resolveNamedAgentHost).mockResolvedValue("host");
+  jest.mocked(openProjectHost).mockResolvedValue({ client: {} } as any);
+  jest.mocked(callHub).mockResolvedValue({ available: true, models: [] });
+  await getProjectCodexModels(session, "project", "credential", true);
+  expect(callHub).toHaveBeenCalledWith(
+    expect.objectContaining({
+      args: [
+        expect.objectContaining({
+          include_models: true,
+          refresh_models: true,
+          credential_id: "credential",
+        }),
+      ],
+    }),
+  );
+});

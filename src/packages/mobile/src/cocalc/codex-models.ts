@@ -13,6 +13,7 @@ export async function getProjectCodexModels(
   session: SiteSession,
   project: string,
   credentialId?: string,
+  refresh = false,
 ): Promise<CodexUsageStatusInfo> {
   const host = await resolveNamedAgentHost(
     session.hubApi,
@@ -31,6 +32,7 @@ export async function getProjectCodexModels(
       {
         project_id: project,
         include_models: true,
+        ...(refresh ? { refresh_models: true } : {}),
         credential_id: credentialId,
         timeout: 90000,
       },

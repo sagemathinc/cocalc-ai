@@ -7,11 +7,13 @@ jest.mock("../cocalc/codex-models", () => ({
     session: any,
     project: string,
     credentialId?: string,
+    refresh?: boolean,
   ) =>
     session.hubApi.projects.getCodexUsageStatus({
       project_id: project,
       include_models: true,
       credential_id: credentialId,
+      ...(refresh ? { refresh_models: true } : {}),
     }),
 }));
 jest.mock("../cocalc/session-registry", () => ({
@@ -26,6 +28,63 @@ const find = (label: string) =>
   )[0];
 afterEach(async () => {
   if (renderer) await act(async () => renderer.unmount());
+});
+
+it("refreshes a ChatGPT plan model catalog on demand", async () => {
+  const getModels = jest
+    .fn()
+    .mockResolvedValueOnce({
+      models: [
+        {
+          model: "gpt-6-astra",
+          displayName: "gpt-6-astra",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+    .mockResolvedValue({
+      models: [
+        {
+          model: "gpt-6-sol",
+          displayName: "gpt-6-sol",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    });
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: {
+        getCodexPaymentSource: async () => ({
+          source: "subscription",
+          credentialId: "credential",
+          subscriptionRevision: "revision",
+        }),
+      },
+      projects: { getCodexUsageStatus: getModels },
+    },
+  } as any);
+  await act(async () => {
+    renderer = create(
+      <ChatSettings
+        profile="p"
+        project="project"
+        thread="thread"
+        client={{ updateCodexThreadConfig: jest.fn() } as any}
+        onClose={() => {}}
+      />,
+    );
+  });
+  expect(find("gpt-6-astra")).toBeDefined();
+  await act(async () => find("Refresh ChatGPT models").props.onPress());
+  expect(getModels).toHaveBeenLastCalledWith({
+    project_id: "project",
+    include_models: true,
+    credential_id: "credential",
+    refresh_models: true,
+  });
+  expect(find("gpt-6-sol")).toBeDefined();
 });
 it("loads account-specific models and saves settings without losing session configuration", async () => {
   const payment = {
