@@ -2136,3 +2136,23 @@ check was healthy with zero current snapshot and backup delay. Overall site
 health remained warning for separate checks. No deliberate unclassified
 staging canary was created for this change; the PGlite test covers that
 branch. Production is unchanged.
+
+## 2026-09-25 signed-in Chromium Recovery view
+
+The user-provided Chromium debugging session on port 9222 was available with
+two signed-in staging2 tabs. A read-only inspection of project
+`1793a413-42c9-49cf-8a2e-0abd641e8b28` at a 1269 CSS-pixel viewport
+showed the current Recovery settings section with the latest confirmed local
+snapshot and off-host backup and their next due times. The browser timezone
+was America/Los_Angeles. At 5:29 PM local time, the displayed 5:41 PM
+snapshot and 9:50 PM backup due times were still in the future; the green
+status was appropriate. The initial impression that the backup due date was
+past came from comparing it with the UTC date, not the browser's local time.
+
+The Recovery section and document had no horizontal overflow at this width.
+Both status regions used polite live announcements, and the Create Snapshot,
+Restore Snapshot, and Create Backup buttons were visible and enabled. The
+[focused staging2 screenshot](screenshots/staging2-recovery-live-2026-09-25.png)
+preserves the rendered result. This confirms one current live UI state; it
+does not qualify under-load terminal or Jupyter latency, a live blocked reason,
+or a paid-project warning. Production is unchanged.
