@@ -2074,3 +2074,22 @@ oldest five minutes, so the recovery check was warning at that sample. By
 or backup delay. Overall site health remained warning for separate checks.
 Staging2 has no foreign-owned project sample for an end-to-end ownership
 negative case. Production is unchanged.
+
+## 2026-09-25 rehome fence for maintenance confirmation and reports
+
+Commit `6d51a5b1de` closes the remaining owning-bay checks in the host
+maintenance handshake. An old host can no longer confirm an assignment after
+the project rehomes to a different bay. The status writer also checks the
+project's current owner bay as part of its database insert, so a delayed
+report cannot replace the last local status or append an attempt after a
+rehome. Legacy rows with no owner bay still use the local one-bay rule.
+
+Focused PGlite suites passed 14/14, the host-status unit suite passed 9/9,
+and the server TypeScript build passed. Staging2 hub artifact
+`20260925T000924Z-6d51a5b1-20260925T0009Z-6d51a5b1-maintenance-bay-fence-dirty`
+deployed as release `20260925001200-hub`. Migration and worker health passed,
+and all seven hub smoke checks passed. At 00:12:35 UTC, live project-recovery
+health was healthy: zero oldest snapshot and backup delay, zero paying critical
+debt, unknown statuses, or unaccounted due work, and 4/4 active backup shards
+with passing recent remote-only restore drills. Overall site health remained
+warning for separate checks. Production is unchanged.
