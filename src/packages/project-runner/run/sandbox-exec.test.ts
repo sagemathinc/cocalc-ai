@@ -76,4 +76,21 @@ describe("sandboxExec", () => {
       expect.any(Function),
     );
   });
+
+  it("passes scoped CLI file paths only to the project exec", async () => {
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callback(undefined, "", "");
+    });
+    await sandboxExec({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      script: "true",
+      env: { COCALC_BEARER_TOKEN_FILE: "/tmp/scoped/token" },
+    });
+    const args = execFileMock.mock.calls[0][1] as string[];
+    expect(args).toContain("COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token");
+    expect(args).not.toContain("COCALC_BEARER_TOKEN=/tmp/scoped/token");
+    expect(execFileMock.mock.calls[0][2].env).not.toHaveProperty(
+      "COCALC_BEARER_TOKEN_FILE",
+    );
+  });
 });

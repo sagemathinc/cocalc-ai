@@ -455,10 +455,24 @@ export class AcpHarnessClient {
             "Harness cannot resume sessions",
           );
         // Loading replays history, not a new response. onUpdate ignores this phase.
-        const loaded = await this.request(
-          this.connection.loadSession({ ...params, sessionId }),
-        );
-        this.session = { ...loaded, sessionId };
+        try {
+          const loaded = await this.request(
+            this.connection.loadSession({ ...params, sessionId }),
+          );
+          this.session = { ...loaded, sessionId };
+        } catch (error) {
+          if (
+            this.sessionPolicy === "claude-subscription-controller" &&
+            error instanceof HarnessError &&
+            error.code === "rejected"
+          ) {
+            throw new HarnessError(
+              "rejected",
+              "Claude could not resume this session. Its native transcript may be missing or incompatible; start a new agent conversation.",
+            );
+          }
+          throw error;
+        }
       } else {
         this.session = await this.request(this.connection.newSession(params));
       }

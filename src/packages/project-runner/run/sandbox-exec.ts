@@ -26,6 +26,7 @@ export interface SandboxExecOptions {
   project_id: string;
   script: string;
   cwd?: string;
+  env?: Record<string, string>;
   timeoutMs?: number;
   maxOutputBytes?: number;
   /**
@@ -74,6 +75,7 @@ export async function sandboxExec({
   project_id,
   script,
   cwd,
+  env: extraEnv,
   timeoutMs,
   maxOutputBytes,
   useEphemeral,
@@ -179,6 +181,11 @@ export async function sandboxExec({
       for (const key in env) {
         args.push("-e", `${key}=${env[key]}`);
       }
+      for (const [key, value] of Object.entries(extraEnv ?? {})) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+          throw Error("Invalid sandbox environment key");
+        args.push("-e", `${key}=${value}`);
+      }
 
       args.push(mountArg({ source: home, target: HOME }));
       if (scratch) {
@@ -209,6 +216,13 @@ export async function sandboxExec({
         `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
         "-e",
         `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
+      );
+      for (const [key, value] of Object.entries(extraEnv ?? {})) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+          throw Error("Invalid sandbox environment key");
+        args.push("-e", `${key}=${value}`);
+      }
+      args.push(
         "--workdir",
         getWorkdir(),
         `project-${project_id}`,

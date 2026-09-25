@@ -7,11 +7,51 @@ import {
   CLAUDE_CONTROLLER_BASE_IMAGE,
   claudeSubscriptionContainerArgs,
   cleanupClaudeSubscriptionController,
+  ensureClaudeTranscriptDirectory,
 } from "./claude-subscription-controller";
 import { mountArg } from "@cocalc/backend/podman";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("controller uses the same normalized image cache key as project startup", () => {
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
+});
+
+test("Claude transcript survives a controller restart without entering the auth bundle", async () => {
+  const projectHome = await mkdtemp(join(tmpdir(), "claude-transcript-test-"));
+  const options = {
+    projectHome,
+    accountId: "00000000-0000-4000-8000-000000000002",
+    credentialId: "00000000-0000-4000-8000-000000000003",
+  };
+  try {
+    const first = await ensureClaudeTranscriptDirectory(options);
+    await writeFile(join(first, "turn.jsonl"), "transcript");
+    const second = await ensureClaudeTranscriptDirectory(options);
+    expect(second).toBe(first);
+    expect(await readFile(join(second, "turn.jsonl"), "utf8")).toBe(
+      "transcript",
+    );
+  } finally {
+    await rm(projectHome, { recursive: true, force: true });
+  }
+});
+
+test("Claude transcript mount rejects a project-controlled symlink", async () => {
+  const projectHome = await mkdtemp(join(tmpdir(), "claude-transcript-test-"));
+  try {
+    await symlink(tmpdir(), join(projectHome, ".local"));
+    await expect(
+      ensureClaudeTranscriptDirectory({
+        projectHome,
+        accountId: "00000000-0000-4000-8000-000000000002",
+        credentialId: "00000000-0000-4000-8000-000000000003",
+      }),
+    ).rejects.toThrow("Unsafe Claude transcript directory");
+  } finally {
+    await rm(projectHome, { recursive: true, force: true });
+  }
 });
 
 jest.mock("@cocalc/backend/podman", () => ({
@@ -24,7 +64,7 @@ jest.mock("../codex/codex-project", () => ({
   ensureProjectContainerRunning: jest.fn(),
 }));
 
-test("subscription controller has no project filesystem, secret or network mount", () => {
+test("subscription controller mounts only its transcript, not project secrets or network", () => {
   const args = claudeSubscriptionContainerArgs({
     name: "claude-controller-test",
     projectId: "00000000-0000-4000-8000-000000000001",
@@ -33,6 +73,7 @@ test("subscription controller has no project filesystem, secret or network mount
     home: "/private-auth-home",
     managedHarnesses: "/managed-harnesses",
     toolBridgeDirectory: "/private-tool-bridge",
+    sessionDirectory: "/project-claude-transcript",
     nodeMounts: { "/managed-node": "/opt/cocalc/bin" },
     uid: 1000,
     gid: 1000,
@@ -49,6 +90,9 @@ test("subscription controller has no project filesystem, secret or network mount
   expect(args).toContain("--network=slirp4netns");
   expect(args).not.toContain("--network=container:project-test");
   expect(args).toContain("mount:/private-auth-home:/home/claude:false");
+  expect(args).toContain(
+    "mount:/project-claude-transcript:/home/claude/projects:false",
+  );
   expect(args).toContain("mount:/managed-harnesses:/opt/cocalc/harnesses:true");
   expect(args).toContain("mount:/managed-node:/opt/cocalc/bin:true");
   expect(mountArg).toHaveBeenCalledWith({

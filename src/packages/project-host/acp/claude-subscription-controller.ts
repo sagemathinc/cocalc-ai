@@ -5,7 +5,8 @@
 
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { HarnessBinding, HarnessProcess } from "@cocalc/ai/acp/harness";
 import { mountArg } from "@cocalc/backend/podman";
 import getLogger from "@cocalc/backend/logger";
@@ -15,6 +16,8 @@ import { normalizeRootfsImageName } from "@cocalc/util/rootfs-images";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getNodeRuntimeMounts } from "@cocalc/project-runner/run/mounts";
+import { localPath } from "@cocalc/project-runner/run/filesystem";
+import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import {
   forceKillContainerProcesses,
   podmanRuntimeArgs,
@@ -35,8 +38,11 @@ import {
   type ClaudeProjectToolBridge,
 } from "./claude-project-tool-bridge";
 import {
+  applyProjectRuntimeCliEnv,
+  createProjectCliTokenLease,
   ensureProjectContainerRunning,
   getBuiltinClaudeSkillText,
+  resolveProjectRuntimeApiUrl,
 } from "../codex/codex-project";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import {
@@ -54,6 +60,34 @@ const logger = getLogger("project-host:acp:claude-subscription-controller");
 export const CLAUDE_CONTROLLER_BASE_IMAGE = normalizeRootfsImageName(
   DEFAULT_PROJECT_IMAGE,
 );
+
+export async function ensureClaudeTranscriptDirectory(options: {
+  projectHome: string;
+  accountId: string;
+  credentialId: string;
+}): Promise<string> {
+  const { projectHome, accountId, credentialId } = options;
+  if (!isValidUUID(accountId) || !isValidUUID(credentialId))
+    throw Error("Invalid Claude transcript owner");
+  let directory = projectHome;
+  for (const part of [
+    ".local",
+    "share",
+    "cocalc",
+    "claude-sessions",
+    accountId,
+    credentialId,
+  ]) {
+    directory = join(directory, part);
+    await mkdir(directory, { mode: 0o700 }).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    });
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw Error("Unsafe Claude transcript directory");
+  }
+  return directory;
+}
 
 export async function cleanupClaudeSubscriptionController(options: {
   stopContainer: () => Promise<void>;
@@ -80,6 +114,7 @@ export function claudeSubscriptionContainerArgs(options: {
   managedHarnesses: string;
   nodeMounts: Record<string, string>;
   toolBridgeDirectory?: string;
+  sessionDirectory?: string;
   uid: number;
   gid: number;
   runtimeArgs?: string[];
@@ -93,6 +128,7 @@ export function claudeSubscriptionContainerArgs(options: {
     managedHarnesses,
     nodeMounts,
     toolBridgeDirectory,
+    sessionDirectory,
     uid,
     gid,
     runtimeArgs = [],
@@ -127,6 +163,14 @@ export function claudeSubscriptionContainerArgs(options: {
     "--tmpfs",
     "/tmp:mode=1777",
     mountArg({ source: home, target: CONTROLLER_HOME }),
+    ...(sessionDirectory
+      ? [
+          mountArg({
+            source: sessionDirectory,
+            target: `${CONTROLLER_HOME}/projects`,
+          }),
+        ]
+      : []),
     mountArg({
       source: managedHarnesses,
       target: MANAGED_HARNESSES,
@@ -199,6 +243,7 @@ ${skill}
   let created = false;
   let launched = false;
   let toolBridge: ClaudeProjectToolBridge | undefined;
+  let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   let stopped: Promise<void> | undefined;
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
@@ -240,7 +285,13 @@ ${skill}
           await remove();
         }
       },
-      closeBridge: async () => toolBridge?.close(),
+      closeBridge: async () => {
+        try {
+          await toolBridge?.close();
+        } finally {
+          await cliLease?.close();
+        }
+      },
       refreshCredential: async () => {
         await publishClaudeSubscriptionCredential({
           projectId,
@@ -261,9 +312,45 @@ ${skill}
     }));
   try {
     await restoreClaudeSubscriptionHome(home, registered.payload);
+    const projectPaths = await localPath({ project_id: projectId });
+    const sessionDirectory = await ensureClaudeTranscriptDirectory({
+      projectHome: projectPaths.home,
+      accountId,
+      credentialId,
+    });
+    cliLease = await createProjectCliTokenLease({
+      projectId,
+      accountId,
+      agentSessionKey: JSON.stringify([
+        "claude-subscription",
+        projectId,
+        accountId,
+        credentialId,
+      ]),
+      home: projectPaths.home,
+      scratch: projectPaths.scratch,
+    });
+    if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
+    const cliEnv: Record<string, string> = {
+      COCALC_PROJECT_ID: projectId,
+      COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
+      COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
+      COCALC_API_URL: resolveProjectRuntimeApiUrl(),
+    };
+    if (cliLease.identityContainerPath)
+      cliEnv.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
+    applyProjectRuntimeCliEnv(cliEnv, accountId);
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
-      undefined,
+      (script, cwd) =>
+        sandboxExec({
+          project_id: projectId,
+          script,
+          cwd,
+          env: cliEnv,
+          timeoutMs: 120_000,
+          maxOutputBytes: 512 * 1024,
+        }),
       async () => {
         await getClaudeSubscriptionCredential({
           projectId,
@@ -286,6 +373,7 @@ ${skill}
         managedHarnesses,
         nodeMounts: getNodeRuntimeMounts(),
         toolBridgeDirectory: toolBridge.directory,
+        sessionDirectory,
         uid: process.getuid!(),
         gid: process.getgid!(),
         runtimeArgs: await podmanRuntimeArgs(),
