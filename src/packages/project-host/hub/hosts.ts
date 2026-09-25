@@ -43,6 +43,12 @@ export function wireHostsApi(): void {
     forwardHost("agent.authorizeRpcAdmission", [opts]);
   hubApi.agent.authorizeRpcExecution = (opts) =>
     forwardHost("agent.authorizeRpcExecution", [opts]);
+  hubApi.agent.beginCocalcConnectorTurn = (opts) =>
+    forwardHost("agent.beginCocalcConnectorTurn", [opts]);
+  hubApi.agent.renewCocalcConnectorTurn = (opts) =>
+    forwardHost("agent.renewCocalcConnectorTurn", [opts]);
+  hubApi.agent.endCocalcConnectorTurn = (opts) =>
+    forwardHost("agent.endCocalcConnectorTurn", [opts]);
 
   hubApi.hosts.issueProjectHostAgentAuthToken = async (opts: {
     host_id?: string;
