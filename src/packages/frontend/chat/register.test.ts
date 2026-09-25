@@ -85,6 +85,7 @@ function makeSyncdb(initialState: string) {
 function makeChatActions(state: string) {
   const syncdb = makeSyncdb(state);
   return {
+    workbenchEnabled: false,
     sendChat: jest.fn(),
     getMessagesInThread: jest.fn(),
     clearAllFilters: jest.fn(),
@@ -133,6 +134,32 @@ describe("chat/register", () => {
       log_opened_time: jest.fn(),
       fs: jest.fn(() => undefined),
     });
+  });
+
+  it.each([undefined, false, true])(
+    "initializes bootstrap workbench support as %s without mounting an editor",
+    (enabled) => {
+      projectConatSyncMock.mockReturnValue({
+        sync: { immer: () => makeSyncdb("connecting") },
+      });
+      const actions = initChat("project-1", "agent.chat", {
+        instanceKey: "onboarding",
+        workbenchEnabled: enabled,
+      });
+      expect(actions.workbenchEnabled).toBe(enabled === true);
+    },
+  );
+
+  it("enables an existing prewarmed chat and preserves the flag on ordinary lookup", () => {
+    const existing = makeChatActions("ready");
+    actionsByName.set("project-1:agent.chat#onboarding", existing);
+    const opts = { instanceKey: "onboarding", workbenchEnabled: true };
+    expect(initChat("project-1", "agent.chat", opts)).toBe(existing);
+    expect(
+      initChat("project-1", "agent.chat", { instanceKey: "onboarding" })
+        .workbenchEnabled,
+    ).toBe(true);
+    expect(createActionsMock).not.toHaveBeenCalled();
   });
 
   it("drops stale closed chat actions from the registry", () => {

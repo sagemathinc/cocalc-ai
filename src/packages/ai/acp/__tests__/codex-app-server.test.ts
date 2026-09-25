@@ -4155,6 +4155,15 @@ describe("CodexAppServerAgent", () => {
       "Publishing durable reviewable results is part of task completion",
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
+      "publish requested programs/scripts and other deliverable files as file-preview cards",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "even on the first onboarding turn",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "Do not publish incidental implementation files",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
       "artifact publication is required",
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(

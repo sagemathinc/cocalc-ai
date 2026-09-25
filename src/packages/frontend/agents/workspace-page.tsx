@@ -784,6 +784,7 @@ function NewAgentPanel({
         await fs.writeFile(path, "");
         const chatActions = initChat(targetProjectId, path, {
           instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+          workbenchEnabled: true,
         });
         await waitForChatReady(chatActions);
         boundAccount.assertCurrent();
@@ -803,6 +804,7 @@ function NewAgentPanel({
       const { path, threadId } = created;
       const chatActions = initChat(targetProjectId, path, {
         instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+        workbenchEnabled: true,
       });
       await waitForChatReady(chatActions);
       await chatActions.syncdb?.save();
@@ -1124,6 +1126,8 @@ function NewAgentPanel({
     if (request) {
       const actions = initChat(created.projectId, created.path, {
         instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+        // The first turn targets the Agents workbench before its editor mounts.
+        workbenchEnabled: true,
       });
       await waitForChatReady(actions);
       actions.setCodexConfig(created.threadId, executionConfig);
