@@ -30,14 +30,14 @@ jest.mock("./actions", () => ({
 import "./register";
 
 describe("code editor registration", () => {
-  it("loads the CodeMirror editor synchronously", () => {
+  it("loads the CodeMirror editor when requested", async () => {
     expect(registerFileEditor).toHaveBeenCalledTimes(1);
     const registration = registerFileEditor.mock.calls[0][0];
     expect(registration.ext).toEqual(["json", "txt"]);
-    expect(registration.component).toBeInstanceOf(Function);
-    expect(registration.Actions).toBeInstanceOf(Function);
-    expect(registration.editor).toBeUndefined();
-    expect(registration.actions).toBeUndefined();
-    expect(registration.codemirror).toBeUndefined();
+    expect(registration.codemirror).toBe(true);
+    expect(registration.component).toBeUndefined();
+    expect(registration.Actions).toBeUndefined();
+    expect((await registration.editor()).Editor).toBeInstanceOf(Function);
+    expect((await registration.actions()).Actions).toBeInstanceOf(Function);
   });
 });

@@ -21,9 +21,13 @@ import { TimeTravelActions } from "./actions";
 import { Editor } from "./editor";
 import "./register";
 
-test("TimeTravel keeps synchronous registration for nested editor frames", () => {
+test("TimeTravel loads nested editor frames when requested", async () => {
   expect(registerFileEditor).toHaveBeenCalledWith({
     ext: "time-travel",
+    asyncData: expect.any(Function),
+  });
+  const registration = registerFileEditor.mock.calls[0][0];
+  expect(await registration.asyncData()).toEqual({
     component: Editor,
     Actions: TimeTravelActions,
   });
