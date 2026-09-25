@@ -12,7 +12,7 @@ TEST:
  - This should always work:  "mypy workspaces.py"
 """
 
-import argparse, json, os, platform, shlex, shutil, subprocess, sys, tempfile, time
+import argparse, json, os, platform, re, shlex, shutil, subprocess, sys, tempfile, time
 
 from typing import Any, Optional, Callable, List
 
@@ -78,8 +78,23 @@ def selected_test_script(scripts: dict[str, str],
 def is_jest_backed_package(package_json: dict[str, Any], path: str,
                            test_script: str) -> bool:
     scripts = package_json.get("scripts", {})
-    return (path.endswith("packages/project-host")
-            or "jest" in scripts.get(test_script, ""))
+    if path.endswith("packages/project-host"):
+        return True
+
+    def uses_jest(script: str, visited: set[str]) -> bool:
+        if script in visited:
+            return False
+        visited.add(script)
+        command = scripts.get(script, "")
+        if re.search(r"\bjest\b", command):
+            return True
+        return any(
+            uses_jest(match.group(1), visited)
+            for match in re.finditer(
+                r"\b(?:pnpm|npm|yarn)\s+(?:run\s+)?([\w:.-]+)", command)
+            if match.group(1) in scripts)
+
+    return uses_jest(test_script, set())
 
 
 def failed_jest_test_paths(report_path: str) -> List[str]:

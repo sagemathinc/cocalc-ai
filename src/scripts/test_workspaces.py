@@ -69,6 +69,13 @@ class WorkerOptionsTest(unittest.TestCase):
         self.assertFalse(workspaces.is_jest_backed_package(
             package, "packages/mobile", script))
 
+    def test_selected_script_follows_jest_wrapper(self):
+        package = {"scripts": {"test": "pnpm test:pglite --maxWorkers=4",
+                               "test:pglite": "TZ=UTC jest"}}
+        script = workspaces.selected_test_script(package["scripts"], False)
+        self.assertTrue(workspaces.is_jest_backed_package(
+            package, "packages/server", script))
+
     def test_known_jest_wrapper_gets_option(self):
         self.assertIn(
             "--maxWorkers=4",
