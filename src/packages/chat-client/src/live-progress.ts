@@ -182,10 +182,14 @@ export class LiveProgressContext {
 
   answer(text: string): string | undefined {
     if (!isProgressQuestion(text)) return;
-    return (
+    const report =
       this.latest?.text ??
-      "No current progress is available. Check the chat and try again."
-    );
+      "No current progress is available. Check the chat and try again.";
+    if (/which tests?\b/i.test(text))
+      return `${report} The compact agent messages do not show which tests are currently running; check chat activity for that detail.`;
+    if (/are you (?:waiting|blocked)/i.test(text))
+      return `${report} The compact agent messages do not confirm whether an approval or reply is pending; check the chat controls for that.`;
+    return report;
   }
 
   close() {

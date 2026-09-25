@@ -105,6 +105,12 @@ it("answers status questions without delegating work and ignores instructions", 
   expect(context.answer("What happened recently?")).toContain(
     "I am checking tests",
   );
+  expect(context.answer("Which tests are still running?")).toContain(
+    "do not show which tests are currently running",
+  );
+  expect(context.answer("Are you waiting for me?")).toContain(
+    "do not confirm whether an approval or reply is pending",
+  );
   expect(context.answer("Please run tests")).toBeUndefined();
   expect(append).toHaveBeenCalledWith(
     "session.thinking.append",
