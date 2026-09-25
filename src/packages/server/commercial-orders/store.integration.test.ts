@@ -1696,6 +1696,132 @@ describePglite("commercial order store", () => {
     expect(invoiceRow.last_reconciled_at).toBeTruthy();
   });
 
+  it("skips unchanged quote reconciliation when the snapshot has undefined fields", async () => {
+    const created = await store.createCommercialOrder(request());
+    const intent = await store.createCommercialStripeQuoteIntent({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "create reviewed Stripe quote",
+      source: "cli",
+      idempotency_key: `stripe-quote-${randomUUID()}`,
+      valid_until: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
+    // An open Stripe quote has no invoice, so the rebuilt snapshot carries
+    // invoice: undefined, which JSONB storage drops.
+    const snapshot = () => ({
+      id: "qt_undefined_fields",
+      status: "open",
+      invoice: undefined,
+      lines: [{ id: "li_1", product: undefined, quantity: 1 }],
+    });
+    const reconcile = (event_type: string) =>
+      store.updateCommercialQuoteProvider({
+        quote_id: intent.quote.id,
+        status: "draft",
+        provider_quote_id: "qt_undefined_fields",
+        provider_status: "draft",
+        provider_snapshot: snapshot(),
+        actor_account_id: actor,
+        event_type,
+        event_source: "reconciler",
+        event_reason: "reconcile Stripe quote",
+        event_idempotency_key: `${event_type}-${randomUUID()}`,
+        skip_if_unchanged: true,
+      });
+    const first = await reconcile("stripe-quote-draft-created");
+    const eventsBefore = await store.listCommercialOrderEvents({
+      id: first.id,
+      reason: "count events before unchanged reconciliation",
+    });
+
+    const second = await reconcile("stripe-quote-reconciled");
+    const third = await reconcile("stripe-quote-reconciled");
+    const eventsAfter = await store.listCommercialOrderEvents({
+      id: first.id,
+      reason: "count events after unchanged reconciliation",
+    });
+
+    expect(second.version).toBe(first.version);
+    expect(third.version).toBe(first.version);
+    expect(eventsAfter.events).toHaveLength(eventsBefore.events.length);
+  });
+
+  it("skips unchanged invoice reconciliation when the snapshot has undefined fields", async () => {
+    const created = await store.createCommercialOrder(
+      request({ collection_mode: "stripe_invoice" }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve undefined-field reconciliation fixture",
+    });
+    const intent = await store.createCommercialInvoiceIntent({
+      order_id: approved.id,
+      actor_account_id: actor,
+      expected_version: approved.version,
+      reason: "create undefined-field reconciliation invoice",
+      idempotency_key: `undefined-intent-${randomUUID()}`,
+      due_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    const update = (event_type: string, skip_if_unchanged: boolean) =>
+      store.updateCommercialInvoiceProvider({
+        invoice_id: intent.invoice.id,
+        status: "open",
+        provider_customer_id: "cus_undefined",
+        provider_invoice_id: "in_undefined",
+        subtotal: "3900",
+        tax: "0",
+        total: "3900",
+        amount_due: "3900",
+        amount_paid: "0",
+        due_at: intent.invoice.due_at,
+        sent_at: "2026-08-23T00:00:00.000Z",
+        provider_snapshot: {
+          id: "in_undefined",
+          status: "open",
+          payment_intent: undefined,
+        },
+        provider_payments: [],
+        collection_state: "open",
+        event_type,
+        event_source: "reconciler",
+        event_reason: "reconcile provider invoice",
+        event_idempotency_key: `${event_type}-${randomUUID()}`,
+        skip_if_unchanged,
+      });
+    const opened = await update("invoice-opened-undefined-test", false);
+    const eventsBefore = await store.listCommercialOrderEvents({
+      id: opened.id,
+      reason: "count events before unchanged reconciliation",
+    });
+
+    const reconciled = await update("invoice-reconciled-undefined-test", true);
+    const eventsAfter = await store.listCommercialOrderEvents({
+      id: opened.id,
+      reason: "count events after unchanged reconciliation",
+    });
+
+    expect(reconciled.version).toBe(opened.version);
+    expect(eventsAfter.events).toHaveLength(eventsBefore.events.length);
+  });
+
+  it("replays a provider operation whose request has undefined fields", async () => {
+    const created = await store.createCommercialOrder(request());
+    const reservation = {
+      order_id: created.id,
+      operation: "quote_reconcile",
+      expected_version: created.version,
+      idempotency_key: `undefined-request-${randomUUID()}`,
+      request: { quote: "qt_request", invoice: undefined },
+    };
+    const first = await store.reserveCommercialProviderOperation(reservation);
+    const replay = await store.reserveCommercialProviderOperation(reservation);
+
+    expect(replay.operation.id).toBe(first.operation.id);
+  });
+
   it("uses a stable event cursor tuple and enforces the event byte cap", async () => {
     const created = await store.createCommercialOrder(request());
     let current = created;
