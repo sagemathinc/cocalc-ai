@@ -13,6 +13,7 @@ import {
   recoverIdentityLocal,
   startFreshConversationLocal,
 } from "./api";
+import { agentStore } from "./store";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
   requireUuid(opts.account_id, "account_id");
@@ -41,6 +42,19 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
       project_id: opts.project_id,
       agent_id: opts.agent_id,
     });
+  },
+  verifyActiveRun: async (opts) => {
+    await assertOwner(opts);
+    requireUuid(opts.agent_id, "agent_id");
+    requireUuid(opts.run_id, "run_id");
+    const run = await agentStore().activeRun(opts.agent_id, opts.run_id);
+    if (
+      run.account_id !== opts.account_id ||
+      run.project_id !== opts.project_id
+    ) {
+      throw new Error("agent run does not match requested owner or project");
+    }
+    return { expires_at: new Date(run.expires_at).valueOf() };
   },
   list: async (opts) => {
     await assertOwner(opts);
