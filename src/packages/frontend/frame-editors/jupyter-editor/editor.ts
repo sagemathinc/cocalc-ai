@@ -475,15 +475,6 @@ const JUPYTER_MENUS = {
         },
       ],
       "run-cells-adjacent": ["run all cells above", "run all cells below"],
-      keys: ["tab key", "shift+tab key"],
-      nbgrader: ["nbgrader validate", "nbgrader assign"],
-    },
-  },
-  jupyter_kernel: {
-    label: menu.kernel,
-    pos: 5,
-    entries: {
-      "kernel-control": ["interrupt kernel"],
       "output-limit": [
         {
           name: "output-limit",
@@ -494,6 +485,15 @@ const JUPYTER_MENUS = {
             outputLimitMenu(props.actions.jupyter_actions),
         },
       ],
+      keys: ["tab key", "shift+tab key"],
+      nbgrader: ["nbgrader validate", "nbgrader assign"],
+    },
+  },
+  jupyter_kernel: {
+    label: menu.kernel,
+    pos: 5,
+    entries: {
+      "kernel-control": ["interrupt kernel"],
       "restart-kernel": [
         {
           label: jupyter.commands.restart_kernel_noconf_menu,
