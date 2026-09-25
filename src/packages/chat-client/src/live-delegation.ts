@@ -17,6 +17,12 @@ export interface LiveEvent {
   usage?: { seconds?: number };
 }
 
+export interface LiveInterruptTarget {
+  message_id: string;
+  message_date: string;
+  session_id?: string;
+}
+
 /** Only an explicit request to stop the current agent turn may interrupt it. */
 export function isExplicitInterruptRequest(text: string): boolean {
   const request = text
@@ -34,7 +40,11 @@ export function isExplicitInterruptRequest(text: string): boolean {
 export class LiveDelegation {
   private seen = new Set<string>();
   private delegated = new Set<string>();
-  private fragments: { text: string; end: number }[] = [];
+  private fragments: {
+    text: string;
+    end: number;
+    interruptTarget?: LiveInterruptTarget;
+  }[] = [];
   private tasks = new Map<string, string>();
   private closed = false;
   private progress = new Map<string, string>();
@@ -51,7 +61,8 @@ export class LiveDelegation {
     ) => void,
     private report: (message: string) => void,
     private answerStatusQuestion?: (text: string) => string | undefined,
-    private interrupt?: () => Promise<boolean>,
+    private interrupt?: (target: LiveInterruptTarget) => Promise<boolean>,
+    private captureInterruptTarget?: () => LiveInterruptTarget | undefined,
   ) {}
 
   async event(event: LiveEvent) {
@@ -70,7 +81,11 @@ export class LiveDelegation {
         this.close();
         return;
       }
-      this.fragments.push({ text: event.delta, end: event.end_ms ?? Infinity });
+      this.fragments.push({
+        text: event.delta,
+        end: event.end_ms ?? Infinity,
+        interruptTarget: this.captureInterruptTarget?.(),
+      });
     }
     if (
       event.type !== "session.delegation.created" ||
@@ -84,6 +99,7 @@ export class LiveDelegation {
     // to a later request; they must not mutate an in-flight submission.
     const offset = event.offset_ms ?? Infinity;
     const ready = this.fragments.filter((x) => x.end <= offset);
+    const interruptTarget = ready[0]?.interruptTarget;
     this.fragments = this.fragments.filter((x) => x.end > offset);
     const text = ready
       .map((x) => x.text)
@@ -107,13 +123,15 @@ export class LiveDelegation {
       if (this.closed) return;
       if (isExplicitInterruptRequest(text)) {
         try {
-          const interrupted = await this.interrupt?.();
+          const interrupted = interruptTarget
+            ? await this.interrupt?.(interruptTarget)
+            : false;
           if (this.closed) return;
           const response =
             interrupted === true
               ? "Interrupt request accepted for the current agent turn. Check chat to confirm it stopped."
               : interrupted === false
-                ? "There is no running agent turn to interrupt."
+                ? "The original agent turn is no longer active. No other turn was interrupted."
                 : "Voice cannot interrupt this agent turn. Use the chat interrupt control.";
           this.append("session.commentary.append", response, id);
           this.report(response);

@@ -172,12 +172,15 @@ export type AcpInterruptRequest = {
   account_id: string;
   threadId?: string;
   chat?: AcpChatContext;
+  // Voice stops only the turn that was active when the user spoke.
+  expected_message_id?: string;
+  expected_session_id?: string;
   note?: string;
 };
 
 export type AcpInterruptResponse = {
   ok: boolean;
-  state: "interrupted" | "repaired" | "queued" | "missing";
+  state: "interrupted" | "repaired" | "queued" | "missing" | "stale";
   threadId?: string | null;
 };
 

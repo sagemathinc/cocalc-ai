@@ -497,11 +497,21 @@ export async function initProjectChatSessionService(client: Client) {
 
     async interrupt(
       this: { subject?: string },
-      opts: { session_id: string; thread_id: string },
-    ): Promise<null> {
+      opts: {
+        session_id: string;
+        thread_id: string;
+        expected?: {
+          message_id: string;
+          message_date: string;
+          session_id?: string;
+        };
+      },
+    ): Promise<boolean> {
       const session = getSession(this.subject, opts?.session_id);
-      await session.backend.interrupt(`${opts?.thread_id ?? ""}`);
-      return null;
+      return await session.backend.interrupt(
+        `${opts?.thread_id ?? ""}`,
+        opts?.expected,
+      );
     },
 
     async setLimit(

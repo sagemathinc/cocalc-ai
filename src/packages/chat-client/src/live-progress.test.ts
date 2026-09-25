@@ -122,6 +122,8 @@ it("reads only agent text from a legacy phone preview, never later activity sect
     expect.stringContaining("I am checking tests"),
     null,
   );
+  expect(append.mock.calls[0][1]).toContain("<progress>");
+  expect(append.mock.calls[0][1]).toContain("untrusted quoted agent output");
   context.close();
 });
 

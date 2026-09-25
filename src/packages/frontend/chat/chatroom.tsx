@@ -2240,6 +2240,7 @@ function ChatPanelContent({
   }
 
   async function interruptVoiceTurn(
+    target: { message_id: string; message_date: string; session_id?: string },
     isCurrentThread: () => boolean,
     signal: AbortSignal,
   ): Promise<boolean> {
@@ -2255,9 +2256,10 @@ function ChatPanelContent({
       selectedThreadMessages,
       acpState,
     );
-    if (!running) return false;
+    if (!running || field<string>(running, "message_id") !== target.message_id)
+      return false;
     const date = dateValue(running);
-    if (!date) throw new Error("The running turn has no message date.");
+    if (!date || date.toISOString() !== target.message_date) return false;
     const sessionId =
       field<string>(running, "acp_thread_id") ??
       resolveAgentSessionIdForThread({
@@ -2266,14 +2268,45 @@ function ChatPanelContent({
         threadKey: selectedThreadKey ?? selectedThreadId,
         persistedSessionId: selectedThreadMetadata?.acp_config?.sessionId,
       });
-    if (!sessionId || !isCurrentThread() || signal.aborted)
+    if (
+      !sessionId ||
+      (target.session_id && target.session_id !== sessionId) ||
+      !isCurrentThread() ||
+      signal.aborted
+    )
       throw new Error("The selected agent changed.");
     const accepted = await actions.languageModelStopGenerating(date, {
       threadId: sessionId,
       senderId: field<string>(running, "sender_id"),
+      expectedMessageId: target.message_id,
+      expectedSessionId: target.session_id,
     });
     if (!accepted) throw new Error("The interrupt was not accepted.");
     return true;
+  }
+
+  function captureVoiceInterruptTarget() {
+    if (!selectedThreadId) return undefined;
+    const running = resolveSelectedThreadRunningCodexMessage(
+      selectedThreadMessages,
+      acpState,
+    );
+    if (!running) return undefined;
+    const date = dateValue(running);
+    const message_id = field<string>(running, "message_id");
+    if (!date || !message_id) return undefined;
+    return {
+      message_id,
+      message_date: date.toISOString(),
+      session_id:
+        field<string>(running, "acp_thread_id") ??
+        resolveAgentSessionIdForThread({
+          actions,
+          threadId: selectedThreadId,
+          threadKey: selectedThreadKey ?? selectedThreadId,
+          persistedSessionId: selectedThreadMetadata?.acp_config?.sessionId,
+        }),
+    };
   }
 
   async function sendMessage(
@@ -3189,6 +3222,7 @@ function ChatPanelContent({
           threadRunning={hasRunningAcpTurn}
           onDelegate={sendVoiceTask}
           onInterrupt={interruptVoiceTurn}
+          onInterruptTarget={captureVoiceInterruptTarget}
           visible={isVisible && tabIsVisible && isChatForeground}
           panelOpen={voiceOptionsOpen && selectedThreadResolved == null}
           onClose={() => setVoiceOptionsOpen(false)}

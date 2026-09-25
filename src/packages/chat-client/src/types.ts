@@ -103,7 +103,14 @@ export interface HeadlessChatClient {
     thread_id: string;
     acp_config: CodexThreadConfig;
   }): Promise<void>;
-  interrupt(thread_id: string): Promise<void>;
+  interrupt(
+    thread_id: string,
+    expected?: {
+      message_id: string;
+      message_date: string;
+      session_id?: string;
+    },
+  ): Promise<boolean>;
   loadOlderMessages?(limit: number): Promise<void>;
   reconnect(reason: string): Promise<void>;
   close(): Promise<void>;

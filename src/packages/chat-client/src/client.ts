@@ -254,9 +254,16 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     this.rebuild();
   }
 
-  async interrupt(thread_id: string): Promise<void> {
+  async interrupt(
+    thread_id: string,
+    expected?: {
+      message_id: string;
+      message_date: string;
+      session_id?: string;
+    },
+  ): Promise<boolean> {
     if (!this.sendPipeline) throw new Error("Chat is not ready.");
-    await this.sendPipeline.interrupt(thread_id);
+    return await this.sendPipeline.interrupt(thread_id, expected);
   }
 
   async reconnect(_reason: string): Promise<void> {

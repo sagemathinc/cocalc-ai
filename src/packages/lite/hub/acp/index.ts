@@ -251,6 +251,7 @@ import {
   markAcpInterruptError,
   markAcpInterruptHandled,
   markAcpInterruptsHandledForThread,
+  markAcpInterruptsHandledForTurn,
 } from "../sqlite/acp-interrupts";
 import {
   claimAcpSteer,
@@ -5055,9 +5056,11 @@ function resolveInterruptedAcpTurnTarget(
 export function finalizeInterruptedAcpBackendState({
   turn,
   recoveryReason = INTERRUPT_STATUS_TEXT,
+  exactMessageId = false,
 }: {
   turn: InterruptedAcpTurnTarget;
   recoveryReason?: string;
+  exactMessageId?: boolean;
 }): boolean {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5071,9 +5074,23 @@ export function finalizeInterruptedAcpBackendState({
   };
   let finalized = false;
 
+  const matches = (row: {
+    project_id: string;
+    path: string;
+    message_date?: string | null;
+    message_id?: string | null;
+    thread_id?: string | null;
+  }) =>
+    exactMessageId
+      ? !!target.message_id &&
+        row.project_id === project_id &&
+        row.path === path &&
+        row.message_id === target.message_id
+      : runningTurnMatchesTarget(row, target);
+
   try {
     for (const row of listRunningAcpJobs()) {
-      if (runningTurnMatchesTarget(row, target)) {
+      if (matches(row)) {
         setAcpJobState({
           op_id: row.op_id,
           state: "interrupted",
@@ -5094,7 +5111,7 @@ export function finalizeInterruptedAcpBackendState({
 
   try {
     for (const row of listRunningAcpTurnLeases()) {
-      if (runningTurnMatchesTarget(row, target)) {
+      if (matches(row)) {
         finalizeAcpTurnLease({
           key: {
             project_id: row.project_id,
@@ -5551,6 +5568,7 @@ type RepairInterruptedAcpTurnOptions = {
   interruptedNotice?: string;
   interruptedReasonId?: string;
   recoveryReason?: string;
+  exactMessageId?: boolean;
 };
 
 type InterruptedAcpRepairResult = {
@@ -5564,6 +5582,7 @@ async function repairInterruptedAcpTurnOnce({
   interruptedNotice = INTERRUPT_STATUS_TEXT,
   interruptedReasonId = "interrupt",
   recoveryReason = INTERRUPT_STATUS_TEXT,
+  exactMessageId = false,
 }: RepairInterruptedAcpTurnOptions): Promise<InterruptedAcpRepairResult> {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5601,7 +5620,7 @@ async function repairInterruptedAcpTurnOnce({
             sender_id,
             message_id: message_id || undefined,
           }) ??
-          (thread_id
+          (!exactMessageId && thread_id
             ? findLatestGeneratingChatRow(syncdb, thread_id)
             : undefined);
         const currentThreadId =
@@ -5730,7 +5749,16 @@ async function repairInterruptedAcpTurnOnce({
           touched = true;
         }
 
-        if (currentThreadId) {
+        const stateActiveMessageId = currentThreadId
+          ? syncdbField<string>(
+              preferredThreadStateRow(syncdb, currentThreadId),
+              "active_message_id",
+            )
+          : undefined;
+        if (
+          currentThreadId &&
+          (!exactMessageId || stateActiveMessageId === message_id)
+        ) {
           replaceThreadScopedRow(
             syncdb,
             THREAD_STATE_EVENT,
@@ -5777,6 +5805,7 @@ async function repairInterruptedAcpTurnOnce({
       thread_id,
     },
     recoveryReason,
+    exactMessageId,
   });
 
   const durable = queuedPersistence.durable && chatDurable;
@@ -10448,6 +10477,36 @@ function resolveInterruptCandidateIds({
   return [...ids];
 }
 
+function expectedInterruptCandidateIds({
+  project_id,
+  path,
+  thread_id,
+  expected_message_id,
+  expected_session_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  expected_message_id: string;
+  expected_session_id?: string;
+}): string[] {
+  const matching = listRunningAcpTurnLeases().filter(
+    (row) =>
+      row.project_id === project_id &&
+      row.path === path &&
+      row.message_id === expected_message_id &&
+      (row.thread_id === thread_id || row.session_id === thread_id) &&
+      (!expected_session_id || row.session_id === expected_session_id),
+  );
+  return [
+    ...new Set(
+      matching.flatMap((row) =>
+        [row.session_id, row.thread_id].filter((id): id is string => !!id),
+      ),
+    ),
+  ];
+}
+
 function resolveSteerCandidateIds({
   project_id,
   path,
@@ -10615,12 +10674,14 @@ async function tryInterruptCandidateIds({
   chat,
   candidateIds,
   notifyText = INTERRUPT_STATUS_TEXT,
+  expectedMessageId,
 }: {
   projectId: string;
   threadId?: string;
   chat?: AcpChatContext;
   candidateIds?: string[];
   notifyText?: string;
+  expectedMessageId?: string;
 }): Promise<boolean> {
   const writer = findChatWriter({ threadId, chat });
   const ids = new Set<string>();
@@ -10628,17 +10689,18 @@ async function tryInterruptCandidateIds({
     const trimmed = `${id ?? ""}`.trim();
     if (trimmed) ids.add(trimmed);
   }
-  if (threadId) {
+  if (threadId && !expectedMessageId) {
     ids.add(threadId);
   }
-  writer?.getKnownThreadIds().forEach((id) => {
-    const trimmed = `${id ?? ""}`.trim();
-    if (trimmed) ids.add(trimmed);
-  });
+  if (!expectedMessageId)
+    writer?.getKnownThreadIds().forEach((id) => {
+      const trimmed = `${id ?? ""}`.trim();
+      if (trimmed) ids.add(trimmed);
+    });
 
   for (const id of ids) {
-    if (await interruptCodexSession(id, projectId)) {
-      writer?.notifyInterrupted(notifyText);
+    if (await interruptCodexSession(id, projectId, expectedMessageId)) {
+      if (!expectedMessageId) writer?.notifyInterrupted(notifyText);
       return true;
     }
   }
@@ -10651,12 +10713,16 @@ function enqueueInterruptRequestForExecution({
   thread_id,
   chat,
   candidateIds,
+  expectedMessageId,
+  expectedSessionId,
 }: {
   project_id: string;
   path: string;
   thread_id: string;
   chat?: AcpChatContext;
   candidateIds?: string[];
+  expectedMessageId?: string;
+  expectedSessionId?: string;
 }): void {
   enqueueAcpInterrupt({
     project_id,
@@ -10664,6 +10730,8 @@ function enqueueInterruptRequestForExecution({
     thread_id,
     candidate_ids: candidateIds,
     chat,
+    expected_message_id: expectedMessageId,
+    expected_session_id: expectedSessionId,
   });
 }
 
@@ -10719,11 +10787,28 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
     for (const row of listPendingAcpInterrupts()) {
       const ageMs = Date.now() - row.created_at;
       const chat = decodeAcpInterruptChat(row);
+      const expectedMessageId = row.expected_message_id || undefined;
+      const guardedIds = expectedMessageId
+        ? expectedInterruptCandidateIds({
+            project_id: row.project_id,
+            path: row.path,
+            thread_id: row.thread_id,
+            expected_message_id: expectedMessageId,
+            expected_session_id: row.expected_session_id || undefined,
+          })
+        : undefined;
+      if (expectedMessageId && !guardedIds?.length) {
+        markAcpInterruptError({
+          id: row.id,
+          error: "original turn is no longer active",
+        });
+        continue;
+      }
       const handled = await tryInterruptCandidateIds({
         projectId: row.project_id,
         threadId: row.thread_id,
         chat,
-        candidateIds: [
+        candidateIds: guardedIds ?? [
           ...decodeAcpInterruptCandidateIds(row),
           ...resolveInterruptCandidateIds({
             project_id: row.project_id,
@@ -10731,6 +10816,7 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
             thread_id: row.thread_id,
           }),
         ],
+        expectedMessageId,
       });
       if (handled) {
         finalizeInterruptedAcpBackendState({
@@ -10743,15 +10829,17 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
             thread_id: row.thread_id || chat?.thread_id,
           },
           recoveryReason: INTERRUPT_STATUS_TEXT,
+          exactMessageId: !!expectedMessageId,
         });
         markAcpInterruptHandled({ id: row.id });
       } else if (
-        await repairOrphanedAcpInterrupt({
+        !expectedMessageId &&
+        (await repairOrphanedAcpInterrupt({
           project_id: row.project_id,
           path: row.path,
           thread_id: row.thread_id,
           chat,
-        })
+        }))
       ) {
         markAcpInterruptHandled({ id: row.id });
       } else if (ageMs >= ACP_INTERRUPT_MAX_AGE_MS) {
@@ -12231,11 +12319,26 @@ async function handleInterruptRequest(
   const path = `${request.chat?.path ?? ""}`.trim();
   const threadId =
     `${request.threadId ?? request.chat?.thread_id ?? ""}`.trim();
-  const candidateIds = resolveInterruptCandidateIds({
-    project_id,
-    path,
-    thread_id: threadId,
-  });
+  const expectedMessageId = `${request.expected_message_id ?? ""}`.trim();
+  const candidateIds = expectedMessageId
+    ? expectedInterruptCandidateIds({
+        project_id,
+        path,
+        thread_id: threadId,
+        expected_message_id: expectedMessageId,
+        expected_session_id: request.expected_session_id,
+      })
+    : resolveInterruptCandidateIds({
+        project_id,
+        path,
+        thread_id: threadId,
+      });
+  if (expectedMessageId && (!request.chat || !candidateIds.length)) {
+    return { ok: false, state: "stale", threadId };
+  }
+  if (expectedMessageId && request.chat?.message_id !== expectedMessageId) {
+    return { ok: false, state: "stale", threadId };
+  }
 
   if (
     await tryInterruptCandidateIds({
@@ -12243,6 +12346,7 @@ async function handleInterruptRequest(
       threadId,
       chat: request.chat,
       candidateIds,
+      expectedMessageId: expectedMessageId || undefined,
     })
   ) {
     if (conatClient && request.chat && project_id && path) {
@@ -12261,6 +12365,7 @@ async function handleInterruptRequest(
           interruptedNotice: INTERRUPT_STATUS_TEXT,
           interruptedReasonId: "interrupt",
           recoveryReason: INTERRUPT_STATUS_TEXT,
+          exactMessageId: !!expectedMessageId,
         });
       } catch (err) {
         logger.warn("failed to persist chat interrupt marker", {
@@ -12281,6 +12386,7 @@ async function handleInterruptRequest(
             account_id: request.account_id,
           },
           recoveryReason: INTERRUPT_STATUS_TEXT,
+          exactMessageId: !!expectedMessageId,
         });
       }
     } else if (project_id && path) {
@@ -12295,15 +12401,25 @@ async function handleInterruptRequest(
       });
     }
     if (project_id && path && threadId) {
-      markAcpInterruptsHandledForThread({
-        project_id,
-        path,
-        thread_id: threadId,
-      });
+      if (expectedMessageId)
+        markAcpInterruptsHandledForTurn({
+          project_id,
+          path,
+          thread_id: threadId,
+          expected_message_id: expectedMessageId,
+          expected_session_id: request.expected_session_id,
+        });
+      else
+        markAcpInterruptsHandledForThread({
+          project_id,
+          path,
+          thread_id: threadId,
+        });
     }
     return { ok: true, state: "interrupted", threadId };
   }
   if (
+    !expectedMessageId &&
     conatClient &&
     request.chat &&
     project_id &&
@@ -12344,6 +12460,8 @@ async function handleInterruptRequest(
     thread_id: threadId,
     chat: request.chat,
     candidateIds,
+    expectedMessageId: expectedMessageId || undefined,
+    expectedSessionId: request.expected_session_id,
   });
   if (!acpExecutionOwnedByCurrentProcess) {
     try {
@@ -12378,6 +12496,7 @@ async function handleForkSessionRequest(
 async function interruptCodexSession(
   threadId: string,
   projectId: string,
+  expectedMessageId?: string,
 ): Promise<boolean> {
   for (const agent of agentsForProject(projectId)) {
     if (
@@ -12385,7 +12504,9 @@ async function interruptCodexSession(
       typeof (agent as any).interruptOutstanding === "function"
     ) {
       try {
-        if (await (agent as any).interruptOutstanding(threadId)) {
+        if (
+          await (agent as any).interruptOutstanding(threadId, expectedMessageId)
+        ) {
           return true;
         }
       } catch (err) {
@@ -12396,6 +12517,7 @@ async function interruptCodexSession(
       }
     }
     if (
+      !expectedMessageId &&
       "interrupt" in agent &&
       typeof (agent as any).interrupt === "function"
     ) {

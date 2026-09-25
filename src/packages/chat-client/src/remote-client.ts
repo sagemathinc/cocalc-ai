@@ -284,11 +284,18 @@ export class RemoteHeadlessChatClient implements HeadlessChatClient {
     return result;
   }
 
-  async interrupt(thread_id: string): Promise<void> {
-    await this.withSessionRecovery(() =>
-      this.call(
+  async interrupt(
+    thread_id: string,
+    expected?: {
+      message_id: string;
+      message_date: string;
+      session_id?: string;
+    },
+  ): Promise<boolean> {
+    return await this.withSessionRecovery(() =>
+      this.call<boolean>(
         "interrupt",
-        [{ session_id: this.requireSession(), thread_id }],
+        [{ session_id: this.requireSession(), thread_id, expected }],
         OPERATION_TIMEOUT_MS,
       ),
     );

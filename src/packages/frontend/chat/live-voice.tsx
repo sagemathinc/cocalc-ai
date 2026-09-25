@@ -11,6 +11,7 @@ import {
 } from "@cocalc/chat-client/live-delegation";
 import { LIVE_VOICE_POLICY } from "@cocalc/chat-client/live-voice-policy";
 import { LiveProgressContext } from "@cocalc/chat-client/live-progress";
+import type { LiveInterruptTarget } from "@cocalc/chat-client/live-delegation";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,
@@ -111,6 +112,7 @@ export function ChatLiveVoice({
   threadRunning,
   onDelegate,
   onInterrupt,
+  onInterruptTarget,
   visible,
   panelOpen = true,
   onClose,
@@ -127,9 +129,11 @@ export function ChatLiveVoice({
     signal: AbortSignal,
   ) => Promise<{ message_id: string; kind?: "guidance" | "work" }>;
   onInterrupt: (
+    target: LiveInterruptTarget,
     isCurrentThread: () => boolean,
     signal: AbortSignal,
   ) => Promise<boolean>;
+  onInterruptTarget: () => LiveInterruptTarget | undefined;
   visible: boolean;
   panelOpen?: boolean;
   onClose?: () => void;
@@ -155,8 +159,18 @@ export function ChatLiveVoice({
   const generationRef = useRef(0);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const delegateRef = useRef({ threadId, onDelegate, onInterrupt });
-  delegateRef.current = { threadId, onDelegate, onInterrupt };
+  const delegateRef = useRef({
+    threadId,
+    onDelegate,
+    onInterrupt,
+    onInterruptTarget,
+  });
+  delegateRef.current = {
+    threadId,
+    onDelegate,
+    onInterrupt,
+    onInterruptTarget,
+  };
   const runningAgent = [...messages]
     .reverse()
     .find((message) => message.role === "agent" && message.generating);
@@ -353,14 +367,19 @@ export function ChatLiveVoice({
         if (isCurrentCall()) setStatus(value);
       },
       (text) => progress.answer(text),
-      async () => {
+      async (target) => {
         if (!isCurrentCall() || delegateRef.current.threadId !== boundThreadId)
           throw new Error("The selected agent changed.");
         return await delegateRef.current.onInterrupt(
+          target,
           isCurrentCall,
           abort.signal,
         );
       },
+      () =>
+        isCurrentCall() && delegateRef.current.threadId === boundThreadId
+          ? delegateRef.current.onInterruptTarget()
+          : undefined,
     );
     const call: Call = {
       peer,

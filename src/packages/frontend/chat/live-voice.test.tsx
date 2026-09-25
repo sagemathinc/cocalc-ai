@@ -39,6 +39,11 @@ const props = {
   messages: [],
   onDelegate: jest.fn(),
   onInterrupt: jest.fn(),
+  onInterruptTarget: jest.fn(() => ({
+    message_id: "turn-a",
+    message_date: "2026-09-25T00:00:00.000Z",
+    session_id: "session-a",
+  })),
   visible: true,
 };
 
@@ -451,6 +456,11 @@ describe("call-scoped cancellation", () => {
       });
     });
     await waitFor(() => expect(onInterrupt).toHaveBeenCalledTimes(1));
+    expect(onInterrupt).toHaveBeenCalledWith(
+      expect.objectContaining({ message_id: "turn-a" }),
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
     expect(onDelegate).not.toHaveBeenCalled();
     expect(peer.channel.send).toHaveBeenCalledWith(
       expect.stringContaining("Interrupt request accepted"),

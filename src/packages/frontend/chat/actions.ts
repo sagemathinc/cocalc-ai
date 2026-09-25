@@ -3128,6 +3128,8 @@ export class ChatActions extends Actions<ChatState> {
     options?: {
       threadId?: string;
       senderId?: string;
+      expectedMessageId?: string;
+      expectedSessionId?: string;
     },
   ): Promise<boolean> => {
     if (this.syncdb == null) return false;
@@ -3135,6 +3137,8 @@ export class ChatActions extends Actions<ChatState> {
       return await this.requestCodexInterrupt({
         threadId: options!.threadId!,
         messageDate: date,
+        expectedMessageId: options?.expectedMessageId,
+        expectedSessionId: options?.expectedSessionId,
       });
     }
     const targetSenderId =
@@ -3159,9 +3163,13 @@ export class ChatActions extends Actions<ChatState> {
   private async requestCodexInterrupt({
     threadId,
     messageDate,
+    expectedMessageId,
+    expectedSessionId,
   }: {
     threadId: string;
     messageDate: Date;
+    expectedMessageId?: string;
+    expectedSessionId?: string;
   }): Promise<boolean> {
     if (!threadId || !this.store) return false;
     const project_id = this.store.get("project_id");
@@ -3173,6 +3181,7 @@ export class ChatActions extends Actions<ChatState> {
     const message_date = toISOString(messageDate);
     if (!message_date) return false;
     const message_id = field<string>(targetMessage, "message_id");
+    if (expectedMessageId && message_id !== expectedMessageId) return false;
     const chat: AcpChatContext = {
       project_id,
       path,
@@ -3186,6 +3195,8 @@ export class ChatActions extends Actions<ChatState> {
         project_id,
         threadId,
         chat,
+        expected_message_id: expectedMessageId,
+        expected_session_id: expectedSessionId,
       });
       if (
         result?.state === "interrupted" ||

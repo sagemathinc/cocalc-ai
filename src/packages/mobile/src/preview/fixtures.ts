@@ -205,7 +205,7 @@ export function createPreviewChat(
     },
     sendToExistingCodexThread: send,
     sendGuidanceToCodexThread: send,
-    interrupt: async () => {},
+    interrupt: async () => true,
     loadOlderMessages: async () => {
       snapshot = {
         ...snapshot,

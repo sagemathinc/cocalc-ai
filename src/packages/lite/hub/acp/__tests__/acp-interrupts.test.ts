@@ -12,6 +12,7 @@ import {
   markAcpInterruptError,
   markAcpInterruptHandled,
   markAcpInterruptsHandledForThread,
+  markAcpInterruptsHandledForTurn,
 } from "../../sqlite/acp-interrupts";
 
 beforeAll(() => {
@@ -128,5 +129,38 @@ describe("acp interrupt queue", () => {
     const pending = listPendingAcpInterrupts();
     expect(pending).toHaveLength(1);
     expect(pending[0].thread_id).toBe("thread-5");
+  });
+
+  it("keeps voice interrupts for replacement turns separate", () => {
+    const common = {
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-1",
+    };
+    const first = enqueueAcpInterrupt({
+      ...common,
+      expected_message_id: "turn-a",
+      expected_session_id: "session-a",
+    });
+    const replacement = enqueueAcpInterrupt({
+      ...common,
+      expected_message_id: "turn-b",
+    });
+    expect(replacement.id).not.toBe(first.id);
+    const restarted = enqueueAcpInterrupt({
+      ...common,
+      expected_message_id: "turn-a",
+      expected_session_id: "session-b",
+    });
+    expect(restarted.id).not.toBe(first.id);
+    markAcpInterruptsHandledForTurn({
+      ...common,
+      expected_message_id: "turn-a",
+      expected_session_id: "session-a",
+    });
+    expect(listPendingAcpInterrupts().map((row) => row.id)).toEqual([
+      replacement.id,
+      restarted.id,
+    ]);
   });
 });

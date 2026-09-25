@@ -208,7 +208,7 @@ export function useLiveVoice(
       },
       setStatus,
       (text) => progress.answer(text),
-      async () => {
+      async (target) => {
         if (
           active.current !== call ||
           call.abort.signal.aborted ||
@@ -218,14 +218,36 @@ export function useLiveVoice(
             current.current.snapshot.selected_thread_id !== thread)
         )
           throw new Error("The voice call is no longer bound to this agent.");
+        const activeThread = current.current.snapshot.threads.find(
+          (item) => item.thread_id === thread,
+        );
         if (
-          current.current.snapshot.threads.find(
-            (item) => item.thread_id === thread,
-          )?.state !== "running"
+          activeThread?.state !== "running" ||
+          activeThread.active_message_id !== target.message_id
         )
           return false;
-        await clientAtStart.interrupt(thread);
-        return true;
+        return await clientAtStart.interrupt(thread, target);
+      },
+      () => {
+        const snap = current.current.snapshot;
+        if (snap.connection !== "connected") return undefined;
+        const activeThread = snap.threads.find(
+          (item) => item.thread_id === thread,
+        );
+        if (
+          activeThread?.state !== "running" ||
+          !activeThread.active_message_id
+        )
+          return undefined;
+        const message = snap.messages.find(
+          (item) => item.message_id === activeThread.active_message_id,
+        );
+        if (!message?.date) return undefined;
+        return {
+          message_id: message.message_id,
+          message_date: message.date,
+          session_id: activeThread.acp_config?.sessionId,
+        };
       },
     );
     const call = {
