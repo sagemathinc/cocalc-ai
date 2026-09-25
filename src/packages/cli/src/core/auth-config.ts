@@ -30,6 +30,7 @@ export type GlobalAuthOptions = {
   accountId?: string;
   account_id?: string;
   apiKey?: string;
+  apiKeyFile?: string;
   cookie?: string;
   bearer?: string;
   hubPassword?: string;
@@ -182,7 +183,12 @@ export function applyAuthProfile(
   ) {
     resolved.accountId = data.account_id;
   }
-  if (allowSecretInheritance && !resolved.apiKey && data.api_key) {
+  if (
+    allowSecretInheritance &&
+    !resolved.apiKey &&
+    !resolved.apiKeyFile &&
+    data.api_key
+  ) {
     resolved.apiKey = data.api_key;
   }
   if (allowSecretInheritance && !resolved.cookie && data.cookie) {

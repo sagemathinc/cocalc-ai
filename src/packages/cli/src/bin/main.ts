@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -280,6 +281,7 @@ console.log = (...args: any[]) => {
 };
 
 type GlobalOptions = GlobalAuthOptions & {
+  apiKeyFile?: string;
   json?: boolean;
   output?: "table" | "json" | "yaml";
   quiet?: boolean;
@@ -1511,6 +1513,23 @@ async function contextForGlobals(
   const applied = applyAuthProfile(globals, config);
   const preferApiTransport = applied.fromProfile || !!globals.api?.trim();
   let effectiveGlobals = applied.globals as GlobalOptions;
+  if (effectiveGlobals.apiKeyFile) {
+    if (normalizeOptionalSecret(effectiveGlobals.apiKey)) {
+      throw new Error("use either --api-key or --api-key-file, not both");
+    }
+    const path = effectiveGlobals.apiKeyFile;
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size < 1 || stat.size > 4096) {
+      throw new Error(
+        "API key file must be a nonempty regular file under 4 KiB",
+      );
+    }
+    const apiKey = readFileSync(path, "utf8").trim();
+    if (!apiKey || apiKey.length > 4096 || /\s/.test(apiKey)) {
+      throw new Error("API key file contains an invalid key");
+    }
+    effectiveGlobals = { ...effectiveGlobals, apiKey };
+  }
 
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
   const rpcTimeoutMs = Math.max(
@@ -2960,6 +2979,7 @@ program
   .option("--rpc-timeout <duration>", "per-RPC timeout (default: 30s)", "30s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
   .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
+  .option("--api-key-file <path>", "read an account API key from a file")
   .option("--cookie <cookie>", "raw Cookie header value")
   .option("--bearer <token>", "bearer token for conat authorization")
   .option(

@@ -148,6 +148,20 @@ test("applyAuthProfile does not override explicit globals", () => {
   assert.equal(result.globals.apiKey, "xyz");
 });
 
+test("an explicit API key file does not inherit a profile key", () => {
+  const config: AuthConfig = {
+    current_profile: "default",
+    profiles: { default: { api_key: "profile-secret" } },
+  };
+  const result = applyAuthProfile(
+    { apiKeyFile: "/tmp/scoped-key" },
+    config,
+    {} as any,
+  );
+  assert.equal(result.globals.apiKey, undefined);
+  assert.equal(result.globals.apiKeyFile, "/tmp/scoped-key");
+});
+
 test("applyAuthProfile overrides ambient env defaults with selected profile values", () => {
   const config: AuthConfig = {
     current_profile: "bella",
