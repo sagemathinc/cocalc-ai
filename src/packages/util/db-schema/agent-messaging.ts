@@ -162,3 +162,43 @@ Table({
     ended_at: timestamp("Explicit runtime revocation time."),
   },
 });
+
+Table({
+  name: "agent_cocalc_connector_configs",
+  rules: {
+    primary_key: "config_id",
+    pg_custom_indexes: [
+      {
+        name: "agent_cocalc_connector_configs_owner_agent_source_key",
+        unique: true,
+        query: "(account_id,agent_id,source_project_id)",
+      },
+    ],
+  },
+  fields: {
+    config_id: required("uuid", "Stable configuration ID."),
+    account_id: required("uuid", "Human who owns this configuration."),
+    agent_id: required("uuid", "Registered native agent."),
+    source_project_id: required("uuid", "Project containing the agent."),
+    scope: {
+      type: "map",
+      pg_type: "JSONB",
+      not_null: true,
+      desc: "Canonical versioned API-key scope; no credential is stored.",
+    },
+    revision: {
+      type: "integer",
+      not_null: true,
+      pg_default: "1",
+      desc: "Monotonic configuration revision.",
+    },
+    enabled: {
+      type: "boolean",
+      not_null: true,
+      pg_default: "false",
+      desc: "Whether a future verified turn may receive this scope.",
+    },
+    created_at: created("Configuration creation time."),
+    updated_at: created("Last configuration update."),
+  },
+});

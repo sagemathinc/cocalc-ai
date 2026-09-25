@@ -14,6 +14,7 @@ import {
   authFirstRequireAccountWithBoundSession,
   authFirstRequireHostWithAccountTarget,
 } from "./util";
+import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import type {
   AgentIdentity,
   AgentCredential,
@@ -59,6 +60,8 @@ export const agent = {
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
+  getCocalcConnectorConfig: authFirstRequireAccount,
+  saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -197,7 +200,33 @@ export interface AgentIdentityLocator {
   project_id?: string;
 }
 
+export interface CocalcConnectorConfig {
+  config_id: string;
+  account_id: string;
+  agent_id: string;
+  source_project_id: string;
+  scope: ApiKeyScope;
+  revision: number;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface AgentApi {
+  getCocalcConnectorConfig(opts: {
+    account_id?: string;
+    agent_id: string;
+    source_project_id: string;
+  }): Promise<CocalcConnectorConfig | null>;
+  saveCocalcConnectorConfig(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      expected_revision?: number;
+      scope: ApiKeyScope;
+      enabled: boolean;
+    },
+  ): Promise<CocalcConnectorConfig>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(

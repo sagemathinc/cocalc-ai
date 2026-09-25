@@ -6,6 +6,10 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+export {
+  getCocalcConnectorConfig,
+  saveCocalcConnectorConfig,
+} from "@cocalc/server/agents/cocalc-connector-config";
 import {
   createAgentNetwork as createAgentNetworkImpl,
   resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,
