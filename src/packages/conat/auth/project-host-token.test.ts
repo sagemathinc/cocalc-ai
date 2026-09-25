@@ -9,6 +9,7 @@ import {
   issueProjectHostApiKeyAuthToken,
   verifyProjectHostAuthToken,
 } from "./project-host-token";
+import { isProjectHostApiKeySubjectAllowed } from "./project-host-api-key-policy";
 
 const hostId = "00000000-0000-4000-8000-000000000001";
 const accountId = "00000000-0000-4000-8000-000000000002";
@@ -131,6 +132,40 @@ describe("project-host API key child tokens", () => {
     private_key: privateKeyPem,
     now_ms: nowMs,
   };
+
+  it("mints only reviewed runtime service subjects", () => {
+    const issued = issueProjectHostApiKeyAuthToken({
+      ...input,
+      capabilities: ["project:exec"],
+      viewer_policy_hash: undefined,
+    });
+    const binding = verifyProjectHostAuthToken({
+      token: issued.token,
+      host_id: hostId,
+      public_key: publicKeyPem,
+      now_ms: nowMs,
+    }).api_key!;
+    expect(binding.subjects).not.toContain(`project.${projectId}.`);
+    for (const subject of [
+      `project.${projectId}.run`,
+      `project.${projectId}.api.-`,
+      `project.${projectId}.project-info.-`,
+      `terminal.project-${projectId}.session`,
+    ]) {
+      expect(
+        isProjectHostApiKeySubjectAllowed({ binding, subject, type: "pub" }),
+      ).toBe(true);
+    }
+    for (const subject of [
+      `project.${projectId}.future-control.-`,
+      `project.${projectId}.api-management.-`,
+      `hub.project.${projectId}.api`,
+    ]) {
+      expect(
+        isProjectHostApiKeySubjectAllowed({ binding, subject, type: "pub" }),
+      ).toBe(false);
+    }
+  });
 
   it("binds parent, placement, viewer policy, service audience and reply prefix", () => {
     const issued = issueProjectHostApiKeyAuthToken(input);
