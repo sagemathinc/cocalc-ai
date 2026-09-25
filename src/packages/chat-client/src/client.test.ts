@@ -183,6 +183,71 @@ describe("headless chat activity recovery", () => {
     );
     await client.close();
   });
+
+  it("recovers completed activity only when guidance needs chronology", async () => {
+    dbMock = Object.assign(new EventEmitter(), {
+      isReady: () => true,
+      get: () => [
+        ...["guided", "plain"].map((id, index) => ({
+          event: "chat",
+          sender_id: "agent-account",
+          date: `2026-08-14T00:00:0${index}.000Z`,
+          message_id: id,
+          thread_id: "thread-1",
+          acp_account_id: "agent-account",
+          acp_log_store: "acp-log/chat.chat",
+          acp_log_key: `thread-1:${id}`,
+          generating: false,
+          history: [
+            { content: "Done.", date: `2026-08-14T00:00:0${index}.000Z` },
+          ],
+        })),
+        {
+          event: "chat",
+          sender_id: "account-1",
+          date: "2026-08-14T00:00:03.000Z",
+          message_id: "guidance",
+          parent_message_id: "guided",
+          thread_id: "thread-1",
+          acp_send_mode: "immediate",
+          generating: false,
+          history: [
+            {
+              content: "Please check tests.",
+              date: "2026-08-14T00:00:03.000Z",
+            },
+          ],
+        },
+      ],
+      close: jest.fn(async () => undefined),
+    });
+    const get = jest.fn(async () => [
+      {
+        type: "event",
+        seq: 1,
+        time: 1000,
+        event: { type: "message", text: "Checking.", delta: false },
+      },
+    ]);
+    const projectHostClient = Object.assign(new EventEmitter(), {
+      sync: { akv: jest.fn(() => ({ get, close: jest.fn() })) },
+    });
+    const client = createHeadlessChatClient({
+      account_id: "account-1",
+      project_id: "project-1",
+      path: "chat.chat",
+      projectHostClient: projectHostClient as any,
+      selected_thread_id: "thread-1",
+      activityLoadPolicy: "live-preview-and-guidance-history",
+    });
+    await client.open();
+    await until(
+      () => client.getSnapshot().messages[0]?.activity?.state === "ready",
+    );
+    expect(get).toHaveBeenCalledWith("thread-1:guided");
+    expect(client.getSnapshot().messages[1]?.activity).toBeUndefined();
+    await client.close();
+  });
 });
 
 test("creates a Codex thread config in the constrained chat document", async () => {

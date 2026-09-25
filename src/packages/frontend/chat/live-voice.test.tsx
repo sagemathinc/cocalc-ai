@@ -5,7 +5,11 @@
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatLiveVoice, requestMicrophoneWithTimeout } from "./live-voice";
+import {
+  ChatLiveVoice,
+  liveVoiceProgressConnection,
+  requestMicrophoneWithTimeout,
+} from "./live-voice";
 
 const mockLiveVoice = jest.fn();
 const mockOpenAccountSettings = jest.fn();
@@ -35,14 +39,52 @@ jest.mock("@cocalc/chat-client", () => ({
 const props = {
   projectId: "project-1",
   threadId: "agent-thread-1",
+  threadRunning: false,
   messages: [],
   onDelegate: jest.fn(),
+  onInterrupt: jest.fn(),
+  onInterruptTarget: jest.fn(() => ({
+    message_id: "turn-a",
+    message_date: "2026-09-25T00:00:00.000Z",
+    session_id: "session-a",
+  })),
   visible: true,
 };
 
 beforeEach(() => {
   mockLiveVoice.mockReset();
   mockOpenAccountSettings.mockReset();
+});
+
+it("marks unavailable live previews as disconnected progress", () => {
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "reconnecting",
+    }),
+  ).toBe("disconnected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "error",
+    }),
+  ).toBe("disconnected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "connected",
+    }),
+  ).toBe("connected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: false,
+      liveStatus: "idle",
+    }),
+  ).toBe("connected");
 });
 
 it("explains live voice and dictation in an accessible dialog", async () => {
@@ -61,6 +103,7 @@ it("explains live voice and dictation in an accessible dialog", async () => {
   const dialog = await screen.findByRole("dialog", { name: "How voice works" });
   expect(dialog).toHaveTextContent(/up to eight recent completed messages/i);
   expect(dialog).toHaveTextContent(/fresh authentication/i);
+  expect(dialog).toHaveTextContent(/interrupt the turn/i);
   expect(dialog).toHaveTextContent(/review and send yourself/i);
   await user.keyboard("{Escape}");
   await waitFor(() =>
@@ -419,12 +462,62 @@ describe("call-scoped cancellation", () => {
     return peer;
   }
 
+  it("routes an explicit spoken stop to the bound interrupt action", async () => {
+    const onDelegate = jest.fn();
+    const onInterrupt = jest.fn(async () => true);
+    const user = userEvent.setup();
+    const view = render(
+      <ChatLiveVoice
+        {...props}
+        onDelegate={onDelegate}
+        onInterrupt={onInterrupt}
+      />,
+    );
+    const peer = await startCall(user);
+    act(() => {
+      peer.channel.onmessage({
+        data: JSON.stringify({
+          type: "session.input_transcript.delta",
+          delta: "Please interrupt the turn.",
+          end_ms: 1,
+        }),
+      });
+      peer.channel.onmessage({
+        data: JSON.stringify({
+          type: "session.delegation.created",
+          offset_ms: 2,
+          delegation: { id: "stop-1", target: "client" },
+        }),
+      });
+    });
+    await waitFor(() => expect(onInterrupt).toHaveBeenCalledTimes(1));
+    expect(onInterrupt).toHaveBeenCalledWith(
+      expect.objectContaining({ message_id: "turn-a" }),
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+    expect(onDelegate).not.toHaveBeenCalled();
+    expect(peer.channel.send).toHaveBeenCalledWith(
+      expect.stringContaining("Interrupt request accepted"),
+    );
+    view.unmount();
+  });
+
   it("waits for delegation acceptance and replays a result received while waiting", async () => {
     const acceptance = deferred<{ message_id: string }>();
     const onDelegate = jest.fn(() => acceptance.promise);
     const user = userEvent.setup();
     const view = render(<ChatLiveVoice {...props} onDelegate={onDelegate} />);
     const peer = await startCall(user);
+    const announce = screen.getByRole("button", {
+      name: "Announce milestones",
+    });
+    announce.focus();
+    expect(announce).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("button", { name: "On-demand updates" }),
+    ).toBeInTheDocument();
     act(() => {
       peer.channel.onmessage({
         data: JSON.stringify({
@@ -442,7 +535,11 @@ describe("call-scoped cancellation", () => {
       });
     });
     await waitFor(() => expect(onDelegate).toHaveBeenCalledTimes(1));
-    expect(peer.channel.send).not.toHaveBeenCalled();
+    expect(
+      peer.channel.send.mock.calls.some(
+        ([payload]: [string]) => JSON.parse(payload).delegation_id === "d1",
+      ),
+    ).toBe(false);
     view.rerender(
       <ChatLiveVoice
         {...props}

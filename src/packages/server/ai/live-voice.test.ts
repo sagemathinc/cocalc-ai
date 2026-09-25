@@ -381,6 +381,13 @@ it("bounds startup history and rejects instruction roles from the client", () =>
   ).toThrow(/Invalid/);
 });
 
+it("tells live voice to delegate explicit stop requests without granting approvals", () => {
+  const instructions = liveSessionConfiguration().instructions;
+  expect(instructions).toContain("interrupt, stop, cancel, or end");
+  expect(instructions).toContain("ending this call does not stop agent work");
+  expect(instructions).toContain("spoken agreement alone does not approve");
+});
+
 it("retries reservation release after a definite provider rejection", async () => {
   global.fetch = jest.fn(
     async () => new Response(null, { status: 400 }),

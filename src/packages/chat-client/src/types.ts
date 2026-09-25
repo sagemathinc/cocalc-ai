@@ -28,6 +28,7 @@ export interface ProjectedChatMessage {
   revision_date?: string;
   generating: boolean;
   guidance?: boolean;
+  guidance_delivered_at_ms?: number;
   state?:
     | "sending"
     | "sent"
@@ -43,6 +44,7 @@ export interface ProjectedChatMessage {
   acp_live_preview_stream?: string;
   activity?: {
     state: "loading" | "ready" | "error";
+    source?: "live-preview" | "recovered";
     events: AcpStreamMessage[];
     markdown?: string;
     error?: string;
@@ -101,7 +103,14 @@ export interface HeadlessChatClient {
     thread_id: string;
     acp_config: CodexThreadConfig;
   }): Promise<void>;
-  interrupt(thread_id: string): Promise<void>;
+  interrupt(
+    thread_id: string,
+    expected?: {
+      message_id: string;
+      message_date: string;
+      session_id?: string;
+    },
+  ): Promise<boolean>;
   loadOlderMessages?(limit: number): Promise<void>;
   reconnect(reason: string): Promise<void>;
   close(): Promise<void>;

@@ -77,6 +77,11 @@ function projectMessage(row: ChatMessage): ProjectedChatMessage | undefined {
     generating: row.generating === true,
     state: messageState(row),
     guidance: (row as any).acp_send_mode === "immediate",
+    guidance_delivered_at_ms:
+      Number.isFinite(Number((row as any).acp_guidance_delivered_at_ms)) &&
+      Number((row as any).acp_guidance_delivered_at_ms) > 0
+        ? Number((row as any).acp_guidance_delivered_at_ms)
+        : undefined,
     acp_events: Array.isArray(row.acp_events) ? row.acp_events : undefined,
     acp_log_store: id(row.acp_log_store),
     acp_log_key: id(row.acp_log_key),

@@ -5,6 +5,7 @@ import {
   ChatStreamWriter,
   acpTestInternals,
   disposeAllChatWritersForTests,
+  finalizeInterruptedAcpBackendState,
   isFatalAcpWorkerStorageError,
   isProjectAcpStorageError,
   recoverCurrentWorkerStuckAcpTurns,
@@ -279,6 +280,46 @@ afterEach(async () => {
 
 afterAll(() => {
   closeAcpDatabase();
+});
+
+it("finalizes only the spoken turn when another turn starts in the same thread", () => {
+  const common = {
+    project_id: "project-1",
+    path: "test.chat",
+    thread_id: "thread-1",
+    state: "running",
+    owner_instance_id: "worker-1",
+  };
+  (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+    {
+      ...common,
+      message_id: "turn-a",
+      message_date: "2026-09-25T00:00:00.000Z",
+    },
+    {
+      ...common,
+      message_id: "turn-b",
+      message_date: "2026-09-25T00:00:01.000Z",
+    },
+  ]);
+  finalizeInterruptedAcpBackendState({
+    turn: {
+      project_id: common.project_id,
+      path: common.path,
+      thread_id: common.thread_id,
+      message_id: "turn-a",
+      message_date: "2026-09-25T00:00:00.000Z",
+    },
+    exactMessageId: true,
+  });
+  expect(turns.finalizeAcpTurnLease).toHaveBeenCalledTimes(1);
+  expect(turns.finalizeAcpTurnLease).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: expect.objectContaining({
+        message_date: "2026-09-25T00:00:00.000Z",
+      }),
+    }),
+  );
 });
 
 it("rejects another human before durable steering while permitting an ordinary queued turn", () => {

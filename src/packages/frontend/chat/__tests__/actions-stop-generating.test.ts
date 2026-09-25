@@ -180,4 +180,37 @@ describe("shouldOptimisticallyStopGeneratingLocally", () => {
     );
     expect(actions.store.setState).not.toHaveBeenCalled();
   });
+
+  it("does not target a replacement turn after a voice stop becomes stale", async () => {
+    const message = runningCodexMessage();
+    const actions = makeActions(message);
+    await expect(
+      actions.languageModelStopGenerating(new Date(message.date), {
+        threadId: "session-a",
+        expectedMessageId: "previous-turn",
+      }),
+    ).resolves.toBe(false);
+    expect(mockInterruptAcp).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
+
+  it("passes the spoken turn identity to the backend for an atomic stop", async () => {
+    const message = runningCodexMessage();
+    const actions = makeActions(message);
+    mockInterruptAcp.mockResolvedValueOnce({ ok: false, state: "stale" });
+    await expect(
+      actions.languageModelStopGenerating(new Date(message.date), {
+        threadId: "session-a",
+        expectedMessageId: message.message_id,
+        expectedSessionId: "session-a",
+      }),
+    ).resolves.toBe(false);
+    expect(mockInterruptAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expected_message_id: message.message_id,
+        expected_session_id: "session-a",
+      }),
+    );
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
 });

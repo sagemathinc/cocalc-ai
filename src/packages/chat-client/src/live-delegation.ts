@@ -17,25 +17,52 @@ export interface LiveEvent {
   usage?: { seconds?: number };
 }
 
-// Owns only this call's delegation state. It never retries an uncertain send,
-// interrupts a task, or treats model output as human permission.
+export interface LiveInterruptTarget {
+  message_id: string;
+  message_date: string;
+  session_id?: string;
+}
+
+/** Only an explicit request to stop the current agent turn may interrupt it. */
+export function isExplicitInterruptRequest(text: string): boolean {
+  const request = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ");
+  return /^(?:(?:please|can you|could you|would you|i want (?:you to|to)) )?(?:just )?(?:stop|interrupt|cancel|end|abort|halt) (?:(?:the|this|my) )?(?:(?:current|running|active) )?(?:(?:agent|codex) )?(?:turn|task|run|work|job)(?: now| please)?$/.test(
+    request,
+  );
+}
+
+// Owns only this call's delegation state. It never retries an uncertain send
+// or treats model output as human permission.
 export class LiveDelegation {
   private seen = new Set<string>();
   private delegated = new Set<string>();
-  private fragments: { text: string; end: number }[] = [];
+  private fragments: {
+    text: string;
+    end: number;
+    interruptTarget?: LiveInterruptTarget;
+  }[] = [];
   private tasks = new Map<string, string>();
   private closed = false;
   private progress = new Map<string, string>();
   private pendingSubmission: Promise<void> | undefined;
 
   constructor(
-    private send: (text: string) => Promise<{ message_id: string }>,
+    private send: (
+      text: string,
+    ) => Promise<{ message_id: string; kind?: "guidance" | "work" }>,
     private append: (
       type: "session.thinking.append" | "session.commentary.append",
       content: string,
       id: string,
     ) => void,
     private report: (message: string) => void,
+    private answerStatusQuestion?: (text: string) => string | undefined,
+    private interrupt?: (target: LiveInterruptTarget) => Promise<boolean>,
+    private captureInterruptTarget?: () => LiveInterruptTarget | undefined,
   ) {}
 
   async event(event: LiveEvent) {
@@ -54,7 +81,11 @@ export class LiveDelegation {
         this.close();
         return;
       }
-      this.fragments.push({ text: event.delta, end: event.end_ms ?? Infinity });
+      this.fragments.push({
+        text: event.delta,
+        end: event.end_ms ?? Infinity,
+        interruptTarget: this.captureInterruptTarget?.(),
+      });
     }
     if (
       event.type !== "session.delegation.created" ||
@@ -68,6 +99,7 @@ export class LiveDelegation {
     // to a later request; they must not mutate an in-flight submission.
     const offset = event.offset_ms ?? Infinity;
     const ready = this.fragments.filter((x) => x.end <= offset);
+    const interruptTarget = ready[0]?.interruptTarget;
     this.fragments = this.fragments.filter((x) => x.end > offset);
     const text = ready
       .map((x) => x.text)
@@ -81,13 +113,51 @@ export class LiveDelegation {
       );
       return;
     }
+    const status = this.answerStatusQuestion?.(text);
+    if (status) {
+      this.append("session.commentary.append", status, id);
+      this.report("Progress update shared without starting agent work.");
+      return;
+    }
     const submit = async () => {
       if (this.closed) return;
+      if (isExplicitInterruptRequest(text)) {
+        try {
+          const interrupted = interruptTarget
+            ? await this.interrupt?.(interruptTarget)
+            : false;
+          if (this.closed) return;
+          const response =
+            interrupted === true
+              ? "Interrupt request accepted for the current agent turn. Check chat to confirm it stopped."
+              : interrupted === false
+                ? "The original agent turn is no longer active. No other turn was interrupted."
+                : "Voice cannot interrupt this agent turn. Use the chat interrupt control.";
+          this.append("session.commentary.append", response, id);
+          this.report(response);
+        } catch {
+          if (this.closed) return;
+          const response =
+            "The interrupt could not be confirmed. Check chat before trying again.";
+          this.append("session.commentary.append", response, id);
+          this.report(response);
+        }
+        return;
+      }
       try {
         // ChatSendPipeline coalesces simultaneous sends to one thread. Wait
         // for the previous acknowledgment so every spoken task gets its own ID.
         const accepted = await this.send(text);
         if (this.closed) return; // Accepted work remains in the durable chat.
+        if (accepted.kind === "guidance") {
+          this.append(
+            "session.thinking.append",
+            "Guidance was sent to the currently running agent turn. It has not finished yet.",
+            id,
+          );
+          this.report("Guidance sent to the running agent.");
+          return;
+        }
         this.tasks.set(accepted.message_id, id);
         this.append(
           "session.thinking.append",

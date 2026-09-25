@@ -339,6 +339,15 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
+// Provider snapshots and operation requests are stored as JSONB, which drops
+// undefined values and turns dates into strings. Compare a freshly built value
+// in that stored form, or an optional field that is undefined never matches.
+function storedJson(value: unknown): string {
+  return stableJson(
+    value === undefined ? value : JSON.parse(JSON.stringify(value)),
+  );
+}
+
 function eventPayload(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(value).filter(
@@ -1810,8 +1819,8 @@ export async function updateCommercialQuoteProvider(
       quote.provider_status === opts.provider_status &&
       (quote.provider_invoice_id ?? null) ===
         (opts.provider_invoice_id ?? quote.provider_invoice_id ?? null) &&
-      stableJson(quote.provider_snapshot) ===
-        stableJson(opts.provider_snapshot) &&
+      storedJson(quote.provider_snapshot) ===
+        storedJson(opts.provider_snapshot) &&
       (!opts.document_sha256 || quote.document_sha256 === opts.document_sha256);
     if (opts.skip_if_unchanged && unchanged) {
       await client.query(
@@ -2817,8 +2826,8 @@ function sameProviderInvoiceState(
     iso(invoice.sent_at) === iso(opts.sent_at) &&
     iso(invoice.paid_at) === iso(opts.paid_at) &&
     iso(invoice.voided_at) === iso(opts.voided_at) &&
-    stableJson(invoice.provider_snapshot) ===
-      stableJson(opts.provider_snapshot) &&
+    storedJson(invoice.provider_snapshot) ===
+      storedJson(opts.provider_snapshot) &&
     before.collection_state === opts.collection_state &&
     before.stripe_customer_id ===
       (opts.provider_customer_id ?? before.stripe_customer_id) &&
@@ -3305,7 +3314,7 @@ export async function reserveCommercialProviderOperation(opts: {
         operation.commercial_quote_id !== (opts.quote_id ?? null) ||
         operation.commercial_invoice_id !== (opts.invoice_id ?? null) ||
         operation.operation !== opts.operation ||
-        stableJson(operation.request) !== stableJson(opts.request ?? {})
+        storedJson(operation.request) !== storedJson(opts.request ?? {})
       ) {
         throw Error(
           "provider idempotency key was already used for different operation input",

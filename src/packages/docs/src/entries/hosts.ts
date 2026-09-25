@@ -57,11 +57,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/exam-scratchpad-301d1929.webp",
       "A locked computational exam project with a notebook, timer, and disabled Internet access",
     ),
-    lastReviewed: "2026-08-07",
+    lastReviewed: "2026-09-25",
+    searchKeywords:
+      "exam mode exams in-person exam final midterm quiz test scratchpad lockdown browser admission token practice session rehearsal no internet student project",
     slug: "hosts/exam-scratchpads",
     status: "ready",
     summary:
-      "Run ephemeral, network-isolated notebook scratchpads for in-person exams on a private project host.",
+      "Set up, rehearse, run, and end an in-person exam on a private project host, with a clean, network-isolated notebook project for each student.",
     title: "Use an exam scratchpad host",
   },
   {

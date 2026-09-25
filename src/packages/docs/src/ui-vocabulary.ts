@@ -419,18 +419,143 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     anchors: [def(HOST_DRAWER, '"Project resource policy"')],
     usedIn: [bold("hosts", "Project resource policy")],
   },
+  // The exam scratchpad guide walks instructors through the Exams tab control by
+  // control, so every control it names is bound here. Each anchor is the
+  // rendered control itself (its text between tags, or its quoted title or
+  // label), so descriptive text that mentions a label cannot satisfy it.
   ...(
     [
-      "Maximum run (minutes)",
-      "Cleanup grace (minutes)",
-      "Practice mode: erase projects manually (no automatic timeout)",
-      "Refresh status",
+      ["Enable exam mode", ">Enable exam mode<"],
+      ["Public scratchpad title", "> Public scratchpad title <"],
+      ["Stable admission token", ">Stable admission token<"],
+      ["Maximum projects (students)", "> Maximum projects (students) <"],
+      ["CPU per project", "> CPU per project <"],
+      ["Memory (MB)", "> Memory (MB) <"],
+      ["Disk (MB)", "> Disk (MB) <"],
+      ["Maximum run (minutes)", "> Maximum run (minutes) <"],
+      ["Cleanup grace (minutes)", "> Cleanup grace (minutes) <"],
+      [
+        "Allow terminals (disabled by default)",
+        "> Allow terminals (disabled by default) <",
+      ],
+      ["Save configuration", "> Save configuration <"],
+      ["Copy link", "> Copy link <"],
+      ["Prepare an exam run", '"Prepare an exam run"'],
+      ["Show older versions", "> Show older versions <"],
+      ["Delete all exam projects at", "> Delete all exam projects at <"],
+      [
+        "Also shut down the project host to save resources",
+        "> Also shut down the project host to save resources <",
+      ],
+      [
+        "Practice mode: erase projects manually (no automatic timeout)",
+        "> Practice mode: erase projects manually (no automatic timeout) <",
+      ],
+      ["Prepare and test run", "> Prepare and test run <"],
+      [
+        "Complete these steps before preparing the run",
+        '"Complete these steps before preparing the run"',
+      ],
+      ["Current run", "> Current run <"],
+      ["Student URL", '"Student URL"'],
+      ["Project cleanup", '"Project cleanup"'],
+      ["Project host afterward", '"Project host afterward"'],
+      ["Open admission", "> Open admission <"],
+      ["Maximum students for this run", "> Maximum students for this run <"],
+      ["Increase capacity", "> Increase capacity <"],
+      ["Update cleanup time", "> Update cleanup time <"],
+      ["Rotate token", "> Rotate token <"],
+      ["End exam and erase now", "> End exam and erase now <"],
+      ["Erase and shut down", '"Erase and shut down"'],
+      ["Refresh status", ">Refresh status<"],
+      [
+        "Exam mode is not enabled for this account",
+        '"Exam mode is not enabled for this account"',
+      ],
+      [
+        "Start the project host to prepare an exam",
+        '"Start the project host to prepare an exam"',
+      ],
     ] as const
   ).map(
-    (label): UiVocabularyEntry => ({
+    ([label, anchor]): UiVocabularyEntry => ({
       id: `hosts.exam.${label.toLowerCase().replace(/[^a-z]+/g, "-")}`,
       label,
-      anchors: [def(EXAM_PANEL, label)],
+      anchors: [ren(EXAM_PANEL, anchor)],
+      usedIn: [bold("hosts", label)],
+    }),
+  ),
+  {
+    id: "hosts.exam.entitlement",
+    label: "Exam scratchpad hosts",
+    anchors: [
+      def(
+        "frontend/admin/users/account-entitlement-override.tsx",
+        'label="Exam scratchpad hosts"',
+      ),
+    ],
+    usedIn: [bold("hosts", "Exam scratchpad hosts")],
+  },
+  {
+    id: "hosts.exam.fresh-auth",
+    label: "Confirm security action",
+    anchors: [
+      def("frontend/auth/fresh-auth.tsx", 'title="Confirm security action"'),
+    ],
+    usedIn: [bold("hosts", "Confirm security action")],
+  },
+  {
+    id: "hosts.exam.student-temporary",
+    label: "Temporary",
+    anchors: [
+      ren("frontend/app/scratchpad-session-controls.tsx", "> Temporary <"),
+    ],
+    usedIn: [bold("hosts", "Temporary")],
+  },
+  // What students see on the admission page, and the errors it can show.
+  ...(
+    [
+      ["student-access-token", "Access token", ">Access token<"],
+      ["student-open", "Open scratchpad", ">Open scratchpad<"],
+      [
+        "student-enter-token",
+        "Enter the token provided to you.",
+        "Enter the token provided to you.",
+      ],
+      [
+        "student-not-open",
+        "This temporary scratchpad has been prepared, but access is not open yet.",
+        "This temporary scratchpad has been prepared, but access is not open yet.",
+      ],
+      [
+        "join-same-origin",
+        "exam admission requires a same-origin request",
+        '"exam admission requires a same-origin request"',
+      ],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `hosts.exam.${key}`,
+      label,
+      anchors: [ren("project-host/web.ts", text)],
+      usedIn: [{ file: doc("hosts"), text: label }],
+    }),
+  ),
+  ...(
+    [
+      ["join-invalid-token", "invalid access token"],
+      ["join-closed", "scratchpad access is closed"],
+      ["join-capacity", "exam project capacity has been reached"],
+      [
+        "join-rate-limit",
+        "too many unsuccessful exam join attempts; try later",
+      ],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `hosts.exam.${key}`,
+      label,
+      anchors: [def("project-host/exam/controller.ts", `"${label}"`)],
       usedIn: [bold("hosts", label)],
     }),
   ),

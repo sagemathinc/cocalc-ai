@@ -71,7 +71,10 @@ export interface AcpSteerResult {
 export interface AcpAgent {
   evaluate(request: AcpEvaluateRequest): Promise<void>;
   steer?(threadId: string, request: AcpSteerRequest): Promise<AcpSteerResult>;
-  interruptOutstanding?(threadId: string): Promise<boolean>;
+  interruptOutstanding?(
+    threadId: string,
+    expectedMessageId?: string,
+  ): Promise<boolean>;
   hasRunningTurn?(threadId: string): boolean;
   getRuntimeStatus?(): {
     liveRuntimes: number;

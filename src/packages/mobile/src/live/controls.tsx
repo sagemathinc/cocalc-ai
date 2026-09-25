@@ -498,6 +498,13 @@ export function LiveVoiceControls({
                 live.muted ? "Unmute microphone" : "Mute microphone",
                 live.toggleMute,
               )}
+            {live.phase === "live" &&
+              button(
+                live.proactive
+                  ? "Use on-demand progress updates"
+                  : "Announce progress milestones",
+                live.toggleAnnouncements,
+              )}
             {button("End live call", live.end, false, "danger")}
           </>
         )}

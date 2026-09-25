@@ -30,6 +30,7 @@ export const DOCS_ENTRY_IDS = [
   "admin.managed-egress",
   "admin.sso",
   "projects.create-project",
+  "ai.my-agents",
   "projects.research-handoff",
   "research.reproduce-analysis",
   "research.streaming-analysis",
@@ -166,7 +167,14 @@ export function orderDocsEntries(
   entries: readonly DocsEntry[],
   allowMissing = false,
 ): DocsEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const byId = new Map<string, DocsEntry>();
+  const orderedIds = new Set<string>(DOCS_ENTRY_IDS);
+  for (const entry of entries) {
+    if (byId.has(entry.id)) throw Error(`Duplicate docs entry id: ${entry.id}`);
+    if (!orderedIds.has(entry.id))
+      throw Error(`Unordered docs entry id: ${entry.id}`);
+    byId.set(entry.id, entry);
+  }
   return DOCS_ENTRY_IDS.flatMap((id) => {
     const entry = byId.get(id);
     if (entry == null) {

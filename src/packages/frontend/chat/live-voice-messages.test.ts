@@ -28,6 +28,25 @@ it("uses the newest revision for voice history and results", () => {
   );
 });
 
+it("exposes the compact preview stream without full activity references", () => {
+  const projected = projectLiveVoiceMessages(
+    [
+      {
+        ...message,
+        acp_live_preview_stream: "preview-only",
+        acp_live_log_stream: "full-stream",
+        acp_log_store: "full-store",
+        acp_log_key: "full-key",
+      },
+    ],
+    "thread-1",
+  )[0];
+  expect(projected.acp_live_preview_stream).toBe("preview-only");
+  expect(projected.acp_live_log_stream).toBeUndefined();
+  expect(projected.acp_log_store).toBeUndefined();
+  expect(projected.acp_log_key).toBeUndefined();
+});
+
 it.each([
   ["queue", "queued"],
   ["queued", "queued"],

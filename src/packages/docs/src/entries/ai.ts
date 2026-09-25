@@ -23,13 +23,13 @@ export const AI_ENTRIES: DocsEntry[] = [
     body: MY_AGENTS_BODY.trim(),
     category: "AI",
     id: "ai.my-agents",
-    lastReviewed: "2026-09-17",
+    lastReviewed: "2026-09-24",
     noActionReason:
-      "The experimental workspace is enabled from account AI settings.",
+      "Start in Agents after signing in; creating an agent requires account and project context.",
     slug: "ai/my-agents",
     status: "ready",
     summary:
-      "Use registered agents, their chats, artifacts, and terminals from one workspace.",
+      "Start an agent with a request, review its results, and continue the work from one workspace.",
     title: "Use the Agents workspace",
   },
   {

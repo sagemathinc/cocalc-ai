@@ -5,6 +5,7 @@
 
 import type { ChatSnapshot, ProjectedChatMessage } from "@cocalc/chat-client";
 import {
+  boundedAgentPreviewEvents,
   boundedProjectChatSnapshot,
   normalizeProjectChatLimit,
   normalizeProjectChatPath,
@@ -143,4 +144,78 @@ describe("project chat session projection", () => {
       removed_message_ids: ["message-1"],
     });
   });
+});
+
+it("projects only compact preview text for a running message", () => {
+  const running = message(1);
+  running.generating = true;
+  running.activity = {
+    state: "ready",
+    events: [
+      {
+        seq: 1,
+        time: 1000,
+        type: "event",
+        event: { type: "message", text: "First", delta: false },
+      },
+      {
+        seq: 2,
+        time: 2000,
+        type: "event",
+        event: {
+          type: "terminal",
+          phase: "data",
+          terminalId: "secret",
+          chunk: "private output",
+        },
+      },
+      {
+        seq: 3,
+        time: 3000,
+        type: "event",
+        event: { type: "message", text: "First second", delta: false },
+      },
+    ] as any[],
+  };
+  const result = boundedProjectChatSnapshot(snapshot([running]));
+  expect(result.messages[0].activity?.events).toMatchObject([
+    { seq: 1, event: { text: "First", delta: true } },
+    { seq: 3, event: { text: " second", delta: true } },
+  ]);
+  expect(JSON.stringify(result.messages[0].activity?.events)).not.toContain(
+    "private output",
+  );
+  expect(boundedAgentPreviewEvents([])).toEqual([]);
+});
+
+it("omits recovered terminal output from a guided completed turn", () => {
+  const completed = message(1);
+  completed.activity = {
+    state: "ready",
+    events: [
+      {
+        seq: 1,
+        type: "event",
+        event: { type: "message", text: "The fix is ready.", delta: false },
+      },
+      {
+        seq: 2,
+        type: "event",
+        event: {
+          type: "terminal",
+          phase: "data",
+          terminalId: "private",
+          chunk: "private output",
+        },
+      },
+    ] as any[],
+    markdown: "private output",
+  };
+  const result = boundedProjectChatSnapshot(snapshot([completed]));
+  expect(JSON.stringify(result.messages[0].activity)).toContain(
+    "The fix is ready",
+  );
+  expect(JSON.stringify(result.messages[0].activity)).not.toContain(
+    "private output",
+  );
 });
