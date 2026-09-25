@@ -2186,3 +2186,43 @@ September 24 and has not yet accrued a mature window. Overall site health
 remained warning for separate checks. The 15-backup canary still awaits its
 natural scheduled replacement around September 25 23:34 UTC; a live
 repository-capacity-denial drill also remains open. Production is unchanged.
+
+## 2026-09-25 browser Jupyter and terminal during backup queue
+
+I created 40 disposable free-class projects with prefix
+`staging2-recovery-browser-load-20260925-0046-` on `staging2-shared-1`,
+the same host as the existing smoke project. A per-project repository check
+found 5/40 with a confirmed off-host backup while the queue was active;
+the later check found 40/40 with at least one listed backup. During the
+queue, operator recovery health reported up to 18 overdue free backups,
+oldest four minutes, with zero unknown or unaccounted obligations. This
+is a bounded staging load observation, not a 30-day objective result.
+
+The signed-in Chromium session ran a new one-cell Python notebook in the
+existing smoke project. A browser-initiated run from a stopped kernel
+recorded 393 ms Jupyter readiness at low load. Four further browser-driven
+shutdown-and-run cycles completed during the backup queue; the typed
+round trip to a running kernel took 2,648, 1,616, 1,495, and 1,491 ms.
+Operator browser telemetry then showed Jupyter p95 392 ms against its
+10-second threshold. Opening a terminal while free backup debt remained
+recorded terminal-ready p95 391 ms against its 5-second threshold.
+
+A fifth automated browser click reached the test harness's 30-second timeout.
+Inspection afterward found the kernel still closed and the Run submenu
+collapsed, so no fifth notebook run was claimed. The harness used a brief
+mouse hover to expose that submenu and did not establish that it remained
+open before clicking; this timeout is not evidence of a slow notebook run.
+Four under-load samples do not qualify the sustained browser responsiveness
+gate.
+Project-file CLI calls also took about 31 seconds, but source inspection
+identified a 30-second local CLI daemon RPC timeout followed by a direct
+fallback. The same file listing completed in 0.85 seconds with
+`--no-daemon`. This CLI delay is not evidence of host file latency.
+
+Audited host resource samples spanning the queue showed CPU at 8.6–35.8%,
+at least 11.6 GB available memory, and zero sampled general or maintenance
+I/O full pressure. The temporary notebook and terminal were removed, and
+the smoke project was returned to its prior stopped state. The 40
+disposable projects await deletion with ordinary seven-day backup
+retention; staging2 requires fresh browser-approved admin authentication
+for that operation. Production is unchanged.
