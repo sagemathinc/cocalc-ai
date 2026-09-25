@@ -19,7 +19,7 @@ import type {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { useCodexLog } from "./use-codex-log";
+import { useCodexLog, type CodexLiveLogStatus } from "./use-codex-log";
 import "./live-voice.css";
 
 interface Call {
@@ -70,6 +70,20 @@ async function waitForIce(peer: RTCPeerConnection) {
     };
     peer.addEventListener("icegatheringstatechange", changed);
   });
+}
+
+export function liveVoiceProgressConnection({
+  visible,
+  hasLivePreview,
+  liveStatus,
+}: {
+  visible: boolean;
+  hasLivePreview: boolean;
+  liveStatus: CodexLiveLogStatus;
+}): ChatSnapshot["connection"] {
+  return visible && (!hasLivePreview || liveStatus === "connected")
+    ? "connected"
+    : "disconnected";
 }
 
 export async function requestMicrophoneWithTimeout(
@@ -184,7 +198,11 @@ export function ChatLiveVoice({
   });
   const progressSnapshot: ChatSnapshot = {
     revision: 0,
-    connection: visible ? "connected" : "disconnected",
+    connection: liveVoiceProgressConnection({
+      visible,
+      hasLivePreview: !!runningAgent?.acp_live_preview_stream,
+      liveStatus: activity.liveStatus,
+    }),
     ready: true,
     project_id: projectId,
     path: "",

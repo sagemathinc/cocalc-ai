@@ -5,7 +5,11 @@
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatLiveVoice, requestMicrophoneWithTimeout } from "./live-voice";
+import {
+  ChatLiveVoice,
+  liveVoiceProgressConnection,
+  requestMicrophoneWithTimeout,
+} from "./live-voice";
 
 const mockLiveVoice = jest.fn();
 const mockOpenAccountSettings = jest.fn();
@@ -50,6 +54,37 @@ const props = {
 beforeEach(() => {
   mockLiveVoice.mockReset();
   mockOpenAccountSettings.mockReset();
+});
+
+it("marks unavailable live previews as disconnected progress", () => {
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "reconnecting",
+    }),
+  ).toBe("disconnected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "error",
+    }),
+  ).toBe("disconnected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: true,
+      liveStatus: "connected",
+    }),
+  ).toBe("connected");
+  expect(
+    liveVoiceProgressConnection({
+      visible: true,
+      hasLivePreview: false,
+      liveStatus: "idle",
+    }),
+  ).toBe("connected");
 });
 
 it("explains live voice and dictation in an accessible dialog", async () => {
