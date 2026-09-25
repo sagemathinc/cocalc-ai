@@ -2299,3 +2299,61 @@ passing remote-only restore drills. The 24-hour attempt history still carries
 the old `free` classification from before this rollout; it must not be read as
 evidence about new admin-tier dispatch. Customer warnings remain disabled, and
 a live admin-tier overdue notice still needs a controlled staging drill.
+
+## 2026-09-25 authenticated host maintenance rollout
+
+The private security review found that the new shared status RPC accepted a
+caller-supplied host ID for schedule listing, assignment confirmation, and
+maintenance reports. Commit `0fceffc216c08603eb9cf82e306ac09e7622056f`
+moved those three calls to the host-scoped Hub API, which binds the host ID to
+the authenticated project-host principal. The fix remains in a draft private
+security advisory and [private PR](https://github.com/sagemathinc/cocalc-ai-ghsa-j69v-vvhv-576p/pull/1)
+pending a second review. No production deployment has been made.
+
+The full 39-workspace development build passed. Focused tests passed: 44 Conat
+client and principal-policy tests, 45 project-host maintenance tests, and 69
+server status and socket-authorization tests (158 total). The client test
+models the typed service proxy's synthesized methods so that a wrapper which
+accidentally calls the old shared RPC fails the test.
+
+Staging2 Hub artifact
+`20260925T074019Z-0fceffc2-recovery-review-0fceffc-dirty` was deployed as
+release `20260925162806-hub`; all seven Hub software smoke checks passed.
+Project-host artifact
+`20260925T074150Z-0fceffc2-recovery-review-0fceffc-dirty` was then installed
+explicitly on the pinned canary host (`c71921d4-8ac1-4bf3-bfdc-5957ce32c6c6`,
+upgrade operation `4fc15982-0d87-48db-9c06-b48665212d18`) and shared host
+(`8cd90870-e58f-4979-b87f-cf85f3622324`, upgrade operation
+`998ff9e0-4e0a-47d0-9fc9-384d47cfc17e`). Both host software smoke checks
+confirmed that exact current version and a working rootfs RPC.
+
+Two disposable administrator-tier projects exercised scheduled work under the
+new route:
+
+| Host   | Project                                | Scheduled local snapshot   | Confirmed off-host backup                                                          |
+| ------ | -------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------- |
+| Canary | `5fe7943b-e755-4ed8-97e8-b35d4927bafa` | `2026-09-25T16:32:36.984Z` | `93e047eaa3f99b39d4f87082cff8f235662a462e09e5827490b7ce821e0ec882` at 16:33:08 UTC |
+| Shared | `8f530ae2-c5c4-4749-a323-8d1ad406e007` | `2026-09-25T16:35:35.691Z` | `2f6befb0b5f06533130eb222224c9b10e2a65f8d6f849acc84cc71b5675a7c8c` at 16:35:39 UTC |
+
+The canary host briefly entered storage-pressure recovery and recorded an
+`io_pressure_recovery` backup deferral for its test project. The scheduler
+retried without operator intervention and completed the backup. Both backup
+IDs were listed from their remote repositories and matched the owning bay's
+`latest_scheduled_backup_id` records. Each marker was restored to a separate
+file and compared byte-for-byte with its source. Each local Btrfs snapshot's
+marker also matched the source file.
+
+On the shared test project, a home-only restore of the older local snapshot
+returned a deliberately changed marker to its original value. The automatic
+named safety snapshot `before-auth-drill-20260925` retained the later marker.
+The restore succeeded and the project ran afterward. The temporary snapshot
+debt immediately after this restore cleared without operator intervention.
+At 16:40 UTC, project-recovery health was healthy: zero overdue delay, zero
+unknown statuses, zero unaccounted due obligations, no host at the memory
+safety gate, and 4/4 active backup shards covered by recent passing
+remote-only restore drills.
+
+The live functional checks do not complete the longer observation windows in
+the plan. The natural at-limit backup replacement, controlled repository
+capacity-denial drill, sustained latency measurements, and week-long canary
+still need their planned evidence before a production rollout decision.
