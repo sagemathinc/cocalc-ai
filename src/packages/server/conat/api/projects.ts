@@ -3389,17 +3389,20 @@ export async function listAccountProjectWindow({
 
 export async function listProjectSummaries({
   account_id,
+  project_id,
   limit,
   offset,
   search,
 }: {
   account_id: string;
+  project_id?: string;
   limit?: number;
   offset?: number;
   search?: string;
 }) {
   return await listProjectSummariesLocal({
     account_id,
+    project_id,
     limit,
     offset,
     search,

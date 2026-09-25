@@ -1924,6 +1924,7 @@ export interface Projects {
 
   listProjectSummaries: (opts: {
     account_id?: string;
+    project_id?: string;
     limit?: number;
     offset?: number;
     search?: string;

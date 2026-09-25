@@ -22,16 +22,21 @@ const MAX_PAGE_BYTES = 2 * 1024 * 1024;
 
 export async function listProjectSummaries({
   account_id,
+  project_id,
   limit = 100,
   offset = 0,
   search,
 }: {
   account_id: string;
+  project_id?: string;
   limit?: number;
   offset?: number;
   search?: string;
 }): Promise<ApiProjectSummaryPage> {
   if (!isValidUUID(account_id)) throw Error("invalid account id");
+  if (project_id != null && !isValidUUID(project_id)) {
+    throw Error("invalid project id");
+  }
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
     throw Error(`limit must be between 1 and ${MAX_LIMIT}`);
   }
@@ -53,6 +58,10 @@ export async function listProjectSummaries({
     "account_id=$1::UUID",
     "COALESCE(is_hidden, FALSE) IS NOT TRUE",
   ];
+  if (project_id != null) {
+    params.push(project_id);
+    where.push(`project_id=$${params.length}::UUID`);
+  }
   for (const term of terms) {
     const escaped = term
       .replaceAll("\\", "\\\\")

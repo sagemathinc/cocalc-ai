@@ -3,12 +3,14 @@ import type { ApiProjectSummaryPage } from "@cocalc/conat/hub/api/projects";
 export async function listProjectsWithApiKey({
   apiBaseUrl,
   apiKey,
+  project_id,
   limit,
   offset,
   search,
 }: {
   apiBaseUrl: string;
   apiKey: string;
+  project_id?: string;
   limit: number;
   offset: number;
   search?: string;
@@ -21,7 +23,7 @@ export async function listProjectsWithApiKey({
     },
     body: JSON.stringify({
       name: "projects.listProjectSummaries",
-      args: [{ limit, offset, search }],
+      args: [{ project_id, limit, offset, search }],
     }),
     signal: AbortSignal.timeout(10_000),
   });

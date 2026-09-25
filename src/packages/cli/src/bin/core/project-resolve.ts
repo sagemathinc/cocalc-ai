@@ -310,6 +310,7 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
       const page = await listProjectsWithApiKey({
         apiBaseUrl: ctx.apiBaseUrl,
         apiKey: ctx.apiKey,
+        project_id,
         limit: 500,
         offset,
         search: title,

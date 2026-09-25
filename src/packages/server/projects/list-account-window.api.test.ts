@@ -7,6 +7,7 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 
 const account_id = "11111111-1111-4111-8111-111111111111";
+const project_id = "22222222-2222-4222-8222-222222222222";
 const release = jest.fn();
 const query = jest.fn();
 
@@ -75,5 +76,18 @@ test("rejects over-limit inputs before accessing the database", async () => {
   await expect(
     listProjectSummaries({ account_id, search: "a".repeat(201) }),
   ).rejects.toThrow(/search/);
+  await expect(
+    listProjectSummaries({ account_id, project_id: "not-a-uuid" }),
+  ).rejects.toThrow(/project id/);
   expect(getPool).not.toHaveBeenCalled();
+});
+
+test("exact project lookup stays inside the caller account index", async () => {
+  await listProjectSummaries({ account_id, project_id, limit: 1 });
+  const select = query.mock.calls.find(([statement]) =>
+    String(statement).includes("SELECT project_id"),
+  );
+  expect(String(select?.[0])).toContain("account_id=$1::UUID");
+  expect(String(select?.[0])).toContain("project_id=$2::UUID");
+  expect(select?.[1]).toEqual([account_id, project_id, 2, 0]);
 });

@@ -35,12 +35,14 @@ function createContext(
 test("API key project lookup never falls back to account userQuery", async () => {
   const originalFetch = global.fetch;
   const paths: string[] = [];
+  let listArgs: Record<string, unknown> | undefined;
   global.fetch = (async (url: URL, options: RequestInit) => {
     paths.push(url.pathname);
     assert.equal(options.headers?.["Authorization"], "Bearer scoped-key");
     if (url.pathname === "/api/conat/project-host-api-key") {
       return { ok: true, json: async () => ({ error: "list-only key" }) };
     }
+    listArgs = JSON.parse(String(options.body)).args[0];
     return {
       ok: true,
       json: async () => ({
@@ -69,6 +71,7 @@ test("API key project lookup never falls back to account userQuery", async () =>
       "/api/conat/project-host-api-key",
       "/api/conat/hub",
     ]);
+    assert.equal(listArgs?.project_id, PROJECT_ID);
   } finally {
     global.fetch = originalFetch;
   }
