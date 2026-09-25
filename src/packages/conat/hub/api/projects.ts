@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountOrBoundAgentProject,
   authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
 } from "./util";
@@ -1283,7 +1284,7 @@ export const projects = {
   start: authFirstRequireAccount,
   startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
-  status: authFirstRequireAccount,
+  status: authFirstRequireAccountOrBoundAgentProject,
   restart: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,

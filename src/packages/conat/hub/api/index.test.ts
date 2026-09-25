@@ -2,6 +2,7 @@ import {
   getHubApiAccountTargetMethods,
   getHubApiPrincipalPolicies,
   initHubApi,
+  isHubApiPrincipalAllowed,
   transformArgs,
 } from "./index";
 import { purchases } from "./purchases";
@@ -103,6 +104,44 @@ describe("hub API argument transforms", () => {
       ).rejects.toThrow();
     }
   });
+  it("binds agent project status to the authenticated project", async () => {
+    expect(getHubApiPrincipalPolicies()["projects.status"]).toBe(
+      "account-or-bound-agent-project",
+    );
+    expect(
+      isHubApiPrincipalAllowed({
+        policy: "account-or-bound-agent-project",
+        account_id: "agent-account",
+        project_id: "own-project",
+        auth_actor: "agent",
+      }),
+    ).toBe(true);
+    expect(
+      isHubApiPrincipalAllowed({
+        policy: "account-or-bound-agent-project",
+        account_id: "agent-account",
+        auth_actor: "agent",
+      }),
+    ).toBe(false);
+    expect(
+      await transformArgs({
+        name: "projects.status",
+        args: [{ account_id: "forged", project_id: "other-project" }],
+        account_id: "agent-account",
+        project_id: "own-project",
+        auth_actor: "agent",
+      }),
+    ).toEqual([{ account_id: "agent-account", project_id: "own-project" }]);
+    expect(() =>
+      transformArgs({
+        name: "projects.status",
+        args: [{ project_id: "other-project" }],
+        account_id: "agent-account",
+        auth_actor: "agent",
+      }),
+    ).toThrow("agent project is required");
+  });
+
   it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
     "binds %s to the authenticated human without requiring fresh auth",
     async (name) => {
