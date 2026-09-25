@@ -498,8 +498,9 @@ export async function getProjectRecoveryStatusLocal(
               WHERE COALESCE(u.user_data->>'group', '')='owner'
               LIMIT 1) AS owner_account_id
        FROM projects p LEFT JOIN project_hosts h ON h.id=p.host_id
-      WHERE p.project_id=$1 AND p.deleted IS NOT TRUE`,
-    [project_id],
+      WHERE p.project_id=$1 AND p.deleted IS NOT TRUE
+        AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $2)=$2`,
+    [project_id, getConfiguredBayId()],
   );
   if (!rows[0]) throw new Error("project not found");
   const project = rows[0];

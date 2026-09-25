@@ -101,6 +101,15 @@ describe("project recovery capacity accounting", () => {
       [local_project_id],
     );
     expect(retained).toEqual([{ outcome: "deferred", attempts: 1 }]);
+    await expect(
+      getProjectRecoveryStatusLocal(local_project_id),
+    ).rejects.toThrow("project not found");
+    await expect(
+      getProjectRecoveryStatusLocal(foreign_project_id),
+    ).rejects.toThrow("project not found");
+    expect(
+      (await getProjectRecoveryStatusLocal(legacy_project_id)).project_id,
+    ).toBe(legacy_project_id);
   });
 
   it("counts a retried due obligation once and sums its work and wait", async () => {
