@@ -3400,6 +3400,16 @@ export async function listProjectSummaries({
   offset?: number;
   search?: string;
 }) {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (location.home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: location.home_bay_id,
+    }).listProjectSummaries({ account_id, project_id, limit, offset, search });
+  }
   return await listProjectSummariesLocal({
     account_id,
     project_id,

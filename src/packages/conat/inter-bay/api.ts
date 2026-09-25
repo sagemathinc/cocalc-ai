@@ -2990,6 +2990,7 @@ export type AccountLocalMethod =
   | "create-cli-login-session"
   | "validate-host-action-auth"
   | "get-api-key-authorization-state"
+  | "list-project-summaries"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
   | "live-voice"
@@ -4722,6 +4723,13 @@ export interface InterBayAccountLocalApi
     scope_revision: number;
     expire_ms?: number;
   } | null>;
+  listProjectSummaries: (opts: {
+    account_id: string;
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }) => Promise<import("@cocalc/conat/hub/api/projects").ApiProjectSummaryPage>;
   startCodexFreshAuth: (
     opts: AccountLocalStartCodexFreshAuthRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
@@ -7404,6 +7412,15 @@ export function createInterBayAccountLocalClient({
       method: "get-api-key-authorization-state",
     }),
   });
+  const listProjectSummariesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listProjectSummaries">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-project-summaries",
+    }),
+  });
   const startCodexFreshAuthClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "startCodexFreshAuth">
   >({
@@ -8765,6 +8782,8 @@ export function createInterBayAccountLocalClient({
       await validateHostActionAuthClient.validateHostActionAuth(opts),
     getApiKeyAuthorizationState: async (opts) =>
       await getApiKeyAuthorizationStateClient.getApiKeyAuthorizationState(opts),
+    listProjectSummaries: async (opts) =>
+      await listProjectSummariesClient.listProjectSummaries(opts),
     startCodexFreshAuth: async (opts) =>
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
@@ -9475,6 +9494,20 @@ export function createInterBayAccountLocalHandler({
           await impl.getApiKeyAuthorizationState(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "listProjectSummaries">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "list-project-summaries",
+        }),
+        impl: {
+          listProjectSummaries: async (opts) =>
+            await impl.listProjectSummaries(opts),
+        },
+      },
+    ),
     createServiceHandler<Pick<InterBayAccountLocalApi, "startCodexFreshAuth">>({
       ...options,
       service: "inter-bay-account-local",
