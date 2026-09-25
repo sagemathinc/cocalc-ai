@@ -6,7 +6,10 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { listHostProjectMaintenanceSchedules } from "./host-status";
+import {
+  confirmHostProjectMaintenanceAssignment,
+  listHostProjectMaintenanceSchedules,
+} from "./host-status";
 
 describe("host recovery schedule ownership", () => {
   beforeAll(async () => {
@@ -55,5 +58,18 @@ describe("host recovery schedule ownership", () => {
     await expect(
       listHostProjectMaintenanceSchedules({ host_id: foreign_host_id }),
     ).rejects.toThrow("host not found");
+    await getPool().query(
+      `UPDATE projects SET owning_bay_id=$2 WHERE project_id=$1`,
+      [local_project_id, foreign_bay_id],
+    );
+    await expect(
+      confirmHostProjectMaintenanceAssignment({
+        host_id: local_host_id,
+        project_id: local_project_id,
+        kind: "snapshot",
+        schedule_revision: "irrelevant after ownership moved",
+        observed_change_at: null,
+      }),
+    ).resolves.toEqual({ valid: false, reason: "assignment_changed" });
   });
 });

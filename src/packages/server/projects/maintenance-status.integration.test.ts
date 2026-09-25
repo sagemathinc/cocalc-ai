@@ -5,6 +5,7 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   ensureProjectMaintenanceStatusTable,
   getProjectRecoveryAttemptHealth,
@@ -27,6 +28,79 @@ describe("project recovery capacity accounting", () => {
 
   afterAll(async () => {
     await getPool().end();
+  });
+
+  it("rejects reports after ownership moves to another bay", async () => {
+    const host_id = uuid();
+    const local_project_id = uuid();
+    const legacy_project_id = uuid();
+    const foreign_project_id = uuid();
+    const bay_id = getConfiguredBayId();
+    await getPool().query(
+      `INSERT INTO projects
+         (project_id, title, owning_bay_id, host_id, provisioned)
+       VALUES ($1, 'local maintenance report', $5, $4, true),
+              ($2, 'legacy maintenance report', NULL, $4, true),
+              ($3, 'foreign maintenance report', $6, $4, true)`,
+      [
+        local_project_id,
+        legacy_project_id,
+        foreign_project_id,
+        host_id,
+        bay_id,
+        `${bay_id}-foreign`,
+      ],
+    );
+    for (const [project_id, accepted] of [
+      [local_project_id, true],
+      [legacy_project_id, true],
+      [foreign_project_id, false],
+    ] as const) {
+      expect(
+        await recordProjectMaintenanceStatus({
+          project_id,
+          host_id,
+          kind: "snapshot",
+          observed_at: new Date().toISOString(),
+          outcome: "deferred",
+          reason: "lifecycle_active",
+        }),
+      ).toBe(accepted);
+    }
+    await getPool().query(
+      `UPDATE projects SET owning_bay_id=$2 WHERE project_id=$1`,
+      [local_project_id, `${bay_id}-foreign`],
+    );
+    expect(
+      await recordProjectMaintenanceStatus({
+        project_id: local_project_id,
+        host_id,
+        kind: "snapshot",
+        observed_at: new Date(Date.now() + 1000).toISOString(),
+        outcome: "failed",
+        reason: "stale report after rehome",
+      }),
+    ).toBe(false);
+    const { rows } = await getPool().query<{ project_id: string }>(
+      `SELECT project_id FROM project_maintenance_status
+        WHERE project_id = ANY($1::uuid[])`,
+      [[local_project_id, legacy_project_id, foreign_project_id]],
+    );
+    expect(rows.map(({ project_id }) => project_id).sort()).toEqual(
+      [local_project_id, legacy_project_id].sort(),
+    );
+    const { rows: retained } = await getPool().query<{
+      outcome: string;
+      attempts: number;
+    }>(
+      `SELECT s.outcome,
+              (SELECT COUNT(*)::int FROM project_maintenance_attempts a
+                 WHERE a.project_id=s.project_id) AS attempts
+         FROM project_maintenance_status s
+        WHERE s.project_id=$1 AND s.kind='snapshot'`,
+      [local_project_id],
+    );
+    expect(retained).toEqual([{ outcome: "deferred", attempts: 1 }]);
   });
 
   it("counts a retried due obligation once and sums its work and wait", async () => {

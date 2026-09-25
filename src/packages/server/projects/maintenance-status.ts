@@ -278,6 +278,7 @@ export async function recordProjectMaintenanceStatus(
        FROM projects p
       WHERE p.project_id=$1 AND p.host_id=$2
         AND p.provisioned IS TRUE AND p.deleted IS NOT TRUE
+        AND COALESCE(NULLIF(BTRIM(p.owning_bay_id), ''), $19)=$19
      ON CONFLICT (project_id, kind) DO UPDATE SET
        host_id=excluded.host_id,
        storage_service_class=excluded.storage_service_class,
@@ -347,6 +348,7 @@ export async function recordProjectMaintenanceStatus(
         bytesScanned,
         bytesUploaded,
         latestBackupId,
+        getConfiguredBayId(),
       ],
     );
     if (!result.rowCount) {

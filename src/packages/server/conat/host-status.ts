@@ -373,8 +373,9 @@ export async function confirmHostProjectMaintenanceAssignment({
        FROM projects
       WHERE project_id=$1 AND host_id=$2
         AND provisioned IS TRUE AND deleted IS NOT TRUE
+        AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $3)=$3
       LIMIT 1`,
-    [project_id, host_id],
+    [project_id, host_id, getConfiguredBayId()],
   );
   const row = rows[0];
   if (!row) return { valid: false, reason: "assignment_changed" };
