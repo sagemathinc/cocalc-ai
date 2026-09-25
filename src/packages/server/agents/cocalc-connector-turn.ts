@@ -32,6 +32,7 @@ import {
 } from "@cocalc/server/api/scope-project-access";
 import { recordApiKeyAuditEvent } from "@cocalc/server/api/api-key-audit";
 import { verifyActiveAgentRun } from "./identity-routing";
+import { getIdentity } from "./api";
 import { assertAccountHome } from "./cocalc-connector-config";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
@@ -106,11 +107,13 @@ async function assertLiveTurn({
   account_id,
   host_id,
   source_project_id,
+  agent_id,
   turn,
 }: {
   account_id: string;
   host_id: string;
   source_project_id: string;
+  agent_id: string;
   turn: ActiveTurnRef;
 }): Promise<void> {
   if (
@@ -120,6 +123,17 @@ async function assertLiveTurn({
     !turn.thread_id?.trim()
   ) {
     throw Error("incomplete authenticated ACP turn reference");
+  }
+  const identity = await getIdentity({
+    account_id,
+    agent_id,
+    project_id: source_project_id,
+  });
+  if (
+    identity.path !== turn.chat_path ||
+    identity.thread_id !== turn.thread_id
+  ) {
+    throw Error("ACP turn does not belong to the registered agent");
   }
   const api = createHostControlClient({
     host_id,
@@ -220,6 +234,7 @@ export async function beginManagedCocalcConnectorTurn({
     account_id: owner,
     host_id: host,
     source_project_id,
+    agent_id,
     turn: turn_ref,
   });
   await assertAccountTrustedForProductAccess(owner, "create API keys");
@@ -462,6 +477,7 @@ export async function renewManagedCocalcConnectorTurn({
     account_id: owner,
     host_id: host,
     source_project_id,
+    agent_id,
     turn: turn_ref,
   });
   const config = await currentConfig({

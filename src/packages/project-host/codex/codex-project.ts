@@ -74,6 +74,8 @@ import type {
   CodexSiteFundedTurnRequest,
   CodexSiteFundedTurnRuntime,
 } from "@cocalc/ai/acp";
+import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type { CocalcConnectorTurnRef } from "@cocalc/conat/hub/api/agent";
 
 const logger = getLogger("project-host:codex-project");
 // Reusing long-lived Codex rootfs containers has proven flaky on some hosts:
@@ -588,6 +590,9 @@ export type ProjectCliTokenLease = {
   setAgentSessionKey: (agentSessionKey: string) => Promise<void>;
   setConnectorKey: (secret: string) => Promise<void>;
   clearConnectorKey: () => Promise<void>;
+  getAgentIdentity: () => { agent_id: string; run_id: string } | undefined;
+  beginConnectorTurn: (chat: AcpChatContext) => Promise<void>;
+  endConnectorTurn: () => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -662,6 +667,16 @@ export async function createProjectCliTokenLease({
   const { createAgentIdentityLease } = await import("./agent-identity-lease");
   let identityLease: Awaited<ReturnType<typeof createAgentIdentityLease>>;
   let closed = false;
+  let connectorTurn:
+    | {
+        agent_id: string;
+        run_id: string;
+        turn_id: string;
+        turn_ref: CocalcConnectorTurnRef;
+        secret: string;
+      }
+    | undefined;
+  let connectorTimer: NodeJS.Timeout | undefined;
   let connectorOperation: Promise<void> = Promise.resolve();
   const queueConnectorOperation = (operation: () => Promise<void>) => {
     const pending = connectorOperation.catch(() => undefined).then(operation);
@@ -672,9 +687,9 @@ export async function createProjectCliTokenLease({
     queueConnectorOperation(async () => {
       await fs.rm(connectorHostPath, { force: true });
     });
-  const setConnectorKey = (secret: string) =>
+  const setConnectorKey = (secret: string, stillCurrent = () => true) =>
     queueConnectorOperation(async () => {
-      if (closed || !identityLease) {
+      if (closed || !identityLease || !stillCurrent()) {
         throw new Error("native agent connector runtime is unavailable");
       }
       if (!secret || secret.length > 4096 || /\s/.test(secret)) {
@@ -684,12 +699,118 @@ export async function createProjectCliTokenLease({
       try {
         await fs.writeFile(tempPath, `${secret}\n`, { mode: 0o600 });
         await fs.chmod(tempPath, 0o600);
-        if (closed) throw new Error("connector runtime closed");
+        if (closed || !stillCurrent()) {
+          throw new Error("connector runtime closed");
+        }
         await fs.rename(tempPath, connectorHostPath);
       } finally {
         await fs.rm(tempPath, { force: true });
       }
     });
+  const endConnectorTurn = async (): Promise<void> => {
+    if (connectorTimer) clearInterval(connectorTimer);
+    connectorTimer = undefined;
+    const active = connectorTurn;
+    connectorTurn = undefined;
+    await clearConnectorKey();
+    if (!active) return;
+    await hubApi.agent.endCocalcConnectorTurn({
+      account_id: resolvedAccountId,
+      agent_id: active.agent_id,
+      source_project_id: projectId,
+      run_id: active.run_id,
+      turn_id: active.turn_id,
+    });
+  };
+  const beginConnectorTurn = async (chat: AcpChatContext): Promise<void> => {
+    await endConnectorTurn();
+    if (closed || !identityLease) return;
+    if (!chat.message_id || !chat.thread_id || !chat.message_date) {
+      throw Error(
+        "native ACP turn is missing its authenticated chat reference",
+      );
+    }
+    const identity = identityLease.currentRun;
+    const turn_ref = {
+      chat_path: chat.path,
+      message_date: chat.message_date,
+      message_id: chat.message_id,
+      thread_id: chat.thread_id,
+    };
+    const bytes = createHash("sha256")
+      .update(
+        `${projectId}\0${chat.path}\0${chat.message_date}\0${chat.message_id}`,
+      )
+      .digest()
+      .subarray(0, 16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.toString("hex");
+    const idempotency_key = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    const issued = await hubApi.agent.beginCocalcConnectorTurn({
+      account_id: resolvedAccountId,
+      agent_id: identity.agent_id,
+      source_project_id: projectId,
+      run_id: identity.run_id,
+      idempotency_key,
+      turn_ref,
+    });
+    if (!issued) return;
+    try {
+      await setConnectorKey(issued.secret);
+    } catch (error) {
+      await hubApi.agent
+        .endCocalcConnectorTurn({
+          account_id: resolvedAccountId,
+          agent_id: identity.agent_id,
+          source_project_id: projectId,
+          run_id: identity.run_id,
+          turn_id: issued.turn_id,
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+    connectorTurn = {
+      agent_id: identity.agent_id,
+      run_id: identity.run_id,
+      turn_id: issued.turn_id,
+      turn_ref,
+      secret: issued.secret,
+    };
+    connectorTimer = setInterval(() => {
+      const active = connectorTurn;
+      if (!active || closed) return;
+      void hubApi.agent
+        .renewCocalcConnectorTurn({
+          account_id: resolvedAccountId,
+          agent_id: active.agent_id,
+          source_project_id: projectId,
+          run_id: active.run_id,
+          turn_id: active.turn_id,
+          turn_ref: active.turn_ref,
+        })
+        .then(async () => {
+          if (connectorTurn === active && !closed) {
+            await setConnectorKey(
+              active.secret,
+              () => connectorTurn === active,
+            );
+          }
+        })
+        .catch(async (error) => {
+          logger.warn("managed CoCalc connector renewal failed", {
+            projectId,
+            err: `${error}`,
+          });
+          await queueConnectorOperation(async () => {
+            if (connectorTurn === active) {
+              await fs.rm(connectorHostPath, { force: true });
+            }
+          });
+        });
+    }, 60_000);
+    connectorTimer.unref();
+  };
   let identityPreparation: Promise<void> | undefined;
   const prepareIdentity = (): Promise<void> => {
     if (closed) return Promise.resolve();
@@ -787,9 +908,12 @@ export async function createProjectCliTokenLease({
     },
     setConnectorKey,
     clearConnectorKey,
+    getAgentIdentity: () => identityLease?.currentRun,
+    beginConnectorTurn,
+    endConnectorTurn,
     setAgentSessionKey: async (nextAgentSessionKey: string) => {
       const identityReady = prepareIdentity();
-      await clearConnectorKey();
+      await endConnectorTurn();
       await identityReady;
       const nextSessionId = projectCliSessionId(nextAgentSessionKey);
       if (closed || nextSessionId === sessionId) return;
@@ -819,6 +943,12 @@ export async function createProjectCliTokenLease({
       closed = true;
       if (timer) clearTimeout(timer);
       await refreshPromise?.catch(() => undefined);
+      await endConnectorTurn().catch((err) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          projectId,
+          err: `${err}`,
+        });
+      });
       await connectorOperation.catch(() => undefined);
       await identityPreparation?.catch(() => undefined);
       await identityLease?.close();
@@ -1891,6 +2021,8 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
+  beginConnectorTurn?: (chat: AcpChatContext) => Promise<void>;
+  endConnectorTurn?: () => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
 };
 
@@ -2227,6 +2359,12 @@ async function spawnCodexAppServerInProjectRuntime({
         }
       }
     } finally {
+      await cliTokenLease?.endConnectorTurn().catch((err) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          projectId,
+          err: `${err}`,
+        });
+      });
       await cliTokenLease?.close();
       await closeSiteFundedTurnAfterRuntimeFailure({
         siteFundedTurn,
@@ -2260,6 +2398,12 @@ async function spawnCodexAppServerInProjectRuntime({
               cliTokenLease.identityContainerPath;
           }
         }
+      : undefined,
+    beginConnectorTurn: cliTokenLease
+      ? (chat: AcpChatContext) => cliTokenLease.beginConnectorTurn(chat)
+      : undefined,
+    endConnectorTurn: cliTokenLease
+      ? () => cliTokenLease.endConnectorTurn()
       : undefined,
     siteFundedTurn,
   };
@@ -2346,6 +2490,8 @@ export function initCodexProjectRunner(): void {
         handleAppServerRequest: spawned.handleAppServerRequest,
         runtimeEnv: spawned.runtimeEnv,
         setAgentSessionKey: spawned.setAgentSessionKey,
+        beginConnectorTurn: spawned.beginConnectorTurn,
+        endConnectorTurn: spawned.endConnectorTurn,
         siteFundedTurn: spawned.siteFundedTurn,
         credentialId: spawned.authRuntime.credentialId,
         validateSubscriptionCredential:

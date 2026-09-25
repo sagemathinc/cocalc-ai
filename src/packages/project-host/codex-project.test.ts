@@ -140,6 +140,9 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     agent: {
       issueIdentity: jest.fn(),
       endIdentityRun: jest.fn(),
+      beginCocalcConnectorTurn: jest.fn(),
+      renewCocalcConnectorTurn: jest.fn(),
+      endCocalcConnectorTurn: jest.fn(),
     },
   },
 }));
@@ -452,6 +455,80 @@ describe("initCodexProjectRunner", () => {
       }
     }
     expect(paths[0]).not.toBe(paths[1]);
+  });
+
+  it("provisions and revokes a turn key through a restricted runtime file", async () => {
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-connector-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "connector-test",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+      turn_id: "turn-id",
+      key_id: "key-id",
+      secret: "test.scoped-key.secret",
+      expires_at: Date.now() + 300000,
+      config_id: "config-id",
+      config_revision: 1,
+    });
+    hubApi.agent.endCocalcConnectorTurn.mockResolvedValue(undefined);
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    const chat = {
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      path: "/home/user/send.chat",
+      message_date: "2026-09-25T00:00:00.000Z",
+      message_id: "message-1",
+      thread_id: "thread-1",
+      sender_id: "00000000-0000-4000-8000-000000000001",
+    };
+    try {
+      await spawned.beginConnectorTurn?.(chat);
+      expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_id: "registered-agent",
+          turn_ref: expect.objectContaining({
+            message_id: "message-1",
+            thread_id: "thread-1",
+          }),
+        }),
+      );
+      const containerFile = spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE;
+      const hostFile = containerFile.replace("/home/user", home);
+      expect(await fs.readFile(hostFile, "utf8")).toBe(
+        "test.scoped-key.secret\n",
+      );
+      expect((await fs.stat(hostFile)).mode & 0o777).toBe(0o600);
+      expect(spawnMock.mock.calls.at(-1)![1].join(" ")).not.toContain(
+        "test.scoped-key.secret",
+      );
+      await spawned.endConnectorTurn?.();
+      await expect(fs.stat(hostFile)).rejects.toThrow();
+      expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const listener of spawned.proc.listeners("exit")) await listener(0);
+    }
   });
 
   it("uses authenticated real-project app-server exec", async () => {

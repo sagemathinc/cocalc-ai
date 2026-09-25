@@ -32,6 +32,7 @@ const ensureSchema = jest.fn();
 const deleteDirectory = jest.fn();
 const clusterAccount = jest.fn();
 const hostLease = jest.fn();
+const identity = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -76,6 +77,9 @@ jest.mock("@cocalc/server/api/api-key-audit", () => ({
 }));
 jest.mock("./identity-routing", () => ({
   verifyActiveAgentRun: (...args: any[]) => liveRun(...args),
+}));
+jest.mock("./api", () => ({
+  getIdentity: (...args: any[]) => identity(...args),
 }));
 jest.mock("./cocalc-connector-config", () => ({
   assertAccountHome: (...args: any[]) => accountHome(...args),
@@ -205,6 +209,10 @@ beforeEach(() => {
     needsMigration: false,
   }));
   clusterAccount.mockResolvedValue({ home_bay_id: "bay-0" });
+  identity.mockResolvedValue({
+    path: request.turn_ref.chat_path,
+    thread_id: request.turn_ref.thread_id,
+  });
 });
 
 test("an enabled config atomically binds one ordinary key to a verified run", async () => {
@@ -310,6 +318,20 @@ test("issuance fails closed when the source host cannot attest the live turn", a
   );
   expect(savedKey).toBeUndefined();
   expect(directory).not.toHaveBeenCalled();
+});
+
+test("issuance rejects a turn belonging to another registered agent thread", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  identity.mockResolvedValueOnce({
+    path: "other.chat",
+    thread_id: "other-thread",
+  });
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "ACP turn does not belong to the registered agent",
+  );
+  expect(hostLease).not.toHaveBeenCalled();
+  expect(savedKey).toBeUndefined();
 });
 
 test("idempotent retry cannot attach an existing key to another turn", async () => {

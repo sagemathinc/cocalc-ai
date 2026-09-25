@@ -473,6 +473,10 @@ type SpawnedCodexAppServer = {
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
+  beginConnectorTurn?: (
+    chat: NonNullable<AcpEvaluateRequest["chat"]>,
+  ) => Promise<void>;
+  endConnectorTurn?: () => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
   credentialId?: string;
   validateSubscriptionCredential?: () => Promise<void>;
@@ -2967,6 +2971,7 @@ export class CodexAppServerAgent implements AcpAgent {
     };
 
     try {
+      if (request.chat) await spawned.beginConnectorTurn?.(request.chat);
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
         // A retained process can straddle a project-tools rollout. Refresh it
@@ -4250,6 +4255,11 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw new Error(userFacingPrimaryError);
     } finally {
+      await spawned.endConnectorTurn?.().catch((error) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          error: String(error),
+        });
+      });
       if (turnId) await client.finishAttentionTurn(turnId);
       await cleanupMentionFile().catch((error) => {
         logger.warn("failed removing current-turn mention references", {

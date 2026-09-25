@@ -11,6 +11,8 @@ import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
+import { createInterBayAgentConnectorHandler } from "@cocalc/conat/inter-bay/agent-connector";
+import { agentConnectorControl } from "@cocalc/server/agents/cocalc-connector-routing";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
 
@@ -660,6 +662,14 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     services.push(
+      createInterBayAgentConnectorHandler(
+        getConfiguredBayId(),
+        agentConnectorControl,
+        {
+          client: getInterBayFabricClient({ noCache: true }),
+          parallel: true,
+        },
+      ),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricClient({ noCache: true }),
         parallel: true,

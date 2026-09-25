@@ -168,6 +168,7 @@ import {
 } from "./workspace-organization";
 import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
+import { CocalcConnector } from "./cocalc-connector";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
@@ -2560,6 +2561,7 @@ function AgentWorkspace({
                 {networkTagCount ? ` (${networkTagCount})` : ""}
               </Button>
             )}
+            {!unregistered && <CocalcConnector agent={displayedAgent} />}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
             {workingDirectoryLabel && (

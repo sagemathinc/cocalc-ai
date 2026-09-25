@@ -112,6 +112,9 @@ export async function createAgentIdentityLease({
   timer.unref();
   return {
     hostPath,
+    get currentRun() {
+      return { agent_id: initial.agent_id, run_id };
+    },
     refresh,
     close: async () => {
       if (closed) return;

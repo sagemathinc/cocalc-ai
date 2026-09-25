@@ -9,7 +9,10 @@ import * as rpc from "@cocalc/server/agents/rpc";
 export {
   getCocalcConnectorConfig,
   saveCocalcConnectorConfig,
-} from "@cocalc/server/agents/cocalc-connector-config";
+  beginCocalcConnectorTurn,
+  renewCocalcConnectorTurn,
+  endCocalcConnectorTurn,
+} from "@cocalc/server/agents/cocalc-connector-routing";
 import {
   createAgentNetwork as createAgentNetworkImpl,
   resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,

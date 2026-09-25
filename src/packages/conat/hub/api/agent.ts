@@ -62,6 +62,9 @@ export const agent = {
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   getCocalcConnectorConfig: authFirstRequireAccount,
   saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
+  beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
+  renewCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
+  endCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -212,7 +215,39 @@ export interface CocalcConnectorConfig {
   updated_at: Date;
 }
 
+export interface CocalcConnectorTurnRef {
+  chat_path: string;
+  message_date: string;
+  message_id: string;
+  thread_id: string;
+}
+
+export interface CocalcConnectorTurnRequest extends AgentHostAuth {
+  agent_id: string;
+  source_project_id: string;
+  run_id: string;
+  turn_ref: CocalcConnectorTurnRef;
+}
+
+export interface CocalcConnectorTurnKey {
+  turn_id: string;
+  key_id: string;
+  secret: string;
+  expires_at: number;
+  config_id: string;
+  config_revision: number;
+}
+
 export interface AgentApi {
+  beginCocalcConnectorTurn(
+    opts: CocalcConnectorTurnRequest & { idempotency_key: string },
+  ): Promise<CocalcConnectorTurnKey | undefined>;
+  renewCocalcConnectorTurn(
+    opts: CocalcConnectorTurnRequest & { turn_id: string },
+  ): Promise<number>;
+  endCocalcConnectorTurn(
+    opts: Omit<CocalcConnectorTurnRequest, "turn_ref"> & { turn_id: string },
+  ): Promise<void>;
   getCocalcConnectorConfig(opts: {
     account_id?: string;
     agent_id: string;
