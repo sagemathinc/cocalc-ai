@@ -1,4 +1,5 @@
 const reportHostProvisionedInventoryMock = jest.fn();
+const reportProjectProvisionedMock = jest.fn();
 const reportProjectStateMock = jest.fn();
 const markProjectStateReportedMock = jest.fn();
 
@@ -21,6 +22,8 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
     reportProjectState: (...args: any[]) => reportProjectStateMock(...args),
     reportHostProvisionedInventory: (...args: any[]) =>
       reportHostProvisionedInventoryMock(...args),
+    reportProjectProvisioned: (...args: any[]) =>
+      reportProjectProvisionedMock(...args),
   })),
 }));
 
@@ -74,6 +77,7 @@ describe("master-status provisioned inventory", () => {
     reportHostProvisionedInventoryMock.mockResolvedValue({
       delete_project_ids: [],
     });
+    reportProjectProvisionedMock.mockResolvedValue({});
     reportProjectStateMock.mockResolvedValue(undefined);
     const { resetMasterStatusForTests } = await import("./master-status");
     resetMasterStatusForTests();
@@ -83,6 +87,32 @@ describe("master-status provisioned inventory", () => {
     const { resetMasterStatusForTests } = await import("./master-status");
     resetMasterStatusForTests();
     jest.useRealTimers();
+  });
+
+  it("notifies the maintenance scheduler only after a provisioned report is accepted", async () => {
+    const {
+      onProjectProvisionedReported,
+      queueProjectProvisioned,
+      setMasterStatusClient,
+    } = await import("./master-status");
+    const listener = jest.fn();
+    const unsubscribe = onProjectProvisionedReported(listener);
+    setMasterStatusClient({ client: {} as any, host_id: "host-1" });
+
+    queueProjectProvisioned("project-1", true);
+    await new Promise(setImmediate);
+    expect(listener).toHaveBeenCalledWith("project-1");
+
+    reportProjectProvisionedMock.mockRejectedValueOnce(
+      new Error("bay offline"),
+    );
+    queueProjectProvisioned("project-2", true);
+    await new Promise(setImmediate);
+    queueProjectProvisioned("project-3", false);
+    await new Promise(setImmediate);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
   });
 
   it("reports legacy inventory once and runs only bounded audits periodically", async () => {

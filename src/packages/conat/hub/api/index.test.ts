@@ -30,6 +30,33 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it("binds maintenance list, confirm, and report to the authenticated host", async () => {
+    for (const [name, opts] of [
+      ["hosts.listProjectMaintenanceSchedules", { host_id: "victim-host" }],
+      [
+        "hosts.confirmProjectMaintenanceAssignment",
+        { host_id: "victim-host", project_id: "project-1" },
+      ],
+      [
+        "hosts.reportProjectMaintenance",
+        { host_id: "victim-host", project_id: "project-1" },
+      ],
+    ] as const) {
+      const args = await transformArgs({
+        name,
+        args: [opts],
+        host_id: "caller-host",
+      });
+      expect(args[0].host_id).toBe("caller-host");
+      if ("project_id" in opts) {
+        expect(args[0].project_id).toBe(opts.project_id);
+      }
+      await expect(
+        transformArgs({ name, args: [opts], account_id: "account-1" }),
+      ).rejects.toThrow("must be a host");
+    }
+  });
+
   it("binds catalog reads to a human account", async () => {
     const name = "artifactCatalog.listProject";
     expect(

@@ -1,0 +1,17 @@
+.cc-project-recovery-actions-compact {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cc-project-recovery-actions-compact .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cc-project-recovery-actions-compact .ant-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

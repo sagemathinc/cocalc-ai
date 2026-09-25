@@ -3026,7 +3026,9 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   adminDbCommonOptions(
     adminDb
       .command("backup-health")
-      .description("show project backup recency and backup index state")
+      .description(
+        "show backup recency, scheduled backup ID, and legacy index state",
+      )
       .option("--project-id <uuid>", "specific project id"),
   ).action(async (opts: any, command: Command) => {
     await withContext(command, "admin db backup-health", async (ctx) => {
@@ -3069,6 +3071,90 @@ Merge comments are private unless their corresponding --*-comment-public flag is
         params: { project_id: opts.projectId },
       });
     });
+  });
+
+  adminDbCommonOptions(
+    adminDb
+      .command("project-recovery")
+      .description("show one project's recent snapshot and backup attempts")
+      .requiredOption("--project-id <uuid>", "project id"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(command, "admin db project-recovery", async (ctx) => {
+      return await runAdminDbDiagnostic({
+        ctx,
+        diagnostic: "project-recovery",
+        opts,
+        params: { project_id: opts.projectId },
+      });
+    });
+  });
+
+  adminDbCommonOptions(
+    adminDb
+      .command("project-restore-drills")
+      .description("list audited remote-only project restore attempts")
+      .option("--project-id <uuid>", "limit to one project")
+      .option("--window-days <days>", "lookback window in days", "30"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(
+      command,
+      "admin db project-restore-drills",
+      async (ctx) => {
+        return await runAdminDbDiagnostic({
+          ctx,
+          diagnostic: "project-restore-drills",
+          opts,
+          params: {
+            project_id: opts.projectId,
+            window_seconds:
+              parsePositiveIntegerOption({
+                name: "--window-days",
+                value: opts.windowDays,
+                fallback: 30,
+                max: 365,
+              }) *
+              24 *
+              60 *
+              60,
+          },
+        });
+      },
+    );
+  });
+
+  adminDbCommonOptions(
+    adminDb
+      .command("project-restore-drill-attest")
+      .description(
+        "record an immutable operator hash attestation for a remote-only restore",
+      )
+      .requiredOption(
+        "--op-id <uuid>",
+        "successful remote-only restore operation",
+      )
+      .requiredOption(
+        "--expected-sha256 <hex>",
+        "SHA-256 of the original marker",
+      )
+      .requiredOption(
+        "--observed-sha256 <hex>",
+        "SHA-256 of the restored marker",
+      )
+      .requiredOption("--reason <reason>", "human-readable audit reason"),
+  ).action(async (opts: any, command: Command) => {
+    await withContext(
+      command,
+      "admin db project-restore-drill-attest",
+      async (ctx) => {
+        return await ctx.hub.adminDb.attestProjectRestoreDrill({
+          bay_id: opts.bay,
+          op_id: opts.opId,
+          expected_sha256: opts.expectedSha256,
+          observed_sha256: opts.observedSha256,
+          reason: opts.reason,
+        });
+      },
+    );
   });
 
   adminDbCommonOptions(
@@ -4388,6 +4474,26 @@ Run "cocalc admin entitlement-override schema" for the accepted JSON payload.
         );
       },
     );
+
+  adminMessage
+    .command("drill-project-recovery-critical-email")
+    .description(
+      "send one labeled critical-lane delivery drill to the configured recovery on-call administrator",
+    )
+    .requiredOption(
+      "--drill-id <uuid>",
+      "stable UUID identifying this drill and deduplicating retries",
+    )
+    .action(async (opts: { drillId: string }, command: Command) => {
+      await withContext(
+        command,
+        "admin message drill-project-recovery-critical-email",
+        async (ctx) =>
+          await ctx.hub.messages.sendProjectRecoveryCriticalEmailDrill({
+            drill_id: opts.drillId,
+          }),
+      );
+    });
 
   return admin;
 }

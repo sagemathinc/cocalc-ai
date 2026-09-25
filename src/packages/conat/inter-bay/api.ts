@@ -8,6 +8,7 @@ import type {
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type {
   AccountFinancialHandoff,
@@ -311,6 +312,7 @@ export interface ProjectDetails {
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
   course: ProjectCourseInfo;
+  recovery_status?: ProjectRecoveryStatus;
 }
 
 export interface ResolveProjectBayRequest {
@@ -565,6 +567,7 @@ export interface GetProjectDetailsRequest {
   account_id: string;
   // Only inter-bay callers that already verified admin authority may set this.
   trusted_admin?: boolean;
+  include_recovery_status?: boolean;
 }
 
 export interface GetHostConnectionRequest {

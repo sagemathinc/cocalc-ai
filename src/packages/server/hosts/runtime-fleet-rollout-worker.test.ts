@@ -385,3 +385,90 @@ describe("host runtime fleet rollout planning", () => {
     ).toEqual([{ ids: ["host-c"], stabilize_seconds: 60 }]);
   });
 });
+
+describe("fleet recovery stop gates", () => {
+  type Snapshot = Parameters<
+    typeof __test__.recoveryStopGateFailure
+  >[0]["baseline"];
+  const baseline = (): Snapshot => ({
+    checked_at: "2026-09-24T04:00:00.000Z",
+    recovery_level: "healthy",
+    latency_level: "healthy",
+    hosts: {
+      canary: {
+        failed_attempts: 2,
+        oldest_backup_delay_seconds: 100,
+        emergency_seconds: 0,
+        latest_valid_pressure_at: "2026-09-24T04:00:00.000Z",
+      },
+    },
+  });
+  const current = (): Snapshot => ({
+    ...baseline(),
+    checked_at: "2026-09-24T04:02:00.000Z",
+    hosts: {
+      canary: {
+        ...baseline().hosts.canary,
+        oldest_backup_delay_seconds: 220,
+        latest_valid_pressure_at: "2026-09-24T04:02:00.000Z",
+      },
+    },
+  });
+  const gate = (after: Snapshot, before = baseline()) =>
+    __test__.recoveryStopGateFailure({
+      baseline: before,
+      current: after,
+      host_ids: ["canary"],
+    });
+
+  test("accepts naturally aging debt with stable health and telemetry", () => {
+    expect(gate(current())).toBeUndefined();
+  });
+
+  test("stops when latency or recovery health degrades", () => {
+    expect(gate({ ...current(), latency_level: "warning" })).toMatch(/latency/);
+    expect(gate({ ...current(), recovery_level: "critical" })).toMatch(
+      /recovery/,
+    );
+    expect(gate({ ...current(), recovery_level: "unknown" })).toMatch(
+      /unknown/,
+    );
+    expect(
+      gate(current(), { ...baseline(), recovery_level: "unknown" }),
+    ).toMatch(/baseline is unknown/);
+    expect(
+      __test__.recoveryStopGateFailure({
+        baseline: { ...baseline(), latency_level: "unknown" },
+        current: { ...current(), latency_level: "unknown" },
+        host_ids: ["canary"],
+        require_measured_latency: true,
+      }),
+    ).toMatch(/global promotion requires browser latency samples/);
+  });
+
+  test("stops on a new failure, backup age jump, or emergency pressure", () => {
+    const newFailure = current();
+    newFailure.hosts.canary.failed_attempts += 1;
+    expect(gate(newFailure)).toMatch(/failed recovery/);
+
+    const ageJump = current();
+    ageJump.hosts.canary.oldest_backup_delay_seconds = 600;
+    expect(gate(ageJump)).toMatch(/backup debt age/);
+
+    const pressure = current();
+    pressure.hosts.canary.emergency_seconds = 30;
+    expect(gate(pressure)).toMatch(/emergency storage pressure/);
+  });
+
+  test("stops on lost pressure telemetry and rejects incomplete saved baselines", () => {
+    const stale = current();
+    stale.hosts.canary.latest_valid_pressure_at = "2026-09-24T03:50:00.000Z";
+    expect(gate(stale)).toMatch(/lost fresh storage pressure telemetry/);
+    expect(
+      __test__.savedRecoveryStopGateBaseline(baseline(), ["canary"]),
+    ).toEqual(baseline());
+    expect(
+      __test__.savedRecoveryStopGateBaseline(baseline(), ["other"]),
+    ).toBeUndefined();
+  });
+});

@@ -123,7 +123,7 @@ import rustic, {
   getHost as getRusticSnapshotHost,
 } from "@cocalc/backend/sandbox/rustic";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
-import { isValidUUID } from "@cocalc/util/misc";
+import { isISODate, isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import {
   acceptProjectVolumeQuotaDesired,
@@ -234,7 +234,7 @@ import {
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
 import {
-  newestBackupTimeForIds,
+  confirmedBackupForIds,
   parseCreatedBackupSnapshot,
 } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
@@ -825,6 +825,30 @@ async function replaceTreeByMove({
   }
   await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
   await sudo({ command: "mv", args: [src, dest] });
+}
+
+async function replaceTreeByCopy({
+  src,
+  dest,
+}: {
+  src?: string;
+  dest: string;
+}): Promise<void> {
+  if (await exists(dest)) {
+    await sudo({ command: "rm", args: ["-rf", dest] });
+  }
+  if (!src || !(await exists(src))) {
+    return;
+  }
+  // A directory inside the old Btrfs project subvolume cannot be renamed into
+  // the restored subvolume (EXDEV). The privileged helper preserves ownership
+  // and metadata while reflinking file data when the filesystem permits it.
+  await sudo({ command: "mkdir", args: ["-p", dest] });
+  await sudo({
+    command: "copy-tree-reflink",
+    args: [src, dest],
+    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
+  });
 }
 
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
@@ -1925,13 +1949,10 @@ async function reportBackupSuccess(
 ): Promise<void> {
   const client = getMasterConatClient();
   if (!client) {
-    logger.warn("backup success not reported: master conat client missing", {
-      project_id,
-    });
-    return;
+    throw new Error("backup success not reported: master conat client missing");
   }
   const hostId = getLocalHostId();
-  if (!hostId) return;
+  if (!hostId) throw new Error("backup success not reported: host id missing");
   await callHub({
     client,
     host_id: hostId,
@@ -3148,17 +3169,71 @@ export async function runScheduledSnapshotMaintenance({
   project_id,
   counts,
   limit = 250,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
-  await updateSnapshots({
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  latest_snapshot_at: string | null;
+  created_snapshot_at: string | null;
+  changed: boolean | null;
+  disabled: boolean;
+  skipped_reason?: string;
+  stage_durations_ms?: Record<string, number>;
+}> {
+  const generation = currentProjectVolumeLifecycleGeneration(project_id);
+  const result = await withCurrentProjectVolumeLifecycleLock(
     project_id,
-    counts,
-    limit,
-    quotaMode: "async",
-  });
+    generation,
+    async () => {
+      const vol = await getVolumeUnchecked(project_id);
+      if (!(await exists(vol.path))) {
+        return { skipped_reason: "project_volume_unavailable" };
+      }
+      if (!(await isBtrfsSubvolume(vol.path))) {
+        return { skipped_reason: "project_volume_invalid" };
+      }
+      if (await isSubvolumeReadonly(vol.path)) {
+        return { skipped_reason: "project_volume_archiving" };
+      }
+      const stageDurations = stage_durations_ms ?? {};
+      const update = await vol.snapshots.update(counts, {
+        limit,
+        quotaMode: "async",
+        onStage: (stage: string, durationMs: number) => {
+          stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
+        },
+      });
+      const confirmationStarted = Date.now();
+      const snapshots = (await vol.snapshots.readdir())
+        .filter(isISODate)
+        .sort();
+      stageDurations.confirmation = Date.now() - confirmationStarted;
+      if (update.createdName && !snapshots.includes(update.createdName)) {
+        throw new Error("new snapshot is not present after creation");
+      }
+      return {
+        latest_snapshot_at: snapshots.at(-1) ?? null,
+        created_snapshot_at: update.createdName,
+        changed: update.changed,
+        disabled: update.disabled,
+        stage_durations_ms: stageDurations,
+      };
+    },
+  );
+  if (!result || "skipped_reason" in result) {
+    return {
+      latest_snapshot_at: null,
+      created_snapshot_at: null,
+      changed: null,
+      disabled: false,
+      skipped_reason:
+        result?.skipped_reason ?? "project_volume_lifecycle_changed",
+    };
+  }
+  return result;
 }
 
 async function allSnapshotUsage({
@@ -3197,7 +3272,6 @@ async function restoreSnapshot({
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
   let preservedRootfsPath: string | undefined;
-  let restoredHomeRootfs = false;
   try {
     if (mode === "rootfs") {
       preservedRootfsPath = await createSnapshotRestoreTempPath(
@@ -3218,13 +3292,6 @@ async function restoreSnapshot({
       return;
     }
 
-    if (mode === "home") {
-      preservedRootfsPath = await createSnapshotRestoreTempPath(
-        `${volName(project_id)}.rootfs-`,
-      );
-      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
-    }
-
     ({ oldHomePath } = await swapProjectHome({
       project_id,
       replacementPath: staged.path,
@@ -3233,12 +3300,10 @@ async function restoreSnapshot({
 
     try {
       if (mode === "home") {
-        await replaceTreeByMove({
-          src: preservedRootfsPath,
+        await replaceTreeByCopy({
+          src: join(oldHomePath, PROJECT_IMAGE_PATH),
           dest: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
         });
-        preservedRootfsPath = undefined;
-        restoredHomeRootfs = true;
       }
       if (oldHomePath && safety_snapshot_name) {
         await createSafetySnapshotFromPath({
@@ -3248,21 +3313,6 @@ async function restoreSnapshot({
         });
       }
     } catch (err) {
-      if (mode === "home" && oldHomePath) {
-        const oldRootfsPath = join(oldHomePath, PROJECT_IMAGE_PATH);
-        if (preservedRootfsPath && (await exists(preservedRootfsPath))) {
-          await replaceTreeByMove({
-            src: preservedRootfsPath,
-            dest: oldRootfsPath,
-          }).catch(() => {});
-          preservedRootfsPath = undefined;
-        } else if (restoredHomeRootfs) {
-          await replaceTreeByMove({
-            src: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
-            dest: oldRootfsPath,
-          }).catch(() => {});
-        }
-      }
       if (oldHomePath) {
         await rollbackProjectHomeSwap({
           project_id,
@@ -4119,7 +4169,7 @@ async function createBackup({
               : undefined;
             try {
               backupResult = await vol.rustic.backup({
-                tags,
+                tags: tags ?? ["cocalc-manual"],
                 parent,
                 progress,
                 runner: async ({ src, host, timeout, tags, progress }) =>
@@ -4246,12 +4296,14 @@ async function restoreBackup({
   id,
   path: backupPath,
   dest,
+  remote_only = false,
   lro,
 }: {
   project_id: string;
   id: string;
   path?: string;
   dest?: string;
+  remote_only?: boolean;
   lro?: LroRef;
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
@@ -4355,6 +4407,7 @@ async function restoreBackup({
             dest,
             timeoutMs: timeout,
             progress,
+            remote_only,
           }),
       });
     } catch (err) {
@@ -4367,7 +4420,12 @@ async function restoreBackup({
     }
   } else {
     await restoreFs.rustic(
-      ["restore", `${id}${restorePath ? ":" + restorePath : ""}`, relDest],
+      [
+        "restore",
+        ...(remote_only ? ["--no-cache"] : []),
+        `${id}${restorePath ? ":" + restorePath : ""}`,
+        relDest,
+      ],
       {
         timeout: PROJECT_RUSTIC_TIMEOUT_MS,
         env: lro ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
@@ -4519,113 +4577,196 @@ async function updateBackupsUnlocked({
   project_id,
   counts,
   limit,
+  knownLastBackupAt,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
+  knownLastBackupAt?: string | null;
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+  latest_backup_id?: string;
+  stage_durations_ms: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+}> {
   if (legacyProjectArchiveRestoreActive.has(project_id)) {
     logger.info("skipping scheduled backup during legacy project restore", {
       project_id,
     });
-    return;
+    return {
+      created: false,
+      deferred_reason: "legacy_restore_active",
+      stage_durations_ms: {},
+    };
   }
   const legacyInitialBackupOverride =
     legacyProjectInitialBackupEgressExempt.has(project_id)
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
+  const stageDurations = stage_durations_ms ?? {};
+  let bytesScanned: number | undefined;
+  let bytesUploaded: number | undefined;
   let newestCreatedBackupTime: Date | undefined;
+  let newestCreatedBackupGeneration: number | undefined;
+  let retentionError: unknown;
   const vol = await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
     run: async () => {
       const refreshed = await getVolumeForBackup(project_id);
-      await refreshed.rustic.update(counts, {
-        limit,
-        tags:
-          legacyInitialBackupOverride == null
-            ? undefined
-            : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-        beforeCreate: async () => {
-          const managedBackupPolicy = await checkManagedBackupAllowedBestEffort(
-            {
-              project_id,
-              managed_egress_override: legacyInitialBackupOverride,
-            },
-          );
-          if (!managedBackupPolicy.allowed) {
-            throw new Error(managedBackupPolicy.message);
-          }
-        },
-        afterCreate: async (created) => {
-          const backup = parseCreatedBackupSnapshot(created);
-          if (!backup?.id) return;
-          createdBackupIds.add(backup.id);
-          if (
-            backup.time &&
-            (!newestCreatedBackupTime || backup.time > newestCreatedBackupTime)
-          ) {
-            newestCreatedBackupTime = backup.time;
-          }
-          if (backup.summary) {
-            await recordManagedBackupEgressBestEffort({
-              project_id,
-              backup_id: backup.id,
-              tags:
-                legacyInitialBackupOverride == null
-                  ? undefined
-                  : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
-              summary: backup.summary,
-              managed_egress_override: legacyInitialBackupOverride,
-            });
-          }
-        },
-      });
+      try {
+        await refreshed.rustic.update(counts, {
+          limit,
+          onStage: (stage: string, durationMs: number) => {
+            stageDurations[stage] = (stageDurations[stage] ?? 0) + durationMs;
+          },
+          tags:
+            legacyInitialBackupOverride == null
+              ? undefined
+              : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+          beforeCreate: async () => {
+            const managedBackupPolicy =
+              await checkManagedBackupAllowedBestEffort({
+                project_id,
+                managed_egress_override: legacyInitialBackupOverride,
+              });
+            if (!managedBackupPolicy.allowed) {
+              throw new Error(managedBackupPolicy.message);
+            }
+          },
+          afterCreate: async (created) => {
+            const backup = parseCreatedBackupSnapshot(created);
+            if (!backup?.id) return;
+            createdBackupIds.add(backup.id);
+            if (
+              backup.time &&
+              (!newestCreatedBackupTime ||
+                backup.time > newestCreatedBackupTime)
+            ) {
+              newestCreatedBackupTime = backup.time;
+              newestCreatedBackupGeneration = backup.snapshotGeneration;
+            }
+            if (backup.summary) {
+              const scanned = Number(backup.summary.total_bytes_processed);
+              const uploaded = Number(
+                backup.summary.data_added_packed ?? backup.summary.data_added,
+              );
+              if (Number.isFinite(scanned) && scanned >= 0) {
+                bytesScanned = (bytesScanned ?? 0) + scanned;
+              }
+              if (Number.isFinite(uploaded) && uploaded >= 0) {
+                bytesUploaded = (bytesUploaded ?? 0) + uploaded;
+              }
+              await recordManagedBackupEgressBestEffort({
+                project_id,
+                backup_id: backup.id,
+                tags:
+                  legacyInitialBackupOverride == null
+                    ? undefined
+                    : LEGACY_MIGRATION_INITIAL_BACKUP_TAGS,
+                summary: backup.summary,
+                managed_egress_override: legacyInitialBackupOverride,
+              });
+            }
+          },
+        });
+      } catch (err) {
+        if (createdBackupIds.size === 0) throw err;
+        retentionError = err;
+      }
       await rusticBackupBrowser.markStale(refreshed.fs.rusticRepo);
       return refreshed;
     },
   });
-  let reportTime = newestCreatedBackupTime;
+  let reportTime: Date | undefined;
+  let latestBackupId: string | undefined;
+  let repositoryBackups: Awaited<ReturnType<typeof vol.rustic.snapshots>> = [];
+  const confirmationStarted = Date.now();
   try {
-    const backups = await vol.rustic.snapshots();
-    reportTime = newestBackupTimeForIds({
-      backups,
+    repositoryBackups = await vol.rustic.snapshots();
+    const confirmed = confirmedBackupForIds({
+      backups: repositoryBackups,
       backupIds: createdBackupIds,
-      fallback: reportTime,
     });
+    reportTime = confirmed?.time;
+    latestBackupId = confirmed?.id;
   } catch (err) {
     logger.warn("backup snapshot refresh failed", { project_id, err });
+  } finally {
+    stageDurations.confirmation = Date.now() - confirmationStarted;
+  }
+  if (createdBackupIds.size > 0 && !reportTime) {
+    throw new Error("created backup was not confirmed in the repository");
   }
   if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
     legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
-  if (createdBackupIds.size > 0 && reportTime) {
-    try {
-      const generation = await getGeneration(
-        projectMountpoint(project_id),
-      ).catch(() => null);
-      await reportBackupSuccess(project_id, reportTime, generation);
-    } catch (err) {
-      logger.warn("scheduled backup success report failed", {
-        project_id,
-        err,
-      });
+  if (createdBackupIds.size === 0 && knownLastBackupAt !== undefined) {
+    const knownTime =
+      knownLastBackupAt == null
+        ? Number.NEGATIVE_INFINITY
+        : Date.parse(knownLastBackupAt);
+    const latest = repositoryBackups.at(-1);
+    if (
+      latest?.time &&
+      (knownLastBackupAt == null || Number.isFinite(knownTime)) &&
+      latest.time.getTime() > knownTime
+    ) {
+      // The previous upload committed but its bay report may have been lost.
+      // Do not claim the current volume generation for that older copy.
+      reportTime = latest.time;
+      latestBackupId = latest.id;
     }
   }
+  if (reportTime) {
+    const reportingStarted = Date.now();
+    try {
+      await reportBackupSuccess(
+        project_id,
+        reportTime,
+        createdBackupIds.size > 0 ? newestCreatedBackupGeneration : null,
+      );
+    } finally {
+      stageDurations.reporting = Date.now() - reportingStarted;
+    }
+  }
+  if (retentionError) throw retentionError;
+  return {
+    created: createdBackupIds.size > 0,
+    latest_backup_id: latestBackupId,
+    stage_durations_ms: stageDurations,
+    bytes_scanned: bytesScanned,
+    bytes_uploaded: bytesUploaded,
+  };
 }
 
 async function updateBackupsIfVolumeCurrent({
   project_id,
   counts,
   limit,
+  knownLastBackupAt,
   expectedLifecycleGeneration,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts?: Partial<SnapshotCounts>;
   limit?: number;
+  knownLastBackupAt?: string | null;
   expectedLifecycleGeneration: number;
-}): Promise<void> {
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+  latest_backup_id?: string;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+}> {
   const result = await withCurrentProjectVolumeLifecycleLock(
     project_id,
     expectedLifecycleGeneration,
@@ -4636,21 +4777,25 @@ async function updateBackupsIfVolumeCurrent({
           "skipping backup maintenance because project data is unavailable",
           { project_id },
         );
-        return true;
+        return {
+          created: false,
+          deferred_reason: "project_volume_unavailable",
+        };
       }
       if (await isSubvolumeReadonly(volume.path)) {
         logger.info(
           "skipping backup maintenance because project archival is in progress",
           { project_id },
         );
-        return true;
+        return { created: false, deferred_reason: "project_volume_archiving" };
       }
-      await updateBackupsUnlocked({
+      return await updateBackupsUnlocked({
         project_id,
         counts,
         limit,
+        knownLastBackupAt,
+        stage_durations_ms,
       });
-      return true;
     },
   );
   if (result === undefined) {
@@ -4664,6 +4809,12 @@ async function updateBackupsIfVolumeCurrent({
       },
     );
   }
+  return (
+    result ?? {
+      created: false,
+      deferred_reason: "project_volume_lifecycle_changed",
+    }
+  );
 }
 
 async function updateBackups({
@@ -4694,25 +4845,40 @@ export async function runScheduledBackupMaintenance({
   project_id,
   counts,
   limit = 30,
+  knownLastBackupAt,
+  stage_durations_ms,
 }: {
   project_id: string;
   counts: Partial<SnapshotCounts>;
   limit?: number;
-}): Promise<void> {
+  knownLastBackupAt?: string | null;
+  stage_durations_ms?: Record<string, number>;
+}): Promise<{
+  created: boolean;
+  deferred_reason?: string;
+  latest_backup_id?: string;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+}> {
   const expectedLifecycleGeneration =
     currentProjectVolumeLifecycleGeneration(project_id);
-  await withBackupParallelLimit({
-    project_id,
-    op: "runScheduledBackupMaintenance",
-    queue_if_busy: false,
-    run: async () =>
-      await updateBackupsIfVolumeCurrent({
-        project_id,
-        counts,
-        limit,
-        expectedLifecycleGeneration,
-      }),
-  });
+  return (
+    (await withBackupParallelLimit({
+      project_id,
+      op: "runScheduledBackupMaintenance",
+      queue_if_busy: false,
+      run: async () =>
+        await updateBackupsIfVolumeCurrent({
+          project_id,
+          counts,
+          limit,
+          knownLastBackupAt,
+          stage_durations_ms,
+          expectedLifecycleGeneration,
+        }),
+    })) ?? { created: false, deferred_reason: "backup_capacity_busy" }
+  );
 }
 
 export async function getBackups({

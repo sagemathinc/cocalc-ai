@@ -3,6 +3,7 @@ import {
   createServiceClient,
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
+import callHub from "@cocalc/conat/hub/call-hub";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type {
   CreateProjectOptions,
@@ -15,6 +16,7 @@ import type {
   HostExamRun,
   HostExamRuntimeStatus,
   HostPressureZone,
+  Hosts,
 } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type {
@@ -1040,14 +1042,72 @@ export interface HostRegisterOnPremTunnelResponse {
 
 export interface HostProjectMaintenanceSchedule {
   project_id: string;
+  storage_account_id?: string | null;
+  storage_service_class?: "paying" | "free" | "unclassified";
+  storage_priority?: number;
   last_edited: string | null;
   last_changed?: string | null;
   last_backup?: string | null;
+  last_snapshot?: string | null;
+  last_snapshot_observed_at?: string | null;
+  snapshot_status_outcome?:
+    | "succeeded"
+    | "deferred"
+    | "failed"
+    | "skipped"
+    | null;
+  snapshot_status_due_at?: string | null;
+  snapshot_reconciled_change_at?: string | null;
+  snapshot_schedule_revision?: string | null;
+  snapshot_reconciled_schedule_revision?: string | null;
+  last_backup_observed_at?: string | null;
+  backup_status_outcome?:
+    | "succeeded"
+    | "deferred"
+    | "failed"
+    | "skipped"
+    | null;
+  backup_status_reason?: string | null;
+  backup_status_due_at?: string | null;
+  snapshot_retry_at?: string | null;
+  backup_retry_at?: string | null;
+  snapshot_failures?: number;
+  backup_failures?: number;
   backup_due_since?: string | null;
   snapshots: SnapshotSchedule | null;
   backups: SnapshotSchedule | null;
   max_snapshots_per_project?: number | null;
   max_backups_per_project?: number | null;
+}
+
+export interface HostProjectMaintenanceAssignment {
+  valid: boolean;
+  reason?:
+    | "assignment_changed"
+    | "schedule_changed"
+    | "change_generation_changed";
+}
+
+export interface ProjectMaintenanceReport {
+  host_id: string;
+  project_id: string;
+  kind: "snapshot" | "backup";
+  storage_service_class?: "paying" | "free" | "unclassified";
+  observed_at: string;
+  outcome: "succeeded" | "deferred" | "failed" | "skipped";
+  reason?: string;
+  due_at?: string | null;
+  attempt_due_at?: string | null;
+  latest_snapshot_at?: string | null;
+  latest_backup_id?: string | null;
+  reconciled_change_at?: string | null;
+  schedule_revision?: string | null;
+  duration_ms?: number;
+  stage_durations_ms?: Record<string, number>;
+  bytes_scanned?: number;
+  bytes_uploaded?: number;
+  retry_at?: string | null;
+  consecutive_failures?: number;
 }
 
 export interface HostRegistryRegistration {
@@ -1155,15 +1215,17 @@ export interface HostStatusApi {
     next_cursor_updated_ms?: number;
     next_cursor_account_id?: string;
   }>;
-  listProjectMaintenanceSchedules: (opts: {
-    host_id: string;
-    active_days?: number;
-    limit?: number;
-  }) => Promise<HostProjectMaintenanceSchedule[]>;
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
 }
+
+type HostMaintenanceApi = Pick<
+  Hosts,
+  | "listProjectMaintenanceSchedules"
+  | "confirmProjectMaintenanceAssignment"
+  | "reportProjectMaintenance"
+>;
 
 export interface HostRegistryApi {
   register: (info: HostRegistryRegistration) => Promise<void>;
@@ -1274,13 +1336,60 @@ export function createHostStatusClient({
 }: {
   client: Client;
   timeout?;
-}): HostStatusApi {
-  return createServiceClient<HostStatusApi>({
+}): HostStatusApi & HostMaintenanceApi {
+  const status = createServiceClient<HostStatusApi>({
     service: "project-host",
     subject: STATUS_SUBJECT,
     client,
     timeout,
   });
+  const maintenance = <T>(
+    name: string,
+    opts: { host_id?: string },
+  ): Promise<T> => {
+    if (!opts.host_id) throw Error("host_id is required for maintenance");
+    // The Hub API binds host_id to the authenticated host principal. A host
+    // cannot use this subject to nominate another host or forge its reports.
+    return callHub({
+      client,
+      host_id: opts.host_id,
+      name,
+      args: [opts],
+      timeout,
+    });
+  };
+  const maintenanceMethods: HostMaintenanceApi = {
+    listProjectMaintenanceSchedules: (
+      opts: Parameters<Hosts["listProjectMaintenanceSchedules"]>[0],
+    ) =>
+      maintenance<HostProjectMaintenanceSchedule[]>(
+        "hosts.listProjectMaintenanceSchedules",
+        opts,
+      ),
+    confirmProjectMaintenanceAssignment: (
+      opts: Parameters<Hosts["confirmProjectMaintenanceAssignment"]>[0],
+    ) =>
+      maintenance<HostProjectMaintenanceAssignment>(
+        "hosts.confirmProjectMaintenanceAssignment",
+        opts,
+      ),
+    reportProjectMaintenance: (report: ProjectMaintenanceReport) =>
+      maintenance<void>("hosts.reportProjectMaintenance", report),
+  };
+  // createServiceClient returns a proxy whose get trap synthesizes every
+  // method, including names assigned to its target. Intercept these three
+  // names before delegating to that proxy.
+  return new Proxy(status, {
+    get(target, prop, receiver) {
+      if (
+        typeof prop === "string" &&
+        Object.prototype.hasOwnProperty.call(maintenanceMethods, prop)
+      ) {
+        return maintenanceMethods[prop as keyof HostMaintenanceApi];
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as HostStatusApi & HostMaintenanceApi;
 }
 
 export function createHostStatusService({

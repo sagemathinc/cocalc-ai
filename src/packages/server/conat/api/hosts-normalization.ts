@@ -179,6 +179,36 @@ function normalizeStorageAdmissionMetrics(
   return value as HostStorageAdmissionMetrics;
 }
 
+function normalizeSnapshotBackupMaintenanceGate(
+  value: unknown,
+): HostCurrentMetrics["snapshot_backup_maintenance_gate"] {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const gate = value as Record<string, unknown>;
+  if (
+    typeof gate.checked_at !== "string" ||
+    !Number.isFinite(Date.parse(gate.checked_at)) ||
+    (gate.blocked_reason != null &&
+      gate.blocked_reason !== "available_memory" &&
+      gate.blocked_reason !== "memory_pressure" &&
+      gate.blocked_reason !== "memory_measurement_unavailable")
+  ) {
+    return undefined;
+  }
+  return {
+    checked_at: gate.checked_at,
+    ...(gate.blocked_reason ? { blocked_reason: gate.blocked_reason } : {}),
+    ...(gate.memory_psi_full_avg10 != null &&
+    isNonNegativeNumberLike(gate.memory_psi_full_avg10)
+      ? { memory_psi_full_avg10: Number(gate.memory_psi_full_avg10) }
+      : {}),
+    ...(gate.pressure_attribution === "bees_cgroup"
+      ? { pressure_attribution: "bees_cgroup" as const }
+      : {}),
+  };
+}
+
 function normalizeHostPlacementSnapshot(
   value: unknown,
 ): HostPlacementSnapshot | undefined {
@@ -997,6 +1027,9 @@ export function parseRow(
   const storageAdmissionMetrics = normalizeStorageAdmissionMetrics(
     rawCurrentMetrics?.storage_admission,
   );
+  const snapshotBackupMaintenanceGate = normalizeSnapshotBackupMaintenanceGate(
+    rawCurrentMetrics?.snapshot_backup_maintenance_gate,
+  );
   const currentMetrics: HostCurrentMetrics | undefined =
     rawCurrentMetrics && typeof rawCurrentMetrics === "object"
       ? {
@@ -1291,6 +1324,11 @@ export function parseRow(
             : {}),
           ...(storageAdmissionMetrics != null
             ? { storage_admission: storageAdmissionMetrics }
+            : {}),
+          ...(snapshotBackupMaintenanceGate != null
+            ? {
+                snapshot_backup_maintenance_gate: snapshotBackupMaintenanceGate,
+              }
             : {}),
         }
       : undefined;

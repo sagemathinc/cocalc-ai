@@ -1,4 +1,6 @@
 import {
+  confirmedBackupForIds,
+  confirmedBackupTimeForIds,
   newestBackupTimeForIds,
   parseCreatedBackupSnapshot,
 } from "./backup-created";
@@ -8,6 +10,7 @@ describe("parseCreatedBackupSnapshot", () => {
     const parsed = parseCreatedBackupSnapshot({
       id: "backup-1",
       time: "2026-05-22T12:34:56.000Z",
+      snapshotGeneration: 1234,
       summary: { total_bytes_processed: 123, ignored: true },
     });
 
@@ -15,6 +18,7 @@ describe("parseCreatedBackupSnapshot", () => {
       id: "backup-1",
       time: new Date("2026-05-22T12:34:56.000Z"),
       summary: { total_bytes_processed: 123 },
+      snapshotGeneration: 1234,
     });
   });
 
@@ -22,6 +26,48 @@ describe("parseCreatedBackupSnapshot", () => {
     expect(parseCreatedBackupSnapshot(undefined)).toBeUndefined();
     expect(parseCreatedBackupSnapshot({ time: new Date() })).toBeUndefined();
     expect(parseCreatedBackupSnapshot({ id: "" })).toBeUndefined();
+  });
+});
+
+describe("confirmedBackupTimeForIds", () => {
+  const created = new Set(["new-1", "new-2"]);
+  const backups = [
+    { id: "new-1", time: new Date("2026-09-23T10:00:00Z") },
+    { id: "new-2", time: new Date("2026-09-23T11:00:00Z") },
+  ];
+
+  it("returns the newest time only when all created IDs are readable", () => {
+    expect(confirmedBackupForIds({ backups, backupIds: created })).toEqual({
+      id: "new-2",
+      time: new Date("2026-09-23T11:00:00Z"),
+    });
+    expect(confirmedBackupTimeForIds({ backups, backupIds: created })).toEqual(
+      new Date("2026-09-23T11:00:00Z"),
+    );
+    expect(
+      confirmedBackupTimeForIds({
+        backups: backups.slice(0, 1),
+        backupIds: created,
+      }),
+    ).toBeUndefined();
+    expect(
+      confirmedBackupForIds({
+        backups: backups.slice(0, 1),
+        backupIds: created,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects missing or invalid repository times", () => {
+    expect(
+      confirmedBackupTimeForIds({
+        backups: [{ id: "new-1", time: new Date("invalid") }, backups[1]],
+        backupIds: created,
+      }),
+    ).toBeUndefined();
+    expect(
+      confirmedBackupTimeForIds({ backups, backupIds: new Set() }),
+    ).toBeUndefined();
   });
 });
 

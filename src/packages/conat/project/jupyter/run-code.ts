@@ -88,6 +88,7 @@ export interface OutputMessage {
   msg_type?: string;
   done?: boolean;
   more_output?: boolean;
+  output_truncated?: boolean;
 }
 
 export interface JupyterRunAck {
@@ -557,7 +558,7 @@ async function handleRequest({
     if (typeof mesg.id != "string") {
       return;
     }
-    if (limit == null || outputVisibleCount < limit) {
+    if (mesg.output_truncated || limit == null || outputVisibleCount < limit) {
       if (totalBatches == 0) {
         // Fast-lane the very first output batch for lower latency.
         // We keep existing throttling for all subsequent output.

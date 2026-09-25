@@ -51,6 +51,41 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
+export interface ProjectRecoveryStatus {
+  project_id: string;
+  storage_service_class: "paying" | "free" | "unclassified";
+  host_id: string | null;
+  last_backup: string | null;
+  last_changed: string | null;
+  host_last_seen: string | null;
+  snapshot_due_at: string | null;
+  backup_due_at: string | null;
+  snapshot_disabled: boolean;
+  backup_disabled: boolean;
+  host_maintenance_block?: {
+    reason:
+      | "available_memory"
+      | "memory_pressure"
+      | "memory_measurement_unavailable";
+    checked_at: string;
+    memory_psi_full_avg10?: number;
+  };
+  snapshot?: {
+    observed_at: string;
+    outcome: string;
+    reason: string | null;
+    due_at: string | null;
+    latest_snapshot_at: string | null;
+  };
+  backup?: {
+    observed_at: string;
+    outcome: string;
+    reason: string | null;
+    due_at: string | null;
+    latest_backup_id: string | null;
+  };
+}
+
 export type ProjectCopyState =
   | "queued"
   | "applying"
@@ -1235,6 +1270,7 @@ export const projects = {
   findBackupFiles: authFirstRequireAccount,
   getBackupFileText: authFirstRequireAccount,
   getBackupQuota: authFirstRequireAccount,
+  getRecoveryStatus: authFirstRequireAccount,
 
   createSnapshot: authFirstRequireAccount,
   deleteSnapshot: authFirstRequireAccount,
@@ -2012,6 +2048,7 @@ export interface Projects {
     project_id: string;
     path?: string;
     dest?: string;
+    remote_only?: boolean;
     id: string;
   }) => Promise<{
     op_id: string;
@@ -2098,6 +2135,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<{ limit: number }>;
+
+  getRecoveryStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRecoveryStatus>;
 
   /////////////
   // SNAPSHOTS

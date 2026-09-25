@@ -272,6 +272,7 @@ const whitelist = {
   },
   restore: {
     "--delete": true,
+    "--no-cache": true,
     "--verify-existing": true,
     "--recursive": true,
     "-h": true,

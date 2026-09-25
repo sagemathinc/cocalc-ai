@@ -109,6 +109,8 @@ printf '%s\n' previous > \
   "${ASSET_PREVIOUS}/runtime/control-plane/static/previous-0123456789abcdef.js"
 printf '%s\n' historic > \
   "${ASSET_PREVIOUS}/runtime/control-plane/static/historic-aaaaaaaaaaaaaaaa.js"
+printf '%s\n' appledouble > \
+  "${ASSET_PREVIOUS}/runtime/control-plane/static/._historic-bbbbbbbbbbbbbbbb.js"
 cat >"${ASSET_PREVIOUS}/runtime/control-plane/static/frontend-build.json" <<'EOF'
 {"schema":1,"fingerprint":"previous","build_timestamp":1,"assets":["previous-0123456789abcdef.js"]}
 EOF
@@ -125,6 +127,10 @@ if [[ ! -f "${ASSET_TARGET}/runtime/control-plane/static/previous-0123456789abcd
   echo "previous frontend asset was not retained" >&2
   exit 1
 fi
+if [[ -e "${ASSET_TARGET}/runtime/control-plane/static/._historic-bbbbbbbbbbbbbbbb.js" ]]; then
+  echo "AppleDouble frontend metadata was retained" >&2
+  exit 1
+fi
 node - "${ASSET_TARGET}/runtime/control-plane/static/frontend-build-history.json" <<'NODE'
 const fs = require("node:fs");
 const history = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
@@ -137,6 +143,9 @@ if (!history.builds[1].assets.includes("previous-0123456789abcdef.js")) {
 }
 if (!history.builds[1].assets.includes("historic-aaaaaaaaaaaaaaaa.js")) {
   throw new Error("historic retained frontend assets missing from history");
+}
+if (history.builds.some(({ assets }) => assets.some((asset) => asset.startsWith("._")))) {
+  throw new Error("AppleDouble frontend metadata included in history");
 }
 NODE
 

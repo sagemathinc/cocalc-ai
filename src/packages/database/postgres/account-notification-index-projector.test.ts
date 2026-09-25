@@ -306,6 +306,66 @@ describe("account_notification_index projector", () => {
     expect(rows).toEqual([{ subject: "CoCalc chat reply in work/chat.chat" }]);
   });
 
+  it("queues a trusted operator incident on the critical immediate lane", async () => {
+    await seedAccounts();
+    await getPool().query(
+      `UPDATE accounts
+          SET other_settings = jsonb_set(
+            coalesce(other_settings, '{}'::jsonb),
+            '{notification_preferences,email}',
+            '{"maintenance":"none","support":"none"}'::jsonb,
+            true
+          )
+        WHERE account_id = $1`,
+      [LOCAL_ACCOUNT_ID],
+    );
+    await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id: LOCAL_BAY_ID,
+      source_project_id: null,
+      actor_account_id: SOURCE_ACCOUNT_ID,
+      origin_kind: "system",
+      payload_json: {
+        title: "Project recovery incident",
+        notice_type: "operator_incident",
+        severity: "error",
+      },
+      targets: [
+        {
+          target_account_id: LOCAL_ACCOUNT_ID,
+          target_home_bay_id: LOCAL_BAY_ID,
+          notification_id: NOTIFICATION_ID,
+          summary_json: {
+            title: "Project recovery incident",
+            notice_type: "operator_incident",
+            severity: "error",
+          },
+        },
+      ],
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+    const { rows } = await getPool().query(
+      `SELECT category, lane, delivery_mode, status,
+              summary_json->>'required' AS required
+         FROM notification_email_outbox
+        WHERE notification_id = $1`,
+      [NOTIFICATION_ID],
+    );
+    expect(rows).toEqual([
+      {
+        category: "maintenance",
+        lane: "critical",
+        delivery_mode: "immediate",
+        status: "queued",
+        required: "true",
+      },
+    ]);
+  });
+
   it("reports unpublished notification projector lag and per-type counts", async () => {
     await seedAccounts();
     await appendMentionOutboxRow({

@@ -9,6 +9,56 @@ jest.mock("@cocalc/conat/service/typed", () => ({
   createServiceHandler: (...args: any[]) => createServiceHandlerMock(...args),
 }));
 
+describe("host maintenance client", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    // Match the real typed client: its get trap returns a generated RPC method
+    // even when a property has been assigned to the proxy target.
+    createServiceClientMock = jest.fn(
+      () =>
+        new Proxy(
+          {},
+          {
+            get: () => jest.fn(),
+          },
+        ),
+    );
+    createServiceHandlerMock = jest.fn();
+  });
+
+  it("routes maintenance methods through the host-scoped Hub API", async () => {
+    const request = jest.fn(async () => ({ data: { valid: true } }));
+    const { createHostStatusClient } = await import("./api");
+    const status = createHostStatusClient({
+      client: { request } as any,
+      timeout: 60_000,
+    });
+    await status.listProjectMaintenanceSchedules({ host_id: "host-1" });
+    await status.confirmProjectMaintenanceAssignment({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "backup",
+      schedule_revision: "revision-1",
+      observed_change_at: null,
+    });
+    await status.reportProjectMaintenance({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "backup",
+      observed_at: "2026-09-25T00:00:00.000Z",
+      outcome: "deferred",
+    });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(
+      request.mock.calls.map(([subject, data]) => [subject, data.name]),
+    ).toEqual([
+      ["hub.host.host-1.api", "hosts.listProjectMaintenanceSchedules"],
+      ["hub.host.host-1.api", "hosts.confirmProjectMaintenanceAssignment"],
+      ["hub.host.host-1.api", "hosts.reportProjectMaintenance"],
+    ]);
+  });
+});
+
 describe("createHostControlClient", () => {
   beforeEach(() => {
     jest.resetModules();

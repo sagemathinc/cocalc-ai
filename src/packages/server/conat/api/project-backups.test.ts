@@ -11,6 +11,8 @@ let getProjectFileServerClientMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let projectControlBackupMock: jest.Mock;
+let projectDetailsGetMock: jest.Mock;
+let getProjectRecoveryStatusLocalMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectBackupLimitMock: jest.Mock;
 let getManagedProjectEgressPolicyMock: jest.Mock;
@@ -93,7 +95,16 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     projectControl: jest.fn(() => ({
       backup: (...args: any[]) => projectControlBackupMock(...args),
     })),
+    projectDetails: jest.fn(() => ({
+      get: (...args: any[]) => projectDetailsGetMock(...args),
+    })),
   })),
+}));
+
+jest.mock("@cocalc/server/projects/maintenance-status", () => ({
+  __esModule: true,
+  getProjectRecoveryStatusLocal: (...args: any[]) =>
+    getProjectRecoveryStatusLocalMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/project-limits", () => ({
@@ -168,6 +179,27 @@ describe("project-backups.createBackup", () => {
       error: null,
       progress_summary: { phase: "done" },
     }));
+    projectDetailsGetMock = jest.fn(async () => ({
+      recovery_status: { project_id: "proj-1", host_id: "host-remote" },
+    }));
+    getProjectRecoveryStatusLocalMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      host_id: "host-local",
+    }));
+  });
+
+  it("reads recovery status from the authoritative project bay", async () => {
+    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-remote", epoch: 4 });
+    const { getRecoveryStatus } = await import("./project-backups");
+    await expect(
+      getRecoveryStatus({ account_id: "acct-1", project_id: "proj-1" }),
+    ).resolves.toMatchObject({ host_id: "host-remote" });
+    expect(projectDetailsGetMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      include_recovery_status: true,
+    });
+    expect(getProjectRecoveryStatusLocalMock).not.toHaveBeenCalled();
   });
 
   it("blocks queued backups for unsealed OCI-backed projects", async () => {
@@ -502,5 +534,31 @@ describe("project-backups.restoreBackup", () => {
       service: "persist-service",
       stream_name: "stream:op-restore-1",
     });
+  });
+
+  it("records a remote-only restore request in the operation", async () => {
+    const { restoreBackup } = await import("./project-backups");
+
+    await restoreBackup({
+      account_id: "acct-1",
+      session_hash: "session-1",
+      project_id: "proj-1",
+      id: "backup-1",
+      path: "data/results",
+      dest: "restored/results",
+      remote_only: true,
+    });
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          project_id: "proj-1",
+          id: "backup-1",
+          path: "data/results",
+          dest: "restored/results",
+          remote_only: true,
+        },
+      }),
+    );
   });
 });

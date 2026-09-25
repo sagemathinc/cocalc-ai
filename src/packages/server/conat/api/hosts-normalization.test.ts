@@ -119,6 +119,56 @@ describe("parseRow host metrics normalization", () => {
     expect(host.metrics?.current?.storage_admission).toEqual(storageAdmission);
   });
 
+  it("preserves a validated snapshot and backup memory gate", () => {
+    const checked_at = new Date().toISOString();
+    const host = parseRow({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      metadata: {
+        metrics: {
+          current: {
+            snapshot_backup_maintenance_gate: {
+              checked_at,
+              blocked_reason: "memory_pressure",
+              memory_psi_full_avg10: 52.48,
+            },
+          },
+        },
+      },
+    });
+    expect(host.metrics?.current?.snapshot_backup_maintenance_gate).toEqual({
+      checked_at,
+      blocked_reason: "memory_pressure",
+      memory_psi_full_avg10: 52.48,
+    });
+  });
+
+  it("preserves a verified isolated Bees pressure attribution", () => {
+    const checked_at = new Date().toISOString();
+    const host = parseRow({
+      id: "host-1",
+      name: "host-1",
+      status: "running",
+      metadata: {
+        metrics: {
+          current: {
+            snapshot_backup_maintenance_gate: {
+              checked_at,
+              memory_psi_full_avg10: 49.8,
+              pressure_attribution: "bees_cgroup",
+            },
+          },
+        },
+      },
+    });
+    expect(host.metrics?.current?.snapshot_backup_maintenance_gate).toEqual({
+      checked_at,
+      memory_psi_full_avg10: 49.8,
+      pressure_attribution: "bees_cgroup",
+    });
+  });
+
   it("rejects malformed I/O control telemetry", () => {
     const host = parseRow({
       id: "host-1",

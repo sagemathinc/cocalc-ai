@@ -126,7 +126,7 @@ password = ""
     ).resolves.toBe("my-host");
   });
 
-  it("can restore legacy project-migration snapshots with bare uuid host", async () => {
+  it("can restore legacy project-migration snapshots without the local cache", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     await writeFile(join(home, "legacy-migration.txt"), "legacy");
     const { stdout } = await rustic(
@@ -137,10 +137,13 @@ password = ""
       },
     );
     const backup = JSON.parse(Buffer.from(stdout).toString());
-    await rustic(["restore", backup.id, "legacy-migration-restore"], {
-      ...options,
-      host: `project-${projectId}`,
-    });
+    await rustic(
+      ["restore", "--no-cache", backup.id, "legacy-migration-restore"],
+      {
+        ...options,
+        host: `project-${projectId}`,
+      },
+    );
     await expect(
       readFile(
         join(home, "legacy-migration-restore", "legacy-migration.txt"),

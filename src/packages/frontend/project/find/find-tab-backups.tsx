@@ -10,6 +10,7 @@ import {
   getBackups,
 } from "@cocalc/frontend/project/archive-info";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { ProjectRecoveryStatus } from "@cocalc/frontend/project/recovery-status";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -601,6 +602,7 @@ export function BackupsTab({
 
   return (
     <div className="smc-vfill">
+      <ProjectRecoveryStatus project_id={project_id} kind="backup" />
       {mode === "flyout" ? (
         <>
           {alert}

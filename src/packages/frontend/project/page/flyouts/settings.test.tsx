@@ -38,6 +38,9 @@ jest.mock("antd", () => {
   );
   const Empty = ({ description }: any) => <div>{description}</div>;
   Empty.PRESENTED_IMAGE_SIMPLE = "simple";
+  const Grid = {
+    useBreakpoint: () => ({ md: true }),
+  };
   const Modal = ({ children, open }: any) =>
     open ? <div>{children}</div> : null;
   const Popconfirm = ({ children }: any) => <>{children}</>;
@@ -53,6 +56,7 @@ jest.mock("antd", () => {
     Card,
     Collapse,
     Empty,
+    Grid,
     InputNumber,
     message: {
       error: jest.fn(),
@@ -176,6 +180,14 @@ jest.mock("@cocalc/frontend/project/explorer/clone", () => ({
   __esModule: true,
   default: () => <button type="button">Clone</button>,
 }));
+jest.mock("@cocalc/frontend/project/recovery-status", () => ({
+  ProjectRecoveryStatus: ({ kind }: { kind: string }) => (
+    <div role="status">
+      {kind === "snapshot" ? "Local snapshots" : "Off-host backups"}: current
+      protection status unknown
+    </div>
+  ),
+}));
 jest.mock("@cocalc/frontend/project/settings/datastore", () => ({
   Datastore: () => <div>Datastore</div>,
 }));
@@ -275,6 +287,12 @@ describe("SettingsFlyout", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create Backup" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Clone" })).toBeTruthy();
+    expect(
+      screen.getByText("Local snapshots: current protection status unknown"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Off-host backups: current protection status unknown"),
+    ).toBeTruthy();
   });
 
   it("shows SSH before Location in flyout settings", () => {

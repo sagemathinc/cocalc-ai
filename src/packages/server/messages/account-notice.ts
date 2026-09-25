@@ -20,6 +20,7 @@ export async function mirrorSystemMessageToAccountNotice(opts: {
   subject: string;
   body: string;
   message_id: number;
+  operationalIncident?: boolean;
 }) {
   const target_account_ids = Array.from(
     new Set(
@@ -45,8 +46,11 @@ export async function mirrorSystemMessageToAccountNotice(opts: {
     payload_json: {
       title: opts.subject,
       body_markdown: opts.body,
-      severity: "info",
-      origin_label: DEFAULT_ORIGIN_LABEL,
+      severity: opts.operationalIncident ? "error" : "info",
+      notice_type: opts.operationalIncident ? "operator_incident" : undefined,
+      origin_label: opts.operationalIncident
+        ? "Operations"
+        : DEFAULT_ORIGIN_LABEL,
       message_id: opts.message_id,
     },
     targets: target_account_ids.map((target_account_id) => ({
@@ -56,8 +60,11 @@ export async function mirrorSystemMessageToAccountNotice(opts: {
       summary_json: {
         title: opts.subject,
         body_markdown: opts.body,
-        severity: "info",
-        origin_label: DEFAULT_ORIGIN_LABEL,
+        severity: opts.operationalIncident ? "error" : "info",
+        notice_type: opts.operationalIncident ? "operator_incident" : undefined,
+        origin_label: opts.operationalIncident
+          ? "Operations"
+          : DEFAULT_ORIGIN_LABEL,
         message_id: opts.message_id,
       },
     })),
@@ -70,6 +77,7 @@ export async function mirrorSystemMessageToAccountNoticeBestEffort(opts: {
   subject: string;
   body: string;
   message_id: number;
+  operationalIncident?: boolean;
 }) {
   try {
     await mirrorSystemMessageToAccountNotice(opts);

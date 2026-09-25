@@ -308,6 +308,19 @@ function projectHostRestartWasScheduled(response: any): boolean {
   );
 }
 
+function delayedProjectHostConvergenceRolloutComponents({
+  targets,
+  alignRuntimeStack,
+}: {
+  targets?: HostSoftwareUpgradeTarget[];
+  alignRuntimeStack?: boolean;
+}) {
+  return rolloutComponentsForUpgradeResults([], {
+    targets,
+    alignRuntimeStack,
+  }).filter((component) => component !== "project-host");
+}
+
 function redundantProjectHostRollbackReason({
   row,
   rollbackVersion,
@@ -2075,6 +2088,49 @@ async function handleOp(op: LroSummary): Promise<void> {
                 err: `${err}`,
               },
             );
+            const recoveryComponents =
+              delayedProjectHostConvergenceRolloutComponents({
+                targets: input?.targets ?? [],
+                alignRuntimeStack: !!input?.align_runtime_stack,
+              });
+            if (recoveryComponents.length > 0) {
+              await progressStep(
+                "waiting",
+                "project-host converged; aligning remaining managed components",
+                {
+                  host_id,
+                  components: recoveryComponents,
+                  target_version: convergedVersion,
+                  ...timingSummary(),
+                },
+              );
+              rolloutResponse = await timePhase(
+                "managed_component_recovery_rollout_ms",
+                async () =>
+                  await rolloutHostManagedComponentsInternal({
+                    account_id,
+                    id: host_id,
+                    components: recoveryComponents,
+                    desired_version: convergedVersion,
+                    base_url: input?.base_url,
+                    reason: "host_software_upgrade_recovered_after_convergence",
+                    record_runtime_deployments:
+                      input?.record_runtime_deployments !== false,
+                    onProgress: async (update) => {
+                      await progressStep(
+                        "waiting",
+                        update.rollout_phase_label,
+                        {
+                          host_id,
+                          components: recoveryComponents,
+                          ...update,
+                          ...timingSummary(),
+                        },
+                      );
+                    },
+                  }),
+              );
+            }
             const updated = await updateLro({
               op_id,
               status: "succeeded",
@@ -2897,6 +2953,7 @@ export const __test__ = {
   completedProjectHostUpgradeVersion,
   requestedProjectHostUpgradeVersion,
   projectHostRestartWasScheduled,
+  delayedProjectHostConvergenceRolloutComponents,
   redundantProjectHostRollbackReason,
   waitForHostStatus,
   billingEnforcementDrainCompleteMetadata,

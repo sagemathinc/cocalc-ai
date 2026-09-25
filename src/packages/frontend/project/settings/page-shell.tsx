@@ -44,6 +44,7 @@ export function ProjectSettingsPageShell({
   const hidden = !!project.get("hidden");
   const screens = Grid.useBreakpoint();
   const wide = !!screens.xl;
+  const compact = !screens.sm;
   const headerLinks = HEADER_LINK_IDS.flatMap((id) => {
     const item = navItems.find((item) => item.id === id);
     return item == null ? [] : [item];
@@ -55,7 +56,7 @@ export function ProjectSettingsPageShell({
         background: UI_COLORS.page,
         margin: "-15px",
         minHeight: "100%",
-        padding: "20px",
+        padding: compact ? "8px" : "20px",
       }}
     >
       <Card

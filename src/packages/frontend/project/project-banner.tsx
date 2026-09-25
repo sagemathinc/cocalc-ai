@@ -9,6 +9,7 @@ import { ComputeVmAgentGrantBanner } from "./compute-vm-agent-grant-banner";
 import { ProjectDiskQuotaWarningBanner } from "./disk-usage/quota-warning-banner";
 import { LegacyMigrationRestoreBanner } from "./legacy-migration-restore-banner";
 import { ProjectRootfsUpgradeBanner } from "./rootfs-upgrade-banner";
+import { ProjectRecoveryBreachBanner } from "./project-recovery-breach-banner";
 
 export function ProjectWarningBanner() {
   const { project_id } = useProjectContext();
@@ -18,6 +19,7 @@ export function ProjectWarningBanner() {
       <ComputeVmAgentGrantBanner projectId={project_id} />
       <ProjectDiskQuotaWarningBanner project_id={project_id} />
       <ProjectRootfsUpgradeBanner project_id={project_id} />
+      <ProjectRecoveryBreachBanner project_id={project_id} />
       <LegacyMigrationRestoreBanner project_id={project_id} />
       <CourseMembershipBanner project_id={project_id} />
     </>

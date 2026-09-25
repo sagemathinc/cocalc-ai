@@ -62,6 +62,16 @@ const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 const MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP = 32;
 
+function isRepositoryCapacityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /rustic|repository|\bs3\b|bucket|object[ -]stor(?:e|age)/i.test(message) &&
+    /InsufficientStorage|QuotaExceeded|storage (?:quota|limit) exceeded|no space left on device/i.test(
+      message,
+    )
+  );
+}
+
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
@@ -80,6 +90,7 @@ interface Snapshot {
   id: string;
   time: Date;
   summary: { [key: string]: string | number };
+  tags: string[];
 }
 
 interface CreatedSnapshot extends Snapshot {
@@ -132,9 +143,16 @@ export function parseRusticSnapshotsOutput({
     );
   }
   const result = flattenSnapshotGroups(parsed)
-    .map(({ time, id, summary }) => {
+    .map(({ time, id, summary, tags }) => {
       if (!time || !id) return null;
-      return { time: new Date(time), id, summary: summary ?? {} };
+      return {
+        time: new Date(time),
+        id,
+        summary: summary ?? {},
+        tags: Array.isArray(tags)
+          ? tags.filter((tag) => typeof tag === "string")
+          : [],
+      };
     })
     .filter((snapshot): snapshot is Snapshot => snapshot != null);
   result.sort(field_cmp("time"));
@@ -327,7 +345,7 @@ export class SubvolumeRustic {
     runner,
   }: RusticBackupOptions = {}): Promise<CreatedSnapshot> => {
     await this.cleanupStaleTempBackupSnapshots();
-    if (limit != null && (await this.snapshots()).length >= limit) {
+    if (limit != null && (await this.listSnapshotsFresh()).length >= limit) {
       // 507 = "insufficient storage" for http
       throw new ConatError(`there is a limit of ${limit} backups`, {
         code: 507,
@@ -393,6 +411,7 @@ export class SubvolumeRustic {
         time: backupTime,
         id,
         summary,
+        tags: tags ?? [],
         snapshotGeneration,
       };
     } finally {
@@ -547,11 +566,111 @@ export class SubvolumeRustic {
   };
 
   update = async (counts?: Partial<SnapshotCounts>, opts?) => {
-    return await updateRollingSnapshots({
-      snapshots: this,
-      counts: { ...DEFAULT_BACKUP_COUNTS, ...counts },
-      opts,
-    });
+    const timed = async <T>(stage: string, run: () => Promise<T>) => {
+      const started = Date.now();
+      try {
+        return await run();
+      } finally {
+        try {
+          opts?.onStage?.(stage, Math.max(0, Date.now() - started));
+        } catch (err) {
+          logger.warn("rustic stage observer failed", { stage, err });
+        }
+      }
+    };
+    const limit = opts?.limit;
+    const normalizedLimit =
+      limit == null ? undefined : Math.max(0, Math.floor(Number(limit)));
+    const snapshots = await timed("inventory", () => this.snapshots());
+    const automatic = (snapshot: Snapshot) =>
+      snapshot.tags.length === 0 || snapshot.tags.includes("cocalc-automatic");
+    const protectedCount = snapshots.filter(
+      (snapshot) => !automatic(snapshot),
+    ).length;
+    if (
+      normalizedLimit === 0 ||
+      (normalizedLimit != null && protectedCount >= normalizedLimit)
+    ) {
+      throw new ConatError(`there is a limit of ${limit} backups`, {
+        code: 507,
+      });
+    }
+    // Existing untagged backups followed the automatic retention policy before
+    // source tags existed. New manual and archival backups have distinct tags.
+    const pruneToLimit = async (target: number) => {
+      if (normalizedLimit == null) return;
+      await timed("prune", async () => {
+        const all = await this.listSnapshotsFresh();
+        const eligible = all.filter(automatic).sort(field_cmp("time"));
+        let excess = all.length - target;
+        // Preserve the newest automatic backup even if protected backups already
+        // consume the entitlement; a failed replacement must never remove it.
+        for (const snapshot of eligible.slice(0, -1)) {
+          if (excess <= 0) break;
+          await this.forget({ id: snapshot.id });
+          excess--;
+        }
+        if (excess > 0) {
+          throw new ConatError(`there is a limit of ${limit} backups`, {
+            code: 507,
+          });
+        }
+      });
+    };
+    let currentSnapshots = snapshots;
+    if (normalizedLimit != null && snapshots.length > normalizedLimit) {
+      await pruneToLimit(normalizedLimit);
+      currentSnapshots = await this.listSnapshotsFresh();
+    }
+    const replacementAtLimit =
+      normalizedLimit != null && currentSnapshots.length === normalizedLimit;
+    try {
+      await updateRollingSnapshots({
+        snapshots: this,
+        counts: { ...DEFAULT_BACKUP_COUNTS, ...counts },
+        opts: {
+          ...opts,
+          tags: ["cocalc-automatic", ...(opts?.tags ?? [])],
+          // The caller holds the per-project backup lock. Reserve exactly one
+          // temporary slot, only when this project is at its normal limit.
+          limit:
+            normalizedLimit == null
+              ? undefined
+              : normalizedLimit + (replacementAtLimit ? 1 : 0),
+          beforeCreate: async () => {
+            await opts?.beforeCreate?.();
+            if (!replacementAtLimit) return;
+            const fresh = await this.listSnapshotsFresh();
+            const expected = new Set(currentSnapshots.map(({ id }) => id));
+            if (
+              fresh.length !== normalizedLimit ||
+              fresh.some(({ id }) => !expected.has(id))
+            ) {
+              throw new Error(
+                "backup repository inventory changed before replacement",
+              );
+            }
+          },
+          afterCreate: async (created: unknown) => {
+            const id = (created as CreatedSnapshot | undefined)?.id;
+            if (!id || !(await this.snapshotExists({ id }))) {
+              throw new Error("new backup is not confirmed in the repository");
+            }
+            await opts?.afterCreate?.(created);
+          },
+        },
+      });
+    } catch (err) {
+      if (replacementAtLimit && isRepositoryCapacityError(err)) {
+        logger.warn("backup replacement repository capacity unavailable", {
+          subvolume: this.subvolume.name,
+          err,
+        });
+        throw new ConatError("replacement_capacity_blocked", { code: 507 });
+      }
+      throw err;
+    }
+    if (normalizedLimit != null) await pruneToLimit(normalizedLimit);
   };
 
   // Snapshot compat api, which is useful for rolling backups.
@@ -576,7 +695,13 @@ export class SubvolumeRustic {
   };
 
   readdir = async (): Promise<string[]> => {
-    return (await this.snapshots()).map(({ time }) => time.toISOString());
+    return (await this.snapshots())
+      .filter(
+        (snapshot) =>
+          snapshot.tags.length === 0 ||
+          snapshot.tags.includes("cocalc-automatic"),
+      )
+      .map(({ time }) => time.toISOString());
   };
 
   // TODO -- for now just always assume we do...

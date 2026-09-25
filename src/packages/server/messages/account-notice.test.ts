@@ -84,4 +84,24 @@ describe("server messages account notice bridge", () => {
       },
     ]);
   });
+
+  it("marks an operator incident for critical email policy", async () => {
+    await mirrorSystemMessageToAccountNotice({
+      from_id: SUPPORT_ACCOUNT_ID,
+      to_ids: [TARGET_ACCOUNT_ID],
+      subject: "Project recovery incident",
+      body: "Paying backup overdue.",
+      message_id: 18,
+      operationalIncident: true,
+    });
+    const { rows } = await getPool().query(
+      "SELECT payload_json FROM notification_events",
+    );
+    expect(rows[0].payload_json).toMatchObject({
+      title: "Project recovery incident",
+      severity: "error",
+      notice_type: "operator_incident",
+      origin_label: "Operations",
+    });
+  });
 });

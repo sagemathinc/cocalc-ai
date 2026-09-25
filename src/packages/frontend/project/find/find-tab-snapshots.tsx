@@ -6,6 +6,7 @@ import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { getSnapshotFileText } from "@cocalc/frontend/project/archive-info";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { ProjectRecoveryStatus } from "@cocalc/frontend/project/recovery-status";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { BACKUPS } from "@cocalc/util/consts/backups";
@@ -672,6 +673,7 @@ export function SnapshotsTab({
 
   return (
     <div className="smc-vfill">
+      <ProjectRecoveryStatus project_id={project_id} kind="snapshot" />
       {mode === "flyout" ? (
         <>
           {alert}

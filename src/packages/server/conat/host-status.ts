@@ -21,75 +21,144 @@ import {
   DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
 } from "@cocalc/server/membership/project-limits";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
+import {
+  storageFundingAccountId,
+  storageServiceClassFromMembership,
+} from "@cocalc/server/membership/storage-service-class";
 import {
   classifyHostProvisionedInventory,
   shouldDeleteHostProjectUpdate,
 } from "./host-project-ownership";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import {
+  ensureProjectMaintenanceStatusTable,
+  snapshotScheduleRevision,
+} from "@cocalc/server/projects/maintenance-status";
 
 const logger = getLogger("server:conat:host-status");
 
 export async function listHostProjectMaintenanceSchedules({
   host_id,
-  active_days,
   limit,
+  cursor_project_id,
+  project_ids,
 }: {
   host_id: string;
   active_days?: number;
   limit?: number;
+  cursor_project_id?: string;
+  project_ids?: string[];
 }): Promise<HostProjectMaintenanceSchedule[]> {
   if (!host_id) {
     throw Error("host_id is required");
   }
+  const bayId = getConfiguredBayId();
   const { rows: hostRows } = await getPool().query<{ id: string }>(
-    `SELECT id FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
-    [host_id],
+    `SELECT id FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL
+        AND COALESCE(NULLIF(BTRIM(bay_id), ''), $2)=$2
+      LIMIT 1`,
+    [host_id, bayId],
   );
   if (!hostRows.length) {
     throw Error("host not found");
   }
+  await ensureProjectMaintenanceStatusTable();
 
-  const normalizedActiveDays = Math.max(
-    0,
-    Math.floor(Number(active_days ?? 0) || 0),
-  );
-  const params: any[] = [host_id];
-  let activeWhere = "";
-  if (normalizedActiveDays > 0) {
-    params.push(normalizedActiveDays);
-    activeWhere = ` AND (
-      COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) >= NOW() - ($2::int * INTERVAL '1 day')
-      OR (
-        COALESCE(backups->>'disabled', 'false') <> 'true'
-        AND (
-          last_backup IS NULL
-          OR COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP, last_edited) > last_backup
-        )
-      )
-    )`;
-  }
+  // Walk a stable project-id cursor. An activity cutoff or debt-ordered LIMIT
+  // can hide projects behind the first page forever.
+  const params: any[] = [host_id, cursor_project_id ?? null];
   const normalizedLimit = Math.max(
     1,
     Math.min(500, Math.floor(Number(limit ?? 100) || 100)),
   );
   params.push(normalizedLimit);
   const limitParam = `$${params.length}`;
+  params.push(bayId);
+  const bayParam = `$${params.length}`;
+  if (project_ids && project_ids.length > 100) {
+    throw Error("too many maintenance project ids");
+  }
+  let projectFilter = "";
+  if (project_ids) {
+    params.push(project_ids);
+    projectFilter = `AND project_id = ANY($${params.length}::uuid[])`;
+  }
   const { rows } = await getPool().query<{
     project_id: string;
     last_edited: Date | string | null;
     last_changed: Date | string | null;
     last_backup: Date | string | null;
+    last_snapshot: Date | string | null;
+    last_snapshot_observed_at: Date | string | null;
+    snapshot_status_outcome: HostProjectMaintenanceSchedule["snapshot_status_outcome"];
+    snapshot_status_due_at: Date | string | null;
+    snapshot_reconciled_change_at: Date | string | null;
+    snapshot_reconciled_schedule_revision: string | null;
+    last_backup_observed_at: Date | string | null;
+    backup_status_outcome: HostProjectMaintenanceSchedule["backup_status_outcome"];
+    backup_status_reason: string | null;
+    backup_status_due_at: Date | string | null;
+    snapshot_retry_at: Date | string | null;
+    backup_retry_at: Date | string | null;
+    snapshot_failures: number | null;
+    backup_failures: number | null;
     backup_due_since: Date | string | null;
     snapshots: HostProjectMaintenanceSchedule["snapshots"];
     backups: HostProjectMaintenanceSchedule["backups"];
     owner_account_id: string | null;
+    usage_account_id: string | null;
+    course: { type?: string; account_id?: string } | null;
+    users: Record<string, { group?: string }> | null;
   }>(
     `SELECT
        project_id,
        last_edited,
        (to_jsonb(projects)->>'last_changed')::TIMESTAMP AS last_changed,
        last_backup,
+       (SELECT latest_snapshot_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS last_snapshot,
+       (SELECT observed_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS last_snapshot_observed_at,
+       (SELECT outcome FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_status_outcome,
+       (SELECT due_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_status_due_at,
+       (SELECT reconciled_change_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_reconciled_change_at,
+       (SELECT reconciled_schedule_revision FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_reconciled_schedule_revision,
+       (SELECT observed_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS last_backup_observed_at,
+       (SELECT outcome FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_outcome,
+       (SELECT reason FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_reason,
+       (SELECT due_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_status_due_at,
+       (SELECT retry_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_retry_at,
+       (SELECT retry_at FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_retry_at,
+       (SELECT consecutive_failures FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='snapshot'
+           AND host_id=projects.host_id) AS snapshot_failures,
+       (SELECT consecutive_failures FROM project_maintenance_status
+         WHERE project_id=projects.project_id AND kind='backup'
+           AND host_id=projects.host_id) AS backup_failures,
        CASE
          WHEN COALESCE(backups->>'disabled', 'false') <> 'true'
            AND (
@@ -105,6 +174,9 @@ export async function listHostProjectMaintenanceSchedules({
        END AS backup_due_since,
        snapshots,
        backups,
+       usage_account_id::text AS usage_account_id,
+       course,
+       users,
        (
          SELECT account_id_text::text
          FROM jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
@@ -114,10 +186,11 @@ export async function listHostProjectMaintenanceSchedules({
      FROM projects
      WHERE host_id=$1
        AND provisioned IS TRUE
-       AND deleted IS NOT TRUE${activeWhere}
-     ORDER BY backup_due_since ASC NULLS LAST,
-              last_edited ASC NULLS LAST,
-              project_id ASC
+       AND deleted IS NOT TRUE
+       AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), ${bayParam})=${bayParam}
+       AND ($2::uuid IS NULL OR project_id > $2::uuid)
+       ${projectFilter}
+     ORDER BY project_id ASC
      LIMIT ${limitParam}`,
     params,
   );
@@ -128,32 +201,56 @@ export async function listHostProjectMaintenanceSchedules({
       max_backups_per_project: number;
     }
   >();
-  const ownerIds = Array.from(
+  const accountIds = Array.from(
     new Set(
       rows
-        .map((row) => `${row.owner_account_id ?? ""}`.trim())
-        .filter((owner_account_id) => owner_account_id.length > 0),
+        .flatMap((row) => {
+          const ownerId = `${row.owner_account_id ?? ""}`.trim();
+          return [ownerId, storageFundingAccountId(row)];
+        })
+        .filter((account_id): account_id is string => Boolean(account_id)),
     ),
   );
-  await Promise.all(
-    ownerIds.map(async (owner_account_id) => {
-      const resolution = await resolveMembershipForAccount(owner_account_id);
-      const limits = getEffectiveMembershipUsageLimits(resolution);
-      limitsByOwner.set(owner_account_id, {
-        max_snapshots_per_project:
-          limits.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
-        max_backups_per_project:
-          limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
-      });
-    }),
-  );
+  const serviceByAccount = new Map<
+    string,
+    { service_class: "paying" | "free"; priority: number }
+  >();
+  // An unresolved owner must not fall back to a smaller retention limit.
+  // Let the host retry this page with its bounded cached ownership lease.
+  for (let offset = 0; offset < accountIds.length; offset += 16) {
+    await Promise.all(
+      accountIds.slice(offset, offset + 16).map(async (account_id) => {
+        const resolution = await resolveRuntimeMembership(account_id);
+        const limits = getEffectiveMembershipUsageLimits(resolution);
+        limitsByOwner.set(account_id, {
+          max_snapshots_per_project:
+            limits.max_snapshots_per_project ??
+            DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+          max_backups_per_project:
+            limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+        });
+        serviceByAccount.set(account_id, {
+          service_class: storageServiceClassFromMembership(resolution),
+          priority: limits.shared_compute_priority ?? 0,
+        });
+      }),
+    );
+  }
   return rows.map((row) => {
-    const owner_account_id = `${row.owner_account_id ?? ""}`.trim();
-    const limits = owner_account_id
-      ? limitsByOwner.get(owner_account_id)
+    const storage_account_id = storageFundingAccountId(row);
+    // Existing snapshot and backup entitlements belong to the project owner.
+    // Funding priority may follow a different usage account; changing limits
+    // here would silently alter the product's storage entitlement policy.
+    const ownerId = `${row.owner_account_id ?? ""}`.trim();
+    const limits = ownerId ? limitsByOwner.get(ownerId) : undefined;
+    const service = storage_account_id
+      ? serviceByAccount.get(storage_account_id)
       : undefined;
     const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
+      storage_account_id: storage_account_id || null,
+      storage_service_class: service?.service_class ?? "unclassified",
+      storage_priority: service?.priority ?? 0,
       last_edited:
         row.last_edited == null
           ? null
@@ -161,6 +258,7 @@ export async function listHostProjectMaintenanceSchedules({
             ? row.last_edited.toISOString()
             : `${row.last_edited}`,
       snapshots: row.snapshots ?? null,
+      snapshot_schedule_revision: snapshotScheduleRevision(row.snapshots),
       backups: row.backups ?? null,
       max_snapshots_per_project:
         limits?.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
@@ -179,6 +277,61 @@ export async function listHostProjectMaintenanceSchedules({
         : row.last_backup instanceof Date
           ? row.last_backup.toISOString()
           : `${row.last_backup}`;
+    schedule.last_snapshot =
+      row.last_snapshot == null
+        ? null
+        : row.last_snapshot instanceof Date
+          ? row.last_snapshot.toISOString()
+          : `${row.last_snapshot}`;
+    schedule.last_snapshot_observed_at =
+      row.last_snapshot_observed_at == null
+        ? null
+        : row.last_snapshot_observed_at instanceof Date
+          ? row.last_snapshot_observed_at.toISOString()
+          : `${row.last_snapshot_observed_at}`;
+    schedule.snapshot_status_outcome = row.snapshot_status_outcome ?? null;
+    schedule.snapshot_status_due_at =
+      row.snapshot_status_due_at == null
+        ? null
+        : row.snapshot_status_due_at instanceof Date
+          ? row.snapshot_status_due_at.toISOString()
+          : `${row.snapshot_status_due_at}`;
+    schedule.snapshot_reconciled_change_at =
+      row.snapshot_reconciled_change_at == null
+        ? null
+        : row.snapshot_reconciled_change_at instanceof Date
+          ? row.snapshot_reconciled_change_at.toISOString()
+          : `${row.snapshot_reconciled_change_at}`;
+    schedule.snapshot_reconciled_schedule_revision =
+      row.snapshot_reconciled_schedule_revision ?? null;
+    schedule.last_backup_observed_at =
+      row.last_backup_observed_at == null
+        ? null
+        : row.last_backup_observed_at instanceof Date
+          ? row.last_backup_observed_at.toISOString()
+          : `${row.last_backup_observed_at}`;
+    schedule.backup_status_outcome = row.backup_status_outcome ?? null;
+    schedule.backup_status_reason = row.backup_status_reason ?? null;
+    schedule.backup_status_due_at =
+      row.backup_status_due_at == null
+        ? null
+        : row.backup_status_due_at instanceof Date
+          ? row.backup_status_due_at.toISOString()
+          : `${row.backup_status_due_at}`;
+    schedule.snapshot_retry_at =
+      row.snapshot_retry_at == null
+        ? null
+        : row.snapshot_retry_at instanceof Date
+          ? row.snapshot_retry_at.toISOString()
+          : `${row.snapshot_retry_at}`;
+    schedule.backup_retry_at =
+      row.backup_retry_at == null
+        ? null
+        : row.backup_retry_at instanceof Date
+          ? row.backup_retry_at.toISOString()
+          : `${row.backup_retry_at}`;
+    schedule.snapshot_failures = row.snapshot_failures ?? 0;
+    schedule.backup_failures = row.backup_failures ?? 0;
     schedule.backup_due_since =
       row.backup_due_since == null
         ? null
@@ -187,6 +340,59 @@ export async function listHostProjectMaintenanceSchedules({
           : `${row.backup_due_since}`;
     return schedule;
   });
+}
+
+export async function confirmHostProjectMaintenanceAssignment({
+  host_id,
+  project_id,
+  kind,
+  schedule_revision,
+  observed_change_at,
+}: {
+  host_id: string;
+  project_id: string;
+  kind: "snapshot" | "backup";
+  schedule_revision: string;
+  observed_change_at: string | null;
+}): Promise<{
+  valid: boolean;
+  reason?:
+    | "assignment_changed"
+    | "schedule_changed"
+    | "change_generation_changed";
+}> {
+  const { rows } = await getPool().query<{
+    snapshots: HostProjectMaintenanceSchedule["snapshots"];
+    backups: HostProjectMaintenanceSchedule["backups"];
+    observed_change_at: Date | string | null;
+  }>(
+    `SELECT snapshots, backups,
+            COALESCE((to_jsonb(projects)->>'last_changed')::TIMESTAMP,
+                     last_edited) AS observed_change_at
+       FROM projects
+      WHERE project_id=$1 AND host_id=$2
+        AND provisioned IS TRUE AND deleted IS NOT TRUE
+        AND COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $3)=$3
+      LIMIT 1`,
+    [project_id, host_id, getConfiguredBayId()],
+  );
+  const row = rows[0];
+  if (!row) return { valid: false, reason: "assignment_changed" };
+  if (
+    snapshotScheduleRevision(
+      kind === "snapshot" ? row.snapshots : row.backups,
+    ) !== schedule_revision
+  ) {
+    return { valid: false, reason: "schedule_changed" };
+  }
+  const currentChange =
+    row.observed_change_at == null
+      ? null
+      : new Date(row.observed_change_at).toISOString();
+  if (currentChange !== observed_change_at) {
+    return { valid: false, reason: "change_generation_changed" };
+  }
+  return { valid: true };
 }
 
 export async function initHostStatusService() {
@@ -481,13 +687,6 @@ export async function initHostStatusService() {
           next_cursor_updated_ms: last?.updated_ms,
           next_cursor_account_id: last?.account_id,
         };
-      },
-      async listProjectMaintenanceSchedules({ host_id, active_days, limit }) {
-        return await listHostProjectMaintenanceSchedules({
-          host_id,
-          active_days,
-          limit,
-        });
       },
     },
   });

@@ -6,6 +6,34 @@
 import { resolveNotificationDeliveryPolicy } from "./notification-delivery-policy";
 
 describe("notification delivery policy", () => {
+  it("requires immediate critical email for a trusted operator incident", () => {
+    const incident = {
+      kind: "account_notice",
+      origin_kind: "system",
+      target_account_id: "oncall",
+      summary: { notice_type: "operator_incident" },
+      preferences: { email: { maintenance: "none", support: "none" } },
+    };
+    expect(resolveNotificationDeliveryPolicy(incident)).toMatchObject({
+      category: "maintenance",
+      lane: "critical",
+      delivery_mode: "immediate",
+      creates_in_app: true,
+      required: true,
+      responsible_account_id: null,
+    });
+    expect(
+      resolveNotificationDeliveryPolicy({
+        ...incident,
+        origin_kind: "user",
+      }),
+    ).toMatchObject({
+      lane: "transactional",
+      delivery_mode: "none",
+      required: false,
+    });
+  });
+
   it("routes direct mentions through mention notification email charged to actor", () => {
     expect(
       resolveNotificationDeliveryPolicy({

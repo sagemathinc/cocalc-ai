@@ -361,6 +361,7 @@ export interface Fileserver {
     id: string;
     path?: string;
     dest?: string;
+    remote_only?: boolean;
     lro?: LroRef;
   }) => Promise<void>;
   // Download a signed project archive directly on the project host and extract

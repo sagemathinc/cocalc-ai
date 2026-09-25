@@ -1,7 +1,11 @@
 import * as fs from "node:fs";
 
 import getLogger from "@cocalc/backend/logger";
-import { createHostStatusClient } from "@cocalc/conat/project-host/api";
+import {
+  createHostStatusClient,
+  type HostProjectMaintenanceSchedule,
+  type ProjectMaintenanceReport,
+} from "@cocalc/conat/project-host/api";
 import {
   BtrfsMutationDeferredError,
   withBtrfsMutationContext,
@@ -9,11 +13,16 @@ import {
 import {
   DEFAULT_BACKUP_COUNTS,
   DEFAULT_SNAPSHOT_COUNTS,
+  SNAPSHOT_INTERVALS_MS,
   type SnapshotCounts,
   type SnapshotSchedule,
 } from "@cocalc/util/consts/snapshots";
-import { getMasterConatClient } from "./master-status";
 import {
+  getMasterConatClient,
+  onProjectProvisionedReported,
+} from "./master-status";
+import {
+  getBackups,
   runScheduledBackupMaintenance,
   runScheduledSnapshotMaintenance,
 } from "./file-server";
@@ -22,6 +31,17 @@ import {
   getStorageAdmissionStatus,
 } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
+import { orderProjectMaintenance } from "./maintenance-priority";
+import { recoveryFailureReason } from "./recovery-failure-reason";
+import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
+import { onProjectChangeReported } from "./last-edited";
+import {
+  listLeasedMaintenanceSchedules,
+  listPendingMaintenanceReports,
+  markMaintenanceReportDelivered,
+  saveMaintenanceReport,
+  saveValidatedMaintenanceSchedules,
+} from "./sqlite/maintenance-ledger";
 
 const logger = getLogger("project-host:snapshot-backup-maintenance");
 
@@ -31,9 +51,14 @@ const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 // scans amplify latency without increasing useful mutation throughput (the
 // mutation lock is global). Operators can raise this only after qualification.
 const DEFAULT_PARALLELISM = 1;
-const DEFAULT_INITIAL_DELAY_MS = DEFAULT_SWEEP_MS;
-const DEFAULT_CANDIDATE_LIMIT = 32;
+const DEFAULT_INITIAL_DELAY_MS = 60_000;
+const INITIAL_DELAY_JITTER_MS = 60_000;
+const FULL_SWEEP_RETRY_MS = 60_000;
+const DEFAULT_CANDIDATE_LIMIT = 250;
 const MAX_CANDIDATE_LIMIT = 500;
+const CHANGE_EVENT_BATCH_LIMIT = 50;
+const CHANGE_EVENT_DELAY_MS = 15_000;
+const CHANGE_EVENT_RETRY_MS = 60_000;
 const DEFAULT_STARVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARVATION_OVERRIDES_PER_SWEEP = 1;
 const MAX_STARVATION_OVERRIDES_PER_SWEEP = 4;
@@ -43,9 +68,14 @@ const DEFAULT_MEMORY_AVAILABLE_MIN_BYTES = 2 * GIB;
 const DEFAULT_MEMORY_AVAILABLE_MAX_BYTES = 16 * GIB;
 const DEFAULT_MEMORY_AVAILABLE_HARD_MIN_BYTES = 4 * GIB;
 const DEFAULT_MEMORY_PSI_FULL_AVG10_MAX = 5;
+const CGROUP_ROOT = "/sys/fs/cgroup";
+const BEES_CGROUP = "cocalc-bees";
 
-const inFlightProjects = new Set<string>();
-let sweepRunning = false;
+const inFlightSnapshots = new Set<string>();
+const inFlightBackups = new Set<string>();
+let snapshotLaneRunning = false;
+let backupLaneRunning = false;
+let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
@@ -55,6 +85,14 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
 function parseNonNegativeInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function initialDelayJitterMs(hostId: string): number {
+  let hash = 0;
+  for (const character of hostId) {
+    hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+  }
+  return hash % INITIAL_DELAY_JITTER_MS;
 }
 
 function parseBoolean(value: string | undefined): boolean {
@@ -130,14 +168,107 @@ function readMemoryPressure(): string | undefined {
   }
 }
 
+function readMemoryInfo(): string | undefined {
+  try {
+    return fs.readFileSync("/proc/meminfo", "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+type MemoryCgroupPressureSample = {
+  beesFullAvg10: number;
+  beesCurrentBytes: number;
+  beesHighBytes: number;
+  otherMaxFullAvg10: number;
+};
+
+function readMemoryCgroupPressure(): MemoryCgroupPressureSample | undefined {
+  try {
+    const beesPath = `${CGROUP_ROOT}/${BEES_CGROUP}`;
+    const beesFullAvg10 = parsePressureFullAvg10(
+      fs.readFileSync(`${beesPath}/memory.pressure`, "utf8"),
+    );
+    const beesCurrentBytes = Number(
+      fs.readFileSync(`${beesPath}/memory.current`, "utf8").trim(),
+    );
+    const beesHighBytes = Number(
+      fs.readFileSync(`${beesPath}/memory.high`, "utf8").trim(),
+    );
+    if (
+      beesFullAvg10 == null ||
+      !Number.isSafeInteger(beesCurrentBytes) ||
+      !Number.isSafeInteger(beesHighBytes) ||
+      beesHighBytes <= 0
+    ) {
+      return undefined;
+    }
+    let otherMaxFullAvg10 = 0;
+    const seen = new Set<string>();
+    for (const entry of fs.readdirSync(CGROUP_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === BEES_CGROUP) continue;
+      const full = parsePressureFullAvg10(
+        fs.readFileSync(`${CGROUP_ROOT}/${entry.name}/memory.pressure`, "utf8"),
+      );
+      if (full == null) return undefined;
+      seen.add(entry.name);
+      otherMaxFullAvg10 = Math.max(otherMaxFullAvg10, full);
+    }
+    // If this is not the host's expected cgroup-v2 layout, keep the
+    // conservative global pressure gate.
+    if (
+      ![
+        "cocalc-host-services",
+        "cocalc-project-pool",
+        "cocalc-maintenance",
+        "system.slice",
+      ].every((name) => seen.has(name))
+    ) {
+      return undefined;
+    }
+    return {
+      beesFullAvg10,
+      beesCurrentBytes,
+      beesHighBytes,
+      otherMaxFullAvg10,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isolatedBeesMemoryPressure({
+  globalFullAvg10,
+  pressureMax,
+  availableBytes,
+  preferredBytes,
+  sample,
+}: {
+  globalFullAvg10: number;
+  pressureMax: number;
+  availableBytes: number;
+  preferredBytes: number;
+  sample: MemoryCgroupPressureSample | undefined;
+}): boolean {
+  if (!sample || availableBytes < preferredBytes) return false;
+  return (
+    sample.beesCurrentBytes >= sample.beesHighBytes &&
+    sample.beesFullAvg10 >= pressureMax &&
+    globalFullAvg10 - sample.beesFullAvg10 <= pressureMax / 2 &&
+    sample.otherMaxFullAvg10 < pressureMax / 2
+  );
+}
+
 function maintenanceMemoryDecision({
   configuredParallelism,
-  meminfoText = fs.readFileSync("/proc/meminfo", "utf8"),
+  meminfoText = readMemoryInfo(),
   pressureText = readMemoryPressure(),
+  cgroupPressure,
 }: {
   configuredParallelism: number;
   meminfoText?: string;
   pressureText?: string;
+  cgroupPressure?: MemoryCgroupPressureSample;
 }):
   | {
       skip: false;
@@ -146,18 +277,22 @@ function maintenanceMemoryDecision({
       preferredBytes?: number;
       hardMinBytes?: number;
       pressureFullAvg10?: number;
+      isolatedBeesPressure?: boolean;
     }
   | {
       skip: true;
-      reason: "available_memory" | "memory_pressure";
+      reason:
+        | "available_memory"
+        | "memory_pressure"
+        | "memory_measurement_unavailable";
       availableBytes?: number;
       preferredBytes?: number;
       hardMinBytes?: number;
       pressureFullAvg10?: number;
     } {
-  const memory = parseMeminfo(meminfoText);
+  const memory = meminfoText ? parseMeminfo(meminfoText) : undefined;
   if (!memory) {
-    return { skip: false, parallelism: configuredParallelism };
+    return { skip: true, reason: "memory_measurement_unavailable" };
   }
   const preferredBytes = memoryMaintenanceThresholdBytes(memory.totalBytes);
   // A zero preferred threshold is the documented escape hatch used by tests
@@ -189,18 +324,45 @@ function maintenanceMemoryDecision({
     Number.isFinite(pressureMax) && pressureMax >= 0
       ? pressureMax
       : DEFAULT_MEMORY_PSI_FULL_AVG10_MAX;
+  if (effectivePressureMax > 0 && pressureFullAvg10 == null) {
+    return {
+      skip: true,
+      reason: "memory_measurement_unavailable",
+      availableBytes: memory.availableBytes,
+      preferredBytes,
+      hardMinBytes,
+    };
+  }
   if (
     pressureFullAvg10 != null &&
     effectivePressureMax > 0 &&
     pressureFullAvg10 >= effectivePressureMax
   ) {
+    const isolatedBeesPressure = isolatedBeesMemoryPressure({
+      globalFullAvg10: pressureFullAvg10,
+      pressureMax: effectivePressureMax,
+      availableBytes: memory.availableBytes,
+      preferredBytes,
+      sample: cgroupPressure ?? readMemoryCgroupPressure(),
+    });
+    if (!isolatedBeesPressure) {
+      return {
+        skip: true,
+        reason: "memory_pressure",
+        availableBytes: memory.availableBytes,
+        preferredBytes,
+        hardMinBytes,
+        pressureFullAvg10,
+      };
+    }
     return {
-      skip: true,
-      reason: "memory_pressure",
+      skip: false,
+      parallelism: 1,
       availableBytes: memory.availableBytes,
       preferredBytes,
       hardMinBytes,
       pressureFullAvg10,
+      isolatedBeesPressure: true,
     };
   }
   if (memory.availableBytes < hardMinBytes) {
@@ -271,6 +433,7 @@ async function runScheduledStorageOperation({
   project_id,
   operation_kind,
   allowStarvationOverride = false,
+  validate,
   run,
 }: {
   hostId: string;
@@ -280,8 +443,9 @@ async function runScheduledStorageOperation({
     "scheduled_snapshot" | "scheduled_backup"
   >;
   allowStarvationOverride?: boolean;
+  validate: () => Promise<string | undefined>;
   run: () => Promise<void>;
-}): Promise<{ ran: boolean; starvationOverride: boolean }> {
+}): Promise<{ ran: boolean; starvationOverride: boolean; reason?: string }> {
   const ticket = admitStorageOperation({
     operation_kind,
     project_id,
@@ -294,7 +458,7 @@ async function runScheduledStorageOperation({
       operation_kind,
       reason: ticket.reason,
     });
-    return { ran: false, starvationOverride: false };
+    return { ran: false, starvationOverride: false, reason: ticket.reason };
   }
   if (ticket.starvation_override) {
     logger.info("admitting overdue backup maintenance at low priority", {
@@ -315,6 +479,7 @@ async function runScheduledStorageOperation({
   }
   try {
     try {
+      let validationReason: string | undefined;
       await withBtrfsMutationContext(
         {
           operation_id: ticket.operation_id,
@@ -325,8 +490,29 @@ async function runScheduledStorageOperation({
           checkpointable: true,
           starvation_override: ticket.starvation_override,
         },
-        run,
+        async () => {
+          validationReason = await validate();
+          if (validationReason) return;
+          await run();
+        },
       );
+      if (validationReason) {
+        return {
+          ran: false,
+          starvationOverride: false,
+          reason: validationReason,
+        };
+      }
+      // A move, edit, or schedule update during a long backup invalidates the
+      // old assignment before its result is published as current protection.
+      validationReason = await validate();
+      if (validationReason) {
+        return {
+          ran: false,
+          starvationOverride: false,
+          reason: validationReason,
+        };
+      }
       return {
         ran: true,
         starvationOverride: ticket.starvation_override,
@@ -339,11 +525,19 @@ async function runScheduledStorageOperation({
         operation_kind,
         reason: err.reason,
       });
-      return { ran: false, starvationOverride: false };
+      return { ran: false, starvationOverride: false, reason: err.reason };
     }
   } finally {
     ticket.release();
   }
+}
+
+function scheduleRevision(schedule: SnapshotSchedule | null): string {
+  return JSON.stringify(
+    Object.entries({ ...DEFAULT_SNAPSHOT_COUNTS, ...(schedule ?? {}) }).sort(
+      ([a], [b]) => a.localeCompare(b),
+    ),
+  );
 }
 
 function parseTimestampMs(
@@ -366,11 +560,100 @@ function backupIsStarved({
   return dueSinceMs != null && nowMs - dueSinceMs >= starvationAgeMs;
 }
 
+function backupDueAt(
+  row: {
+    backup_due_since?: string | null;
+    last_backup?: string | null;
+    backup_status_outcome?: HostProjectMaintenanceSchedule["backup_status_outcome"];
+    backup_status_due_at?: string | null;
+  },
+  schedule: SnapshotSchedule,
+): number | undefined {
+  const changedAt = parseTimestampMs(row.backup_due_since);
+  if (changedAt == null) return undefined;
+  const intervals = (
+    Object.keys(SNAPSHOT_INTERVALS_MS) as Array<keyof SnapshotCounts>
+  )
+    .filter((kind) => kind !== "frequent" && schedule[kind] > 0)
+    .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
+  if (!intervals.length) return undefined;
+  const lastBackup = parseTimestampMs(row.last_backup);
+  const candidate =
+    lastBackup == null
+      ? changedAt
+      : Math.max(changedAt, lastBackup + Math.min(...intervals));
+  const previousDue = parseTimestampMs(row.backup_status_due_at);
+  return (row.backup_status_outcome === "deferred" ||
+    row.backup_status_outcome === "failed") &&
+    previousDue != null &&
+    (lastBackup == null || lastBackup < previousDue)
+    ? Math.min(candidate, previousDue)
+    : candidate;
+}
+
+function snapshotDueAt(
+  row: HostProjectMaintenanceSchedule,
+  schedule: SnapshotSchedule,
+): number | undefined {
+  const changedAt = parseTimestampMs(row.last_changed ?? row.last_edited);
+  if (changedAt == null) return undefined;
+  const reconciledChangeAt = parseTimestampMs(
+    row.snapshot_reconciled_change_at,
+  );
+  if (
+    reconciledChangeAt != null &&
+    changedAt <= reconciledChangeAt &&
+    row.snapshot_schedule_revision != null &&
+    row.snapshot_schedule_revision === row.snapshot_reconciled_schedule_revision
+  ) {
+    return undefined;
+  }
+  const lastSnapshot = parseTimestampMs(row.last_snapshot);
+  if (lastSnapshot != null && changedAt <= lastSnapshot) return undefined;
+  const intervals = (
+    Object.keys(SNAPSHOT_INTERVALS_MS) as Array<keyof SnapshotCounts>
+  )
+    .filter((kind) => schedule[kind] > 0)
+    .map((kind) => SNAPSHOT_INTERVALS_MS[kind]);
+  if (!intervals.length) return undefined;
+  const candidate =
+    lastSnapshot == null
+      ? changedAt
+      : Math.max(changedAt, lastSnapshot + Math.min(...intervals));
+  const previousDue = parseTimestampMs(row.snapshot_status_due_at);
+  return (row.snapshot_status_outcome === "deferred" ||
+    row.snapshot_status_outcome === "failed") &&
+    previousDue != null &&
+    (lastSnapshot == null || lastSnapshot < previousDue)
+    ? Math.min(candidate, previousDue)
+    : candidate;
+}
+
+function retryAt(
+  outcome: "succeeded" | "deferred" | "failed" | "skipped",
+  failures: number,
+): string | null {
+  if (outcome === "succeeded" || outcome === "skipped") return null;
+  const base =
+    outcome === "deferred"
+      ? 60_000
+      : Math.min(6 * 60 * 60_000, 5 * 60_000 * 2 ** Math.min(failures, 7));
+  return new Date(
+    Date.now() + Math.floor(base * (0.8 + Math.random() * 0.4)),
+  ).toISOString();
+}
+
 async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   hostId,
+  projectIds,
+  onFutureDue,
+  shadow = false,
 }: {
   hostId: string;
-}) {
+  projectIds?: string[];
+  onFutureDue?: (projectId: string, at: number) => void;
+  shadow?: boolean;
+}): Promise<boolean> {
   const admission = getStorageAdmissionStatus();
   const sweepRestricted =
     admission?.mode === "enforce" &&
@@ -383,7 +666,7 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hostId,
       lifecycle_active: admission.lifecycle_active,
       pressure_state: admission.pressure_state,
-      policy: "overdue-backup-only",
+      policy: "per-operation-admission",
     });
   }
   const configuredParallelism = parsePositiveInteger(
@@ -391,8 +674,18 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     DEFAULT_PARALLELISM,
   );
   const memoryDecision = maintenanceMemoryDecision({ configuredParallelism });
+  setSnapshotBackupMaintenanceGate({
+    checked_at: new Date().toISOString(),
+    ...(memoryDecision.skip ? { blocked_reason: memoryDecision.reason } : {}),
+    ...(memoryDecision.skip || !memoryDecision.isolatedBeesPressure
+      ? {}
+      : { pressure_attribution: "bees_cgroup" as const }),
+    ...(memoryDecision.pressureFullAvg10 == null
+      ? {}
+      : { memory_psi_full_avg10: memoryDecision.pressureFullAvg10 }),
+  });
   if (memoryDecision.skip) {
-    logger.info("skipping snapshot/backup maintenance under memory pressure", {
+    logger.info("skipping snapshot/backup maintenance at memory safety gate", {
       hostId,
       reason: memoryDecision.reason,
       memory_available_bytes: memoryDecision.availableBytes,
@@ -400,17 +693,41 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
       memory_psi_full_avg10: memoryDecision.pressureFullAvg10,
     });
-    return;
+    return false;
+  }
+  if (memoryDecision.isolatedBeesPressure) {
+    logger.info("ignoring memory pressure confined to the Bees cgroup", {
+      hostId,
+      memory_psi_full_avg10: memoryDecision.pressureFullAvg10,
+      memory_available_bytes: memoryDecision.availableBytes,
+      parallelism: memoryDecision.parallelism,
+    });
   }
   const client = getMasterConatClient();
   if (!client) {
     logger.debug("skipping maintenance sweep without master conat client");
-    return;
+    return false;
   }
   const statusClient = createHostStatusClient({
     client,
     timeout: 60_000,
   });
+  const report = async (value: ProjectMaintenanceReport) => {
+    saveMaintenanceReport(value);
+    await statusClient.reportProjectMaintenance(value);
+    markMaintenanceReportDelivered(value);
+  };
+  if (!shadow) {
+    for (const pending of listPendingMaintenanceReports()) {
+      try {
+        await statusClient.reportProjectMaintenance(pending);
+        markMaintenanceReportDelivered(pending);
+      } catch (err) {
+        logger.warn("maintenance status replay paused", { hostId, err });
+        break;
+      }
+    }
+  }
   const activeDays = parseNonNegativeInteger(
     process.env.COCALC_PROJECT_HOST_MAINTENANCE_ACTIVE_DAYS,
     DEFAULT_ACTIVE_DAYS,
@@ -445,120 +762,693 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       hard_min_bytes: memoryDecision.hardMinBytes,
     });
   }
-  const rows = await statusClient.listProjectMaintenanceSchedules({
-    host_id: hostId,
-    active_days: activeDays,
-    limit: candidateLimit,
-  });
-  if (!rows.length) {
-    logger.debug("no active projects eligible for maintenance", { hostId });
-    return;
+  const listingStartedAt = Date.now();
+  const listing = projectIds
+    ? statusClient.listProjectMaintenanceSchedules({
+        host_id: hostId,
+        active_days: activeDays,
+        limit: Math.max(1, projectIds.length),
+        project_ids: projectIds,
+      })
+    : (scheduleListing ??
+      (async () => {
+        const rows: HostProjectMaintenanceSchedule[] = [];
+        let cursor_project_id: string | undefined;
+        while (true) {
+          const page = await statusClient.listProjectMaintenanceSchedules({
+            host_id: hostId,
+            active_days: activeDays,
+            limit: candidateLimit,
+            ...(cursor_project_id ? { cursor_project_id } : {}),
+          });
+          rows.push(...page);
+          if (page.length < candidateLimit) break;
+          const next = page[page.length - 1]?.project_id;
+          if (!next || next <= (cursor_project_id ?? "")) {
+            throw new Error("maintenance project cursor did not advance");
+          }
+          cursor_project_id = next;
+        }
+        return rows;
+      })());
+  if (!projectIds) scheduleListing = listing;
+  let rows: HostProjectMaintenanceSchedule[];
+  let usedOwnershipLease = false;
+  try {
+    rows = await listing;
+  } catch (err) {
+    rows = listLeasedMaintenanceSchedules({ hostId, projectIds });
+    if (!rows.length) throw err;
+    usedOwnershipLease = true;
+    logger.warn("using short maintenance ownership lease during bay outage", {
+      hostId,
+      count: rows.length,
+      err: `${err}`,
+    });
+  } finally {
+    if (!projectIds && scheduleListing === listing) scheduleListing = undefined;
   }
-  let starvationOverrideReservations = 0;
-  await runWithParallelism(rows, parallelism, async (row) => {
-    const project_id = `${row.project_id ?? ""}`.trim();
-    if (!project_id) {
-      return;
-    }
-    if (inFlightProjects.has(project_id)) {
-      logger.debug("skipping overlapping maintenance sweep", { project_id });
-      return;
-    }
-    inFlightProjects.add(project_id);
+  if (!usedOwnershipLease) {
+    saveValidatedMaintenanceSchedules({
+      hostId,
+      rows,
+      requestedProjectIds: projectIds,
+    });
+  }
+  if (!rows.length) return true;
+  const candidateDiscoveryMs = Date.now() - listingStartedAt;
+  const validateAssignment = async (
+    row: HostProjectMaintenanceSchedule,
+    kind: "snapshot" | "backup",
+  ): Promise<string | undefined> => {
     try {
-      const snapshotSchedule = mergeSchedule(
-        DEFAULT_SNAPSHOT_COUNTS,
-        row.snapshots,
+      const assignment = await statusClient.confirmProjectMaintenanceAssignment(
+        {
+          host_id: hostId,
+          project_id: row.project_id,
+          kind,
+          schedule_revision: scheduleRevision(
+            kind === "snapshot" ? row.snapshots : row.backups,
+          ),
+          observed_change_at: row.last_changed ?? row.last_edited ?? null,
+        },
       );
-      if (!snapshotSchedule.disabled && !sweepRestricted) {
+      return assignment.valid
+        ? undefined
+        : (assignment.reason ?? "assignment_changed");
+    } catch (err) {
+      const leased = listLeasedMaintenanceSchedules({
+        hostId,
+        projectIds: [row.project_id],
+      })[0];
+      if (
+        leased &&
+        scheduleRevision(
+          kind === "snapshot" ? leased.snapshots : leased.backups,
+        ) ===
+          scheduleRevision(kind === "snapshot" ? row.snapshots : row.backups) &&
+        (leased.last_changed ?? leased.last_edited ?? null) ===
+          (row.last_changed ?? row.last_edited ?? null)
+      ) {
+        return undefined;
+      }
+      logger.warn("scheduled maintenance assignment check failed", {
+        hostId,
+        project_id: row.project_id,
+        kind,
+        err,
+      });
+      return "assignment_unverified";
+    }
+  };
+  if (usedOwnershipLease) {
+    logger.info("maintenance dispatch using bounded cached assignment", {
+      hostId,
+      count: rows.length,
+    });
+  }
+  const now = Date.now();
+  for (const row of rows) {
+    const snapshotSchedule = mergeSchedule(
+      DEFAULT_SNAPSHOT_COUNTS,
+      row.snapshots,
+    );
+    const backupSchedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
+    const snapshotDue = snapshotSchedule.disabled
+      ? undefined
+      : snapshotDueAt(row, snapshotSchedule);
+    const backupDue = backupSchedule.disabled
+      ? undefined
+      : backupDueAt(row, backupSchedule);
+    for (const [due, retry] of [
+      [snapshotDue, parseTimestampMs(row.snapshot_retry_at)],
+      [backupDue, parseTimestampMs(row.backup_retry_at)],
+    ]) {
+      if (due == null) continue;
+      const next = Math.max(due, retry ?? 0);
+      if (next > now) onFutureDue?.(row.project_id, next);
+    }
+  }
+  const snapshotRows = orderProjectMaintenance(rows, (row) => {
+    const due = snapshotDueAt(
+      row,
+      mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots),
+    );
+    return due == null ? null : new Date(due).toISOString();
+  });
+  const backupRows = orderProjectMaintenance(
+    rows,
+    (row) => row.backup_due_since,
+  );
+  if (shadow) {
+    const summarizeLane = (
+      ordered: HostProjectMaintenanceSchedule[],
+      kind: "snapshot" | "backup",
+    ) => {
+      let dueCount = 0;
+      let payingDue = 0;
+      let freeDue = 0;
+      let unclassifiedDue = 0;
+      let retryWaiting = 0;
+      let oldestDelayMs = 0;
+      const firstClasses: string[] = [];
+      for (const row of ordered) {
+        const schedule = mergeSchedule(
+          kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+          kind === "snapshot" ? row.snapshots : row.backups,
+        );
+        if (schedule.disabled) continue;
+        const due =
+          kind === "snapshot"
+            ? snapshotDueAt(row, schedule)
+            : backupDueAt(row, schedule);
+        if (due == null || due > now) continue;
+        dueCount++;
+        if (row.storage_service_class === "paying") payingDue++;
+        else if (row.storage_service_class === "free") freeDue++;
+        else unclassifiedDue++;
+        if (
+          (parseTimestampMs(
+            kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
+          ) ?? 0) > now
+        ) {
+          retryWaiting++;
+        }
+        oldestDelayMs = Math.max(oldestDelayMs, now - due);
+        if (firstClasses.length < 10) {
+          firstClasses.push(
+            row.storage_service_class === "paying" ||
+              row.storage_service_class === "free"
+              ? row.storage_service_class
+              : "unclassified",
+          );
+        }
+      }
+      return {
+        due_count: dueCount,
+        paying_due: payingDue,
+        free_due: freeDue,
+        unclassified_due: unclassifiedDue,
+        retry_waiting: retryWaiting,
+        oldest_delay_ms: oldestDelayMs,
+        first_ten_classes: firstClasses,
+      };
+    };
+    logger.info("snapshot/backup shadow reconciliation", {
+      hostId,
+      inventory_count: rows.length,
+      snapshot: summarizeLane(snapshotRows, "snapshot"),
+      backup: summarizeLane(backupRows, "backup"),
+      admission_pressure_state: admission?.pressure_state ?? "unknown",
+      maintenance_parallelism: parallelism,
+    });
+    return true;
+  }
+  const queuedAt = Date.now();
+  // Publish every due item before a long lane starts. A project waiting behind
+  // hundreds of backups must already count as debt and appear in bay health.
+  // Use the inventory timestamp so a completion racing this publication wins.
+  const queuedObservedAt = new Date(listingStartedAt).toISOString();
+  await runWithParallelism(
+    [
+      ...snapshotRows.map((row) => ({ row, kind: "snapshot" as const })),
+      ...backupRows.map((row) => ({ row, kind: "backup" as const })),
+    ],
+    Math.min(8, Math.max(1, parallelism * 8)),
+    async ({ row, kind }) => {
+      const schedule = mergeSchedule(
+        kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+        kind === "snapshot" ? row.snapshots : row.backups,
+      );
+      if (schedule.disabled) return;
+      const dueAt =
+        kind === "snapshot"
+          ? snapshotDueAt(row, schedule)
+          : backupDueAt(row, schedule);
+      if (dueAt == null || dueAt > queuedAt) return;
+      if (
+        kind === "snapshot"
+          ? inFlightSnapshots.has(row.project_id)
+          : inFlightBackups.has(row.project_id)
+      ) {
+        return;
+      }
+      const previousDue = parseTimestampMs(
+        kind === "snapshot"
+          ? row.snapshot_status_due_at
+          : row.backup_status_due_at,
+      );
+      const previousOutcome =
+        kind === "snapshot"
+          ? row.snapshot_status_outcome
+          : row.backup_status_outcome;
+      if (
+        previousDue === dueAt &&
+        (previousOutcome === "deferred" || previousOutcome === "failed")
+      ) {
+        return;
+      }
+      await report({
+        host_id: hostId,
+        project_id: row.project_id,
+        kind,
+        storage_service_class: row.storage_service_class,
+        observed_at: queuedObservedAt,
+        outcome: "deferred",
+        reason: "queued",
+        due_at: new Date(dueAt).toISOString(),
+        attempt_due_at: new Date(dueAt).toISOString(),
+        retry_at: null,
+        consecutive_failures:
+          kind === "snapshot"
+            ? (row.snapshot_failures ?? 0)
+            : (row.backup_failures ?? 0),
+      }).catch((err) =>
+        logger.warn("maintenance queue status report failed", {
+          project_id: row.project_id,
+          kind,
+          err,
+        }),
+      );
+    },
+  );
+  const snapshotLane = async () => {
+    if (snapshotLaneRunning) return;
+    snapshotLaneRunning = true;
+    try {
+      await runWithParallelism(snapshotRows, parallelism, async (row) => {
+        const project_id = row.project_id;
+        const schedule = mergeSchedule(DEFAULT_SNAPSHOT_COUNTS, row.snapshots);
+        const dueAt = snapshotDueAt(row, schedule);
+        const lastObserved = parseTimestampMs(row.last_snapshot_observed_at);
+        const reconciliationDue =
+          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
+        if (
+          !project_id ||
+          schedule.disabled ||
+          (parseTimestampMs(row.snapshot_retry_at) ?? 0) > Date.now() ||
+          ((dueAt == null || dueAt > Date.now()) && !reconciliationDue) ||
+          inFlightSnapshots.has(project_id)
+        ) {
+          return;
+        }
+        inFlightSnapshots.add(project_id);
+        const startedAt = Date.now();
+        let stageDurations: Record<string, number> = {};
         try {
-          await runScheduledStorageOperation({
+          let latest_snapshot_at: string | null = null;
+          let created_snapshot_at: string | null = null;
+          let changed: boolean | null = null;
+          let disabled = false;
+          let skippedReason: string | undefined;
+          const result = await runScheduledStorageOperation({
             hostId,
             project_id,
             operation_kind: "scheduled_snapshot",
-            run: async () =>
-              await runScheduledSnapshotMaintenance({
+            validate: () => validateAssignment(row, "snapshot"),
+            run: async () => {
+              const updated = await runScheduledSnapshotMaintenance({
                 project_id,
-                counts: scheduleToCounts(snapshotSchedule),
+                counts: scheduleToCounts(schedule),
                 limit: row.max_snapshots_per_project ?? undefined,
-              }),
+                stage_durations_ms: stageDurations,
+              });
+              latest_snapshot_at = updated?.latest_snapshot_at ?? null;
+              created_snapshot_at = updated?.created_snapshot_at ?? null;
+              changed = updated?.changed ?? null;
+              disabled = updated?.disabled ?? false;
+              skippedReason = updated?.skipped_reason;
+              stageDurations = updated?.stage_durations_ms ?? {};
+            },
           });
+          const changedAt = parseTimestampMs(
+            row.last_changed ?? row.last_edited,
+          );
+          const latestSnapshotAt = parseTimestampMs(latest_snapshot_at);
+          const confirmedRecoveryPoint =
+            created_snapshot_at != null ||
+            (changed === false &&
+              latestSnapshotAt != null &&
+              (changedAt == null || latestSnapshotAt >= changedAt));
+          const nextSnapshotDueAt = result.ran
+            ? snapshotDueAt(
+                { ...row, last_snapshot: latest_snapshot_at },
+                schedule,
+              )
+            : dueAt;
+          // The bay can have an old snapshot timestamp while the host has a
+          // newer local one. If the replacement interval has not elapsed,
+          // publish the verified inventory and wake at the actual due time
+          // instead of retrying the same Btrfs scan every minute.
+          const intervalWaiting =
+            result.ran &&
+            !disabled &&
+            !confirmedRecoveryPoint &&
+            changed === true &&
+            latestSnapshotAt != null &&
+            nextSnapshotDueAt != null &&
+            nextSnapshotDueAt > Date.now();
+          const outcome = !result.ran
+            ? "deferred"
+            : disabled
+              ? "deferred"
+              : confirmedRecoveryPoint
+                ? "succeeded"
+                : changed === false || intervalWaiting
+                  ? "skipped"
+                  : "deferred";
+          const reason =
+            result.reason ??
+            skippedReason ??
+            (disabled
+              ? "snapshot_maintenance_disabled"
+              : intervalWaiting
+                ? "snapshot_interval_wait"
+                : outcome === "skipped"
+                  ? "no_content_change"
+                  : outcome === "deferred"
+                    ? "snapshot_not_created"
+                    : undefined);
+          const nextRetry = retryAt(outcome, row.snapshot_failures ?? 0);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+          if (intervalWaiting && nextSnapshotDueAt != null) {
+            onFutureDue?.(project_id, nextSnapshotDueAt);
+          }
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "snapshot",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome,
+            reason,
+            // The host inventory is authoritative for the latest local
+            // recovery point even when a newer change cannot be snapshotted
+            // until the interval expires. Do not publish it if assignment
+            // validation failed after the scan.
+            latest_snapshot_at: result.ran ? latest_snapshot_at : null,
+            reconciled_change_at:
+              reason === "no_content_change"
+                ? (row.last_changed ?? row.last_edited)
+                : null,
+            schedule_revision:
+              reason === "no_content_change"
+                ? row.snapshot_schedule_revision
+                : null,
+            due_at: result.ran
+              ? reason === "no_content_change"
+                ? null
+                : nextSnapshotDueAt == null
+                  ? null
+                  : new Date(nextSnapshotDueAt).toISOString()
+              : dueAt == null
+                ? null
+                : new Date(dueAt).toISOString(),
+            attempt_due_at:
+              dueAt == null ? null : new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            retry_at: nextRetry,
+            consecutive_failures:
+              outcome === "succeeded" ? 0 : (row.snapshot_failures ?? 0),
+          }).catch((err) =>
+            logger.warn("snapshot status report failed", { project_id, err }),
+          );
         } catch (err) {
           logger.warn("scheduled snapshot maintenance failed", {
             hostId,
             project_id,
             err: `${err}`,
           });
+          const nextRetry = retryAt("failed", (row.snapshot_failures ?? 0) + 1);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "snapshot",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "failed",
+            reason: recoveryFailureReason(err, "snapshot") ?? `${err}`,
+            due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+            attempt_due_at:
+              dueAt == null ? null : new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            retry_at: nextRetry,
+            consecutive_failures: (row.snapshot_failures ?? 0) + 1,
+          }).catch(() => {});
+        } finally {
+          inFlightSnapshots.delete(project_id);
         }
-      }
-      const backupSchedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
-      if (!backupSchedule.disabled) {
+      });
+    } finally {
+      snapshotLaneRunning = false;
+    }
+  };
+  const backupLane = async () => {
+    if (backupLaneRunning) return;
+    backupLaneRunning = true;
+    let starvationOverrideReservations = 0;
+    try {
+      await runWithParallelism(backupRows, parallelism, async (row) => {
+        const project_id = row.project_id;
+        const schedule = mergeSchedule(DEFAULT_BACKUP_COUNTS, row.backups);
+        const dueAt = backupDueAt(row, schedule);
+        const lastObserved = parseTimestampMs(row.last_backup_observed_at);
+        const reconciliationDue =
+          lastObserved == null || Date.now() - lastObserved >= 24 * 60 * 60_000;
+        const previousDue = parseTimestampMs(row.backup_status_due_at);
+        const lastBackup = parseTimestampMs(row.last_backup);
+        const needsConfirmedBackupReconciliation =
+          (row.backup_status_outcome === "failed" &&
+            row.backup_status_reason?.includes("hosts.recordProjectBackup")) ||
+          (row.backup_status_outcome === "deferred" &&
+            row.backup_status_reason === "change_generation_changed");
+        if (
+          project_id &&
+          !schedule.disabled &&
+          needsConfirmedBackupReconciliation &&
+          previousDue != null &&
+          lastBackup != null &&
+          lastBackup >= previousDue &&
+          (dueAt == null || dueAt > Date.now())
+        ) {
+          try {
+            // The bay may have committed recordProjectBackup even when its RPC
+            // acknowledgement timed out. Verify that exact recovery point is
+            // still visible in the off-host repository before clearing debt.
+            const backups = await getBackups({ project_id });
+            const confirmed = backups.find(
+              (backup) => Math.abs(backup.time.getTime() - lastBackup) < 1_000,
+            );
+            if (confirmed) {
+              await report({
+                host_id: hostId,
+                project_id,
+                kind: "backup",
+                storage_service_class: row.storage_service_class,
+                observed_at: new Date().toISOString(),
+                outcome: "succeeded",
+                reason:
+                  row.backup_status_outcome === "failed"
+                    ? "confirmed_backup_after_failed_report"
+                    : "confirmed_backup_after_changed_generation",
+                latest_backup_id: confirmed.id,
+                due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+                attempt_due_at: new Date(previousDue).toISOString(),
+                retry_at: null,
+                consecutive_failures: 0,
+              });
+              return;
+            }
+          } catch (err) {
+            logger.warn("backup failure reconciliation paused", {
+              project_id,
+              err: `${err}`,
+            });
+          }
+        }
+        if (
+          project_id &&
+          !schedule.disabled &&
+          (dueAt == null || dueAt > Date.now()) &&
+          reconciliationDue &&
+          row.backup_status_outcome !== "failed"
+        ) {
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "skipped",
+            reason: dueAt == null ? "no_change_due" : "interval_not_due",
+            due_at: dueAt == null ? null : new Date(dueAt).toISOString(),
+            retry_at: null,
+            consecutive_failures: 0,
+          }).catch((err) =>
+            logger.warn("backup status report failed", { project_id, err }),
+          );
+          return;
+        }
+        if (
+          !project_id ||
+          schedule.disabled ||
+          dueAt == null ||
+          dueAt > Date.now() ||
+          (parseTimestampMs(row.backup_retry_at) ?? 0) > Date.now() ||
+          inFlightBackups.has(project_id)
+        ) {
+          return;
+        }
         const starved = backupIsStarved({
-          backupDueSince: row.backup_due_since,
+          backupDueSince: new Date(dueAt).toISOString(),
           starvationAgeMs,
         });
         const allowStarvationOverride =
           starved &&
           starvationOverrideEligible &&
           starvationOverrideReservations < starvationOverrideLimit;
-        if (sweepRestricted && !allowStarvationOverride) {
-          return;
-        }
-        if (allowStarvationOverride) {
-          starvationOverrideReservations += 1;
-        }
+        if (allowStarvationOverride) starvationOverrideReservations += 1;
+        inFlightBackups.add(project_id);
+        const startedAt = Date.now();
+        let stageDurations: Record<string, number> = {};
+        let bytesScanned: number | undefined;
+        let bytesUploaded: number | undefined;
+        let latestBackupId: string | undefined;
         try {
-          await runScheduledStorageOperation({
+          let created = false;
+          let backupDeferredReason: string | undefined;
+          const result = await runScheduledStorageOperation({
             hostId,
             project_id,
             operation_kind: "scheduled_backup",
+            validate: () => validateAssignment(row, "backup"),
             allowStarvationOverride,
-            run: async () =>
-              await runScheduledBackupMaintenance({
+            run: async () => {
+              const updated = await runScheduledBackupMaintenance({
                 project_id,
-                counts: scheduleToCounts(backupSchedule, {
-                  allowFrequent: false,
-                }),
+                counts: scheduleToCounts(schedule, { allowFrequent: false }),
                 limit: row.max_backups_per_project ?? undefined,
-              }),
+                knownLastBackupAt: row.last_backup,
+                stage_durations_ms: stageDurations,
+              });
+              created = updated?.created ?? false;
+              backupDeferredReason = updated?.deferred_reason;
+              stageDurations = updated?.stage_durations_ms ?? {};
+              bytesScanned = updated?.bytes_scanned;
+              bytesUploaded = updated?.bytes_uploaded;
+              latestBackupId = updated?.latest_backup_id;
+            },
           });
+          const outcome = result.ran
+            ? backupDeferredReason
+              ? "deferred"
+              : created
+                ? "succeeded"
+                : "deferred"
+            : "deferred";
+          const nextRetry = retryAt(outcome, row.backup_failures ?? 0);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome,
+            reason:
+              result.reason ??
+              backupDeferredReason ??
+              (created ? undefined : "backup_not_created"),
+            latest_backup_id: result.ran ? latestBackupId : undefined,
+            due_at:
+              outcome === "succeeded" ? null : new Date(dueAt).toISOString(),
+            attempt_due_at: new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            bytes_scanned: bytesScanned,
+            bytes_uploaded: bytesUploaded,
+            retry_at: nextRetry,
+            consecutive_failures:
+              outcome === "succeeded" ? 0 : (row.backup_failures ?? 0),
+          }).catch((err) =>
+            logger.warn("backup status report failed", { project_id, err }),
+          );
         } catch (err) {
           logger.warn("scheduled backup maintenance failed", {
             hostId,
             project_id,
             err: `${err}`,
           });
+          const nextRetry = retryAt("failed", (row.backup_failures ?? 0) + 1);
+          if (nextRetry) onFutureDue?.(project_id, Date.parse(nextRetry));
+          await report({
+            host_id: hostId,
+            project_id,
+            kind: "backup",
+            storage_service_class: row.storage_service_class,
+            observed_at: new Date().toISOString(),
+            outcome: "failed",
+            reason: recoveryFailureReason(err, "backup") ?? `${err}`,
+            due_at: new Date(dueAt).toISOString(),
+            attempt_due_at: new Date(dueAt).toISOString(),
+            duration_ms: Date.now() - startedAt,
+            stage_durations_ms: {
+              candidate_discovery: candidateDiscoveryMs,
+              queue_wait: startedAt - queuedAt,
+              ...stageDurations,
+            },
+            bytes_scanned: bytesScanned,
+            bytes_uploaded: bytesUploaded,
+            retry_at: nextRetry,
+            consecutive_failures: (row.backup_failures ?? 0) + 1,
+          }).catch(() => {});
+        } finally {
+          inFlightBackups.delete(project_id);
         }
-      }
-    } catch (err) {
-      logger.warn("snapshot/backup maintenance failed", {
-        hostId,
-        project_id,
-        err: `${err}`,
       });
     } finally {
-      inFlightProjects.delete(project_id);
+      backupLaneRunning = false;
     }
-  });
+  };
+  const overlappingLane = snapshotLaneRunning || backupLaneRunning;
+  await Promise.all([snapshotLane(), backupLane()]);
+  // One lane may have been occupied by an event-triggered batch. A full
+  // reconciliation is incomplete until both lanes have seen its inventory.
+  return !overlappingLane;
 }
 
 export async function runProjectSnapshotBackupMaintenanceSweepOnce({
   hostId,
+  projectIds,
+  onFutureDue,
+  shadow = false,
 }: {
   hostId: string;
+  projectIds?: string[];
+  onFutureDue?: (projectId: string, at: number) => void;
+  shadow?: boolean;
 }) {
-  if (sweepRunning) {
-    logger.debug("skipping overlapping snapshot/backup maintenance sweep", {
-      hostId,
-    });
-    return;
-  }
-  sweepRunning = true;
-  try {
-    await runProjectSnapshotBackupMaintenanceSweepUnlocked({ hostId });
-  } finally {
-    sweepRunning = false;
-  }
+  return await runProjectSnapshotBackupMaintenanceSweepUnlocked({
+    hostId,
+    projectIds,
+    onFutureDue,
+    shadow,
+  });
 }
 
 export function startProjectSnapshotBackupMaintenance({
@@ -570,37 +1460,154 @@ export function startProjectSnapshotBackupMaintenance({
     logger.info("snapshot/backup maintenance disabled by env", { hostId });
     return () => {};
   }
+  const shadow = parseBoolean(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SHADOW,
+  );
   const sweepMs = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS,
     DEFAULT_SWEEP_MS,
   );
   const initialDelayMs = parseNonNegativeInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS,
-    DEFAULT_INITIAL_DELAY_MS,
+    DEFAULT_INITIAL_DELAY_MS + initialDelayJitterMs(hostId),
   );
   let closed = false;
-  const runSweep = async () => {
-    if (closed) {
-      return;
-    }
+  const changedProjects = new Set<string>();
+  const futureDue = new Map<string, number>();
+  let changedTimer: ReturnType<typeof setTimeout> | undefined;
+  let dueTimer: ReturnType<typeof setTimeout> | undefined;
+  let sweepRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let changedDrainRunning = false;
+  let fullSweepRunning = false;
+  const scheduleChangedDrain = (delayMs: number) => {
+    if (closed || changedTimer || !changedProjects.size) return;
+    changedTimer = setTimeout(() => {
+      changedTimer = undefined;
+      void drainChangedProjects();
+    }, delayMs);
+    changedTimer.unref();
+  };
+  const rememberFutureDue = (projectId: string, at: number) => {
+    if (!Number.isFinite(at) || at <= Date.now()) return;
+    const previous = futureDue.get(projectId);
+    if (previous == null || at < previous) futureDue.set(projectId, at);
+  };
+  const scheduleFutureDue = () => {
+    clearTimeout(dueTimer);
+    dueTimer = undefined;
+    if (closed || !futureDue.size) return;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const due of futureDue.values()) earliest = Math.min(earliest, due);
+    dueTimer = setTimeout(
+      () => {
+        dueTimer = undefined;
+        const now = Date.now();
+        for (const [projectId, due] of futureDue) {
+          if (due > now) continue;
+          futureDue.delete(projectId);
+          changedProjects.add(projectId);
+        }
+        scheduleChangedDrain(0);
+        scheduleFutureDue();
+      },
+      Math.max(1, Math.min(sweepMs, earliest - Date.now())),
+    );
+    dueTimer.unref();
+  };
+  const drainChangedProjects = async () => {
+    if (closed || changedDrainRunning) return;
+    changedDrainRunning = true;
+    const projectIds = Array.from(changedProjects).slice(
+      0,
+      CHANGE_EVENT_BATCH_LIMIT,
+    );
+    for (const projectId of projectIds) changedProjects.delete(projectId);
+    for (const projectId of projectIds) futureDue.delete(projectId);
+    const laneBusy = snapshotLaneRunning || backupLaneRunning;
+    let needsRetry = laneBusy;
     try {
-      await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId });
+      const reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId,
+        projectIds,
+        onFutureDue: rememberFutureDue,
+        shadow,
+      });
+      if (!reconciled || laneBusy) {
+        needsRetry = true;
+        for (const projectId of projectIds) changedProjects.add(projectId);
+      }
+    } catch (err) {
+      needsRetry = true;
+      for (const projectId of projectIds) changedProjects.add(projectId);
+      logger.warn("changed-project maintenance batch failed", {
+        hostId,
+        count: projectIds.length,
+        err: `${err}`,
+      });
+    } finally {
+      changedDrainRunning = false;
+      scheduleFutureDue();
+      scheduleChangedDrain(
+        needsRetry ? CHANGE_EVENT_RETRY_MS : CHANGE_EVENT_DELAY_MS,
+      );
+    }
+  };
+  const enqueueConfirmedProject = (projectId: string) => {
+    if (closed) return;
+    changedProjects.add(projectId);
+    scheduleChangedDrain(CHANGE_EVENT_DELAY_MS);
+  };
+  const unsubscribeChanges = onProjectChangeReported(enqueueConfirmedProject);
+  const unsubscribeProvisioned = onProjectProvisionedReported(
+    enqueueConfirmedProject,
+  );
+  const runSweep = async (trigger: "startup" | "periodic" | "retry") => {
+    if (closed || fullSweepRunning) return;
+    fullSweepRunning = true;
+    const startedAt = Date.now();
+    let reconciled = false;
+    try {
+      reconciled = await runProjectSnapshotBackupMaintenanceSweepOnce({
+        hostId,
+        onFutureDue: rememberFutureDue,
+        shadow,
+      });
     } catch (err) {
       logger.warn("snapshot/backup maintenance sweep failed", {
         hostId,
         err: `${err}`,
       });
+    } finally {
+      fullSweepRunning = false;
+      logger.info("snapshot/backup full reconciliation finished", {
+        hostId,
+        trigger,
+        reconciled,
+        duration_ms: Date.now() - startedAt,
+      });
+      scheduleFutureDue();
+      if (reconciled) {
+        clearTimeout(sweepRetryTimer);
+        sweepRetryTimer = undefined;
+      } else if (!closed && !sweepRetryTimer) {
+        sweepRetryTimer = setTimeout(() => {
+          sweepRetryTimer = undefined;
+          void runSweep("retry");
+        }, FULL_SWEEP_RETRY_MS);
+        sweepRetryTimer.unref();
+      }
     }
   };
   logger.info("snapshot/backup maintenance scheduled", {
     hostId,
+    mode: shadow ? "shadow" : "active",
     initial_delay_ms: initialDelayMs,
     sweep_ms: sweepMs,
   });
   const startRepeatingSweep = () => {
     if (closed) return;
     const timer = setInterval(() => {
-      void runSweep();
+      void runSweep("periodic");
     }, sweepMs);
     timer.unref();
     return timer;
@@ -609,13 +1616,18 @@ export function startProjectSnapshotBackupMaintenance({
     if (closed) {
       return;
     }
-    void runSweep();
+    void runSweep("startup");
     repeatingTimer = startRepeatingSweep();
   }, initialDelayMs);
   initialTimer.unref();
   let repeatingTimer: ReturnType<typeof setInterval> | undefined;
   return () => {
     closed = true;
+    unsubscribeChanges();
+    unsubscribeProvisioned();
+    clearTimeout(changedTimer);
+    clearTimeout(dueTimer);
+    clearTimeout(sweepRetryTimer);
     clearTimeout(initialTimer);
     if (repeatingTimer) {
       clearInterval(repeatingTimer);
@@ -628,5 +1640,7 @@ export const _test = {
   parsePressureFullAvg10,
   maintenanceMemoryDecision,
   backupIsStarved,
+  backupDueAt,
+  snapshotDueAt,
   runScheduledStorageOperation,
 };

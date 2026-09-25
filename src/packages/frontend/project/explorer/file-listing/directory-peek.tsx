@@ -23,10 +23,15 @@ import {
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu";
 import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/project/file-action-trigger";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
+import { resolveVirtualListingPath } from "@cocalc/frontend/project/listing/virtual-listing-path";
 import type { FileAction } from "@cocalc/frontend/project_actions";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { isBackupsPath } from "@cocalc/util/consts/backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import * as misc from "@cocalc/util/misc";
 
 interface Props {
@@ -35,6 +40,7 @@ interface Props {
   onClose: () => void;
   onNavigateDirectory?: (path: string) => void;
   onOpenFile: (path: string) => void;
+  readOnly?: boolean;
 }
 
 interface PeekEntry extends DirectoryListingEntry {
@@ -50,6 +56,7 @@ export default function DirectoryPeek({
   onClose,
   onNavigateDirectory,
   onOpenFile,
+  readOnly = false,
 }: Props) {
   const intl = useIntl();
   const actions = useActions({ project_id });
@@ -57,12 +64,26 @@ export default function DirectoryPeek({
   const showHidden = useTypedRedux({ project_id }, "show_hidden") ?? false;
   const mask = useAccountOtherSetting("mask_files");
   const student = useStudentProjectFunctionality(project_id);
-  const { dropRef } = useFolderDrop(`explorer-peek-${dirPath}`, dirPath);
-  const { listing, error } = useListing({
-    fs,
-    path: dirPath,
+  const inBackups = isBackupsPath(dirPath);
+  const isReadOnly = readOnly || inBackups || isSnapshotsPath(dirPath);
+  const { dropRef } = useFolderDrop(
+    `explorer-peek-${dirPath}`,
+    dirPath,
+    !isReadOnly,
+  );
+  const filesystemListing = useListing({
+    fs: inBackups ? null : fs,
+    path: resolveVirtualListingPath({
+      path: dirPath,
+      homePath: getProjectHomeDirectory(project_id),
+    }),
     mask,
   });
+  const backupsListing = useBackupsListing({
+    project_id,
+    path: inBackups ? dirPath : "",
+  });
+  const { listing, error } = inBackups ? backupsListing : filesystemListing;
 
   const entries = useMemo<PeekEntry[]>(() => {
     const items = (listing ?? [])
@@ -108,7 +129,7 @@ export default function DirectoryPeek({
 
   return (
     <div
-      ref={dropRef}
+      ref={isReadOnly ? undefined : dropRef}
       style={{
         borderLeft: `5px solid ${UI_COLORS.link}`,
         background: UI_COLORS.inset,
@@ -131,6 +152,7 @@ export default function DirectoryPeek({
         <Button
           type="text"
           size="small"
+          aria-label="Close directory preview"
           onClick={(e) => {
             e.stopPropagation();
             onClose();
@@ -172,8 +194,8 @@ export default function DirectoryPeek({
               key={entry.fullPath}
               entry={entry}
               project_id={project_id}
-              disableActions={student.disableActions}
-              contextMenuItems={getContextMenuItems(entry)}
+              disableActions={student.disableActions || isReadOnly}
+              contextMenuItems={isReadOnly ? [] : getContextMenuItems(entry)}
               onClick={() => {
                 if (entry.isDir) {
                   if (onNavigateDirectory) {
@@ -215,56 +237,65 @@ function PeekItem({
     ? "folder-open"
     : (file_options(entry.name)?.icon ?? "file");
 
-  return (
-    <Dropdown menu={{ items: contextMenuItems }} trigger={["contextMenu"]}>
-      <Tooltip title={entry.name} mouseEnterDelay={0.5}>
-        <div
-          ref={dragRef}
-          {...(disableActions ? {} : dragListeners)}
-          {...(disableActions ? {} : dragAttributes)}
-          onClick={(e) => {
-            e.stopPropagation();
-            onClick();
-          }}
+  const item = (
+    <Tooltip title={entry.name} mouseEnterDelay={0.5}>
+      <button
+        type="button"
+        aria-label={`${entry.isDir ? "Open folder" : "Open file"} ${entry.name}`}
+        ref={dragRef}
+        {...(disableActions ? {} : dragListeners)}
+        {...(disableActions ? {} : dragAttributes)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "3px 8px",
+          borderRadius: 4,
+          cursor: "pointer",
+          width: ITEM_WIDTH,
+          fontSize: 12,
+          textAlign: "left",
+          border: 0,
+          background: "transparent",
+          color: entry.isDir ? UI_COLORS.link : UI_COLORS.text,
+          opacity: isDragging && !disableActions ? 0.45 : entry.mask ? 0.65 : 1,
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.background = UI_COLORS.inset;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "transparent";
+        }}
+      >
+        <Icon
+          name={iconName}
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "3px 8px",
-            borderRadius: 4,
-            cursor: "pointer",
-            width: ITEM_WIDTH,
             fontSize: 12,
-            color: entry.isDir ? UI_COLORS.link : UI_COLORS.text,
-            opacity:
-              isDragging && !disableActions ? 0.45 : entry.mask ? 0.65 : 1,
+            flexShrink: 0,
+            color: entry.isDir ? UI_COLORS.secondary : undefined,
           }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = UI_COLORS.inset;
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.background = "transparent";
+        />
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          <Icon
-            name={iconName}
-            style={{
-              fontSize: 12,
-              flexShrink: 0,
-              color: entry.isDir ? UI_COLORS.secondary : undefined,
-            }}
-          />
-          <span
-            style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {entry.name}
-          </span>
-        </div>
-      </Tooltip>
+          {entry.name}
+        </span>
+      </button>
+    </Tooltip>
+  );
+  return disableActions ? (
+    item
+  ) : (
+    <Dropdown menu={{ items: contextMenuItems }} trigger={["contextMenu"]}>
+      {item}
     </Dropdown>
   );
 }

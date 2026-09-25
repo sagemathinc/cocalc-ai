@@ -292,6 +292,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only curated read-only database diagnostics with server-side caps",
   },
+  "adminDb.attestProjectRestoreDrill": {
+    decision: "fresh-auth-required",
+    reason:
+      "writes an immutable operator hash attestation for a remote-only restore drill",
+  },
   "adminDb.exec": {
     decision: "fresh-auth-required",
     reason: "audited operator SQL write mode against operational data",
@@ -889,6 +894,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "messages.sendSystemNotice": {
     decision: "fresh-auth-not-required",
     reason: "admin-only notification send",
+  },
+  "messages.sendProjectRecoveryCriticalEmailDrill": {
+    decision: "fresh-auth-required",
+    reason: "admin-triggered critical operational email drill",
   },
   "notifications.archive": {
     decision: "fresh-auth-not-required",

@@ -14,6 +14,9 @@ import type {
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
   ManagedComponentVersionState,
+  HostProjectMaintenanceSchedule,
+  HostProjectMaintenanceAssignment,
+  ProjectMaintenanceReport,
 } from "@cocalc/conat/project-host/api";
 import {
   type ProjectCopyRow,
@@ -1077,6 +1080,15 @@ export interface HostCurrentMetrics {
   resource_pressure?: HostResourcePressureMetrics;
   io_containment?: HostIoContainmentMetrics;
   storage_admission?: HostStorageAdmissionMetrics;
+  snapshot_backup_maintenance_gate?: {
+    checked_at: string;
+    blocked_reason?:
+      | "available_memory"
+      | "memory_pressure"
+      | "memory_measurement_unavailable";
+    memory_psi_full_avg10?: number;
+    pressure_attribution?: "bees_cgroup";
+  };
   conat_persist?: HostConatPersistMetrics;
 }
 
@@ -1798,6 +1810,9 @@ export const hosts = {
   upgradeHostConnector: authFirstRequireAccount,
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
+  listProjectMaintenanceSchedules: authFirstRequireHost,
+  confirmProjectMaintenanceAssignment: authFirstRequireHost,
+  reportProjectMaintenance: authFirstRequireHost,
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
   getAccountEffectiveLimits: authFirstRequireHostWithAccountTarget,
   recordAcpAdmissionDenial: authFirstRequireHostWithAccountTarget,
@@ -2128,6 +2143,21 @@ export interface Hosts {
   ) => Promise<HostRuntimeFleetRolloutResponse>;
 
   // host calls getBackupConfig function to get backup configuration
+  listProjectMaintenanceSchedules: (opts: {
+    host_id?: string;
+    active_days?: number;
+    limit?: number;
+    cursor_project_id?: string;
+    project_ids?: string[];
+  }) => Promise<HostProjectMaintenanceSchedule[]>;
+  confirmProjectMaintenanceAssignment: (opts: {
+    host_id?: string;
+    project_id: string;
+    kind: "snapshot" | "backup";
+    schedule_revision: string;
+    observed_change_at: string | null;
+  }) => Promise<HostProjectMaintenanceAssignment>;
+  reportProjectMaintenance: (report: ProjectMaintenanceReport) => Promise<void>;
   getBackupConfig: (opts: {
     host_id?: string;
     project_id?: string;

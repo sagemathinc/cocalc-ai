@@ -1451,11 +1451,15 @@ export async function recordProjectBackup({
   if (Number.isNaN(recordedAt.getTime())) {
     recordedAt = new Date();
   }
-  await markProjectBackedUp({
+  const recorded = await markProjectBackedUp({
     project_id,
+    host_id,
     backed_up_at: recordedAt,
     generation,
   });
+  if (!recorded) {
+    throw new Error("project assignment changed before backup success report");
+  }
 }
 
 function mapProjectBackupIndexRow(

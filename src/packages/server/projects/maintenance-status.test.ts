@@ -1,0 +1,745 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+const queryMock = jest.fn();
+const resolveRuntimeMembershipMock = jest.fn();
+
+jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
+  resolveRuntimeMembership: (...args: any[]) =>
+    resolveRuntimeMembershipMock(...args),
+}));
+
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    query: (...args: any[]) => queryMock(...args),
+    connect: async () => ({
+      query: (...args: any[]) => queryMock(...args),
+      release: jest.fn(),
+    }),
+  })),
+}));
+
+describe("project recovery status after unchanged-content reconciliation", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock.mockReset();
+    resolveRuntimeMembershipMock.mockReset();
+  });
+
+  async function statusFor({
+    changedAt,
+    reconciledAt,
+    scheduleChanged = false,
+    ownerAccountId = null,
+    usageAccountId = null,
+    course = null,
+    users = null,
+    hostMaintenanceGate = null,
+  }: {
+    changedAt: string;
+    reconciledAt: string;
+    scheduleChanged?: boolean;
+    ownerAccountId?: string | null;
+    usageAccountId?: string | null;
+    course?: { type?: string; account_id?: string } | null;
+    users?: Record<string, { group?: string }> | null;
+    hostMaintenanceGate?: unknown;
+  }) {
+    const { snapshotScheduleRevision } = await import("./maintenance-status");
+    const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p LEFT JOIN project_hosts")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              last_backup: null,
+              last_changed: new Date(changedAt),
+              host_last_seen: hostMaintenanceGate
+                ? new Date()
+                : new Date("2026-04-11T00:00:00.000Z"),
+              host_maintenance_gate: hostMaintenanceGate,
+              snapshots: schedule,
+              backups: { disabled: true },
+              owner_account_id: ownerAccountId,
+              usage_account_id: usageAccountId,
+              course,
+              users,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_maintenance_status WHERE")) {
+        return {
+          rows: [
+            {
+              kind: "snapshot",
+              host_id: "host-1",
+              observed_at: new Date("2026-04-11T00:00:00.000Z"),
+              outcome: "skipped",
+              reason: "no_content_change",
+              due_at: null,
+              latest_snapshot_at: new Date("2026-04-09T00:00:00.000Z"),
+              reconciled_change_at: new Date(reconciledAt),
+              reconciled_schedule_revision: scheduleChanged
+                ? "previous-revision"
+                : snapshotScheduleRevision(schedule),
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const { getProjectRecoveryStatusLocal } =
+      await import("./maintenance-status");
+    return await getProjectRecoveryStatusLocal("project-1");
+  }
+
+  it("does not show unchanged content as overdue", async () => {
+    const status = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+    });
+    expect(status.snapshot_due_at).toBeNull();
+    expect(status.snapshot?.reason).toBe("no_content_change");
+  });
+
+  it("makes a later change due again", async () => {
+    const status = await statusFor({
+      changedAt: "2026-04-11T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+    });
+    expect(status.snapshot_due_at).toBe("2026-04-11T00:00:00.000Z");
+  });
+
+  it("makes a changed snapshot schedule due again", async () => {
+    const status = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      scheduleChanged: true,
+    });
+    expect(status.snapshot_due_at).toBe("2026-04-10T00:00:00.000Z");
+  });
+
+  it("attaches only a fresh host-wide memory block", async () => {
+    const status = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      hostMaintenanceGate: {
+        checked_at: new Date().toISOString(),
+        blocked_reason: "memory_pressure",
+        memory_psi_full_avg10: 52.48,
+      },
+    });
+    expect(status.host_maintenance_block).toMatchObject({
+      reason: "memory_pressure",
+      memory_psi_full_avg10: 52.48,
+    });
+    const old = await statusFor({
+      changedAt: "2026-04-10T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      hostMaintenanceGate: {
+        checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+        blocked_reason: "memory_pressure",
+      },
+    });
+    expect(old.host_maintenance_block).toBeUndefined();
+  });
+
+  it("classifies an admin-tier storage payer for critical recovery health", async () => {
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "admin",
+      source: "admin",
+    });
+    const status = await statusFor({
+      changedAt: "2026-04-11T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      ownerAccountId: "owner-account",
+      usageAccountId: "storage-payer",
+      users: {
+        "owner-account": { group: "owner" },
+      },
+    });
+    expect(status.storage_service_class).toBe("paying");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("storage-payer");
+  });
+
+  it("classifies a student course project using its sponsor account", async () => {
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    const status = await statusFor({
+      changedAt: "2026-04-11T00:00:00.000Z",
+      reconciledAt: "2026-04-10T00:00:00.000Z",
+      ownerAccountId: "student-owner",
+      course: { type: "student", account_id: "course-sponsor" },
+      users: { "student-owner": { group: "owner" } },
+    });
+    expect(status.storage_service_class).toBe("paying");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("course-sponsor");
+  });
+
+  it("classifies an overdue paying project at its customer objective", async () => {
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    const status = await statusFor({
+      changedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      reconciledAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+      ownerAccountId: "owner-account",
+    });
+    expect(status.storage_service_class).toBe("paying");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("owner-account");
+  });
+
+  it("rejects a snapshot success report without a recovery point", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    await expect(
+      recordProjectMaintenanceStatus({
+        host_id: "host-1",
+        project_id: "project-1",
+        kind: "snapshot",
+        observed_at: new Date().toISOString(),
+        outcome: "succeeded",
+        latest_snapshot_at: null,
+      }),
+    ).rejects.toThrow("snapshot success requires a confirmed snapshot time");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("records an omitted host funding class as unclassified", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id: "host-1",
+        project_id: "project-1",
+        kind: "snapshot",
+        observed_at: new Date().toISOString(),
+        outcome: "failed",
+        reason: "legacy host report",
+      }),
+    ).toBe(true);
+    const statusInsert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    const attemptInsert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_attempts"),
+    );
+    expect(statusInsert?.[1][9]).toBe("unclassified");
+    expect(attemptInsert?.[1][3]).toBe("unclassified");
+  });
+
+  it("replaces a stale latest snapshot after confirmed empty inventory", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordProjectMaintenanceStatus({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "snapshot",
+      observed_at: new Date().toISOString(),
+      outcome: "skipped",
+      reason: "no_content_change",
+      latest_snapshot_at: null,
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    expect(insert?.[0]).toContain(
+      "excluded.outcome='skipped' AND excluded.reason='no_content_change'",
+    );
+    expect(insert?.[1][7]).toBeNull();
+  });
+
+  it("bounds stage timing labels and backup byte counts in the bay projection", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordProjectMaintenanceStatus({
+      host_id: "host-1",
+      project_id: "project-1",
+      kind: "backup",
+      observed_at: new Date().toISOString(),
+      outcome: "succeeded",
+      stage_durations_ms: {
+        inventory: 12.7,
+        create: 50,
+        arbitrary_project_label: 100,
+      },
+      bytes_scanned: 1024,
+      bytes_uploaded: 256,
+      latest_backup_id: "a".repeat(64),
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_status"),
+    );
+    expect(insert?.[1].slice(14, 18)).toEqual([
+      { inventory: 12, create: 50 },
+      1024,
+      256,
+      "a".repeat(64),
+    ]);
+    const attempt = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("INSERT INTO project_maintenance_attempts"),
+    );
+    expect(attempt?.[1].slice(10, 15)).toEqual([
+      { inventory: 12, create: 50 },
+      1024,
+      256,
+      null,
+      "a".repeat(64),
+    ]);
+  });
+
+  it("does not record an attempt from a stale project host", async () => {
+    const { recordProjectMaintenanceStatus } =
+      await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => ({
+      rows: [],
+      rowCount: sql.includes("INSERT INTO project_maintenance_status") ? 0 : 1,
+    }));
+    expect(
+      await recordProjectMaintenanceStatus({
+        host_id: "old-host",
+        project_id: "project-1",
+        kind: "backup",
+        observed_at: new Date().toISOString(),
+        outcome: "failed",
+      }),
+    ).toBe(false);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.includes("INSERT INTO project_maintenance_attempts"),
+      ),
+    ).toBe(false);
+  });
+
+  it("summarizes attempts and bounded stages for operator health", async () => {
+    const { getProjectRecoveryAttemptHealth } =
+      await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("COUNT(*) FILTER (WHERE outcome='succeeded')")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              storage_service_class: "paying",
+              kind: "backup",
+              succeeded: 2,
+              deferred: 1,
+              failed: 0,
+              skipped: 0,
+              bytes_scanned: "1024",
+              bytes_uploaded: "128",
+              due_obligations: 2,
+              execution_seconds: "180.25",
+              successful_execution_seconds: "170",
+              queue_wait_seconds: "6.5",
+            },
+          ],
+        };
+      }
+      if (sql.includes("percentile_cont(0.95)")) {
+        if (sql.includes("attempt_due_at")) {
+          return {
+            rows: [
+              {
+                storage_service_class: "paying",
+                kind: "backup",
+                samples: 2,
+                p95_seconds: 120,
+                p99_seconds: 140,
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              storage_service_class: "paying",
+              kind: "backup",
+              stage: "create",
+              samples: 3,
+              p95_ms: 900,
+              p99_ms: 950,
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS reason_code")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              storage_service_class: "paying",
+              kind: "backup",
+              outcome: "deferred",
+              reason_code: "backup_capacity_busy",
+              attempts: 1,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    expect(await getProjectRecoveryAttemptHealth()).toEqual({
+      by_host: [
+        {
+          host_id: "host-1",
+          storage_service_class: "paying",
+          kind: "backup",
+          succeeded: 2,
+          deferred: 1,
+          failed: 0,
+          skipped: 0,
+          bytes_scanned: 1024,
+          bytes_uploaded: 128,
+          due_obligations: 2,
+          execution_seconds: 180.25,
+          successful_execution_seconds: 170,
+          queue_wait_seconds: 6.5,
+        },
+      ],
+      stages: [
+        {
+          storage_service_class: "paying",
+          kind: "backup",
+          stage: "create",
+          samples: 3,
+          p95_ms: 900,
+          p99_ms: 950,
+        },
+      ],
+      due_to_success: [
+        {
+          storage_service_class: "paying",
+          kind: "backup",
+          samples: 2,
+          p95_seconds: 120,
+          p99_seconds: 140,
+        },
+      ],
+      reasons: [
+        {
+          host_id: "host-1",
+          storage_service_class: "paying",
+          kind: "backup",
+          outcome: "deferred",
+          reason_code: "backup_capacity_busy",
+          attempts: 1,
+        },
+      ],
+    });
+    const aggregateQuery = queryMock.mock.calls.find(([sql]) =>
+      sql.includes("AS due_obligations"),
+    )?.[0];
+    expect(aggregateQuery).toContain("COALESCE(attempt_due_at, due_at)");
+    expect(aggregateQuery).toContain(
+      "outcome IN ('succeeded', 'failed', 'deferred')",
+    );
+    expect(aggregateQuery).toContain("stage_durations_ms->>'queue_wait'");
+  });
+
+  it("counts new changes after an unchanged-content report in health", async () => {
+    const { getProjectRecoveryHealth, snapshotScheduleRevision } =
+      await import("./maintenance-status");
+    const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
+    const old = new Date(Date.now() - 4 * 60 * 60_000);
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              owner_account_id: "owner-account",
+              last_changed: old,
+              last_backup: null,
+              host_last_seen: new Date(),
+              snapshots: schedule,
+              backups: { disabled: true },
+              snapshot_at: null,
+              snapshot_observed_at: new Date(),
+              snapshot_class: "paying",
+              reconciled_change_at: new Date(old.getTime() - 60_000),
+              reconciled_schedule_revision: snapshotScheduleRevision(schedule),
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.paying_snapshot_overdue).toBe(1);
+    expect(health.oldest_snapshot_delay_seconds).toBeGreaterThan(2 * 3600);
+    expect(health.unknown_snapshot_status).toBe(0);
+    expect(health.eligible_snapshot_projects).toBe(1);
+    expect(health.unaccounted_snapshot_due).toBe(1);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "paying",
+        kind: "snapshot",
+        overdue_count: 1,
+        unknown_count: 0,
+        repeated_failures: 0,
+      }),
+    ]);
+  });
+
+  it("bounds the oldest overdue projects separately by funding class and kind", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    const now = Date.now();
+    resolveRuntimeMembershipMock.mockImplementation(
+      async (accountId: string) => ({
+        class: accountId === "paid-account" ? "member" : "free",
+        source: accountId === "paid-account" ? "subscription" : "free",
+        subscription_cost: accountId === "paid-account" ? 10 : 0,
+      }),
+    );
+    const projects = Array.from({ length: 8 }, (_, index) => ({
+      project_id: `project-${index}`,
+      host_id: "host-1",
+      owner_account_id: index < 6 ? "paid-account" : "free-account",
+      last_changed: new Date(now - (index + 1) * 60 * 60_000),
+      last_backup: null,
+      host_last_seen: new Date(now),
+      snapshots: { disabled: true },
+      backups: { daily: 1 },
+      backup_observed_at: new Date(now),
+      backup_class: index < 6 ? "paying" : "free",
+    }));
+    queryMock.mockImplementation(async (sql: string) =>
+      sql.includes("FROM projects p") && sql.includes("LIMIT 1000")
+        ? { rows: projects }
+        : { rows: [], rowCount: 0 },
+    );
+
+    const health = await getProjectRecoveryHealth();
+    expect(health.oldest_debt).toHaveLength(7);
+    expect(
+      health.oldest_debt
+        .filter((item) => item.storage_service_class === "paying")
+        .map((item) => item.project_id),
+    ).toEqual([
+      "project-5",
+      "project-4",
+      "project-3",
+      "project-2",
+      "project-1",
+    ]);
+    expect(
+      health.oldest_debt
+        .filter((item) => item.storage_service_class === "free")
+        .map((item) => item.project_id),
+    ).toEqual(["project-7", "project-6"]);
+  });
+
+  it.each([null, "unclassified"])(
+    "keeps an overdue project with host classification %s visible",
+    async (serviceClass) => {
+      const { getProjectRecoveryHealth } = await import("./maintenance-status");
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+          return {
+            rows: [
+              {
+                project_id: "project-1",
+                host_id: "host-1",
+                last_changed: new Date(Date.now() - 3 * 60 * 60_000),
+                last_backup: null,
+                host_last_seen: null,
+                snapshots: { frequent: 0, daily: 1, weekly: 0, monthly: 0 },
+                backups: { disabled: true },
+                snapshot_at: null,
+                snapshot_observed_at: null,
+                snapshot_class: serviceClass,
+                reconciled_change_at: null,
+                reconciled_schedule_revision: null,
+              },
+            ],
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const health = await getProjectRecoveryHealth();
+      expect(health.unclassified_snapshot_overdue).toBe(1);
+      expect(health.unknown_snapshot_status).toBe(1);
+      expect(health.by_host_class).toEqual([
+        expect.objectContaining({
+          host_id: "host-1",
+          storage_service_class: "unclassified",
+          kind: "snapshot",
+          overdue_count: 1,
+          unknown_count: 1,
+        }),
+      ]);
+    },
+  );
+
+  it("counts repeated paid failures before the due-age incident threshold", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              owner_account_id: "owner-account",
+              last_changed: new Date(Date.now() - 60_000),
+              last_backup: null,
+              host_last_seen: new Date(),
+              snapshots: { disabled: true },
+              backups: { daily: 1 },
+              backup_observed_at: new Date(),
+              backup_class: "paying",
+              backup_outcome: "failed",
+              backup_failures: 3,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.paying_backup_repeated_failures).toBe(1);
+    expect(health.paying_backup_overdue).toBe(0);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        storage_service_class: "paying",
+        kind: "backup",
+        repeated_failures: 1,
+      }),
+    ]);
+  });
+
+  it("uses the current usage payer when an overdue host report says free", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      subscription_cost: 10,
+    });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM projects p") && sql.includes("LIMIT 1000")) {
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: "host-1",
+              owner_account_id: "owner-account",
+              usage_account_id: "current-payer",
+              last_changed: new Date(Date.now() - 13 * 60 * 60_000),
+              last_backup: null,
+              host_last_seen: new Date(),
+              snapshots: { disabled: true },
+              backups: { daily: 1 },
+              backup_observed_at: new Date(),
+              backup_class: "free",
+              backup_outcome: "failed",
+              backup_failures: 3,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledTimes(1);
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("current-payer");
+    expect(health.paying_backup_overdue).toBe(1);
+    expect(health.paying_backup_repeated_failures).toBe(1);
+    expect(health.by_host_class).toEqual([
+      expect.objectContaining({
+        storage_service_class: "paying",
+        overdue_count: 1,
+        repeated_failures: 1,
+      }),
+    ]);
+  });
+
+  it("keeps unresolved overdue payer membership visible as unclassified", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    resolveRuntimeMembershipMock.mockRejectedValue(
+      new Error("account home unavailable"),
+    );
+    queryMock.mockImplementation(async (sql: string) =>
+      sql.includes("FROM projects p") && sql.includes("LIMIT 1000")
+        ? {
+            rows: [
+              {
+                project_id: "project-1",
+                host_id: "host-1",
+                owner_account_id: "payer-1",
+                last_changed: new Date(Date.now() - 13 * 60 * 60_000),
+                last_backup: null,
+                host_last_seen: new Date(),
+                snapshots: { disabled: true },
+                backups: { daily: 1 },
+                backup_observed_at: new Date(),
+                backup_class: "free",
+              },
+            ],
+          }
+        : { rows: [], rowCount: 0 },
+    );
+    const health = await getProjectRecoveryHealth();
+    expect(health.paying_backup_overdue).toBe(0);
+    expect(health.unclassified_backup_overdue).toBe(1);
+    expect(health.by_host_class[0].storage_service_class).toBe("unclassified");
+  });
+
+  it("lists fresh host-wide memory gates once in operator health", async () => {
+    const { getProjectRecoveryHealth } = await import("./maintenance-status");
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_hosts h")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              host_last_seen: new Date(),
+              gate: {
+                checked_at: new Date().toISOString(),
+                blocked_reason: "memory_pressure",
+                memory_psi_full_avg10: 52.48,
+              },
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const health = await getProjectRecoveryHealth();
+    expect(health.host_maintenance_blocks).toEqual([
+      expect.objectContaining({
+        host_id: "host-1",
+        reason: "memory_pressure",
+        memory_psi_full_avg10: 52.48,
+      }),
+    ]);
+  });
+});

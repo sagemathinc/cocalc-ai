@@ -131,6 +131,7 @@ import {
 } from "@cocalc/server/launch/kill-switches";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
+import { getProjectRecoveryNotificationConfiguration } from "@cocalc/server/projects/recovery-notification-configuration";
 import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import {
@@ -211,6 +212,23 @@ import {
   getProjectBackupInfrastructureStatus,
   getProjectBackupShardAdminStatus,
 } from "@cocalc/server/project-backup";
+import {
+  getProjectRecoveryAttemptHealth,
+  getProjectRecoveryHealth,
+  getProjectRecoveryRecentPayingCompletions,
+} from "@cocalc/server/projects/maintenance-status";
+import { stalledPayingRecoveryQueues } from "@cocalc/server/projects/recovery-notification-plan";
+import {
+  getProjectRestoreDrillHealth,
+  summarizeProjectRestoreDrills,
+} from "@cocalc/server/projects/restore-drill-attestation";
+import { getProjectRecoveryServiceObjectives } from "@cocalc/server/projects/recovery-objectives";
+import {
+  getProjectRecoveryCustomerWarningScanStatus,
+  projectRecoveryCustomerWarningScanProblem,
+  type ProjectRecoveryCustomerWarningScanStatus,
+} from "@cocalc/server/projects/recovery-customer-warning-maintenance";
+import { getProjectHostStoragePressureWindows } from "@cocalc/database/postgres/project-host-metrics";
 import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
@@ -2089,6 +2107,12 @@ export async function getLaunchHealth({
     settingsResult,
     loadResult,
     backupsResult,
+    projectRecoveryResult,
+    projectRecoveryPayingCompletionsResult,
+    projectRestoreDrillsResult,
+    projectRecoveryAttemptsResult,
+    projectRecoveryObjectivesResult,
+    projectRecoveryPressureResult,
     latencyResult,
     setupResult,
     configResult,
@@ -2100,6 +2124,12 @@ export async function getLaunchHealth({
     getServerSettings(),
     getBayLoad({ account_id, bay_id: currentBay.bay_id }),
     getBayBackups({ account_id, bay_id: currentBay.bay_id }),
+    getProjectRecoveryHealth(),
+    getProjectRecoveryRecentPayingCompletions(),
+    getProjectRestoreDrillHealth(currentBay.bay_id),
+    getProjectRecoveryAttemptHealth(),
+    getProjectRecoveryServiceObjectives(),
+    getProjectHostStoragePressureWindows({ bay_id: currentBay.bay_id }),
     getUxLatencySummary({ account_id, window_minutes: latencyWindowMinutes }),
     getSiteSetupStatus({ account_id }),
     getGlobalConfigPropagationStatus({
@@ -2115,9 +2145,71 @@ export async function getLaunchHealth({
     settingsResult.status === "fulfilled"
       ? (settingsResult.value as Record<string, any>)
       : undefined;
+  const {
+    oncallAccountId: recoveryOncallAccountId,
+    criticalEmailBackend: recoveryCriticalEmailBackend,
+    issues: recoveryNotificationConfigurationIssues,
+  } = getProjectRecoveryNotificationConfiguration(settings);
+  let customerWarningScan: ProjectRecoveryCustomerWarningScanStatus | null =
+    null;
+  let customerWarningScanReadError: string | null = null;
+  if (settings?.project_recovery_customer_warnings_enabled) {
+    try {
+      customerWarningScan = await getProjectRecoveryCustomerWarningScanStatus(
+        currentBay.bay_id,
+      );
+    } catch (err) {
+      customerWarningScanReadError = `${err}`;
+    }
+  }
+  const customerWarningScanProblem = customerWarningScanReadError
+    ? `Unable to read customer warning scan: ${customerWarningScanReadError}`
+    : projectRecoveryCustomerWarningScanProblem({
+        enabled: !!settings?.project_recovery_customer_warnings_enabled,
+        scan: customerWarningScan,
+        checkedAt: new Date(checkedAt),
+      });
   const load = loadResult.status === "fulfilled" ? loadResult.value : undefined;
   const backups =
     backupsResult.status === "fulfilled" ? backupsResult.value : undefined;
+  const projectRecovery =
+    projectRecoveryResult.status === "fulfilled"
+      ? projectRecoveryResult.value
+      : undefined;
+  const stalledPayingQueues =
+    projectRecovery &&
+    projectRecoveryPayingCompletionsResult.status === "fulfilled"
+      ? stalledPayingRecoveryQueues({
+          health: projectRecovery,
+          recentPayingCompletions: projectRecoveryPayingCompletionsResult.value,
+        })
+      : [];
+  const projectRestoreDrills =
+    projectRestoreDrillsResult.status === "fulfilled"
+      ? summarizeProjectRestoreDrills(
+          projectRestoreDrillsResult.value,
+          new Date(checkedAt),
+        )
+      : undefined;
+  const projectRecoveryAttempts =
+    projectRecoveryAttemptsResult.status === "fulfilled"
+      ? projectRecoveryAttemptsResult.value
+      : undefined;
+  const projectRecoveryObjectives =
+    projectRecoveryObjectivesResult.status === "fulfilled"
+      ? projectRecoveryObjectivesResult.value
+      : undefined;
+  const projectRecoveryPressure =
+    projectRecoveryPressureResult.status === "fulfilled"
+      ? projectRecoveryPressureResult.value
+      : undefined;
+  const hostsMissingPressureTelemetry =
+    projectRecoveryPressure?.filter(
+      (host) =>
+        !host.latest_valid_sample_at ||
+        Date.parse(checkedAt) - Date.parse(host.latest_valid_sample_at) >
+          5 * 60_000,
+    ) ?? [];
   const latency =
     latencyResult.status === "fulfilled" ? latencyResult.value : undefined;
   const setup =
@@ -2375,6 +2467,193 @@ export async function getLaunchHealth({
             : "Bay backup is not enabled.",
       details:
         backupsResult.status === "rejected" ? [`${backupsResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "project-recovery",
+      label: "Project snapshots and backups",
+      level:
+        projectRecoveryResult.status === "rejected" ||
+        projectRecoveryPayingCompletionsResult.status === "rejected" ||
+        stalledPayingQueues.length > 0 ||
+        projectRestoreDrillsResult.status === "rejected" ||
+        projectRestoreDrills?.level === "critical" ||
+        projectRecoveryPressureResult.status === "rejected" ||
+        hostsMissingPressureTelemetry.length > 0 ||
+        recoveryNotificationConfigurationIssues.length > 0 ||
+        customerWarningScanProblem != null
+          ? "critical"
+          : !projectRecovery
+            ? "unknown"
+            : projectRecovery.paying_snapshot_overdue > 0 ||
+                projectRecovery.paying_backup_overdue > 0 ||
+                projectRecovery.unclassified_snapshot_overdue > 0 ||
+                projectRecovery.unclassified_backup_overdue > 0 ||
+                projectRecovery.paying_snapshot_repeated_failures > 0 ||
+                projectRecovery.paying_backup_repeated_failures > 0
+              ? "critical"
+              : projectRecoveryAttemptsResult.status === "rejected" ||
+                  projectRestoreDrills?.level === "warning" ||
+                  projectRecoveryObjectivesResult.status === "rejected" ||
+                  (projectRecoveryObjectives?.ready &&
+                    projectRecoveryObjectives.rows.some((row) => {
+                      const required =
+                        row.storage_service_class === "paying"
+                          ? 0.999
+                          : row.storage_service_class === "free"
+                            ? 0.99
+                            : 1;
+                      return (
+                        row.obligations > 0 &&
+                        row.on_time / row.obligations < required
+                      );
+                    })) ||
+                  projectRecovery.unknown_snapshot_status > 0 ||
+                  projectRecovery.unknown_backup_status > 0 ||
+                  projectRecovery.unaccounted_snapshot_due > 0 ||
+                  projectRecovery.unaccounted_backup_due > 0 ||
+                  projectRecovery.host_maintenance_blocks.length > 0 ||
+                  projectRecovery.oldest_snapshot_delay_seconds > 0 ||
+                  projectRecovery.oldest_backup_delay_seconds > 0 ||
+                  projectRecovery.by_host_class.some(
+                    (group) => group.repeated_failures > 0,
+                  )
+                ? "warning"
+                : "healthy",
+      summary: !projectRecovery
+        ? "Unable to read project recovery status."
+        : `${projectRecovery.paying_snapshot_overdue} paying snapshots and ${projectRecovery.paying_backup_overdue} paying backups beyond incident thresholds; ${projectRecovery.unclassified_snapshot_overdue} snapshots and ${projectRecovery.unclassified_backup_overdue} backups overdue without funding classification; ${projectRecovery.unknown_snapshot_status} snapshot and ${projectRecovery.unknown_backup_status} backup statuses unknown; ${projectRecovery.unaccounted_snapshot_due} snapshot and ${projectRecovery.unaccounted_backup_due} backup due obligations absent from objective accounting; ${projectRecovery.host_maintenance_blocks.length} hosts at the memory safety gate; ${hostsMissingPressureTelemetry.length} hosts missing recent storage pressure telemetry; ${stalledPayingQueues.length} paying host queues with no recent completion${projectRecoveryPayingCompletionsResult.status === "rejected" ? " (completion history unavailable)" : ""}. ${projectRestoreDrills ? `${projectRestoreDrills.current}/${projectRestoreDrills.current + projectRestoreDrills.missing + projectRestoreDrills.stale + projectRestoreDrills.failed} active backup shards have a passing remote-only restore drill within 30 days (${projectRestoreDrills.failed} latest failed, ${projectRestoreDrills.missing} missing, ${projectRestoreDrills.stale} stale).` : "Restore drill coverage unavailable."}${recoveryNotificationConfigurationIssues.length ? ` Operator delivery misconfigured: ${recoveryNotificationConfigurationIssues.join("; ")}.` : ""}${customerWarningScanProblem ? ` ${customerWarningScanProblem}.` : ""}`,
+      details:
+        projectRecoveryResult.status === "rejected"
+          ? [`${projectRecoveryResult.reason}`]
+          : projectRecovery
+            ? [
+                `Oldest snapshot delay: ${Math.round(projectRecovery.oldest_snapshot_delay_seconds / 60)} minutes`,
+                `Oldest backup delay: ${Math.round(projectRecovery.oldest_backup_delay_seconds / 60)} minutes`,
+                `Repeated paying failures: ${projectRecovery.paying_snapshot_repeated_failures} snapshots, ${projectRecovery.paying_backup_repeated_failures} backups`,
+                ...(projectRecoveryPayingCompletionsResult.status === "rejected"
+                  ? [
+                      `Unable to read recent paying completions: ${projectRecoveryPayingCompletionsResult.reason}`,
+                    ]
+                  : stalledPayingQueues
+                      .slice(0, 12)
+                      .map(
+                        (group) =>
+                          `${group.host_id} paying ${group.kind} queue stalled: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes; no confirmed completion in the last ${group.kind === "snapshot" ? "30 minutes" : "2 hours"}`,
+                      )),
+                ...(projectRestoreDrillsResult.status === "rejected"
+                  ? [
+                      `Unable to read project restore drill coverage: ${projectRestoreDrillsResult.reason}`,
+                    ]
+                  : (projectRestoreDrills?.details ?? [])),
+                settings?.project_recovery_notifications_enabled
+                  ? `Operator notifications enabled; on-call administrator ${recoveryOncallAccountId || "not configured"}; critical email backend ${recoveryCriticalEmailBackend || "not configured"}`
+                  : "Operator notifications disabled until the named on-call administrator and alert switch are configured",
+                ...recoveryNotificationConfigurationIssues,
+                ...(settings?.project_recovery_customer_warnings_enabled
+                  ? customerWarningScan
+                    ? [
+                        `Customer warning scan completed ${customerWarningScan.last_completed_at.toISOString()}; ${customerWarningScan.scanned} projects scanned in this batch; ${customerWarningScan.notices_sent} notices sent; ${customerWarningScan.failures} failures`,
+                        customerWarningScan.last_full_scan_at
+                          ? `Customer warning full inventory completed ${customerWarningScan.last_full_scan_at.toISOString()}; ${customerWarningScan.last_full_scan_scanned} projects scanned; ${customerWarningScan.last_full_scan_failures} failures`
+                          : `Customer warning full inventory in progress; ${customerWarningScan.cycle_scanned} projects scanned so far`,
+                      ]
+                    : []
+                  : ["Customer warnings disabled"]),
+                ...(customerWarningScanProblem
+                  ? [customerWarningScanProblem]
+                  : []),
+                ...projectRecovery.host_maintenance_blocks.map(
+                  (block) =>
+                    `${block.host_id} maintenance blocked: ${block.reason} checked at ${block.checked_at}${block.memory_psi_full_avg10 == null ? "" : ` (memory PSI full avg10 ${block.memory_psi_full_avg10}%)`}`,
+                ),
+                ...(projectRecoveryPressureResult.status === "rejected"
+                  ? [
+                      `Unable to read host storage pressure history: ${projectRecoveryPressureResult.reason}`,
+                    ]
+                  : []),
+                ...hostsMissingPressureTelemetry.map(
+                  (host) =>
+                    `${host.host_name} storage pressure telemetry missing or older than five minutes`,
+                ),
+                ...(projectRecoveryPressure?.map(
+                  (host) =>
+                    `${host.host_name} pressure over 24h: storage contended ${Math.round(host.contended_seconds / 60)}m, emergency ${Math.round(host.emergency_seconds / 60)}m, recovery ${Math.round(host.recovery_seconds / 60)}m, unavailable ${Math.round(host.unavailable_seconds / 60)}m, sampled ${Math.round(host.sampled_seconds / 60)}m; maintenance memory PSI ${Math.round(host.memory_pressure_seconds / 60)}m, available-memory floor ${Math.round(host.available_memory_seconds / 60)}m, measurement unavailable ${Math.round(host.memory_measurement_unavailable_seconds / 60)}m`,
+                ) ?? []),
+                ...projectRecovery.by_host_class
+                  .slice(0, 12)
+                  .map(
+                    (group) =>
+                      `${group.host_id} ${group.storage_service_class} ${group.kind} debt: ${group.overdue_count} overdue, oldest ${Math.round(group.oldest_delay_seconds / 60)} minutes, ${group.unknown_count} unknown, ${group.repeated_failures} repeated failures`,
+                  ),
+                ...projectRecovery.oldest_debt.map(
+                  (item) =>
+                    `Project ${item.project_id} on ${item.host_id}: ${item.storage_service_class} ${item.kind} due ${item.due_at}, delayed ${Math.round(item.delay_seconds / 60)} minutes`,
+                ),
+                ...(projectRecoveryAttemptsResult.status === "rejected"
+                  ? [
+                      `Unable to read 24-hour maintenance attempts: ${projectRecoveryAttemptsResult.reason}`,
+                    ]
+                  : []),
+                ...(projectRecoveryObjectivesResult.status === "rejected"
+                  ? [
+                      `Unable to read 30-day recovery objectives: ${projectRecoveryObjectivesResult.reason}`,
+                    ]
+                  : projectRecoveryObjectives
+                    ? [
+                        `30-day objectives ${projectRecoveryObjectives.ready ? "mature" : "collecting"}; recorded since ${projectRecoveryObjectives.collecting_since ?? "no due observations"}; mature UTC due window ${projectRecoveryObjectives.window_start} through ${projectRecoveryObjectives.window_end}`,
+                        `30-day inventory coverage: ${projectRecoveryObjectives.coverage_slots_observed}/${projectRecoveryObjectives.coverage_slots_expected} fifteen-minute slots audited, ${projectRecoveryObjectives.coverage_gap_slots} slots with unknown status, blocked hosts, or unaccounted due work`,
+                        ...projectRecoveryObjectives.rows.map(
+                          (row) =>
+                            `${row.storage_service_class} ${row.kind} 30-day objective: ${row.on_time}/${row.obligations} on time, ${row.succeeded} confirmed; ${row.target_seconds == null ? "target unavailable" : `target ${row.target_seconds}s`}`,
+                        ),
+                      ]
+                    : []),
+                ...(projectRecoveryAttempts
+                  ? [
+                      `24-hour attempts: ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.succeeded, 0)} succeeded, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.deferred, 0)} deferred, ${projectRecoveryAttempts.by_host.reduce((total, item) => total + item.failed, 0)} failed`,
+                      ...projectRecoveryAttempts.by_host
+                        .filter((item) => item.due_obligations > 0)
+                        .sort(
+                          (a, b) => b.execution_seconds - a.execution_seconds,
+                        )
+                        .slice(0, 12)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind} 24-hour observed load: ${item.due_obligations} distinct due obligations, ${(item.execution_seconds / 3600).toFixed(2)} execution slot-hours (${(item.successful_execution_seconds / 3600).toFixed(2)} successful), ${(item.queue_wait_seconds / 3600).toFixed(2)} queue-wait hours, ${(item.bytes_uploaded / 1024 ** 3).toFixed(2)} GiB uploaded; safe host budget requires calibration`,
+                        ),
+                      ...projectRecoveryAttempts.by_host
+                        .filter((item) => item.failed > 0 || item.deferred > 0)
+                        .sort(
+                          (a, b) =>
+                            b.failed + b.deferred - (a.failed + a.deferred),
+                        )
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind}: ${item.succeeded} succeeded, ${item.deferred} deferred, ${item.failed} failed`,
+                        ),
+                      ...projectRecoveryAttempts.reasons
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.host_id} ${item.storage_service_class} ${item.kind} ${item.outcome}: ${item.reason_code} (${item.attempts})`,
+                        ),
+                      ...projectRecoveryAttempts.stages
+                        .filter((item) => item.samples >= 5)
+                        .sort((a, b) => b.p99_ms - a.p99_ms)
+                        .slice(0, 8)
+                        .map(
+                          (item) =>
+                            `${item.storage_service_class} ${item.kind} ${item.stage}: p95 ${Math.round(item.p95_ms)}ms, p99 ${Math.round(item.p99_ms)}ms (${item.samples} attempts)`,
+                        ),
+                      ...projectRecoveryAttempts.due_to_success.map(
+                        (item) =>
+                          `${item.storage_service_class} ${item.kind} due-to-success: p95 ${Math.round(item.p95_seconds)}s, p99 ${Math.round(item.p99_seconds)}s (${item.samples} completions)`,
+                      ),
+                    ]
+                  : []),
+              ]
+            : [],
     }),
     launchHealthCheck({
       id: "site-setup",

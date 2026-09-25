@@ -3,7 +3,7 @@ export {};
 let createHostStatusServiceMock: jest.Mock;
 let conatMock: jest.Mock;
 let queryMock: jest.Mock;
-let resolveMembershipForAccountMock: jest.Mock;
+let resolveRuntimeMembershipMock: jest.Mock;
 let getEffectiveMembershipUsageLimitsMock: jest.Mock;
 let getLaunchpadLocalConfigMock: jest.Mock;
 let maybeStartLaunchpadOnPremServicesMock: jest.Mock;
@@ -78,16 +78,23 @@ jest.mock("@cocalc/server/account/project-feed", () => ({
   publishProjectAccountFeedEventsBestEffort: jest.fn(),
 }));
 
-jest.mock("@cocalc/server/membership/resolve", () => ({
+jest.mock("@cocalc/server/membership/runtime-resolution", () => ({
   __esModule: true,
-  resolveMembershipForAccount: (...args: any[]) =>
-    resolveMembershipForAccountMock(...args),
+  resolveRuntimeMembership: (...args: any[]) =>
+    resolveRuntimeMembershipMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/effective-limits", () => ({
   __esModule: true,
   getEffectiveMembershipUsageLimits: (...args: any[]) =>
     getEffectiveMembershipUsageLimitsMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/maintenance-status", () => ({
+  __esModule: true,
+  ensureProjectMaintenanceStatusTable: jest.fn(async () => undefined),
+  recordProjectMaintenanceStatus: jest.fn(async () => true),
+  snapshotScheduleRevision: jest.fn(() => "schedule-revision"),
 }));
 
 jest.mock("./host-project-ownership", () => ({
@@ -107,7 +114,9 @@ describe("listHostProjectMaintenanceSchedules", () => {
     createHostStatusServiceMock = jest.fn();
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
-    resolveMembershipForAccountMock = jest.fn(async () => ({
+    resolveRuntimeMembershipMock = jest.fn(async () => ({
+      class: "free",
+      source: "free",
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({
@@ -131,7 +140,63 @@ describe("listHostProjectMaintenanceSchedules", () => {
     delete process.env.COCALC_DEV_GCP_REVERSE_TUNNEL;
   });
 
-  it("lists active and backup-due provisioned projects for the host", async () => {
+  it("fences maintenance against moves, schedule edits, and newer changes", async () => {
+    const { confirmHostProjectMaintenanceAssignment } =
+      await import("./host-status");
+    const request = {
+      host_id: "host-1",
+      project_id: "proj-1",
+      kind: "snapshot" as const,
+      schedule_revision: "schedule-revision",
+      observed_change_at: "2026-09-23T21:00:00.000Z",
+    };
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: false, reason: "assignment_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date(request.observed_change_at),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment({
+        ...request,
+        schedule_revision: "old-revision",
+      }),
+    ).resolves.toEqual({ valid: false, reason: "schedule_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date("2026-09-23T22:00:00.000Z"),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: false, reason: "change_generation_changed" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          snapshots: {},
+          observed_change_at: new Date(request.observed_change_at),
+        },
+      ],
+    });
+    await expect(
+      confirmHostProjectMaintenanceAssignment(request),
+    ).resolves.toEqual({ valid: true });
+    expect(queryMock.mock.calls[0][0]).toContain("host_id=$2");
+  });
+
+  it("pages provisioned projects in stable project-id order", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
       .mockResolvedValueOnce({
@@ -155,12 +220,31 @@ describe("listHostProjectMaintenanceSchedules", () => {
       listHostProjectMaintenanceSchedules({
         host_id: "host-1",
         active_days: 2,
+        cursor_project_id: "proj-0",
       }),
     ).resolves.toEqual([
       {
         project_id: "proj-1",
+        storage_account_id: "owner-1",
+        storage_service_class: "free",
+        storage_priority: 0,
         last_edited: "2026-04-10T22:00:00.000Z",
         last_backup: null,
+        last_snapshot: null,
+        last_snapshot_observed_at: null,
+        snapshot_status_outcome: null,
+        snapshot_status_due_at: null,
+        snapshot_reconciled_change_at: null,
+        snapshot_schedule_revision: "schedule-revision",
+        snapshot_reconciled_schedule_revision: null,
+        last_backup_observed_at: null,
+        backup_status_outcome: null,
+        backup_status_reason: null,
+        backup_status_due_at: null,
+        snapshot_retry_at: null,
+        backup_retry_at: null,
+        snapshot_failures: 0,
+        backup_failures: 0,
         backup_due_since: "2026-04-10T22:00:00.000Z",
         snapshots: { daily: 5 },
         backups: { weekly: 2, disabled: true },
@@ -172,22 +256,207 @@ describe("listHostProjectMaintenanceSchedules", () => {
     expect(queryMock).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("FROM project_hosts"),
-      ["host-1"],
+      ["host-1", expect.any(String)],
     );
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("provisioned IS TRUE"),
-      ["host-1", 2, 100],
+      ["host-1", "proj-0", 100, expect.any(String)],
     );
+    expect(queryMock.mock.calls[0][0]).toContain(
+      "COALESCE(NULLIF(BTRIM(bay_id), ''), $2)=$2",
+    );
+    expect(queryMock.mock.calls[0][1][1]).toBe(queryMock.mock.calls[1][1][3]);
     const maintenanceSql = queryMock.mock.calls[1][0];
+    expect(maintenanceSql).toContain(
+      "COALESCE(NULLIF(BTRIM(owning_bay_id), ''), $4)=$4",
+    );
     expect(maintenanceSql).toContain("last_backup IS NULL");
     expect(maintenanceSql).toContain("> last_backup");
     expect(maintenanceSql).toContain("backups->>'disabled'");
-    expect(maintenanceSql).toContain("INTERVAL '1 day'");
-    expect(maintenanceSql).toContain(
-      "ORDER BY backup_due_since ASC NULLS LAST",
-    );
+    expect(maintenanceSql).toContain("project_id > $2::uuid");
+    expect(maintenanceSql).toContain("ORDER BY project_id ASC");
     expect(maintenanceSql).toContain("LIMIT $3");
+  });
+
+  it("starts the first page with a null UUID cursor", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    await expect(
+      listHostProjectMaintenanceSchedules({ host_id: "host-1" }),
+    ).resolves.toEqual([]);
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("$2::uuid IS NULL"),
+      ["host-1", null, 100, expect.any(String)],
+    );
+  });
+
+  it("filters a bounded event batch by project id and assigned host", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+      project_ids: ["proj-1", "proj-2"],
+      limit: 50,
+    });
+
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("project_id = ANY($5::uuid[])"),
+      ["host-1", null, 50, expect.any(String), ["proj-1", "proj-2"]],
+    );
+  });
+
+  it("uses an admin-tier storage payer for priority and the owner for existing limits", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-1",
+            owner_account_id: "owner-1",
+            usage_account_id: "sponsor-1",
+            users: {
+              "owner-1": { group: "owner" },
+            },
+          },
+        ],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
+      account_id === "sponsor-1"
+        ? { class: "admin", source: "admin" }
+        : { class: "free", source: "free" },
+    );
+    getEffectiveMembershipUsageLimitsMock.mockImplementation((resolution) =>
+      resolution.class === "admin"
+        ? {
+            max_snapshots_per_project: 30,
+            max_backups_per_project: 10,
+            shared_compute_priority: 5,
+          }
+        : { max_snapshots_per_project: 8, max_backups_per_project: 4 },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    const rows = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+
+    expect(rows[0]).toMatchObject({
+      storage_account_id: "sponsor-1",
+      storage_service_class: "paying",
+      storage_priority: 5,
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 4,
+    });
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("owner-1");
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith("sponsor-1");
+  });
+
+  it("uses a non-collaborator student course sponsor for storage priority", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-1",
+            owner_account_id: "owner-1",
+            usage_account_id: null,
+            course: { type: "student", account_id: "course-sponsor-1" },
+            users: { "owner-1": { group: "owner" } },
+          },
+        ],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
+      account_id === "course-sponsor-1"
+        ? { class: "member", source: "subscription", subscription_cost: 10 }
+        : { class: "free", source: "free" },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    const rows = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    expect(rows[0]).toMatchObject({
+      storage_account_id: "course-sponsor-1",
+      storage_service_class: "paying",
+    });
+    expect(resolveRuntimeMembershipMock).toHaveBeenCalledWith(
+      "course-sponsor-1",
+    );
+  });
+
+  it("defers a page if the owner's entitlement cannot be resolved", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { project_id: "proj-1", owner_account_id: "remote-owner" },
+          { project_id: "proj-2", owner_account_id: "local-owner" },
+        ],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) => {
+      if (account_id === "remote-owner") throw Error("home bay unavailable");
+      return { class: "free", source: "free" };
+    });
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+    await expect(
+      listHostProjectMaintenanceSchedules({ host_id: "host-1" }),
+    ).rejects.toThrow("home bay unavailable");
+  });
+
+  it("refreshes funding class when a project's storage payer changes", async () => {
+    const projectRow = {
+      project_id: "proj-1",
+      owner_account_id: "owner-1",
+      users: {
+        "owner-1": { group: "owner" },
+        "sponsor-1": { group: "collaborator" },
+      },
+    };
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [{ ...projectRow, usage_account_id: null }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+      .mockResolvedValueOnce({
+        rows: [{ ...projectRow, usage_account_id: "sponsor-1" }],
+      });
+    resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
+      account_id === "sponsor-1"
+        ? { class: "member", source: "subscription", subscription_cost: 10 }
+        : { class: "free", source: "free" },
+    );
+    const { listHostProjectMaintenanceSchedules } =
+      await import("./host-status");
+
+    const before = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    const after = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+
+    expect(before[0]).toMatchObject({
+      storage_account_id: "owner-1",
+      storage_service_class: "free",
+    });
+    expect(after[0]).toMatchObject({
+      storage_account_id: "sponsor-1",
+      storage_service_class: "paying",
+    });
   });
 });
 
@@ -197,7 +466,9 @@ describe("initHostStatusService registerOnPremTunnel", () => {
     createHostStatusServiceMock = jest.fn(({ impl }) => impl);
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
-    resolveMembershipForAccountMock = jest.fn(async () => ({
+    resolveRuntimeMembershipMock = jest.fn(async () => ({
+      class: "free",
+      source: "free",
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({

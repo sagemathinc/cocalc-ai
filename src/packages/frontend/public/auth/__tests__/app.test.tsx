@@ -239,6 +239,24 @@ describe("PublicAuthApp", () => {
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
+  it("fails closed when password signup policy cannot be loaded", async () => {
+    mockedApi.mockRejectedValueOnce(new Error("stale bay is unreachable"));
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to load this site's sign-up requirements",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeDisabled();
+    expect(mockedPostAuthApi).not.toHaveBeenCalled();
+  });
+
   it("shows custom account creation instructions on the public sign-up page", async () => {
     mockedApi.mockResolvedValueOnce(false);
 
@@ -430,9 +448,11 @@ describe("PublicAuthApp", () => {
       target: { value: "correct horse battery staple 12345!" },
     });
     expect(screen.queryByText("Passwords do not match.")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Create account" }),
-    ).not.toBeDisabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create account" }),
+      ).not.toBeDisabled(),
+    );
   });
 
   it("shows Terms of Service and Privacy Policy notice on sign-up", async () => {
@@ -525,6 +545,27 @@ describe("PublicAuthApp", () => {
         terms: true,
       },
     });
+  });
+
+  it("fails closed when email-first signup policy cannot be loaded", async () => {
+    mockedApi.mockRejectedValueOnce(new Error("stale bay is unreachable"));
+    render(
+      <PublicAuthApp
+        config={config({ email_authentication_mode: "email_first" })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to load this site's sign-up requirements",
+    );
+    fireEvent.change(screen.getByLabelText("Email address"), {
+      target: { value: "person@example.edu" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Continue with email" }),
+    ).toBeDisabled();
+    expect(mockedPostAuthApi).not.toHaveBeenCalled();
   });
 
   it("carries acquisition intent into email-first account creation", async () => {
@@ -832,10 +873,16 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Your name"), {
       target: { value: "New User" },
     });
-    expect(
-      screen.getByRole("button", { name: "Create account" }),
-    ).not.toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create account" }),
+      ).not.toBeDisabled(),
+    );
+    const createAccount = screen.getByRole("button", {
+      name: "Create account",
+    });
+    await waitFor(() => expect(createAccount).not.toBeDisabled());
+    fireEvent.click(createAccount);
     await waitFor(() => {
       expect(mockedPostAuthApi).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -883,7 +930,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Your name"), {
       target: { value: "New User" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    const createAccount = screen.getByRole("button", {
+      name: "Create account",
+    });
+    await waitFor(() => expect(createAccount).not.toBeDisabled());
+    fireEvent.click(createAccount);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Your account was created, but automatic sign-in on your home bay failed.",
@@ -937,7 +988,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Your name"), {
       target: { value: "New User" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    const createAccount = screen.getByRole("button", {
+      name: "Create account",
+    });
+    await waitFor(() => expect(createAccount).not.toBeDisabled());
+    fireEvent.click(createAccount);
 
     expect(await screen.findByText("Check your email")).not.toBeNull();
     expect(
@@ -993,7 +1048,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Your name"), {
       target: { value: "New User" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    const createAccount = screen.getByRole("button", {
+      name: "Create account",
+    });
+    await waitFor(() => expect(createAccount).not.toBeDisabled());
+    fireEvent.click(createAccount);
 
     expect(await screen.findByText("Check your email")).not.toBeNull();
     expect(screen.getByText("new-user@example.edu")).not.toBeNull();

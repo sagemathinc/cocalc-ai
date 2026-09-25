@@ -489,7 +489,10 @@ describe("project-backup", () => {
         sql.includes("UPDATE projects") &&
         sql.includes("SET last_backup =")
       ) {
-        return { rows: [] };
+        return {
+          rows: [],
+          rowCount: settings.backup_record_assignment_changed_at_update ? 0 : 1,
+        };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -828,8 +831,28 @@ describe("project-backup", () => {
       sql.trimStart().startsWith("UPDATE projects"),
     );
     expect(updateCall).toBeDefined();
-    const params = updateCall?.[1] as [string, Date];
+    const params = updateCall?.[1] as [string, Date, number | null, string];
     expect(params?.[1]?.toISOString()).toBe(when.toISOString());
+    expect(params?.[3]).toBe(HOST_ID);
+    expect(updateCall?.[0]).toContain("host_id = $4");
+  });
+
+  it("rejects a backup report if the project moves after access validation", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      backup_record_assignment_changed_at_update: true,
+    };
+    const { recordProjectBackup } = await import("./index");
+    await expect(
+      recordProjectBackup({
+        host_id: HOST_ID,
+        project_id: PROJECT_ID,
+        time: new Date(),
+      }),
+    ).rejects.toThrow(
+      "project assignment changed before backup success report",
+    );
   });
 
   it("allows backup access when the authenticated host is the assigned host across bays", async () => {

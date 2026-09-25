@@ -126,4 +126,40 @@ describe("system message delivery", () => {
       expect.objectContaining({ message_id: 23 }),
     );
   });
+
+  it("passes operational priority to the durable account notice", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT id FROM messages")) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO messages")) {
+        return { rows: [{ id: 42 }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { default: send } = await import("./send");
+    await send({
+      to_ids: ["11111111-1111-4111-8111-111111111111"],
+      subject: "Project recovery incident",
+      body: "Paying backup overdue.",
+      operationalIncident: true,
+      requireAccountNoticeDelivery: true,
+    });
+    expect(mirrorSystemMessageToAccountNoticeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: 42,
+        operationalIncident: true,
+      }),
+    );
+    await expect(
+      send({
+        from_id: "22222222-2222-4222-8222-222222222222",
+        to_ids: ["11111111-1111-4111-8111-111111111111"],
+        subject: "Fake incident",
+        body: "",
+        operationalIncident: true,
+        requireAccountNoticeDelivery: true,
+      }),
+    ).rejects.toThrow("must be internal system messages");
+  });
 });

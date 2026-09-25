@@ -7,6 +7,7 @@ export type BackupSnapshotRef = {
   id: string;
   time?: Date;
   summary?: Record<string, string | number>;
+  snapshotGeneration?: number;
 };
 
 export function parseCreatedBackupSnapshot(
@@ -23,6 +24,12 @@ export function parseCreatedBackupSnapshot(
     id: record.id,
     time: parseBackupDate(record.time),
     summary: parseBackupSummary(record.summary),
+    snapshotGeneration:
+      typeof record.snapshotGeneration === "number" &&
+      Number.isSafeInteger(record.snapshotGeneration) &&
+      record.snapshotGeneration > 0
+        ? record.snapshotGeneration
+        : undefined,
   };
 }
 
@@ -41,6 +48,36 @@ export function newestBackupTimeForIds({
     if (!newest || backup.time > newest) {
       newest = backup.time;
     }
+  }
+  return newest;
+}
+
+// A successful upload is not a confirmed recovery point until every newly
+// created ID can be read back from the remote repository with a valid time.
+export function confirmedBackupTimeForIds({
+  backups,
+  backupIds,
+}: {
+  backups: readonly BackupSnapshotRef[];
+  backupIds: ReadonlySet<string>;
+}): Date | undefined {
+  return confirmedBackupForIds({ backups, backupIds })?.time;
+}
+
+export function confirmedBackupForIds({
+  backups,
+  backupIds,
+}: {
+  backups: readonly BackupSnapshotRef[];
+  backupIds: ReadonlySet<string>;
+}): { id: string; time: Date } | undefined {
+  if (backupIds.size === 0) return undefined;
+  const byId = new Map(backups.map((backup) => [backup.id, backup]));
+  let newest: { id: string; time: Date } | undefined;
+  for (const id of backupIds) {
+    const time = byId.get(id)?.time;
+    if (!time || !validDate(time)) return undefined;
+    if (!newest || time > newest.time) newest = { id, time };
   }
   return newest;
 }

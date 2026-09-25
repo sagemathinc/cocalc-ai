@@ -12,8 +12,17 @@ export interface Messages {
     reply_id?: number;
     dedupMinutes?: number;
   }) => Promise<number>;
+  sendProjectRecoveryCriticalEmailDrill: (opts: {
+    account_id?: string;
+    drill_id: string;
+  }) => Promise<{
+    message_id: number;
+    recipient_account_id: string;
+    drill_id: string;
+  }>;
 }
 
 export const messages = {
   sendSystemNotice: authFirstRequireAccount,
+  sendProjectRecoveryCriticalEmailDrill: authFirstRequireAccount,
 };

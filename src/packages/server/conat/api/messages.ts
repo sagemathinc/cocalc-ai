@@ -2,6 +2,10 @@ import send0 from "@cocalc/server/messages/send";
 import { isValidUUID } from "@cocalc/util/misc";
 import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import getAdmins from "@cocalc/server/accounts/admins";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getSingleBayInfo } from "@cocalc/server/bay-directory";
+import { getProjectRecoveryNotificationConfiguration } from "@cocalc/server/projects/recovery-notification-configuration";
 
 const MAX_MESSAGE_RECIPIENTS = 25;
 
@@ -54,4 +58,55 @@ export async function sendSystemNotice(opts) {
     reply_id: opts.reply_id,
     dedupMinutes: opts.dedupMinutes,
   });
+}
+
+/** Send a labeled, idempotent critical-lane test to this bay's named on-call. */
+export async function sendProjectRecoveryCriticalEmailDrill({
+  account_id,
+  drill_id,
+}: {
+  account_id?: string;
+  drill_id: string;
+}): Promise<{
+  message_id: number;
+  recipient_account_id: string;
+  drill_id: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("only admin may send project recovery critical email drills");
+  }
+  if (!isValidUUID(drill_id)) {
+    throw Error("a valid drill_id UUID is required");
+  }
+  const settings = await getServerSettings();
+  const { oncallAccountId, criticalEmailBackend } =
+    getProjectRecoveryNotificationConfiguration(settings);
+  if (!oncallAccountId || !(await getAdmins()).includes(oncallAccountId)) {
+    throw Error("a local administrator must be configured as recovery on-call");
+  }
+  if (!criticalEmailBackend || criticalEmailBackend === "none") {
+    throw Error("critical email backend is unavailable");
+  }
+  const bayId = getSingleBayInfo().bay_id;
+  const messageId = await send0({
+    to_ids: [oncallAccountId],
+    subject: `Admin Alert - TEST project recovery critical email drill on ${bayId}: ${drill_id}`,
+    body: [
+      "TEST ONLY: This is a project recovery critical email delivery drill.",
+      "No project debt or production incident is implied by this message.",
+      `Owning bay: ${bayId}`,
+      `Drill ID: ${drill_id}`,
+      "Confirm receipt and verify that the email arrived through the critical lane.",
+    ].join("\n"),
+    dedupMinutes: 60,
+    dedupBySubject: true,
+    requireAccountNoticeDelivery: true,
+    operationalIncident: true,
+  });
+  if (messageId == null) throw Error("critical email drill was not queued");
+  return {
+    message_id: messageId,
+    recipient_account_id: oncallAccountId,
+    drill_id,
+  };
 }

@@ -1565,6 +1565,125 @@ test("admin db lro forwards diagnostic filters", async () => {
   });
 });
 
+test("admin db project-recovery scopes an audited diagnostic to one project", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        diagnostic: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-recovery", rows: [] };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-recovery",
+    "--project-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--limit",
+    "20",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    limit: 20,
+    statement_timeout_ms: 15000,
+    lock_timeout_ms: 1000,
+    max_bytes: 2097152,
+    diagnostic: "project-recovery",
+    params: { project_id: "11111111-1111-4111-8111-111111111111" },
+  });
+});
+
+test("admin db project-restore-drills scopes the report and lookback", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        diagnostic: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-drills", rows: [] };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-restore-drills",
+    "--project-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--window-days",
+    "7",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    limit: 200,
+    statement_timeout_ms: 15000,
+    lock_timeout_ms: 1000,
+    max_bytes: 2097152,
+    diagnostic: "project-restore-drills",
+    params: {
+      project_id: "11111111-1111-4111-8111-111111111111",
+      window_seconds: 7 * 24 * 60 * 60,
+    },
+  });
+});
+
+test("admin db project-restore-drill-attest forwards operator evidence", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminDb: {
+        attestProjectRestoreDrill: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-attestation", passed: true };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "db",
+    "project-restore-drill-attest",
+    "--op-id",
+    "11111111-1111-4111-8111-111111111111",
+    "--expected-sha256",
+    "a".repeat(64),
+    "--observed-sha256",
+    "a".repeat(64),
+    "--reason",
+    "Remote-only canary marker readback",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bay_id: undefined,
+    op_id: "11111111-1111-4111-8111-111111111111",
+    expected_sha256: "a".repeat(64),
+    observed_sha256: "a".repeat(64),
+    reason: "Remote-only canary marker readback",
+  });
+});
+
 test("admin db host-query forwards audited project-host SQLite options", async () => {
   let capturedArgs: any;
   const program = new Command();
@@ -2610,4 +2729,38 @@ test("admin message send-system-notice forwards the system notice payload", asyn
     body: "Tonight",
     dedupMinutes: 30,
   });
+});
+
+test("admin critical recovery drill forwards a stable drill id", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(program, {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        hub: {
+          messages: {
+            sendProjectRecoveryCriticalEmailDrill: async (opts: any) => {
+              captured = opts;
+              return { message_id: 123 };
+            },
+          },
+        },
+      }),
+    resolveAccountByIdentifier: async () => {
+      throw new Error("not used");
+    },
+    normalizeUrl: (value: string) => value,
+    isValidUUID: () => false,
+  } as any);
+  const drill_id = "55555555-5555-4555-8555-555555555555";
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "message",
+    "drill-project-recovery-critical-email",
+    "--drill-id",
+    drill_id,
+  ]);
+  assert.deepEqual(captured, { drill_id });
 });

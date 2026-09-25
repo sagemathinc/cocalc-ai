@@ -124,6 +124,22 @@ class RuntimeStoragePathHelperTest(unittest.TestCase):
     def helper_run(self):
         return self.helper_namespace()["run"]
 
+    def test_rustic_no_cache_is_restricted_to_project_restore(self) -> None:
+        parse_rustic = self.helper_namespace()["parse_rustic"]
+        common = [
+            "--root", "/mnt/cocalc",
+            "--path", "project-1",
+            "--profile-root", "/mnt/cocalc/data/secrets/rustic",
+            "--profile-path", "project-1.toml",
+        ]
+        command, restore = parse_rustic(
+            ["rustic-project-restore", *common, "--snapshot", "backup-id:data", "--no-cache"]
+        )
+        self.assertEqual(command, "rustic-project-restore")
+        self.assertTrue(restore["no-cache"])
+        with self.assertRaises(ValueError):
+            parse_rustic(["rustic-project-backup", *common, "--host", "project-1", "--no-cache"])
+
     def test_tree_copy_uses_anchored_directories(self) -> None:
         run = self.helper_run()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -480,6 +496,27 @@ secret_access_key = "secret"
             self.assertEqual(lines[0], str(source))
             self.assertIn("backup", lines)
             self.assertIn("--host", lines)
+            self.assertEqual(list(profile_run_dir.iterdir()), [])
+
+            run_rustic(
+                [
+                    "rustic-project-restore",
+                    "--root", str(root),
+                    "--path", "source",
+                    "--profile-root", str(root),
+                    "--profile-path", "profile.toml",
+                    "--snapshot", "backup-id:data",
+                    "--no-cache",
+                ],
+                allowed_roots={str(root)},
+                rustic_candidates=[str(fake_rustic)],
+                profile_run_dir=str(profile_run_dir),
+                profile_run_dir_uid=os.getuid(),
+            )
+            restore_args = invocation.read_text(encoding="utf-8").splitlines()
+            self.assertIn("restore", restore_args)
+            self.assertIn("--no-cache", restore_args)
+            self.assertIn("backup-id:data", restore_args)
             self.assertEqual(list(profile_run_dir.iterdir()), [])
 
             outside = root / "outside-profile.toml"

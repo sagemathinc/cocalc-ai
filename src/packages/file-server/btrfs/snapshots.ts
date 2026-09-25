@@ -16,6 +16,23 @@ let loggedRollingSnapshotsDisabled = false;
 export const TEMP_RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
+export interface RollingSnapshotUpdateResult {
+  changed: boolean | null;
+  createdName: string | null;
+  disabled: boolean;
+}
+
+export type RollingSnapshotStage =
+  | "inventory"
+  | "change_detection"
+  | "create"
+  | "prune";
+
+export type RollingSnapshotStageObserver = (
+  stage: RollingSnapshotStage,
+  durationMs: number,
+) => void;
+
 export async function updateRollingSnapshots({
   snapshots,
   counts,
@@ -27,23 +44,41 @@ export async function updateRollingSnapshots({
   opts?: {
     beforeCreate?: () => Promise<void>;
     afterCreate?: (created: unknown) => Promise<void>;
+    onStage?: RollingSnapshotStageObserver;
     [key: string]: unknown;
   };
-}) {
+}): Promise<RollingSnapshotUpdateResult> {
+  const timed = async <T>(
+    stage: RollingSnapshotStage,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const started = Date.now();
+    try {
+      return await run();
+    } finally {
+      try {
+        opts?.onStage?.(stage, Math.max(0, Date.now() - started));
+      } catch (err) {
+        logger.warn("rolling snapshot stage observer failed", { stage, err });
+      }
+    }
+  };
   if (btrfsRollingSnapshotsDisabled()) {
     if (!loggedRollingSnapshotsDisabled) {
       loggedRollingSnapshotsDisabled = true;
       logger.warn("rolling btrfs snapshots disabled by configuration");
     }
-    return;
+    return { changed: null, createdName: null, disabled: true };
   }
   counts = { ...DEFAULT_SNAPSHOT_COUNTS, ...counts };
 
   // Snapshot discovery can require one targeted Btrfs metadata command per
   // retained snapshot. Reuse one inventory throughout the rolling update
   // instead of listing again for change detection and the create limit.
-  const allSnapshotNames = await snapshots.readdir();
-  const changed = await snapshots.hasUnsavedChanges(allSnapshotNames);
+  const allSnapshotNames = await timed("inventory", () => snapshots.readdir());
+  const changed = await timed("change_detection", () =>
+    snapshots.hasUnsavedChanges(allSnapshotNames),
+  );
   logger.debug("updateRollingSnapshots", {
     name: snapshots.subvolume.name,
     counts,
@@ -60,7 +95,7 @@ export async function updateRollingSnapshots({
         ? 1e12 // infinitely old
         : Date.now() - new Date(snapshotNames.slice(-1)[0]).valueOf();
     for (const key in SNAPSHOT_INTERVALS_MS) {
-      if (counts[key] && timeSinceLastSnapshot > SNAPSHOT_INTERVALS_MS[key]) {
+      if (counts[key] && timeSinceLastSnapshot >= SNAPSHOT_INTERVALS_MS[key]) {
         // there is NOT a sufficiently recent snapshot to satisfy the constraint
         // of having at least one snapshot for the given interval.
         needNewSnapshot = true;
@@ -73,6 +108,7 @@ export async function updateRollingSnapshots({
   // create error or last delete error...
 
   let createError: any = undefined;
+  let createdName: string | null = null;
   if (changed && needNewSnapshot) {
     // make a new snapshot -- but only bother
     // definitely no data written since most recent snapshot, so nothing to do
@@ -82,14 +118,22 @@ export async function updateRollingSnapshots({
       snapshots.subvolume.name,
     );
     try {
-      const { beforeCreate, afterCreate, ...createOpts } = opts ?? {};
-      await beforeCreate?.();
-      const created = await snapshots.create(name, {
-        ...createOpts,
-        existingSnapshotNames: allSnapshotNames,
+      await timed("create", async () => {
+        const {
+          beforeCreate,
+          afterCreate,
+          onStage: _onStage,
+          ...createOpts
+        } = opts ?? {};
+        await beforeCreate?.();
+        const created = await snapshots.create(name, {
+          ...createOpts,
+          existingSnapshotNames: allSnapshotNames,
+        });
+        await afterCreate?.(created);
       });
-      await afterCreate?.(created);
       snapshotNames.push(name);
+      createdName = name;
     } catch (err) {
       createError = err;
     }
@@ -101,19 +145,21 @@ export async function updateRollingSnapshots({
     ...tempRusticSnapshotsToDelete(allSnapshotNames),
   ];
   let deleteError: any = undefined;
-  for (const name of toDelete) {
-    try {
-      logger.debug(
-        "updateRollingSnapshots: deleting snapshot of",
-        snapshots.subvolume.name,
-        name,
-      );
-      await snapshots.delete(name);
-    } catch (err) {
-      // ONLY report this if create doesn't error, to give both delete and create a chance to run.
-      deleteError = err;
+  await timed("prune", async () => {
+    for (const name of toDelete) {
+      try {
+        logger.debug(
+          "updateRollingSnapshots: deleting snapshot of",
+          snapshots.subvolume.name,
+          name,
+        );
+        await snapshots.delete(name);
+      } catch (err) {
+        // ONLY report this if create doesn't error, to give both delete and create a chance to run.
+        deleteError = err;
+      }
     }
-  }
+  });
 
   if (createError) {
     throw createError;
@@ -121,6 +167,7 @@ export async function updateRollingSnapshots({
   if (deleteError) {
     throw deleteError;
   }
+  return { changed, createdName, disabled: false };
 }
 
 export function snapshotsToDelete({

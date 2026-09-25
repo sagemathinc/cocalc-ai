@@ -15,8 +15,12 @@ import { delay } from "awaiting";
 import { trunc } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
-export default async function api(endpoint: string, args?: object) {
-  return await callApi(joinUrlPath("v2", endpoint), args);
+export default async function api(
+  endpoint: string,
+  args?: object,
+  options?: { routing?: "control-plane" | "same-origin" },
+) {
+  return await callApi(joinUrlPath("v2", endpoint), args, undefined, options);
 }
 
 // also the old v1 api
@@ -41,13 +45,16 @@ async function callApi(
   endpoint: string,
   args?: object,
   numRetriesOnFail?: number,
+  options?: { routing?: "control-plane" | "same-origin" },
 ) {
   // console.log("callApi", { endpoint, args });
-  const origin = getControlPlaneOrigin();
+  const origin =
+    options?.routing === "same-origin" ? undefined : getControlPlaneOrigin();
   const sameOrigin =
-    typeof window !== "undefined" &&
-    origin != null &&
-    origin === window.location.origin;
+    options?.routing === "same-origin" ||
+    (typeof window !== "undefined" &&
+      origin != null &&
+      origin === window.location.origin);
   const url =
     origin && !sameOrigin
       ? `${origin}${joinUrlPath(appBasePath, "api", endpoint)}`
@@ -76,7 +83,7 @@ async function callApi(
       `waiting ${RETRY_DELAY_MS}ms then trying again up to ${numRetriesOnFail} more times`,
     );
     await delay(RETRY_DELAY_MS);
-    return await callApi(endpoint, args, numRetriesOnFail - 1);
+    return await callApi(endpoint, args, numRetriesOnFail - 1, options);
   }
   if (json == null) {
     throw Error("timeout -- try again later");

@@ -164,6 +164,25 @@ export function resolveNotificationDeliveryPolicy(
   const kind = text(opts.kind);
   const summary = opts.summary ?? {};
   const event_payload = opts.event_payload ?? {};
+  // A bay's named on-call administrator must receive an incident promptly,
+  // even if ordinary support or maintenance mail has been disabled. Require
+  // the trusted system origin so user-authored notices cannot opt themselves
+  // into the critical email lane.
+  const operatorIncident =
+    kind === "account_notice" &&
+    opts.origin_kind === "system" &&
+    lower(summary.notice_type ?? event_payload.notice_type) ===
+      "operator_incident";
+  if (operatorIncident) {
+    return {
+      category: "maintenance",
+      lane: "critical",
+      delivery_mode: "immediate",
+      creates_in_app: true,
+      required: true,
+      responsible_account_id: null,
+    };
+  }
   const category: NotificationCategory =
     kind === "mention"
       ? mentionCategory({ summary, event_payload })

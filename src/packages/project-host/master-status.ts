@@ -56,6 +56,16 @@ let pendingInventory: { project_ids: string[]; checked_at: number } | null =
 const DEFAULT_PROVISIONED_INVENTORY_INTERVAL_MS = 5 * 60 * 1000;
 const pendingProjectDeletions = new Map<string, number>();
 let projectDeletionWorkerRunning = false;
+const projectProvisionedReportedListeners = new Set<
+  (project_id: string) => void
+>();
+
+export function onProjectProvisionedReported(
+  listener: (project_id: string) => void,
+): () => void {
+  projectProvisionedReportedListeners.add(listener);
+  return () => projectProvisionedReportedListeners.delete(listener);
+}
 
 function provisionedInventoryIntervalMs(): number {
   const raw = Number(process.env.COCALC_PROJECT_HOST_INVENTORY_INTERVAL_MS);
@@ -383,6 +393,7 @@ export function resetMasterStatusForTests(): void {
   pendingInventory = null;
   pendingProjectDeletions.clear();
   projectDeletionWorkerRunning = false;
+  projectProvisionedReportedListeners.clear();
 }
 
 async function reportProvisionedInventory() {
@@ -479,6 +490,18 @@ async function reportProjectProvisionedToMaster(
       return;
     }
     markProjectProvisionedReported(project_id);
+    if (provisioned) {
+      for (const listener of projectProvisionedReportedListeners) {
+        try {
+          listener(project_id);
+        } catch (err) {
+          logger.warn("project provisioned listener failed", {
+            project_id,
+            err,
+          });
+        }
+      }
+    }
   } catch (err) {
     recordProjectHostRpcTraffic({
       channel: "status",

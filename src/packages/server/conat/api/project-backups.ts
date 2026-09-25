@@ -29,8 +29,34 @@ import { formatManagedEgressPolicyDetails } from "@cocalc/util/managed-egress-me
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
+import { getProjectRecoveryStatusLocal } from "@cocalc/server/projects/maintenance-status";
 const log = getLogger("server:conat:api:project-backups");
 const BACKUP_CONTROL_TIMEOUT_MS = BACKUP_TIMEOUT_MS + 60_000;
+
+export async function getRecoveryStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}) {
+  await assertCollab({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) throw new Error(`project ${project_id} not found`);
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    const details = await getInterBayBridge()
+      .projectDetails(ownership.bay_id)
+      .get({
+        account_id: account_id!,
+        project_id,
+        include_recovery_status: true,
+      });
+    if (!details.recovery_status)
+      throw new Error("project recovery status unavailable");
+    return details.recovery_status;
+  }
+  return await getProjectRecoveryStatusLocal(project_id);
+}
 
 async function projectClient(project_id: string, account_id?: string) {
   assertProjectRuntimeCapability("backups");
@@ -431,6 +457,7 @@ export async function restoreBackup({
   id,
   path,
   dest,
+  remote_only = false,
 }: {
   account_id?: string;
   session_hash?: string | null;
@@ -438,6 +465,7 @@ export async function restoreBackup({
   id: string;
   path?: string;
   dest?: string;
+  remote_only?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -454,7 +482,13 @@ export async function restoreBackup({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id, id, path, dest },
+    input: {
+      project_id,
+      id,
+      path,
+      dest,
+      ...(remote_only ? { remote_only: true } : {}),
+    },
     status: "queued",
   });
   await publishQueuedLroSafe({

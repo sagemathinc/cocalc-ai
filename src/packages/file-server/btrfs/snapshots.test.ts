@@ -24,7 +24,9 @@ describe("rolling btrfs snapshots kill switch", () => {
     };
 
     const { updateRollingSnapshots } = await import("./snapshots");
-    await updateRollingSnapshots({ snapshots: snapshots as any });
+    await expect(
+      updateRollingSnapshots({ snapshots: snapshots as any }),
+    ).resolves.toEqual({ changed: null, createdName: null, disabled: true });
 
     expect(snapshots.hasUnsavedChanges).not.toHaveBeenCalled();
     expect(snapshots.readdir).not.toHaveBeenCalled();
@@ -46,6 +48,7 @@ describe("rolling btrfs snapshot retention", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   afterAll(() => {
@@ -119,10 +122,12 @@ describe("rolling btrfs snapshot retention", () => {
       create: jest.fn(async () => undefined),
       delete: jest.fn(async () => undefined),
     };
+    const onStage = jest.fn();
 
-    await updateRollingSnapshots({
+    const result = await updateRollingSnapshots({
       snapshots: snapshots as any,
       counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+      opts: { onStage },
     });
 
     expect(snapshots.readdir).toHaveBeenCalledTimes(1);
@@ -130,5 +135,37 @@ describe("rolling btrfs snapshot retention", () => {
     expect(snapshots.create).toHaveBeenCalledWith(expect.any(String), {
       existingSnapshotNames: inventory,
     });
+    expect(onStage.mock.calls.map(([stage]) => stage)).toEqual([
+      "inventory",
+      "change_detection",
+      "create",
+      "prune",
+    ]);
+    expect(result).toEqual({
+      changed: true,
+      createdName: expect.any(String),
+      disabled: false,
+    });
+  });
+
+  it("creates a changed snapshot exactly when the scheduled interval is due", async () => {
+    jest.useFakeTimers({ now });
+    const { updateRollingSnapshots } = await import("./snapshots");
+    const last = new Date(now - 15 * 60_000).toISOString();
+    const snapshots = {
+      subvolume: { name: "project-1" },
+      hasUnsavedChanges: jest.fn(async () => true),
+      readdir: jest.fn(async () => [last]),
+      create: jest.fn(async () => undefined),
+      delete: jest.fn(async () => undefined),
+    };
+
+    const result = await updateRollingSnapshots({
+      snapshots: snapshots as any,
+      counts: { frequent: 1, daily: 0, weekly: 0, monthly: 0 },
+    });
+
+    expect(snapshots.create).toHaveBeenCalledTimes(1);
+    expect(result.createdName).toBe(new Date(now).toISOString());
   });
 });

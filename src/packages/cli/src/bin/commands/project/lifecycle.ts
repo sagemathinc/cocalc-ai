@@ -388,6 +388,10 @@ export function registerProjectLifecycleCommands(
     .requiredOption("--backup-id <id>", "backup id")
     .option("--path <path>", "source path in backup")
     .option("--dest <path>", "destination path in project")
+    .option(
+      "--remote-only",
+      "bypass the local Rustic cache for a restore drill",
+    )
     .option("--wait", "wait for completion")
     .action(
       async (
@@ -396,6 +400,7 @@ export function registerProjectLifecycleCommands(
           backupId: string;
           path?: string;
           dest?: string;
+          remoteOnly?: boolean;
           wait?: boolean;
         },
         command: Command,
@@ -407,11 +412,13 @@ export function registerProjectLifecycleCommands(
             id: opts.backupId,
             path: opts.path,
             dest: opts.dest,
+            ...(opts.remoteOnly ? { remote_only: true } : {}),
           });
           if (!opts.wait) {
             return {
               project_id: ws.project_id,
               backup_id: opts.backupId,
+              ...(opts.remoteOnly ? { remote_only: true } : {}),
               op_id: op.op_id,
               status: "queued",
             };
@@ -433,6 +440,7 @@ export function registerProjectLifecycleCommands(
           return {
             project_id: ws.project_id,
             backup_id: opts.backupId,
+            ...(opts.remoteOnly ? { remote_only: true } : {}),
             op_id: op.op_id,
             status: summary.status,
           };

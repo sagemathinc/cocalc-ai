@@ -1243,6 +1243,7 @@ export function FileListing({
             <DirectoryPeek
               project_id={project_id}
               dirPath={misc.path_to_file(current_path, entry._peekForName)}
+              readOnly={readOnly}
               onClose={() =>
                 setExpandedDirs((prev) =>
                   prev.filter((dir) => dir !== entry._peekForName),
@@ -1250,6 +1251,9 @@ export function FileListing({
               }
               onNavigateDirectory={onNavigateDirectory}
               onOpenFile={(path) => {
+                if (onOpenSpecial?.(path, false)) {
+                  return;
+                }
                 const nextSelection = applyPathSelection(path);
                 actions.open_file({
                   path,
@@ -1502,6 +1506,7 @@ export function FileListing({
       expandedDirs,
       numCols,
       onNavigateDirectory,
+      onOpenSpecial,
       project_id,
       publicShareLabels,
       toggleExpandDir,

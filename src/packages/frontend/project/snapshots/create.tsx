@@ -56,10 +56,14 @@ export default function CreateSnapshot({
   const [rollingReserved, setRollingReserved] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const modalIdRef = useRef<symbol>(Symbol("CreateSnapshot"));
+  const restoreFocusAfterCloseRef = useRef<boolean>(false);
 
   function closeModal(clearName: boolean = false): void {
+    const restoreFocus = activeCreateSnapshotModal === modalIdRef.current;
     releaseCreateSnapshotModal(modalIdRef.current);
+    restoreFocusAfterCloseRef.current = restoreFocus;
     setOpen(false);
     setCreating(false);
     if (clearName) {
@@ -169,115 +173,118 @@ export default function CreateSnapshot({
 
   return (
     <>
-      <Button disabled={open} onClick={openModal}>
+      <Button ref={triggerRef} disabled={open} onClick={openModal}>
         <Icon name="disk-snapshot" /> Create Snapshot
       </Button>
-      {open && (
-        <Modal
-          afterOpenChange={async (open) => {
-            if (!open) return;
-            inputRef.current?.focus({
-              cursor: "all",
-            });
-          }}
-          title={
-            <>
-              <Icon name="disk-snapshot" /> Create Snapshot{" "}
-              <Button
-                size="small"
-                type="text"
-                style={{ float: "right", marginRight: "15px" }}
-                onClick={() => setShowHelp(!showHelp)}
-              >
-                Help
-              </Button>
-              {loading && (
-                <Spin style={{ float: "right", marginRight: "15px" }} />
-              )}
-              {creating && (
-                <Spin style={{ float: "right", marginRight: "15px" }} />
-              )}
-            </>
+      <Modal
+        destroyOnHidden
+        afterOpenChange={(isOpen) => {
+          if (isOpen) {
+            inputRef.current?.focus({ cursor: "all" });
+          } else if (restoreFocusAfterCloseRef.current) {
+            restoreFocusAfterCloseRef.current = false;
+            if (activeCreateSnapshotModal == null) {
+              triggerRef.current?.focus();
+            }
           }
-          open={open}
-          onOk={createSnapshot}
-          onCancel={() => {
-            broadcastCloseCreateSnapshotModals();
-          }}
-          footer={[
+        }}
+        title={
+          <>
+            <Icon name="disk-snapshot" /> Create Snapshot{" "}
             <Button
-              key="cancel"
-              onClick={() => {
-                broadcastCloseCreateSnapshotModals();
-              }}
-              disabled={creating}
+              size="small"
+              type="text"
+              style={{ float: "right", marginRight: "15px" }}
+              onClick={() => setShowHelp(!showHelp)}
             >
-              Cancel
-            </Button>,
-            <Button
-              key="create"
-              type="primary"
-              onClick={createSnapshot}
-              disabled={
-                creating ||
-                !name.trim() ||
-                (manualLimit != null &&
-                  manualCurrent != null &&
-                  manualCurrent >= manualLimit)
-              }
-              loading={creating}
-            >
-              Create Snapshot
-            </Button>,
-          ]}
-        >
-          <p>
-            This project can keep up to <b>{limit ?? "..."}</b> snapshots in
-            total. Automatic rolling snapshots reserve{" "}
-            <b>{rollingReserved ?? "..."}</b> slots, leaving{" "}
-            <b>{manualLimit ?? "..."}</b> named snapshot slots.
-          </p>
-          {manualLimit != null &&
-            manualCurrent != null &&
-            manualCurrent >= manualLimit && (
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginBottom: 10 }}
-                title="Manual snapshot limit reached"
-                description="Delete a named snapshot or ask the owner to increase the snapshot limit before creating another named snapshot."
-              />
+              Help
+            </Button>
+            {loading && (
+              <Spin style={{ float: "right", marginRight: "15px" }} />
             )}
-          {showHelp && (
-            <p>
-              Create instant lightweight snapshots of the exact state of all
-              files in your project. Named snapshots remain until you delete
-              them, whereas the default timestamp snapshots are created and
-              deleted automatically according to a schedule. Snapshot-retained
-              data counts against your project quota, so deleting old snapshots
-              can reduce quota usage.
-            </p>
-          )}
-          <Input
-            allowClear
-            ref={inputRef}
-            style={{ flex: 1, width: "100%", marginTop: "5px" }}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name of snapshot to create..."
-            onPressEnter={() => {
-              if (name.trim() && !creating) {
-                createSnapshot();
-              }
+            {creating && (
+              <Spin style={{ float: "right", marginRight: "15px" }} />
+            )}
+          </>
+        }
+        open={open}
+        onOk={createSnapshot}
+        onCancel={() => {
+          broadcastCloseCreateSnapshotModals();
+        }}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              broadcastCloseCreateSnapshotModals();
             }}
-          />
-          <ShowError
-            style={{ marginTop: "10px" }}
-            error={error}
-            setError={setError}
-          />
-        </Modal>
-      )}
+            disabled={creating}
+          >
+            Cancel
+          </Button>,
+          <Button
+            key="create"
+            type="primary"
+            onClick={createSnapshot}
+            disabled={
+              creating ||
+              !name.trim() ||
+              (manualLimit != null &&
+                manualCurrent != null &&
+                manualCurrent >= manualLimit)
+            }
+            loading={creating}
+          >
+            Create Snapshot
+          </Button>,
+        ]}
+      >
+        <p>
+          This project can keep up to <b>{limit ?? "..."}</b> snapshots in
+          total. Automatic rolling snapshots reserve{" "}
+          <b>{rollingReserved ?? "..."}</b> slots, leaving{" "}
+          <b>{manualLimit ?? "..."}</b> named snapshot slots.
+        </p>
+        {manualLimit != null &&
+          manualCurrent != null &&
+          manualCurrent >= manualLimit && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 10 }}
+              title="Manual snapshot limit reached"
+              description="Delete a named snapshot or ask the owner to increase the snapshot limit before creating another named snapshot."
+            />
+          )}
+        {showHelp && (
+          <p>
+            Create instant lightweight snapshots of the exact state of all files
+            in your project. Named snapshots remain until you delete them,
+            whereas the default timestamp snapshots are created and deleted
+            automatically according to a schedule. Snapshot-retained data counts
+            against your project quota, so deleting old snapshots can reduce
+            quota usage.
+          </p>
+        )}
+        <Input
+          allowClear
+          ref={inputRef}
+          style={{ flex: 1, width: "100%", marginTop: "5px" }}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name of snapshot to create..."
+          onPressEnter={() => {
+            if (name.trim() && !creating) {
+              createSnapshot();
+            }
+          }}
+        />
+        <ShowError
+          style={{ marginTop: "10px" }}
+          error={error}
+          setError={setError}
+        />
+      </Modal>
     </>
   );
 }
