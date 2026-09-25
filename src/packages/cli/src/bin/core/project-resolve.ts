@@ -6,6 +6,10 @@ import {
   getProjectHostAccessWithApiKey,
   listProjectsWithApiKey,
 } from "./api-key-hub";
+import {
+  apiKeyForProject,
+  type ManagedConnectorCredential,
+} from "./managed-connector-auth";
 
 export type ProjectLike = {
   project_id: string;
@@ -28,6 +32,7 @@ export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
   accountId?: string;
   apiBaseUrl?: string;
   apiKey?: string;
+  managedConnector?: ManagedConnectorCredential;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
@@ -284,13 +289,14 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   host_id?: string | null;
   limit: number;
 }): Promise<W[]> {
-  if (ctx.apiKey) {
+  const apiKey = apiKeyForProject(ctx, project_id);
+  if (apiKey) {
     if (!ctx.apiBaseUrl) throw Error("missing API URL for API key access");
     if (project_id && isValidUUID(project_id)) {
       try {
         const access = await getProjectHostAccessWithApiKey({
           apiBaseUrl: ctx.apiBaseUrl,
-          apiKey: ctx.apiKey,
+          apiKey,
           project_id,
         });
         return [
@@ -309,7 +315,7 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
     while (rows.length < limit) {
       const page = await listProjectsWithApiKey({
         apiBaseUrl: ctx.apiBaseUrl,
-        apiKey: ctx.apiKey,
+        apiKey,
         project_id,
         limit: 500,
         offset,
@@ -447,7 +453,7 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
       setCachedProject(ctx, rows[0], projectCacheTtlMs);
       return rows[0];
     }
-    if (ctx.apiKey) {
+    if (apiKeyForProject(ctx, identifier)) {
       if (queryErr) throw queryErr;
       throw new Error(`project '${identifier}' not found`);
     }

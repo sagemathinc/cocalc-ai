@@ -83,6 +83,11 @@ import {
 } from "./core/context";
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
 import { getProjectHostAccessWithApiKey } from "./core/api-key-hub";
+import {
+  apiKeyForProject,
+  managedConnectorCredentialFromEnv,
+  type ManagedConnectorCredential,
+} from "./core/managed-connector-auth";
 import { effectiveDaemonGlobals } from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
 import {
@@ -306,6 +311,7 @@ type CommandContext = {
   pollMs: number;
   apiBaseUrl: string;
   apiKey?: string;
+  managedConnector?: ManagedConnectorCredential;
   remote: RemoteConnection;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
@@ -1600,6 +1606,9 @@ async function contextForGlobals(
       (!effectiveGlobals.disableEnvAuthDefaults
         ? normalizeOptionalSecret(process.env.COCALC_API_KEY)
         : undefined),
+    managedConnector: !effectiveGlobals.disableEnvAuthDefaults
+      ? managedConnectorCredentialFromEnv()
+      : undefined,
     remote,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
@@ -2077,10 +2086,11 @@ async function issueProjectHostAuthToken(
   }
 
   state.tokenInFlight = (async () => {
-    if (ctx.apiKey) {
+    const apiKey = apiKeyForProject(ctx, project_id);
+    if (apiKey) {
       const access = await getProjectHostAccessWithApiKey({
         apiBaseUrl: ctx.apiBaseUrl,
-        apiKey: ctx.apiKey,
+        apiKey,
         project_id,
       });
       if (access.host_id !== state.host_id) {
@@ -2131,7 +2141,7 @@ function routedProjectHostCacheKey(
   ctx: CommandContext,
   project: Pick<ProjectRow, "project_id" | "host_id">,
 ): string {
-  return ctx.apiKey
+  return apiKeyForProject(ctx, project.project_id)
     ? `${project.host_id}:${project.project_id}`
     : `${project.host_id}`;
 }
@@ -2161,6 +2171,7 @@ async function getOrCreateRoutedProjectHostClient(
     throw new Error("project has no assigned host");
   }
   const cacheKey = routedProjectHostCacheKey(ctx, project);
+  const apiKey = apiKeyForProject(ctx, project.project_id);
 
   let connection: HostConnectionInfo | undefined;
   const cachedConnection = ctx.hostConnectionCache.get(cacheKey);
@@ -2175,10 +2186,10 @@ async function getOrCreateRoutedProjectHostClient(
     });
   }
   if (!connection) {
-    if (ctx.apiKey) {
+    if (apiKey) {
       const access = await getProjectHostAccessWithApiKey({
         apiBaseUrl: ctx.apiBaseUrl,
-        apiKey: ctx.apiKey,
+        apiKey,
         project_id: project.project_id,
       });
       if (access.host_id !== host_id) {
@@ -2213,7 +2224,7 @@ async function getOrCreateRoutedProjectHostClient(
     existing &&
     existing.address === address &&
     existing.client &&
-    (!ctx.apiKey ||
+    (!apiKey ||
       (existing.expiresAt != null && Date.now() < existing.expiresAt - 1_000))
   ) {
     return existing;
@@ -2234,7 +2245,7 @@ async function getOrCreateRoutedProjectHostClient(
   const routed = connectConat({
     address,
     noCache: true,
-    reconnection: !!ctx.apiKey,
+    reconnection: !!apiKey,
     ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) => {
       try {
@@ -2255,7 +2266,7 @@ async function getOrCreateRoutedProjectHostClient(
   });
   state.client = routed;
   routed.inboxPrefixHook = (info) => {
-    if (ctx.apiKey) return state.apiKeyBinding?.reply_prefix;
+    if (apiKey) return state.apiKeyBinding?.reply_prefix;
     const user = info?.user as
       | {
           account_id?: string;
@@ -2322,7 +2333,7 @@ async function resolveProjectFilesystem(
       `internal error: routed client missing for host ${routed.host_id}`,
     );
   }
-  const readOnly = ctx.apiKey
+  const readOnly = apiKeyForProject(ctx, project.project_id)
     ? !!routed.apiKeyBinding?.viewer_policy_hash
     : isProjectViewerRole(projectUserRole(project, ctx.accountId));
   const timeout = Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000));
@@ -2930,6 +2941,7 @@ const { serveDaemon, runDaemonRequestFromCommand } =
   });
 
 function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
+  if (process.env.COCALC_CONNECTOR_API_KEY_FILE) return false;
   if (process.env.COCALC_CLI_DAEMON_MODE === "1") return false;
   if (globals.daemon === false) return false;
   return globals.noDaemon !== true;

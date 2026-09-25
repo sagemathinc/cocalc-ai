@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { queryProjects, resolveHost, resolveProject } from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const HOST_ID = "33333333-3333-4333-8333-333333333333";
+const SOURCE_PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 
 function createContext(
   handler: (table: string, row?: Record<string, unknown>) => any[],
@@ -99,6 +103,66 @@ test("API key title lookup applies exact matching to scoped search results", asy
     assert.equal(project.project_id, HOST_ID);
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+test("managed connector uses its key for account and target lookups, not its source project", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-project-auth-"));
+  const originalFetch = global.fetch;
+  const fetched: string[] = [];
+  try {
+    const keyFile = join(dir, "key");
+    writeFileSync(keyFile, "scoped-key\n", { mode: 0o600 });
+    global.fetch = (async (url: URL, options: RequestInit) => {
+      fetched.push(url.pathname);
+      assert.equal(options.headers?.["Authorization"], "Bearer scoped-key");
+      if (url.pathname === "/api/conat/project-host-api-key") {
+        return { ok: true, json: async () => ({ error: "list-only key" }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          projects: [
+            {
+              project_id: PROJECT_ID,
+              title: "SageMath",
+              host_id: HOST_ID,
+            },
+          ],
+          next_offset: null,
+        }),
+      };
+    }) as typeof fetch;
+    const ctx = createContext((table) =>
+      table === "projects"
+        ? [{ project_id: SOURCE_PROJECT_ID, title: "Source", host_id: HOST_ID }]
+        : [],
+    );
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.managedConnector = { keyFile, sourceProjectId: SOURCE_PROJECT_ID };
+    const own = await queryProjects({
+      ctx,
+      project_id: SOURCE_PROJECT_ID,
+      limit: 5,
+    });
+    assert.equal(own[0].project_id, SOURCE_PROJECT_ID);
+    assert.deepEqual(fetched, []);
+    const listed = await queryProjects({ ctx, limit: 5 });
+    assert.equal(listed[0].project_id, PROJECT_ID);
+    assert.deepEqual(fetched, ["/api/conat/hub"]);
+    const target = await queryProjects({
+      ctx,
+      project_id: PROJECT_ID,
+      limit: 5,
+    });
+    assert.equal(target[0].project_id, PROJECT_ID);
+    assert.deepEqual(fetched.slice(1), [
+      "/api/conat/project-host-api-key",
+      "/api/conat/hub",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
