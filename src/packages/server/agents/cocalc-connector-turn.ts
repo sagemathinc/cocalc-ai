@@ -33,6 +33,8 @@ import {
 import { recordApiKeyAuditEvent } from "@cocalc/server/api/api-key-audit";
 import { verifyActiveAgentRun } from "./identity-routing";
 import { assertAccountHome } from "./cocalc-connector-config";
+import { createHostControlClient } from "@cocalc/conat/project-host/api";
+import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
 
 const MANAGED_KEY_TTL_MS = 5 * 60_000;
 const MAX_ACTIVE_MANAGED_KEYS_PER_ACCOUNT = 64;
@@ -59,6 +61,10 @@ interface ManagedTurnRow {
   agent_id?: string;
   source_project_id?: string;
   run_id?: string;
+  chat_path?: string;
+  message_date?: string;
+  message_id?: string;
+  thread_id?: string;
   renewed_at?: Date;
 }
 
@@ -87,6 +93,48 @@ function requireUuid(value: string | undefined, name: string): string {
 
 function secretName(turn_id: string): string {
   return `agent-cocalc-connector-turn:${turn_id}`;
+}
+
+interface ActiveTurnRef {
+  chat_path: string;
+  message_date: string;
+  message_id: string;
+  thread_id: string;
+}
+
+async function assertLiveTurn({
+  account_id,
+  host_id,
+  source_project_id,
+  turn,
+}: {
+  account_id: string;
+  host_id: string;
+  source_project_id: string;
+  turn: ActiveTurnRef;
+}): Promise<void> {
+  if (
+    !turn.chat_path?.trim() ||
+    !turn.message_date?.trim() ||
+    !turn.message_id?.trim() ||
+    !turn.thread_id?.trim()
+  ) {
+    throw Error("incomplete authenticated ACP turn reference");
+  }
+  const api = createHostControlClient({
+    host_id,
+    client: await getExplicitHostControlClient({ host_id }),
+    timeout: 15_000,
+    noRetry: true,
+  });
+  await api.verifyActiveAcpConnectorTurn({
+    account_id,
+    project_id: source_project_id,
+    path: turn.chat_path,
+    message_date: turn.message_date,
+    message_id: turn.message_id,
+    thread_id: turn.thread_id,
+  });
 }
 
 async function assertTrustedSource({
@@ -135,6 +183,7 @@ export async function beginManagedCocalcConnectorTurn({
   source_project_id,
   run_id,
   idempotency_key,
+  turn_ref,
 }: {
   account_id?: string;
   host_id?: string;
@@ -142,6 +191,7 @@ export async function beginManagedCocalcConnectorTurn({
   source_project_id: string;
   run_id: string;
   idempotency_key: string;
+  turn_ref: ActiveTurnRef;
 }): Promise<ManagedCocalcConnectorKey | undefined> {
   const owner = requireUuid(account_id, "account_id");
   const host = requireUuid(host_id, "host_id");
@@ -165,6 +215,12 @@ export async function beginManagedCocalcConnectorTurn({
     agent_id,
     project_id: source_project_id,
     run_id,
+  });
+  await assertLiveTurn({
+    account_id: owner,
+    host_id: host,
+    source_project_id,
+    turn: turn_ref,
   });
   await assertAccountTrustedForProductAccess(owner, "create API keys");
   const scope = normalizeApiKeyScopeV1(config.scope);
@@ -207,6 +263,7 @@ export async function beginManagedCocalcConnectorTurn({
     }
     const { rows: turns } = await client.query<ManagedTurnRow>(
       `SELECT turn_id,source_host_id,config_id,config_revision,key_id,
+              chat_path,message_date,message_id,thread_id,
               secret_ciphertext,expires_at,ended_at
          FROM agent_cocalc_connector_turns
         WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
@@ -221,7 +278,11 @@ export async function beginManagedCocalcConnectorTurn({
         new Date(turn.expires_at).valueOf() <= Date.now() ||
         turn.source_host_id !== host ||
         turn.config_id !== config.config_id ||
-        turn.config_revision !== config.revision
+        turn.config_revision !== config.revision ||
+        turn.chat_path !== turn_ref.chat_path ||
+        turn.message_date !== turn_ref.message_date ||
+        turn.message_id !== turn_ref.message_id ||
+        turn.thread_id !== turn_ref.thread_id
       ) {
         throw Error("managed CoCalc connector turn is no longer valid");
       }
@@ -280,10 +341,11 @@ export async function beginManagedCocalcConnectorTurn({
       const { rows: created } = await client.query<ManagedTurnRow>(
         `INSERT INTO agent_cocalc_connector_turns
           (turn_id,account_id,agent_id,source_project_id,source_host_id,
-           run_id,idempotency_key,config_id,config_revision,key_id,
-           secret_ciphertext,expires_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           run_id,idempotency_key,chat_path,message_date,message_id,thread_id,
+           config_id,config_revision,key_id,secret_ciphertext,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          RETURNING turn_id,source_host_id,config_id,config_revision,key_id,
+                   chat_path,message_date,message_id,thread_id,
                    secret_ciphertext,expires_at,ended_at`,
         [
           turn_id,
@@ -293,6 +355,10 @@ export async function beginManagedCocalcConnectorTurn({
           host,
           run_id,
           idempotency_key,
+          turn_ref.chat_path,
+          turn_ref.message_date,
+          turn_ref.message_id,
+          turn_ref.thread_id,
           config.config_id,
           config.revision,
           key_id,
@@ -365,6 +431,7 @@ export async function renewManagedCocalcConnectorTurn({
   source_project_id,
   run_id,
   turn_id,
+  turn_ref,
 }: {
   account_id?: string;
   host_id?: string;
@@ -372,6 +439,7 @@ export async function renewManagedCocalcConnectorTurn({
   source_project_id: string;
   run_id: string;
   turn_id: string;
+  turn_ref: ActiveTurnRef;
 }): Promise<number> {
   const owner = requireUuid(account_id, "account_id");
   const host = requireUuid(host_id, "host_id");
@@ -390,6 +458,12 @@ export async function renewManagedCocalcConnectorTurn({
     project_id: source_project_id,
     run_id,
   });
+  await assertLiveTurn({
+    account_id: owner,
+    host_id: host,
+    source_project_id,
+    turn: turn_ref,
+  });
   const config = await currentConfig({
     account_id: owner,
     agent_id,
@@ -406,6 +480,7 @@ export async function renewManagedCocalcConnectorTurn({
     await client.query("BEGIN");
     const { rows: turns } = await client.query<ManagedTurnRow>(
       `SELECT account_id,agent_id,source_project_id,source_host_id,run_id,
+              chat_path,message_date,message_id,thread_id,
               config_id,config_revision,key_id,expires_at,ended_at,renewed_at
          FROM agent_cocalc_connector_turns WHERE turn_id=$1 FOR UPDATE`,
       [turn_id],
@@ -418,6 +493,10 @@ export async function renewManagedCocalcConnectorTurn({
       turn.source_project_id !== source_project_id ||
       turn.source_host_id !== host ||
       turn.run_id !== run_id ||
+      turn.chat_path !== turn_ref.chat_path ||
+      turn.message_date !== turn_ref.message_date ||
+      turn.message_id !== turn_ref.message_id ||
+      turn.thread_id !== turn_ref.thread_id ||
       turn.config_id !== config.config_id ||
       turn.config_revision !== config.revision ||
       turn.ended_at ||

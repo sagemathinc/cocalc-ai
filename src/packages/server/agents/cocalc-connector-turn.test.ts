@@ -31,6 +31,7 @@ const decrypt = jest.fn();
 const ensureSchema = jest.fn();
 const deleteDirectory = jest.fn();
 const clusterAccount = jest.fn();
+const hostLease = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -79,6 +80,14 @@ jest.mock("./identity-routing", () => ({
 jest.mock("./cocalc-connector-config", () => ({
   assertAccountHome: (...args: any[]) => accountHome(...args),
 }));
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  getExplicitHostControlClient: async () => ({}),
+}));
+jest.mock("@cocalc/conat/project-host/api", () => ({
+  createHostControlClient: () => ({
+    verifyActiveAcpConnectorTurn: (...args: any[]) => hostLease(...args),
+  }),
+}));
 
 const request = {
   account_id: accountId,
@@ -87,6 +96,12 @@ const request = {
   source_project_id: projectId,
   run_id: runId,
   idempotency_key: idempotencyKey,
+  turn_ref: {
+    chat_path: "work.chat",
+    message_date: "2026-09-25T00:00:00.000Z",
+    message_id: "message-a",
+    thread_id: "thread-a",
+  },
 };
 
 let savedTurn: any;
@@ -140,11 +155,15 @@ beforeEach(() => {
         source_project_id: args[3],
         source_host_id: args[4],
         run_id: args[5],
-        config_id: args[7],
-        config_revision: args[8],
-        key_id: args[9],
-        secret_ciphertext: args[10],
-        expires_at: args[11],
+        chat_path: args[7],
+        message_date: args[8],
+        message_id: args[9],
+        thread_id: args[10],
+        config_id: args[11],
+        config_revision: args[12],
+        key_id: args[13],
+        secret_ciphertext: args[14],
+        expires_at: args[15],
         ended_at: null,
       };
       return { rows: [savedTurn] };
@@ -176,6 +195,7 @@ beforeEach(() => {
     trust,
     ensureSchema,
     deleteDirectory,
+    hostLease,
   ]) {
     mock.mockResolvedValue(undefined);
   }
@@ -279,6 +299,31 @@ test("idempotent retry rejects a stored secret that does not match the key", asy
   expect(directory).not.toHaveBeenCalled();
 });
 
+test("issuance fails closed when the source host cannot attest the live turn", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  hostLease.mockRejectedValueOnce(
+    new Error("active authenticated ACP turn unavailable"),
+  );
+  await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+    "active authenticated ACP turn unavailable",
+  );
+  expect(savedKey).toBeUndefined();
+  expect(directory).not.toHaveBeenCalled();
+});
+
+test("idempotent retry cannot attach an existing key to another turn", async () => {
+  const { beginManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  await beginManagedCocalcConnectorTurn(request);
+  await expect(
+    beginManagedCocalcConnectorTurn({
+      ...request,
+      turn_ref: { ...request.turn_ref, message_id: "message-b" },
+    }),
+  ).rejects.toThrow("managed CoCalc connector turn is no longer valid");
+});
+
 test("renewal extends the existing key without exposing a new secret", async () => {
   const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
     await import("./cocalc-connector-turn");
@@ -295,6 +340,19 @@ test("renewal extends the existing key without exposing a new secret", async () 
       expire: savedKey.expire,
     }),
   );
+});
+
+test("renewal requires the same live ACP turn", async () => {
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  hostLease.mockRejectedValueOnce(
+    new Error("active authenticated ACP turn unavailable"),
+  );
+  await expect(
+    renewManagedCocalcConnectorTurn({ ...request, turn_id: issued!.turn_id }),
+  ).rejects.toThrow("active authenticated ACP turn unavailable");
+  expect(savedKey.expire).toEqual(new Date(issued!.expires_at));
 });
 
 test("renewal rolls back when the ordinary key expires during update", async () => {

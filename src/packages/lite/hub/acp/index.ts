@@ -2305,6 +2305,7 @@ export class ChatStreamWriter {
     try {
       startAcpTurnLease({
         context: this.metadata,
+        approver_account_id: this.approverAccountId,
         owner_instance_id: ACP_INSTANCE_ID,
         pid: process.pid,
         session_id: this.sessionKey ?? undefined,

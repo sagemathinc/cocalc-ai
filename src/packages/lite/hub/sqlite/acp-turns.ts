@@ -17,6 +17,7 @@ export interface AcpTurnLeaseRow extends AcpTurnLeaseKey {
   message_id?: string | null;
   thread_id?: string | null;
   sender_id?: string | null;
+  approver_account_id?: string | null;
   session_id?: string | null;
   state: AcpTurnLeaseState;
   owner_instance_id: string;
@@ -37,6 +38,7 @@ function init(): void {
       message_id TEXT,
       thread_id TEXT,
       sender_id TEXT,
+      approver_account_id TEXT,
       session_id TEXT,
       state TEXT NOT NULL,
       owner_instance_id TEXT NOT NULL,
@@ -68,6 +70,9 @@ function init(): void {
   if (!hasColumn("thread_id")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN thread_id TEXT`);
   }
+  if (!hasColumn("approver_account_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN approver_account_id TEXT`);
+  }
   ensureAcpTableMigrated(TABLE);
   installThreadSuccessorFence(TABLE);
 }
@@ -94,11 +99,13 @@ export function startAcpTurnLease({
   owner_instance_id,
   pid,
   session_id,
+  approver_account_id,
 }: {
   context: AcpChatContext;
   owner_instance_id: string;
   pid: number;
   session_id?: string;
+  approver_account_id: string;
 }): void {
   ensureInit();
   const db = getAcpDatabase();
@@ -106,12 +113,13 @@ export function startAcpTurnLease({
   const now = Date.now();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (project_id, path, message_date, message_id, thread_id, sender_id, session_id, state, owner_instance_id, pid, started_at, heartbeat_at, ended_at, reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL)
+      (project_id, path, message_date, message_id, thread_id, sender_id, approver_account_id, session_id, state, owner_instance_id, pid, started_at, heartbeat_at, ended_at, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, message_date) DO UPDATE SET
         message_id = COALESCE(excluded.message_id, ${TABLE}.message_id),
         thread_id = COALESCE(excluded.thread_id, ${TABLE}.thread_id),
         sender_id = excluded.sender_id,
+        approver_account_id = excluded.approver_account_id,
         session_id = COALESCE(excluded.session_id, ${TABLE}.session_id),
         state = 'running',
         owner_instance_id = excluded.owner_instance_id,
@@ -127,6 +135,7 @@ export function startAcpTurnLease({
     context.message_id ?? null,
     context.thread_id ?? null,
     context.sender_id ?? null,
+    approver_account_id,
     session_id ?? null,
     owner_instance_id,
     pid,
@@ -254,6 +263,7 @@ function selectLeaseByWhere(where: string): string {
       message_id,
       thread_id,
       sender_id,
+      approver_account_id,
       session_id,
       state,
       owner_instance_id,
@@ -337,4 +347,34 @@ export function getAcpTurnLease(
     .get(key.project_id, key.path, key.message_date) as
     | AcpTurnLeaseRow
     | undefined;
+}
+
+export function verifyActiveAcpConnectorTurn({
+  key,
+  account_id,
+  message_id,
+  thread_id,
+  now = Date.now(),
+}: {
+  key: AcpTurnLeaseKey;
+  account_id: string;
+  message_id: string;
+  thread_id: string;
+  now?: number;
+}): AcpTurnLeaseRow {
+  const lease = getAcpTurnLease(key);
+  if (
+    !lease ||
+    lease.state !== "running" ||
+    lease.approver_account_id !== account_id ||
+    lease.message_id !== message_id ||
+    lease.thread_id !== thread_id ||
+    !lease.owner_instance_id ||
+    !Number.isFinite(lease.heartbeat_at) ||
+    lease.heartbeat_at > now ||
+    now - lease.heartbeat_at > 30_000
+  ) {
+    throw new Error("active authenticated ACP turn unavailable");
+  }
+  return lease;
 }

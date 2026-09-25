@@ -229,6 +229,22 @@ Table({
       "uuid",
       "Live native-agent run attested by its owner bay.",
     ),
+    chat_path: {
+      type: "string",
+      desc: "Source chat path for newly issued authenticated turns.",
+    },
+    message_date: {
+      type: "string",
+      desc: "Source message date for newly issued authenticated turns.",
+    },
+    message_id: {
+      type: "string",
+      desc: "Source message ID for newly issued authenticated turns.",
+    },
+    thread_id: {
+      type: "string",
+      desc: "Source thread ID for newly issued authenticated turns.",
+    },
     idempotency_key: required("uuid", "Trusted runtime's per-turn retry key."),
     config_id: required("uuid", "Saved human consent configuration."),
     config_revision: required("integer", "Consent revision at issuance."),

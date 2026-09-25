@@ -715,6 +715,14 @@ export interface ApplyHostExamRunRequest {
 }
 
 export interface HostControlApi {
+  verifyActiveAcpConnectorTurn: (opts: {
+    project_id: string;
+    path: string;
+    message_date: string;
+    message_id: string;
+    thread_id: string;
+    account_id: string;
+  }) => Promise<{ owner_instance_id: string; started_at: number }>;
   prepareAgentRpcAttachments: (
     envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
   ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation>;

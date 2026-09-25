@@ -1393,6 +1393,28 @@ export async function startMasterRegistration({
     );
   };
   const controlImpl: HostControlApi = {
+    async verifyActiveAcpConnectorTurn(opts) {
+      await awaitReadyForControl(
+        "verifyActiveAcpConnectorTurn",
+        waitUntilReady,
+      );
+      const { verifyActiveAcpConnectorTurn } =
+        await import("@cocalc/lite/hub/sqlite/acp-turns");
+      const lease = verifyActiveAcpConnectorTurn({
+        key: {
+          project_id: opts.project_id,
+          path: opts.path,
+          message_date: opts.message_date,
+        },
+        account_id: opts.account_id,
+        message_id: opts.message_id,
+        thread_id: opts.thread_id,
+      });
+      return {
+        owner_instance_id: lease.owner_instance_id,
+        started_at: lease.started_at,
+      };
+    },
     async prepareAgentRpcAttachments(envelope) {
       return (await agentRpcService()).prepareAttachments(envelope);
     },
