@@ -56,6 +56,20 @@ export function readManagedConnectorKey(keyFile: string): string {
   }
 }
 
+export function defaultApiKey({
+  explicitKey,
+  envKey,
+  managedConnector,
+}: {
+  explicitKey?: string;
+  envKey?: string;
+  managedConnector?: ManagedConnectorCredential;
+}): string | undefined {
+  return (
+    explicitKey?.trim() || (!managedConnector ? envKey?.trim() : undefined)
+  );
+}
+
 export function apiKeyForProject(
   ctx: {
     apiKey?: string;

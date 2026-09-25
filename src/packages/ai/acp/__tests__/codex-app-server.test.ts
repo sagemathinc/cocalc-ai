@@ -583,6 +583,8 @@ describe("CodexAppServerAgent", () => {
 
   it("publishes retained runtime ownership until the app-server is disposed", async () => {
     const ownershipChanged = jest.fn(async () => {});
+    const beginConnectorTurn = jest.fn(async () => {});
+    const endConnectorTurn = jest.fn(async () => {});
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
@@ -616,6 +618,8 @@ describe("CodexAppServerAgent", () => {
         cmd: "fake-codex",
         args: ["app-server"],
         cwd: "/tmp/project",
+        beginConnectorTurn,
+        endConnectorTurn,
       }),
     });
 
@@ -630,6 +634,11 @@ describe("CodexAppServerAgent", () => {
       chat: { path: "a.chat" } as any,
       config: { workingDirectory: "/tmp/project" },
     });
+
+    expect(beginConnectorTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "a.chat" }),
+    );
+    expect(endConnectorTurn).toHaveBeenCalledTimes(1);
 
     expect(ownershipChanged).toHaveBeenCalledWith({
       state: "owned",
@@ -4278,6 +4287,9 @@ describe("CodexAppServerAgent", () => {
 
     const text = turnStartParams?.input?.[0]?.text;
     expect(text).toContain("project build -h");
+    expect(text).toContain(
+      "automatically selects the temporary scoped credential",
+    );
     expect(text).toContain("Do not publish artifacts by default");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   apiKeyForProject,
+  defaultApiKey,
   managedConnectorCredentialFromEnv,
   readManagedConnectorKey,
 } from "./managed-connector-auth";
@@ -36,6 +37,19 @@ test("a managed key is selected only for account and other-project work", () => 
       keyFile,
       sourceProjectId: SOURCE,
     });
+    assert.equal(
+      defaultApiKey({ envKey: "ambient-key", managedConnector }),
+      undefined,
+    );
+    assert.equal(
+      defaultApiKey({
+        explicitKey: "explicit-key",
+        envKey: "ambient-key",
+        managedConnector,
+      }),
+      "explicit-key",
+    );
+    assert.equal(defaultApiKey({ envKey: "ambient-key" }), "ambient-key");
     assert.equal(apiKeyForProject({ managedConnector }, SOURCE), undefined);
     assert.equal(apiKeyForProject({ managedConnector }, TARGET), "scoped-key");
     assert.equal(apiKeyForProject({ managedConnector }), "scoped-key");

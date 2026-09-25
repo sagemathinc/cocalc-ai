@@ -85,6 +85,7 @@ import { isProjectScopedRemoteForProject } from "./core/remote-scope";
 import { getProjectHostAccessWithApiKey } from "./core/api-key-hub";
 import {
   apiKeyForProject,
+  defaultApiKey,
   managedConnectorCredentialFromEnv,
   type ManagedConnectorCredential,
 } from "./core/managed-connector-auth";
@@ -1594,6 +1595,9 @@ async function contextForGlobals(
     );
   }
 
+  const managedConnector = !effectiveGlobals.disableEnvAuthDefaults
+    ? managedConnectorCredentialFromEnv()
+    : undefined;
   const ctx = {
     globals: effectiveGlobals,
     accountId,
@@ -1601,14 +1605,14 @@ async function contextForGlobals(
     rpcTimeoutMs,
     pollMs,
     apiBaseUrl,
-    apiKey:
-      normalizeOptionalSecret(effectiveGlobals.apiKey) ??
-      (!effectiveGlobals.disableEnvAuthDefaults
+    apiKey: defaultApiKey({
+      explicitKey: normalizeOptionalSecret(effectiveGlobals.apiKey),
+      envKey: !effectiveGlobals.disableEnvAuthDefaults
         ? normalizeOptionalSecret(process.env.COCALC_API_KEY)
-        : undefined),
-    managedConnector: !effectiveGlobals.disableEnvAuthDefaults
-      ? managedConnectorCredentialFromEnv()
-      : undefined,
+        : undefined,
+      managedConnector,
+    }),
+    managedConnector,
     remote,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
