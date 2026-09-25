@@ -349,6 +349,27 @@ describe("project-host HTTP session cookie", () => {
     );
   });
 
+  it("rejects API key child bearers at HTTP session redemption", async () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      api_key: { key_id: "key-id-123" },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer api-key-child" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow(
+      "API key child credentials cannot authorize project-host HTTP access",
+    );
+  });
+
   it("bounds cookies minted from a restricted bearer", async () => {
     jest.useFakeTimers();
     try {

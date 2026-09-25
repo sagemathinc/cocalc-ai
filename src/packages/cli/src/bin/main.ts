@@ -31,6 +31,8 @@ import {
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import type { ProjectHostApiKeyBinding } from "@cocalc/conat/auth/project-host-token";
+import { apiKeyViewerFsSubject } from "@cocalc/conat/auth/project-host-api-key-subject";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -79,6 +81,7 @@ import {
   withTimeout,
 } from "./core/context";
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
+import { getProjectHostAccessWithApiKey } from "./core/api-key-hub";
 import { effectiveDaemonGlobals } from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
 import {
@@ -300,6 +303,7 @@ type CommandContext = {
   rpcTimeoutMs: number;
   pollMs: number;
   apiBaseUrl: string;
+  apiKey?: string;
   remote: RemoteConnection;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
@@ -318,6 +322,7 @@ type RoutedProjectHostClientState = {
   expiresAt?: number;
   tokenSource?: "memory" | "hub";
   tokenInFlight?: Promise<string>;
+  apiKeyBinding?: ProjectHostApiKeyBinding;
 };
 
 type ProjectRow = {
@@ -1571,6 +1576,11 @@ async function contextForGlobals(
     rpcTimeoutMs,
     pollMs,
     apiBaseUrl,
+    apiKey:
+      normalizeOptionalSecret(effectiveGlobals.apiKey) ??
+      (!effectiveGlobals.disableEnvAuthDefaults
+        ? normalizeOptionalSecret(process.env.COCALC_API_KEY)
+        : undefined),
     remote,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
@@ -2048,6 +2058,31 @@ async function issueProjectHostAuthToken(
   }
 
   state.tokenInFlight = (async () => {
+    if (ctx.apiKey) {
+      const access = await getProjectHostAccessWithApiKey({
+        apiBaseUrl: ctx.apiBaseUrl,
+        apiKey: ctx.apiKey,
+        project_id,
+      });
+      if (access.host_id !== state.host_id) {
+        throw new Error("project host changed; retry the command");
+      }
+      const claims = JSON.parse(
+        Buffer.from(access.token.split(".")[1], "base64url").toString("utf8"),
+      );
+      if (
+        claims?.api_key?.project_id !== project_id ||
+        claims?.api_key?.account_id !== ctx.accountId ||
+        claims?.api_key?.reply_prefix !== `_INBOX.api-key-${claims.jti}`
+      ) {
+        throw new Error("invalid project-host API key token response");
+      }
+      state.token = access.token;
+      state.expiresAt = access.expires_at;
+      state.apiKeyBinding = claims.api_key;
+      state.tokenSource = "hub";
+      return access.token;
+    }
     const issued = await ctx.hub.hosts.issueProjectHostAuthToken({
       host_id: state.host_id,
       project_id,
@@ -2070,6 +2105,16 @@ function invalidateProjectHostAuthToken(
   delete state.expiresAt;
   delete state.tokenSource;
   delete state.tokenInFlight;
+  delete state.apiKeyBinding;
+}
+
+function routedProjectHostCacheKey(
+  ctx: CommandContext,
+  project: Pick<ProjectRow, "project_id" | "host_id">,
+): string {
+  return ctx.apiKey
+    ? `${project.host_id}:${project.project_id}`
+    : `${project.host_id}`;
 }
 
 function closeRoutedProjectHostClient(
@@ -2096,22 +2141,39 @@ async function getOrCreateRoutedProjectHostClient(
   if (!host_id) {
     throw new Error("project has no assigned host");
   }
+  const cacheKey = routedProjectHostCacheKey(ctx, project);
 
   let connection: HostConnectionInfo | undefined;
-  const cachedConnection = ctx.hostConnectionCache.get(host_id);
+  const cachedConnection = ctx.hostConnectionCache.get(cacheKey);
   if (cachedConnection && Date.now() < cachedConnection.expiresAt) {
     connection = cachedConnection.connection;
   }
   if (!connection && knownConnection) {
     connection = knownConnection;
-    ctx.hostConnectionCache.set(host_id, {
+    ctx.hostConnectionCache.set(cacheKey, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
     });
   }
   if (!connection) {
-    connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
-    ctx.hostConnectionCache.set(host_id, {
+    if (ctx.apiKey) {
+      const access = await getProjectHostAccessWithApiKey({
+        apiBaseUrl: ctx.apiBaseUrl,
+        apiKey: ctx.apiKey,
+        project_id: project.project_id,
+      });
+      if (access.host_id !== host_id) {
+        throw new Error("project host changed; retry the command");
+      }
+      connection = {
+        host_id,
+        connect_url: access.connect_url,
+        local_proxy: access.local_proxy,
+      };
+    } else {
+      connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+    }
+    ctx.hostConnectionCache.set(cacheKey, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
     });
@@ -2127,12 +2189,12 @@ async function getOrCreateRoutedProjectHostClient(
     );
   }
 
-  const existing = ctx.routedProjectHostClients[host_id];
+  const existing = ctx.routedProjectHostClients[cacheKey];
   if (existing && existing.address === address && existing.client) {
     return existing;
   }
   if (existing) {
-    closeRoutedProjectHostClient(ctx, host_id);
+    closeRoutedProjectHostClient(ctx, cacheKey);
   }
 
   const state: RoutedProjectHostClientState = {
@@ -2147,7 +2209,7 @@ async function getOrCreateRoutedProjectHostClient(
   const routed = connectConat({
     address,
     noCache: true,
-    reconnection: false,
+    reconnection: !!ctx.apiKey,
     ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) => {
       try {
@@ -2168,6 +2230,7 @@ async function getOrCreateRoutedProjectHostClient(
   });
   state.client = routed;
   routed.inboxPrefixHook = (info) => {
+    if (ctx.apiKey) return state.apiKeyBinding?.reply_prefix;
     const user = info?.user as
       | {
           account_id?: string;
@@ -2189,7 +2252,7 @@ async function getOrCreateRoutedProjectHostClient(
       invalidateProjectHostAuthToken(state);
     }
   });
-  ctx.routedProjectHostClients[host_id] = state;
+  ctx.routedProjectHostClients[cacheKey] = state;
 
   const signInTimeoutMs = Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
   try {
@@ -2202,7 +2265,7 @@ async function getOrCreateRoutedProjectHostClient(
     const hadToken = !!state.token;
     const shouldRetryWithFreshToken =
       allowTokenRetry && (hadToken || isProjectHostAuthError(err));
-    closeRoutedProjectHostClient(ctx, host_id);
+    closeRoutedProjectHostClient(ctx, cacheKey);
     if (shouldRetryWithFreshToken) {
       invalidateProjectHostAuthToken(state);
       return await getOrCreateRoutedProjectHostClient(
@@ -2234,14 +2297,29 @@ async function resolveProjectFilesystem(
       `internal error: routed client missing for host ${routed.host_id}`,
     );
   }
-  const readOnly = isProjectViewerRole(projectUserRole(project, ctx.accountId));
+  const readOnly = ctx.apiKey
+    ? !!routed.apiKeyBinding?.viewer_policy_hash
+    : isProjectViewerRole(projectUserRole(project, ctx.accountId));
   const timeout = Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000));
   if (readOnly) {
-    const fs = routed.client.viewerFs({
-      project_id: project.project_id,
-      account_id: ctx.accountId,
-      timeout,
-    });
+    const binding = routed.apiKeyBinding;
+    const fs = binding?.viewer_policy_hash
+      ? fsClient({
+          client: routed.client,
+          subject: apiKeyViewerFsSubject({
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+            key_id: binding.key_id,
+            scope_revision: binding.scope_revision,
+            viewer_policy_hash: binding.viewer_policy_hash,
+          }),
+          timeout,
+        })
+      : routed.client.viewerFs({
+          project_id: project.project_id,
+          account_id: ctx.accountId,
+          timeout,
+        });
     return { project, fs, readOnly };
   }
   const fs = fsClient({
@@ -2558,7 +2636,10 @@ async function projectHostHubCallAccount<T>(
     )) as T;
   } catch (err) {
     if (allowAuthRetry && isProjectHostAuthError(err) && project.host_id) {
-      closeRoutedProjectHostClient(ctx, project.host_id);
+      closeRoutedProjectHostClient(
+        ctx,
+        routedProjectHostCacheKey(ctx, project),
+      );
       return await projectHostHubCallAccount(
         ctx,
         project,

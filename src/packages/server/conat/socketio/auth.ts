@@ -196,6 +196,9 @@ function verifyAgentScopedProjectHostBearer(
       host_id,
       public_key: getProjectHostAuthTokenPublicKey(),
     });
+    if (claims.api_key != null) {
+      return;
+    }
     if (claims.act !== "account" || !isValidUUID(claims.sub)) {
       return;
     }

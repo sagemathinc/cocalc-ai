@@ -475,7 +475,14 @@ export function createProjectHostHttpProxyAuth({
     sub: string;
     act?: string;
     auth_actor?: "account" | "agent";
+    api_key?: unknown;
   }): string => {
+    if (claims.api_key != null) {
+      throw new HttpAuthError(
+        403,
+        "API key child credentials cannot authorize project-host HTTP access",
+      );
+    }
     const actor = claims.act ?? "account";
     if (actor !== "account") {
       throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");

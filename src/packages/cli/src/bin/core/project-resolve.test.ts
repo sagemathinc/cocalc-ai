@@ -4,6 +4,8 @@ import test from "node:test";
 import { queryProjects, resolveHost, resolveProject } from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const HOST_ID = "33333333-3333-4333-8333-333333333333";
 
 function createContext(
   handler: (table: string, row?: Record<string, unknown>) => any[],
@@ -29,6 +31,73 @@ function createContext(
     },
   } as any;
 }
+
+test("API key project lookup never falls back to account userQuery", async () => {
+  const originalFetch = global.fetch;
+  const paths: string[] = [];
+  global.fetch = (async (url: URL, options: RequestInit) => {
+    paths.push(url.pathname);
+    assert.equal(options.headers?.["Authorization"], "Bearer scoped-key");
+    if (url.pathname === "/api/conat/project-host-api-key") {
+      return { ok: true, json: async () => ({ error: "list-only key" }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        projects: [
+          {
+            project_id: PROJECT_ID,
+            title: "SageMath",
+            host_id: HOST_ID,
+            state: "running",
+            last_edited: null,
+          },
+        ],
+        next_offset: null,
+      }),
+    };
+  }) as typeof fetch;
+  try {
+    const ctx = createContext(() => {
+      throw Error("account userQuery must not be called");
+    });
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.apiKey = "scoped-key";
+    const project = await resolveProject(ctx, PROJECT_ID, 1000);
+    assert.equal(project.title, "SageMath");
+    assert.deepEqual(paths, [
+      "/api/conat/project-host-api-key",
+      "/api/conat/hub",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("API key title lookup applies exact matching to scoped search results", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = (async () => ({
+    ok: true,
+    json: async () => ({
+      projects: [
+        { project_id: PROJECT_ID, title: "SageMath archive", host_id: HOST_ID },
+        { project_id: HOST_ID, title: "SageMath", host_id: HOST_ID },
+      ],
+      next_offset: null,
+    }),
+  })) as unknown as typeof fetch;
+  try {
+    const ctx = createContext(() => {
+      throw Error("account userQuery must not be called");
+    });
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.apiKey = "scoped-key";
+    const project = await resolveProject(ctx, "SageMath", 1000);
+    assert.equal(project.project_id, HOST_ID);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
 
 test("queryProjects uses legacy projects reads by default", async () => {
   delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;

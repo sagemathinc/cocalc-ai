@@ -35,6 +35,7 @@ type LocalProjectReferenceRow = {
   owning_bay_id: string | null;
   usage_account_id: string | null;
   users: Record<string, any> | null;
+  runtime_lifecycle_revision: number | null;
   allow_collaborator_destructive_storage_actions: boolean | null;
 };
 
@@ -48,6 +49,7 @@ function projectReferenceFromLocalRow(
     owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
     usage_account_id: row.usage_account_id ?? null,
     users: row.users ?? {},
+    runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
     allow_collaborator_destructive_storage_actions:
       row.allow_collaborator_destructive_storage_actions,
   };
@@ -71,6 +73,7 @@ async function loadLocalProjectReference({
         COALESCE(owning_bay_id, $3) AS owning_bay_id,
         usage_account_id,
         COALESCE(users, '{}'::jsonb) AS users,
+        runtime_lifecycle_revision,
         allow_collaborator_destructive_storage_actions
       FROM projects
       WHERE project_id = $1
@@ -102,6 +105,7 @@ async function loadLocalProjectReferences(
         COALESCE(owning_bay_id, $2) AS owning_bay_id,
         usage_account_id,
         COALESCE(users, '{}'::jsonb) AS users,
+        runtime_lifecycle_revision,
         allow_collaborator_destructive_storage_actions
       FROM projects
       WHERE project_id = ANY($1::uuid[])
@@ -182,6 +186,22 @@ export async function resolveProjectReferenceAllowRemote({
     return null;
   }
   return reference;
+}
+
+export async function resolveProjectReferenceForMemberAllowRemote({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectReference | null> {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectReference(ownership.bay_id)
+      .get({ account_id, project_id });
+  }
+  return await loadLocalProjectReference({ account_id, project_id });
 }
 
 async function resolveProjectReferenceForProjectUserAllowRemote({

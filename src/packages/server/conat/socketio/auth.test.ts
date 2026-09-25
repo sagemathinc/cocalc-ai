@@ -572,6 +572,26 @@ describe("project-host bearer account auth", () => {
     expect(getAccountRevokedBeforeCachedMock).toHaveBeenCalledWith(account_id);
   });
 
+  it("never exchanges a project-host API key child for Hub agent authority", async () => {
+    verifyProjectHostAuthTokenMock.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      aud: `project-host:${host_id}`,
+      iat: 100,
+      exp: 1000,
+      api_key: { key_id: "key-id-123" },
+    });
+    const socket = {
+      handshake: {
+        auth: { bearer: projectHostBearerToken(), project_id },
+        headers: {},
+      },
+    };
+    await expect(getUser(socket)).rejects.toThrow(
+      "invalid master host auth token",
+    );
+  });
+
   it("keeps one agent identity across signed turn-token refreshes", async () => {
     const sessionId = "00000000-0000-4000-8000-000000000098";
     verifyProjectHostAuthTokenMock

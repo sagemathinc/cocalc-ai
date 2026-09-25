@@ -2,6 +2,10 @@ import type { HubApi } from "@cocalc/conat/hub/api";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  getProjectHostAccessWithApiKey,
+  listProjectsWithApiKey,
+} from "./api-key-hub";
 
 export type ProjectLike = {
   project_id: string;
@@ -23,6 +27,7 @@ export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
   projectCache: Map<string, { expiresAt: number; project: W }>;
   accountId?: string;
   apiBaseUrl?: string;
+  apiKey?: string;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
@@ -279,6 +284,55 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   host_id?: string | null;
   limit: number;
 }): Promise<W[]> {
+  if (ctx.apiKey) {
+    if (!ctx.apiBaseUrl) throw Error("missing API URL for API key access");
+    if (project_id && isValidUUID(project_id)) {
+      try {
+        const access = await getProjectHostAccessWithApiKey({
+          apiBaseUrl: ctx.apiBaseUrl,
+          apiKey: ctx.apiKey,
+          project_id,
+        });
+        return [
+          {
+            project_id,
+            title: access.title,
+            host_id: access.host_id,
+          } as W,
+        ];
+      } catch {
+        // A list-only key can resolve a UUID without host access.
+      }
+    }
+    const rows: W[] = [];
+    let offset = 0;
+    while (rows.length < limit) {
+      const page = await listProjectsWithApiKey({
+        apiBaseUrl: ctx.apiBaseUrl,
+        apiKey: ctx.apiKey,
+        limit: 500,
+        offset,
+        search: title,
+      });
+      for (const item of page.projects) {
+        if (project_id && item.project_id !== project_id) continue;
+        if (title != null && item.title !== title) continue;
+        if (host_id != null && item.host_id !== host_id) continue;
+        rows.push({
+          project_id: item.project_id,
+          title: item.title,
+          host_id: item.host_id,
+          state: item.state ? { state: item.state } : null,
+          last_edited: item.last_edited,
+        } as W);
+        if (rows.length >= limit) break;
+      }
+      if (page.next_offset == null) break;
+      if (page.next_offset <= offset) throw Error("invalid project list page");
+      offset = page.next_offset;
+    }
+    return rows;
+  }
   const readMode = getProjectListReadMode();
   if (readMode !== "off") {
     try {
@@ -391,6 +445,10 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
     if (rows[0]) {
       setCachedProject(ctx, rows[0], projectCacheTtlMs);
       return rows[0];
+    }
+    if (ctx.apiKey) {
+      if (queryErr) throw queryErr;
+      throw new Error(`project '${identifier}' not found`);
     }
     try {
       const located = await getProjectBayWithHelpfulError(ctx, identifier);

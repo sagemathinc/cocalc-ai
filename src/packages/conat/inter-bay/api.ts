@@ -671,6 +671,14 @@ export interface IssueProjectHostAuthTokenResponse {
   expires_at: number;
 }
 
+export interface IssueProjectHostApiKeyAuthTokenRequest {
+  account_id: string;
+  key_id: string;
+  scope_revision: number;
+  project_id: string;
+  host_id: string;
+}
+
 export interface ForwardProjectLroProgressRequest {
   project_id: string;
   op_id: string;
@@ -2922,7 +2930,7 @@ export type HostControlMethod =
   | "inspect-static-app-path"
   | "build-rootfs-image-manifest"
   | "build-project-rootfs-manifest";
-export type ProjectHostAuthTokenMethod = "issue";
+export type ProjectHostAuthTokenMethod = "issue" | "issue-api-key";
 export type ProjectLroMethod = "publish-progress";
 export type AccountDirectoryMethod =
   | "get"
@@ -4338,6 +4346,9 @@ export interface InterBayHostControlApi {
 export interface InterBayProjectHostAuthTokenApi {
   issue: (
     opts: IssueProjectHostAuthTokenRequest,
+  ) => Promise<IssueProjectHostAuthTokenResponse>;
+  issueApiKey: (
+    opts: IssueProjectHostApiKeyAuthTokenRequest,
   ) => Promise<IssueProjectHostAuthTokenResponse>;
 }
 
@@ -6358,8 +6369,18 @@ export function createInterBayProjectHostAuthTokenClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectHostAuthTokenSubject({ dest_bay, method: "issue" }),
   });
+  const apiKeyTokenClient = createServiceClient<
+    Pick<InterBayProjectHostAuthTokenApi, "issueApiKey">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectHostAuthTokenSubject({
+      dest_bay,
+      method: "issue-api-key",
+    }),
+  });
   return {
     issue: async (opts) => await tokenClient.issue(opts),
+    issueApiKey: async (opts) => await apiKeyTokenClient.issueApiKey(opts),
   };
 }
 
@@ -6496,6 +6517,29 @@ export function createInterBayProjectHostAuthTokenHandler({
     subject: projectHostAuthTokenSubject({ dest_bay: bay_id, method: "issue" }),
     impl: {
       issue: async (opts) => await impl.issue(opts),
+    },
+  });
+}
+
+export function createInterBayProjectHostApiKeyAuthTokenHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectHostAuthTokenApi;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectHostAuthTokenApi, "issueApiKey">
+  >({
+    ...options,
+    service: "inter-bay-project-host-auth-token",
+    subject: projectHostAuthTokenSubject({
+      dest_bay: bay_id,
+      method: "issue-api-key",
+    }),
+    impl: {
+      issueApiKey: async (opts) => await impl.issueApiKey(opts),
     },
   });
 }

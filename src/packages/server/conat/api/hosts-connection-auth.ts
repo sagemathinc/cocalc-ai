@@ -282,7 +282,7 @@ async function assertAccountCanIssueProjectHostToken({
   return "host";
 }
 
-async function syncProjectUsersOnHostForBrowserAccess({
+export async function syncProjectUsersOnHostForBrowserAccess({
   account_id,
   project_id,
   expected_host_id,

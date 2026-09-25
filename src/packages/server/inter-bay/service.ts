@@ -30,6 +30,7 @@ import {
   createInterBayHostConnectionHandler,
   createInterBayHostControlHandler,
   createInterBayProjectHostAuthTokenHandler,
+  createInterBayProjectHostApiKeyAuthTokenHandler,
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
@@ -313,6 +314,7 @@ import {
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
 import { getApiKeyAuthorizationStateLocal } from "@cocalc/server/api/key-authorization-state";
+import { issueProjectHostApiKeyTokenLocal } from "@cocalc/server/api/project-host-api-key";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import { recordSiteFundedCodexAccountUsage } from "@cocalc/server/ai/save-response";
@@ -3537,9 +3539,16 @@ async function startProjectHostAuthTokenService(): Promise<void> {
         ttl_seconds,
         browser_session_exp_s,
       }),
+    issueApiKey: async (opts) => await issueProjectHostApiKeyTokenLocal(opts),
   };
   services.push(
     createInterBayProjectHostAuthTokenHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectHostApiKeyAuthTokenHandler({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

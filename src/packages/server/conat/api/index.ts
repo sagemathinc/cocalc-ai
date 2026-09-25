@@ -57,6 +57,7 @@ import * as legacyMigration from "./legacy-migration";
 import * as compute from "./compute";
 import * as computeFunding from "./compute-funding";
 import * as publicDirectoryShares from "./public-directory-shares";
+import * as apiKeys from "./api-keys";
 import * as growthAnalytics from "./growth-analytics";
 import * as commercialOrders from "./commercial-orders";
 import * as adminCrm from "./crm";
@@ -122,6 +123,7 @@ export const hubApi: HubApi = {
   compute,
   computeFunding,
   publicDirectoryShares,
+  apiKeys,
   growthAnalytics,
   commercialOrders,
   adminCrm,

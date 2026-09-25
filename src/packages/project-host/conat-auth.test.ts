@@ -106,13 +106,16 @@ describe("project-host Conat auth", () => {
   it("keeps a scoped key in its viewer service instead of account permissions", async () => {
     const expires = Math.floor(Date.now() / 1000) + 20;
     const binding = {
+      account_id,
       key_id: "key-id-123",
       scope_revision: 2,
       project_id,
       placement_revision: 7,
       capabilities: ["file:read"],
       viewer_policy_hash: "a".repeat(64),
-      subjects: [`fs-api-key.project-${project_id}.key-key-id-123.rev-2`],
+      subjects: [
+        `fs-api-key.project-${project_id}.account-${account_id}.key-key-id-123.rev-2.hash-${"a".repeat(64)}`,
+      ],
       reply_prefix: "_INBOX.api-key-00000000-0000-4000-8000-000000000003",
     };
     mockVerifyProjectHostAuthToken.mockReturnValue({

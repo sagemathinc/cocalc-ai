@@ -4,13 +4,16 @@ import type { ProjectHostApiKeyBinding } from "./project-host-token";
 const projectId = "00000000-0000-4000-8000-000000000001";
 const otherProjectId = "00000000-0000-4000-8000-000000000002";
 const base: ProjectHostApiKeyBinding = {
+  account_id: "00000000-0000-4000-8000-000000000003",
   key_id: "key-id-123",
   scope_revision: 2,
   project_id: projectId,
   placement_revision: 4,
   capabilities: ["file:read"],
   viewer_policy_hash: "a".repeat(64),
-  subjects: [`fs-api-key.project-${projectId}.key-key-id-123.rev-2`],
+  subjects: [
+    `fs-api-key.project-${projectId}.account-00000000-0000-4000-8000-000000000003.key-key-id-123.rev-2.hash-${"a".repeat(64)}`,
+  ],
   reply_prefix: "_INBOX.api-key-00000000-0000-4000-8000-000000000003",
 };
 

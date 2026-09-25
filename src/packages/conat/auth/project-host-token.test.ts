@@ -145,13 +145,16 @@ describe("project-host API key child tokens", () => {
       sub: accountId,
       exp: 1025,
       api_key: {
+        account_id: accountId,
         key_id: "key-id-123",
         scope_revision: 3,
         project_id: projectId,
         placement_revision: 7,
         capabilities: ["file:read"],
         viewer_policy_hash: "a".repeat(64),
-        subjects: [`fs-api-key.project-${projectId}.key-key-id-123.rev-3`],
+        subjects: [
+          `fs-api-key.project-${projectId}.account-${accountId}.key-key-id-123.rev-3.hash-${"a".repeat(64)}`,
+        ],
         reply_prefix: `_INBOX.api-key-${claims.jti}`,
       },
     });

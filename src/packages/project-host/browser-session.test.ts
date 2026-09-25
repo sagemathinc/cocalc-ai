@@ -239,4 +239,20 @@ describe("project-host shared browser session", () => {
       }),
     ).toThrow("agent credentials cannot create a browser session");
   });
+
+  it("rejects API key child bearers at browser-session redemption", () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: "00000000-1000-4000-8000-000000000001",
+      act: "account",
+      api_key: { key_id: "key-id-123" },
+    });
+    expect(() =>
+      issueProjectHostBrowserSessionFromBearer({
+        req: { headers: {}, socket: {} } as any,
+        res: createResponse(),
+        host_id: "00000000-1000-4000-8000-000000000099",
+        token: "api-key-child",
+      }),
+    ).toThrow("API key child credentials cannot create a browser session");
+  });
 });

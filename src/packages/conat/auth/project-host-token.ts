@@ -7,6 +7,7 @@ import {
 } from "crypto";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
+import { apiKeyViewerFsSubject } from "./project-host-api-key-subject";
 
 /*
 Project-host auth token protocol (overview):
@@ -64,6 +65,7 @@ export interface ProjectHostAuthClaims {
 }
 
 export interface ProjectHostApiKeyBinding {
+  account_id: string;
   key_id: string;
   scope_revision: number;
   project_id: string;
@@ -99,13 +101,20 @@ const API_KEY_PROJECT_CAPABILITIES = new Set<ApiKeyCapability>([
 ]);
 
 function apiKeySubjects({
+  account_id,
   project_id,
   key_id,
   scope_revision,
   capabilities,
+  viewer_policy_hash,
 }: Pick<
   ProjectHostApiKeyBinding,
-  "project_id" | "key_id" | "scope_revision" | "capabilities"
+  | "account_id"
+  | "project_id"
+  | "key_id"
+  | "scope_revision"
+  | "capabilities"
+  | "viewer_policy_hash"
 >): string[] {
   const grants = new Set(capabilities);
   const subjects: string[] = [];
@@ -120,9 +129,17 @@ function apiKeySubjects({
   if (grants.has("file:write") || grants.has("project:exec")) {
     subjects.push(`fs.project-${project_id}`);
   } else if (grants.has("file:read")) {
-    subjects.push(
-      `fs-api-key.project-${project_id}.key-${key_id}.rev-${scope_revision}`,
-    );
+    if (viewer_policy_hash) {
+      subjects.push(
+        apiKeyViewerFsSubject({
+          project_id,
+          account_id,
+          key_id,
+          scope_revision,
+          viewer_policy_hash,
+        }),
+      );
+    }
   }
   return subjects.sort();
 }
@@ -130,6 +147,7 @@ function apiKeySubjects({
 function validateApiKeyBinding(binding: ProjectHostApiKeyBinding): void {
   if (
     !binding ||
+    !isValidUUID(binding.account_id) ||
     !/^[A-Za-z0-9_-]{8,128}$/.test(binding.key_id) ||
     !isValidUUID(binding.project_id) ||
     !Number.isSafeInteger(binding.scope_revision) ||
@@ -195,6 +213,7 @@ export function issueProjectHostApiKeyAuthToken({
   }
   const jti = randomUUID();
   const binding: ProjectHostApiKeyBinding = {
+    account_id,
     key_id,
     scope_revision,
     project_id,
@@ -202,10 +221,12 @@ export function issueProjectHostApiKeyAuthToken({
     capabilities: [...capabilities].sort(),
     ...(viewer_policy_hash ? { viewer_policy_hash } : {}),
     subjects: apiKeySubjects({
+      account_id,
       project_id,
       key_id,
       scope_revision,
       capabilities,
+      viewer_policy_hash,
     }),
     reply_prefix: `_INBOX.api-key-${jti}`,
   };
@@ -505,7 +526,8 @@ export function verifyProjectHostAuthToken({
       actor !== "account" ||
       claims.auth_actor != null ||
       claims.sid != null ||
-      claims.api_key?.reply_prefix !== `_INBOX.api-key-${claims.jti}`
+      claims.api_key?.reply_prefix !== `_INBOX.api-key-${claims.jti}` ||
+      claims.api_key?.account_id !== claims.sub
     ) {
       throw new Error("invalid API key project-host identity");
     }
