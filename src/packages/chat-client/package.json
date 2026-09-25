@@ -4,6 +4,15 @@
   "description": "Headless collaborative chat client for CoCalc",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "agent-organization": ["dist/agent-organization.d.ts"],
+      "named-agents": ["dist/named-agents.d.ts"],
+      "speech-text": ["dist/speech-text.d.ts"],
+      "live-delegation": ["dist/live-delegation.d.ts"],
+      "live-voice-policy": ["dist/live-voice-policy.d.ts"]
+    }
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",

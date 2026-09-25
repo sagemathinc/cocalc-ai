@@ -4,12 +4,12 @@
  */
 import { Button, Modal, Progress } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ProjectedChatMessage } from "@cocalc/chat-client";
 import {
   LiveDelegation,
-  LIVE_VOICE_POLICY,
   type LiveEvent,
-  type ProjectedChatMessage,
-} from "@cocalc/chat-client";
+} from "@cocalc/chat-client/live-delegation";
+import { LIVE_VOICE_POLICY } from "@cocalc/chat-client/live-voice-policy";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,

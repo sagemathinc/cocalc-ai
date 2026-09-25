@@ -19,9 +19,9 @@ export {
   moveAgentToIndex,
   moveAgentBefore,
   markAgentActive,
-} from "@cocalc/chat-client";
+} from "@cocalc/chat-client/agent-organization";
 export type {
   AgentWorkspaceOrganization,
   AgentRecencySection,
   AgentProjectGroup,
-} from "@cocalc/chat-client";
+} from "@cocalc/chat-client/agent-organization";

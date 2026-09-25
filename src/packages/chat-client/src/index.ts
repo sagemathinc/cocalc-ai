@@ -10,9 +10,3 @@ export * from "./messages";
 export * from "./remote-client";
 export * from "./send";
 export * from "./types";
-export * from "./agent-organization";
-export * from "./named-agents";
-
-export { markdownToSpeechText, splitSpeechText } from "./speech-text";
-export { LiveDelegation, type LiveEvent } from "./live-delegation";
-export { LIVE_VOICE_POLICY } from "./live-voice-policy";

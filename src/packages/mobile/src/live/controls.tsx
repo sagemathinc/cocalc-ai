@@ -19,7 +19,7 @@ import { usePalette } from "../ui/palette";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile } from "../preview/fixtures";
 import type { useLiveVoice } from "./use-live";
-import { LIVE_VOICE_POLICY } from "@cocalc/chat-client";
+import { LIVE_VOICE_POLICY } from "@cocalc/chat-client/live-voice-policy";
 
 function VoicePolicyModal({
   visible,
