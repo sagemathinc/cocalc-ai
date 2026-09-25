@@ -212,9 +212,7 @@ Do this once per host. CoCalc keeps these settings for every later exam.
    keep trying to delete projects after the deletion time before it forces the
    host to power off. It is **not** extra time for students.
 10. Leave **Allow terminals (disabled by default)** off unless students need a
-    terminal. Turning terminals off removes them from the student interface,
-    but code in a notebook can still run system commands, so do not rely on
-    this setting for security. The Internet block is what isolates students.
+    terminal. During the student rehearsal, check the **New** menu as in Part 3.
 11. Select **Save configuration**. When the **Confirm security action** dialog
     opens, verify your identity and select **Verify**.
 12. A link now appears under the token. Select **Copy link** and keep the link
