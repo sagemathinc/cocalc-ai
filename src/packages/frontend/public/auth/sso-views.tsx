@@ -18,6 +18,8 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { pathForSSO } from "@cocalc/frontend/public/auth/routes";
 
+const SAME_ORIGIN_AUTH_API = { routing: "same-origin" } as const;
+
 const { Paragraph, Text, Title } = Typography;
 
 const md = new MarkdownIt({
@@ -113,7 +115,11 @@ function useStrategies(initialStrategies?: PublicSSOStrategy[]): {
     let cancelled = false;
     (async () => {
       try {
-        const result = await api("auth/sso-strategies");
+        const result = await api(
+          "auth/sso-strategies",
+          undefined,
+          SAME_ORIGIN_AUTH_API,
+        );
         if (!cancelled) {
           setStrategies(
             Array.isArray(result) ? result.map(normalizeStrategy) : [],

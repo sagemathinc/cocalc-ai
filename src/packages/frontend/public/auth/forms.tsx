@@ -66,6 +66,10 @@ const STACK_STYLE: CSSProperties = {
   width: "100%",
 } as const;
 
+const SAME_ORIGIN_AUTH_API = { routing: "same-origin" } as const;
+const SIGNUP_POLICY_ERROR =
+  "Unable to load this site's sign-up requirements. Refresh the page and try again.";
+
 const FIELD_STYLE: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -451,7 +455,11 @@ function usePublicSsoStrategies(
     let cancelled = false;
     (async () => {
       try {
-        const result = await api("auth/sso-strategies");
+        const result = await api(
+          "auth/sso-strategies",
+          undefined,
+          SAME_ORIGIN_AUTH_API,
+        );
         if (!cancelled) {
           setStrategies(Array.isArray(result) ? result : []);
         }
@@ -922,13 +930,17 @@ export function PublicEmailFirstForm({
     let cancelled = false;
     void (async () => {
       try {
-        const result = await api("auth/requires-token");
+        const result = await api(
+          "auth/requires-token",
+          undefined,
+          SAME_ORIGIN_AUTH_API,
+        );
         if (!cancelled) {
           setRequiresToken(!!result);
         }
       } catch {
         if (!cancelled) {
-          setRequiresToken(false);
+          setError(SIGNUP_POLICY_ERROR);
         }
       }
     })();
@@ -1464,9 +1476,11 @@ export function PublicSignInForm({
     const timer = setTimeout(() => {
       (async () => {
         try {
-          const result = (await api("auth/sign-in-method", {
-            email: normalizedEmail,
-          })) as SignInMethod;
+          const result = (await api(
+            "auth/sign-in-method",
+            { email: normalizedEmail },
+            SAME_ORIGIN_AUTH_API,
+          )) as SignInMethod;
           if (!cancelled) {
             setSignInMethod(
               result?.email === normalizedEmail ? result : undefined,
@@ -1502,9 +1516,11 @@ export function PublicSignInForm({
     try {
       let method: SignInMethod | undefined;
       try {
-        method = (await api("auth/sign-in-method", {
-          email: email.trim().toLowerCase(),
-        })) as SignInMethod;
+        method = (await api(
+          "auth/sign-in-method",
+          { email: email.trim().toLowerCase() },
+          SAME_ORIGIN_AUTH_API,
+        )) as SignInMethod;
       } catch {
         // Keep password sign-in available if the advisory policy query fails.
       }
@@ -1846,7 +1862,11 @@ export function PublicPasswordResetForm({
     setSuccess("");
     setResetting(true);
     try {
-      const result = await api("auth/password-reset", { email });
+      const result = await api(
+        "auth/password-reset",
+        { email },
+        SAME_ORIGIN_AUTH_API,
+      );
       if (result?.error) {
         setError(result.error);
         return;
@@ -2213,10 +2233,14 @@ export function PublicSignUpForm({
     }
     (async () => {
       try {
-        const result = await api("auth/requires-token");
+        const result = await api(
+          "auth/requires-token",
+          undefined,
+          SAME_ORIGIN_AUTH_API,
+        );
         setRequiresToken(!!result);
       } catch {
-        setRequiresToken(false);
+        setError(SIGNUP_POLICY_ERROR);
       }
     })();
   }, [requiresToken]);
@@ -2267,6 +2291,9 @@ export function PublicSignUpForm({
       return false;
     }
     if (!displayName.trim()) {
+      return false;
+    }
+    if (requiresToken === undefined) {
       return false;
     }
     if (requiresToken && !registrationToken.trim()) {
@@ -2406,6 +2433,7 @@ export function PublicSignUpForm({
         <div style={FIELD_STYLE}>
           <div style={LABEL_STYLE}>Registration token</div>
           <TextInput
+            ariaLabel="Registration token"
             autoFocus={!!requiresToken}
             inputRef={registrationTokenInputRef}
             name="registration-token"
