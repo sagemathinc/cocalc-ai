@@ -6,6 +6,7 @@ const { getDocsEntry, listDocsEntries, searchDocsEntries } = require("../dist");
 const { verifyDocsStatic } = require("../dist/verification");
 
 const guides = {
+  "ai/my-agents": "Start agent",
   "ai/codex-settings": "Reasoning level",
   "ai/codex-conversations": "Fork chat",
   "ai/codex-goals": "Snooze 5 minutes",
@@ -26,11 +27,19 @@ test("agent guides are registered, linked from the introduction, and searchable"
       searchDocsEntries(phrase).some((result) => result.id === entry.id),
       slug,
     );
-    assert.equal(entry.lastReviewed, "2026-09-07");
-    assert.ok(entry.noActionReason);
-    assert.ok(
-      existsSync(resolve(__dirname, "../../assets", entry.image.src.slice(1))),
+    assert.equal(
+      entry.lastReviewed,
+      slug === "ai/my-agents" ? "2026-09-24" : "2026-09-07",
     );
+    assert.ok(entry.noActionReason);
+    if (slug !== "ai/my-agents") {
+      assert.ok(entry.image, slug);
+      assert.ok(
+        existsSync(
+          resolve(__dirname, "../../assets", entry.image.src.slice(1)),
+        ),
+      );
+    }
   }
   assert.ok(
     intro.body.split("\n").length < 80,
@@ -41,6 +50,7 @@ test("agent guides are registered, linked from the introduction, and searchable"
 test("agent guides keep distinct headings and valid internal links", () => {
   const entries = listDocsEntries();
   for (const slug of [
+    "ai/my-agents",
     "ai/codex-chat",
     "ai/connect-credentials",
     ...Object.keys(guides),
@@ -58,6 +68,16 @@ test("agent guides keep distinct headings and valid internal links", () => {
     }
   }
   assert.equal(verifyDocsStatic().ok, true);
+});
+
+test("Agents guide includes its saved-result screenshot", () => {
+  const body = getDocsEntry("ai/my-agents").body;
+  const image = body.match(/!\[[^\]]+\]\((\/public\/docs\/[^)]+)\)/);
+  assert.ok(image, "an inline screenshot should explain the review surface");
+  assert.ok(
+    existsSync(resolve(__dirname, "../../assets", image[1].slice(1))),
+    image[1],
+  );
 });
 
 test("editor recipes remain in their task guides", () => {

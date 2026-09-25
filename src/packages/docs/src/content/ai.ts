@@ -27,6 +27,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 
 ## Find the right guide
 
+- [Start and review work in Agents](/docs/ai/my-agents).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Configure models, access, and defaults](/docs/ai/codex-settings).
 - [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
@@ -50,45 +51,56 @@ share the same project state with collaborators.
 `;
 
 export const MY_AGENTS_BODY = String.raw`
-## What Agents is
+## Start with a request
 
-**Agents** is an experimental workspace for explicitly registered CoCalc
-agents. It puts named agents from different projects in one list and opens each
-agent's existing chat, artifacts, and terminal frames without making the
-project filesystem layout the primary navigation.
+After signing in, CoCalc normally opens **Agents**. If it does not, choose
+**Agents** in the main navigation. The new-agent request box appears when you
+have no named agents; otherwise choose **New Agent**. Describe a result you can
+inspect, such as a comparison, document, application, or visualization. Include
+the relevant files and the checks that would make the result useful.
 
-## Enable the workspace
+1. Use the project and working-directory control if the work belongs in an
+   existing project. If you have no project selected, CoCalc creates one named
+   **Agents** when you start.
+2. Review the available payment source and model. Access, funding, project
+   permissions, and resource limits still apply.
+3. Choose the up-arrow **Start agent** button, or press **Shift+Enter**. This
+   creates the named agent and sends your request. It can start project compute
+   and use model allowance. If CoCalc warns that the agent was created but the
+   first request could not start, the request is preserved as a draft for you
+   to inspect before trying again.
 
-1. Open account **AI** settings.
-2. Turn on **Enable Agents Page (Experimental)**.
-3. Open **Agents** in the main navigation.
+If **Agents** is absent from your installation, ask its administrator whether
+agent access is enabled.
 
-Only registered named agents appear. Ordinary project chats are not scanned or
-automatically imported. Use **Open in project** whenever you need the complete
-project desktop.
+## Review and continue
 
-Use the star control to pin important agents. Pinned agents have their own
-manual order. The remaining list can follow your recently opened agents or a
-custom order; drag rows with a pointer or keyboard to arrange it. This
-organization is personal to your account and does not affect collaborators.
+Select a named agent to return to its conversation. Open a saved result from
+the chat to inspect it beside your request, then ask the same agent for a
+specific correction or another version. **Library** helps you find artifacts
+from named agents. Use **Open in project** when you need the underlying files,
+software, or complete project view.
 
-**New Agent** lets you choose an existing project and working directory, name
-the agent, and optionally prepare its first request. The request is preserved as
-a draft in the new agent so you can review it before pressing **Send**. Creating
-the agent alone does not start project compute or approve messaging links.
+![A saved dispatch review image open beside its agent conversation in a fresh CoCalc project with fictional data](/public/docs/agents-workspace-dispatch-review-20260924.jpg)
 
-When enabled, Agents is also the normal destination after signing in.
-Explicit links to projects, files, settings, and other destinations continue to
-open the requested destination.
+This example shows a reviewable image result beside the conversation. The
+underlying file remains in the project.
 
-Opening an agent reads its existing project-backed chat and does not by itself
-start project compute. Sending a prompt, running code, or opening a terminal can
-start compute under the project's normal authorization and quota rules.
+## Bring existing work into Agents
 
-This preference controls discoverability only. Turning it off does not stop
-running work, revoke messaging connections, remove external installations, or
-change project permissions. Existing connection management remains available
-under account **Agents** settings.
+Only registered named agents appear in the Agents list; existing project chats
+are not imported automatically. In a project chat, choose **Name agent** to
+register that thread. Naming it does not start work, grant communication with
+another agent, or change who can read the shared chat.
+
+Pin an agent to keep it near the top. You can use recent or custom ordering and
+group the list by project. These list preferences are personal to your account.
+Account **Agents** settings also lets you remove a named agent from the list;
+the conversation and artifacts remain, but that agent becomes unavailable to
+its Agent Networks.
+
+For project-chat controls and access setup, see [Open Codex chat](/docs/ai/codex-chat)
+and [Connect AI access](/docs/ai/connect-credentials).
 `;
 
 export const AI_CREDENTIALS_BODY = String.raw`
