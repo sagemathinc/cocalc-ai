@@ -208,6 +208,25 @@ export function useLiveVoice(
       },
       setStatus,
       (text) => progress.answer(text),
+      async () => {
+        if (
+          active.current !== call ||
+          call.abort.signal.aborted ||
+          current.current.client !== clientAtStart ||
+          current.current.snapshot.connection !== "connected" ||
+          (current.current.snapshot.selected_thread_id != null &&
+            current.current.snapshot.selected_thread_id !== thread)
+        )
+          throw new Error("The voice call is no longer bound to this agent.");
+        if (
+          current.current.snapshot.threads.find(
+            (item) => item.thread_id === thread,
+          )?.state !== "running"
+        )
+          return false;
+        await clientAtStart.interrupt(thread);
+        return true;
+      },
     );
     const call = {
       abort: new AbortController(),

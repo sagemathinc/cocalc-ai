@@ -110,6 +110,7 @@ export function ChatLiveVoice({
   messages,
   threadRunning,
   onDelegate,
+  onInterrupt,
   visible,
   panelOpen = true,
   onClose,
@@ -125,6 +126,10 @@ export function ChatLiveVoice({
     isCurrentThread: () => boolean,
     signal: AbortSignal,
   ) => Promise<{ message_id: string; kind?: "guidance" | "work" }>;
+  onInterrupt: (
+    isCurrentThread: () => boolean,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   visible: boolean;
   panelOpen?: boolean;
   onClose?: () => void;
@@ -150,8 +155,8 @@ export function ChatLiveVoice({
   const generationRef = useRef(0);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const delegateRef = useRef({ threadId, onDelegate });
-  delegateRef.current = { threadId, onDelegate };
+  const delegateRef = useRef({ threadId, onDelegate, onInterrupt });
+  delegateRef.current = { threadId, onDelegate, onInterrupt };
   const runningAgent = [...messages]
     .reverse()
     .find((message) => message.role === "agent" && message.generating);
@@ -348,6 +353,14 @@ export function ChatLiveVoice({
         if (isCurrentCall()) setStatus(value);
       },
       (text) => progress.answer(text),
+      async () => {
+        if (!isCurrentCall() || delegateRef.current.threadId !== boundThreadId)
+          throw new Error("The selected agent changed.");
+        return await delegateRef.current.onInterrupt(
+          isCurrentCall,
+          abort.signal,
+        );
+      },
     );
     const call: Call = {
       peer,

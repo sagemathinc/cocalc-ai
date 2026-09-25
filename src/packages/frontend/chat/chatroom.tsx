@@ -72,7 +72,10 @@ import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import { requestThreadSearch } from "./thread-search-request";
-import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
+import {
+  ChatRoomThreadPanel,
+  resolveSelectedThreadRunningCodexMessage,
+} from "./chatroom-thread-panel";
 import { ChatFontSizeControls } from "./chat-font-size-controls";
 import {
   getDefaultNewThreadSetup,
@@ -2236,6 +2239,43 @@ function ChatPanelContent({
     };
   }
 
+  async function interruptVoiceTurn(
+    isCurrentThread: () => boolean,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (
+      readOnly ||
+      !selectedThreadId ||
+      !isCurrentThread() ||
+      signal.aborted ||
+      selectedThreadMetadata?.agent_kind !== "acp"
+    )
+      throw new Error("The selected agent changed.");
+    const running = resolveSelectedThreadRunningCodexMessage(
+      selectedThreadMessages,
+      acpState,
+    );
+    if (!running) return false;
+    const date = dateValue(running);
+    if (!date) throw new Error("The running turn has no message date.");
+    const sessionId =
+      field<string>(running, "acp_thread_id") ??
+      resolveAgentSessionIdForThread({
+        actions,
+        threadId: selectedThreadId,
+        threadKey: selectedThreadKey ?? selectedThreadId,
+        persistedSessionId: selectedThreadMetadata?.acp_config?.sessionId,
+      });
+    if (!sessionId || !isCurrentThread() || signal.aborted)
+      throw new Error("The selected agent changed.");
+    const accepted = await actions.languageModelStopGenerating(date, {
+      threadId: sessionId,
+      senderId: field<string>(running, "sender_id"),
+    });
+    if (!accepted) throw new Error("The interrupt was not accepted.");
+    return true;
+  }
+
   async function sendMessage(
     extraInput?: string,
     opts?: { immediate?: boolean; postOnly?: boolean },
@@ -3148,6 +3188,7 @@ function ChatPanelContent({
           messages={liveVoiceMessages}
           threadRunning={hasRunningAcpTurn}
           onDelegate={sendVoiceTask}
+          onInterrupt={interruptVoiceTurn}
           visible={isVisible && tabIsVisible && isChatForeground}
           panelOpen={voiceOptionsOpen && selectedThreadResolved == null}
           onClose={() => setVoiceOptionsOpen(false)}

@@ -17,8 +17,20 @@ export interface LiveEvent {
   usage?: { seconds?: number };
 }
 
-// Owns only this call's delegation state. It never retries an uncertain send,
-// interrupts a task, or treats model output as human permission.
+/** Only an explicit request to stop the current agent turn may interrupt it. */
+export function isExplicitInterruptRequest(text: string): boolean {
+  const request = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ");
+  return /^(?:(?:please|can you|could you|would you|i want (?:you to|to)) )?(?:just )?(?:stop|interrupt|cancel|end|abort|halt) (?:(?:the|this|my) )?(?:(?:current|running|active) )?(?:(?:agent|codex) )?(?:turn|task|run|work|job)(?: now| please)?$/.test(
+    request,
+  );
+}
+
+// Owns only this call's delegation state. It never retries an uncertain send
+// or treats model output as human permission.
 export class LiveDelegation {
   private seen = new Set<string>();
   private delegated = new Set<string>();
@@ -39,6 +51,7 @@ export class LiveDelegation {
     ) => void,
     private report: (message: string) => void,
     private answerStatusQuestion?: (text: string) => string | undefined,
+    private interrupt?: () => Promise<boolean>,
   ) {}
 
   async event(event: LiveEvent) {
@@ -92,6 +105,27 @@ export class LiveDelegation {
     }
     const submit = async () => {
       if (this.closed) return;
+      if (isExplicitInterruptRequest(text)) {
+        try {
+          const interrupted = await this.interrupt?.();
+          if (this.closed) return;
+          const response =
+            interrupted === true
+              ? "Interrupt request accepted for the current agent turn. Check chat to confirm it stopped."
+              : interrupted === false
+                ? "There is no running agent turn to interrupt."
+                : "Voice cannot interrupt this agent turn. Use the chat interrupt control.";
+          this.append("session.commentary.append", response, id);
+          this.report(response);
+        } catch {
+          if (this.closed) return;
+          const response =
+            "The interrupt could not be confirmed. Check chat before trying again.";
+          this.append("session.commentary.append", response, id);
+          this.report(response);
+        }
+        return;
+      }
       try {
         // ChatSendPipeline coalesces simultaneous sends to one thread. Wait
         // for the previous acknowledgment so every spoken task gets its own ID.

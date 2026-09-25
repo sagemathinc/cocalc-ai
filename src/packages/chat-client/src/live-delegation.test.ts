@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { LiveDelegation } from "./live-delegation";
+import { isExplicitInterruptRequest, LiveDelegation } from "./live-delegation";
 import type { ProjectedChatMessage } from "./types";
 
 it.each([
@@ -127,4 +127,84 @@ it("acknowledges guidance without tracking it as a new task", async () => {
       String(content).includes("Guidance was sent"),
     ),
   ).toBe(true);
+});
+
+it.each([
+  "interrupt the turn",
+  "Please stop the current agent turn now!",
+  "I want to just end the turn",
+  "could you cancel this task?",
+])("recognizes an explicit spoken stop request: %s", (text) => {
+  expect(isExplicitInterruptRequest(text)).toBe(true);
+});
+
+it.each([
+  "stop talking",
+  "end the call",
+  "don't stop the turn",
+  "interrupt the turn after the tests finish",
+  "tell the agent to stop when done",
+  "can you stop the music",
+])("does not treat other speech as an interrupt: %s", (text) => {
+  expect(isExplicitInterruptRequest(text)).toBe(false);
+});
+
+it("interrupts a running turn once without sending guidance or new work", async () => {
+  const send = jest.fn(async () => ({ message_id: "unexpected" }));
+  const interrupt = jest.fn(async () => true);
+  const append = jest.fn();
+  const report = jest.fn();
+  const bridge = new LiveDelegation(send, append, report, undefined, interrupt);
+  const input = {
+    type: "session.input_transcript.delta",
+    delta: "Please interrupt the turn.",
+    end_ms: 1,
+  };
+  const delegated = {
+    type: "session.delegation.created",
+    event_id: "stop-1",
+    offset_ms: 2,
+    delegation: { id: "stop", target: "client" },
+  };
+  await bridge.event(input);
+  await bridge.event(delegated);
+  await bridge.event(delegated);
+  expect(interrupt).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
+  expect(append).toHaveBeenCalledWith(
+    "session.commentary.append",
+    expect.stringContaining("Interrupt request accepted"),
+    "stop",
+  );
+  expect(report).toHaveBeenCalledWith(
+    expect.stringContaining("Check chat to confirm"),
+  );
+});
+
+it("says when no turn is running and does not claim an interrupt", async () => {
+  const send = jest.fn();
+  const append = jest.fn();
+  const bridge = new LiveDelegation(
+    send,
+    append,
+    jest.fn(),
+    undefined,
+    async () => false,
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "End the turn",
+    end_ms: 1,
+  });
+  await bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 2,
+    delegation: { id: "stop", target: "client" },
+  });
+  expect(send).not.toHaveBeenCalled();
+  expect(append).toHaveBeenCalledWith(
+    "session.commentary.append",
+    "There is no running agent turn to interrupt.",
+    "stop",
+  );
 });

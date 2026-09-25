@@ -11,7 +11,7 @@ export const LIVE_VOICE_POLICY = [
   },
   {
     title: "Spoken tasks and approvals",
-    text: "Progress questions are answered from the latest visible turn report without sending a new Codex request. Spoken instructions go to the selected CoCalc agent as ordinary messages from you, without a separate Send tap. While a turn runs, instructions are sent as guidance to that turn; otherwise they may start new work. This work may have side effects and continue after the call ends. Voice does not press on-screen approval controls or perform fresh authentication; actions requiring those controls still need you to use them on screen. Review sensitive actions on screen.",
+    text: "Progress questions are answered from the latest visible turn report without sending a new Codex request. Spoken instructions go to the selected CoCalc agent as ordinary messages from you, without a separate Send tap. While a turn runs, instructions are sent as guidance to that turn; otherwise they may start new work. An explicit request such as 'interrupt the turn' stops the currently running turn instead of sending guidance; ending the voice call alone does not stop agent work. Other work may have side effects and continue after the call ends. Voice does not press on-screen approval controls or perform fresh authentication; actions requiring those controls still need you to use them on screen. Review sensitive actions on screen.",
   },
   {
     title: "Dictate message",
