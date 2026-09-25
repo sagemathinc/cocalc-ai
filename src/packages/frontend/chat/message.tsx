@@ -103,6 +103,7 @@ import {
 } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { recordCodexFirstResponseVisible } from "./codex-ux-latency";
+import { recordOnboardingOutput } from "@cocalc/frontend/monitoring/onboarding";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { sendGitCommitAgentTurn } from "./git-commit-agent-turn";
@@ -1102,12 +1103,22 @@ export default function Message({
     if (
       !isCodexThread ||
       !responseParentMessageId ||
-      !renderedMessageValue.trim()
+      (!renderedMessageValue.trim() && acpState !== "error")
     ) {
       return;
     }
-    return recordCodexFirstResponseVisible(responseParentMessageId);
-  }, [isCodexThread, renderedMessageValue, responseParentMessageId]);
+    const cancelOnboarding = recordOnboardingOutput(
+      responseParentMessageId,
+      acpState === "error",
+    );
+    const cancelCodex = recordCodexFirstResponseVisible(
+      responseParentMessageId,
+    );
+    return () => {
+      cancelOnboarding();
+      cancelCodex();
+    };
+  }, [isCodexThread, renderedMessageValue, responseParentMessageId, acpState]);
   const renderedMessageMarkdown = useMemo(() => {
     const formattedValue = is_viewers_message
       ? renderedMessageValue

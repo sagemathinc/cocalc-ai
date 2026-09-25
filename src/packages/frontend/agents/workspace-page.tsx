@@ -36,6 +36,14 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
+import {
+  retryablePreparation,
+  readPreparedFirstAgent,
+  writePreparedFirstAgent,
+} from "./retryable-preparation";
+import { PreparationStatus } from "./preparation-status";
+import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
+import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
 import {
@@ -483,6 +491,9 @@ function NewAgentPanel({
   const boundAccount = useBoundAgentAccount();
   const isFirstRun =
     !sourceAgent && agentFirstRunStarted(boundAccount.accountId);
+  const [restoredPreparation] = useState(() =>
+    isFirstRun ? readPreparedFirstAgent(boundAccount.accountId) : undefined,
+  );
   const sourceConfig = useMemo(
     () => freshAgentExecutionConfig(selectedAgentCodexConfig(sourceAgent)),
     [sourceAgent?.endpoint.agent_id],
@@ -496,6 +507,7 @@ function NewAgentPanel({
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
       sourceAgent?.endpoint.project_id ||
+      restoredPreparation?.projectId ||
       mostRecentlyEditedWritableProject(projectMap),
   );
   const [directory, setDirectory] = useState(
@@ -532,11 +544,15 @@ function NewAgentPanel({
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
-  const agentName = isFirstRun
-    ? agents.some((agent) => agent.name === "agent")
-      ? suggestedAgentName(agents, boundAccount.accountId)
-      : "agent"
-    : name;
+  const [firstRunName] = useState(() =>
+    isFirstRun
+      ? (restoredPreparation?.name ??
+        (agents.some((agent) => agent.name === "agent")
+          ? suggestedAgentName(agents, boundAccount.accountId)
+          : "agent"))
+      : name,
+  );
+  const agentName = isFirstRun ? firstRunName : name;
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
   const automaticProjectPromise = useRef<
@@ -545,7 +561,14 @@ function NewAgentPanel({
   const automaticProjectAttempted = useRef(false);
   const automaticProjectCreated = useRef<
     { projectId: string; title: string } | undefined
-  >(undefined);
+  >(
+    restoredPreparation?.automaticProjectTitle
+      ? {
+          projectId: restoredPreparation.projectId,
+          title: restoredPreparation.automaticProjectTitle,
+        }
+      : undefined,
+  );
   const inputControlRef = useRef<ChatInputControl | null>(null);
   const [composerSession, setComposerSession] = useState(0);
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
@@ -563,7 +586,33 @@ function NewAgentPanel({
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
-  const [pending, setPending] = useState<PendingAgent>();
+  const [pending, setPending] = useState<PendingAgent | undefined>(
+    restoredPreparation,
+  );
+  const pendingRef = useRef<PendingAgent | undefined>(restoredPreparation);
+  const prepareOnce = useRef(retryablePreparation<PendingAgent>());
+  const identityOnce = useRef(retryablePreparation<string>());
+  const backgroundOnce = useRef(retryablePreparation<void>());
+  const attemptRef = useRef<OnboardingAttempt | undefined>(undefined);
+  const handedOff = useRef(false);
+  const submitting = useRef(false);
+  const phaseRef = useRef<OnboardingPhase>("workspace");
+  const [preparationPhase, setPreparationPhase] =
+    useState<OnboardingPhase>("workspace");
+  useEffect(
+    () => () => {
+      if (!handedOff.current)
+        attemptRef.current?.finish("abandoned", "left_onboarding");
+    },
+    [],
+  );
+
+  function progress(phase: OnboardingPhase, targetProjectId?: string) {
+    boundAccount.assertCurrent();
+    phaseRef.current = phase;
+    setPreparationPhase(phase);
+    attemptRef.current?.mark(phase, targetProjectId);
+  }
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -602,7 +651,7 @@ function NewAgentPanel({
         }
       : undefined,
   );
-  const atLimit = namedAgentLimitReached(namedAgentDirectory);
+  const atLimit = namedAgentLimitReached(namedAgentDirectory) && !pending;
 
   function selectProject(nextProjectId: string) {
     setComposerSession((session) => session + 1);
@@ -699,63 +748,86 @@ function NewAgentPanel({
     targetProjectId: string | undefined = projectId,
     executionConfig: NewAgentCodexConfig = config,
   ): Promise<PendingAgent> {
-    if (pending) return pending;
-    if (!targetProjectId) throw new Error("Create or select a project first.");
-    await ensureProjectReduxRuntime();
-    const projectActions = redux.getProjectActions(targetProjectId);
-    const fs = projectActions?.fs?.();
-    if (!projectActions || !fs) {
-      throw new Error("The selected project filesystem is unavailable");
-    }
-    const projectHome = getProjectHomeDirectory(targetProjectId);
-    const workingDirectory =
-      directoryProjectId === targetProjectId
-        ? directory.trim() || projectHome
-        : projectHome;
-    if (workingDirectory === projectHome) {
-      await ensureAgentProjectHomeReady(fs, projectHome);
-    } else {
-      await assertAgentWorkingDirectory(fs, workingDirectory);
-    }
-    const path = joinAbsolutePath(
-      projectHome,
-      `.local/share/cocalc/agents/${uuid()}.chat`,
-    );
-    await projectActions.ensureContainingDirectoryExists(path);
-    await fs.writeFile(path, "");
-    const chatActions = initChat(targetProjectId, path, {
-      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+    return prepareOnce.current(async () => {
+      boundAccount.assertCurrent();
+      if (!targetProjectId)
+        throw new Error("Create or select a project first.");
+      await ensureProjectReduxRuntime();
+      const projectActions = redux.getProjectActions(targetProjectId);
+      const fs = projectActions?.fs?.();
+      if (!projectActions || !fs) {
+        throw new Error("The selected project filesystem is unavailable");
+      }
+      const projectHome = getProjectHomeDirectory(targetProjectId);
+      const workingDirectory =
+        directoryProjectId === targetProjectId
+          ? directory.trim() || projectHome
+          : projectHome;
+      if (workingDirectory === projectHome) {
+        await ensureAgentProjectHomeReady(fs, projectHome);
+      } else {
+        await assertAgentWorkingDirectory(fs, workingDirectory);
+      }
+      boundAccount.assertCurrent();
+      let created = pendingRef.current;
+      if (!created) {
+        progress("chat", targetProjectId);
+        const path = joinAbsolutePath(
+          projectHome,
+          `.local/share/cocalc/agents/${uuid()}.chat`,
+        );
+        await projectActions.ensureContainingDirectoryExists(path);
+        await fs.writeFile(path, "");
+        const chatActions = initChat(targetProjectId, path, {
+          instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+        });
+        await waitForChatReady(chatActions);
+        boundAccount.assertCurrent();
+        const threadId = chatActions.createEmptyThread({
+          name: agentName.trim(),
+          threadAgent: {
+            mode: "codex",
+            model: executionConfig.model,
+            codexConfig: { ...executionConfig, workingDirectory },
+          },
+        });
+        if (!threadId) throw new Error("Unable to create the agent thread");
+        created = { projectId: targetProjectId, path, threadId };
+        pendingRef.current = created;
+        setPending(created);
+      }
+      const { path, threadId } = created;
+      const chatActions = initChat(targetProjectId, path, {
+        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+      });
+      await waitForChatReady(chatActions);
+      await chatActions.syncdb?.save();
+      await chatActions.save_to_disk();
+      if (isFirstRun)
+        writePreparedFirstAgent(boundAccount.accountId, {
+          ...created,
+          name: agentName,
+          automaticProjectTitle: automaticProjectCreated.current?.title,
+        });
+      writeAgentSubscriptionSelection({
+        accountId: boundAccount.accountId,
+        projectId: targetProjectId,
+        threadId,
+        credentialId:
+          executionConfig.paymentSource === "subscription"
+            ? executionConfig.credentialId
+            : undefined,
+      });
+      return created;
     });
-    await waitForChatReady(chatActions);
-    const threadId = chatActions.createEmptyThread({
-      name: agentName.trim(),
-      threadAgent: {
-        mode: "codex",
-        model: executionConfig.model,
-        codexConfig: { ...executionConfig, workingDirectory },
-      },
-    });
-    if (!threadId) throw new Error("Unable to create the agent thread");
-    await chatActions.syncdb?.save();
-    await chatActions.save_to_disk();
-    const created = { projectId: targetProjectId, path, threadId };
-    writeAgentSubscriptionSelection({
-      accountId: boundAccount.accountId,
-      projectId: targetProjectId,
-      threadId,
-      credentialId:
-        executionConfig.paymentSource === "subscription"
-          ? executionConfig.credentialId
-          : undefined,
-    });
-    setPending(created);
-    return created;
   }
 
   const createWithoutTaskRef = useRef(false);
 
   function ensureAutomaticProject(request: string, start: boolean) {
     return createAgentProjectOnce(automaticProjectPromise, async () => {
+      boundAccount.assertCurrent();
+      progress("workspace");
       const needsImage =
         getProjectRuntimeCapabilities().rootfs &&
         cocalc_setup_profile !== "star";
@@ -801,7 +873,6 @@ function NewAgentPanel({
     if (
       !isFirstRun ||
       !firstRequest.trim() ||
-      projectId ||
       !projectMap ||
       emailVerificationRequired ||
       automaticProjectAttempted.current
@@ -809,7 +880,7 @@ function NewAgentPanel({
       return;
     }
     automaticProjectAttempted.current = true;
-    void ensureAutomaticProject(firstRequest, true).catch((error) => {
+    void prepareFirstAgent().catch((error) => {
       setError(`${error}`);
     });
   }, [
@@ -820,14 +891,105 @@ function NewAgentPanel({
     emailVerificationRequired,
   ]);
 
+  function prepareFirstAgent(): Promise<void> {
+    return backgroundOnce.current(async () => {
+      if (emailVerificationRequired)
+        throw new Error("Verify your email before starting your agent.");
+      const target =
+        projectId ??
+        (await ensureAutomaticProject(firstRequest, true)).projectId;
+      boundAccount.assertCurrent();
+      progress("starting", target);
+      if (
+        !(await preflightNewAgentProjectStart({
+          projectId: target,
+          onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+        }))
+      ) {
+        throw new Error(
+          "Your workspace could not start. Submit again to retry.",
+        );
+      }
+      const source = await fetchCodexPaymentSourceForSubmit({
+        projectId: target,
+        preference: paymentPreference,
+        credentialId:
+          paymentPreference === "subscription"
+            ? config.credentialId
+            : undefined,
+      });
+      const executionConfig = newAgentFundingConfig({
+        config,
+        paymentSource: source,
+        useSubscriptionDefault:
+          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
+      });
+      boundAccount.assertCurrent();
+      setConfig(executionConfig);
+      const created = await prepare(target, executionConfig);
+      await prepareIdentity(created);
+      progress("ready", target);
+    });
+  }
+
+  function prepareIdentity(
+    created: PendingAgent,
+    projectTitleOverride?: string,
+  ): Promise<string> {
+    return identityOnce.current(async () => {
+      boundAccount.assertCurrent();
+      progress("identity", created.projectId);
+      const api = personalAgentApi();
+      const locator = {
+        project_id: created.projectId,
+        path: created.path,
+        thread_id: created.threadId,
+      };
+      const identity =
+        (await api.resolveIdentity(locator)) ??
+        (await api.registerIdentity(locator));
+      if (!identity) throw new Error("Unable to register this agent thread");
+      boundAccount.assertCurrent();
+      await api.nameAgent({
+        endpoint: {
+          project_id: created.projectId,
+          agent_id: identity.agent_id,
+        },
+        name: normalizeAgentName(agentName),
+        description,
+        ...cachedAgentNameContext(locator),
+        project_title:
+          projectTitleOverride ??
+          (projectMap?.getIn([created.projectId, "title"]) as
+            | string
+            | undefined),
+        thread_title: agentName.trim(),
+      });
+      return identity.agent_id;
+    });
+  }
+
   async function create(requestValue?: string, withoutTask = false) {
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
       firstRequest
     ).trim();
-    if (busy || uploading || problem || atLimit || (!request && !withoutTask))
+    if (
+      submitting.current ||
+      busy ||
+      uploading ||
+      problem ||
+      atLimit ||
+      (!request && !withoutTask)
+    )
       return;
+    submitting.current = true;
+    if (isFirstRun && !withoutTask && boundAccount.accountId) {
+      attemptRef.current?.finish("failed", "retried");
+      attemptRef.current = new OnboardingAttempt(boundAccount.accountId);
+      attemptRef.current.mark(phaseRef.current, projectId);
+    }
     createWithoutTaskRef.current = withoutTask;
     setBusy(true);
     setError("");
@@ -835,6 +997,10 @@ function NewAgentPanel({
     let targetProjectId = projectId;
     try {
       boundAccount.assertCurrent();
+      if (isFirstRun) {
+        await prepareFirstAgent();
+        targetProjectId = pendingRef.current?.projectId ?? targetProjectId;
+      }
       let createdProjectTitle: string | undefined;
       let executionConfig = config;
       if (!targetProjectId) {
@@ -856,18 +1022,16 @@ function NewAgentPanel({
       ) {
         const finalTitle = suggestedAgentProjectTitle(request);
         if (finalTitle !== automaticProjectCreated.current.title) {
-          try {
-            await redux
-              .getActions("projects")
-              .set_project_title(targetProjectId, finalTitle);
-            automaticProjectCreated.current.title = finalTitle;
-          } catch {
-            // A title update must not prevent the first agent turn.
-          }
+          void redux
+            .getActions("projects")
+            .set_project_title(targetProjectId, finalTitle)
+            .catch(() => {});
+          automaticProjectCreated.current.title = finalTitle;
         }
         createdProjectTitle = automaticProjectCreated.current.title;
       }
       if (!withoutTask) {
+        progress("funding", targetProjectId);
         const source = await fetchCodexPaymentSourceForSubmit({
           projectId: targetProjectId,
           preference: paymentPreference,
@@ -905,6 +1069,7 @@ function NewAgentPanel({
             onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
           }))
         ) {
+          attemptRef.current?.finish("failed", "project_start_blocked");
           return;
         }
       }
@@ -915,9 +1080,14 @@ function NewAgentPanel({
         executionConfig,
       );
     } catch (err) {
+      attemptRef.current?.finish(
+        "failed",
+        err instanceof Error ? err.name : "preparation_error",
+      );
       handleCreateError(err, targetProjectId);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -930,45 +1100,38 @@ function NewAgentPanel({
   ): Promise<void> {
     const created = await prepare(targetProjectId, executionConfig);
     boundAccount.assertCurrent();
-    const api = personalAgentApi();
-    const locator = {
-      project_id: created.projectId,
-      path: created.path,
-      thread_id: created.threadId,
-    };
-    let identity = await api.resolveIdentity(locator);
-    if (!identity) {
-      identity = await api.registerIdentity(locator);
-    }
-    if (!identity) throw new Error("Unable to register this agent thread");
-    boundAccount.assertCurrent();
-    await api.nameAgent({
-      endpoint: {
-        project_id: created.projectId,
-        agent_id: identity.agent_id,
-      },
-      name: normalizeAgentName(agentName),
-      description,
-      ...cachedAgentNameContext(locator),
-      project_title:
-        projectTitleOverride ??
-        (projectMap?.getIn([created.projectId, "title"]) as string | undefined),
-      thread_title: agentName.trim(),
-    });
+    const agentId = await prepareIdentity(created, projectTitleOverride);
     if (request) {
       const actions = initChat(created.projectId, created.path, {
         instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
       });
       await waitForChatReady(actions);
+      actions.setCodexConfig(created.threadId, executionConfig);
+      writeAgentSubscriptionSelection({
+        accountId: boundAccount.accountId,
+        projectId: created.projectId,
+        threadId: created.threadId,
+        credentialId:
+          executionConfig.paymentSource === "subscription"
+            ? executionConfig.credentialId
+            : undefined,
+      });
+      progress("sending", created.projectId);
+      const chatIdentity = actions.reserveChatSendIdentity({
+        reply_thread_id: created.threadId,
+      });
+      attemptRef.current?.attach(chatIdentity.message_id, created.projectId);
       const sent = actions.sendChat({
         input: request,
         reply_thread_id: created.threadId,
         acpConfigOverride: executionConfig,
+        chatIdentity,
       });
       if (sent) {
         await actions.syncdb?.save();
         await actions.save_to_disk();
       } else {
+        attemptRef.current?.finish("failed", "send_not_accepted");
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
           project_id: created.projectId,
@@ -982,9 +1145,11 @@ function NewAgentPanel({
       }
     }
     rememberAgentName(normalizeAgentName(agentName), boundAccount.accountId);
+    if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
     void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
-    onCreated(identity.agent_id);
+    handedOff.current = true;
+    onCreated(agentId);
   }
 
   function handleCreateError(
@@ -1494,6 +1659,9 @@ function NewAgentPanel({
             />
           </div>
         </div>
+        {(isFirstRun || busy) && (
+          <PreparationStatus active={busy} phase={preparationPhase} />
+        )}
         {!isFirstRun && (
           <div
             style={{
@@ -2738,10 +2906,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             : "Agents",
     );
   }, [active, libraryOpen, creating, selected?.name]);
-  const creatingSourceAgent =
-    agents.find(
-      ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
-    ) ?? selected;
+  const creatingSourceAgent = agentFirstRunStarted(accountId)
+    ? undefined
+    : (agents.find(
+        ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
+      ) ?? selected);
 
   useWorkspaceRoute({
     active: active && !libraryOpen,
