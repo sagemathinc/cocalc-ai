@@ -453,6 +453,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ],
       ["Prepare and test run", "> Prepare and test run <"],
       [
+        "Preparing and testing the exam environment",
+        '"Preparing and testing the exam environment"',
+      ],
+      ["Exam run prepared and tested", '"Exam run prepared and tested"'],
+      [
         "Complete these steps before preparing the run",
         '"Complete these steps before preparing the run"',
       ],
@@ -460,6 +465,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["Student URL", '"Student URL"'],
       ["Project cleanup", '"Project cleanup"'],
       ["Project host afterward", '"Project host afterward"'],
+      ["What these checks mean", '"What these checks mean"'],
+      ["Admission", ">Admission<"],
+      ["Cleanup", ">Cleanup<"],
+      ["End the exam", ">End the exam<"],
       ["Open admission", "> Open admission <"],
       ["Maximum students for this run", "> Maximum students for this run <"],
       ["Increase capacity", "> Increase capacity <"],
@@ -468,6 +477,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["End exam and erase now", "> End exam and erase now <"],
       ["Erase and shut down", '"Erase and shut down"'],
       ["Refresh status", ">Refresh status<"],
+      ["Last run", '"Last run"'],
+      ["Student projects", '"Student projects"'],
+      ["all erased", "> all erased <"],
       [
         "Exam mode is not enabled for this account",
         '"Exam mode is not enabled for this account"',
@@ -526,6 +538,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "student-not-open",
         "This temporary scratchpad has been prepared, but access is not open yet.",
         "This temporary scratchpad has been prepared, but access is not open yet.",
+      ],
+      [
+        "student-waiting",
+        "This page checks again about every 30 seconds.",
+        "This page checks again about every 30 seconds.",
       ],
       [
         "join-same-origin",

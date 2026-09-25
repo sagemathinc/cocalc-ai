@@ -247,21 +247,26 @@ of them are erased. Prepare a new run for every exam and every rehearsal,
      keep running other projects afterward.
    - **For an open-ended practice session:** select **Practice mode: erase
      projects manually (no automatic timeout)**. Nothing is erased until you
-     end the run, and the host keeps running, and billing, until then.
+     end the run. The host keeps running, and billing, until you stop it
+     yourself, including after you end the run.
 5. Select **Prepare and test run**, then verify your identity in the **Confirm
    security action** dialog. If the button is unavailable, the message
    **Complete these steps before preparing the run** lists what is missing.
-6. Wait for preparation to finish. CoCalc downloads the image if the host does
-   not have it yet, creates a test project, runs a Python notebook in it,
-   checks that the test project cannot reach the Internet, erases the test
-   project, and checks the web address students will use. With an image the
-   host already has, this usually takes about a minute; a first download can
-   take several minutes.
+6. Wait for preparation to finish. While it runs, the **Prepare an exam run**
+   card shows **Preparing and testing the exam environment**. CoCalc downloads
+   the image if the host does not have it yet, creates a test project, runs a
+   Python notebook in it, checks that the test project cannot reach the
+   Internet, erases the test project, and checks the web address students will
+   use. With an image the host already has, this usually takes about a minute;
+   a first download can take several minutes. When preparation succeeds, CoCalc
+   shows **Exam run prepared and tested**.
 7. When it finishes, check the **Current run** card:
    - The status tag next to **Current run** reads **ready**.
    - All seven check tags are green: \`host_running\`, \`public_route\`,
      \`rootfs\`, \`local_snapshot\`, \`network_policy\`, \`project_smoke\`,
-     and \`watchdog\`.
+     and \`watchdog\`. To see what each one verified, select **What these
+     checks mean**. Only \`host_running\` and \`watchdog\` describe the host
+     right now; the other five were checked while the run was prepared.
    - **RootFS** shows your image, **Project cleanup** shows the deletion time,
      **Project host afterward** shows your shutdown choice, **Projects** shows
      0 followed by your maximum, **Terminal** shows your terminal choice, and
@@ -295,7 +300,8 @@ software image, room network, and lockdown browser that students will use.
 6. Create a Jupyter notebook and run \`2 + 2\`.
 7. Refresh the page. Check that you return to the same project and notebook.
 8. Check that the Internet is blocked. Run this in the notebook; it must fail
-   with an error:
+   with an error. The error can take up to a minute to appear and ends with a
+   message such as \`Temporary failure in name resolution\`:
 
 ~~~python
 import urllib.request
@@ -306,8 +312,8 @@ urllib.request.urlopen("https://example.com", timeout=5)
    **Terminal**.
 10. Return to the **Exams** tab and select **Refresh status**. **Projects**
     should now show 1.
-11. End the rehearsal as in Part 5, and check that the status becomes
-    **stopped**.
+11. End the rehearsal as in Part 5. Check that the **Last run** card appears
+    and shows **all erased** next to **Student projects**.
 
 ![The student admission page with the access token obscured and Open scratchpad available](/public/docs/exam-scratchpad-14-student-admission-open-5abe2fc9.webp)
 
@@ -317,8 +323,8 @@ urllib.request.urlopen("https://example.com", timeout=5)
 
 1. Prepare a new run as in Part 2, and check that it is **ready** with every
    tag green.
-2. When students are ready to begin, select **Open admission**. The status
-   changes to **open**.
+2. When students are ready to begin, select **Open admission** under
+   **Admission** in the **Current run** card. The status changes to **open**.
 3. Give students the admission link. If a student cannot use the link, give
    them the **Student URL** shown in the **Current run** card and the token;
    they type the token into **Access token**.
@@ -328,8 +334,8 @@ urllib.request.urlopen("https://example.com", timeout=5)
    effect immediately. You cannot lower the number during a run.
 6. To change the deletion time or the shutdown choice, change **Delete all exam
    projects at**, **Practice mode: erase projects manually (no automatic
-   timeout)**, or **Also shut down the project host to save resources**, then
-   select **Update cleanup time**.
+   timeout)**, or **Also shut down the project host to save resources** under
+   **Cleanup**, then select **Update cleanup time**.
 7. If the token or link leaks, select **Rotate token**. This creates a new
    token and a new admission link. Give the new link to students who have not
    joined yet; students already working are not affected.
@@ -350,14 +356,18 @@ Tell students before they begin:
 - **Automatically:** at the time set in **Delete all exam projects at**, CoCalc
   closes admission and erases every student project. If **Also shut down the
   project host to save resources** is selected, the host then shuts down.
-- **Early, or to end a practice session:** select **End exam and erase now**.
-  Depending on your shutdown choice, CoCalc asks **Erase all exam projects and
-  shut down this host?** with the button **Erase and shut down**, or **Erase
-  all exam projects now?** with the button **Erase**. Confirm.
+- **Early, or to end a practice session:** under **End the exam**, select
+  **End exam and erase now**. The line above the button says whether the host
+  will also shut down; that follows **Also shut down the project host to save
+  resources** under **Cleanup**. Depending on that choice, CoCalc asks **Erase
+  all exam projects and shut down this host?** with the button **Erase and shut
+  down**, or **Erase all exam projects now?** with the button **Erase**.
+  Confirm.
 
 Do not stop the host yourself before cleanup has finished. CoCalc needs the
-host running to erase the projects. When cleanup is complete, the status is
-**stopped**.
+host running to erase the projects. When cleanup is complete, a **Last run**
+card replaces **Current run**. It shows when the run ended and **all erased**
+next to **Student projects**, and it stays visible after the host shuts down.
 
 After cleanup:
 
@@ -373,13 +383,14 @@ After cleanup:
 | **Exam mode is not enabled for this account** | Your account does not have the exam-mode entitlement. | Ask a site administrator to set your **Exam scratchpad hosts** entitlement to **Allow**. |
 | **Start the project host to prepare an exam** | The host is not running. | Start the host and wait until it is running. |
 | **Complete these steps before preparing the run** | A required setting is missing. | Do each step that the message lists. |
-| The status is **error**, or a check tag is red | Preparation failed. The error message explains why. | Select **End exam and erase now** and wait for **stopped**. Restart the host if it shut down, fix the cause, then prepare a new run. A red \`project_smoke\` tag often means the image lacks Jupyter with a \`python3\` kernel. |
-| A student sees "This temporary scratchpad has been prepared, but access is not open yet." | Admission is closed. | Select **Open admission**. The student then refreshes the page. |
+| The status is **error**, or a check tag is red | Preparation failed. The error message explains why. | Select **End exam and erase now** and wait for the **Last run** card. Restart the host if it shut down, fix the cause, then prepare a new run. A red \`project_smoke\` tag often means the image lacks Jupyter with a \`python3\` kernel. |
+| A student sees "This temporary scratchpad has been prepared, but access is not open yet." | Admission is closed. | Select **Open admission**. The student's page says "This page checks again about every 30 seconds." and shows **Open scratchpad** once admission is open; the student can also refresh it. A token from the admission link is kept for that browser tab. |
 | A student sees **invalid access token** | The token was mistyped. | Give the student the admission link, which fills in the token. |
 | A student sees **exam project capacity has been reached** | The run is full. | Raise **Maximum students for this run** and select **Increase capacity**. |
 | A student sees **too many unsuccessful exam join attempts; try later** | 12 wrong tokens came from the same network address within 10 minutes. All students behind one Internet address, such as a classroom network, share this limit, and while it applies even a correct token is refused. | Wait up to 10 minutes. To prevent it, give students the admission link instead of asking them to type the token. |
 | A student sees **exam admission requires a same-origin request** | The browser did not send the standard \`Origin\` header when submitting the token. | Change the lockdown browser's settings, or use another browser. |
 | A student sees **scratchpad access is closed** | The deletion time has passed, or the run ended. | Prepare a new run if students need more time. |
+| A student who reloads the page after the exam sees a Cloudflare page with "Error 1033" | The run ended and the host shut down, so the student web address no longer answers. | Nothing needs fixing. If students need more time, start the host and prepare a new run; the earlier projects are already erased. |
 | A student's earlier work is missing | The student opened the link in a different browser, which created a new project. | Return to the original browser or profile and reopen the link there. If that browser's data was cleared, or the run has ended and cleanup erased the project, the work cannot be recovered. |
 | The status stays **error** after the deletion time | Cleanup could not finish. CoCalc keeps retrying. | If host shutdown was selected, the host powers off anyway after **Cleanup grace (minutes)**. If the problem persists, contact support. |
 
@@ -444,13 +455,16 @@ always disabled.
 
 ### Run statuses
 
+The **Exams** tab shows the status of a run in progress next to **Current run**.
+The CLI reports every status.
+
 | Status | Meaning |
 | :-- | :-- |
 | **preparing** | CoCalc is preparing and testing the run. |
 | **ready** | The run passed its checks. Admission is closed. |
 | **open** | Students can join. |
 | **closing**, **cleaning** | The run is ending and the projects are being erased. |
-| **stopped** | All projects are erased. You can prepare a new run. |
+| **stopped** | All projects are erased. The **Exams** tab shows **Last run** instead of **Current run**, and you can prepare a new run. |
 | **error** | Preparation or cleanup failed. |
 
 A host runs one exam at a time.
@@ -459,7 +473,9 @@ A host runs one exam at a time.
 
 The admission link looks like \`https://exam-<name>.<domain>/#token=<token>\`.
 Because the token comes after \`#\`, the browser fills in the token without
-sending it to the server, then removes it from the address bar. The link stays
+sending it to the server, then removes it from the address bar. The page keeps
+the token for that browser tab, so reloading the page, or opening the link
+again in the same tab, fills it in again. The link stays
 the same across host restarts and new runs. It changes only when you change
 **Stable admission token** between runs or select **Rotate token** during a
 run.

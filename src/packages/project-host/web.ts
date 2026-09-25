@@ -42,15 +42,53 @@ const DEFAULT_CONFIGURATION = {
   site_name: "CoCalc Project Host",
 };
 
-const EXAM_ADMISSION_SCRIPT = `(() => {
-  const token = new URLSearchParams(window.location.hash.slice(1)).get("token");
-  if (token) {
+// Runs in the student's browser. The admission link carries the token in the
+// URL fragment, which is never sent to the server. The script moves the token
+// into this tab's sessionStorage and removes it from the address bar, so a
+// student who opens the link before admission opens can simply refresh (or
+// wait for the automatic check) and still find the token filled in. Pasting the
+// link into a tab already showing this page changes only the fragment, which
+// does not reload the page, so the script also listens for hashchange.
+export const EXAM_ADMISSION_SCRIPT = `(() => {
+  const STORAGE_KEY = "cocalc-exam-admission-token";
+  const storage = () => {
+    try {
+      return window.sessionStorage;
+    } catch {
+      return null;
+    }
+  };
+  const fillToken = () => {
+    const fromLink = new URLSearchParams(window.location.hash.slice(1)).get("token");
+    if (fromLink) {
+      try {
+        storage()?.setItem(STORAGE_KEY, fromLink);
+      } catch {}
+      window.history.replaceState(
+        null,
+        document.title,
+        window.location.pathname + window.location.search,
+      );
+    }
+    let token = fromLink;
+    if (!token) {
+      try {
+        token = storage()?.getItem(STORAGE_KEY) ?? null;
+      } catch {}
+    }
     const input = document.querySelector('input[name="token"]');
-    if (input instanceof HTMLInputElement) input.value = token;
-    window.history.replaceState(
-      null,
-      document.title,
-      window.location.pathname + window.location.search,
+    if (token && input instanceof HTMLInputElement && !input.value) {
+      input.value = token;
+    }
+  };
+  fillToken();
+  window.addEventListener("hashchange", fillToken);
+  // While admission is closed, check again about every 30 seconds. The jitter
+  // keeps a whole class from reloading at the same moment.
+  if (document.querySelector("[data-exam-waiting]")) {
+    window.setTimeout(
+      () => window.location.reload(),
+      30000 + Math.floor(Math.random() * 10000),
     );
   }
   const deadline = document.querySelector('time[data-deadline-ms]');
@@ -339,7 +377,7 @@ export function getExamJoinPage({
     <button type="submit">Open scratchpad</button>
   </form>`
       : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
-  <div class="closed">Wait for access to open, then refresh this page.</div>`
+  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.</div>`
   }
   ${escaped ? `<div class="error" role="alert">${escaped}</div>` : ""}
 </main></body></html>`;

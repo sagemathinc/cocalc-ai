@@ -12,6 +12,7 @@ jest.mock("./exam/controller", () => ({
 }));
 
 import {
+  EXAM_ADMISSION_SCRIPT,
   getExamJoinPage,
   getProjectHostCustomizePayload,
   isExamPostOriginAllowed,
@@ -216,7 +217,8 @@ describe("project-host exam admission page", () => {
   it("tells students to wait without asking for a token while closed", () => {
     const closed = getExamJoinPage({ admission_open: false });
     expect(closed).toContain("access is not open yet");
-    expect(closed).toContain("Wait for access to open");
+    expect(closed).toContain("checks again about every 30 seconds");
+    expect(closed).toContain("data-exam-waiting");
     expect(closed).not.toContain("Enter the token provided to you");
     expect(closed).not.toContain('name="token"');
   });
@@ -228,5 +230,112 @@ describe("project-host exam admission page", () => {
     });
     expect(page).toContain("until your instructor ends the session");
     expect(page).not.toContain("erased automatically");
+  });
+});
+
+// The admission script runs in the student's browser. These tests run it
+// against minimal stand-ins for the few browser objects it touches.
+describe("project-host exam admission script", () => {
+  const STORAGE_KEY = "cocalc-exam-admission-token";
+
+  function runAdmissionScript({
+    hash = "",
+    withInput = false,
+    typed = "",
+    stored,
+    waiting = false,
+  }: {
+    hash?: string;
+    withInput?: boolean;
+    typed?: string;
+    stored?: string;
+    waiting?: boolean;
+  }) {
+    class FakeInput {
+      value = typed;
+    }
+    class FakeTime {}
+    const store = new Map<string, string>();
+    if (stored) store.set(STORAGE_KEY, stored);
+    const input = withInput ? new FakeInput() : null;
+    const listeners: Record<string, Array<() => void>> = {};
+    const timeouts: number[] = [];
+    const location = { hash, pathname: "/", search: "", reload: jest.fn() };
+    const replaceState = jest.fn(() => {
+      location.hash = "";
+    });
+    const window = {
+      location,
+      history: { replaceState },
+      sessionStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+      },
+      addEventListener: (type: string, listener: () => void) => {
+        (listeners[type] ??= []).push(listener);
+      },
+      setTimeout: (_callback: () => void, ms: number) => {
+        timeouts.push(ms);
+        return timeouts.length;
+      },
+      setInterval: jest.fn(),
+    };
+    const document = {
+      title: "Math 101 Final Exam - CoCalc",
+      querySelector: (selector: string) => {
+        if (selector === 'input[name="token"]') return input;
+        if (selector === "[data-exam-waiting]") return waiting ? {} : null;
+        return null;
+      },
+    };
+    new Function(
+      "window",
+      "document",
+      "HTMLInputElement",
+      "HTMLTimeElement",
+      EXAM_ADMISSION_SCRIPT,
+    )(window, document, FakeInput, FakeTime);
+    return { input, store, replaceState, location, listeners, timeouts };
+  }
+
+  it("keeps the token for this tab while access is not open yet", () => {
+    const page = runAdmissionScript({ hash: "#token=abc123", waiting: true });
+    expect(page.store.get(STORAGE_KEY)).toBe("abc123");
+    expect(page.replaceState).toHaveBeenCalledTimes(1);
+    expect(page.location.hash).toBe("");
+  });
+
+  it("fills the token after a refresh once access opens", () => {
+    const page = runAdmissionScript({ withInput: true, stored: "abc123" });
+    expect(page.input?.value).toBe("abc123");
+    expect(page.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("fills the token when the link is pasted into the same tab", () => {
+    const page = runAdmissionScript({ withInput: true });
+    expect(page.input?.value).toBe("");
+    page.location.hash = "#token=xyz789";
+    for (const listener of page.listeners.hashchange ?? []) listener();
+    expect(page.input?.value).toBe("xyz789");
+    expect(page.store.get(STORAGE_KEY)).toBe("xyz789");
+    expect(page.location.hash).toBe("");
+  });
+
+  it("never replaces a token the student typed", () => {
+    const page = runAdmissionScript({
+      withInput: true,
+      typed: "typed-token",
+      stored: "abc123",
+    });
+    expect(page.input?.value).toBe("typed-token");
+  });
+
+  it("checks again about every 30 seconds while access is closed", () => {
+    const waiting = runAdmissionScript({ waiting: true });
+    expect(waiting.timeouts).toHaveLength(1);
+    expect(waiting.timeouts[0]).toBeGreaterThanOrEqual(30_000);
+    expect(waiting.timeouts[0]).toBeLessThan(40_000);
+    const open = runAdmissionScript({ withInput: true });
+    expect(open.timeouts).toHaveLength(0);
   });
 });
