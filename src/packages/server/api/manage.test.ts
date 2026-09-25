@@ -97,6 +97,8 @@ describe("manageApiKeys local bay access", () => {
       const text = `${sql}`;
       return (
         !text.includes("ALTER TABLE api_keys ADD COLUMN") &&
+        !text.includes("ALTER TABLE api_keys ALTER COLUMN") &&
+        !text.includes("UPDATE api_keys SET scope_revision=1") &&
         !text.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
         ) &&
@@ -179,6 +181,18 @@ describe("manageApiKeys local bay access", () => {
     expect(key?.key_id).toBe("random-key-id");
     expect(key?.secret).toMatch(/^sk-cc-v2\.random-key-id\.[A-Za-z0-9_-]+$/);
     expect(key?.trunc).toMatch(/^sk-cc\.\.\.[A-Za-z0-9_-]{8}$/);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes(
+          "UPDATE api_keys SET scope_revision=1 WHERE scope_revision IS NULL",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("scope,scope_revision) VALUES"),
+      ),
+    ).toBe(true);
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "api_key_created",
       value: {

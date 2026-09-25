@@ -81,6 +81,15 @@ export async function ensureApiKeysV2Schema(): Promise<void> {
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
     );
     await pool.query(
+      "UPDATE api_keys SET scope_revision=1 WHERE scope_revision IS NULL",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET DEFAULT 1",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ALTER COLUMN scope_revision SET NOT NULL",
+    );
+    await pool.query(
       "CREATE INDEX IF NOT EXISTS api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
     );
     await pool.query(
@@ -320,7 +329,7 @@ async function createApiKey({
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids,scope) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7::JSONB) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,scope,scope_revision,last_active",
+    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids,scope,scope_revision) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7::JSONB,1) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,scope,scope_revision,last_active",
     [
       account_id,
       expire,
@@ -382,7 +391,7 @@ async function updateApiKey({ apiKey, account_id }) {
   const { rows: updatedRows } = await pool.query(
     `UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,
             allowed_project_ids=$6,scope=$7::JSONB,last_active=$8,
-            scope_revision=scope_revision+1
+            scope_revision=COALESCE(scope_revision,1)+1
       WHERE id=$1 AND account_id=$2
         AND NOT EXISTS (
           SELECT 1 FROM agent_cocalc_connector_turns
