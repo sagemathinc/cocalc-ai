@@ -333,12 +333,14 @@ ${skill}
     if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
     const cliEnv: Record<string, string> = {
       COCALC_PROJECT_ID: projectId,
+      COCALC_BEARER_TOKEN: "",
+      COCALC_AGENT_TOKEN: "",
       COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
       COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
+      COCALC_AGENT_IDENTITY_FILE: cliLease.identityContainerPath ?? "",
+      COCALC_AGENT_MENTION_REFERENCES_FILE: "",
       COCALC_API_URL: resolveProjectRuntimeApiUrl(),
     };
-    if (cliLease.identityContainerPath)
-      cliEnv.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
     applyProjectRuntimeCliEnv(cliEnv, accountId);
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
