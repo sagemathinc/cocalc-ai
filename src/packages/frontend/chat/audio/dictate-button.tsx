@@ -50,6 +50,7 @@ function DictationLiveStatus({ label }: { label: string }) {
 }
 
 interface DictateButtonProps {
+  borderless?: boolean;
   projectId?: string;
   path?: string;
   threadId?: string;
@@ -67,6 +68,7 @@ export function DictateButton(props: DictateButtonProps) {
 }
 
 function EnabledDictateButton({
+  borderless,
   projectId,
   path,
   threadId,
@@ -114,10 +116,14 @@ function EnabledDictateButton({
   });
 
   useEffect(() => {
-    if (recorder.status === "error" && recorder.error) {
+    if (
+      recorder.status === "error" &&
+      recorder.error &&
+      !recorder.backgroundError
+    ) {
       antdMessage.error(recorder.error);
     }
-  }, [recorder.error, recorder.status]);
+  }, [recorder.backgroundError, recorder.error, recorder.status]);
 
   const begin = useCallback(() => {
     void recorder.start({
@@ -258,6 +264,7 @@ function EnabledDictateButton({
           }
           onClick={onOpenVoiceOptions ?? requestStart}
           size="small"
+          type={borderless ? "text" : "default"}
         />
       </Tooltip>
       <DictationLiveStatus

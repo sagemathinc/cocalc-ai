@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   agentMentionReferenceMap,
   extractAgentMentions,
@@ -276,7 +275,7 @@ export function useAgentMentions({
                 <>
                   {error}{" "}
                   <a
-                    href="/settings/my-agents"
+                    href="/agents"
                     onClick={(event) => {
                       if (
                         event.button !== 0 ||
@@ -287,7 +286,7 @@ export function useAgentMentions({
                       )
                         return;
                       event.preventDefault();
-                      openAccountSettings({ page: "my-agents" });
+                      void redux.getActions("page").set_active_tab("agents");
                     }}
                   >
                     Agents

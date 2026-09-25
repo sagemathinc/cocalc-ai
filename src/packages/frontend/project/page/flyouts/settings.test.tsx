@@ -342,7 +342,7 @@ describe("SettingsFlyout", () => {
       />,
     );
 
-    expect(screen.getByText("People")).toBeTruthy();
+    expect(screen.getByText("Add or Remove Collaborators")).toBeTruthy();
     expect(screen.getByText("ProjectCollaboratorsContent")).toBeTruthy();
   });
 

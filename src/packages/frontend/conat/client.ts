@@ -1834,7 +1834,11 @@ export class ConatClient extends EventEmitter {
     preferred_project_id?: string,
   ): string | undefined => {
     this.syncTrackedProjectsForHost(host_id, state);
-    if (preferred_project_id && state.project_ids.has(preferred_project_id)) {
+    // Agent onboarding and other headless project work need a scoped token
+    // before the project has an open tab. Tab cleanup must not discard the
+    // explicit project for the operation that is connecting now.
+    if (preferred_project_id && isValidUUID(preferred_project_id)) {
+      state.project_ids.add(preferred_project_id);
       state.last_project_id = preferred_project_id;
       return preferred_project_id;
     }

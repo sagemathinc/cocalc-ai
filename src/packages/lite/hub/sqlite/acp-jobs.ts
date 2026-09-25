@@ -1,4 +1,5 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import {
   codexModelRecoveryConfig,
   unavailableChatGptCodexModel,
@@ -1273,6 +1274,7 @@ export function resendCanceledAcpJob({
   path,
   user_message_id,
   modelRecovery,
+  fundingRecovery,
 }: {
   project_id: string;
   path: string;
@@ -1283,7 +1285,15 @@ export function resendCanceledAcpJob({
     account_id: string;
     thread_id: string;
   };
+  fundingRecovery?: {
+    account_id: string;
+    thread_id: string;
+    expected_request: string;
+    payment_source: CodexPaymentSourcePreference;
+    credential_id?: string;
+  };
 }): AcpJobRow | undefined {
+  if (modelRecovery && fundingRecovery) return undefined;
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
@@ -1315,6 +1325,28 @@ export function resendCanceledAcpJob({
     replacement = JSON.stringify({
       ...request,
       config: codexModelRecoveryConfig(request.config, modelRecovery.model),
+    });
+  }
+  if (fundingRecovery) {
+    const current = getAcpJob({ project_id, path, user_message_id });
+    if (
+      !current ||
+      current.state !== "error" ||
+      current.account_id !== fundingRecovery.account_id ||
+      current.thread_id !== fundingRecovery.thread_id ||
+      current.request_json !== fundingRecovery.expected_request
+    )
+      return undefined;
+    const original = decodeAcpJobRequest(current);
+    if (original.request_kind === "command") return undefined;
+    expectedRequest = current.request_json;
+    replacement = JSON.stringify({
+      ...original,
+      config: {
+        ...original.config,
+        paymentSource: fundingRecovery.payment_source,
+        credentialId: fundingRecovery.credential_id,
+      },
     });
   }
   // Historical name: this also retries terminal error jobs, which keep the
@@ -1351,7 +1383,8 @@ export function resendCanceledAcpJob({
       expectedRequest,
       expectedRequest,
     );
-  if (modelRecovery && updated.changes !== 1) return undefined;
+  if ((modelRecovery || fundingRecovery) && updated.changes !== 1)
+    return undefined;
   const job = getAcpJob({ project_id, path, user_message_id });
   mirrorAcpJobSession(job);
   return job;

@@ -68,4 +68,15 @@ describe("chooseOnboardingRootfs", () => {
       image_id: "default",
     });
   });
+
+  it("returns a catalog fallback when no onboarding tags are configured", () => {
+    const entry = image("standard", [], { official: true });
+    const result = chooseOnboardingRootfs({
+      kind: "codex",
+      images: [entry],
+      fallback: { image: entry.image, image_id: entry.id },
+    });
+    expect(result?.entry).toBe(entry);
+    expect(result?.matched_tag).toBeUndefined();
+  });
 });

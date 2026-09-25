@@ -1,4 +1,7 @@
-import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import type {
+  CodexPaymentSourcePreference,
+  CodexSessionConfig,
+} from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
@@ -213,24 +216,41 @@ export type AcpTruncateSessionRequest = {
   force?: boolean;
 };
 
-export type AcpControlRequest = {
-  project_id: string;
-  account_id: string;
-  path: string;
-  thread_id: string;
-  user_message_id: string;
-  action:
-    | "cancel"
-    | "send_immediately"
-    | "resend"
-    | "resend_with_model"
-    | "prepare_fresh_conversation";
-  // Only for retrying a confirmed ChatGPT model-unavailable rejection.
-  model_recovery?: { model: string; expected_model: string };
-};
+export type AcpControlRequest =
+  | {
+      project_id: string;
+      account_id: string;
+      action: "status";
+    }
+  | {
+      project_id: string;
+      account_id: string;
+      path: string;
+      thread_id: string;
+      user_message_id: string;
+      action:
+        | "cancel"
+        | "send_immediately"
+        | "resend"
+        | "resend_with_payment"
+        | "resend_with_model"
+        | "prepare_fresh_conversation";
+      // Only for retrying a confirmed ChatGPT model-unavailable rejection.
+      model_recovery?: { model: string; expected_model: string };
+      // Retry a terminal failed job using only a newly selected funding source.
+      payment_recovery?: {
+        payment_source: CodexPaymentSourcePreference;
+        credential_id?: string;
+      };
+    };
 
 export type AcpControlResponse = {
   ok: boolean;
+  active_threads?: Array<{
+    path: string;
+    thread_id: string;
+    state: "queued" | "running";
+  }>;
   successor_thread_id?: string;
   state?:
     | "queued"
@@ -349,7 +369,7 @@ export type AcpAttentionRequest =
       account_id: string;
       path?: string;
       thread_id?: string;
-      state?: AcpAttentionState | "all";
+      state?: AcpAttentionState | "all" | "actionable";
     }
   | {
       action: "register_action";

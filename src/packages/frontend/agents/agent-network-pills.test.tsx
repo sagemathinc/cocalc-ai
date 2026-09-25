@@ -23,9 +23,8 @@ function network(
   };
 }
 
-test("network pills filter from the keyboard and expose overflow", async () => {
+test("network pills open details in one keyboard or pointer activation", async () => {
   const user = userEvent.setup();
-  const onSelect = jest.fn();
   const onOpen = jest.fn();
   const first = network("11111111-1111-4111-8111-111111111111", "Release");
   const second = network(
@@ -33,24 +32,19 @@ test("network pills filter from the keyboard and expose overflow", async () => {
     "Support",
     "paused",
   );
-  render(
-    <AgentNetworkPills
-      networks={[first, second]}
-      selectedNetworkId={first.agent_network_id}
-      onSelect={onSelect}
-      onOpen={onOpen}
-    />,
-  );
+  render(<AgentNetworkPills networks={[first, second]} onOpen={onOpen} />);
 
-  const release = screen.getByRole("button", { name: "Release" });
+  const release = screen.getByRole("button", {
+    name: "Configure Release network tag",
+  });
   release.focus();
+  expect(release).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(onOpen).toHaveBeenCalledWith(first);
-  expect(onSelect).not.toHaveBeenCalled();
-
-  await user.click(screen.getByText("+1"));
-  await user.click(await screen.findByRole("button", { name: "Support" }));
-  expect(onSelect).toHaveBeenLastCalledWith(second);
+  await user.click(
+    screen.getByRole("button", { name: "Configure Support network tag" }),
+  );
+  expect(onOpen).toHaveBeenLastCalledWith(second);
 });
 
 test("network colors are stable", () => {

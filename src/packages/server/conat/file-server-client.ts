@@ -121,6 +121,23 @@ export async function ensureProjectFileServerRoute(
   return target.address;
 }
 
+// For trusted server-side work after the caller has authorized project access.
+// The route discovery remains account-scoped, but the direct host connection
+// uses the server's short-lived hub principal.
+export async function getTrustedProjectHostClient({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): Promise<Client> {
+  return await getProjectConatClient({
+    project_id,
+    account_id,
+    hub_only: true,
+  });
+}
+
 export async function getProjectFileServerClient({
   project_id,
   account_id,

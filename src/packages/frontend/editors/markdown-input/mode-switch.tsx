@@ -14,6 +14,7 @@ interface MarkdownInputModeSwitchProps {
   hideHelp?: boolean;
   hidden?: boolean;
   overflowEllipsis?: boolean;
+  compactModeSwitch?: boolean;
   style?: React.CSSProperties;
   editBarContentRef: MutableRefObject<React.JSX.Element | undefined>;
   onSelectMode: (mode: Mode) => void;
@@ -29,6 +30,7 @@ export function MarkdownInputModeSwitch({
   hideHelp,
   hidden,
   overflowEllipsis = true,
+  compactModeSwitch = false,
   style,
   editBarContentRef,
   onSelectMode,
@@ -47,6 +49,32 @@ export function MarkdownInputModeSwitch({
     setMenuOpen(false);
     triggerRef.current?.focus({ preventScroll: true });
   }
+
+  function selectMode(nextMode: Mode) {
+    if (typeof document !== "undefined") {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        active.closest?.("[data-markdown-mode-switch='true']") != null
+      ) {
+        active.blur();
+      }
+    }
+    setMenuOpen(false);
+    onSelectMode(nextMode);
+    queueMicrotask(onInteractionEnd);
+  }
+
+  const modeOptions = [
+    {
+      label: <span style={{ fontWeight: 400 }}>Rich Text</span>,
+      value: "editor",
+    },
+    {
+      label: <span style={{ fontWeight: 400 }}>Markdown</span>,
+      value: "markdown",
+    },
+  ];
 
   function renderEllipsis() {
     return (
@@ -90,6 +118,18 @@ export function MarkdownInputModeSwitch({
                   style={{ minWidth: 44, minHeight: 44 }}
                 />
               </div>
+              {compactModeSwitch && (
+                <div role="group" aria-label="Editor mode">
+                  <Radio.Group
+                    options={modeOptions}
+                    onChange={(event) => selectMode(event.target.value as Mode)}
+                    value={mode}
+                    optionType="button"
+                    size="small"
+                    buttonStyle="solid"
+                  />
+                </div>
+              )}
               {editBarContentRef.current}
             </div>
           </KeyboardBoundary>
@@ -98,7 +138,9 @@ export function MarkdownInputModeSwitch({
         <Button
           ref={triggerRef}
           size="small"
-          aria-label="Text formatting"
+          aria-label={
+            compactModeSwitch ? "Editor mode and formatting" : "Text formatting"
+          }
           aria-haspopup="dialog"
           aria-expanded={!!(isFocusedFrame && isVisible && menuOpen)}
           icon={<Icon name="ellipsis" />}
@@ -146,39 +188,19 @@ export function MarkdownInputModeSwitch({
           ...style,
         }}
       >
-        {overflowEllipsis && mode === "editor" && renderEllipsis()}
-        <Radio.Group
-          options={[
-            {
-              label: <span style={{ fontWeight: 400 }}>Rich Text</span>,
-              value: "editor",
-            },
-            {
-              label: <span style={{ fontWeight: 400 }}>Markdown</span>,
-              value: "markdown",
-            },
-          ]}
-          onChange={(e) => {
-            const nextMode = e.target.value;
-            if (typeof document !== "undefined") {
-              const active = document.activeElement;
-              if (
-                active instanceof HTMLElement &&
-                active.closest?.("[data-markdown-mode-switch='true']") != null
-              ) {
-                active.blur();
-              }
-            }
-            setMenuOpen(false);
-            onSelectMode(nextMode as Mode);
-            queueMicrotask(onInteractionEnd);
-          }}
-          value={mode}
-          optionType="button"
-          size="small"
-          buttonStyle="solid"
-          style={{ display: "block" }}
-        />
+        {(compactModeSwitch || (overflowEllipsis && mode === "editor")) &&
+          renderEllipsis()}
+        {!compactModeSwitch && (
+          <Radio.Group
+            options={modeOptions}
+            onChange={(event) => selectMode(event.target.value as Mode)}
+            value={mode}
+            optionType="button"
+            size="small"
+            buttonStyle="solid"
+            style={{ display: "block" }}
+          />
+        )}
       </div>
     </div>
   );

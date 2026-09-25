@@ -54,6 +54,7 @@ import { ComposerDeliverySelector } from "./composer-delivery";
 import type { ComposerDelivery } from "./composer-delivery";
 
 export interface ChatRoomComposerProps {
+  isActive?: boolean;
   actions: ChatActions;
   project_id: string;
   path: string;
@@ -122,6 +123,7 @@ export function approvedDraftIsCurrent({
 }
 
 export function ChatRoomComposer({
+  isActive = true,
   actions,
   project_id,
   path,
@@ -162,14 +164,15 @@ export function ChatRoomComposer({
   const embeddingOptions = useChatEmbeddingOptions();
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
-  const postOnly = delivery === "post" && on_post != null;
   const visualViewport = useChatVisualViewport(mobile);
-  const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
+  const HEIGHT_STORAGE_KEY = embeddingOptions.agentWorkspace
+    ? "agents-chat-composer-height-px"
+    : "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
-  const IDLE_COLLAPSED_HEIGHT = 60;
+  const IDLE_COLLAPSED_HEIGHT = 40;
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -185,6 +188,22 @@ export function ChatRoomComposer({
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
+  const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
+  const canPost =
+    on_post != null &&
+    (selectedThread
+      ? threadMetadata?.agent_kind !== "none" &&
+        (isSelectedThreadAI || showGoal)
+      : isNewThreadCodex);
+  const canChooseDelivery = canPost || hasRunningCodexTurn;
+  const postOnly = canPost && delivery === "post";
+  const queueOnly = hasRunningCodexTurn && delivery === "queue";
+  const selectedDelivery = queueOnly ? "queue" : postOnly ? "post" : "agent";
+  useEffect(() => {
+    if (!hasRunningCodexTurn) {
+      setDelivery((current) => (current === "queue" ? "agent" : current));
+    }
+  }, [hasRunningCodexTurn]);
   const showComposerCodexConfig =
     isSelectedThreadAI ||
     showGoal ||
@@ -317,7 +336,7 @@ export function ChatRoomComposer({
       return;
     }
     set_local_storage(HEIGHT_STORAGE_KEY, String(manualHeightPx));
-  }, [manualHeightPx]);
+  }, [HEIGHT_STORAGE_KEY, manualHeightPx]);
 
   useEffect(() => {
     if (manualHeightPx == null) return;
@@ -383,19 +402,18 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const collapseWhenIdle = !isZenMode && !hasInput;
+  const collapseWhenIdle =
+    !isZenMode && input.length === 0 && manualHeightPx == null;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
     : collapseWhenIdle
       ? `${IDLE_COLLAPSED_HEIGHT}px`
-      : !mobile && manualHeightPx != null
-        ? `${manualHeightPx}px`
-        : INPUT_HEIGHT;
+      : INPUT_HEIGHT;
   const autoGrowMaxHeight = collapseWhenIdle
     ? IDLE_COLLAPSED_HEIGHT
     : isZenMode
       ? zenHeight
-      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0));
+      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0) + 100);
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -595,7 +613,6 @@ export function ChatRoomComposer({
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
-  const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
   const handlePrimarySend = hasRunningCodexTurn
     ? handleSendImmediately
     : handleSend;
@@ -612,17 +629,17 @@ export function ChatRoomComposer({
   const composerStyle: CSSProperties = {
     display: "flex",
     flexDirection: "column",
-    margin: isZenMode && isFullscreen ? 0 : "0 8px 8px",
+    margin:
+      isZenMode && isFullscreen ? 0 : !mobile ? "0 auto 8px" : "0 8px 8px",
     overflow: "hidden",
     width: isZenMode && isFullscreen ? "100%" : "calc(100% - 16px)",
+    maxWidth: !mobile && !isZenMode ? 1120 : undefined,
     height: isZenMode && isFullscreen ? "100%" : undefined,
-    padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
+    padding: isZenMode && isFullscreen ? "12px" : "6px 10px",
     background: UI_COLORS.surface,
-    border: `1px solid ${isInputFocused ? UI_COLORS.link : UI_COLORS.border}`,
+    border: `1px solid ${isInputFocused ? `color-mix(in srgb, ${UI_COLORS.focus} 35%, ${UI_COLORS.border})` : UI_COLORS.border}`,
     borderRadius: isZenMode && isFullscreen ? 0 : 16,
-    boxShadow: isInputFocused
-      ? `inset 0 0 0 1px ${UI_COLORS.focus}`
-      : undefined,
+    boxShadow: undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
@@ -662,11 +679,12 @@ export function ChatRoomComposer({
               title={
                 isZenMode
                   ? "Exit zen mode to resize"
-                  : "Drag to resize the composer"
+                  : "Drag to resize the composer; double-click to reset"
               }
             >
               <div
                 onMouseDown={startDrag}
+                onDoubleClick={() => setManualHeightPx(null)}
                 style={{
                   height: "8px",
                   cursor: isZenMode ? "default" : "row-resize",
@@ -813,65 +831,73 @@ export function ChatRoomComposer({
                 </Button>
               ))}
           <div ref={inputContainerRef} data-testid="chat-composer-input">
-            <ChatInput
-              key={`${path}${project_id}-draft-${composerDraftKey}`}
-              inputControlRef={chatInputControlRef}
-              onControlReady={(control) =>
-                onComposerReady?.(control, inputContainerRef.current)
-              }
-              fontSize={mobile ? Math.max(16, fontSize) : fontSize}
-              autoFocus={!mobile}
-              isFocused={isInputFocused}
-              cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
-              input={input}
-              presenceThreadKey={presenceThreadKey}
-              on_send={handlePrimarySend}
-              on_post={on_post ? handlePost : undefined}
-              on_font_size_change={handleFontSizeChange}
-              height={chatInputHeight}
-              autoGrowMaxHeight={autoGrowMaxHeight}
-              onChange={(value) => {
-                setInput(value, composerSession);
-              }}
-              onFocus={() => {
-                setIsInputFocused(true);
-                onComposerFocusChange(true);
-              }}
-              onBlur={() => {
-                setIsInputFocused(false);
-                onComposerFocusChange(false);
-              }}
-              submitMentionsRef={submitMentionsRef}
-              syncdb={actions.syncdb}
-              date={composerDraftKey}
-              sessionToken={composerSession}
-              editBarStyle={{ overflow: "hidden" }}
-              placeholder={
-                postOnly
-                  ? "Post a note; @mention people to notify them..."
-                  : composerPlaceholder
-              }
-              externalMultilinePasteAsCodeBlock
-              toolbarRightContent={
-                hasInput ? (
-                  <Tooltip
-                    title={
-                      isZenMode
-                        ? "Exit zen mode"
-                        : "Expand composer for focused writing"
-                    }
-                  >
-                    <Button
-                      aria-label={isZenMode ? "Exit Zen" : "Zen"}
-                      icon={<Icon name="expand-arrows" />}
-                      onClick={toggleZenMode}
-                      size="small"
-                      type="text"
-                    />
-                  </Tooltip>
-                ) : null
-              }
-            />
+            {isActive && (
+              <ChatInput
+                projectId={project_id}
+                key={`${path}${project_id}-draft-${composerDraftKey}`}
+                inputControlRef={chatInputControlRef}
+                onControlReady={(control) =>
+                  onComposerReady?.(control, inputContainerRef.current)
+                }
+                fontSize={mobile ? Math.max(16, fontSize) : fontSize}
+                autoFocus={!mobile}
+                isFocused={isInputFocused}
+                cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
+                input={input}
+                presenceThreadKey={presenceThreadKey}
+                on_send={handlePrimarySend}
+                on_queue={hasRunningCodexTurn ? handleSend : undefined}
+                on_post={on_post ? handlePost : undefined}
+                on_font_size_change={handleFontSizeChange}
+                height={chatInputHeight}
+                autoGrowMinHeight={!mobile ? (manualHeightPx ?? 32) : 32}
+                autoGrowMaxHeight={autoGrowMaxHeight}
+                clampAutoGrowToHost={false}
+                compactModeSwitch
+                softFocus
+                onChange={(value) => {
+                  setInput(value, composerSession);
+                }}
+                onFocus={() => {
+                  setIsInputFocused(true);
+                  onComposerFocusChange(true);
+                }}
+                onBlur={() => {
+                  setIsInputFocused(false);
+                  onComposerFocusChange(false);
+                }}
+                submitMentionsRef={submitMentionsRef}
+                syncdb={actions.syncdb}
+                date={composerDraftKey}
+                sessionToken={composerSession}
+                editBarStyle={{ overflow: "hidden" }}
+                placeholder={
+                  postOnly
+                    ? "Post a note; @mention people to notify them..."
+                    : composerPlaceholder
+                }
+                externalMultilinePasteAsCodeBlock
+                toolbarRightContent={
+                  hasInput ? (
+                    <Tooltip
+                      title={
+                        isZenMode
+                          ? "Exit zen mode"
+                          : "Expand composer for focused writing"
+                      }
+                    >
+                      <Button
+                        aria-label={isZenMode ? "Exit Zen" : "Zen"}
+                        icon={<Icon name="expand-arrows" />}
+                        onClick={toggleZenMode}
+                        size="small"
+                        type="text"
+                      />
+                    </Tooltip>
+                  ) : null
+                }
+              />
+            )}
           </div>
           {showGoal && selectedThread && (
             <CodexGoalControl
@@ -893,14 +919,14 @@ export function ChatRoomComposer({
           aria-label="Message actions"
           style={{
             alignItems: "flex-end",
-            borderTop: `1px solid ${UI_COLORS.border}`,
+            borderTop: undefined,
             display: "flex",
             flexDirection: "row",
             flexWrap: "nowrap",
             gap: 4,
             flexShrink: 0,
             minWidth: 0,
-            paddingTop: 7,
+            paddingTop: 2,
           }}
         >
           <div
@@ -932,6 +958,7 @@ export function ChatRoomComposer({
               }}
             />
             <DictateButton
+              borderless
               inputControlRef={chatInputControlRef}
               path={path}
               projectId={project_id}
@@ -947,13 +974,13 @@ export function ChatRoomComposer({
               <div
                 style={{
                   display: "flex",
-                  flex: mobile ? "0 0 auto" : "1 1 auto",
+                  flex: "1 1 auto",
                   minWidth: 0,
                   overflow: "hidden",
                 }}
               >
                 <CodexConfigButton
-                  compact={mobile ? "icon" : "composer"}
+                  compact={mobile ? "mobile-composer" : "composer"}
                   threadKey={selectedThread.key}
                   chatPath={path}
                   projectId={project_id}
@@ -982,40 +1009,24 @@ export function ChatRoomComposer({
                 </Button>
               </Tooltip>
             ) : null}
-            {hasRunningCodexTurn && !postOnly ? (
-              <Tooltip
-                title={
-                  <FormattedMessage
-                    id="chatroom.chat_input.queue_button.tooltip"
-                    defaultMessage={"Queue after the running turn"}
-                  />
-                }
-              >
-                <Button
-                  onClick={handleSend}
-                  disabled={!hasInput}
-                  size="small"
-                  type="text"
-                >
-                  Queue
-                </Button>
-              </Tooltip>
-            ) : null}
-            {on_post &&
-              (isSelectedThreadAI || showGoal || isNewThreadCodex) && (
-                <ComposerDeliverySelector
-                  value={delivery}
-                  onChange={(value) => {
-                    setDelivery(value);
-                    refocusComposerInput();
-                  }}
-                />
-              )}
+            {canChooseDelivery && hasInput && (
+              <ComposerDeliverySelector
+                value={selectedDelivery}
+                canQueue={hasRunningCodexTurn}
+                canPost={canPost}
+                onChange={(value) => {
+                  setDelivery(value);
+                  refocusComposerInput();
+                }}
+              />
+            )}
           </div>
           <Tooltip
             title={
               postOnly ? (
                 "Post without sending to the agent (Ctrl+Enter)"
+              ) : queueOnly ? (
+                "Queue after the running turn (Alt+Enter)"
               ) : hasRunningCodexTurn ? (
                 <FormattedMessage
                   id="chatroom.chat_input.steer_button.tooltip"
@@ -1030,16 +1041,24 @@ export function ChatRoomComposer({
             }
           >
             <Button
-              onClick={postOnly ? handlePost : handlePrimarySend}
+              onClick={
+                postOnly
+                  ? handlePost
+                  : queueOnly
+                    ? handleSend
+                    : handlePrimarySend
+              }
               disabled={!hasInput}
               type="primary"
               shape="circle"
               aria-label={
                 postOnly
                   ? "Post message"
-                  : hasRunningCodexTurn
-                    ? "Steer"
-                    : "Send"
+                  : queueOnly
+                    ? "Queue message"
+                    : hasRunningCodexTurn
+                      ? "Steer"
+                      : "Send"
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}

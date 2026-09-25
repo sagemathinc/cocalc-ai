@@ -196,7 +196,7 @@ export function ExternalAgentApproval({
                 <Alert
                   type="info"
                   role="note"
-                  title="Your agent messaging is paused. Resume it in Agents before approving this request."
+                  title="Your agent messaging is paused. Resume it in Preferences > AI before approving this request."
                 />
               )}
             </>

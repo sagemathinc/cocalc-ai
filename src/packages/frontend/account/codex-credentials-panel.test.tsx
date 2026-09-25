@@ -16,6 +16,7 @@ import {
   readCachedCodexModelCatalog,
   writeCachedCodexModelCatalog,
 } from "./codex-usage";
+import { encodeRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 
 const getCodexPaymentSource = jest.fn();
 const getCodexUsageStatus = jest.fn();
@@ -469,6 +470,35 @@ describe("CodexCredentialsPanel", () => {
       ).toBeTruthy();
       expect(screen.queryByText("ChatGPT is connected")).toBeNull();
     });
+  });
+
+  it("explains sponsored-slot denial without exposing its raw payload or suggesting sign-in", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockRejectedValue(
+      new Error(
+        encodeRuntimeSponsorDenial({
+          code: "runtime_sponsor_slots_exhausted",
+          sponsor_account_id: "sponsor-1",
+          limit: 2,
+          current: 3,
+          active_projects: [],
+        }),
+      ),
+    );
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    expect(
+      await screen.findByText("Start the project to check Codex usage"),
+    ).toBeTruthy();
+    expect(screen.getByText(/has no free running-project slots/)).toBeTruthy();
+    expect(screen.queryByText(/COCALC_RUNTIME_SPONSOR_DENIAL/)).toBeNull();
+    expect(
+      screen.queryByText("Could not verify your ChatGPT sign-in"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Sign in again with ChatGPT" }),
+    ).toBeNull();
   });
 
   it("explains how to recover when the installed Codex is too old", async () => {

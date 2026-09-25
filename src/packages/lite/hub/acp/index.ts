@@ -191,6 +191,7 @@ import {
   hasQueuedOrRunningAcpJobs,
   hasRunningAcpJobForThread,
   listQueuedAcpJobThreadKeys,
+  listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
@@ -11011,6 +11012,7 @@ function publicAttentionRecord(
     response: _response,
     response_id: _responseId,
     response_declined: _responseDeclined,
+    dispatch_as_async: _dispatchAsAsync,
     ...publicRecord
   } = record;
   return publicRecord;
@@ -11517,11 +11519,18 @@ async function handleAcpAttentionRequest(
         response_id: request.response_id,
         answers,
         decline: request.decline,
+        allow_stale_sync: current.state === "stale",
       });
       if (!submitted.record) {
         return { ok: false, state: submitted.state };
       }
-      if (current.source_kind !== "codex_async_question") {
+      if (
+        current.source_kind !== "codex_async_question" &&
+        !(
+          current.source_kind === "codex_sync_question" &&
+          current.state === "stale"
+        )
+      ) {
         return {
           ok: true,
           state: submitted.state,
@@ -11716,6 +11725,52 @@ async function handleAcpControlRequest(
   request: AcpControlRequest,
 ): Promise<AcpControlResponse> {
   const project_id = `${request.project_id ?? ""}`.trim();
+  if (request.action === "status") {
+    const liveTurns = new Set(
+      listRunningAcpTurnLeases()
+        .filter(
+          (turn) =>
+            turn.project_id === project_id &&
+            turn.thread_id &&
+            turnStillLikelyOwnedByLiveWorker(turn),
+        )
+        .map((turn) => `${turn.path}\0${turn.thread_id}`),
+    );
+    const active = new Map<
+      string,
+      { path: string; thread_id: string; state: "queued" | "running" }
+    >();
+    for (const job of listQueuedAcpJobs()) {
+      if (
+        job.project_id !== project_id ||
+        job.account_id !== request.account_id
+      )
+        continue;
+      active.set(`${job.path}\0${job.thread_id}`, {
+        path: job.path,
+        thread_id: job.thread_id,
+        state: "queued",
+      });
+    }
+    for (const job of listRunningAcpJobs()) {
+      if (
+        job.project_id !== project_id ||
+        job.account_id !== request.account_id
+      )
+        continue;
+      if (
+        !jobStillLikelyOwnedByLiveWorker(job) &&
+        !liveTurns.has(`${job.path}\0${job.thread_id}`)
+      )
+        continue;
+      active.set(`${job.path}\0${job.thread_id}`, {
+        path: job.path,
+        thread_id: job.thread_id,
+        state: "running",
+      });
+    }
+    return { ok: true, active_threads: [...active.values()] };
+  }
   const path = `${request.path ?? ""}`.trim();
   const thread_id = `${request.thread_id ?? ""}`.trim();
   const user_message_id = `${request.user_message_id ?? ""}`.trim();
@@ -11856,15 +11911,61 @@ async function handleAcpControlRequest(
       throw err;
     }
   }
-  if (request.action === "resend" || request.action === "resend_with_model") {
+  if (
+    request.action === "resend" ||
+    request.action === "resend_with_model" ||
+    request.action === "resend_with_payment"
+  ) {
     if (request.action === "resend_with_model" && !request.model_recovery) {
       throw new Error("Model recovery requires a replacement model");
+    }
+    if (request.action === "resend_with_payment" && !request.payment_recovery) {
+      throw new Error("Payment recovery requires a replacement source");
     }
     const current = getAcpJob({ project_id, path, user_message_id });
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
     }
     const currentRequest = decodeAcpJobRequest(current);
+    let fundingRecovery:
+      | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
+      | undefined;
+    if (request.action === "resend_with_payment") {
+      const payment = request.payment_recovery!;
+      if (
+        current.state !== "error" ||
+        current.account_id !== request.account_id ||
+        current.thread_id !== thread_id ||
+        currentRequest.request_kind === "command" ||
+        ![
+          "auto",
+          "subscription",
+          "project-api-key",
+          "account-api-key",
+          "site-api-key",
+          "shared-home",
+        ].includes(payment.payment_source) ||
+        (payment.credential_id && payment.payment_source !== "subscription")
+      ) {
+        return { ok: false, state: current.state };
+      }
+      const replacement = await pinCodexCredentialAtAdmission({
+        ...currentRequest,
+        config: {
+          ...currentRequest.config,
+          paymentSource: payment.payment_source,
+          credentialId: payment.credential_id,
+        },
+      });
+      fundingRecovery = {
+        account_id: request.account_id,
+        thread_id,
+        expected_request: current.request_json,
+        payment_source:
+          replacement.config?.paymentSource ?? payment.payment_source,
+        credential_id: replacement.config?.credentialId,
+      };
+    }
     throwIfAcpAdmissionDenied(
       admitAcpJobCreation(
         currentRequest,
@@ -11885,6 +11986,7 @@ async function handleAcpControlRequest(
             thread_id,
           }
         : undefined,
+      fundingRecovery,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };
@@ -12508,6 +12610,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  handleAcpControlRequest,
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,

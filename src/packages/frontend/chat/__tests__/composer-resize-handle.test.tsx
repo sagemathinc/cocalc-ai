@@ -15,6 +15,7 @@ import {
 
 let lastChatInputProps: any;
 let lastCodexConfigProps: any;
+let mockStoredHeight: string | null = null;
 
 jest.mock("../input", () => ({
   __esModule: true,
@@ -67,12 +68,12 @@ jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
 
 jest.mock("@cocalc/frontend/misc", () => ({
   delete_local_storage: jest.fn(),
-  get_local_storage: jest.fn(() => null),
+  get_local_storage: jest.fn(() => mockStoredHeight),
   set_local_storage: jest.fn(),
 }));
 
 jest.mock("../utils", () => ({
-  INPUT_HEIGHT: 60,
+  INPUT_HEIGHT: "auto",
 }));
 
 function renderComposer(
@@ -100,14 +101,186 @@ function renderComposer(
     onComposerFocusChange: jest.fn(),
     ...overrides,
   };
-  return render(
+  const view = render(
     <ChatEmbeddingOptionsProvider value={embeddingOptions}>
       <ChatRoomComposer {...props} />
     </ChatEmbeddingOptionsProvider>,
   );
+  return { ...view, props };
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it("uses the compact idle composer in .chat files", () => {
+    renderComposer();
+    const composer = screen.getByTestId("chat-composer");
+    expect(composer.style.maxWidth).toBe("1120px");
+    expect(lastChatInputProps.height).toBe("40px");
+    expect(lastChatInputProps.compactModeSwitch).toBe(true);
+    expect(lastChatInputProps.softFocus).toBe(true);
+    expect(screen.getByTestId("chat-composer-actions").style.borderTop).toBe(
+      "",
+    );
+  });
+
+  it("keeps growing a draft with a saved manual minimum height", () => {
+    mockStoredHeight = "180";
+    renderComposer(
+      { hasInput: true, input: "A multiline draft" },
+      { agentWorkspace: true },
+    );
+    expect(lastChatInputProps.height).toBe("auto");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(180);
+    expect(lastChatInputProps.autoGrowMaxHeight).toBeGreaterThan(180);
+    expect(lastChatInputProps.clampAutoGrowToHost).toBe(false);
+  });
+
+  it("centers a compact auto-growing Agents composer", () => {
+    renderComposer(
+      { hasInput: true, input: "draft" },
+      { agentWorkspace: true },
+    );
+    const composer = screen.getByTestId("chat-composer");
+    expect(composer.style.maxWidth).toBe("1120px");
+    expect(composer.style.margin).toBe("0px auto 8px");
+    expect(lastChatInputProps.height).toBe("auto");
+    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
+    expect(lastChatInputProps.compactModeSwitch).toBe(true);
+    expect(lastChatInputProps.softFocus).toBe(true);
+  });
+
+  it("shows focus on the Agents outer shell without an extra shadow", () => {
+    renderComposer({}, { agentWorkspace: true });
+    const composer = screen.getByTestId("chat-composer");
+    expect(composer.style.border).toContain("var(--cocalc-ui-border)");
+    fireEvent.focus(screen.getByTestId("chat-input-focus-probe"));
+    expect(composer.style.border).toContain("var(--cocalc-ui-focus)");
+    expect(composer.style.boxShadow).toBe("");
+  });
+
+  it.each([false, true])(
+    "offers agent delivery for a new thread only when Codex is selected (%s)",
+    (isNewThreadCodex) => {
+      renderComposer({
+        isNewThreadCodex,
+        on_post: jest.fn(),
+        hasInput: true,
+        input: "draft",
+      });
+      if (isNewThreadCodex) {
+        expect(
+          screen.getByRole("button", { name: "Message delivery: To Agent" }),
+        ).toBeEnabled();
+      } else {
+        expect(
+          screen.queryByRole("button", { name: /Message delivery:/ }),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("does not show delivery options for an empty agent composer", () => {
+    renderComposer({ isNewThreadCodex: true, on_post: jest.fn() });
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("only offers agent delivery for the selected agent or a new Codex thread", async () => {
+    const humanThread = { key: "human", label: "Human", isAI: false } as any;
+    const agentThread = { key: "agent", label: "Agent", isAI: true } as any;
+    const onSend = jest.fn();
+    const view = renderComposer({
+      actions: {
+        syncdb: {},
+        getThreadMetadata: (key: string) => ({
+          agent_kind: key === "agent" ? "acp" : "none",
+        }),
+        isCodexThread: () => false,
+      } as any,
+      selectedThread: humanThread,
+      isNewThreadCodex: true,
+      on_post: jest.fn(),
+      on_send: onSend,
+      hasInput: true,
+      input: "hello",
+    });
+    const rerenderThread = (selectedThread: any, isSelectedThreadAI: boolean) =>
+      view.rerender(
+        <ChatEmbeddingOptionsProvider value={{}}>
+          <ChatRoomComposer
+            {...view.props}
+            selectedThread={selectedThread}
+            isSelectedThreadAI={isSelectedThreadAI}
+          />
+        </ChatEmbeddingOptionsProvider>,
+      );
+
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+
+    rerenderThread(agentThread, true);
+    expect(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    ).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Post/ }));
+    expect(screen.getByRole("button", { name: "Post message" })).toBeEnabled();
+
+    rerenderThread(humanThread, false);
+    expect(
+      screen.queryByRole("button", { name: /Message delivery:/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Post message" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+
+  it("unmounts the inactive editor without resetting delivery or its draft", async () => {
+    const onSend = jest.fn();
+    const onPost = jest.fn();
+    const view = renderComposer({
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({ agent_kind: "acp" }),
+      } as any,
+      selectedThread: { key: "agent", label: "Agent", isAI: true } as any,
+      isSelectedThreadAI: true,
+      input: "unsent draft",
+      hasInput: true,
+      on_send: onSend,
+      on_post: onPost,
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Post/ }));
+
+    const rerenderActive = (isActive: boolean) =>
+      view.rerender(
+        <ChatEmbeddingOptionsProvider value={{}}>
+          <ChatRoomComposer {...view.props} isActive={isActive} />
+        </ChatEmbeddingOptionsProvider>,
+      );
+    rerenderActive(false);
+    expect(screen.queryByTestId("chat-input-focus-probe")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Message delivery: Post" }),
+    ).toBeEnabled();
+
+    rerenderActive(true);
+    expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
+    expect(lastChatInputProps.input).toBe("unsent draft");
+    fireEvent.click(screen.getByRole("button", { name: "Post message" }));
+    expect(onPost).toHaveBeenCalledTimes(1);
+    expect(onPost).toHaveBeenCalledWith("unsent draft");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "uses compact settings only on mobile (%s)",
     (mobile) => {
@@ -116,7 +289,9 @@ describe("ChatRoomComposer resize handle", () => {
         isSelectedThreadAI: true,
         selectedThread: { key: "thread-mobile", label: "Agent" } as any,
       });
-      expect(lastCodexConfigProps.compact).toBe(mobile ? "icon" : "composer");
+      expect(lastCodexConfigProps.compact).toBe(
+        mobile ? "mobile-composer" : "composer",
+      );
       expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
       expect(
         screen.getByRole("button", { name: "Codex settings" }),
@@ -125,6 +300,7 @@ describe("ChatRoomComposer resize handle", () => {
   );
   beforeEach(() => {
     lastChatInputProps = undefined;
+    mockStoredHeight = null;
   });
 
   it("allows agent mentions only in explicit ACP or new Codex threads", () => {
@@ -550,7 +726,7 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).not.toHaveBeenCalled();
   });
 
-  it("makes Steer the running-turn primary action and leaves Queue explicit", () => {
+  it("switches the running-turn primary action between Steer and Queue", async () => {
     const onSend = jest.fn();
     const onSendImmediately = jest.fn();
     renderComposer({
@@ -564,9 +740,8 @@ describe("ChatRoomComposer resize handle", () => {
     });
 
     const steer = screen.getByRole("button", { name: "Steer" });
-    const queue = screen.getByRole("button", { name: "Queue" });
     expect(steer.className).toContain("ant-btn-primary");
-    expect(queue.className).not.toContain("ant-btn-primary");
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
 
     act(() => {
       lastChatInputProps.on_send("shift-enter guidance");
@@ -574,7 +749,21 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).toHaveBeenCalledWith("shift-enter guidance");
     expect(onSend).not.toHaveBeenCalled();
 
-    fireEvent.click(queue);
+    act(() => {
+      lastChatInputProps.on_queue("alt-enter guidance");
+    });
+    expect(onSend).toHaveBeenCalledWith("alt-enter guidance");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Message delivery: To Agent" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Queue Alt\+Enter/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Message delivery: Queue" }),
+    ).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(onSend).toHaveBeenCalledWith("guidance");
   });
 
@@ -636,6 +825,11 @@ describe("ChatRoomComposer resize handle", () => {
         acpPrompt: "Full agent prompt",
         isSelectedThreadAI: true,
         selectedThread: { key: "thread-layout", label: "Agent" } as any,
+        actions: {
+          syncdb: {},
+          getThreadMetadata: () => ({ agent_kind: "acp" }),
+          isCodexThread: () => true,
+        } as any,
         on_send: send,
         on_send_immediately: steer,
         on_post: jest.fn(),
@@ -662,27 +856,43 @@ describe("ChatRoomComposer resize handle", () => {
         "Add files and more",
         "Codex settings",
         "Agent Prompt",
-        "Queue",
         "Message delivery: To Agent",
       ]) {
         expect(within(options).getByRole("button", { name })).toBeEnabled();
       }
       const user = userEvent.setup();
-      const queue = within(options).getByRole("button", { name: "Queue" });
       const delivery = within(options).getByRole("button", {
         name: "Message delivery: To Agent",
       });
-      queue.focus();
+      delivery.focus();
+      await user.keyboard("{Enter}");
+      const queue = await screen.findByRole("menuitem", {
+        name: /Queue Alt\+Enter/,
+      });
+      await user.click(queue);
+      expect(delivery).toHaveFocus();
+      expect(
+        within(options).getByRole("button", {
+          name: "Message delivery: Queue",
+        }),
+      ).toBe(delivery);
+      await user.tab();
+      const queueSubmit = within(row).getByRole("button", {
+        name: "Queue message",
+      });
+      expect(queueSubmit).toHaveFocus();
       await user.keyboard("{Enter}");
       expect(send).toHaveBeenCalledWith("guidance");
-      await user.tab();
+      await user.tab({ shift: true });
       expect(delivery).toHaveFocus();
+      await user.keyboard("{Enter}");
+      await user.click(
+        await screen.findByRole("menuitem", { name: /To Agent Shift\+Enter/ }),
+      );
       await user.tab();
       expect(submit).toHaveFocus();
       await user.keyboard("{Enter}");
       expect(steer).toHaveBeenCalledWith("guidance");
-      await user.tab({ shift: true });
-      expect(delivery).toHaveFocus();
     },
   );
 });

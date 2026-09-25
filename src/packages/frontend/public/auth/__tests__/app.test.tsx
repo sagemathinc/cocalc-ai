@@ -11,7 +11,9 @@ import api from "@cocalc/frontend/client/api";
 import {
   getControlPlaneAuthBootstrap,
   isMfaRequiredAuthResponse,
+  isWrongBayAuthResponse,
   postAuthApi,
+  retryAuthOnHomeBay,
   signOutAuthSession,
 } from "@cocalc/frontend/auth/api";
 import { enableForceConsent } from "@cocalc/frontend/cookie-consent";
@@ -42,6 +44,8 @@ const mockedGetControlPlaneAuthBootstrap = jest.mocked(
 const mockedPostAuthApi = jest.mocked(postAuthApi);
 const mockedSignOutAuthSession = jest.mocked(signOutAuthSession);
 const mockedIsMfaRequiredAuthResponse = jest.mocked(isMfaRequiredAuthResponse);
+const mockedIsWrongBayAuthResponse = jest.mocked(isWrongBayAuthResponse);
+const mockedRetryAuthOnHomeBay = jest.mocked(retryAuthOnHomeBay);
 const mockedEnableForceConsent = jest.mocked(enableForceConsent);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
@@ -76,6 +80,9 @@ beforeEach(() => {
   mockedSignOutAuthSession.mockReset();
   mockedIsMfaRequiredAuthResponse.mockReset();
   mockedIsMfaRequiredAuthResponse.mockReturnValue(false);
+  mockedIsWrongBayAuthResponse.mockReset();
+  mockedIsWrongBayAuthResponse.mockReturnValue(false);
+  mockedRetryAuthOnHomeBay.mockReset();
   mockedEnableForceConsent.mockReset();
   mockedEnableForceConsent.mockReturnValue(jest.fn());
 });
@@ -849,6 +856,96 @@ describe("PublicAuthApp", () => {
     });
   });
 
+  it("does not report invalid credentials after cross-bay account creation", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+    mockedPostAuthApi.mockResolvedValueOnce({ wrong_bay: true });
+    mockedIsWrongBayAuthResponse.mockReturnValue(true);
+    mockedRetryAuthOnHomeBay.mockRejectedValueOnce(
+      new Error("Invalid email address or password."),
+    );
+
+    render(
+      <PublicAuthApp
+        config={config({ policy_pages: "none" })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      { target: { value: "correct horse battery staple 12345!" } },
+    );
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your account was created, but automatic sign-in on your home bay failed.",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(
+      "Invalid email address or password",
+    );
+  });
+
+  it("shows email verification after cross-bay password sign-up when required", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+    mockedPostAuthApi.mockResolvedValueOnce({ wrong_bay: true });
+    mockedIsWrongBayAuthResponse.mockImplementation(
+      (value: unknown): value is any =>
+        !!value && typeof value === "object" && (value as any).wrong_bay,
+    );
+    mockedRetryAuthOnHomeBay.mockResolvedValueOnce({
+      account_id: "account-new",
+      home_bay_id: "bay-1",
+      home_bay_url: "https://bay-1.example.test",
+    });
+    mockedGetControlPlaneAuthBootstrap
+      .mockRejectedValueOnce(new Error("initial bootstrap unavailable"))
+      .mockResolvedValue({
+        account_id: "account-new",
+        email_address: "new-user@example.edu",
+        email_address_verified: false,
+        signed_in: true,
+      });
+
+    render(
+      <PublicAuthApp
+        config={config({
+          email_authentication_mode: "password_required",
+          verify_emails: true,
+          policy_pages: "none",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      { target: { value: "correct horse battery staple 12345!" } },
+    );
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByText("Check your email")).not.toBeNull();
+    expect(
+      screen.getByText(/This page will continue automatically/),
+    ).not.toBeNull();
+    expect(mockedRetryAuthOnHomeBay).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps verify-after-signup users in a dedicated verification step", async () => {
     mockedApi.mockResolvedValueOnce(false);
     mockedPostAuthApi
@@ -1331,6 +1428,40 @@ describe("PublicAuthApp", () => {
     expect(
       screen.queryByRole("heading", { name: "Create your CoCalc account" }),
     ).toBeNull();
+  });
+
+  it("does not report a wrong password after cross-bay verification succeeded", async () => {
+    mockedApi.mockResolvedValue({
+      email: "ada@example.com",
+      password_allowed: true,
+      sso_required: false,
+    });
+    mockedPostAuthApi.mockResolvedValueOnce({ wrong_bay: true });
+    mockedIsWrongBayAuthResponse.mockReturnValue(true);
+    mockedRetryAuthOnHomeBay.mockRejectedValueOnce(
+      new Error("Invalid email address or password."),
+    );
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "ada@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Password"), {
+      target: { value: "correct password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your password was accepted, but sign-in on your home bay failed.",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(
+      "Invalid email address or password",
+    );
   });
 
   it("keeps passkey selection visually separate from passkey submission", async () => {

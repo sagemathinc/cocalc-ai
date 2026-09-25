@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 import { StrictMode } from "react";
-import { act, renderHook } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import {
   useChatComposerDraft,
   writeChatComposerDraft,
@@ -123,6 +129,77 @@ test("two mounted views share edits; stale unmount cannot restore an older draft
   reopened.unmount();
   await settle();
   expect([...local.values()]).not.toContain("project draft");
+});
+
+test("switching the active composer preserves its draft and sends once", async () => {
+  const opts = options();
+  const sent: string[] = [];
+
+  function View({ label, visible }: { label: string; visible: boolean }) {
+    const { input, setInput, clearInput } = useChatComposerDraft(opts);
+    return visible ? (
+      <>
+        <label>
+          {label} composer
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            sent.push(input);
+            void clearInput();
+          }}
+        >
+          Send {label}
+        </button>
+      </>
+    ) : null;
+  }
+
+  function Views({ active }: { active: "project" | "agent" }) {
+    return (
+      <>
+        <View label="Project" visible={active === "project"} />
+        <View label="Agent" visible={active === "agent"} />
+      </>
+    );
+  }
+
+  const views = render(<Views active="project" />);
+  await settle();
+  fireEvent.change(screen.getByRole("textbox", { name: "Project composer" }), {
+    target: { value: "one draft" },
+  });
+  views.rerender(<Views active="agent" />);
+  await settle();
+  expect(
+    screen.queryByRole("textbox", { name: "Project composer" }),
+  ).toBeNull();
+  expect(
+    (
+      screen.getByRole("textbox", {
+        name: "Agent composer",
+      }) as HTMLInputElement
+    ).value,
+  ).toBe("one draft");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send Agent" }));
+  });
+  expect(sent).toEqual(["one draft"]);
+  views.rerender(<Views active="project" />);
+  await settle();
+  expect(
+    (
+      screen.getByRole("textbox", {
+        name: "Project composer",
+      }) as HTMLInputElement
+    ).value,
+  ).toBe("");
+  views.unmount();
+  await settle();
 });
 
 test("send clears every mounted view and persists an empty snapshot", async () => {

@@ -231,10 +231,10 @@ export function validateAgentRpcRequest(
       throw new Error("invalid proposed delivery mode");
     if (
       !Array.isArray(value.members) ||
-      value.members.length < 2 ||
+      value.members.length < 1 ||
       value.members.length > 64
     )
-      throw new Error("proposal requires 2 to 64 members");
+      throw new Error("proposal requires 1 to 64 members");
     if (value.reason !== undefined && value.reason.length > 500)
       throw new Error("proposal reason is too long");
   } else if (value.action === "broadcast") {

@@ -4,6 +4,12 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
+import { createHash } from "node:crypto";
+import {
+  ONBOARDING_METRICS as ONBOARDING,
+  ONBOARDING_DEADLINE_MS,
+  ONBOARDING_SLOW_MS,
+} from "@cocalc/util/onboarding-metrics";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getAdmins from "@cocalc/server/accounts/admins";
@@ -184,6 +190,11 @@ export async function ensureUxLatencySchema(): Promise<void> {
       `CREATE INDEX IF NOT EXISTS ${TABLE}_account_received_idx
          ON ${TABLE} (account_id, received_at DESC)`,
     );
+    await getPool().query(
+      `CREATE INDEX IF NOT EXISTS ${TABLE}_onboarding_attempt_idx
+       ON ${TABLE} (account_id, client_event_id, metric)
+       WHERE event_type = 'onboarding'`,
+    );
   })();
   return schemaReady;
 }
@@ -325,9 +336,21 @@ export async function recordUxLatencyEvent({
     VALUES
       ($1, $2, $3, $4, $5, $6, $7, $8, $9,
        $10::TIMESTAMPTZ, $11, $12, $13, $14, $15::jsonb, $16::jsonb)
+    ON CONFLICT (id) DO NOTHING
     `,
     [
-      uuid(),
+      eventType === "onboarding" && account_id && event.client_event_id
+        ? createHash("md5")
+            .update(
+              JSON.stringify([
+                account_id,
+                event.client_event_id,
+                metric,
+                event.segment ?? "",
+              ]),
+            )
+            .digest("hex")
+        : uuid(),
       eventType,
       metric,
       cleanUuid(account_id),
@@ -345,6 +368,52 @@ export async function recordUxLatencyEvent({
       saturation == null ? null : JSON.stringify(saturation),
     ],
   );
+}
+
+/** Account-home events remain observable even if the browser closes or crashes. */
+export async function sweepIncompleteOnboardingAttempts(): Promise<number> {
+  await ensureUxLatencySchema();
+  const result = await getPool().query(
+    `INSERT INTO ${TABLE}
+       (id, event_type, metric, account_id, project_id, host_id, bay_id,
+        client_event_id, duration_ms, started_at, sample_rate, details)
+     SELECT md5('onboarding-watchdog:' || s.account_id::text || ':' || s.client_event_id)::uuid,
+            'onboarding', $2, s.account_id, COALESCE(p.project_id, s.project_id),
+            COALESCE(p.host_id, s.host_id), s.bay_id, s.client_event_id,
+            LEAST(86400000, GREATEST(0, EXTRACT(EPOCH FROM (NOW() - s.received_at)) * 1000))::integer,
+            s.started_at, 1,
+            COALESCE(p.details, s.details) || '{"reason":"server_deadline_no_terminal_event"}'::jsonb
+       FROM ${TABLE} s
+       LEFT JOIN LATERAL (
+         SELECT project_id, host_id, details FROM ${TABLE}
+          WHERE event_type = 'onboarding' AND account_id = s.account_id
+            AND client_event_id = s.client_event_id AND metric = $3
+          ORDER BY duration_ms DESC LIMIT 1
+       ) p ON TRUE
+      WHERE s.event_type = 'onboarding' AND s.metric = $1
+        AND s.account_id IS NOT NULL AND s.client_event_id IS NOT NULL
+        AND s.received_at < NOW() - ($4::double precision * INTERVAL '1 millisecond')
+        AND NOT EXISTS (
+          SELECT 1 FROM ${TABLE} terminal
+           WHERE terminal.event_type = 'onboarding'
+             AND terminal.account_id = s.account_id AND terminal.client_event_id = s.client_event_id
+             AND terminal.metric = ANY($5::text[])
+        )
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      ONBOARDING.started,
+      ONBOARDING.incomplete,
+      ONBOARDING.phase,
+      ONBOARDING_DEADLINE_MS,
+      [
+        ONBOARDING.visible,
+        ONBOARDING.failed,
+        ONBOARDING.abandoned,
+        ONBOARDING.incomplete,
+      ],
+    ],
+  );
+  return result.rowCount ?? 0;
 }
 
 function boundedWindowMinutes(value: unknown): number {
@@ -375,6 +444,7 @@ export async function getUxLatencySummary({
   window_minutes?: number;
 } = {}): Promise<UxLatencySummary> {
   await ensureUxLatencySchema();
+  await sweepIncompleteOnboardingAttempts();
   const windowMinutes = boundedWindowMinutes(window_minutes);
   const since = new Date(Date.now() - windowMinutes * 60_000);
   const [metricRows, segmentRows, recentRows] = await Promise.all([
@@ -649,6 +719,46 @@ export function alertCandidates(
   sla: UxLatencySlaThresholds,
 ): UxLatencyAlertCandidate[] {
   const alerts: UxLatencyAlertCandidate[] = [];
+  const firstOutput = rowByMetric(summary.metrics, ONBOARDING.visible);
+  const onboardingSlow = shouldAlertOnLatencySla({
+    summary,
+    row: firstOutput,
+    thresholdMs: ONBOARDING_SLOW_MS,
+    minSamples: 3,
+    minSlowSamples: 2,
+  });
+  if (firstOutput && onboardingSlow.alert) {
+    alerts.push({
+      subject: "onboarding first response is slow",
+      body: actionableLatencyBody({
+        summary,
+        row: firstOutput,
+        expectation:
+          "First-submit to visible Codex output should take less than 10 seconds. Includes workspace and agent preparation.",
+        thresholdMs: ONBOARDING_SLOW_MS,
+        slowSamples: onboardingSlow.slowSamples,
+      }),
+    });
+  }
+  for (const metric of [
+    ONBOARDING.failed,
+    ONBOARDING.stalled,
+    ONBOARDING.incomplete,
+    ONBOARDING.abandoned,
+  ]) {
+    const row = rowByMetric(summary.metrics, metric);
+    if (row && row.count >= 1)
+      alerts.push({
+        subject: `onboarding: ${metric}`,
+        body: actionableLatencyBody({
+          summary,
+          row,
+          expectation:
+            "A first-submit attempt failed, stalled, was abandoned, or has no terminal report. Inspect its client_event_id and last phase; a missing terminal report can also mean the browser disconnected.",
+          thresholdMs: ONBOARDING_SLOW_MS,
+        }),
+      });
+  }
   const warmStart = rowByMetricAndSegment(
     summary.segments,
     "project_start_running",

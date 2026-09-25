@@ -833,7 +833,7 @@ export async function selectActiveHost({
               .hostConnection(candidateBayId)
               .list({
                 account_id,
-                catalog: false,
+                catalog: true,
               });
             remoteRows.push(
               ...hosts

@@ -6,7 +6,6 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown } from "antd";
 
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   useActions,
   useEffect,
@@ -33,6 +32,7 @@ export function CompactAgentsTopNav({
   foregroundColor,
   workspaceItems = [],
   onOpenDocs,
+  onOpenTerminal,
 }: {
   isLoggedIn: boolean;
   pageStyle: PageStyle;
@@ -40,6 +40,7 @@ export function CompactAgentsTopNav({
   foregroundColor?: string;
   workspaceItems?: MenuProps["items"];
   onOpenDocs?: () => void;
+  onOpenTerminal?: () => void;
 }) {
   const pageActions = useActions("page");
   const groups = useTypedRedux("account", "groups");
@@ -81,14 +82,11 @@ export function CompactAgentsTopNav({
       icon: <Icon name="mail" />,
       label: "Notifications",
     },
-    { type: "divider" },
-    {
-      key: "agents-settings",
-      icon: <Icon name="users" />,
-      label: "Manage agents and connections",
-    },
     ...(groups?.includes("admin")
-      ? [{ key: "admin", icon: <Icon name="users" />, label: "Admin" }]
+      ? [
+          { type: "divider" as const },
+          { key: "admin", icon: <Icon name="users" />, label: "Admin" },
+        ]
       : []),
     { type: "divider" },
     { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
@@ -110,9 +108,6 @@ export function CompactAgentsTopNav({
         return;
       case "open-in-project":
         onOpenInProject?.();
-        return;
-      case "agents-settings":
-        openAccountSettings({ page: "my-agents" });
         return;
       case "support":
         openSupportTab();
@@ -155,6 +150,20 @@ export function CompactAgentsTopNav({
         hideWhenConnected
         pageStyle={pageStyle}
       />
+      {onOpenTerminal && (
+        <Button
+          aria-label="Open terminal"
+          title="Open terminal"
+          type="text"
+          onClick={onOpenTerminal}
+          style={{
+            color: foregroundColor ?? UI_COLORS.text,
+            height: pageStyle.height,
+            width: pageStyle.height,
+          }}
+          icon={<Icon name="terminal" />}
+        />
+      )}
       <Dropdown
         menu={{ items, onClick: onMenuClick }}
         open={menuOpen}

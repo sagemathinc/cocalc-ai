@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Space, Tag } from "antd";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type { AgentNetwork } from "@cocalc/conat/agents/personal";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { redux } from "@cocalc/frontend/app-framework";
 
 type Api = Pick<AgentApi, "resolveIdentity" | "listAgentNetworks">;
 
@@ -90,7 +90,9 @@ export function AgentCommunication({
           {!error && (
             <Button
               size="small"
-              onClick={() => openAccountSettings({ page: "my-agents" })}
+              onClick={() =>
+                void redux.getActions("page").set_active_tab("agents")
+              }
             >
               Manage Agent Networks
             </Button>

@@ -28,6 +28,9 @@ export function GitHubPRArtifact({
   sourcePath,
   historical,
   readOnly = false,
+  fontSize,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   onRefresh,
   onRequestAgentTurn,
 }: {
@@ -36,6 +39,9 @@ export function GitHubPRArtifact({
   sourcePath: string;
   historical: boolean;
   readOnly?: boolean;
+  fontSize?: number;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   onRequestAgentTurn?: ArtifactReviewRequest;
   onRefresh?: (
     next: Awaited<ReturnType<typeof refreshPR>>,
@@ -165,6 +171,9 @@ export function GitHubPRArtifact({
         <Suspense fallback={<div role="status">Loading Git review...</div>}>
           <Review
             open
+            fontSize={fontSize}
+            onIncreaseFontSize={onIncreaseFontSize}
+            onDecreaseFontSize={onDecreaseFontSize}
             onClose={() => setReview(false)}
             projectId={projectId}
             sourcePath={sourcePath}

@@ -6,8 +6,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
   GitCommitDrawer: (props) => (
-    <div role="status">
+    <div role="status" data-font-size={props.fontSize}>
       Review {props.commitHash} in {props.cwdOverride}
+      <button onClick={props.onIncreaseFontSize}>Zoom review in</button>
     </div>
   ),
 }));
@@ -25,11 +26,14 @@ beforeEach(() => {
   }));
 });
 test("pins the SHA and worktree after keyboard-accessible review activation", async () => {
+  const zoomIn = jest.fn();
   render(
     <CommitArtifact
       artifact={{ title: "Fix", input: "Summary", commit } as any}
       projectId="project"
       sourcePath="/chat.chat"
+      fontSize={20}
+      onIncreaseFontSize={zoomIn}
     />,
   );
   const button = screen.getByRole("button", { name: "Review commit" });
@@ -39,6 +43,9 @@ test("pins the SHA and worktree after keyboard-accessible review activation", as
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain(commit.sha),
   );
+  expect(screen.getByRole("status")).toHaveAttribute("data-font-size", "20");
+  fireEvent.click(screen.getByRole("button", { name: "Zoom review in" }));
+  expect(zoomIn).toHaveBeenCalledTimes(1);
   expect(exec).toHaveBeenLastCalledWith(
     expect.objectContaining({
       path: commit.path,

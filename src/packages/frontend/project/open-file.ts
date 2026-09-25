@@ -279,8 +279,15 @@ export async function resolveSyncPathWithRetry(
       }
       try {
         syncPath = await resolveSyncPath(fs, displayPath, projectHome);
+        if (!isOpen()) {
+          throw new Error("canonical sync identity open was cancelled");
+        }
         return true;
       } catch (err) {
+        // Access can be revoked by project deletion while the RPC is pending.
+        if (!isOpen()) {
+          throw new Error("canonical sync identity open was cancelled");
+        }
         if (!isTransientSyncIdentityResolutionError(err)) {
           throw err;
         }
@@ -412,8 +419,20 @@ export async function open_file(
     return;
   }
 
-  const tabIsOpened = () =>
-    !!actions.get_store()?.get("open_files")?.has(displayPath);
+  const currentProject = () =>
+    redux.getStore("projects")?.get("project_map")?.get(actions.project_id);
+  const projectWasKnown = currentProject() != null;
+  const tabIsOpened = () => {
+    const project = currentProject();
+    const state = project?.getIn(["state", "state"]);
+    return (
+      !(projectWasKnown && project == null) &&
+      !project?.get("deleted") &&
+      state !== "deleting" &&
+      state !== "delete_failed" &&
+      !!actions.get_store()?.get("open_files")?.has(displayPath)
+    );
+  };
   const workingDirectory = (path = displayPath) =>
     workingDirectoryForProjectFile(path, {
       projectHomeDirectory: projectHome,

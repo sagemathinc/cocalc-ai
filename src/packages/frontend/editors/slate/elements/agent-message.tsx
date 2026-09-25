@@ -10,10 +10,12 @@ import {
   QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
+import { Node } from "slate";
 import type { AgentNetworkActivity } from "@cocalc/conat/agents/personal";
 import { useNamedAgents, sameEndpoint } from "@cocalc/frontend/agents/api";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { readablePeerMessage } from "@cocalc/frontend/chat/readable-peer-message";
 import { markdown_to_slate } from "../markdown-to-slate";
 import {
   register,
@@ -140,6 +142,8 @@ export function AgentMessageElement({
   element,
 }: RenderElementProps) {
   const [expanded, setExpanded] = useState(false);
+  const [bodyExpanded, setBodyExpanded] = useState(false);
+  const messageBody = readablePeerMessage(Node.string(element));
   const [loading, setLoading] = useState(false);
   const [activity, setActivity] = useState<AgentNetworkActivity>();
   const [error, setError] = useState("");
@@ -251,18 +255,52 @@ export function AgentMessageElement({
       </span>
       <div
         className="cocalc-slate-agent-message-body"
+        data-expanded={bodyExpanded}
         style={{
-          flex: "1 1 240px",
+          flex: bodyExpanded ? "1 0 100%" : "1 1 240px",
           minWidth: 0,
-          height: "1.5em",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          height: bodyExpanded ? "auto" : "1.5em",
+          maxHeight: bodyExpanded ? "55vh" : undefined,
+          overflow: bodyExpanded ? "auto" : "hidden",
+          textOverflow: bodyExpanded ? undefined : "ellipsis",
+          whiteSpace: bodyExpanded ? "normal" : "nowrap",
+          overflowWrap: "anywhere",
           lineHeight: 1.5,
         }}
       >
-        {children}
+        {messageBody.structured ? (
+          <>
+            <span contentEditable={false}>{messageBody.text}</span>
+            <details
+              style={{
+                marginTop: 8,
+                display: bodyExpanded ? undefined : "none",
+              }}
+            >
+              <summary contentEditable={false}>Raw message</summary>
+              <div>{children}</div>
+            </details>
+          </>
+        ) : (
+          children
+        )}
       </div>
+      <button
+        type="button"
+        contentEditable={false}
+        aria-expanded={bodyExpanded}
+        onClick={() => setBodyExpanded((value) => !value)}
+        style={{
+          appearance: "none",
+          border: 0,
+          background: "transparent",
+          color: UI_COLORS.link,
+          cursor: "pointer",
+          padding: "4px 6px",
+        }}
+      >
+        {bodyExpanded ? "Hide message" : "Read message"}
+      </button>
       <button
         type="button"
         aria-label={expanded ? "Hide delivery details" : "Inspect delivery"}

@@ -9,6 +9,7 @@ let queryMock: jest.Mock;
 let warnMock: jest.Mock;
 let debugMock: jest.Mock;
 let resolveProjectBayAcrossClusterMock: jest.Mock;
+let resolveHostBayAcrossClusterMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let mockProjectHostsRouteMode: string;
@@ -38,6 +39,8 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBayAcrossCluster: (...args: any[]) =>
     resolveProjectBayAcrossClusterMock(...args),
+  resolveHostBayAcrossCluster: (...args: any[]) =>
+    resolveHostBayAcrossClusterMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -63,6 +66,7 @@ describe("route-project bay-aware routing", () => {
     warnMock = jest.fn();
     debugMock = jest.fn();
     resolveProjectBayAcrossClusterMock = jest.fn(async () => null);
+    resolveHostBayAcrossClusterMock = jest.fn(async () => null);
     projectReferenceGetMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn(async () => null);
     mockProjectHostsRouteMode = "auto";
@@ -276,6 +280,71 @@ describe("route-project bay-aware routing", () => {
       host_id: HOST_ID,
       host_session_id: "remote-session",
     });
+  });
+
+  it("routes an authorized local project to its assigned host in another bay", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ host_id: HOST_ID, resolved_host_id: null }],
+      })
+      .mockResolvedValueOnce({ rows: [{ host_id: HOST_ID }] });
+    resolveProjectBayAcrossClusterMock.mockResolvedValue({
+      bay_id: "bay-0",
+      epoch: 0,
+    });
+    resolveHostBayAcrossClusterMock.mockResolvedValue({
+      bay_id: "bay-7",
+      epoch: 0,
+    });
+    hostConnectionGetMock.mockResolvedValue({
+      host_id: HOST_ID,
+      connect_url: "https://remote-host.example.com",
+      host_session_id: "remote-session",
+    });
+
+    const { materializeRemoteProjectHostTarget, routeProjectSubject } =
+      await import("./route-project");
+    await expect(
+      materializeRemoteProjectHostTarget({
+        account_id: "account-1",
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toMatchObject({
+      address: "https://remote-host.example.com",
+      host_id: HOST_ID,
+    });
+    expect(queryMock).toHaveBeenLastCalledWith(
+      "SELECT host_id FROM projects WHERE project_id=$1 AND users ? $2",
+      [PROJECT_ID, "account-1"],
+    );
+    expect(resolveHostBayAcrossClusterMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionGetMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      host_id: HOST_ID,
+    });
+    expect(routeProjectSubject(`project.${PROJECT_ID}.api`)).toMatchObject({
+      host_id: HOST_ID,
+    });
+  });
+
+  it("does not reveal a remote host assignment to a non-collaborator", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    resolveProjectBayAcrossClusterMock.mockResolvedValue({
+      bay_id: "bay-0",
+      epoch: 0,
+    });
+    const { materializeRemoteProjectHostTarget } =
+      await import("./route-project");
+    await expect(
+      materializeRemoteProjectHostTarget({
+        account_id: "not-a-collaborator",
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBeUndefined();
+    expect(resolveHostBayAcrossClusterMock).not.toHaveBeenCalled();
+    expect(hostConnectionGetMock).not.toHaveBeenCalled();
   });
 
   it("routes direct host subjects through a host in the same bay", async () => {

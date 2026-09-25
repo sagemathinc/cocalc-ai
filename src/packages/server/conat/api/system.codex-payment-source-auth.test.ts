@@ -10,6 +10,7 @@ const resolveAccountHomeBayMock = jest.fn();
 const getConfiguredBayIdMock = jest.fn(() => "bay-local");
 const getAccountUsageOverviewMock = jest.fn();
 const getAIUsageStatusMock = jest.fn();
+const resolveProjectReferenceMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -42,12 +43,21 @@ jest.mock("@cocalc/server/ai/usage-status", () => ({
   getAIUsageStatus: (...args: any[]) => getAIUsageStatusMock(...args),
 }));
 
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  ...jest.requireActual("@cocalc/server/conat/project-remote-access"),
+  resolveProjectReferenceAllowRemote: (...args: any[]) =>
+    resolveProjectReferenceMock(...args),
+}));
+
 describe("Codex payment source project-host authorization", () => {
   const account_id = "11111111-1111-4111-8111-111111111111";
   const project_id = "22222222-2222-4222-8222-222222222222";
   const host_id = "33333333-3333-4333-8333-333333333333";
 
-  beforeEach(() => queryMock.mockReset());
+  beforeEach(() => {
+    queryMock.mockReset();
+    resolveProjectReferenceMock.mockReset();
+  });
 
   it("accepts the assigned host for a collaborator account", async () => {
     queryMock.mockResolvedValue({ rowCount: 1 });
@@ -62,10 +72,41 @@ describe("Codex payment source project-host authorization", () => {
       host_id,
       account_id,
     ]);
+    expect(resolveProjectReferenceMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a host assigned by another bay after collaborator authorization", async () => {
+    queryMock.mockResolvedValue({ rowCount: 0 });
+    resolveProjectReferenceMock.mockResolvedValue({ host_id });
+    const { assertCodexPaymentSourceCaller } = await import("./system");
+
+    await expect(
+      assertCodexPaymentSourceCaller({ account_id, project_id, host_id }),
+    ).resolves.toBeUndefined();
+    expect(resolveProjectReferenceMock).toHaveBeenCalledWith({
+      account_id,
+      project_id,
+      warmRoute: false,
+    });
   });
 
   it("rejects an unassigned host or non-collaborator account", async () => {
     queryMock.mockResolvedValue({ rowCount: 0 });
+    resolveProjectReferenceMock.mockResolvedValue(null);
+    const { assertCodexPaymentSourceCaller } = await import("./system");
+
+    await expect(
+      assertCodexPaymentSourceCaller({ account_id, project_id, host_id }),
+    ).rejects.toThrow(
+      "project host is not authorized for this account payment source",
+    );
+  });
+
+  it("rejects a different host even when the project is accessible", async () => {
+    queryMock.mockResolvedValue({ rowCount: 0 });
+    resolveProjectReferenceMock.mockResolvedValue({
+      host_id: "44444444-4444-4444-8444-444444444444",
+    });
     const { assertCodexPaymentSourceCaller } = await import("./system");
 
     await expect(

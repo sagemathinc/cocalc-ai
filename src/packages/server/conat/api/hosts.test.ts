@@ -66,6 +66,7 @@ let hostConnectionListHostProjectsMock: jest.Mock;
 let hostConnectionSetHostPoolAccessMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
+let resolveProjectReferenceAllowRemoteMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
 let listProjectHostRuntimeDeploymentsMock: jest.Mock;
 let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
@@ -140,6 +141,12 @@ jest.mock("node:child_process", () => {
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+}));
+
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  ...jest.requireActual("@cocalc/server/conat/project-remote-access"),
+  resolveProjectReferenceAllowRemote: (...args: any[]) =>
+    resolveProjectReferenceAllowRemoteMock(...args),
 }));
 
 jest.mock("@cocalc/server/lro/lro-db", () => ({
@@ -562,6 +569,7 @@ describe("site-funded Codex account directory routing", () => {
 
   beforeEach(async () => {
     queryMock = jest.fn(async () => ({ rows: [], rowCount: 1 }));
+    resolveProjectReferenceAllowRemoteMock = jest.fn(async () => null);
     jest
       .spyOn(
         await import("@cocalc/server/launch/kill-switches"),
@@ -609,6 +617,11 @@ describe("site-funded Codex account directory routing", () => {
   afterEach(() => jest.restoreAllMocks());
 
   it("reserves eligible remote usage under the executing human, not the host owner", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValue({
+      host_id: HOST_ID,
+      owning_bay_id: "project-owner-bay",
+    });
     overview.mockResolvedValue({
       meters: [
         { id: "ai-5h", limit: 10, remaining: 5 },
@@ -651,6 +664,7 @@ describe("site-funded Codex account directory routing", () => {
         homeBayId: "remote-account-home",
         hostId: HOST_ID,
         projectId: request.project_id,
+        owningBayId: "project-owner-bay",
         poolId: "site-funded-codex-free",
         policy: expect.objectContaining({
           maxConcurrentTurnsPerAccount: 3,
@@ -836,6 +850,36 @@ describe("site-funded Codex account directory routing", () => {
 
   it("checks the host and project authorization before reading account metadata", async () => {
     queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
+      "host is not authorized",
+    );
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("accepts a host assigned to a project on another bay", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValue({
+      host_id: HOST_ID,
+    });
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+      allowed: false,
+      code: "ineligible",
+    });
+    expect(resolveProjectReferenceAllowRemoteMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: request.project_id,
+      warmRoute: false,
+    });
+    expect(lookup).toHaveBeenCalledWith(ACCOUNT_ID);
+  });
+
+  it("rejects another host even when the account can access the remote project", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    resolveProjectReferenceAllowRemoteMock.mockResolvedValue({
+      host_id: "another-host",
+    });
     const { reserveSiteFundedCodexTurn } = await import("./hosts");
     await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
       "host is not authorized",

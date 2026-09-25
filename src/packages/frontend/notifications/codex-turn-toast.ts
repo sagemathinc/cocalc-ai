@@ -24,6 +24,8 @@ import {
   codexNativeNotificationContent,
 } from "./codex-native-content";
 import { codexNotificationFragment } from "./codex-notification-target";
+import { loadNamedAgents } from "@cocalc/frontend/agents/api";
+import { notificationAgentName } from "@cocalc/frontend/agents/notification-name";
 
 const TOAST_STATE_DKV_NAME = "notification-toast-state";
 const CODEX_TURN_TOAST_PREFIX = "codex-turn.";
@@ -336,15 +338,19 @@ function showNativeCodexNotification(opts: {
   notificationId: string;
   row: Pick<NotificationListRow, "notification_id" | "project_id" | "summary">;
   attention: boolean;
+  agentName?: string;
 }): void {
   if (!nativeCodexNotificationAvailable()) {
     return;
   }
   const { title, body } = codexNativeNotificationContent(opts.attention);
-  const notification = new window.Notification(title, {
-    body,
-    tag: `cocalc-codex:${opts.notificationId}`,
-  });
+  const notification = new window.Notification(
+    opts.agentName ? `${opts.agentName} · ${title}` : title,
+    {
+      body: opts.agentName ? `${body} (${opts.agentName})` : body,
+      tag: `cocalc-codex:${opts.notificationId}`,
+    },
+  );
   nativeNotifications.set(opts.notificationId, notification);
   notification.onclick = () => {
     window.focus();
@@ -477,11 +483,29 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
     type: "delivered",
     notificationId: deliveryId,
   });
+  let agentName: string | undefined;
+  try {
+    const directory = await Promise.race([
+      loadNamedAgents(opts.account_id),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 750),
+      ),
+    ]);
+    agentName = notificationAgentName({
+      agents: directory?.agents,
+      projectId: opts.row.project_id,
+      path: opts.row.summary?.path,
+      threadId: opts.row.summary?.thread_id,
+    });
+  } catch {
+    // A directory lookup must not suppress the notification.
+  }
   if (!visible) {
     showNativeCodexNotification({
       notificationId: deliveryId,
       row: opts.row,
       attention,
+      agentName,
     });
     return;
   }
@@ -495,10 +519,12 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
     key: attention
       ? `codex-attention:${deliveryId}`
       : `codex-turn:${deliveryId}`,
-    title,
+    title: agentName ? `${agentName} · ${title}` : title,
     description: attention
-      ? "Open the Codex thread to respond."
-      : codexTurnToastDescription(opts.row.summary ?? {}),
+      ? `Open ${agentName ?? "the Codex thread"} to respond.`
+      : agentName
+        ? `Codex finished working in ${agentName}.`
+        : codexTurnToastDescription(opts.row.summary ?? {}),
     duration: attention ? 0 : 6,
     onClick: () => {
       void openCodexTurnNoticeTarget(opts.row).catch((err) => {

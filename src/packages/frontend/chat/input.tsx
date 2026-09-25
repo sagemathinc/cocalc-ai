@@ -25,7 +25,9 @@ import { useNarrowChatViewport } from "./use-chat-viewport";
 import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/types";
 
 interface Props {
+  projectId?: string;
   on_send: (value: string) => void;
+  on_queue?: (value: string) => void;
   on_post?: (value: string) => void;
   on_font_size_change?: (delta: -1 | 1) => void;
   onChange: (value: string, sessionToken?: number) => void;
@@ -57,8 +59,12 @@ interface Props {
   inputControlRef?: MutableRefObject<ChatInputControl | null>;
   onControlReady?: (control: ChatInputControl | null) => void;
   enableUpload?: boolean;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
   enableMentions?: boolean;
   toolbarRightContent?: ReactNode;
+  compactModeSwitch?: boolean;
+  softFocus?: boolean;
 }
 
 export interface ChatInputControl {
@@ -138,6 +144,7 @@ export function insertTranscriptAtMarkdownPosition({
 }
 
 export default function ChatInput({
+  projectId,
   autoFocus,
   cacheId,
   date,
@@ -148,6 +155,7 @@ export default function ChatInput({
   autoGrowMinHeight,
   input: propsInput,
   on_send,
+  on_queue,
   on_post,
   on_font_size_change,
   onBlur,
@@ -167,8 +175,12 @@ export default function ChatInput({
   inputControlRef,
   onControlReady,
   enableUpload = true,
+  onUploadStart,
+  onUploadEnd,
   enableMentions = true,
   toolbarRightContent,
+  compactModeSwitch,
+  softFocus,
 }: Props) {
   const narrow = useNarrowChatViewport();
   const intl = useIntl();
@@ -412,6 +424,7 @@ export default function ChatInput({
 
   return (
     <MarkdownInput
+      project_id={projectId}
       key={`chat-input-session-${sessionToken ?? "default"}-${editorResetEpoch}`}
       fixedMode={fixedMode}
       slateExternalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}
@@ -430,6 +443,8 @@ export default function ChatInput({
       controlRef={controlRef}
       getValueRef={getValueRef}
       enableUpload={enableUpload}
+      onUploadStart={onUploadStart}
+      onUploadEnd={onUploadEnd}
       enableMentions={enableMentions}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
@@ -470,6 +485,18 @@ export default function ChatInput({
         publishNotComposing();
         on_send(value);
       }}
+      onAltEnter={
+        on_queue
+          ? (value) => {
+              if (!mountedRef.current || isStaleSessionCallback(sessionToken))
+                return;
+              savePresence.cancel();
+              controlRef.current?.cancelPendingUploads?.();
+              publishNotComposing();
+              on_queue(value);
+            }
+          : undefined
+      }
       onCtrlEnter={(value) => {
         if (
           !on_post ||
@@ -499,6 +526,8 @@ export default function ChatInput({
       hideModeSwitch={!showModeSwitch}
       modeSwitchPlacement="toolbar"
       reserveModeSwitchSpace
+      compactModeSwitch={compactModeSwitch}
+      softFocus={softFocus}
       disableModeSwitchShortcuts
       modeSwitchRightContent={
         <>

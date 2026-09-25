@@ -804,6 +804,21 @@ export class AppServerClient {
     this.attentionContext = context;
   }
 
+  async finishAttentionTurn(turnId: string): Promise<void> {
+    const context = this.attentionContext;
+    if (context?.turnId === turnId) {
+      this.attentionContext = undefined;
+      const finished = this.attentionHandler?.turnFinished?.(context);
+      for (const [requestId, requestContext] of this.serverRequestContexts) {
+        if (requestContext.turnId !== turnId) continue;
+        this.serverRequestAborts
+          .get(Number(requestId))
+          ?.abort(new Error("Codex turn ended"));
+      }
+      await finished;
+    }
+  }
+
   async initialize(timeoutMs = REQUEST_TIMEOUT_MS): Promise<any> {
     const result = await this.request(
       "initialize",
@@ -1751,7 +1766,7 @@ function addRuntimeGuidance(
     : "";
   const workbench =
     runtimeEnv?.COCALC_WORKBENCH === "1"
-      ? `\n\nWorkbench is enabled for this turn. Publishing durable reviewable results is part of task completion: publish written plans/documents as file references, generated images as file references, completed commits and PRs as their respective cards, and support drafts requiring approval as proposed actions. If the user explicitly asks to create, make, or publish an artifact, artifact publication is required: a normal response, file creation, image generation, or file link alone does not satisfy the request. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help. Keep ordinary explanations and scratch work in chat. Read and update an existing artifact when revising the same object; do not duplicate it. Respect a user's request not to publish. Verify the returned publication before claiming success. Publishing proposals does not approve or execute them. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`
+      ? `\n\nWorkbench is enabled for this turn. Publishing durable reviewable results is part of task completion: publish requested programs/scripts and other deliverable files as file-preview cards, written plans/documents as file references, generated images as file references, completed commits and PRs as their respective cards, and support drafts requiring approval as proposed actions. If the user explicitly asks to create, make, or publish an artifact, artifact publication is required: a normal response, file creation, image generation, or file link alone does not satisfy the request. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help. A program or script created to satisfy the user's request is a deliverable even on the first onboarding turn: publish its saved file without waiting for the user to ask for a card. Do not publish incidental implementation files, temporary files, or every file touched during a task. Keep ordinary explanations and scratch work in chat. Read and update an existing artifact when revising the same object; do not duplicate it. Respect a user's request not to publish. Verify the returned publication before claiming success. Publishing proposals does not approve or execute them. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`
       : `\n\nThis turn has no workbench-enabled surface. Do not publish artifacts by default; use ordinary text and file links for ordinary requests. However, if the user explicitly asks to create, make, or publish an artifact, artifact publication is required. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help and publish with its explicit outside-workbench opt-in (currently --experimental). A normal response, file creation, image generation, or file link alone does not satisfy an explicit artifact request. Verify the returned publication before claiming success. If the installed command is unavailable or publication fails, report that exact failure and provide an ordinary link as a fallback; never claim an artifact was created and never write .chat files directly.`;
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
@@ -2559,9 +2574,22 @@ export class CodexAppServerAgent implements AcpAgent {
         );
       }
       if (backgroundTerminalCount > 0 || activeDescendantCount > 0) {
-        throw new Error(
-          "This Codex thread still has subagents or background commands running. Wait for them to finish or stop them before changing its runtime settings.",
-        );
+        if (
+          runtime.accountId !== request.account_id ||
+          runtime.projectId !== (request.chat?.project_id ?? request.project_id)
+        ) {
+          throw new Error(
+            "This Codex thread still has subagents or background commands running. Wait for them to finish or stop them before changing its runtime settings.",
+          );
+        }
+        try {
+          await this.interruptOutstanding(session.sessionId);
+        } catch (err) {
+          logger.warn("codex app-server: failed stopping retained work", {
+            threadId: runtime.threadId,
+            err: `${err}`,
+          });
+        }
       }
       await this.disposeRuntime(runtime, "runtime configuration changed");
       runtime = undefined;
@@ -3845,6 +3873,7 @@ export class CodexAppServerAgent implements AcpAgent {
         let lastReconciliationNoticeAt = 0;
         let awaitingGoalContinuation = false;
         const adoptContinuation = async (nextTurnId: string) => {
+          if (turnId) await client.finishAttentionTurn(turnId);
           completedGoalUsage = cumulativeUsage(latestUsage);
           latestUsage = undefined;
           turnId = nextTurnId;
@@ -4219,6 +4248,7 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw new Error(userFacingPrimaryError);
     } finally {
+      if (turnId) await client.finishAttentionTurn(turnId);
       await cleanupMentionFile().catch((error) => {
         logger.warn("failed removing current-turn mention references", {
           error: String(error),

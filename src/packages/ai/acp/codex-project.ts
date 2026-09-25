@@ -97,6 +97,7 @@ export type CodexAttentionHandler = {
     context?: CodexAttentionContext;
   }) => void | Promise<void>;
   runtimeClosed?: (context?: CodexAttentionContext) => void | Promise<void>;
+  turnFinished?: (context: CodexAttentionContext) => void | Promise<void>;
 };
 
 export type CodexProjectSpawner = {

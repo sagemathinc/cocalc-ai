@@ -1,0 +1,24 @@
+.new-agent-composer-input [data-slate-placeholder] {
+  transform: translateY(0.25em);
+}
+
+.agent-name-input-side-feedback {
+  position: relative;
+  width: 100%;
+}
+
+.agent-name-input-side-feedback .agent-name-input-feedback {
+  left: calc(100% + 16px);
+  position: absolute;
+  top: 0;
+  width: min(440px, calc(100vw - 420px));
+}
+
+@media (max-width: 740px) {
+  .agent-name-input-side-feedback .agent-name-input-feedback {
+    left: auto;
+    min-height: 72px;
+    position: static;
+    width: 100%;
+  }
+}

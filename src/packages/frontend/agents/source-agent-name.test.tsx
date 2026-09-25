@@ -133,7 +133,7 @@ test("an unnamed source is named before its two-way network is created", async (
   expect(mockApi.createAgentNetwork).toHaveBeenCalledWith({
     request_id: expect.any(String),
     title: "Review work",
-    delivery_mode: "queued",
+    delivery_mode: "live",
     members: [
       { kind: "registered", endpoint: source },
       { kind: "registered", endpoint: target },

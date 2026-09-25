@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Alert, Button, Modal, Space } from "antd";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { redux } from "@cocalc/frontend/app-framework";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
@@ -98,7 +99,7 @@ export function NamedAgentUsage({
               type="primary"
               onClick={() => {
                 setDetailsOpen(false);
-                openAccountSettings({ page: "my-agents" });
+                void redux.getActions("page").set_active_tab("agents");
               }}
             >
               Manage named agents
@@ -112,7 +113,7 @@ export function NamedAgentUsage({
         </p>
         <p>To free a slot:</p>
         <ol>
-          <li>Open Manage named agents.</li>
+          <li>Open Manage named agents in the Agents workspace.</li>
           <li>Find an agent you no longer need.</li>
           <li>Choose Remove from Agents and confirm.</li>
         </ol>

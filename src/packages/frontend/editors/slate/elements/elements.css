@@ -39,12 +39,12 @@ list spacing collapses.
 }
 
 /* Agent messages are summaries in the transcript; inspection reveals detail. */
-.cocalc-slate-agent-message-body > * {
+.cocalc-slate-agent-message-body:not([data-expanded="true"]) > * {
   display: inline;
   margin: 0;
 }
 
-.cocalc-slate-agent-message-body br {
+.cocalc-slate-agent-message-body:not([data-expanded="true"]) br {
   display: none;
 }
 

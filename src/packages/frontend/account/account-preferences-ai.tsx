@@ -24,6 +24,7 @@ import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
+import { AgentMessagingSettings } from "./agent-messaging-settings";
 
 const CODEX_SESSIONS_TITLE = "Codex sessions";
 
@@ -38,6 +39,10 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
     CODEX_SUBAGENTS_LABEL,
     ...Object.values(CODEX_DEFAULTS_LABELS),
     ...Object.values(CODEX_CREDENTIALS_LABELS),
+    "Agent messaging",
+    "Pause all messaging",
+    "Revoke all networks",
+    "External agent installations",
   ],
   icon: ({ context }) => (
     <AIAvatar
@@ -118,6 +123,9 @@ export function AccountPreferencesAI() {
       <CodexCredentialsPanel />
       <CodexSubagentConcurrencyField />
       <CodexDefaultsPanel other_settings={other_settings} />
+      <Panel header="Agent messaging">
+        <AgentMessagingSettings />
+      </Panel>
     </>
   );
 }

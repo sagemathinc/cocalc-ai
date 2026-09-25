@@ -103,6 +103,10 @@ import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processAI as processAIExternal } from "./actions/ai";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
 import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "./codex-subscription-selection";
+import {
   buildThreadNotificationPlan,
   sendThreadFollowerNotifications,
 } from "./thread-notifications";
@@ -3116,6 +3120,31 @@ export class ChatActions extends Actions<ChatState> {
     }
     this.syncdb.commit();
     void this.saveSyncdb();
+
+    if (shouldForkAcp) {
+      const projectId = this.store.get("project_id");
+      const credentialId =
+        readCodexSubscriptionSelection({
+          accountId: sender_id,
+          projectId,
+          threadKey: sourceThreadId,
+        }) ??
+        (threadKey !== sourceThreadId
+          ? readCodexSubscriptionSelection({
+              accountId: sender_id,
+              projectId,
+              threadKey,
+            })
+          : undefined);
+      if (credentialId && projectId) {
+        writeCodexSubscriptionSelection({
+          accountId: sender_id,
+          projectId,
+          threadKey: newThreadId,
+          credentialId,
+        });
+      }
+    }
 
     if (selectNewThread) {
       this.setSelectedThread(newThreadId);

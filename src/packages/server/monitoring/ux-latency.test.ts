@@ -4,6 +4,7 @@
  */
 
 import { PROJECT_DISK_QUOTA_EXCEEDED_CODE } from "@cocalc/util/project-start-errors";
+import { ONBOARDING_METRICS as ONBOARDING } from "@cocalc/util/onboarding-metrics";
 import type {
   UxLatencyMetricSummary,
   UxLatencySummary,
@@ -17,6 +18,38 @@ import {
 } from "./ux-latency";
 
 describe("latency health sample requirements", () => {
+  it.each([
+    ONBOARDING.failed,
+    ONBOARDING.stalled,
+    ONBOARDING.incomplete,
+    ONBOARDING.abandoned,
+  ])("alerts on even one onboarding %s", (name) => {
+    const result = alertCandidates(
+      summary({ aggregate: metric({ name, count: 1, p95_ms: 120000 }) }),
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS,
+    );
+    expect(result.some((item) => item.subject.includes("onboarding"))).toBe(
+      true,
+    );
+  });
+
+  it("alerts on repeated slow first output with only three onboarding samples", () => {
+    const result = alertCandidates(
+      summary({
+        aggregate: metric({
+          name: ONBOARDING.visible,
+          count: 3,
+          p95_ms: 15000,
+        }),
+      }),
+      DEFAULT_UX_LATENCY_SLA_THRESHOLDS,
+    );
+    expect(
+      result.some(
+        (item) => item.subject === "onboarding first response is slow",
+      ),
+    ).toBe(true);
+  });
   it("does not warn on a P95 computed from too few project starts", () => {
     expect(
       classifyLatencyP95Health({

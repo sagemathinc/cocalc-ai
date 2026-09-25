@@ -6,10 +6,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { AgentProjectStatus, projectStatusLabel } from "./project-status";
+let liveTitle = "Development";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useProjectFromMap: () => ({
-    get: (key) => (key === "title" ? "Development" : undefined),
+    get: (key) => (key === "title" ? liveTitle : undefined),
     getIn: () => "running",
   }),
   useTypedRedux: () => undefined,
@@ -38,6 +39,7 @@ test("distinguishes stopped projects, blocked internet, and unknown state", () =
 });
 
 test("opens project controls without navigation, resizes, and restores focus on Escape", async () => {
+  liveTitle = "Development";
   render(
     <AgentProjectStatus agent={{ endpoint: { project_id: "p" } } as any} />,
   );
@@ -55,4 +57,34 @@ test("opens project controls without navigation, resizes, and restores focus on 
   fireEvent.keyDown(dialog, { key: "Escape", keyCode: 27 });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(trigger);
+});
+
+test("long live titles stay single-line and retain a full accessible name", () => {
+  liveTitle = "A very long project title ".repeat(30).trim();
+  const { rerender } = render(
+    <AgentProjectStatus
+      agent={{ endpoint: { project_id: "p" }, project_title: "stale" } as any}
+    />,
+  );
+  const button = screen.getByRole("button", {
+    name: `Project: ${liveTitle} · Running`,
+  });
+  expect(button).toHaveStyle({
+    whiteSpace: "nowrap",
+    minWidth: "0",
+    height: "24px",
+  });
+  expect(button.querySelector("span")).toHaveStyle({
+    textOverflow: "ellipsis",
+    overflow: "hidden",
+  });
+  liveTitle = "Updated title";
+  rerender(
+    <AgentProjectStatus
+      agent={{ endpoint: { project_id: "p" }, project_title: "stale" } as any}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Project: Updated title · Running" }),
+  ).toBeVisible();
 });

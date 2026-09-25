@@ -82,6 +82,34 @@ jest.mock("../composing", () => ({
 }));
 
 describe("ChatLog immediate steer rendering", () => {
+  it("caps and centers message rows on wide viewports", () => {
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ store: {}, clearScrollRequest: jest.fn() } as any}
+        messages={
+          new Map([
+            [
+              "2000",
+              {
+                date: 2000,
+                message_id: "reading-width-message",
+                sender_id: "acct-codex",
+                history: [{ content: "A message" }],
+              },
+            ],
+          ]) as any
+        }
+      />,
+    );
+
+    const row = screen.getByText("reading-width-message").parentElement;
+    expect(row).toHaveStyle({ maxWidth: "1040px", width: "100%" });
+    expect(row?.style.marginInline).toBe("auto");
+  });
+
   it("retains activity when a frame is replaced while its document remains open", () => {
     const store = {};
     const messages = new Map([

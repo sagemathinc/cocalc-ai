@@ -105,6 +105,31 @@ describe("Codex attention summaries", () => {
     hook.unmount();
   });
 
+  it("keeps stale synchronous questions visible without counting them as pending", async () => {
+    const stale = {
+      ...record("thread-1", "stale"),
+      source_kind: "codex_sync_question" as const,
+    };
+    jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
+      ok: true,
+      records: [stale, record("thread-2", "answered")],
+    });
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.records).toEqual([stale]));
+    expect(hook.result.current.count).toBe(0);
+    expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "list", state: "actionable" }),
+    );
+    hook.unmount();
+  });
+
   it("drops the previous human's attention on account switch even when new reads fail", async () => {
     const pending = record("thread-1", "pending");
     jest

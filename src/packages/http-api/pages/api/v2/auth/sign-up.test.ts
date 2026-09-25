@@ -832,6 +832,33 @@ describe("/api/v2/auth/sign-up", () => {
     expect(mockSignUserIn).not.toHaveBeenCalled();
   });
 
+  it("does not create an account when cross-bay retry signing is unavailable", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockSelectSignupHomeBay.mockResolvedValue("bay-remote");
+    mockIssueHomeBayRetryToken.mockImplementationOnce(() => {
+      throw new Error("missing shared home-bay retry token signing secret");
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+    expect(res._getJSONData()).toEqual({
+      issues: { api: "Problem creating account. Please try again." },
+    });
+  });
+
   it("persists explicit marketing consent for password signup", async () => {
     mockGetRequiresRegistrationToken.mockResolvedValue(false);
     mockCreateClusterAccount.mockResolvedValue({

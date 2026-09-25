@@ -130,3 +130,50 @@ test("missing evidence degrades to an explicit unavailable state", async () => {
     "Delivery details are unavailable",
   );
 });
+
+test("message body expands separately from delivery details", () => {
+  inspectAgentNetworkAttempt.mockClear();
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={
+        {
+          type: "agent-message",
+          children: [{ text: "Full peer message" }],
+        } as any
+      }
+    >
+      Full peer message
+    </AgentMessageElement>,
+  );
+  const read = screen.getByRole("button", { name: "Read message" });
+  expect(read).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(read);
+  expect(screen.getByRole("button", { name: "Hide message" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(
+    screen.getByText("Full peer message").closest("[data-expanded]"),
+  ).toHaveAttribute("data-expanded", "true");
+  expect(inspectAgentNetworkAttempt).not.toHaveBeenCalled();
+});
+
+test("structured agent messages show their text instead of JSON", () => {
+  const raw = JSON.stringify({
+    kind: "request",
+    text: "Please review",
+    correlation_id: "123",
+  });
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={{ type: "agent-message", children: [{ text: raw }] } as any}
+    >
+      {raw}
+    </AgentMessageElement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read message" }));
+  expect(screen.getByText("Please review")).toBeVisible();
+  expect(screen.getByText("Raw message")).toBeInTheDocument();
+});

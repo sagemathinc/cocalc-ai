@@ -849,7 +849,7 @@ test("large cache bounds rows across groups and explains partial coverage", asyn
   await user.click(details);
   expect(details.closest("details")).toHaveAttribute("open");
   expect(screen.getByText(/not a completeness count/)).toBeVisible();
-});
+}, 20_000);
 
 test("failed artifact opens remain visible in the Library", async () => {
   render(

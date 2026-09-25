@@ -20,6 +20,10 @@ import { useSourceAgentName } from "./source-agent-name";
 import type { AgentNameContext } from "./name-context";
 import { cachedAgentNameContext } from "./name-context";
 import { AgentNetworkSummary } from "./agent-network-summary";
+import {
+  activeNetworkMembers,
+  duplicateNetworkTitle,
+} from "./agent-network-utils";
 
 const NEW_NETWORK = "new";
 
@@ -38,7 +42,7 @@ function registeredMember(
   network: AgentNetwork,
   endpoint: AgentEndpoint,
 ): AgentNetworkMember | undefined {
-  return network.members.find(
+  return activeNetworkMembers(network).find(
     (member) =>
       member.kind === "registered" && sameEndpoint(member.endpoint, endpoint),
   );
@@ -106,15 +110,18 @@ export function NetworkApproval({
   const joinableNetworks = targetNetworks.filter(
     (network) =>
       !registeredMember(network, value.source) &&
-      network.members.length < (directory?.usage.member_limit ?? 0),
+      activeNetworkMembers(network).length <
+        (directory?.usage.member_limit ?? 0),
   );
   const selectedNetwork = joinableNetworks.find(
     ({ agent_network_id }) => agent_network_id === selection,
   );
   const selectedProjects = new Set(
-    selectedNetwork?.members.flatMap((member) =>
-      member.kind === "registered" ? [member.endpoint.project_id] : [],
-    ) ?? [],
+    selectedNetwork
+      ? activeNetworkMembers(selectedNetwork).flatMap((member) =>
+          member.kind === "registered" ? [member.endpoint.project_id] : [],
+        )
+      : [],
   );
   const crossesProject = selectedNetwork
     ? selectedProjects.size > 0 &&
@@ -124,6 +131,10 @@ export function NetworkApproval({
   const atNetworkLimit =
     !!directory &&
     directory.usage.active_networks >= directory.usage.network_limit;
+  const duplicateTitle = duplicateNetworkTitle(
+    directory?.networks ?? [],
+    newTitle,
+  );
   const canSubmit =
     !busy &&
     !loading &&
@@ -131,7 +142,7 @@ export function NetworkApproval({
     sourceNaming.canApprove &&
     (!!sharedNetwork ||
       !!selectedNetwork ||
-      (creating && !!newTitle.trim() && !atNetworkLimit));
+      (creating && !!newTitle.trim() && !duplicateTitle && !atNetworkLimit));
 
   function requestId(key: string): string {
     let request = requestIds.current.get(key);
@@ -161,7 +172,7 @@ export function NetworkApproval({
       const firstJoinable = activeForTarget.find(
         (network) =>
           !registeredMember(network, value.source) &&
-          network.members.length < next.usage.member_limit,
+          activeNetworkMembers(network).length < next.usage.member_limit,
       );
       setSelection(
         shared?.agent_network_id ??
@@ -216,7 +227,7 @@ export function NetworkApproval({
           await personalAgentApi().createAgentNetwork({
             request_id: requestId(key),
             title,
-            delivery_mode: "queued",
+            delivery_mode: "live",
             members: [
               { kind: "registered", endpoint: value.source },
               { kind: "registered", endpoint: value.target },
@@ -369,7 +380,19 @@ export function NetworkApproval({
                         onChange={(event) => setNewTitle(event.target.value)}
                         placeholder="Illustration work"
                         style={{ marginTop: 5 }}
+                        status={duplicateTitle ? "error" : undefined}
+                        aria-describedby={
+                          duplicateTitle
+                            ? "connect-network-duplicate"
+                            : undefined
+                        }
                       />
+                      {duplicateTitle && (
+                        <div id="connect-network-duplicate" role="alert">
+                          A network tag with this name already exists. Choose a
+                          distinct name.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -394,7 +417,7 @@ export function NetworkApproval({
             <p style={{ margin: 0, color: UI_COLORS.secondary }}>
               Connecting grants permission only. It does not send this draft or
               start any agent. Messages use the selected network&apos;s delivery
-              mode; new networks start with queued delivery.
+              mode; new networks start with live delivery.
             </p>
           )}
           {error && (

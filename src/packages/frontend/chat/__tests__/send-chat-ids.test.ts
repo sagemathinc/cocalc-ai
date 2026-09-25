@@ -5,6 +5,10 @@ import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
+import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "../codex-subscription-selection";
 
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
@@ -771,6 +775,7 @@ describe("chat autosave", () => {
 describe("thread-config by thread_id", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear();
     jest
       .spyOn(webapp_client as any, "server_time")
       .mockReturnValue(new Date("2026-02-21T18:00:00.000Z"));
@@ -1335,6 +1340,13 @@ describe("deleteThread identity targeting", () => {
   });
 
   it("forkThread writes a canonical thread-config row and preserves codex metadata", async () => {
+    const credentialId = "00000000-1000-4000-8000-000000000002";
+    writeCodexSubscriptionSelection({
+      accountId: "00000000-1000-4000-8000-000000000001",
+      projectId: "proj-1",
+      threadKey: "thread-source-1",
+      credentialId,
+    });
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
     const rootMs = rootDate.valueOf();
@@ -1400,6 +1412,20 @@ describe("deleteThread identity targeting", () => {
     });
 
     expect(newThreadId).toBeTruthy();
+    expect(
+      readCodexSubscriptionSelection({
+        accountId: "00000000-1000-4000-8000-000000000001",
+        projectId: "proj-1",
+        threadKey: newThreadId,
+      }),
+    ).toBe(credentialId);
+    expect(
+      readCodexSubscriptionSelection({
+        accountId: "00000000-1000-4000-8000-000000000003",
+        projectId: "proj-1",
+        threadKey: newThreadId,
+      }),
+    ).toBeUndefined();
     const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
     const chatRow = rows.find(
       (row: any) => row?.event === "chat" && row?.thread_id === newThreadId,

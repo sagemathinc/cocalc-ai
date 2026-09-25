@@ -325,12 +325,15 @@ export function useCodexPaymentSource({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
+  const [resolvedKey, setResolvedKey] = useState<string>();
+  const currentKey = cacheKey(projectId, preference, credentialId);
 
   const refresh = () => setRefreshToken((x) => x + 1);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    setResolvedKey(currentKey);
     const cached = getCachedPaymentSource(projectId, preference, credentialId);
     if (cached?.paymentSource) {
       setPaymentSource(cached.paymentSource);
@@ -369,7 +372,7 @@ export function useCodexPaymentSource({
     return () => {
       cancelled = true;
     };
-  }, [credentialId, enabled, preference, projectId, refreshToken]);
+  }, [credentialId, currentKey, enabled, preference, projectId, refreshToken]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -382,22 +385,26 @@ export function useCodexPaymentSource({
     return () => clearInterval(interval);
   }, [enabled, pollMs]);
 
-  const isSiteBilled = paymentSource?.source === "site-api-key";
+  const currentPaymentSource =
+    resolvedKey === currentKey && enabled ? paymentSource : undefined;
+  const currentError = resolvedKey === currentKey && enabled ? error : "";
+  const currentLoading = enabled && (loading || resolvedKey !== currentKey);
+  const isSiteBilled = currentPaymentSource?.source === "site-api-key";
 
   const shortLabel = useMemo(
-    () => getCodexPaymentSourceShortLabel(paymentSource?.source),
-    [paymentSource?.source],
+    () => getCodexPaymentSourceShortLabel(currentPaymentSource?.source),
+    [currentPaymentSource?.source],
   );
 
   const tooltip = useMemo(
-    () => getCodexPaymentSourceTooltip(paymentSource),
-    [paymentSource],
+    () => getCodexPaymentSourceTooltip(currentPaymentSource),
+    [currentPaymentSource],
   );
 
   return {
-    paymentSource,
-    loading,
-    error,
+    paymentSource: currentPaymentSource,
+    loading: currentLoading,
+    error: currentError,
     refresh,
     isSiteBilled,
     shortLabel,

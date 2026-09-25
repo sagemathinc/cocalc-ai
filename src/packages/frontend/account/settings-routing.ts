@@ -59,7 +59,6 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
     { page: "membership", path: "settings/membership" },
     { page: "legacy-migration", path: "settings/legacy-migration" },
     { page: "public-shares", path: "settings/public-shares" },
-    { page: "my-agents", path: "settings/my-agents" },
     { page: "usage-limits", path: "settings/usage-limits" },
     { page: "appearance", path: "settings/appearance" },
     { page: "editor", path: "settings/editor" },
@@ -92,6 +91,9 @@ const PAGES_BY_PATH = new Map<string, SettingsPageType>(
     page,
   ]),
 );
+
+// Preserve bookmarks for the former standalone Agent messaging page.
+PAGES_BY_PATH.set("my-agents", "ai");
 
 export function isAccountSettingsPageKey(
   value: string,
@@ -170,6 +172,9 @@ export function getAccountSettingsState(
 export function getAccountSettingsRouteFromState(
   state: AccountSettingsLegacyState,
 ): AccountSettingsRoute {
+  if (state.active_page === "my-agents") {
+    return { page: "ai" };
+  }
   if (state.active_page === "preferences") {
     return { page: normalizeLegacyPreferencesPage(state.active_sub_tab) };
   }

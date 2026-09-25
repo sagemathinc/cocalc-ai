@@ -50,11 +50,14 @@ export default function MultiMarkdownInput({
   minimal,
   modeSwitchPlacement = "float",
   reserveModeSwitchSpace = false,
+  compactModeSwitch = false,
+  softFocus = false,
   modeSwitchRightContent,
   modeSwitchStyle,
   noVfill,
   onBlur,
   onChange,
+  onAltEnter,
   onCursorBottom,
   onCursors,
   onCursorTop,
@@ -111,6 +114,10 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onShiftEnterRef.current = onShiftEnter;
   }, [onShiftEnter]);
+  const onAltEnterRef = useRef(onAltEnter);
+  useEffect(() => {
+    onAltEnterRef.current = onAltEnter;
+  }, [onAltEnter]);
   const onCtrlEnterRef = useRef<any>(onCtrlEnter);
   useEffect(() => {
     onCtrlEnterRef.current = onCtrlEnter;
@@ -138,13 +145,13 @@ export default function MultiMarkdownInput({
     modeSwitchPlacement === "toolbar" &&
     !fixedMode &&
     (showToolbarModeSwitch || reserveModeSwitchSpace);
-  const toolbarInset = reserveToolbarModeSwitch ? 28 : 0;
+  const toolbarInset = reserveToolbarModeSwitch && !compactModeSwitch ? 28 : 0;
   const editorHeight =
     reserveToolbarModeSwitch && height != null && height !== "auto"
       ? "100%" // The flex body already excludes the toolbar height.
       : height;
   const shellHeight =
-    unboundedAutoGrow && height === "auto"
+    height === "auto"
       ? "auto"
       : reserveToolbarModeSwitch && height != null && height !== "auto"
         ? height
@@ -253,6 +260,19 @@ export default function MultiMarkdownInput({
 
   return (
     <div
+      onClick={(event) => {
+        if (!compactModeSwitch) return;
+        const target = event.target;
+        if (
+          target instanceof Element &&
+          target.closest(
+            "textarea, input, button, [contenteditable], [role='textbox'], [data-markdown-mode-switch]",
+          )
+        ) {
+          return;
+        }
+        focusActiveEditor();
+      }}
       style={{
         position: "relative",
         width: "100%",
@@ -269,7 +289,13 @@ export default function MultiMarkdownInput({
               overflow: unboundedAutoGrow ? "visible" : "hidden",
               background: UI_COLORS.surface,
               color: UI_COLORS.text,
-              ...(focused ? FOCUSED_STYLE : BLURED_STYLE),
+              ...(softFocus
+                ? {
+                    border: 0,
+                  }
+                : focused
+                  ? FOCUSED_STYLE
+                  : BLURED_STYLE),
             }),
       }}
     >
@@ -280,8 +306,11 @@ export default function MultiMarkdownInput({
             alignItems: "center",
             justifyContent: "space-between",
             minHeight: `${toolbarInset}px`,
-            paddingBottom: "4px",
+            paddingBottom: compactModeSwitch ? 0 : "4px",
             flexShrink: 0,
+            ...(compactModeSwitch
+              ? { position: "absolute" as const, top: 0, right: 0, zIndex: 1 }
+              : undefined),
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }} />
@@ -302,6 +331,7 @@ export default function MultiMarkdownInput({
               hideHelp={hideHelp}
               hidden={!showToolbarModeSwitch}
               overflowEllipsis={overflowEllipsis}
+              compactModeSwitch={compactModeSwitch}
               style={modeSwitchStyle}
               editBarContentRef={editBar2}
               onSelectMode={(nextMode) => {
@@ -329,6 +359,7 @@ export default function MultiMarkdownInput({
           hideHelp={hideHelp}
           hidden={!!fixedMode || !!hideModeSwitch}
           overflowEllipsis={overflowEllipsis}
+          compactModeSwitch={compactModeSwitch}
           style={modeSwitchStyle}
           editBarContentRef={editBar2}
           onSelectMode={(nextMode) => {
@@ -395,15 +426,20 @@ export default function MultiMarkdownInput({
             }
             onFontSizeChange={onFontSizeChange}
             onAltEnter={
-              disableModeSwitchShortcuts
-                ? () => undefined
-                : (value, pos) => {
-                    onChangeRef.current?.(value);
-                    if (pos) {
-                      rememberPendingSelection("editor", pos);
-                    }
-                    setMode("editor");
+              onAltEnter
+                ? (value) => {
+                    if (!isActiveCallback("markdown")) return;
+                    onAltEnterRef.current?.(value);
                   }
+                : disableModeSwitchShortcuts
+                  ? () => undefined
+                  : (value, pos) => {
+                      onChangeRef.current?.(value);
+                      if (pos) {
+                        rememberPendingSelection("editor", pos);
+                      }
+                      setMode("editor");
+                    }
             }
             placeholder={placeholder ?? "Type markdown..."}
             fontSize={fontSize}
@@ -484,16 +520,22 @@ export default function MultiMarkdownInput({
             }
             onFontSizeChange={onFontSizeChange}
             onAltEnter={
-              disableModeSwitchShortcuts
-                ? () => undefined
-                : (value) => {
+              onAltEnter
+                ? (value) => {
+                    if (!isActiveCallback("editor")) return;
                     onChangeRef.current?.(value);
-                    const pos = getMarkdownPositionForSelection();
-                    if (pos) {
-                      rememberPendingSelection("markdown", pos);
-                    }
-                    setMode("markdown");
+                    onAltEnterRef.current?.(value);
                   }
+                : disableModeSwitchShortcuts
+                  ? () => undefined
+                  : (value) => {
+                      onChangeRef.current?.(value);
+                      const pos = getMarkdownPositionForSelection();
+                      if (pos) {
+                        rememberPendingSelection("markdown", pos);
+                      }
+                      setMode("markdown");
+                    }
             }
             onCursors={onCursors}
             onUndo={onUndo}

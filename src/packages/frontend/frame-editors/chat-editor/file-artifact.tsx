@@ -178,12 +178,14 @@ function SavedFileArtifact({
   onComment,
   projectId,
   localComments = false,
+  fontSize,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
   projectId?: string;
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
   localComments?: boolean;
+  fontSize?: number;
 }) {
   const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
@@ -281,7 +283,6 @@ function SavedFileArtifact({
       }}
     >
       <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
-        <strong>{artifact.title}</strong>
         <Button
           disabled={!actions}
           onClick={() => {
@@ -367,7 +368,9 @@ function SavedFileArtifact({
           can still be previewed or opened.
         </div>
       )}
-      <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
+      {artifact.title !== path.split("/").pop() && (
+        <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
+      )}
       {historical && (
         <div role="note">
           Published file reference; the contents shown are current, not a
@@ -410,7 +413,7 @@ function SavedFileArtifact({
           )
             event.preventDefault();
         }}
-        style={{ overflow: "auto", flex: "1 1 0", minHeight: 0 }}
+        style={{ overflow: "auto", flex: "1 1 0", minHeight: 0, minWidth: 0 }}
       >
         <FileContext.Provider
           value={{
@@ -442,6 +445,7 @@ function SavedFileArtifact({
               content={loaded.content}
               path={path}
               rawUrl=""
+              fontSize={fontSize}
               fileContext={{
                 ...context,
                 noSanitize: false,

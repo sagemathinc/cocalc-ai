@@ -58,6 +58,10 @@ jest.mock("../lite-ai-settings", () => ({
   default: () => <div>LiteAISettings</div>,
 }));
 
+jest.mock("../agent-messaging-settings", () => ({
+  AgentMessagingSettings: () => <div>Agent messaging controls</div>,
+}));
+
 jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
   AIUsageStatus: () => <div>AIUsageStatus</div>,
 }));
@@ -89,6 +93,10 @@ describe("AccountPreferencesAI", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("AIUsageStatus")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Agent messaging" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Agent messaging controls")).toBeTruthy();
     expect(
       screen.queryByRole("switch", { name: /agents|communication/i }),
     ).toBeNull();

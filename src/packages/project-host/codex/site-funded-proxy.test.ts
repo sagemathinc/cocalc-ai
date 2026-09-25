@@ -48,121 +48,141 @@ describe("site-funded Codex provider proxy", () => {
     );
   });
 
-  it("forces policy and records streaming usage without exposing the real key", async () => {
-    let upstreamAuthorization = "";
-    let upstreamProjectHeader: string | undefined;
-    let upstreamCustomHeader: string | undefined;
-    let upstreamBody: any;
-    const upstream = createServer(async (request, response) => {
-      upstreamAuthorization = `${request.headers.authorization ?? ""}`;
-      upstreamProjectHeader = request.headers["openai-project"] as
-        | string
-        | undefined;
-      upstreamCustomHeader = request.headers["x-project-controlled"] as
-        | string
-        | undefined;
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      upstreamBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      response.writeHead(200, {
-        "content-type": "text/event-stream",
-        "x-request-id": "req-header-1",
-      });
-      response.end(
-        `data: ${JSON.stringify({
-          type: "response.completed",
-          response: {
-            id: "resp-1",
-            usage: {
-              input_tokens: 10_000,
-              input_tokens_details: { cached_tokens: 6_000 },
-              output_tokens: 500,
-              output_tokens_details: { reasoning_tokens: 200 },
-            },
-          },
-        })}\n\ndata: [DONE]\n\n`,
-      );
-    });
-    await new Promise<void>((resolve) =>
-      upstream.listen(0, "127.0.0.1", resolve),
-    );
-    const address = upstream.address();
-    if (!address || typeof address === "string") throw new Error("no port");
-    const events: SiteFundedCodexUsageEvent[] = [];
-    const session = await startSiteFundedCodexProxySession({
-      reservation: reservation(),
-      apiKey: "real-site-key",
-      upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`,
-      onUsage: async (event) => {
-        events.push(event);
-      },
-    });
-    const localUrl = session.baseUrl.replace(
-      "host.containers.internal",
-      "127.0.0.1",
-    );
-    const imageData = "A".repeat(2 * 1024 * 1024);
-    const result = await fetch(`${localUrl}/responses`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${session.token}`,
-        "content-type": "application/json",
-        "openai-project": "proj-attacker-selected",
-        "x-project-controlled": "do-not-forward",
-      },
-      body: JSON.stringify({
-        model: "gpt-5.6-sol",
-        reasoning: { effort: "high" },
-        service_tier: "priority",
-        background: true,
-        store: true,
-        tools: [{ type: "function", name: "shell" }],
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: "analyze this image" },
-              {
-                type: "input_image",
-                image_url: `data:image/png;base64,${imageData}`,
+  it.each(
+    [
+      [{ type: "function", name: "shell" }],
+      [
+        {
+          type: "namespace",
+          name: "functions",
+          description: "Local Codex tools",
+          tools: [
+            { type: "function", name: "exec_command" },
+            { type: "custom", name: "apply_patch", format: { type: "text" } },
+          ],
+        },
+        { type: "local_shell" },
+      ],
+    ].map((tools) => [tools]),
+  )(
+    "forces policy and records streaming usage with tools %j without exposing the real key",
+    async (tools) => {
+      let upstreamAuthorization = "";
+      let upstreamProjectHeader: string | undefined;
+      let upstreamCustomHeader: string | undefined;
+      let upstreamBody: any;
+      const upstream = createServer(async (request, response) => {
+        upstreamAuthorization = `${request.headers.authorization ?? ""}`;
+        upstreamProjectHeader = request.headers["openai-project"] as
+          | string
+          | undefined;
+        upstreamCustomHeader = request.headers["x-project-controlled"] as
+          | string
+          | undefined;
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        upstreamBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-request-id": "req-header-1",
+        });
+        response.end(
+          `data: ${JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: "resp-1",
+              usage: {
+                input_tokens: 10_000,
+                input_tokens_details: { cached_tokens: 6_000 },
+                output_tokens: 500,
+                output_tokens_details: { reasoning_tokens: 200 },
               },
-            ],
-          },
-        ],
-      }),
-    });
-    expect(result.status).toBe(200);
-    await result.text();
-    expect(upstreamAuthorization).toBe("Bearer real-site-key");
-    expect(upstreamProjectHeader).toBeUndefined();
-    expect(upstreamCustomHeader).toBeUndefined();
-    expect(upstreamBody).toMatchObject({
-      model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
-      reasoning: { effort: "medium" },
-      service_tier: "default",
-      background: false,
-      store: false,
-    });
-    expect(upstreamBody.max_output_tokens).toBeGreaterThan(0);
-    expect(upstreamBody.max_output_tokens).toBeLessThanOrEqual(32_000);
-    expect(upstreamBody.input[0].content[1].image_url).toHaveLength(
-      "data:image/png;base64,".length + imageData.length,
-    );
-    expect(events).toEqual([
-      expect.objectContaining({
-        reservationId: session.reservationId,
-        providerRequestId: "resp-1",
-        requestSequence: 1,
+            },
+          })}\n\ndata: [DONE]\n\n`,
+        );
+      });
+      await new Promise<void>((resolve) =>
+        upstream.listen(0, "127.0.0.1", resolve),
+      );
+      const address = upstream.address();
+      if (!address || typeof address === "string") throw new Error("no port");
+      const events: SiteFundedCodexUsageEvent[] = [];
+      const session = await startSiteFundedCodexProxySession({
+        reservation: reservation(),
+        apiKey: "real-site-key",
+        upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`,
+        onUsage: async (event) => {
+          events.push(event);
+        },
+      });
+      const localUrl = session.baseUrl.replace(
+        "host.containers.internal",
+        "127.0.0.1",
+      );
+      const imageData = "A".repeat(2 * 1024 * 1024);
+      const result = await fetch(`${localUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+          "openai-project": "proj-attacker-selected",
+          "x-project-controlled": "do-not-forward",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.6-sol",
+          reasoning: { effort: "high" },
+          service_tier: "priority",
+          background: true,
+          store: true,
+          tools,
+          input: [
+            {
+              role: "user",
+              content: [
+                { type: "input_text", text: "analyze this image" },
+                {
+                  type: "input_image",
+                  image_url: `data:image/png;base64,${imageData}`,
+                },
+              ],
+            },
+          ],
+        }),
+      });
+      expect(result.status).toBe(200);
+      await result.text();
+      expect(upstreamAuthorization).toBe("Bearer real-site-key");
+      expect(upstreamProjectHeader).toBeUndefined();
+      expect(upstreamCustomHeader).toBeUndefined();
+      expect(upstreamBody).toMatchObject({
         model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
-        inputTokens: 10_000,
-        cachedInputTokens: 6_000,
-        outputTokens: 500,
-        reasoningOutputTokens: 200,
-      }),
-    ]);
-    session.close();
-    await new Promise<void>((resolve) => upstream.close(() => resolve()));
-  });
+        reasoning: { effort: "medium" },
+        service_tier: "default",
+        background: false,
+        store: false,
+      });
+      expect(upstreamBody.max_output_tokens).toBeGreaterThan(0);
+      expect(upstreamBody.tools).toEqual(tools);
+      expect(upstreamBody.max_output_tokens).toBeLessThanOrEqual(32_000);
+      expect(upstreamBody.input[0].content[1].image_url).toHaveLength(
+        "data:image/png;base64,".length + imageData.length,
+      );
+      expect(events).toEqual([
+        expect.objectContaining({
+          reservationId: session.reservationId,
+          providerRequestId: "resp-1",
+          requestSequence: 1,
+          model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
+          inputTokens: 10_000,
+          cachedInputTokens: 6_000,
+          outputTokens: 500,
+          reasoningOutputTokens: 200,
+        }),
+      ]);
+      session.close();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    },
+  );
 
   it("serializes overlapping provider requests within a funded turn", async () => {
     let releaseUpstream!: () => void;
@@ -369,34 +389,61 @@ describe("site-funded Codex provider proxy", () => {
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
   });
 
-  it("rejects OpenAI-hosted paid tools before forwarding", async () => {
-    const session = await startSiteFundedCodexProxySession({
-      reservation: reservation(),
-      apiKey: "real-site-key",
-      upstreamBaseUrl: "http://127.0.0.1:1/v1",
-      onUsage: async () => {},
-    });
-    const localUrl = session.baseUrl.replace(
-      "host.containers.internal",
-      "127.0.0.1",
-    );
-    const result = await fetch(`${localUrl}/responses`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${session.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        input: "hello",
-        tools: [{ type: "web_search_preview" }],
-      }),
-    });
-    expect(result.status).toBe(403);
-    await expect(result.json()).resolves.toMatchObject({
-      error: { type: "site_funded_codex_policy_error" },
-    });
-    session.close();
-  });
+  it.each([
+    { type: "web_search_preview" },
+    { type: "namespace", name: "invalid" },
+    { type: "namespace", name: "invalid", tools: {} },
+    { type: "namespace", name: "invalid", tools: [null] },
+    {
+      type: "namespace",
+      name: "mixed",
+      tools: [
+        { type: "function", name: "shell" },
+        { type: "web_search_preview" },
+      ],
+    },
+    {
+      type: "namespace",
+      name: "outer",
+      tools: [
+        {
+          type: "namespace",
+          name: "inner",
+          tools: [{ type: "code_interpreter" }],
+        },
+      ],
+    },
+  ])(
+    "rejects disallowed or malformed tools before forwarding: %j",
+    async (tool) => {
+      const session = await startSiteFundedCodexProxySession({
+        reservation: reservation(),
+        apiKey: "real-site-key",
+        upstreamBaseUrl: "http://127.0.0.1:1/v1",
+        onUsage: async () => {},
+      });
+      const localUrl = session.baseUrl.replace(
+        "host.containers.internal",
+        "127.0.0.1",
+      );
+      const result = await fetch(`${localUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          input: "hello",
+          tools: [tool],
+        }),
+      });
+      expect(result.status).toBe(403);
+      await expect(result.json()).resolves.toMatchObject({
+        error: { type: "site_funded_codex_policy_error" },
+      });
+      session.close();
+    },
+  );
 
   it("rejects provider-side context references and requests beyond the safety cap", async () => {
     const session = await startSiteFundedCodexProxySession({

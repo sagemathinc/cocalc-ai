@@ -20,9 +20,12 @@ test("network proposals are typed, bounded, and cannot claim a principal", () =>
     reason: "Coordinate the release review",
   };
   expect(() => validateAgentRpcRequest(value)).not.toThrow();
+  expect(() =>
+    validateAgentRpcRequest({ ...value, members: [source] }),
+  ).not.toThrow();
   for (const invalid of [
     { ...value, proposal_id: "bad" },
-    { ...value, members: [source] },
+    { ...value, members: [] },
     { ...value, members: Array.from({ length: 65 }, member) },
     { ...value, delivery_mode: "interrupt" },
     { ...value, account_id: randomUUID() },

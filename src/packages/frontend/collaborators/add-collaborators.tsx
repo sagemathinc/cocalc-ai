@@ -9,6 +9,7 @@ Add collaborators to a project
 
 import { Alert, Button, Input, Select } from "antd";
 import { useIntl } from "react-intl";
+import { useId } from "react";
 import type { ProjectCollaboratorInviteUsage } from "@cocalc/conat/hub/api/projects";
 import type {
   ProjectEmailInviteDeliveryResult,
@@ -226,6 +227,7 @@ export const AddCollaborators: React.FC<Props> = ({
   mode = "project",
 }) => {
   const intl = useIntl();
+  const collaboratorSearchId = useId();
   const isFlyout = mode === "flyout";
   const student = useStudentProjectFunctionality(project_id);
   const accountCustomize = useTypedRedux("account", "customize")?.toJS() as
@@ -936,7 +938,15 @@ export const AddCollaborators: React.FC<Props> = ({
           padding: 12,
         }}
       >
+        <label
+          htmlFor={collaboratorSearchId}
+          style={{ display: "block", fontWeight: 600, marginBottom: 8 }}
+        >
+          Add Collaborator
+        </label>
         <Input.Search
+          id={collaboratorSearchId}
+          aria-label="Add Collaborator"
           autoFocus={autoFocus}
           placeholder="Search by name or email address..."
           value={search}

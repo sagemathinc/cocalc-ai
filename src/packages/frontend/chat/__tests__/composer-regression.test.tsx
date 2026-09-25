@@ -53,14 +53,16 @@ jest.mock("use-debounce", () => ({
 }));
 
 describe("ChatInput send lifecycle regressions", () => {
-  it("routes Ctrl+Enter to Post and Shift+Enter to the agent", () => {
+  it("routes Ctrl+Enter to Post, Shift+Enter to the agent, and Alt+Enter to Queue", () => {
     const send = jest.fn();
     const post = jest.fn();
+    const queue = jest.fn();
     render(
       <ChatInput
         input="hello"
         onChange={() => {}}
         on_send={send}
+        on_queue={queue}
         on_post={post}
         syncdb={
           {
@@ -77,6 +79,8 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(send).not.toHaveBeenCalled();
     act(() => lastMarkdownInputProps.onShiftEnter("hello agent"));
     expect(send).toHaveBeenCalledWith("hello agent");
+    act(() => lastMarkdownInputProps.onAltEnter("hello queue"));
+    expect(queue).toHaveBeenCalledWith("hello queue");
   });
   beforeEach(() => {
     lastMarkdownInputProps = null;

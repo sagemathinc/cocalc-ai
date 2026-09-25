@@ -9,6 +9,7 @@ import {
   claimStaleAcpAttentionContinue,
   deferAcpAttentionResponseDispatch,
   getAcpAttention,
+  listAcpAttention,
   listPendingAcpActions,
   listPendingAcpAttentionResponseDispatches,
   markAllPendingAcpSyncAttentionStale,
@@ -20,6 +21,8 @@ import {
   upsertAcpAttention,
 } from "../../sqlite/acp-attention";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
+import { enqueueAcpJob } from "../../sqlite/acp-jobs";
+import { acpTestInternals } from "../index";
 import { __test__ } from "../codex-attention";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -83,6 +86,42 @@ describe("ACP attention storage", () => {
 
   afterEach(() => {
     closeAcpDatabase();
+  });
+
+  it("reports queued agent activity without opening its chat", async () => {
+    enqueueAcpJob({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      prompt: "Work",
+      chat: {
+        project_id: PROJECT_ID,
+        path: "agent.chat",
+        thread_id: "thread-1",
+        sender_id: ACCOUNT_ID,
+        parent_message_id: "user-1",
+        message_id: "assistant-1",
+        message_date: "2026-09-24T06:00:00.000Z",
+      },
+    });
+    expect(
+      await acpTestInternals.handleAcpControlRequest({
+        action: "status",
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).toEqual({
+      ok: true,
+      active_threads: [
+        { path: "agent.chat", thread_id: "thread-1", state: "queued" },
+      ],
+    });
+    expect(
+      await acpTestInternals.handleAcpControlRequest({
+        action: "status",
+        account_id: "other-account",
+        project_id: PROJECT_ID,
+      }),
+    ).toEqual({ ok: true, active_threads: [] });
   });
 
   it("retains the owning chat row in the public attention record", () => {
@@ -320,6 +359,63 @@ describe("ACP attention storage", () => {
         resolution_reason: "runtime closed",
       }),
     ]);
+  });
+
+  it("accepts a late answer only when stale sync delivery is explicitly enabled", () => {
+    const record = createAttention({ source_id: "late-sync" });
+    markAcpSyncAttentionStale({
+      project_id: PROJECT_ID,
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      reason: "turn ended",
+    });
+    expect(
+      submitAcpAttentionResponse({
+        attention_id: record.attention_id,
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        response_id: "late-answer",
+        answers: { choice: ["Yes"] },
+      }).state,
+    ).toBe("already_submitted");
+    expect(
+      submitAcpAttentionResponse({
+        attention_id: record.attention_id,
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        response_id: "late-answer",
+        answers: { choice: ["Yes"] },
+        allow_stale_sync: true,
+      }),
+    ).toMatchObject({
+      state: "submitted",
+      record: { state: "pending", dispatch_as_async: true },
+    });
+    expect(listPendingAcpAttentionResponseDispatches()).toEqual([
+      expect.objectContaining({ attention_id: record.attention_id }),
+    ]);
+  });
+
+  it("lists stale synchronous questions without including resolved history", () => {
+    const stale = createAttention({ source_id: "stale-actionable" });
+    markAcpSyncAttentionStale({
+      project_id: PROJECT_ID,
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      reason: "turn ended",
+    });
+    const resolved = createAttention({ source_id: "resolved-history" });
+    resolveAcpAttention({
+      attention_id: resolved.attention_id,
+      state: "answered",
+    });
+    expect(
+      listAcpAttention({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        state: "actionable",
+      }).map(({ attention_id }) => attention_id),
+    ).toEqual([stale.attention_id]);
   });
 
   it("marks every held synchronous responder stale after service restart", () => {

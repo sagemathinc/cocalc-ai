@@ -5,7 +5,10 @@ import LRU from "lru-cache";
 import { resolveProjectHostRouteMode } from "@cocalc/server/cloud/internal-network";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBayAcrossCluster,
+  resolveProjectBayAcrossCluster,
+} from "@cocalc/server/inter-bay/directory";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:conat:route-project");
@@ -517,19 +520,36 @@ export async function materializeRemoteProjectHostTarget({
   }
   const ownership = await resolveProjectBayAcrossCluster(project_id);
   const currentBayId = getConfiguredBayId();
-  if (!ownership || ownership.bay_id === currentBayId) {
+  if (!ownership) {
     return undefined;
   }
   const bridge = getInterBayBridge();
-  const reference = await bridge
-    .projectReference(ownership.bay_id, { timeout_ms: 15_000 })
-    .get({ account_id, project_id });
-  const host_id = `${reference?.host_id ?? ""}`.trim();
+  let host_id: string;
+  let hostBayId: string;
+  if (ownership.bay_id === currentBayId) {
+    // An owning bay may assign a project to a host in another bay. Only use
+    // that assignment for an account in the project's collaborator list.
+    const { rows } = await getPool().query<{ host_id: string | null }>(
+      `SELECT host_id FROM projects WHERE project_id=$1 AND users ? $2`,
+      [project_id, account_id],
+    );
+    host_id = `${rows[0]?.host_id ?? ""}`.trim();
+    if (!host_id) return undefined;
+    const hostOwner = await resolveHostBayAcrossCluster(host_id);
+    if (!hostOwner || hostOwner.bay_id === currentBayId) return undefined;
+    hostBayId = hostOwner.bay_id;
+  } else {
+    const reference = await bridge
+      .projectReference(ownership.bay_id, { timeout_ms: 15_000 })
+      .get({ account_id, project_id });
+    host_id = `${reference?.host_id ?? ""}`.trim();
+    hostBayId = ownership.bay_id;
+  }
   if (!host_id) {
     return undefined;
   }
   const connection = await bridge
-    .hostConnection(ownership.bay_id, { timeout_ms: 15_000 })
+    .hostConnection(hostBayId, { timeout_ms: 15_000 })
     .get({ account_id, host_id });
   const address = `${connection?.connect_url ?? ""}`.trim();
   if (!address) {

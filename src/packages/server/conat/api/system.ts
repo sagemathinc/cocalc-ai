@@ -97,7 +97,10 @@ import {
   upsertExternalCredentialRouted,
   updateExternalCredentialLabelByIdRouted,
 } from "@cocalc/server/external-credentials/routing";
-import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import {
+  assertProjectCollaboratorAccessAllowRemote,
+  resolveProjectReferenceAllowRemote,
+} from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import {
@@ -6726,6 +6729,12 @@ export async function assertCodexPaymentSourceCaller({
     [project_id, host_id, account_id],
   );
   if (!rowCount) {
+    const reference = await resolveProjectReferenceAllowRemote({
+      account_id,
+      project_id,
+      warmRoute: false,
+    });
+    if (reference?.host_id === host_id) return;
     throw new Error(
       "project host is not authorized for this account payment source",
     );

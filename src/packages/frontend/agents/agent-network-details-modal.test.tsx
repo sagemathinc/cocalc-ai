@@ -2,10 +2,7 @@ import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentNetwork } from "@cocalc/conat/agents/personal";
-import {
-  AgentNetworkDetailsModal,
-  AgentNetworkFilterBar,
-} from "./agent-network-details-modal";
+import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 
 const mockApi = {
   listAgentNetworkActivity: jest.fn(),
@@ -81,29 +78,6 @@ beforeEach(() => {
   });
 });
 
-test("filter bar makes details and clearing explicit", async () => {
-  const user = userEvent.setup();
-  const onOpen = jest.fn();
-  const onClear = jest.fn();
-  render(
-    <AgentNetworkFilterBar
-      network={network}
-      onOpen={onOpen}
-      onClear={onClear}
-    />,
-  );
-
-  const filter = screen.getByRole("region", {
-    name: "Filtered to Release network",
-  });
-  expect(filter).toHaveTextContent("Showing Release · 2 agents");
-  expect(filter).toHaveStyle({ boxSizing: "border-box", width: "100%" });
-  await user.click(screen.getByRole("button", { name: "Details" }));
-  await user.click(screen.getByRole("button", { name: "Clear" }));
-  expect(onOpen).toHaveBeenCalledTimes(1);
-  expect(onClear).toHaveBeenCalledTimes(1);
-});
-
 test("details modal loads activity and can pause the network", async () => {
   const user = userEvent.setup();
   const onChanged = jest.fn();
@@ -132,4 +106,44 @@ test("details modal loads activity and can pause the network", async () => {
     ),
   );
   expect(onChanged).toHaveBeenCalledTimes(1);
+});
+
+test("network selector switches details to any existing network", async () => {
+  const other = {
+    ...network,
+    agent_network_id: "22222222-2222-4222-8222-222222222222",
+    title: "Support",
+    members: [],
+  };
+  const onSelectNetwork = jest.fn();
+  render(
+    <AgentNetworkDetailsModal
+      network={network}
+      networks={[network, other]}
+      onSelectNetwork={onSelectNetwork}
+      onClose={jest.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const selector = screen.getByRole("combobox", {
+    name: "Select Agent Network",
+  });
+  await user.click(selector);
+  expect(
+    await screen.findByRole("option", { name: "Support" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByText("Support"));
+  await waitFor(() => expect(onSelectNetwork).toHaveBeenCalledWith(other));
+});
+
+test("closing a network requires explicit confirmation", async () => {
+  render(<AgentNetworkDetailsModal network={network} onClose={jest.fn()} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Close network" }));
+  expect(
+    (await screen.findAllByText("Close this Agent Network?")).length,
+  ).toBeGreaterThan(0);
+  expect(mockApi.updateAgentNetwork).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(mockApi.updateAgentNetwork).not.toHaveBeenCalled();
 });

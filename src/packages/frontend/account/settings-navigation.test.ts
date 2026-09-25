@@ -141,6 +141,7 @@ describe("settings-navigation", () => {
     expect(overview.primaryPages).toContain("usage-limits");
     expect(overview.primaryPages).toContain("appearance");
     expect(overview.primaryPages).toContain("ai");
+    expect(overview.primaryPages).not.toContain("my-agents");
     expect(
       overview.sections.find((section) => section.key === "licenses")?.pages,
     ).toEqual(["team-licenses", "site-licenses", "software-licenses"]);

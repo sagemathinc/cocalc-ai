@@ -16,6 +16,7 @@ import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
 
 interface ChatInstanceOptions {
   instanceKey?: string;
+  workbenchEnabled?: boolean;
 }
 
 function hasChatActionsMethods(actions: any): actions is ChatActions {
@@ -127,10 +128,14 @@ export function initChat(
     });
     removeByName(name, redux);
   } else if (isChatActions(existing)) {
+    if (opts?.workbenchEnabled !== undefined)
+      existing.workbenchEnabled = opts.workbenchEnabled;
     return existing; // already initialized
   }
 
   const actions = redux.createActions(name, ChatActions);
+  if (opts?.workbenchEnabled !== undefined)
+    actions.workbenchEnabled = opts.workbenchEnabled;
   const store = redux.createStore(name, ChatStore);
   actions.setState({ project_id, path });
 
