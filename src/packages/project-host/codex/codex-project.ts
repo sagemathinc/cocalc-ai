@@ -582,9 +582,12 @@ async function rotateProjectCliBearerWithRetry(
 
 export type ProjectCliTokenLease = {
   identityContainerPath?: string;
+  connectorContainerPath?: string;
   hostPath: string;
   containerPath: string;
   setAgentSessionKey: (agentSessionKey: string) => Promise<void>;
+  setConnectorKey: (secret: string) => Promise<void>;
+  clearConnectorKey: () => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -638,6 +641,8 @@ export async function createProjectCliTokenLease({
     : join(PROJECT_RUNTIME_HOME, relativeHomeDir);
   const hostPath = join(hostDir, "token");
   const containerPath = join(containerDir, "token");
+  const connectorHostPath = join(hostDir, "connector-key");
+  const connectorContainerPath = join(containerDir, "connector-key");
 
   await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
   await fs.chmod(hostDir, 0o700);
@@ -657,6 +662,34 @@ export async function createProjectCliTokenLease({
   const { createAgentIdentityLease } = await import("./agent-identity-lease");
   let identityLease: Awaited<ReturnType<typeof createAgentIdentityLease>>;
   let closed = false;
+  let connectorOperation: Promise<void> = Promise.resolve();
+  const queueConnectorOperation = (operation: () => Promise<void>) => {
+    const pending = connectorOperation.catch(() => undefined).then(operation);
+    connectorOperation = pending;
+    return pending;
+  };
+  const clearConnectorKey = () =>
+    queueConnectorOperation(async () => {
+      await fs.rm(connectorHostPath, { force: true });
+    });
+  const setConnectorKey = (secret: string) =>
+    queueConnectorOperation(async () => {
+      if (closed || !identityLease) {
+        throw new Error("native agent connector runtime is unavailable");
+      }
+      if (!secret || secret.length > 4096 || /\s/.test(secret)) {
+        throw new Error("invalid managed connector credential");
+      }
+      const tempPath = join(hostDir, `.connector-${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(tempPath, `${secret}\n`, { mode: 0o600 });
+        await fs.chmod(tempPath, 0o600);
+        if (closed) throw new Error("connector runtime closed");
+        await fs.rename(tempPath, connectorHostPath);
+      } finally {
+        await fs.rm(tempPath, { force: true });
+      }
+    });
   let identityPreparation: Promise<void> | undefined;
   const prepareIdentity = (): Promise<void> => {
     if (closed) return Promise.resolve();
@@ -749,8 +782,15 @@ export async function createProjectCliTokenLease({
     get identityContainerPath() {
       return identityLease ? join(containerDir, "identity.json") : undefined;
     },
+    get connectorContainerPath() {
+      return identityLease ? connectorContainerPath : undefined;
+    },
+    setConnectorKey,
+    clearConnectorKey,
     setAgentSessionKey: async (nextAgentSessionKey: string) => {
-      await prepareIdentity();
+      const identityReady = prepareIdentity();
+      await clearConnectorKey();
+      await identityReady;
       const nextSessionId = projectCliSessionId(nextAgentSessionKey);
       if (closed || nextSessionId === sessionId) return;
       const setGeneration = ++generation;
@@ -779,6 +819,7 @@ export async function createProjectCliTokenLease({
       closed = true;
       if (timer) clearTimeout(timer);
       await refreshPromise?.catch(() => undefined);
+      await connectorOperation.catch(() => undefined);
       await identityPreparation?.catch(() => undefined);
       await identityLease?.close();
       await fs.rm(hostDir, { recursive: true, force: true });
@@ -1989,6 +2030,7 @@ async function spawnCodexAppServerInProjectRuntime({
   delete execEnv.COCALC_BEARER_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_IDENTITY_FILE;
+  delete execEnv.COCALC_CONNECTOR_API_KEY_FILE;
   // Never inherit another turn's reference path. Codex shell commands inherit
   // the process environment, not the unsupported turn/start.env field.
   execEnv[TURN_MENTION_FILE_ENV] = "";
@@ -1998,6 +2040,10 @@ async function spawnCodexAppServerInProjectRuntime({
       execEnv[TURN_MENTION_FILE_ENV] = turnMentionFilePath(
         cliTokenLease.identityContainerPath,
       );
+    }
+    if (cliTokenLease.connectorContainerPath) {
+      execEnv.COCALC_CONNECTOR_API_KEY_FILE =
+        cliTokenLease.connectorContainerPath;
     }
     execEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
     execEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
@@ -2018,9 +2064,14 @@ async function spawnCodexAppServerInProjectRuntime({
   };
   delete runtimeEnv.COCALC_BEARER_TOKEN;
   delete runtimeEnv.COCALC_AGENT_TOKEN;
+  delete runtimeEnv.COCALC_CONNECTOR_API_KEY_FILE;
   if (cliTokenLease) {
     runtimeEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
     runtimeEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
+    if (cliTokenLease.connectorContainerPath) {
+      runtimeEnv.COCALC_CONNECTOR_API_KEY_FILE =
+        cliTokenLease.connectorContainerPath;
+    }
   }
   if (siteFundedTurn) {
     // The proxy credential is only needed by the Codex process itself. Do not

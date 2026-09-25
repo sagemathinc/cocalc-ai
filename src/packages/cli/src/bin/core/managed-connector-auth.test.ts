@@ -45,7 +45,10 @@ test("a managed key is selected only for account and other-project work", () => 
     );
     rmSync(keyFile);
     assert.equal(apiKeyForProject({ managedConnector }, SOURCE), undefined);
-    assert.throws(() => apiKeyForProject({ managedConnector }, TARGET));
+    assert.throws(
+      () => apiKeyForProject({ managedConnector }, TARGET),
+      /connector credential is unavailable/,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

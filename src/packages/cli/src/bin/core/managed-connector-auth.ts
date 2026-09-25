@@ -30,7 +30,12 @@ export function managedConnectorCredentialFromEnv(
 }
 
 export function readManagedConnectorKey(keyFile: string): string {
-  const fd = openSync(keyFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let fd: number;
+  try {
+    fd = openSync(keyFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    throw new Error("managed CoCalc connector credential is unavailable");
+  }
   try {
     const stat = fstatSync(fd);
     if (

@@ -434,6 +434,9 @@ describe("initCodexProjectRunner", () => {
         const identityPath = spawned.runtimeEnv!.COCALC_AGENT_IDENTITY_FILE;
         const file = spawned.runtimeEnv!.COCALC_AGENT_MENTION_REFERENCES_FILE;
         expect(identityPath).toMatch(/\/identity.json$/);
+        expect(spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE).toMatch(
+          /\/connector-key$/,
+        );
         expect(file).toBe(`${identityPath}.mentions.json`);
         const args = spawnMock.mock.calls.at(-1)![1];
         expect(args).toContain(`COCALC_AGENT_MENTION_REFERENCES_FILE=${file}`);
@@ -940,6 +943,55 @@ describe("initCodexProjectRunner", () => {
 
     await lease!.close();
     await expect(fs.stat(lease!.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("atomically provisions and removes a native connector credential file", async () => {
+    const scratch = await mkTempDir("codex-project-connector-key-");
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = (await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+      home: scratch,
+      scratch,
+      refreshMs: 60_000,
+    }))!;
+    const connectorHostPath = path.join(
+      path.dirname(lease.hostPath),
+      "connector-key",
+    );
+    try {
+      expect(lease.connectorContainerPath).toMatch(/\/connector-key$/);
+      await lease.setConnectorKey("sk-cc-v2.key-one.secret");
+      expect(await fs.readFile(connectorHostPath, "utf8")).toBe(
+        "sk-cc-v2.key-one.secret\n",
+      );
+      expect((await fs.stat(connectorHostPath)).mode & 0o777).toBe(0o600);
+      await lease.setConnectorKey("sk-cc-v2.key-two.secret");
+      expect(await fs.readFile(connectorHostPath, "utf8")).toBe(
+        "sk-cc-v2.key-two.secret\n",
+      );
+      await lease.setAgentSessionKey("thread-1\0turn-2");
+      await expect(fs.stat(connectorHostPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await lease.setConnectorKey("sk-cc-v2.key-three.secret");
+    } finally {
+      await lease.close();
+    }
+    await expect(fs.stat(connectorHostPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
