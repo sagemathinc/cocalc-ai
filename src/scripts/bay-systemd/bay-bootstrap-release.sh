@@ -457,7 +457,8 @@ preserve_previous_static_assets() {
   # release flips /static to new HTML and entrypoints, keep old chunk filenames
   # available until the retained release ages out instead of stranding clients
   # that navigate after the deploy.
-  run rsync -a --ignore-existing "${previous_static}/" "${target_static}/"
+  run rsync -a --ignore-existing --exclude='._*' \
+    "${previous_static}/" "${target_static}/"
 }
 
 prepare_frontend_asset_history() {
@@ -509,6 +510,7 @@ function scanAssets(root, directory = root) {
   if (!root || !fs.existsSync(directory)) return [];
   const assets = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name.startsWith("._")) continue;
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       assets.push(...scanAssets(root, absolute));
