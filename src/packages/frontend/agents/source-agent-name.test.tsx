@@ -295,6 +295,111 @@ test("an agent joins a target's existing topic network", async () => {
   expect(mockApi.createAgentNetwork).not.toHaveBeenCalled();
 });
 
+test("the target joins the source's existing network by default", async () => {
+  mockAgents.push({ ...reviewer, name: "builder", endpoint: source });
+  mockApi.listAgentNetworks.mockResolvedValue({
+    enabled: true,
+    controls: { paused: false, generation: 0 },
+    usage: { active_networks: 1, network_limit: 100, member_limit: 8 },
+    networks: [
+      {
+        agent_network_id: "77777777-7777-4777-8777-777777777777",
+        account_id: account,
+        title: "agents",
+        state: "active",
+        delivery_mode: "live",
+        generation: "3",
+        members: [{ kind: "registered", endpoint: source, name: "builder" }],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  const onClose = jest.fn();
+  render(
+    <NetworkApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "@builder",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+      }}
+      onClose={onClose}
+    />,
+  );
+
+  expect(await screen.findByRole("radio", { name: "agents" })).toBeChecked();
+  await waitFor(() =>
+    expect(screen.getByText("Add @reviewer to agents")).toBeVisible(),
+  );
+  await user.click(screen.getByRole("button", { name: "Join network" }));
+
+  await waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+  expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith({
+    request_id: expect.any(String),
+    agent_network_id: "77777777-7777-4777-8777-777777777777",
+    action: "add-member",
+    member: { kind: "registered", endpoint: target },
+  });
+  expect(mockApi.createAgentNetwork).not.toHaveBeenCalled();
+});
+
+test("the user can select the target's network instead of the source's", async () => {
+  mockAgents.push({ ...reviewer, name: "builder", endpoint: source });
+  mockApi.listAgentNetworks.mockResolvedValue({
+    enabled: true,
+    controls: { paused: false, generation: 0 },
+    usage: { active_networks: 2, network_limit: 100, member_limit: 8 },
+    networks: [
+      {
+        agent_network_id: "77777777-7777-4777-8777-777777777777",
+        title: "agents",
+        state: "active",
+        generation: "3",
+        members: [{ kind: "registered", endpoint: source, name: "builder" }],
+      },
+      {
+        agent_network_id: "88888888-8888-4888-8888-888888888888",
+        title: "reviewers",
+        state: "active",
+        generation: "4",
+        members: [{ kind: "registered", endpoint: target, name: "reviewer" }],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(
+    <NetworkApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "@builder",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+      }}
+      onClose={jest.fn()}
+    />,
+  );
+
+  const sourceChoice = await screen.findByRole("radio", { name: "agents" });
+  expect(sourceChoice).toBeChecked();
+  const targetChoice = screen.getByRole("radio", { name: "reviewers" });
+  targetChoice.focus();
+  await user.keyboard(" ");
+  expect(targetChoice).toBeChecked();
+  expect(screen.getByText("Add @builder to reviewers")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Join network" }));
+
+  await waitFor(() =>
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith({
+      request_id: expect.any(String),
+      agent_network_id: "88888888-8888-4888-8888-888888888888",
+      action: "add-member",
+      member: { kind: "registered", endpoint: source },
+    }),
+  );
+});
+
 test("rename dialog checks current names without submitting", async () => {
   const builder = { ...reviewer, name: "builder", endpoint: source };
   mockAgents.push(builder);
