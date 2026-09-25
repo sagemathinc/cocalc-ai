@@ -84,6 +84,7 @@ import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { resolveProjectReferenceAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
@@ -2521,10 +2522,12 @@ async function assertHostCredentialProjectAccess({
   host_id: string;
   project_id: string;
   owner_account_id?: string;
-}): Promise<void> {
-  const { rowCount } = await pool().query(
+}): Promise<string> {
+  const { rows, rowCount } = await pool().query<{
+    owning_bay_id: string | null;
+  }>(
     `
-      SELECT 1
+      SELECT owning_bay_id
       FROM projects
       WHERE project_id=$1
         AND host_id=$2
@@ -2535,8 +2538,19 @@ async function assertHostCredentialProjectAccess({
     [project_id, host_id, owner_account_id ?? null],
   );
   if (!rowCount) {
+    if (owner_account_id) {
+      const reference = await resolveProjectReferenceAllowRemote({
+        account_id: owner_account_id,
+        project_id,
+        warmRoute: false,
+      });
+      if (reference?.host_id === host_id) {
+        return reference.owning_bay_id ?? getConfiguredBayId();
+      }
+    }
     throw new Error("host is not authorized for this credential project");
   }
+  return rows[0]?.owning_bay_id ?? getConfiguredBayId();
 }
 
 async function restrictedBrowserSessionExpiration({
@@ -3522,7 +3536,7 @@ export async function reserveSiteFundedCodexTurn({
   if (!isValidUUID(funded_turn_id)) {
     throw new Error("funded_turn_id must be a UUID");
   }
-  await assertHostCredentialProjectAccess({
+  const owningBayId = await assertHostCredentialProjectAccess({
     host_id,
     project_id,
     owner_account_id: account_id,
@@ -3628,7 +3642,7 @@ export async function reserveSiteFundedCodexTurn({
     projectId: project_id,
     hostId: host_id,
     homeBayId,
-    owningBayId: getConfiguredBayId(),
+    owningBayId,
     membershipTier: membership.class,
     policy: {
       ...configuration.policy,

@@ -26,9 +26,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function TestComponent({ projectId }: { projectId?: string }) {
+function TestComponent({
+  projectId,
+  preference,
+}: {
+  projectId?: string;
+  preference?: "auto" | "subscription";
+}) {
   const { paymentSource, error, loading, refresh } = useCodexPaymentSource({
     projectId,
+    preference,
     enabled: true,
     pollMs: 60_000,
   });
@@ -76,6 +83,33 @@ describe("useCodexPaymentSource", () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId("source").textContent).toBe("project-api-key");
+    });
+  });
+
+  it("does not expose an old membership result while a subscription lookup is pending", async () => {
+    const subscription = deferred<any>();
+    getCodexPaymentSourceMock
+      .mockResolvedValueOnce({ source: "site-api-key" })
+      .mockReturnValueOnce(subscription.promise);
+    const { rerender } = render(
+      <TestComponent projectId="project-preference" preference="auto" />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("source").textContent).toBe("site-api-key");
+    });
+
+    rerender(
+      <TestComponent
+        projectId="project-preference"
+        preference="subscription"
+      />,
+    );
+    expect(screen.getByTestId("source").textContent).toBe("");
+    expect(screen.getByTestId("loading").textContent).toBe("yes");
+
+    await act(async () => subscription.resolve({ source: "subscription" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("source").textContent).toBe("subscription");
     });
   });
 

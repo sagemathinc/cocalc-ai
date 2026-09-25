@@ -45,6 +45,7 @@ type AcpAttentionRow = {
   response_json: string | null;
   response_declined: number;
   response_submitted_at: number | null;
+  dispatch_as_async: number;
   created_at: number;
   updated_at: number;
   resolved_at: number | null;
@@ -60,6 +61,7 @@ export type AcpAttentionStoredRecord = AcpAttentionRecord & {
   response_id?: string;
   response?: Record<string, string[]>;
   response_declined?: boolean;
+  dispatch_as_async?: boolean;
 };
 
 function init(db = getAcpDatabase()): void {
@@ -85,6 +87,7 @@ function init(db = getAcpDatabase()): void {
       response_json TEXT,
       response_declined INTEGER NOT NULL DEFAULT 0,
       response_submitted_at INTEGER,
+      dispatch_as_async INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       resolved_at INTEGER,
@@ -101,6 +104,11 @@ function init(db = getAcpDatabase()): void {
   }>;
   if (!columns.some(({ name }) => name === "action_json")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN action_json TEXT`);
+  }
+  if (!columns.some(({ name }) => name === "dispatch_as_async")) {
+    db.exec(
+      `ALTER TABLE ${TABLE} ADD COLUMN dispatch_as_async INTEGER NOT NULL DEFAULT 0`,
+    );
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_attention_account_state_idx ON ${TABLE}(account_id, project_id, state, updated_at)`,
@@ -163,6 +171,7 @@ function toStoredRecord(row: AcpAttentionRow): AcpAttentionStoredRecord {
     ),
     response_declined: row.response_declined === 1 || undefined,
     response_submitted_at: row.response_submitted_at ?? undefined,
+    dispatch_as_async: row.dispatch_as_async === 1 || undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
     resolved_at: row.resolved_at ?? undefined,
@@ -354,7 +363,7 @@ export function listAcpAttention(opts: {
   project_id: string;
   path?: string;
   thread_id?: string;
-  state?: AcpAttentionState | "all";
+  state?: AcpAttentionState | "all" | "actionable";
   limit?: number;
 }): AcpAttentionStoredRecord[] {
   ensureInit();
@@ -368,7 +377,11 @@ export function listAcpAttention(opts: {
     clauses.push("thread_id = ?");
     args.push(opts.thread_id);
   }
-  if (opts.state !== "all") {
+  if (opts.state === "actionable") {
+    clauses.push(
+      "(state = 'pending' OR (state = 'stale' AND source_kind = 'codex_sync_question'))",
+    );
+  } else if (opts.state !== "all") {
     clauses.push("state = ?");
     args.push(opts.state ?? "pending");
   }
@@ -403,6 +416,7 @@ export function submitAcpAttentionResponse(opts: {
   response_id: string;
   answers?: Record<string, string[]>;
   decline?: boolean;
+  allow_stale_sync?: boolean;
 }): {
   state: "submitted" | "already_submitted" | "missing";
   record?: AcpAttentionStoredRecord;
@@ -426,7 +440,11 @@ export function submitAcpAttentionResponse(opts: {
       record: toStoredRecord(row),
     };
   }
-  if (row.state !== "pending") {
+  const staleSync =
+    opts.allow_stale_sync &&
+    row.state === "stale" &&
+    row.source_kind === "codex_sync_question";
+  if (row.state !== "pending" && !staleSync) {
     return { state: "already_submitted", record: toStoredRecord(row) };
   }
   const now = Date.now();
@@ -434,8 +452,13 @@ export function submitAcpAttentionResponse(opts: {
     .prepare(
       `UPDATE ${TABLE}
        SET response_id = ?, response_json = ?, response_declined = ?,
-           response_submitted_at = ?, updated_at = ?
-       WHERE attention_id = ? AND state = 'pending' AND response_id IS NULL`,
+           response_submitted_at = ?, updated_at = ?,
+           state = CASE WHEN state = 'stale' THEN 'pending' ELSE state END,
+           resolved_at = NULL, resolution_reason = NULL,
+           dispatch_as_async = CASE WHEN state = 'stale' THEN 1 ELSE dispatch_as_async END
+       WHERE attention_id = ? AND (state = 'pending' OR
+         (? = 1 AND state = 'stale' AND source_kind = 'codex_sync_question'))
+         AND response_id IS NULL`,
     )
     .run(
       opts.response_id,
@@ -444,6 +467,7 @@ export function submitAcpAttentionResponse(opts: {
       now,
       now,
       opts.attention_id,
+      staleSync ? 1 : 0,
     );
   const updated = getAcpAttention(opts.attention_id);
   return {
@@ -466,7 +490,7 @@ export function claimAcpAttentionResponseDispatch(opts: {
        SET resolution_reason = 'dispatching', updated_at = ?
        WHERE attention_id = ? AND state = 'pending' AND response_id = ?
          AND (resolution_reason IS NULL OR resolution_reason = 'awaiting_delivery' OR
-              (resolution_reason = 'dispatching' AND updated_at <= ?))`,
+              (resolution_reason IN ('dispatching', 'continuing') AND updated_at <= ?))`,
     )
     .run(
       now,
@@ -504,12 +528,10 @@ export function listPendingAcpAttentionResponseDispatches(
     getAcpDatabase()
       .prepare(
         `SELECT * FROM ${TABLE}
-         WHERE (source_kind = 'codex_async_question' OR
-                (source_kind = 'codex_sync_question' AND
-                 resolution_reason = 'awaiting_delivery'))
+         WHERE (source_kind = 'codex_async_question' OR dispatch_as_async = 1)
            AND state = 'pending' AND response_id IS NOT NULL
-           AND (resolution_reason IS NULL OR resolution_reason = 'awaiting_delivery' OR
-                (resolution_reason = 'dispatching' AND updated_at <= ?))
+         AND (resolution_reason IS NULL OR resolution_reason = 'awaiting_delivery' OR
+                (resolution_reason IN ('dispatching', 'continuing') AND updated_at <= ?))
          ORDER BY response_submitted_at ASC, attention_id ASC`,
       )
       .all(now - ACP_ATTENTION_DISPATCH_LEASE_MS) as AcpAttentionRow[]
@@ -526,7 +548,7 @@ export function claimStaleAcpAttentionContinue(opts: {
   const result = getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
-       SET state = 'pending', resolution_reason = 'continuing',
+       SET state = 'pending', resolution_reason = 'continuing', dispatch_as_async = 1,
            resolved_at = NULL, updated_at = ?
        WHERE attention_id = ? AND account_id = ? AND project_id = ?
          AND source_kind IN ('codex_sync_question', 'codex_async_question')

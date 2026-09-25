@@ -5,8 +5,84 @@
 
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type { CodexReasoningId } from "@cocalc/util/ai/codex";
 
 const AGENT_NAME_COUNTER_PREFIX = "cocalc-agent-name-counter-v1";
+
+export function suggestedAgentProjectTitle(request: string): string {
+  const firstLine = request.split(/\r?\n/, 1)[0].trim();
+  const title = firstLine.replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+  if (!title) return "My first project";
+  return title.length <= 80 ? title : `${title.slice(0, 77).trimEnd()}...`;
+}
+
+export async function createDefaultAgentProject({
+  request,
+  createProject,
+  start = false,
+  image,
+}: {
+  request: string;
+  createProject: (opts: {
+    title: string;
+    start: boolean;
+    rootfs_image?: string;
+    rootfs_image_id?: string;
+  }) => Promise<string>;
+  start?: boolean;
+  image?: { image: string; id: string };
+}): Promise<{ projectId: string; title: string }> {
+  const title = suggestedAgentProjectTitle(request);
+  const projectId = await createProject({
+    title,
+    start,
+    ...(image && { rootfs_image: image.image, rootfs_image_id: image.id }),
+  });
+  return { projectId, title };
+}
+
+export function createAgentProjectOnce<T>(
+  pending: { current: Promise<T> | undefined },
+  create: () => Promise<T>,
+): Promise<T> {
+  if (!pending.current) {
+    pending.current = Promise.resolve()
+      .then(create)
+      .catch((error) => {
+        pending.current = undefined;
+        throw error;
+      });
+  }
+  return pending.current;
+}
+
+export function newAgentFundingConfig<T extends CodexThreadConfig>({
+  config,
+  paymentSource,
+  useSubscriptionDefault,
+}: {
+  config: T;
+  paymentSource?: CodexPaymentSourceInfo;
+  useSubscriptionDefault: boolean;
+}): T {
+  const policy =
+    paymentSource?.source === "site-api-key" &&
+    paymentSource.siteFundedCodex?.enabled
+      ? paymentSource.siteFundedCodex.policy
+      : undefined;
+  if (policy) {
+    return {
+      ...config,
+      model: policy.model,
+      reasoning: policy.reasoning as CodexReasoningId,
+    };
+  }
+  if (paymentSource?.source === "subscription" && useSubscriptionDefault) {
+    return { ...config, model: "gpt-6-sol", reasoning: "medium" };
+  }
+  return config;
+}
 
 function agentNameCounterKey(accountId?: string): string {
   return `${AGENT_NAME_COUNTER_PREFIX}:${accountId ?? "anonymous"}`;

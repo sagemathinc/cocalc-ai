@@ -258,7 +258,11 @@ function getManagedOpenAiProviderArgs(
       `model_provider="${API_KEY_PROVIDER_ID}"`,
     ];
     if (fundedProvider) {
+      // Hosted search has separate fees that the included-turn meter does not
+      // account for. Do not advertise a tool the funded proxy must reject.
       args.push(
+        "--config",
+        'web_search="disabled"',
         "--config",
         `model_context_window=${fundedProvider.contextWindowTokens}`,
         "--config",

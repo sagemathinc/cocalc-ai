@@ -21,7 +21,9 @@ export function refreshNamedAgents() {
 
 export const refreshAgentNetworks = refreshNamedAgents;
 
-function loadNamedAgents(accountId: string): Promise<NamedAgentDirectory> {
+export function loadNamedAgents(
+  accountId: string,
+): Promise<NamedAgentDirectory> {
   let request = directoryRequests.get(accountId);
   if (!request) {
     request = personalAgentApi()
@@ -76,6 +78,8 @@ export function namedAgentReference(agent: NamedAgent): AgentMentionReference {
 
 export function useNamedAgents(enabled = true) {
   const accountId = useTypedRedux("account", "account_id");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const projectIds = projectMap?.keySeq().sort().join(",");
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     accountId?: string;
@@ -107,7 +111,7 @@ export function useNamedAgents(enabled = true) {
     return () => {
       disposed = true;
     };
-  }, [accountId, revision, enabled]);
+  }, [accountId, revision, enabled, projectIds]);
   return !enabled
     ? { loading: false }
     : state.accountId === accountId

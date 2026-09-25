@@ -60,7 +60,14 @@ describeDb("account-home Agent Networks", () => {
     }) as AgentIdentity;
   const identity = jest.fn(identityResult);
   const principal = jest.fn(async () => account);
-  const store = new PersonalAgentStore(db, identity, principal, async () => {});
+  const projectWasDeleted = jest.fn(async (_project: string) => false);
+  const store = new PersonalAgentStore(
+    db,
+    identity,
+    principal,
+    async () => {},
+    projectWasDeleted,
+  );
   const tables = [
     "agent_personal_controls",
     "agent_personal_names",
@@ -93,6 +100,178 @@ describeDb("account-home Agent Networks", () => {
       [remote, "remote"],
     ] as const)
       await store.name(account, { endpoint, name });
+  });
+
+  test("repairs names of confirmed deleted projects and frees their slots", async () => {
+    projectWasDeleted.mockImplementation(async (id) => id === project);
+    identity.mockImplementation(async (owner, endpoint) => {
+      if (endpoint.project_id === project) throw new Error("missing identity");
+      return identityResult(owner, endpoint);
+    });
+    try {
+      expect((await store.names(account)).map(({ name }) => name)).toEqual([
+        "remote",
+      ]);
+      expect(
+        projectWasDeleted.mock.calls.filter(([id]) => id === project),
+      ).toHaveLength(1);
+      identity.mockImplementation(identityResult);
+      // Retirement is durable, not just a filtered directory response.
+      expect((await store.names(account)).map(({ name }) => name)).toEqual([
+        "remote",
+      ]);
+      await expect(
+        store.name(account, { endpoint: remote, name: "builder" }, 2),
+      ).resolves.toMatchObject({ name: "builder", endpoint: remote });
+    } finally {
+      projectWasDeleted.mockReset().mockResolvedValue(false);
+      identity.mockImplementation(identityResult);
+    }
+  });
+
+  test("keeps names when deletion is unconfirmed or the evidence service fails", async () => {
+    identity.mockRejectedValue(new Error("owner temporarily unavailable"));
+    try {
+      expect(await store.names(account)).toHaveLength(4);
+      projectWasDeleted.mockRejectedValue(new Error("timeout"));
+      expect(await store.names(account)).toHaveLength(4);
+    } finally {
+      projectWasDeleted.mockReset().mockResolvedValue(false);
+      identity.mockImplementation(identityResult);
+    }
+  });
+
+  test("retirement releases all aliases without reserving a deleted endpoint", async () => {
+    await store.name(account, { endpoint: source, name: "renamed" });
+    await expect(store.resolveName(account, "builder")).rejects.toThrow(
+      "name_renamed:renamed",
+    );
+    await expect(
+      store.name(account, { endpoint: peer, name: "builder" }),
+    ).rejects.toThrow("name_reserved");
+    await store.retire(account, { endpoint: source });
+    await expect(store.resolveName(account, "builder")).rejects.toThrow(
+      "name_not_found",
+    );
+    await expect(store.resolveName(account, "renamed")).rejects.toThrow(
+      "name_not_found",
+    );
+    await expect(
+      store.name(account, { endpoint: peer, name: "builder" }),
+    ).resolves.toMatchObject({ endpoint: peer });
+    await expect(
+      store.name(account, { endpoint: remote, name: "renamed" }),
+    ).resolves.toMatchObject({ endpoint: remote });
+  });
+
+  test("reclaims legacy retired names but preserves live rename redirects", async () => {
+    await db.query(
+      "UPDATE agent_personal_names SET retired_at=now() WHERE account_id=$1 AND agent_id=$2",
+      [account, source.agent_id],
+    );
+    await store.name(account, { endpoint: peer, name: "reviewer-new" });
+    await expect(
+      store.name(account, { endpoint: remote, name: "builder" }),
+    ).resolves.toMatchObject({ endpoint: remote });
+    await expect(store.resolveName(account, "builder")).resolves.toMatchObject({
+      endpoint: remote,
+    });
+    await expect(
+      store.name(account, { endpoint: source, name: "reviewer" }),
+    ).rejects.toThrow("name_reserved");
+    await expect(store.resolveName(account, "reviewer")).rejects.toThrow(
+      "name_renamed:reviewer-new",
+    );
+  });
+
+  test("reusing a retired name does not transfer network membership", async () => {
+    const network = await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Original endpoints",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+        ],
+      },
+      8,
+    );
+    await store.retire(account, { endpoint: source });
+    await store.name(account, { endpoint: secondPeer, name: "builder" });
+    await expect(
+      store.checkNetwork(
+        account,
+        network.agent_network_id,
+        secondPeer,
+        run_id,
+        peer,
+      ),
+    ).rejects.toThrow("not_a_member");
+    await expect(
+      store.checkNetwork(
+        account,
+        network.agent_network_id,
+        source,
+        run_id,
+        peer,
+      ),
+    ).rejects.toThrow("not_a_member");
+    await expect(store.resolveName(account, "builder")).resolves.toMatchObject({
+      endpoint: secondPeer,
+    });
+  });
+
+  test("a network can be created empty, populated, and emptied again", async () => {
+    const network = await store.createNetwork(
+      account,
+      { request_id: randomUUID(), title: "Solo tag", members: [] },
+      8,
+    );
+    expect(network.members).toHaveLength(0);
+
+    const member = { kind: "registered" as const, endpoint: source };
+    const withMember = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "add-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      withMember.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(1);
+
+    const emptyAgain = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "remove-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      emptyAgain.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(0);
+
+    const rejoined = await store.updateNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        action: "add-member",
+        member,
+      },
+      8,
+    );
+    expect(
+      rejoined.members.filter(({ removed_at }) => !removed_at),
+    ).toHaveLength(1);
   });
 
   test("one network authorizes every direction but no nonmember", async () => {

@@ -27,6 +27,30 @@ export interface ProjectRehomeSqlSideTablePreflight {
 }
 
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
+  agent_identities: {
+    table: "agent_identities",
+    status: "not-portable",
+    reason:
+      "Registered identities require explicit project-owner migration and directory reconciliation before rehome can preserve them.",
+  },
+  agent_identity_runs: {
+    table: "agent_identity_runs",
+    status: "not-portable",
+    reason:
+      "Runtime credentials derive authority from project-owned identities and must not be copied to a new bay.",
+  },
+  agent_message_project_fences: {
+    table: "agent_message_project_fences",
+    status: "not-portable",
+    reason:
+      "Owner-issued messaging recovery fences require explicit destination reconciliation, not raw row copying.",
+  },
+  agent_rpc_admission_state: {
+    table: "agent_rpc_admission_state",
+    status: "operation-local",
+    reason:
+      "Short-lived permits and attachment preparations are local admission state and must not transfer across bays.",
+  },
   artifact_catalog: {
     table: "artifact_catalog",
     status: "not-portable",

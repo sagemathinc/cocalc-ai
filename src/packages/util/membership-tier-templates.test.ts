@@ -4,6 +4,34 @@ import {
 } from "./membership-tier-templates";
 
 describe("membership tier templates", () => {
+  it("provides generous named-agent defaults without changing explicit limits", () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(TIER_TEMPLATES).map(([id, tier]) => [
+          id,
+          tier.usage_limits.max_named_agents,
+        ]),
+      ),
+    ).toEqual({
+      admin: 1000,
+      basic: 250,
+      free: 100,
+      instructor: 1000,
+      standard: 250,
+      pro: 1000,
+      student: 250,
+    });
+    expect(
+      applyMembershipTierTemplateFallbacks({ id: "free", usage_limits: {} })
+        .usage_limits,
+    ).toMatchObject({ max_named_agents: 100 });
+    expect(
+      applyMembershipTierTemplateFallbacks({
+        id: "free",
+        usage_limits: { max_named_agents: 5 },
+      }).usage_limits,
+    ).toMatchObject({ max_named_agents: 5 });
+  });
   it("defines the exported preset catalog", () => {
     expect(Object.keys(TIER_TEMPLATES)).toEqual([
       "admin",

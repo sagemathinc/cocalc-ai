@@ -5,6 +5,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { lite } from "@cocalc/frontend/lite";
+import type { CodexThreadConfig } from "@cocalc/chat";
 import { getCodexSubscriptionConnection } from "@cocalc/frontend/account/codex-usage";
 import {
   getProjectStartPolicyBlock,
@@ -31,6 +32,53 @@ export function isCodexPaymentSourceNeedsUserConfiguration(
     (paymentSource?.source === "site-api-key" &&
       (paymentSource.siteFundedCodex?.enabled === false ||
         paymentSource.siteAiUsageLimitPositive === false))
+  );
+}
+
+export function assertCodexFundingModelReady({
+  config,
+  paymentSource,
+}: {
+  config: Partial<CodexThreadConfig>;
+  paymentSource: CodexPaymentSourceInfo;
+}): void {
+  const preference = config.paymentSource ?? "auto";
+  if (paymentSource.source === "none") {
+    throw new Error(
+      paymentSource.unavailableReason ||
+        "Configure a payment source before starting this turn.",
+    );
+  }
+  if (preference !== "auto" && paymentSource.source !== preference) {
+    throw new Error(
+      paymentSource.unavailableReason ||
+        "The selected payment source is not available yet. Check your payment settings and try again.",
+    );
+  }
+  const policy = paymentSource.siteFundedCodex?.policy;
+  if (
+    preference === "auto" &&
+    paymentSource.source === "site-api-key" &&
+    policy &&
+    (config.model !== policy.model || config.reasoning !== policy.reasoning)
+  ) {
+    throw new Error(
+      "Automatic funding currently resolves to CoCalc Membership, which uses a different model. Wait for your ChatGPT Plan to load or select CoCalc Membership explicitly.",
+    );
+  }
+}
+
+export function shouldUseExplicitMembershipModel({
+  preference,
+  paymentSource,
+}: {
+  preference?: string;
+  paymentSource?: CodexPaymentSourceInfo;
+}): boolean {
+  return (
+    preference === "site-api-key" &&
+    paymentSource?.source === "site-api-key" &&
+    paymentSource.siteFundedCodex?.enabled === true
   );
 }
 

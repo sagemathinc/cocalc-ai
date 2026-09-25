@@ -110,7 +110,9 @@ jest.mock("../chatroom-layout", () => ({
 }));
 
 jest.mock("../composer", () => ({
-  ChatRoomComposer: () => <div data-testid="chat-composer" />,
+  ChatRoomComposer: ({ isActive }: { isActive: boolean }) => (
+    <div data-testid="chat-composer" data-active={isActive} />
+  ),
 }));
 
 jest.mock("../codex-attention-card", () => ({
@@ -176,6 +178,8 @@ describe("ChatPanel external side chat persistence", () => {
       hideTopControls?: boolean;
       isVisible?: boolean;
       tabIsVisible?: boolean;
+      agentWorkspace?: boolean;
+      agentWorkspaceActive?: boolean;
     },
   ) {
     const actions = {
@@ -194,6 +198,8 @@ describe("ChatPanel external side chat persistence", () => {
         value={{
           hideCompactThreadHeader: opts?.hideCompactThreadHeader,
           hideTopControls: opts?.hideTopControls,
+          agentWorkspace: opts?.agentWorkspace,
+          agentWorkspaceActive: opts?.agentWorkspaceActive,
         }}
       >
         <ChatPanel
@@ -212,6 +218,32 @@ describe("ChatPanel external side chat persistence", () => {
 
     return actions;
   }
+
+  it("uses workspace activity for an agent composer when shared frame visibility is stale", () => {
+    renderPanel(undefined, {
+      agentWorkspace: true,
+      agentWorkspaceActive: true,
+      isVisible: false,
+      tabIsVisible: true,
+    });
+    expect(screen.getByTestId("chat-composer")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("keeps the agent composer inactive when its workspace is hidden", () => {
+    renderPanel(undefined, {
+      agentWorkspace: true,
+      agentWorkspaceActive: false,
+      isVisible: true,
+      tabIsVisible: true,
+    });
+    expect(screen.getByTestId("chat-composer")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+  });
 
   it("persists selected threads for external side chat even when frame data is available", async () => {
     renderPanel({ "data-externalSideChat": true });

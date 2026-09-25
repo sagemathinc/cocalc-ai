@@ -45,6 +45,8 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
   const latestRef = useRef(persisted);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingRef = useRef(0);
+  const latestSaveRef = useRef(0);
+  const needsRetryRef = useRef(false);
   const accountGenerationRef = useRef(0);
   const organization = optimistic ?? persisted;
   const groups = useMemo(
@@ -53,8 +55,10 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
   );
   function save(value: AgentWorkspaceOrganization) {
     const generation = accountGenerationRef.current;
+    const saveId = ++latestSaveRef.current;
     latestRef.current = value;
     pendingRef.current += 1;
+    needsRetryRef.current = false;
     setOptimistic(value);
     setSaveError("");
     queueRef.current = queueRef.current
@@ -73,26 +77,44 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
             serializeAgentWorkspaceOrganization(value),
           );
       })
+      .then(() => {
+        if (
+          generation === accountGenerationRef.current &&
+          saveId === latestSaveRef.current
+        ) {
+          needsRetryRef.current = false;
+          setSaveError("");
+        }
+      })
       .catch((err) => {
         logger.warn("unable to save agent organization", err);
-        if (generation === accountGenerationRef.current) {
-          setSaveError("Unable to save agent organization. Try again.");
+        if (
+          generation === accountGenerationRef.current &&
+          saveId === latestSaveRef.current
+        ) {
+          needsRetryRef.current = true;
+          setSaveError("Agent list changes were not saved.");
         }
       })
       .finally(() => {
         if (generation !== accountGenerationRef.current) return;
         pendingRef.current = Math.max(0, pendingRef.current - 1);
-        if (pendingRef.current === 0) setOptimistic(undefined);
+        if (pendingRef.current === 0 && !needsRetryRef.current) {
+          setOptimistic(undefined);
+        }
       });
   }
 
   useEffect(() => {
-    if (pendingRef.current === 0) latestRef.current = persisted;
+    if (pendingRef.current === 0 && !needsRetryRef.current) {
+      latestRef.current = persisted;
+    }
   }, [persisted]);
 
   useEffect(() => {
     accountGenerationRef.current += 1;
     pendingRef.current = 0;
+    needsRetryRef.current = false;
     latestRef.current = persisted;
     setOptimistic(undefined);
     setSaveError("");
@@ -102,6 +124,9 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
     organization,
     groups,
     saveError,
+    retrySave() {
+      if (needsRetryRef.current) save(latestRef.current);
+    },
     setMode(mode: AgentWorkspaceOrganization["mode"]) {
       save({ ...latestRef.current, mode });
     },

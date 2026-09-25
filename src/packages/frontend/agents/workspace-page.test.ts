@@ -5,16 +5,23 @@
 
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
+  createAgentProjectOnce,
+  createDefaultAgentProject,
   freshAgentExecutionConfig,
+  newAgentFundingConfig,
   suggestedAgentName,
+  suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
+import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
 import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
 import {
   assertAgentWorkingDirectory,
+  AgentProjectHomeNotReadyError,
   createAgentWorkingDirectory,
+  ensureAgentProjectHomeReady,
   effectiveNewAgentWorkingDirectory,
   MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
@@ -42,6 +49,68 @@ describe("new agent defaults", () => {
     ).toBe("agent-5");
   });
 
+  it("suggests a project title from the first line of the task", () => {
+    expect(
+      suggestedAgentProjectTitle("Build a weather dashboard.\nUse maps"),
+    ).toBe("Build a weather dashboard");
+    expect(suggestedAgentProjectTitle("  ")).toBe("My first project");
+    expect(suggestedAgentProjectTitle("A".repeat(100))).toHaveLength(80);
+  });
+
+  it("creates a default project from the first agent task without opening it", async () => {
+    const createProject = jest.fn(async () => "project-new");
+    await expect(
+      createDefaultAgentProject({
+        request: "Build a weather dashboard.\nUse maps",
+        createProject,
+      }),
+    ).resolves.toEqual({
+      projectId: "project-new",
+      title: "Build a weather dashboard",
+    });
+    expect(createProject).toHaveBeenCalledWith({
+      title: "Build a weather dashboard",
+      start: false,
+    });
+  });
+
+  it("starts a provisional first-run project with the selected managed image", async () => {
+    const createProject = jest.fn(async () => "project-new");
+    await expect(
+      createDefaultAgentProject({
+        request: "",
+        start: true,
+        image: { id: "official", image: "cocalc.local/rootfs/standard" },
+        createProject,
+      }),
+    ).resolves.toEqual({ projectId: "project-new", title: "My first project" });
+    expect(createProject).toHaveBeenCalledWith({
+      title: "My first project",
+      start: true,
+      rootfs_image: "cocalc.local/rootfs/standard",
+      rootfs_image_id: "official",
+    });
+  });
+
+  it("shares an in-flight automatic creation and retries only after failure", async () => {
+    const pending: { current: Promise<string> | undefined } = {
+      current: undefined,
+    };
+    const create = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("no host"))
+      .mockResolvedValue("project-new");
+    const first = createAgentProjectOnce(pending, create);
+    const concurrent = createAgentProjectOnce(pending, create);
+    expect(concurrent).toBe(first);
+    await expect(first).rejects.toThrow("no host");
+    expect(create).toHaveBeenCalledTimes(1);
+    await expect(createAgentProjectOnce(pending, create)).resolves.toBe(
+      "project-new",
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   it("does not carry Codex runtime identity into a fresh agent", () => {
     expect(
       freshAgentExecutionConfig({
@@ -57,6 +126,93 @@ describe("new agent defaults", () => {
       paymentSource: "subscription",
       workingDirectory: "/home/user/work",
     });
+  });
+
+  it("uses the site policy before a first agent turn with automatic membership funding", () => {
+    const paymentSource: any = {
+      source: "site-api-key",
+      siteFundedCodex: {
+        enabled: true,
+        policy: { model: "gpt-6-luna", reasoning: "medium" },
+      },
+    };
+    const config = newAgentFundingConfig({
+      config: {
+        paymentSource: "auto",
+        model: "gpt-6-astra",
+        reasoning: "low",
+      },
+      paymentSource,
+      useSubscriptionDefault: true,
+    });
+    expect(config).toMatchObject({
+      model: "gpt-6-luna",
+      reasoning: "medium",
+    });
+    expect(() =>
+      assertCodexFundingModelReady({ config, paymentSource }),
+    ).not.toThrow();
+  });
+
+  it("defaults a new subscription-funded agent to Sol, but preserves chosen settings", () => {
+    const paymentSource: any = { source: "subscription" };
+    const config = {
+      paymentSource: "auto" as const,
+      model: "gpt-6-astra",
+      reasoning: "low" as const,
+    };
+    expect(
+      newAgentFundingConfig({
+        config,
+        paymentSource,
+        useSubscriptionDefault: true,
+      }),
+    ).toMatchObject({ model: "gpt-6-sol", reasoning: "medium" });
+    expect(
+      newAgentFundingConfig({
+        config,
+        paymentSource,
+        useSubscriptionDefault: false,
+      }),
+    ).toBe(config);
+  });
+
+  it("does not silently send a preferred model using transient membership funding", () => {
+    const paymentSource: any = {
+      source: "site-api-key",
+      siteFundedCodex: {
+        policy: { model: "gpt-5.6-luna", reasoning: "medium" },
+      },
+    };
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "auto",
+          model: "gpt-6-sol",
+          reasoning: "high",
+        },
+        paymentSource,
+      }),
+    ).toThrow(/Wait for your ChatGPT Plan/);
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "subscription",
+          model: "gpt-6-sol",
+        },
+        paymentSource,
+      }),
+    ).toThrow(/selected payment source is not available/);
+    expect(() =>
+      assertCodexFundingModelReady({
+        config: {
+          paymentSource: "site-api-key",
+          model: "gpt-5.6-luna",
+          reasoning: "medium",
+        },
+        paymentSource,
+      }),
+    ).not.toThrow();
   });
 
   it("carries an exact subscription selection to the new thread", () => {
@@ -119,6 +275,17 @@ describe("agent workspace paths", () => {
         "/home/user/file",
       ),
     ).rejects.toThrow('Working directory "/home/user/file" is not a directory');
+
+    await expect(
+      assertAgentWorkingDirectory(
+        {
+          stat: jest.fn(async () =>
+            Promise.reject(new Error("RPC unavailable")),
+          ),
+        },
+        "/home/user",
+      ),
+    ).rejects.toThrow("RPC unavailable");
   });
 
   it("creates and revalidates a missing working directory", async () => {
@@ -131,5 +298,87 @@ describe("agent workspace paths", () => {
       recursive: true,
     });
     expect(stat).toHaveBeenCalledWith("/home/user/scratch2");
+  });
+
+  it("prepares a new project home after transient filesystem startup failures", async () => {
+    const stat = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("ENOENT"))
+      .mockRejectedValueOnce(new Error("project starting"))
+      .mockResolvedValue({ isDirectory: () => true });
+    const mkdir = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("project starting"));
+
+    await ensureAgentProjectHomeReady({ mkdir, stat }, "/home/user", {
+      attempts: 3,
+      retryDelayMs: 0,
+    });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user", { recursive: true });
+    expect(stat).toHaveBeenCalledTimes(3);
+  });
+
+  it("creates the default home automatically when it does not exist yet", async () => {
+    const stat = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("ENOENT"))
+      .mockResolvedValue({ isDirectory: () => true });
+    const mkdir = jest.fn(async () => undefined);
+
+    await ensureAgentProjectHomeReady({ mkdir, stat }, "/home/user", {
+      attempts: 2,
+      retryDelayMs: 0,
+    });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user", { recursive: true });
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a workspace readiness problem rather than a missing chosen directory", async () => {
+    const fs = {
+      mkdir: jest.fn(async () => Promise.reject(new Error("project starting"))),
+      stat: jest.fn(async () => Promise.reject(new Error("ENOENT"))),
+    };
+    await expect(
+      ensureAgentProjectHomeReady(fs, "/home/user", {
+        attempts: 2,
+        retryDelayMs: 0,
+      }),
+    ).rejects.toBeInstanceOf(AgentProjectHomeNotReadyError);
+  });
+
+  it.each(["stat", "mkdir"])(
+    "does not retry or hide %s permission failures",
+    async (method) => {
+      const denied = new Error("not authorized for project-host access token");
+      const fs = {
+        mkdir: jest.fn().mockRejectedValue(denied),
+        stat: jest
+          .fn()
+          .mockRejectedValue(method === "stat" ? denied : new Error("ENOENT")),
+      };
+      await expect(
+        ensureAgentProjectHomeReady(fs, "/home/user", {
+          attempts: 3,
+          retryDelayMs: 0,
+        }),
+      ).rejects.toBe(denied);
+      expect(fs.stat).toHaveBeenCalledTimes(1);
+      expect(fs.mkdir).toHaveBeenCalledTimes(method === "mkdir" ? 1 : 0);
+    },
+  );
+
+  it("includes the last filesystem failure when readiness retries run out", async () => {
+    await expect(
+      ensureAgentProjectHomeReady(
+        {
+          stat: jest.fn().mockRejectedValue(new Error("RPC unavailable")),
+          mkdir: jest.fn(),
+        },
+        "/home/user",
+        { attempts: 2, retryDelayMs: 0 },
+      ),
+    ).rejects.toThrow("Last filesystem error: Error: RPC unavailable");
   });
 });

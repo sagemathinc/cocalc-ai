@@ -4,6 +4,7 @@
  */
 
 import { Card, Descriptions, Space, Tag, Typography } from "antd";
+import type { ReactNode } from "react";
 import type {
   AgentNetwork,
   AgentNetworkMember,
@@ -12,7 +13,11 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import { isExternalAgentSource } from "@cocalc/conat/agents/rpc";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { networkColor, networkProjectCount } from "./agent-network-utils";
+import {
+  activeNetworkMembers,
+  networkColor,
+  networkProjectCount,
+} from "./agent-network-utils";
 
 const { Text } = Typography;
 
@@ -26,17 +31,22 @@ function memberLabel(member: AgentNetworkMember): string {
 export function AgentNetworkSummary({
   network,
   compact = false,
+  titleControl,
 }: {
   network: AgentNetwork;
   compact?: boolean;
+  titleControl?: ReactNode;
 }) {
   const projects = networkProjectCount(network);
+  const members = activeNetworkMembers(network);
   return (
     <Card
       size="small"
       title={
         <Space wrap>
-          <Tag color={networkColor(network)}>{network.title}</Tag>
+          {titleControl ?? (
+            <Tag color={networkColor(network)}>{network.title}</Tag>
+          )}
           <Tag>{network.delivery_mode}</Tag>
           {network.state !== "active" && (
             <Tag
@@ -57,12 +67,16 @@ export function AgentNetworkSummary({
         style={{ width: "100%" }}
       >
         <Text type="secondary">
-          {network.members.length} members across {projects} project
-          {projects === 1 ? "" : "s"}; every member can communicate with every
-          other member.
+          {members.length} members across {projects} project
+          {projects === 1 ? "" : "s"}
+          {members.length > 1
+            ? "; every member can communicate with every other member."
+            : members.length === 1
+              ? ". Add another member to enable agent-to-agent messaging."
+              : ". Add members to enable agent-to-agent messaging."}
         </Text>
         <Space wrap size={[4, 4]}>
-          {network.members.map((member) => (
+          {members.map((member) => (
             <Tag
               key={member.member_id}
               icon={

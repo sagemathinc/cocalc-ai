@@ -51,12 +51,18 @@ export function CommitArtifact({
   projectId,
   sourcePath,
   readOnly,
+  fontSize,
+  onIncreaseFontSize,
+  onDecreaseFontSize,
   onRequestAgentTurn,
 }: {
   artifact: ArtifactRecord;
   projectId: string;
   sourcePath: string;
   readOnly?: boolean;
+  fontSize?: number;
+  onIncreaseFontSize?: () => void;
+  onDecreaseFontSize?: () => void;
   onRequestAgentTurn?: ArtifactReviewRequest;
 }) {
   const commit = artifact.commit!;
@@ -64,7 +70,14 @@ export function CommitArtifact({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <div style={{ padding: 16, overflow: "auto", overflowWrap: "anywhere" }}>
+    <div
+      style={{
+        padding: 16,
+        overflow: "auto",
+        overflowWrap: "anywhere",
+        fontSize,
+      }}
+    >
       <h3>{artifact.title}</h3>
       <p>{artifact.input}</p>
       <p>
@@ -95,6 +108,9 @@ export function CommitArtifact({
         <Suspense fallback={<div role="status">Loading Git review...</div>}>
           <Review
             open
+            fontSize={fontSize}
+            onIncreaseFontSize={onIncreaseFontSize}
+            onDecreaseFontSize={onDecreaseFontSize}
             onClose={() => setReview(undefined)}
             projectId={projectId}
             sourcePath={sourcePath}

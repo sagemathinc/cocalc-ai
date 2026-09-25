@@ -58,6 +58,12 @@ import { projectRootfsEntryLabel } from "./project-rootfs-badge";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
+import { appUrl } from "@cocalc/frontend/auth/util";
+import { load_target } from "@cocalc/frontend/history";
+import {
+  agentFirstRunStarted,
+  beginAgentFirstRun,
+} from "./onboarding/agent-completion";
 import {
   classifyFirstRunOnboarding,
   FIRST_RUN_ONBOARDING_SETTING,
@@ -277,7 +283,9 @@ export const ProjectsPage: React.FC = () => {
       classifyFirstRunOnboarding({
         projects: onboardingProjects,
         invitations: inviteState.incoming,
-        invitesLoading: inviteState.loading,
+        invitesLoading:
+          inviteState.loading ||
+          (!!accountId && !inviteState.loaded && !inviteState.error),
         accountCreated,
         saved: savedFirstRunOnboarding,
       }),
@@ -285,11 +293,40 @@ export const ProjectsPage: React.FC = () => {
       accountCreated,
       inviteState.incoming,
       inviteState.loading,
+      inviteState.loaded,
+      inviteState.error,
+      accountId,
       onboardingProjects,
       savedFirstRunOnboarding,
     ],
   );
-  const showFirstRunOnboarding = firstRunDecision.kind !== "hidden";
+  const useAgentOnboarding =
+    (firstRunDecision.kind === "intent" ||
+      firstRunDecision.kind === "ready-projects") &&
+    inviteState.loaded &&
+    !inviteState.error &&
+    project_map != null &&
+    !otherSettings?.get("openai_disabled") &&
+    !(
+      savedFirstRunOnboarding?.status === "in_progress" &&
+      (savedFirstRunOnboarding.intent === "course-invite" ||
+        savedFirstRunOnboarding.intent === "project-invite")
+    );
+  useEffect(() => {
+    if (
+      !useAgentOnboarding ||
+      !accountId ||
+      activeTopTab !== "projects" ||
+      agentFirstRunStarted(accountId)
+    ) {
+      return;
+    }
+    beginAgentFirstRun(accountId);
+    window.history.replaceState(window.history.state, "", appUrl("agents/new"));
+    load_target("agents/new", false, false);
+  }, [accountId, activeTopTab, useAgentOnboarding]);
+  const showFirstRunOnboarding =
+    firstRunDecision.kind !== "hidden" && !useAgentOnboarding;
 
   const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",

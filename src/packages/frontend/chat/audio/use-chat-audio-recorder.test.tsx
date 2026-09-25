@@ -128,6 +128,20 @@ describe("useChatAudioRecorder", () => {
     }
   });
 
+  it("marks a permanent capability failure as background-only", async () => {
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValueOnce(new Error("capability lookup unavailable"));
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ onTranscript: jest.fn() }),
+    );
+    await waitFor(() => {
+      expect(hook.result.current.status).toBe("error");
+    });
+    expect(hook.result.current.error).toBe("capability lookup unavailable");
+    expect(hook.result.current.backgroundError).toBe(true);
+  });
+
   it("retries on reconnect and cancels retries on unmount", async () => {
     jest.useFakeTimers();
     jest

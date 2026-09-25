@@ -487,6 +487,7 @@ load_config() {
   COCALC_CLUSTER_SEED_CONAT_PASSWORD="${COCALC_CLUSTER_SEED_CONAT_PASSWORD:-}"
 
   load_cluster_vars
+  configure_cluster_shared_secret
 
   if [ -z "$HUB_SOFTWARE_BASE_URL_FORCE" ] && [ "$HUB_USE_LOCAL_SOFTWARE" = "1" ]; then
     if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
@@ -503,6 +504,33 @@ load_config() {
       fi
     fi
   fi
+}
+
+configure_cluster_shared_secret() {
+  if [ "${HUB_CLUSTER_BAY_COUNT:-0}" -le 1 ] ||
+    [ -n "${COCALC_CLUSTER_SHARED_SECRET:-}" ] ||
+    [ -n "${COCALC_HOME_BAY_RETRY_TOKEN_SECRET:-}" ]; then
+    return 0
+  fi
+
+  local secret_file="$STATE_DIR/cluster-shared-secret"
+  if [ ! -s "$secret_file" ]; then
+    local temp_file
+    temp_file="$(mktemp "$STATE_DIR/.cluster-shared-secret.XXXXXX")"
+    chmod 600 "$temp_file"
+    if ! node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))' > "$temp_file"; then
+      rm -f "$temp_file"
+      return 1
+    fi
+    ln "$temp_file" "$secret_file" 2>/dev/null || true
+    rm -f "$temp_file"
+  fi
+  if [ ! -s "$secret_file" ]; then
+    echo "cluster shared secret is empty: $secret_file" >&2
+    return 1
+  fi
+  COCALC_CLUSTER_SHARED_SECRET="$(<"$secret_file")"
+  export COCALC_CLUSTER_SHARED_SECRET
 }
 
 configure_funding_qa_env() {

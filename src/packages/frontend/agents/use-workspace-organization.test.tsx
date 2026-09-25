@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { Map } from "immutable";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { MY_AGENTS_ORGANIZATION_SETTING } from "./workspace-organization";
 
 const mockSave = jest.fn();
 let mockOtherSettings = Map();
@@ -40,10 +41,12 @@ function agent(id: string): NamedAgent {
 
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -139,4 +142,48 @@ it("persists project grouping and collapsed projects", async () => {
 
   second.resolve();
   await act(async () => await second.promise);
+});
+
+it("keeps failed changes visible and retries the latest organization", async () => {
+  mockSave
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(undefined);
+  const { result, rerender } = renderHook(() =>
+    useAgentWorkspaceOrganization([agent("a"), agent("b")]),
+  );
+
+  act(() => result.current.setPinned("a", true));
+  await waitFor(() =>
+    expect(result.current.saveError).toBe("Agent list changes were not saved."),
+  );
+  expect(result.current.groups.pinned.map(({ name }) => name)).toEqual(["a"]);
+
+  mockOtherSettings = Map().set(MY_AGENTS_ORGANIZATION_SETTING, {
+    mode: "custom",
+  });
+  rerender();
+
+  act(() => result.current.retrySave());
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(2));
+  expect(mockSave.mock.calls[1]).toEqual(mockSave.mock.calls[0]);
+  await waitFor(() => expect(result.current.saveError).toBe(""));
+});
+
+it("does not report an older failed write after a newer save succeeds", async () => {
+  const first = deferred();
+  mockSave.mockReturnValueOnce(first.promise).mockResolvedValueOnce(undefined);
+  const { result } = renderHook(() =>
+    useAgentWorkspaceOrganization([agent("a"), agent("b")]),
+  );
+
+  act(() => result.current.setMode("custom"));
+  act(() => result.current.setPinned("a", true));
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+  first.reject(new Error("offline"));
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(2));
+  expect(result.current.saveError).toBe("");
+  expect(mockSave.mock.calls[1][1]).toMatchObject({
+    mode: "custom",
+    pinned: '["a"]',
+  });
 });

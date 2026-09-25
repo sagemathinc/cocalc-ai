@@ -154,6 +154,34 @@ describe("conat/file-server-client", () => {
     expect(conatWithProjectRoutingForAccountMock).not.toHaveBeenCalled();
   });
 
+  it("uses an account-authorized route and a hub token for trusted chat reads", async () => {
+    materializeProjectHostTargetMock = jest.fn(async () => undefined);
+    materializeRemoteProjectHostTargetMock = jest.fn(async () => ({
+      address: "https://remote-host",
+      host_id: "host-remote",
+      host_session_id: "session-remote",
+    }));
+    const { getTrustedProjectHostClient } =
+      await import("./file-server-client");
+
+    await expect(
+      getTrustedProjectHostClient({
+        project_id: "22222222-2222-2222-2222-222222222222",
+        account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ id: "explicit-hub-client" });
+    expect(materializeRemoteProjectHostTargetMock).toHaveBeenCalledWith({
+      account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      project_id: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(getExplicitProjectHostRoutedHubClientMock).toHaveBeenCalledWith({
+      address: "https://remote-host",
+      host_id: "host-remote",
+      host_session_id: "session-remote",
+    });
+    expect(conatWithProjectRoutingForAccountMock).not.toHaveBeenCalled();
+  });
+
   it("does not use an account principal for local file-server management", async () => {
     const { getProjectFileServerClient } = await import("./file-server-client");
 

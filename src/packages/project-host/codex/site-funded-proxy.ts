@@ -228,15 +228,21 @@ function providerResponseStatus(payload: any): ProviderResponseStatus | null {
 
 function assertAllowedTools(tools: unknown): void {
   if (!Array.isArray(tools)) return;
-  for (const tool of tools) {
-    const type = `${(tool as any)?.type ?? ""}`.trim();
-    if (!UNBILLED_PROVIDER_TOOL_TYPES.has(type)) {
-      throw Object.assign(
-        new Error(
-          `OpenAI tool '${type || "unknown"}' is not available in site-funded Codex mode`,
-        ),
-        { statusCode: 403 },
-      );
+  const groups = [tools];
+  while (groups.length) {
+    for (const tool of groups.pop()!) {
+      const type = `${tool?.type ?? ""}`.trim();
+      // Namespaces group client-executed tools; validate their members too.
+      if (type === "namespace" && Array.isArray(tool.tools)) {
+        groups.push(tool.tools);
+      } else if (!UNBILLED_PROVIDER_TOOL_TYPES.has(type)) {
+        throw Object.assign(
+          new Error(
+            `OpenAI tool '${type || "unknown"}' is not available in site-funded Codex mode`,
+          ),
+          { statusCode: 403 },
+        );
+      }
     }
   }
 }

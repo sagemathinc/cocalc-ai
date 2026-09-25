@@ -4,7 +4,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import type {
   AgentNetwork,
   AgentNetworkActivity,
@@ -13,12 +22,13 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon } from "@cocalc/frontend/components/icon";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
-import { networkProjectCount } from "./agent-network-utils";
+import {
+  duplicateNetworkTitle,
+  networkProjectCount,
+} from "./agent-network-utils";
 import { AgentNetworkSummary } from "./agent-network-summary";
 
 const { Text } = Typography;
@@ -34,57 +44,18 @@ function memberLabel(network: AgentNetwork, memberId: string): string {
     : (member.thread_title ?? member.member_id);
 }
 
-export function AgentNetworkFilterBar({
-  network,
-  onOpen,
-  onClear,
-}: {
-  network: AgentNetwork;
-  onOpen: () => void;
-  onClear: () => void;
-}) {
-  return (
-    <section
-      aria-label={`Filtered to ${network.title} network`}
-      style={{
-        alignItems: "center",
-        background: UI_COLORS.infoBg,
-        border: `1px solid ${UI_COLORS.info}`,
-        borderRadius: 6,
-        boxSizing: "border-box",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-        padding: "7px 8px",
-        maxWidth: "100%",
-        width: "100%",
-      }}
-    >
-      <Icon name="network" style={{ color: UI_COLORS.info }} />
-      <Text style={{ flex: "1 1 130px", minWidth: 0 }} ellipsis>
-        Showing <strong>{network.title}</strong>
-        <Text type="secondary"> · {network.members.length} agents</Text>
-      </Text>
-      <Space size={2} wrap>
-        <Button type="link" size="small" onClick={onOpen}>
-          Details
-        </Button>
-        <Button type="text" size="small" onClick={onClear}>
-          Clear
-        </Button>
-      </Space>
-    </section>
-  );
-}
-
 export function AgentNetworkDetailsModal({
   network,
+  networks = [],
   onClose,
   onChanged,
+  onSelectNetwork,
 }: {
   network?: AgentNetwork;
+  networks?: AgentNetwork[];
   onClose: () => void;
   onChanged?: () => void | Promise<void>;
+  onSelectNetwork?: (network: AgentNetwork) => void;
 }) {
   const [activity, setActivity] = useState<AgentNetworkActivity[]>();
   const [activityLoading, setActivityLoading] = useState(false);
@@ -165,6 +136,11 @@ export function AgentNetworkDetailsModal({
 
   if (!network) return null;
   const projects = networkProjectCount(network);
+  const duplicateTitle = duplicateNetworkTitle(
+    networks,
+    title,
+    network.agent_network_id,
+  );
 
   const setDelivery = (deliveryMode: "queued" | "live") => {
     const key = `${network.agent_network_id}:delivery:${deliveryMode}:${network.generation}`;
@@ -203,7 +179,37 @@ export function AgentNetworkDetailsModal({
           {notice && (
             <Alert role="status" type="success" showIcon title={notice} />
           )}
-          <AgentNetworkSummary network={network} />
+          <AgentNetworkSummary
+            network={network}
+            titleControl={
+              <Select
+                aria-label="Select Agent Network"
+                value={network.agent_network_id}
+                onChange={(id) => {
+                  const next = networks.find(
+                    ({ agent_network_id }) => agent_network_id === id,
+                  );
+                  if (next) onSelectNetwork?.(next);
+                }}
+                getPopupContainer={(node) =>
+                  node.parentElement ?? document.body
+                }
+                options={(networks.length ? networks : [network]).map(
+                  (item) => ({
+                    value: item.agent_network_id,
+                    label: duplicateNetworkTitle(
+                      networks,
+                      item.title,
+                      item.agent_network_id,
+                    )
+                      ? `${item.title} · ${item.agent_network_id.slice(0, 8)}`
+                      : item.title,
+                  }),
+                )}
+                style={{ minWidth: 160, maxWidth: "100%" }}
+              />
+            }
+          />
 
           <section aria-labelledby="agent-network-controls-heading">
             <Space orientation="vertical" size={8} style={{ width: "100%" }}>
@@ -218,7 +224,8 @@ export function AgentNetworkDetailsModal({
                   onChange={(event) => setTitle(event.target.value)}
                   onPressEnter={() => {
                     const next = title.trim();
-                    if (!next || next === network.title) return;
+                    if (!next || next === network.title || duplicateTitle)
+                      return;
                     const key = `${network.agent_network_id}:title:${next}:${network.generation}`;
                     void mutate(
                       key,
@@ -235,7 +242,10 @@ export function AgentNetworkDetailsModal({
                 />
                 <Button
                   disabled={
-                    busy || !title.trim() || title.trim() === network.title
+                    busy ||
+                    !title.trim() ||
+                    title.trim() === network.title ||
+                    duplicateTitle
                   }
                   onClick={() => {
                     const next = title.trim();
@@ -256,6 +266,12 @@ export function AgentNetworkDetailsModal({
                   Rename
                 </Button>
               </Space.Compact>
+              {duplicateTitle && (
+                <Text role="alert" type="danger">
+                  Another network tag already uses this name. Choose a distinct
+                  name.
+                </Text>
+              )}
               <Space wrap>
                 <Button
                   disabled={busy || network.state === "closed"}
@@ -298,6 +314,34 @@ export function AgentNetworkDetailsModal({
                   }}
                 >
                   {network.state === "paused" ? "Resume" : "Pause"} network
+                </Button>
+                <Button
+                  danger
+                  disabled={busy || network.state === "closed"}
+                  onClick={() =>
+                    Modal.confirm({
+                      title: "Close this Agent Network?",
+                      content:
+                        "Closing is permanent and blocks future messages. It does not cancel accepted work or erase chat history.",
+                      okText: "Close network",
+                      okButtonProps: { danger: true },
+                      onOk: () => {
+                        const key = `${network.agent_network_id}:close:${network.generation}`;
+                        return mutate(
+                          key,
+                          () =>
+                            personalAgentApi().updateAgentNetwork({
+                              request_id: requestId(key),
+                              agent_network_id: network.agent_network_id,
+                              action: "close",
+                            }),
+                          "Agent Network closed.",
+                        );
+                      },
+                    })
+                  }
+                >
+                  Close network
                 </Button>
               </Space>
               <Text type="secondary">

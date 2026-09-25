@@ -7,6 +7,7 @@ import {
   afterNextPaint,
   UxLatencyTrace,
 } from "@cocalc/frontend/monitoring/ux-latency-trace";
+import { failOnboardingMessage } from "@cocalc/frontend/monitoring/onboarding";
 
 const CODEX_RESPONSE_TIMEOUT_MS = 10 * 60_000;
 
@@ -108,6 +109,7 @@ export function recordCodexResponseFailed({
   error_name: string;
   acknowledged: boolean;
 }): void {
+  failOnboardingMessage(message_id);
   const entry = traces.get(message_id);
   if (entry == null) return;
   entry.trace.record("codex_response_failed_v2", {

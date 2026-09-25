@@ -234,6 +234,9 @@ function metricLabel(metric: string): string {
 }
 
 function metricHelp(metric: string, segment?: string): string {
+  if (metric.startsWith("onboarding_")) {
+    return "Unsampled first-onboarding-submit trace, including preparation, through the first nonempty Codex output painted in the browser. Started and phase events are persisted; failures, abandonment, 60-second stalls, and missing terminal reports after 120 seconds are reported separately. The server watchdog runs during UX monitoring even if the browser disappears. Details include the last stage and elapsed stage marks, never the prompt.";
+  }
   if (segment === "project_restore") {
     return "Observed in the user's browser. This segment starts from a project that is archived or not provisioned, so it can include backup restore, rootfs restore, or other storage preparation and can legitimately be much slower than a normal start.";
   }

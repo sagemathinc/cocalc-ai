@@ -18,6 +18,7 @@ import { isNewsFilter } from "./news/types";
 import { NoMentions } from "./notification-no-mentions";
 import { NotificationRow } from "./mentions/notification-row";
 import { groupNotificationMentions } from "./mentions/notification-groups";
+import { useNamedAgents } from "@cocalc/frontend/agents/api";
 
 interface MentionsPanelProps {
   filter: MentionsFilter;
@@ -32,6 +33,7 @@ interface MentionsPanelProps {
 const READ_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function MentionsPanel(props: MentionsPanelProps) {
+  const { directory: namedAgents } = useNamedAgents();
   const {
     filter,
     loading,
@@ -130,6 +132,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
         firstTime={group.firstTime}
         latestTime={group.latestTime}
         user_map={user_map}
+        namedAgents={namedAgents?.agents}
       />,
     );
   }

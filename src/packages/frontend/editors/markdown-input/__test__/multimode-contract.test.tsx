@@ -115,6 +115,38 @@ describe("MultiMarkdownInput wrapper contract", () => {
     jest.useRealTimers();
   });
 
+  it("focuses the compact editor when its blank shell is clicked", () => {
+    const focus = jest.fn(() => true);
+    editableControlApi = { focus };
+    const { container } = render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        compactModeSwitch
+        height={"auto"}
+      />,
+    );
+
+    fireEvent.click(container.firstElementChild!);
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("lets an auto-growing compact editor expand its shell", () => {
+    const { container } = render(
+      <MultiMarkdownInput
+        value="A growing draft"
+        onChange={() => {}}
+        compactModeSwitch
+        modeSwitchPlacement="toolbar"
+        height="auto"
+      />,
+    );
+
+    expect((container.firstElementChild as HTMLElement).style.height).toBe(
+      "auto",
+    );
+  });
+
   it("reports initial mode and updates onModeChange when the mode switch is used", () => {
     const onModeChange = jest.fn();
 

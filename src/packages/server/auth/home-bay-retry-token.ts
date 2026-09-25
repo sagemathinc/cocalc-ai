@@ -76,7 +76,10 @@ function getSharedSecret(): Buffer {
     return Buffer.from(clusterShared, "utf8");
   }
   const cluster = getClusterConfig();
-  const shared = `${cluster.seed_conat_password ?? conatPassword ?? ""}`.trim();
+  if (cluster.role !== "standalone") {
+    throw new Error("missing shared home-bay retry token signing secret");
+  }
+  const shared = `${conatPassword ?? ""}`.trim();
   if (!shared) {
     throw new Error("missing home-bay retry token signing secret");
   }

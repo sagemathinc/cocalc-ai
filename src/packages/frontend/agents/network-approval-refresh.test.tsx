@@ -29,6 +29,7 @@ const mockApi = {
       { kind: "registered", endpoint: source, name: "agent-1" },
     ];
   }),
+  createAgentNetwork: jest.fn(async () => ({})),
 };
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -128,5 +129,44 @@ it("refreshes mounted membership views after approving a cross-project join", as
     expect(
       screen.getByRole("status", { name: "Network membership" }).textContent,
     ).toBe("agent-2, agent-1"),
+  );
+});
+
+it("creates a live network from the connect-agents flow", async () => {
+  const onClose = jest.fn();
+  render(
+    <NetworkApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "agent-1",
+        targetLabel: "agent-2",
+      }}
+      onClose={onClose}
+    />,
+  );
+
+  await userEvent.click(
+    await screen.findByRole("radio", { name: "Create a new topic network" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Network topic" }),
+    "Review",
+  );
+  expect(
+    screen.getByText(/new networks start with live delivery/i),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Create network" }));
+
+  await waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+  expect(mockApi.createAgentNetwork).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Review",
+      delivery_mode: "live",
+      members: [
+        { kind: "registered", endpoint: source },
+        { kind: "registered", endpoint: target },
+      ],
+    }),
   );
 });

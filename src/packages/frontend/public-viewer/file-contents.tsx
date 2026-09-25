@@ -130,7 +130,7 @@ export default function PublicViewerFileContents({
       <Suspense fallback={<LoadingRenderer />}>
         <MarkdownRenderer
           content={content}
-          style={style}
+          style={{ fontSize, ...style }}
           fileContext={resolvedFileContext}
         />
       </Suspense>

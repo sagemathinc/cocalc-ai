@@ -13,9 +13,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useWindowDimensions: () => ({ width: mockWidth, height: 740 }),
   useTypedRedux: (store, key) =>
     store === "account"
-      ? { active_page: "my-agents", account_id: "account", is_logged_in: true }[
-          key
-        ]
+      ? { active_page: "ai", account_id: "account", is_logged_in: true }[key]
       : undefined,
   redux: {
     getActions: () => ({ setState: mockSetState, push_state: jest.fn() }),
@@ -43,11 +41,11 @@ jest.mock("./settings-index", () => ({
 }));
 jest.mock("./settings-page-registry", () => ({
   SETTINGS_PAGE_DEFINITIONS: {
-    "my-agents": {
-      key: "my-agents",
-      component: () => <p>My agents directory content</p>,
-      label: { id: "agents", defaultMessage: "Agents" },
-      icon: "robot",
+    ai: {
+      key: "ai",
+      component: () => <p>AI preferences content</p>,
+      label: { id: "ai", defaultMessage: "AI" },
+      icon: "cog",
     },
     profile: {
       key: "profile",
@@ -62,7 +60,7 @@ jest.mock("./settings-navigation", () => ({
   getSettingsNavigationGroupKey: () => undefined,
   useSettingsNavigationContext: () => ({}),
   getVisibleSettingsNavigation: () => [
-    { type: "page", page: "my-agents" },
+    { type: "page", page: "ai" },
     { type: "page", page: "profile" },
   ],
 }));
@@ -84,7 +82,7 @@ test("320px desktop viewport uses the existing compact settings menu instead of 
     container.querySelector("[data-cocalc-mobile-account-settings]"),
   ).not.toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
-  expect(screen.getByText("My agents directory content")).toBeTruthy();
+  expect(screen.getByText("AI preferences content")).toBeTruthy();
   const menu = screen.getByRole("combobox", { name: "Settings menu" });
   menu.focus();
   // rc-select reads legacy `which`, which user-event does not populate.
@@ -118,8 +116,8 @@ test("resizing automatically switches navigation while preserving the selected p
   view.rerender(<Page />);
   expect(screen.queryByRole("menu")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Settings menu" })).toBeTruthy();
-  expect(screen.getByRole("heading", { name: "Agents" })).toBeTruthy();
-  expect(screen.getByText("My agents directory content")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "AI" })).toBeTruthy();
+  expect(screen.getByText("AI preferences content")).toBeTruthy();
   mockWidth = 1000;
   view.rerender(<Page />);
   await user.click(screen.getByRole("button", { name: "Show settings menu" }));
@@ -134,5 +132,5 @@ test("mobile settings menu retains readable page labels", () => {
   mockMobile = true;
   render(<Page />);
   expect(screen.getByRole("combobox", { name: "Settings menu" })).toBeTruthy();
-  expect(screen.getAllByText("Agents").length).toBeGreaterThan(1);
+  expect(screen.getAllByText("AI").length).toBeGreaterThan(1);
 });

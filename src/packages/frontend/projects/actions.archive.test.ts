@@ -465,6 +465,37 @@ describe("ProjectsActions archive flow", () => {
     }
   });
 
+  it("does not report a completed stop as failed when its projection stays stale", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({ state: "running", hostId: "host-1" });
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+      const { actions, setState } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      const repair = jest
+        .spyOn(actions, "repairProjectProjection")
+        .mockResolvedValue(undefined);
+
+      const stopped = actions.stop_project(project_id);
+      await jest.advanceTimersByTimeAsync(10_000);
+
+      await expect(stopped).resolves.toBe(true);
+      expect(repair).toHaveBeenCalledTimes(1);
+      expect(setState).toHaveBeenCalledWith({ control_error: "" });
+      expect(setState).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          control_error: expect.stringContaining("projection did not converge"),
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("treats a fresh running projection as a converged stop during fast restart", async () => {
     configureProject({
       state: "running",

@@ -89,6 +89,12 @@ import {
 } from "./use-codex-payment-source";
 import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
+  ComposerPillButton,
+  ComposerProjectDirectoryButton,
+  composerPillStyle,
+  displayComposerWorkingDirectory,
+} from "./composer-codex-controls";
+import {
   readCodexSubscriptionSelection,
   writeCodexSubscriptionSelection,
 } from "./codex-subscription-selection";
@@ -131,7 +137,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean | "summary" | "composer" | "icon";
+  compact?: boolean | "summary" | "composer" | "mobile-composer" | "icon";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -364,24 +370,6 @@ type PillSegment =
   | "mode"
   | "reasoning";
 
-const pillSegmentBaseStyle: React.CSSProperties = {
-  alignItems: "center",
-  background: "transparent",
-  border: 0,
-  borderRadius: 999,
-  color: UI_COLORS.secondary,
-  cursor: "pointer",
-  display: "inline-flex",
-  font: "inherit",
-  lineHeight: 1.2,
-  minWidth: 0,
-  paddingBottom: 2,
-  paddingLeft: 5,
-  paddingRight: 5,
-  paddingTop: 2,
-  whiteSpace: "nowrap",
-};
-
 function readCodexControlsCollapsed(): boolean {
   try {
     return (
@@ -551,6 +539,7 @@ export function CodexConfigButton({
   const [selectedCredentialId, setSelectedCredentialId] = useState<
     string | undefined
   >();
+  const [draftPaymentChoice, setDraftPaymentChoice] = useState("auto");
   const [credentialSelectionLoaded, setCredentialSelectionLoaded] =
     useState(false);
   useEffect(() => {
@@ -728,6 +717,7 @@ export function CodexConfigButton({
     Form.useWatch("serviceTier", form) ?? value?.serviceTier ?? "standard";
   const siteFundedPolicy =
     !lite &&
+    selectedPaymentSource === "site-api-key" &&
     paymentSource?.source === "site-api-key" &&
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy
@@ -859,6 +849,34 @@ export function CodexConfigButton({
       return option;
     },
   );
+  const dialogPaymentOptions = paymentSourceOptions.flatMap<{
+    value: string;
+    label: string;
+    description: string;
+    disabled?: boolean;
+  }>((option) =>
+    option.value === "subscription" && paymentSource?.subscriptions?.length
+      ? paymentSource.subscriptions.map((credential) => ({
+          value: `subscription:${credential.id}`,
+          label: getCodexSubscriptionDisplayName(
+            credential,
+            paymentSource.subscriptions ?? [],
+          ),
+          description: credential.plan
+            ? `ChatGPT ${credential.plan} subscription`
+            : option.description,
+          disabled: option.disabled,
+        }))
+      : [option],
+  );
+  useEffect(() => {
+    if (!open) return;
+    setDraftPaymentChoice(
+      selectedPaymentSource === "subscription" && selectedSubscription
+        ? `subscription:${selectedSubscription.id}`
+        : selectedPaymentSource,
+    );
+  }, [open]);
 
   useEffect(() => {
     const wantsModels = open || codexModelRequestNonce > 0;
@@ -1009,14 +1027,10 @@ export function CodexConfigButton({
       )?.label ?? siteFundedPolicy.reasoning)
     : reasoningLabel;
   const displayedServiceTier = siteFundedPolicy ? undefined : serviceTierLabel;
-  const displayedWorkingDirectory = (() => {
-    const home = getProjectHomeDirectory(projectId);
-    if (selectedWorkingDirectory === home) return "~";
-    if (selectedWorkingDirectory.startsWith(`${home}/`)) {
-      return `~/${selectedWorkingDirectory.slice(home.length + 1)}`;
-    }
-    return selectedWorkingDirectory;
-  })();
+  const displayedWorkingDirectory = displayComposerWorkingDirectory(
+    selectedWorkingDirectory,
+    getProjectHomeDirectory(projectId),
+  );
   const paymentNeedsAttention =
     paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
   const toggleControlsCollapsed = () => {
@@ -1113,8 +1127,25 @@ export function CodexConfigButton({
   };
 
   const saveConfig = () => {
-    const finalValues = normalizeConfigForSave(form.getFieldsValue());
+    const finalValues = normalizeConfigForSave({
+      ...form.getFieldsValue(),
+      paymentSource: draftPaymentChoice.startsWith("subscription:")
+        ? "subscription"
+        : (draftPaymentChoice as CodexPaymentSourcePreference),
+    });
     actions?.setCodexConfig?.(threadKey, finalValues);
+    if (accountId && projectId) {
+      const credentialId = draftPaymentChoice.startsWith("subscription:")
+        ? draftPaymentChoice.slice("subscription:".length)
+        : undefined;
+      writeCodexSubscriptionSelection({
+        accountId,
+        projectId,
+        threadKey,
+        credentialId,
+      });
+      setSelectedCredentialId(credentialId);
+    }
     setTimeout(() => {
       setOpen(false);
     }, 1);
@@ -1320,7 +1351,7 @@ export function CodexConfigButton({
   };
 
   const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
-    ...pillSegmentBaseStyle,
+    ...composerPillStyle,
     background:
       hoveredPillSegment === segment ? UI_COLORS.hover : "transparent",
     color:
@@ -1406,47 +1437,11 @@ export function CodexConfigButton({
                   </Space>
                 }
               >
-                <Button
-                  aria-label={`Working directory: ${projectTitle ?? "Project"} / ${selectedWorkingDirectory}`}
-                  aria-haspopup="dialog"
-                  icon={<Icon name="folder-open" />}
-                  size="small"
-                  type="text"
-                  style={{
-                    color: UI_COLORS.secondary,
-                    display: "inline-flex",
-                    flex: "0 1 auto",
-                    maxWidth: 240,
-                    minWidth: 0,
-                    overflow: "hidden",
-                  }}
-                >
-                  <span
-                    style={{
-                      flex: "0 1 110px",
-                      minWidth: 24,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {projectTitle ?? "Project"}
-                  </span>
-                  <Text type="secondary" style={{ flex: "0 0 auto" }}>
-                    &nbsp;/&nbsp;
-                  </Text>
-                  <span
-                    style={{
-                      flex: "1 1 70px",
-                      minWidth: 50,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {displayedWorkingDirectory}
-                  </span>
-                </Button>
+                <ComposerProjectDirectoryButton
+                  projectTitle={projectTitle ?? "Project"}
+                  directory={selectedWorkingDirectory}
+                  displayedDirectory={displayedWorkingDirectory}
+                />
               </Popover>
             </Tooltip>
             <span
@@ -1460,12 +1455,9 @@ export function CodexConfigButton({
             >
               {siteFundedPolicy ? (
                 <Tooltip title="CoCalc Membership chooses the model">
-                  <button
-                    type="button"
-                    style={{ ...pillSegmentBaseStyle, cursor: "default" }}
-                  >
+                  <ComposerPillButton style={{ cursor: "default" }}>
                     {displayedModel}
-                  </button>
+                  </ComposerPillButton>
                 </Tooltip>
               ) : (
                 <Dropdown
@@ -1481,51 +1473,43 @@ export function CodexConfigButton({
                     }
                   }}
                 >
-                  <button
-                    type="button"
+                  <ComposerPillButton
                     aria-label={`Change model. Current model: ${displayedModel}`}
-                    style={{ ...pillSegmentBaseStyle, maxWidth: 150 }}
+                    style={{ maxWidth: 150 }}
                   >
                     <span
                       style={{ overflow: "hidden", textOverflow: "ellipsis" }}
                     >
                       {displayedModel}
                     </span>
-                  </button>
+                  </ComposerPillButton>
                 </Dropdown>
               )}
               <Text type="secondary">·</Text>
               {siteFundedPolicy ? (
                 <Tooltip title="CoCalc Membership chooses the thinking level">
-                  <button
-                    type="button"
-                    style={{ ...pillSegmentBaseStyle, cursor: "default" }}
-                  >
+                  <ComposerPillButton style={{ cursor: "default" }}>
                     {displayedReasoning}
-                  </button>
+                  </ComposerPillButton>
                 </Tooltip>
               ) : (
                 <Dropdown menu={reasoningMenu} trigger={["click"]}>
-                  <button
-                    type="button"
+                  <ComposerPillButton
                     aria-label={`Change thinking level. Current level: ${displayedReasoning}`}
-                    style={pillSegmentBaseStyle}
                   >
                     {displayedReasoning}
-                  </button>
+                  </ComposerPillButton>
                 </Dropdown>
               )}
               {displayedServiceTier ? (
                 <>
                   <Text type="secondary">·</Text>
                   <Dropdown menu={serviceTierMenu} trigger={["click"]}>
-                    <button
-                      type="button"
+                    <ComposerPillButton
                       aria-label={`Change speed. Current speed: ${displayedServiceTier}`}
-                      style={pillSegmentBaseStyle}
                     >
                       {displayedServiceTier}
-                    </button>
+                    </ComposerPillButton>
                   </Dropdown>
                 </>
               ) : null}
@@ -1537,21 +1521,19 @@ export function CodexConfigButton({
                   title={sourceTooltipDetails}
                   styles={{ root: { maxWidth: 420 } }}
                 >
-                  <button
-                    type="button"
+                  <ComposerPillButton
                     aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
                     aria-haspopup="dialog"
                     onMouseEnter={() => setCodexUsageRequested(true)}
                     onClick={() => setPaymentOpen(true)}
                     style={{
-                      ...pillSegmentBaseStyle,
                       color: paymentNeedsAttention
                         ? UI_COLORS.danger
                         : UI_COLORS.secondary,
                     }}
                   >
                     {sourceShortLabel}
-                  </button>
+                  </ComposerPillButton>
                 </Tooltip>
               ) : (
                 <Tooltip
@@ -1561,12 +1543,10 @@ export function CodexConfigButton({
                   styles={{ root: { maxWidth: 420 } }}
                 >
                   <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
-                    <button
-                      type="button"
+                    <ComposerPillButton
                       aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
                       onMouseEnter={() => setCodexUsageRequested(true)}
                       style={{
-                        ...pillSegmentBaseStyle,
                         color: paymentNeedsAttention
                           ? UI_COLORS.danger
                           : UI_COLORS.secondary,
@@ -1576,7 +1556,7 @@ export function CodexConfigButton({
                       }}
                     >
                       {sourceShortLabel}
-                    </button>
+                    </ComposerPillButton>
                   </Dropdown>
                 </Tooltip>
               )}
@@ -1592,6 +1572,33 @@ export function CodexConfigButton({
               ></Button>
             </Tooltip>
           </>
+        ) : compact === "mobile-composer" ? (
+          <Button
+            aria-label={`Agent settings: ${displayedModel}, ${displayedReasoning}, ${sourceShortLabel}`}
+            aria-haspopup="dialog"
+            size="small"
+            title={`${displayedModel} · ${displayedReasoning} · ${sourceShortLabel}`}
+            type="text"
+            onClick={() => setOpen(true)}
+            style={{
+              color: paymentNeedsAttention ? UI_COLORS.danger : undefined,
+              minWidth: 0,
+              maxWidth: "100%",
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {displayedModel} · {displayedReasoning} · {sourceShortLabel}
+            </span>
+          </Button>
         ) : compact ? (
           <Button
             className={
@@ -1703,18 +1710,16 @@ export function CodexConfigButton({
                   flex: "0 0 auto",
                 }}
               />
-              <button
-                type="button"
+              <ComposerPillButton
                 onClick={() => setOpen(true)}
                 style={{
-                  ...pillSegmentBaseStyle,
                   color: UI_COLORS.text,
                   fontWeight: 600,
                   paddingLeft: 0,
                 }}
               >
                 Codex
-              </button>
+              </ComposerPillButton>
               {showPaymentSourceSelector ? (
                 <>
                   <Text type="secondary" style={{ fontSize: 12 }}>
@@ -1924,7 +1929,14 @@ export function CodexConfigButton({
         onOk={onSave}
         onCancel={() => setOpen(false)}
         width={680}
-        styles={{ body: { background: UI_COLORS.surface, paddingTop: 8 } }}
+        styles={{
+          body: {
+            background: UI_COLORS.surface,
+            maxHeight: "calc(100dvh - 220px)",
+            overflowY: "auto",
+            paddingTop: 8,
+          },
+        }}
       >
         <Form form={form} layout="vertical">
           <Space orientation="vertical" style={{ width: "100%" }} size={10}>
@@ -1996,20 +2008,27 @@ export function CodexConfigButton({
                       Payment source
                     </SectionTitle>
                   }
-                  name="paymentSource"
                   style={formItemStyle}
                 >
                   <Select
                     aria-label="Payment source"
-                    options={paymentSourceOptions}
+                    value={draftPaymentChoice}
+                    options={dialogPaymentOptions}
                     optionRender={(option) =>
                       renderOptionWithDescription({
                         title: `${option.data.label}`,
                         description: option.data.description,
                       })
                     }
-                    onChange={(next: CodexPaymentSourcePreference) => {
-                      form.setFieldsValue(paymentSourcePatch(next));
+                    onChange={(next: string) => {
+                      setDraftPaymentChoice(next);
+                      form.setFieldsValue(
+                        paymentSourcePatch(
+                          next.startsWith("subscription:")
+                            ? "subscription"
+                            : (next as CodexPaymentSourcePreference),
+                        ),
+                      );
                     }}
                   />
                 </Form.Item>

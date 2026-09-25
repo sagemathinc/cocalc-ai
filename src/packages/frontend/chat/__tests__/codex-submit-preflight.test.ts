@@ -5,6 +5,7 @@ import {
   isCodexPaymentSourceNeedsUserConfiguration,
   isCodexPaymentSourceUsable,
   isCodexSubmitTarget,
+  shouldUseExplicitMembershipModel,
 } from "../codex-submit-preflight";
 
 jest.mock("@cocalc/frontend/lite", () => ({
@@ -12,6 +13,21 @@ jest.mock("@cocalc/frontend/lite", () => ({
 }));
 
 describe("Codex submit preflight", () => {
+  it("only applies the membership model after explicit selection", () => {
+    const paymentSource = {
+      source: "site-api-key" as const,
+      siteFundedCodex: { enabled: true },
+    } as any;
+    expect(
+      shouldUseExplicitMembershipModel({ preference: "auto", paymentSource }),
+    ).toBe(false);
+    expect(
+      shouldUseExplicitMembershipModel({
+        preference: "site-api-key",
+        paymentSource,
+      }),
+    ).toBe(true);
+  });
   it("requires an actual payment source", () => {
     expect(isCodexPaymentSourceUsable(undefined)).toBe(false);
     expect(isCodexPaymentSourceUsable({ source: "none" } as any)).toBe(false);

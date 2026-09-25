@@ -1,4 +1,4 @@
-import { personalControl } from "./personal";
+import { personalControl, personalAgentLimits } from "./personal";
 
 const mockNetworks = jest.fn();
 const mockUpdateNetwork = jest.fn();
@@ -6,6 +6,7 @@ const mockAssertHome = jest.fn();
 const mockNames = jest.fn();
 const mockRetire = jest.fn();
 let mockHome = "home";
+let mockNamedLimit: number | undefined = 15;
 jest.mock("./store", () => ({
   AgentStore: jest.fn(),
   agentStore: () => {
@@ -49,7 +50,7 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
 jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: async () => ({
     effective_limits: {
-      max_named_agents: 15,
+      max_named_agents: mockNamedLimit,
       max_agent_network_members: 8,
     },
   }),
@@ -58,10 +59,24 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 const account_id = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => {
   mockHome = "home";
+  mockNamedLimit = 15;
   jest.clearAllMocks();
   mockAssertHome.mockResolvedValue(undefined);
   mockNetworks.mockResolvedValue({ networks: [], active_count: 0 });
   mockNames.mockResolvedValue([]);
+});
+
+test.each([
+  [undefined, 100],
+  [0, 0],
+  [15, 15],
+  [1000, 1000],
+])("named-agent limit %s resolves to %s", async (configured, expected) => {
+  mockNamedLimit = configured;
+  await expect(personalAgentLimits(account_id)).resolves.toEqual({
+    named: expected,
+    members: 8,
+  });
 });
 
 test("network inspection passes the account-home fence", async () => {

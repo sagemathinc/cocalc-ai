@@ -22,6 +22,7 @@ import * as workspaceSelectionRuntime from "./workspaces/selection-runtime";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import * as alerts from "@cocalc/frontend/alerts";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -433,6 +434,23 @@ describe("resolveSyncPathWithRetry", () => {
     ).rejects.toThrow("boom");
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["success", "permission denied"])(
+    "cancels an in-flight resolution after close even when it returns %s",
+    async (result) => {
+      const pending = deferred<string>();
+      const fs = { canonicalSyncIdentityPath: jest.fn(() => pending.promise) };
+      let open = true;
+      const promise = resolveSyncPathWithRetry(fs, "/root/file.txt", HOME, {
+        isOpen: () => open,
+      });
+      open = false;
+      if (result === "success") pending.resolve("/root/file.txt");
+      else pending.reject(new Error(result));
+      await expect(promise).rejects.toThrow("open was cancelled");
+      expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("isTransientProjectOpenError", () => {
@@ -740,6 +758,63 @@ describe("open_file wait_for_ready", () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+
+  it.each(["removed", "deleting", "deleted", "running"])(
+    "handles a pending permission failure when the project becomes %s",
+    async (state) => {
+      const pending = deferred<string>();
+      const started = deferred<void>();
+      let project: any = fromJS({ state: { state: "running" } });
+      const { open_files, store } = makeOpenFilesHarness();
+      jest
+        .spyOn(redux as any, "getStore")
+        .mockImplementation((name: string) => {
+          if (name === "projects")
+            return { get: () => ({ get: () => project }) };
+          if (name === "page") return { get: () => false };
+          return undefined;
+        });
+      jest
+        .spyOn(redux as any, "getActions")
+        .mockReturnValue({ save_session: jest.fn() });
+      const alert = jest
+        .spyOn(alerts, "alert_message")
+        .mockImplementation(() => {});
+      const initFileRedux = jest.fn();
+      const actions = {
+        project_id: "project-1",
+        get_store: () => store,
+        open_files,
+        initFileRedux,
+        fs: () => ({
+          canonicalSyncIdentityPath: () => {
+            started.resolve();
+            return pending.promise;
+          },
+        }),
+      } as any;
+      const opening = open_file(actions, {
+        path: "/home/user/agent.chat",
+        foreground: false,
+        wait_for_ready: true,
+      });
+      await started.promise;
+      project =
+        state === "removed"
+          ? undefined
+          : fromJS({
+              deleted: state === "deleted",
+              state: { state },
+            });
+      pending.reject(
+        new Error("permission denied publishing to fs.project-project-1"),
+      );
+      await opening;
+      expect(initFileRedux).not.toHaveBeenCalled();
+      if (state === "running") expect(alert).toHaveBeenCalledTimes(1);
+      else expect(alert).not.toHaveBeenCalled();
+    },
+  );
 
   it("normalizes a :line suffix before creating the file tab", async () => {
     const path = "/home/user/c.txt";

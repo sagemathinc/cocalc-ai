@@ -56,9 +56,19 @@ test.each(["a", "another-agent"])(
     );
   },
 );
-test("preserves file navigation outside Agents and for unmatched threads", async () => {
+test("preserves file navigation for unmatched threads", async () => {
   expect(await openAgentNotification("p", "a.chat", "other")).toBe(false);
+  expect(setState).not.toHaveBeenCalled();
+});
+test("preserves project file navigation outside Agents", async () => {
   tab = "projects";
   expect(await openAgentNotification("p", "a.chat", "t")).toBe(false);
+  expect(listNamedAgents).not.toHaveBeenCalled();
   expect(setState).not.toHaveBeenCalled();
+  expect(setActiveTab).not.toHaveBeenCalled();
+});
+test("falls back to file navigation when the agent directory is unavailable", async () => {
+  listNamedAgents.mockRejectedValueOnce(new Error("offline"));
+  expect(await openAgentNotification("p", "a.chat", "t")).toBe(false);
+  expect(setActiveTab).not.toHaveBeenCalled();
 });

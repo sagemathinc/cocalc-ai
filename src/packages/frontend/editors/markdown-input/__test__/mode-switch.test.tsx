@@ -49,3 +49,33 @@ it("opens formatting independently of mode and restores keyboard focus on Escape
   await user.keyboard(" ");
   expect(onSelectMode).toHaveBeenCalledWith("markdown");
 });
+
+it("keeps mode choices in the compact formatting menu", async () => {
+  const user = userEvent.setup();
+  const onSelectMode = jest.fn();
+  render(
+    <MarkdownInputModeSwitch
+      mode="editor"
+      compactModeSwitch
+      isFocusedFrame
+      isVisible
+      editBarContentRef={{ current: <button>Bold</button> }}
+      onSelectMode={onSelectMode}
+      onInteractionStart={() => {}}
+      onInteractionEnd={() => {}}
+    />,
+  );
+  expect(screen.queryByRole("radio", { name: "Markdown" })).toBeNull();
+  const trigger = screen.getByRole("button", {
+    name: "Editor mode and formatting",
+  });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "Text formatting" });
+  await waitFor(() =>
+    expect(screen.getByRole("group", { name: "Editor mode" })).toBeVisible(),
+  );
+  screen.getByRole("radio", { name: "Markdown" }).focus();
+  await user.keyboard(" ");
+  expect(onSelectMode).toHaveBeenCalledWith("markdown");
+});

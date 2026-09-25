@@ -62,6 +62,7 @@ interface Props {
   default_value: string;
   open: boolean;
   onClose: () => void;
+  onCreated?: (projectId: string) => void;
 }
 
 const PROJECT_PRESETS: {
@@ -103,7 +104,12 @@ function projectPresetDescription(preset: (typeof PROJECT_PRESETS)[number]) {
   }
 }
 
-export function NewProjectCreator({ default_value, open, onClose }: Props) {
+export function NewProjectCreator({
+  default_value,
+  open,
+  onClose,
+  onCreated,
+}: Props) {
   const runtime = useProjectRuntimeCapabilities();
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -246,7 +252,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       return;
     }
 
-    if (openAfterCreate) {
+    if (onCreated) {
+      onCreated(project_id);
+    } else if (openAfterCreate) {
       // switch_to=true is perhaps suggested by #4088
       actions.open_project({
         project_id,
@@ -274,7 +282,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     if (e.keyCode === 27) {
       cancel_editing();
     } else if (e.keyCode === 13) {
-      create_project({ openAfterCreate: true });
+      create_project({ openAfterCreate: !onCreated });
     }
   }
 
@@ -616,22 +624,25 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <Alert type="warning" showIcon title={summary.warnings.join(" ")} />
           )}
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            {!onCreated && (
+              <Button
+                type="primary"
+                block
+                onClick={() => create_project({ openAfterCreate: true })}
+                disabled={isDisabled()}
+                title={
+                  titleIsMissing
+                    ? "Enter a project name before creating."
+                    : undefined
+                }
+                loading={createAction === "open"}
+                icon={<Icon name="arrow-right" />}
+              >
+                Create and Open
+              </Button>
+            )}
             <Button
-              type="primary"
-              block
-              onClick={() => create_project({ openAfterCreate: true })}
-              disabled={isDisabled()}
-              title={
-                titleIsMissing
-                  ? "Enter a project name before creating."
-                  : undefined
-              }
-              loading={createAction === "open"}
-              icon={<Icon name="arrow-right" />}
-            >
-              Create and Open
-            </Button>
-            <Button
+              type={onCreated ? "primary" : undefined}
               block
               onClick={() => create_project({ openAfterCreate: false })}
               disabled={isDisabled()}

@@ -11,6 +11,11 @@ const markMany = jest.fn();
 const respondAccessRequest = jest.fn();
 const listAccessRequests = jest.fn();
 const mockEnsureProjectReduxRuntime = jest.fn();
+const mockOpenAgentNotification = jest.fn();
+
+jest.mock("../../agents/open-notification", () => ({
+  openAgentNotification: (...args: any[]) => mockOpenAgentNotification(...args),
+}));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -71,6 +76,41 @@ describe("NotificationRow", () => {
     listAccessRequests.mockResolvedValue([]);
     mockEnsureProjectReduxRuntime.mockReset();
     mockEnsureProjectReduxRuntime.mockResolvedValue(undefined);
+    mockOpenAgentNotification.mockReset();
+    mockOpenAgentNotification.mockResolvedValue(false);
+  });
+
+  it("includes the matching named agent in a Codex notice", () => {
+    render(
+      <NotificationRow
+        id="agent-notice"
+        user_map={{}}
+        namedAgents={[
+          {
+            name: "reviewer",
+            endpoint: { project_id: "project-1", agent_id: "agent-1" },
+            path: "agent.chat",
+            thread_id: "thread-1",
+          } as any,
+        ]}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-09-24T00:00:00.000Z"),
+            project_id: "project-1",
+            path: "agent.chat",
+            thread_id: "thread-1",
+            title: "Codex needs your attention",
+            origin_label: "Codex",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+    expect(
+      screen.getByText("@reviewer · Codex needs your attention"),
+    ).toBeVisible();
   });
 
   it("does not mark account notices read when they do not target a file", () => {
@@ -192,6 +232,46 @@ describe("NotificationRow", () => {
     ).toBeLessThan(open_file.mock.invocationCallOrder[0]);
     expect(mark).toHaveBeenCalledWith(expect.anything(), "notice-1", "read");
     expect(markMany).not.toHaveBeenCalled();
+  });
+
+  it("uses the notice thread to switch agents instead of opening a project file", async () => {
+    mockOpenAgentNotification.mockResolvedValue(true);
+    render(
+      <NotificationRow
+        id="agent-notice"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            project_id: "project-1",
+            path: "work/agent.chat",
+            target: "acct-1",
+            time: new Date("2026-09-24T00:00:00.000Z"),
+            title: "Codex turn finished",
+            origin_label: "Codex",
+            fragment_id: "chat=1234",
+            thread_id: "thread-1",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex turn finished"));
+
+    await waitFor(() =>
+      expect(mockOpenAgentNotification).toHaveBeenCalledWith(
+        "project-1",
+        "work/agent.chat",
+        "thread-1",
+      ),
+    );
+    expect(open_file).not.toHaveBeenCalled();
+    expect(mark).toHaveBeenCalledWith(
+      expect.anything(),
+      "agent-notice",
+      "read",
+    );
   });
 
   it("opens a Codex attention notification at its actionable request", async () => {

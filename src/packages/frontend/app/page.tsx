@@ -58,6 +58,7 @@ import { useVisibleViewportBottom } from "./visible-viewport";
 import { ScratchpadSessionControls } from "./scratchpad-session-controls";
 import { recordSignedInAppBootstrapReady } from "./bootstrap-ux-latency";
 import { configureUxLatency } from "@cocalc/frontend/monitoring/ux-latency";
+import { configureOnboardingMonitoring } from "@cocalc/frontend/monitoring/onboarding";
 import {
   getStoredProjectsNavMode,
   type ProjectsNavMode,
@@ -255,6 +256,19 @@ export const Page: React.FC = () => {
   const effectivelySignedIn = is_logged_in || clientSignedIn;
   const groups = useTypedRedux("account", "groups");
   const zendesk = !!useTypedRedux("customize", "zendesk");
+
+  useEffect(() => {
+    configureOnboardingMonitoring(
+      effectivelySignedIn && accountIsReady ? account_id : undefined,
+      !!customizeReady && uxLatencyTelemetryEnabled === true,
+    );
+  }, [
+    account_id,
+    accountIsReady,
+    customizeReady,
+    effectivelySignedIn,
+    uxLatencyTelemetryEnabled,
+  ]);
 
   useEffect(() => {
     if (!accountIsReady || !customizeReady || !effectivelySignedIn) return;

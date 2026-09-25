@@ -88,7 +88,7 @@ export function useCodexAttentionSummary(opts: {
           action: "list",
           project_id: opts.project_id,
           path: opts.path,
-          state: "pending",
+          state: "actionable",
         });
         if (!disposed) {
           const next = (
@@ -96,7 +96,12 @@ export function useCodexAttentionSummary(opts: {
           ).filter(
             (record) =>
               (!opts.account_id || record.account_id === opts.account_id) &&
-              (!record.expires_at || record.expires_at > Date.now()),
+              (record.state === "pending" ||
+                (record.state === "stale" &&
+                  record.source_kind === "codex_sync_question")) &&
+              (record.state !== "pending" ||
+                !record.expires_at ||
+                record.expires_at > Date.now()),
           );
           const nextIds = new Set(next.map(({ attention_id }) => attention_id));
           for (const previous of recordsRef.current) {

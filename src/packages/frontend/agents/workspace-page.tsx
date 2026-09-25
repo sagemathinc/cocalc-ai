@@ -19,7 +19,10 @@ import {
   useTypedRedux,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
+import { Suspense } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
+import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { useAppContext } from "@cocalc/frontend/app/context";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
@@ -33,6 +36,17 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
+import {
+  retryablePreparation,
+  readPreparedFirstAgent,
+  writePreparedFirstAgent,
+} from "./retryable-preparation";
+import { PreparationStatus } from "./preparation-status";
+import { AvailableConversation } from "./available-conversation";
+import { agentProjectTitle } from "./project-title";
+import { claimOnboardingName } from "./claim-onboarding-name";
+import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
+import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
 import {
@@ -49,15 +63,21 @@ import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-op
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { AgentFileAttachment } from "@cocalc/frontend/chat/agent-file-attachment";
-import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
+import ChatInput, { type ChatInputControl } from "@cocalc/frontend/chat/input";
+import { DictateButton } from "@cocalc/frontend/chat/audio/dictate-button";
+import {
+  ComposerPillButton,
+  ComposerProjectDirectoryButton,
+  displayComposerWorkingDirectory,
+} from "@cocalc/frontend/chat/composer-codex-controls";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
+import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   ProjectContext,
   useProjectContextProvider,
@@ -69,8 +89,10 @@ import {
   type ProjectDocsOpenDetail,
 } from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import "./workspace-sidebar-row.css";
+import "./new-agent-composer.css";
 import { AgentOrganizationControls } from "./organization-controls";
 import { AgentsSidebarResizeHandle } from "./sidebar-resize-handle";
 import {
@@ -78,12 +100,26 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
-import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { getProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-capabilities";
+import {
+  loadRootfsImages,
+  managedRootfsCatalogUrl,
+} from "@cocalc/frontend/rootfs/manifest";
+import { chooseAutomaticProjectRootfs } from "@cocalc/frontend/projects/create-project-rootfs";
+import { chooseOnboardingRootfs } from "@cocalc/frontend/projects/onboarding/rootfs";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  useEmailVerificationRequired,
+  VerifyEmailRequiredPanel,
+} from "@cocalc/frontend/app/verify-email-banner";
+import {
+  agentFirstRunStarted,
+  completeFirstRunWithAgent,
+} from "@cocalc/frontend/projects/onboarding/agent-completion";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
 import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
@@ -98,7 +134,6 @@ import {
   Input,
   Modal,
   Popover,
-  Select,
   Space,
   Tag,
   Typography,
@@ -112,21 +147,21 @@ import {
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
-import { AgentNetworkPills } from "./agent-network-pills";
-import {
-  readAgentNetworkFilter,
-  rememberAgentNetworkFilter,
-} from "./agent-network-filter";
-import {
-  AgentNetworkDetailsModal,
-  AgentNetworkFilterBar,
-} from "./agent-network-details-modal";
+import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
+import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
+import { OrganizationSaveAlert } from "./organization-save-alert";
+import { AgentSidebarFilter } from "./sidebar-filter";
+import {
+  agentNetworkLookupKey,
+  indexAgentNetworks,
+  matchesAgentSidebarSearch,
+} from "./sidebar-search";
 import {
   groupAgentsByProject,
   groupAgentsByRecency,
@@ -135,7 +170,10 @@ import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
+import { AgentProjectSelector } from "./agent-project-selector";
 import { AgentProjectStatus } from "./project-status";
+import { AgentHostRecovery } from "./host-recovery";
+import { useWorkspaceSelectedThread } from "./use-workspace-selected-thread";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
@@ -161,8 +199,10 @@ import {
 import {
   getDefaultCodexNewChatDefaults,
   getDefaultCodexSessionMode,
+  getStoredCodexNewChatDefaults,
 } from "@cocalc/frontend/chat/codex-defaults";
 import {
+  fetchCodexPaymentSourceForSubmit,
   getCodexPaymentSourceOptions,
   useCodexPaymentSource,
 } from "@cocalc/frontend/chat/use-codex-payment-source";
@@ -173,10 +213,20 @@ import {
 } from "@cocalc/frontend/chat/codex-model-discovery";
 import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
 import {
+  createAgentProjectOnce,
+  createDefaultAgentProject,
   freshAgentExecutionConfig,
+  newAgentFundingConfig,
   rememberAgentName,
   suggestedAgentName,
+  suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
+import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
+import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
+import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
+import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
+import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import { preflightNewAgentProjectStart } from "./new-agent-project-start";
 import { namedAgentExecutionState } from "./agent-execution-state";
 import {
   readAgentSubscriptionSelection,
@@ -184,13 +234,23 @@ import {
 } from "./agent-subscription-selection";
 import {
   assertAgentWorkingDirectory,
+  AgentProjectHomeNotReadyError,
   createAgentWorkingDirectory,
+  ensureAgentProjectHomeReady,
   effectiveNewAgentWorkingDirectory,
   MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
 } from "./workspace-path";
 
 const { Text, Title } = Typography;
+
+const NewProjectCreator = lazyWithRetry(
+  async () => ({
+    default: (await import("@cocalc/frontend/projects/create-project"))
+      .NewProjectCreator,
+  }),
+  "create project dialog",
+);
 
 const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
 const MIN_AGENT_SIDEBAR_WIDTH = 220;
@@ -426,15 +486,31 @@ function NewAgentPanel({
   onCreated: (agentId: string) => void;
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
+  const siteDefaultRootfs = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image",
+  );
+  const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
   const boundAccount = useBoundAgentAccount();
+  const isFirstRun =
+    !sourceAgent && agentFirstRunStarted(boundAccount.accountId);
+  const [restoredPreparation] = useState(() =>
+    isFirstRun ? readPreparedFirstAgent(boundAccount.accountId) : undefined,
+  );
   const sourceConfig = useMemo(
     () => freshAgentExecutionConfig(selectedAgentCodexConfig(sourceAgent)),
     [sourceAgent?.endpoint.agent_id],
   );
   const accountDefaults = useMemo(() => getDefaultCodexNewChatDefaults(), []);
+  const hasStoredAccountDefaults = useMemo(
+    () => getStoredCodexNewChatDefaults() != null,
+    [],
+  );
+  const modelCustomized = useRef(false);
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
       sourceAgent?.endpoint.project_id ||
+      restoredPreparation?.projectId ||
       mostRecentlyEditedWritableProject(projectMap),
   );
   const [directory, setDirectory] = useState(
@@ -471,16 +547,76 @@ function NewAgentPanel({
   const [name, setName] = useState(() =>
     suggestedAgentName(agents, boundAccount.accountId),
   );
+  const [firstRunName, setFirstRunName] = useState(() =>
+    isFirstRun
+      ? (restoredPreparation?.name ??
+        (agents.some((agent) => agent.name === "agent")
+          ? suggestedAgentName(agents, boundAccount.accountId)
+          : "agent"))
+      : name,
+  );
+  const agentName = isFirstRun ? firstRunName : name;
+  const claimedNameRef = useRef<string | undefined>(undefined);
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
-  const firstRequestRef = useRef<() => string>(() => "");
+  const automaticProjectPromise = useRef<
+    Promise<{ projectId: string; title: string }> | undefined
+  >(undefined);
+  const automaticProjectAttempted = useRef(false);
+  const automaticProjectCreated = useRef<
+    { projectId: string; title: string } | undefined
+  >(
+    restoredPreparation?.automaticProjectTitle
+      ? {
+          projectId: restoredPreparation.projectId,
+          title: restoredPreparation.automaticProjectTitle,
+        }
+      : undefined,
+  );
+  const inputControlRef = useRef<ChatInputControl | null>(null);
+  const [composerSession, setComposerSession] = useState(0);
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
-  const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
+  const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectCreationTitle, setProjectCreationTitle] = useState("");
+  const [projectCreatorInstance, setProjectCreatorInstance] = useState(0);
+  const projectCreatorTrigger = useRef<HTMLElement | null>(null);
+  const emailVerificationRequired = useEmailVerificationRequired();
+  const createProjectMounted = useRef(false);
+  if (createProjectOpen) createProjectMounted.current = true;
+  const projectSettingsButton = useRef<HTMLButtonElement>(null);
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
-  const [pending, setPending] = useState<PendingAgent>();
+  const [pending, setPending] = useState<PendingAgent | undefined>(
+    restoredPreparation,
+  );
+  const pendingRef = useRef<PendingAgent | undefined>(restoredPreparation);
+  const prepareOnce = useRef(retryablePreparation<PendingAgent>());
+  const identityOnce = useRef(retryablePreparation<string>());
+  const backgroundOnce = useRef(retryablePreparation<void>());
+  const attemptRef = useRef<OnboardingAttempt | undefined>(undefined);
+  const handedOff = useRef(false);
+  const submitting = useRef(false);
+  const phaseRef = useRef<OnboardingPhase>("workspace");
+  const [preparationPhase, setPreparationPhase] =
+    useState<OnboardingPhase>("workspace");
+  useEffect(
+    () => () => {
+      if (!handedOff.current)
+        attemptRef.current?.finish("abandoned", "left_onboarding");
+    },
+    [],
+  );
+
+  function progress(phase: OnboardingPhase, targetProjectId?: string) {
+    boundAccount.assertCurrent();
+    phaseRef.current = phase;
+    setPreparationPhase(phase);
+    attemptRef.current?.mark(phase, targetProjectId);
+  }
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -497,7 +633,6 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
-    enabled: !!projectId,
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -510,8 +645,8 @@ function NewAgentPanel({
   const reasoningOptions =
     modelOptions.find(({ value }) => value === config.model)?.reasoning ?? [];
   const problem = agentNameProblem(
-    name,
-    agents,
+    agentName,
+    isFirstRun ? [] : agents,
     pending
       ? {
           project_id: pending.projectId,
@@ -520,7 +655,43 @@ function NewAgentPanel({
         }
       : undefined,
   );
-  const atLimit = namedAgentLimitReached(namedAgentDirectory);
+  const atLimit = namedAgentLimitReached(namedAgentDirectory) && !pending;
+
+  function selectProject(nextProjectId: string) {
+    setComposerSession((session) => session + 1);
+    setMissingDirectory(undefined);
+    setError("");
+    setProjectId(nextProjectId);
+    const home = getProjectHomeDirectory(nextProjectId);
+    setDirectory(home);
+    setDirectoryProjectId(nextProjectId);
+  }
+
+  function closeProjectCreator() {
+    setCreateProjectOpen(false);
+    requestAnimationFrame(() => {
+      const trigger = projectCreatorTrigger.current;
+      if (trigger?.isConnected) trigger.focus();
+      else projectSettingsButton.current?.focus();
+    });
+  }
+
+  function openProjectCreator() {
+    if (emailVerificationRequired) return;
+    projectCreatorTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setProjectCreationTitle(
+      suggestedAgentProjectTitle(
+        inputControlRef.current?.getValue?.() ?? firstRequest,
+      ),
+    );
+    setProjectCreatorInstance((instance) => instance + 1);
+    setSettingsOpen(false);
+    setMoreSettingsOpen(false);
+    setCreateProjectOpen(true);
+  }
 
   useEffect(() => {
     if (projectId || !projectMap) return;
@@ -550,177 +721,500 @@ function NewAgentPanel({
   }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
 
   useEffect(() => {
-    const policy =
-      paymentSource?.source === "site-api-key" &&
-      paymentSource.siteFundedCodex?.enabled
-        ? paymentSource.siteFundedCodex.policy
-        : undefined;
     setConfig((current) => {
-      const next = policy
-        ? {
-            ...current,
-            model: policy.model,
-            reasoning: policy.reasoning as CodexReasoningId,
-          }
-        : reconcileAgentConfig(
-            current,
-            defaultModelOptions(modelCatalog, current.model),
-          );
+      const funded = newAgentFundingConfig({
+        config: current,
+        paymentSource,
+        useSubscriptionDefault:
+          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
+      });
+      const next =
+        modelCatalog?.length && paymentSource?.source === "subscription"
+          ? reconcileAgentConfig(
+              funded,
+              defaultModelOptions(modelCatalog, funded.model),
+            )
+          : funded;
       return next.model === current.model &&
         next.reasoning === current.reasoning
         ? current
         : next;
     });
-  }, [modelCatalog, paymentSource?.source, paymentSource?.siteFundedCodex]);
+  }, [
+    modelCatalog,
+    hasStoredAccountDefaults,
+    paymentSource?.source,
+    paymentSource?.siteFundedCodex,
+    sourceAgent,
+  ]);
 
-  async function prepare(): Promise<PendingAgent> {
-    if (pending) return pending;
-    let targetProjectId = projectId;
-    if (!targetProjectId) {
-      targetProjectId = await redux.getActions("projects").create_project({
-        title: "Agents",
-        description: "Workspace for CoCalc agents",
-        start: true,
+  async function prepare(
+    targetProjectId: string | undefined = projectId,
+    executionConfig: NewAgentCodexConfig = config,
+  ): Promise<PendingAgent> {
+    return prepareOnce.current(async () => {
+      boundAccount.assertCurrent();
+      if (!targetProjectId)
+        throw new Error("Create or select a project first.");
+      await ensureProjectReduxRuntime();
+      const projectActions = redux.getProjectActions(targetProjectId);
+      const fs = projectActions?.fs?.();
+      if (!projectActions || !fs) {
+        throw new Error("The selected project filesystem is unavailable");
+      }
+      const projectHome = getProjectHomeDirectory(targetProjectId);
+      const workingDirectory =
+        directoryProjectId === targetProjectId
+          ? directory.trim() || projectHome
+          : projectHome;
+      if (workingDirectory === projectHome) {
+        await ensureAgentProjectHomeReady(fs, projectHome);
+      } else {
+        await assertAgentWorkingDirectory(fs, workingDirectory);
+      }
+      boundAccount.assertCurrent();
+      let created = pendingRef.current;
+      if (!created) {
+        progress("chat", targetProjectId);
+        const path = joinAbsolutePath(
+          projectHome,
+          `.local/share/cocalc/agents/${uuid()}.chat`,
+        );
+        await projectActions.ensureContainingDirectoryExists(path);
+        await fs.writeFile(path, "");
+        const chatActions = initChat(targetProjectId, path, {
+          instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+          workbenchEnabled: true,
+        });
+        await waitForChatReady(chatActions);
+        boundAccount.assertCurrent();
+        const threadId = chatActions.createEmptyThread({
+          name: agentName.trim(),
+          threadAgent: {
+            mode: "codex",
+            model: executionConfig.model,
+            codexConfig: { ...executionConfig, workingDirectory },
+          },
+        });
+        if (!threadId) throw new Error("Unable to create the agent thread");
+        created = { projectId: targetProjectId, path, threadId };
+        pendingRef.current = created;
+        setPending(created);
+      }
+      const { path, threadId } = created;
+      const chatActions = initChat(targetProjectId, path, {
+        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+        workbenchEnabled: true,
       });
-      setProjectId(targetProjectId);
-    }
-    await ensureProjectReduxRuntime();
-    const projectActions = redux.getProjectActions(targetProjectId);
-    const fs = projectActions?.fs?.();
-    if (!projectActions || !fs) {
-      throw new Error("The selected project filesystem is unavailable");
-    }
-    const projectHome = getProjectHomeDirectory(targetProjectId);
-    const workingDirectory =
-      directoryProjectId === targetProjectId
-        ? directory.trim() || projectHome
-        : projectHome;
-    await assertAgentWorkingDirectory(fs, workingDirectory);
-    const path = joinAbsolutePath(
-      getProjectHomeDirectory(targetProjectId),
-      `.local/share/cocalc/agents/${uuid()}.chat`,
-    );
-    await projectActions.ensureContainingDirectoryExists(path);
-    await fs.writeFile(path, "");
-    const chatActions = initChat(targetProjectId, path, {
-      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+      await waitForChatReady(chatActions);
+      await chatActions.syncdb?.save();
+      await chatActions.save_to_disk();
+      if (isFirstRun)
+        writePreparedFirstAgent(boundAccount.accountId, {
+          ...created,
+          name: claimedNameRef.current ?? agentName,
+          automaticProjectTitle: automaticProjectCreated.current?.title,
+        });
+      writeAgentSubscriptionSelection({
+        accountId: boundAccount.accountId,
+        projectId: targetProjectId,
+        threadId,
+        credentialId:
+          executionConfig.paymentSource === "subscription"
+            ? executionConfig.credentialId
+            : undefined,
+      });
+      return created;
     });
-    await waitForChatReady(chatActions);
-    const threadId = chatActions.createEmptyThread({
-      name: name.trim(),
-      threadAgent: {
-        mode: "codex",
-        model: config.model,
-        codexConfig: { ...config, workingDirectory },
-      },
-    });
-    if (!threadId) throw new Error("Unable to create the agent thread");
-    await chatActions.syncdb?.save();
-    await chatActions.save_to_disk();
-    const created = { projectId: targetProjectId, path, threadId };
-    writeAgentSubscriptionSelection({
-      accountId: boundAccount.accountId,
-      projectId: targetProjectId,
-      threadId,
-      credentialId:
-        config.paymentSource === "subscription"
-          ? config.credentialId
-          : undefined,
-    });
-    setPending(created);
-    return created;
   }
 
-  async function create(requestValue?: string) {
-    const request = (requestValue ?? firstRequestRef.current()).trim();
-    if (busy || uploading || problem || atLimit || !request) return;
+  const createWithoutTaskRef = useRef(false);
+
+  function ensureAutomaticProject(request: string, start: boolean) {
+    return createAgentProjectOnce(automaticProjectPromise, async () => {
+      boundAccount.assertCurrent();
+      progress("workspace");
+      const needsImage =
+        getProjectRuntimeCapabilities().rootfs &&
+        cocalc_setup_profile !== "star";
+      const images = needsImage
+        ? await loadRootfsImages([managedRootfsCatalogUrl()], undefined, {
+            limit: 1000,
+          })
+        : [];
+      const fallback = chooseAutomaticProjectRootfs({
+        images,
+        preferredImages: [accountDefaultRootfs, siteDefaultRootfs],
+      });
+      const image = chooseOnboardingRootfs({
+        images,
+        kind: "codex",
+        fallback: fallback
+          ? { image: fallback.image, image_id: fallback.id }
+          : undefined,
+        isAdmin: false,
+      })?.entry;
+      if (needsImage && !image) {
+        throw new Error(
+          "No usable project image is available. Please contact the site administrator.",
+        );
+      }
+      const created = await createDefaultAgentProject({
+        request: start ? "" : request,
+        start,
+        image,
+        createProject: (opts) =>
+          redux.getActions("projects").create_project(opts),
+      });
+      automaticProjectCreated.current = created;
+      const home = getProjectHomeDirectory(created.projectId);
+      setProjectId(created.projectId);
+      setDirectory(home);
+      setDirectoryProjectId(created.projectId);
+      return created;
+    });
+  }
+
+  useEffect(() => {
+    if (
+      !isFirstRun ||
+      !firstRequest.trim() ||
+      !projectMap ||
+      emailVerificationRequired ||
+      automaticProjectAttempted.current
+    ) {
+      return;
+    }
+    automaticProjectAttempted.current = true;
+    void prepareFirstAgent().catch((error) => {
+      setError(`${error}`);
+    });
+  }, [
+    isFirstRun,
+    firstRequest,
+    projectId,
+    projectMap,
+    emailVerificationRequired,
+  ]);
+
+  function prepareFirstAgent(): Promise<void> {
+    return backgroundOnce.current(async () => {
+      if (emailVerificationRequired)
+        throw new Error("Verify your email before starting your agent.");
+      const target =
+        projectId ??
+        (await ensureAutomaticProject(firstRequest, true)).projectId;
+      boundAccount.assertCurrent();
+      progress("starting", target);
+      if (
+        !(await preflightNewAgentProjectStart({
+          projectId: target,
+          onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+        }))
+      ) {
+        throw new Error(
+          "Your workspace could not start. Submit again to retry.",
+        );
+      }
+      const source = await fetchCodexPaymentSourceForSubmit({
+        projectId: target,
+        preference: paymentPreference,
+        credentialId:
+          paymentPreference === "subscription"
+            ? config.credentialId
+            : undefined,
+      });
+      const executionConfig = newAgentFundingConfig({
+        config,
+        paymentSource: source,
+        useSubscriptionDefault:
+          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
+      });
+      boundAccount.assertCurrent();
+      setConfig(executionConfig);
+      const created = await prepare(target, executionConfig);
+      await prepareIdentity(created);
+      progress("ready", target);
+    });
+  }
+
+  function prepareIdentity(
+    created: PendingAgent,
+    projectTitleOverride?: string,
+  ): Promise<string> {
+    return identityOnce.current(async () => {
+      boundAccount.assertCurrent();
+      progress("identity", created.projectId);
+      const api = personalAgentApi();
+      const locator = {
+        project_id: created.projectId,
+        path: created.path,
+        thread_id: created.threadId,
+      };
+      const identity =
+        (await api.resolveIdentity(locator)) ??
+        (await api.registerIdentity(locator));
+      if (!identity) throw new Error("Unable to register this agent thread");
+      boundAccount.assertCurrent();
+      const claim = (candidate: string) => {
+        boundAccount.assertCurrent();
+        return api.nameAgent({
+          endpoint: {
+            project_id: created.projectId,
+            agent_id: identity.agent_id,
+          },
+          name: candidate,
+          description,
+          ...cachedAgentNameContext(locator),
+          project_title:
+            projectTitleOverride ??
+            (projectMap?.getIn([created.projectId, "title"]) as
+              | string
+              | undefined),
+          thread_title: candidate,
+        });
+      };
+      const preferred = normalizeAgentName(claimedNameRef.current ?? agentName);
+      const claimedName = isFirstRun
+        ? (await claimOnboardingName(preferred, claim)).name
+        : (await claim(preferred), preferred);
+      claimedNameRef.current = claimedName;
+      if (isFirstRun) {
+        setFirstRunName(claimedName);
+        writePreparedFirstAgent(boundAccount.accountId, {
+          ...created,
+          name: claimedName,
+          automaticProjectTitle: automaticProjectCreated.current?.title,
+        });
+      }
+      return identity.agent_id;
+    });
+  }
+
+  async function create(requestValue?: string, withoutTask = false) {
+    const request = (
+      requestValue ??
+      inputControlRef.current?.getValue?.() ??
+      firstRequest
+    ).trim();
+    if (
+      submitting.current ||
+      busy ||
+      uploading ||
+      problem ||
+      atLimit ||
+      (!request && !withoutTask)
+    )
+      return;
+    submitting.current = true;
+    if (isFirstRun && !withoutTask && boundAccount.accountId) {
+      attemptRef.current?.finish("failed", "retried");
+      attemptRef.current = new OnboardingAttempt(boundAccount.accountId);
+      attemptRef.current.mark(phaseRef.current, projectId);
+    }
+    createWithoutTaskRef.current = withoutTask;
     setBusy(true);
     setError("");
     setMissingDirectory(undefined);
+    let targetProjectId = projectId;
     try {
-      await submitNewAgentRequest(request);
+      boundAccount.assertCurrent();
+      if (isFirstRun) {
+        await prepareFirstAgent();
+        targetProjectId = pendingRef.current?.projectId ?? targetProjectId;
+      }
+      let createdProjectTitle: string | undefined;
+      let executionConfig = config;
+      if (!targetProjectId) {
+        if (emailVerificationRequired) return;
+        if (!projectMap) {
+          throw new Error("Your projects are still loading. Please try again.");
+        }
+        const createdProject = await ensureAutomaticProject(
+          request,
+          isFirstRun,
+        );
+        createdProjectTitle = createdProject.title;
+        targetProjectId = createdProject.projectId;
+      }
+      if (
+        isFirstRun &&
+        request &&
+        automaticProjectCreated.current?.projectId === targetProjectId
+      ) {
+        const finalTitle = suggestedAgentProjectTitle(request);
+        if (finalTitle !== automaticProjectCreated.current.title) {
+          void redux
+            .getActions("projects")
+            .set_project_title(targetProjectId, finalTitle)
+            .catch(() => {});
+          automaticProjectCreated.current.title = finalTitle;
+        }
+        createdProjectTitle = automaticProjectCreated.current.title;
+      }
+      if (!withoutTask) {
+        progress("funding", targetProjectId);
+        const source = await fetchCodexPaymentSourceForSubmit({
+          projectId: targetProjectId,
+          preference: paymentPreference,
+          credentialId:
+            paymentPreference === "subscription"
+              ? config.credentialId
+              : undefined,
+        });
+        executionConfig = newAgentFundingConfig({
+          config,
+          paymentSource: source,
+          useSubscriptionDefault:
+            !sourceAgent &&
+            !hasStoredAccountDefaults &&
+            !modelCustomized.current,
+        });
+        if (
+          source.source === "subscription" &&
+          projectId === targetProjectId &&
+          modelCatalog?.length
+        ) {
+          executionConfig = reconcileAgentConfig(
+            executionConfig,
+            defaultModelOptions(modelCatalog, executionConfig.model),
+          );
+        }
+        assertCodexFundingModelReady({
+          config: executionConfig,
+          paymentSource: source,
+        });
+        if (executionConfig !== config) setConfig(executionConfig);
+        if (
+          !(await preflightNewAgentProjectStart({
+            projectId: targetProjectId,
+            onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+          }))
+        ) {
+          attemptRef.current?.finish("failed", "project_start_blocked");
+          return;
+        }
+      }
+      await submitNewAgentRequest(
+        withoutTask ? undefined : request,
+        targetProjectId,
+        createdProjectTitle,
+        executionConfig,
+      );
     } catch (err) {
-      handleCreateError(err);
+      attemptRef.current?.finish(
+        "failed",
+        err instanceof Error ? err.name : "preparation_error",
+      );
+      handleCreateError(err, targetProjectId);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
 
-  async function submitNewAgentRequest(request: string): Promise<void> {
-    const created = await prepare();
+  async function submitNewAgentRequest(
+    request?: string,
+    targetProjectId?: string,
+    projectTitleOverride?: string,
+    executionConfig: NewAgentCodexConfig = config,
+  ): Promise<void> {
+    const created = await prepare(targetProjectId, executionConfig);
     boundAccount.assertCurrent();
-    const api = personalAgentApi();
-    const locator = {
-      project_id: created.projectId,
-      path: created.path,
-      thread_id: created.threadId,
-    };
-    let identity = await api.resolveIdentity(locator);
-    if (!identity) {
-      identity = await api.registerIdentity(locator);
-    }
-    if (!identity) throw new Error("Unable to register this agent thread");
-    boundAccount.assertCurrent();
-    await api.nameAgent({
-      endpoint: {
-        project_id: created.projectId,
-        agent_id: identity.agent_id,
-      },
-      name: normalizeAgentName(name),
-      description,
-      ...cachedAgentNameContext(locator),
-      project_title: projectMap?.getIn([created.projectId, "title"]) as
-        | string
-        | undefined,
-      thread_title: name.trim(),
-    });
-    const actions = initChat(created.projectId, created.path, {
-      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
-    });
-    await waitForChatReady(actions);
-    const sent = actions.sendChat({
-      input: request,
-      reply_thread_id: created.threadId,
-      acpConfigOverride: config,
-    });
-    if (sent) {
-      await actions.syncdb?.save();
-      await actions.save_to_disk();
-    } else {
-      await writeChatComposerDraft({
-        account_id: boundAccount.accountId,
-        project_id: created.projectId,
-        path: created.path,
-        composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
-        text: request,
+    const agentId = await prepareIdentity(created, projectTitleOverride);
+    if (request) {
+      const actions = initChat(created.projectId, created.path, {
+        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+        // The first turn targets the Agents workbench before its editor mounts.
+        workbenchEnabled: true,
       });
-      antdMessage.warning(
-        "The agent was created, but the first request could not start. It is preserved as a draft.",
-      );
+      await waitForChatReady(actions);
+      actions.setCodexConfig(created.threadId, executionConfig);
+      writeAgentSubscriptionSelection({
+        accountId: boundAccount.accountId,
+        projectId: created.projectId,
+        threadId: created.threadId,
+        credentialId:
+          executionConfig.paymentSource === "subscription"
+            ? executionConfig.credentialId
+            : undefined,
+      });
+      progress("sending", created.projectId);
+      const chatIdentity = actions.reserveChatSendIdentity({
+        reply_thread_id: created.threadId,
+      });
+      attemptRef.current?.attach(chatIdentity.message_id, created.projectId);
+      const sent = actions.sendChat({
+        input: request,
+        reply_thread_id: created.threadId,
+        acpConfigOverride: executionConfig,
+        chatIdentity,
+      });
+      if (sent) {
+        await actions.syncdb?.save();
+        await actions.save_to_disk();
+      } else {
+        attemptRef.current?.finish("failed", "send_not_accepted");
+        await writeChatComposerDraft({
+          account_id: boundAccount.accountId,
+          project_id: created.projectId,
+          path: created.path,
+          composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
+          text: request,
+        });
+        antdMessage.warning(
+          "The agent was created, but the first request could not start. It is preserved as a draft.",
+        );
+      }
     }
-    rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
+    rememberAgentName(
+      claimedNameRef.current ?? normalizeAgentName(agentName),
+      boundAccount.accountId,
+    );
+    if (isFirstRun) writePreparedFirstAgent(boundAccount.accountId);
+    void completeFirstRunWithAgent(boundAccount.accountId, created.projectId);
     refreshNamedAgents();
-    onCreated(identity.agent_id);
+    handedOff.current = true;
+    onCreated(agentId);
   }
 
-  function handleCreateError(err: unknown): void {
-    if (err instanceof MissingAgentWorkingDirectoryError && projectId) {
-      setMissingDirectory({ path: err.path, projectId });
+  function handleCreateError(
+    err: unknown,
+    targetProjectId: string | undefined = projectId,
+  ): void {
+    if (
+      targetProjectId &&
+      (extractRuntimeSponsorDenial(err) ||
+        getProjectStartPolicyBlockFromError(err))
+    ) {
+      showCodexProjectStartFailure({
+        error: err,
+        projectId: targetProjectId,
+        onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
+      });
+      return;
+    }
+    if (err instanceof MissingAgentWorkingDirectoryError && targetProjectId) {
+      setMissingDirectory({ path: err.path, projectId: targetProjectId });
       setError("");
       return;
     }
     setError(
       isNamedAgentLimitError(err)
         ? "Your membership's named-agent limit was reached."
-        : `${err}`,
+        : err instanceof AgentProjectHomeNotReadyError
+          ? err.message
+          : `${err}`,
     );
   }
 
   async function createMissingDirectoryAndContinue(): Promise<void> {
     if (!missingDirectory || busy) return;
-    const request = firstRequestRef.current().trim();
-    if (!request) return;
+    const request = (
+      inputControlRef.current?.getValue?.() ?? firstRequest
+    ).trim();
+    if (!request && !createWithoutTaskRef.current) return;
     setBusy(true);
     setError("");
     try {
@@ -731,7 +1225,9 @@ function NewAgentPanel({
       }
       await createAgentWorkingDirectory(fs, missingDirectory.path);
       setMissingDirectory(undefined);
-      await submitNewAgentRequest(request);
+      await submitNewAgentRequest(
+        createWithoutTaskRef.current ? undefined : request,
+      );
     } catch (err) {
       handleCreateError(err);
     } finally {
@@ -750,40 +1246,48 @@ function NewAgentPanel({
     directory,
     projectHome,
   });
-  const directoryLabel =
-    relativeAgentWorkingDirectory(effectiveDirectory, projectHome) ??
-    (effectiveDirectory || "~/");
+  const directoryLabel = displayComposerWorkingDirectory(
+    effectiveDirectory,
+    projectHome,
+  );
   const subscriptions =
     (paymentSource as PaymentSourceWithSubscriptions | undefined)
       ?.subscriptions ?? [];
-  const paymentOptions = getCodexPaymentSourceOptions(paymentSource).flatMap(
-    (option) => {
-      if (option.value !== "subscription" || subscriptions.length === 0) {
-        return [option];
-      }
-      return subscriptions.map((subscription) => ({
-        value: `subscription:${subscription.id}`,
-        label:
-          subscription.label?.trim() ||
-          (() => {
-            const index = [...subscriptions]
-              .sort((left, right) => left.id.localeCompare(right.id))
-              .findIndex(({ id }) => id === subscription.id);
-            return index > 0 ? `ChatGPT ${index + 1}` : "ChatGPT";
-          })(),
-        description: subscription.plan
-          ? `Use this ChatGPT ${subscription.plan} subscription.`
-          : option.description,
-      }));
-    },
-  );
+  const paymentOptions: {
+    value: string;
+    label: string;
+    description: string;
+    disabled?: boolean;
+  }[] = getCodexPaymentSourceOptions(paymentSource).flatMap((option) => {
+    if (option.value !== "subscription" || subscriptions.length === 0) {
+      return [option];
+    }
+    return subscriptions.map((subscription) => ({
+      value: `subscription:${subscription.id}`,
+      label:
+        subscription.label?.trim() ||
+        (() => {
+          const index = [...subscriptions]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .findIndex(({ id }) => id === subscription.id);
+          return index > 0 ? `ChatGPT ${index + 1}` : "ChatGPT";
+        })(),
+      description: subscription.plan
+        ? `Use this ChatGPT ${subscription.plan} subscription.`
+        : option.description,
+    }));
+  });
   const selectedPaymentValue =
     paymentPreference === "subscription" && config.credentialId
       ? `subscription:${config.credentialId}`
       : paymentPreference;
-  const paymentLabel =
+  const selectedPaymentLabel =
     paymentOptions.find(({ value }) => value === selectedPaymentValue)?.label ??
-    "Automatic";
+    selectedPaymentValue;
+  const selectedReasoningLabel =
+    reasoningOptions.find(({ id }) => id === config.reasoning)?.label ??
+    config.reasoning ??
+    "Reasoning";
   const siteFundedPolicy =
     paymentSource?.source === "site-api-key" &&
     paymentSource.siteFundedCodex?.enabled
@@ -792,14 +1296,6 @@ function NewAgentPanel({
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        <AgentNameInput
-          id="new-agent-name"
-          value={name}
-          onChange={setName}
-          problem={name.trim() ? problem : undefined}
-          busy={busy || !!pending}
-          onEnter={() => undefined}
-        />
         <label htmlFor="new-agent-description">Description (optional)</label>
         <Input.TextArea
           id="new-agent-description"
@@ -809,23 +1305,15 @@ function NewAgentPanel({
           autoSize={{ minRows: 2, maxRows: 5 }}
           onChange={(event) => setDescription(event.target.value)}
         />
-        <label>Project</label>
-        <SelectProject
-          fullCollaboratorOnly
+        <AgentProjectSelector
           value={projectId}
           disabled={busy || !!pending}
-          onChange={(nextProjectId) => {
-            setMissingDirectory(undefined);
-            setError("");
-            setProjectId(nextProjectId);
-            const home = getProjectHomeDirectory(nextProjectId);
-            setDirectory(home);
-            setDirectoryProjectId(nextProjectId);
-          }}
+          onChange={selectProject}
+          onCreate={openProjectCreator}
         />
         {!projectId && (
           <Text type="secondary">
-            A project named “Agents” will be created when you start.
+            Create a project before starting your agent.
           </Text>
         )}
         <label htmlFor="new-agent-directory">Working directory</label>
@@ -846,6 +1334,7 @@ function NewAgentPanel({
             disabled={!projectId || busy || !!pending}
             onClick={() => {
               setSettingsOpen(false);
+              setMoreSettingsOpen(false);
               setDirectorySelectorOpen(true);
             }}
           >
@@ -876,188 +1365,308 @@ function NewAgentPanel({
       >
         <div style={{ textAlign: "center" }}>
           <Title level={2} style={{ marginBottom: 4 }}>
-            What should your new agent do?
+            {isFirstRun
+              ? "What would you like to work on?"
+              : "What should your new agent do?"}
           </Title>
-          <Text type="secondary">
-            Starting from{" "}
-            {sourceAgent ? `@${sourceAgent.name}` : "your defaults"}. You can
-            change any setting below.
-          </Text>
+          {!isFirstRun && (
+            <Text type="secondary">
+              {sourceAgent
+                ? `Using @${sourceAgent.name}'s project and settings as defaults. This starts a new conversation.`
+                : "Choose a name and describe the first task for your agent."}
+            </Text>
+          )}
         </div>
-        <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        {(!isFirstRun || atLimit) && (
+          <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        )}
+        {!projectId &&
+          projectMap &&
+          (emailVerificationRequired || !isFirstRun) && (
+            <div>
+              {emailVerificationRequired ? (
+                <VerifyEmailRequiredPanel
+                  title="Verify your email to create a project"
+                  description="Your agent needs a project. Verify your email, then start your agent; we will create a project for it automatically."
+                  compact
+                />
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="Your first project will be created automatically"
+                  description="Describe a task and start your agent. You can also choose or create a project from the project selector."
+                />
+              )}
+            </div>
+          )}
+        {!isFirstRun && (
+          <div style={{ maxWidth: 320, width: "100%" }}>
+            <AgentNameInput
+              id="new-agent-name"
+              label="Name"
+              value={name}
+              onChange={setName}
+              problem={name.trim() ? problem : undefined}
+              busy={busy || !!pending}
+              autoFocus={false}
+              sideFeedback
+            />
+          </div>
+        )}
         <div
           style={{
             background: UI_COLORS.surface,
             border: `1px solid ${UI_COLORS.border}`,
-            borderRadius: 18,
+            borderRadius: 16,
             boxSizing: "border-box",
-            boxShadow: `0 12px 40px ${UI_COLORS.shadow}`,
+            boxShadow: `0 6px 24px ${UI_COLORS.shadow}`,
             maxWidth: "100%",
-            padding: 12,
+            padding: "6px 10px",
           }}
         >
-          <div inert={busy ? true : undefined}>
-            <MarkdownInput
-              project_id={projectId}
+          <div
+            className="new-agent-composer-input"
+            inert={busy ? true : undefined}
+          >
+            <ChatInput
+              projectId={projectId}
+              date={0}
+              syncdb={undefined}
+              inputControlRef={inputControlRef}
+              sessionToken={composerSession}
               cacheId={`new-agent:${boundAccount.accountId ?? "account"}`}
-              value={firstRequest}
-              getValueRef={firstRequestRef}
+              input={firstRequest}
               onChange={setFirstRequest}
-              onShiftEnter={(value) => void create(value)}
-              onCtrlEnter={() => undefined}
+              on_send={(value) => void create(value)}
               autoFocus
-              autoGrow
-              autoGrowMinHeight={128}
+              fontSize={16}
+              autoGrowMinHeight={40}
               autoGrowMaxHeight={420}
-              enableUpload
+              enableUpload={!isFirstRun}
               onUploadStart={() => setUploading(true)}
               onUploadEnd={() => setUploading(false)}
               hideHelp
-              modeSwitchPlacement="toolbar"
-              reserveModeSwitchSpace
-              undoMode="local"
-              redoMode="local"
-              placeholder="Ask your agent to build, research, debug, or explain…"
+              compactModeSwitch
+              fixedMode={isFirstRun ? "editor" : undefined}
+              softFocus
+              placeholder={
+                isFirstRun
+                  ? "Describe what you'd like to work on…"
+                  : "Ask your agent to build, research, debug, or explain…"
+              }
               style={{ fontSize: 16 }}
             />
           </div>
           <div
             style={{
-              alignItems: "center",
-              borderTop: `1px solid ${UI_COLORS.border}`,
+              alignItems: "flex-end",
               display: "flex",
-              flexWrap: "wrap",
-              gap: 6,
-              paddingTop: 10,
+              flexWrap: "nowrap",
+              gap: 4,
+              justifyContent: isFirstRun ? "flex-end" : undefined,
+              paddingTop: 2,
             }}
           >
-            {projectId ? (
-              <AgentFileAttachment
-                projectId={projectId}
-                workingDirectory={effectiveDirectory}
-                disabled={busy || !!pending}
-                onInsert={(markdown) =>
-                  setFirstRequest(
-                    (current) =>
-                      `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
-                  )
-                }
-              />
-            ) : (
-              <Button
-                aria-label="Add files and more"
-                disabled
-                icon={<Icon name="plus" />}
-                shape="circle"
-                style={{ height: 32, minWidth: 32, width: 32 }}
-                title="Choose a project before adding files"
-                type="text"
-              />
-            )}
-            <Popover
-              content={advancedSettings}
-              open={settingsOpen}
-              placement="bottomLeft"
-              trigger="click"
-              onOpenChange={setSettingsOpen}
-            >
-              <Button
-                icon={<Icon name="folder-open" />}
-                style={{ height: "auto", maxWidth: 280, overflow: "hidden" }}
-                title={`${projectTitle} / ${effectiveDirectory}`}
+            {!isFirstRun && (
+              <div
+                role="group"
+                aria-label="Message options"
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  flex: "1 1 0",
+                  flexWrap: "wrap",
+                  gap: 4,
+                  minHeight: 32,
+                  minWidth: 0,
+                }}
               >
-                <span
-                  style={{
-                    alignItems: "flex-start",
-                    display: "flex",
-                    flexDirection: "column",
-                    lineHeight: 1.25,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textAlign: "left",
+                {projectId ? (
+                  <AgentFileAttachment
+                    projectId={projectId}
+                    workingDirectory={effectiveDirectory}
+                    disabled={busy || !!pending}
+                    onInsert={(markdown) => {
+                      if (!inputControlRef.current?.insertText(markdown)) {
+                        setFirstRequest(
+                          (current) =>
+                            `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
+                        );
+                      }
+                      inputControlRef.current?.focus();
+                    }}
+                  />
+                ) : (
+                  <Button
+                    aria-label="Add files and more"
+                    disabled
+                    icon={<Icon name="plus" />}
+                    shape="circle"
+                    style={{ height: 32, minWidth: 32, width: 32 }}
+                    title="Choose a project before adding files"
+                    type="text"
+                  />
+                )}
+                <DictateButton
+                  borderless
+                  inputControlRef={inputControlRef}
+                  projectId={projectId}
+                  session={composerSession}
+                />
+                <Popover
+                  content={advancedSettings}
+                  open={settingsOpen}
+                  placement="bottomLeft"
+                  trigger="click"
+                  onOpenChange={(open) => {
+                    setSettingsOpen(open);
+                    if (open) setMoreSettingsOpen(false);
                   }}
                 >
-                  <span
-                    style={{
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                  <ComposerProjectDirectoryButton
+                    ref={projectSettingsButton}
+                    projectTitle={projectTitle}
+                    directory={effectiveDirectory}
+                    displayedDirectory={directoryLabel}
+                    disabled={busy || !!pending}
+                  />
+                </Popover>
+                <span
+                  style={{
+                    alignItems: "center",
+                    display: "inline-flex",
+                    flex: "0 1 auto",
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <Dropdown
+                    menu={{
+                      items: modelOptions.map(({ value, label, disabled }) => ({
+                        key: value,
+                        label,
+                        disabled,
+                      })),
+                      selectedKeys: config.model ? [config.model] : [],
+                      onClick: ({ key }) => {
+                        modelCustomized.current = true;
+                        setConfig((current) =>
+                          reconcileAgentConfig(
+                            { ...current, model: key },
+                            modelOptions,
+                          ),
+                        );
+                      },
                     }}
+                    trigger={["click"]}
                   >
-                    {projectTitle}
-                  </span>
-                  <span
-                    style={{
-                      color: UI_COLORS.secondary,
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                    <ComposerPillButton
+                      aria-label={`Change model. Current model: ${config.model}`}
+                      disabled={busy || !!pending || !!siteFundedPolicy}
+                      style={{
+                        maxWidth: 150,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {config.model}
+                    </ComposerPillButton>
+                  </Dropdown>
+                  <Text type="secondary">·</Text>
+                  <Dropdown
+                    menu={{
+                      items: reasoningOptions.map(({ id, label }) => ({
+                        key: id,
+                        label,
+                      })),
+                      selectedKeys: config.reasoning ? [config.reasoning] : [],
+                      onClick: ({ key }) => {
+                        modelCustomized.current = true;
+                        setConfig((current) => ({
+                          ...current,
+                          reasoning: key as CodexReasoningId,
+                        }));
+                      },
                     }}
+                    trigger={["click"]}
                   >
-                    {directoryLabel}
-                  </span>
+                    <ComposerPillButton
+                      aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                      disabled={
+                        busy ||
+                        !!pending ||
+                        !!siteFundedPolicy ||
+                        reasoningOptions.length === 0
+                      }
+                    >
+                      {selectedReasoningLabel}
+                    </ComposerPillButton>
+                  </Dropdown>
+                  <Text type="secondary">·</Text>
+                  <Dropdown
+                    menu={{
+                      items: paymentOptions.map(
+                        ({ value, label, disabled }) => ({
+                          key: value,
+                          label,
+                          disabled,
+                        }),
+                      ),
+                      selectedKeys: [selectedPaymentValue],
+                      onClick: ({ key }) => {
+                        if (key.startsWith("subscription:")) {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: "subscription",
+                            credentialId: key.slice("subscription:".length),
+                          }));
+                        } else {
+                          setConfig((current) => ({
+                            ...current,
+                            paymentSource: key as CodexPaymentSourcePreference,
+                            credentialId: undefined,
+                          }));
+                        }
+                      },
+                    }}
+                    trigger={["click"]}
+                  >
+                    <ComposerPillButton
+                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                      disabled={busy || !!pending || paymentSourceLoading}
+                      style={{
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {selectedPaymentLabel}
+                    </ComposerPillButton>
+                  </Dropdown>
                 </span>
-              </Button>
-            </Popover>
-            <Select
-              aria-label="Payment source"
-              value={selectedPaymentValue}
-              loading={paymentSourceLoading}
-              disabled={busy || !!pending}
-              options={paymentOptions}
-              style={{ minWidth: 150 }}
-              onChange={(value: string) => {
-                if (value.startsWith("subscription:")) {
-                  setConfig((current) => ({
-                    ...current,
-                    paymentSource: "subscription",
-                    credentialId: value.slice("subscription:".length),
-                  }));
-                  return;
-                }
-                setConfig((current) => ({
-                  ...current,
-                  paymentSource: value as CodexPaymentSourcePreference,
-                  credentialId: undefined,
-                }));
-              }}
-            />
-            <Select
-              aria-label="Model"
-              value={config.model}
-              disabled={busy || !!pending || !!siteFundedPolicy}
-              options={modelOptions}
-              showSearch
-              optionFilterProp="label"
-              style={{ minWidth: 150 }}
-              onChange={(model) =>
-                setConfig((current) =>
-                  reconcileAgentConfig({ ...current, model }, modelOptions),
-                )
-              }
-            />
-            <Select
-              aria-label="Reasoning level"
-              value={config.reasoning}
-              disabled={
-                busy ||
-                !!pending ||
-                !!siteFundedPolicy ||
-                reasoningOptions.length === 0
-              }
-              options={reasoningOptions.map(({ id, label }) => ({
-                value: id,
-                label,
-              }))}
-              placeholder="Reasoning"
-              style={{ minWidth: 120 }}
-              onChange={(reasoning: CodexReasoningId) =>
-                setConfig((current) => ({ ...current, reasoning }))
-              }
-            />
-            <span style={{ flex: 1 }} />
+                <Popover
+                  content={advancedSettings}
+                  open={moreSettingsOpen}
+                  placement="bottomRight"
+                  trigger="click"
+                  onOpenChange={(open) => {
+                    setMoreSettingsOpen(open);
+                    if (open) setSettingsOpen(false);
+                  }}
+                >
+                  <Button
+                    aria-label="More agent settings"
+                    aria-haspopup="dialog"
+                    icon={<Icon name="sliders" />}
+                    size="small"
+                    type="text"
+                    disabled={busy || !!pending}
+                  />
+                </Popover>
+                <span style={{ flex: 1 }} />
+              </div>
+            )}
             <Button
               type="primary"
               shape="circle"
@@ -1067,45 +1676,49 @@ function NewAgentPanel({
               style={{ height: 32, minWidth: 32, width: 32 }}
               loading={busy}
               disabled={
-                uploading || !!problem || !firstRequest.trim() || atLimit
+                uploading ||
+                !!problem ||
+                !firstRequest.trim() ||
+                atLimit ||
+                (!projectId && (!projectMap || emailVerificationRequired))
               }
               onClick={() => void create()}
             />
           </div>
         </div>
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            justifyContent: "space-between",
-          }}
-        >
-          <Space size={4} wrap>
-            <Button
-              type="link"
-              size="small"
-              aria-label={`Change agent name @${name}`}
-              disabled={busy || !!pending}
-              style={{ height: "auto", padding: 0 }}
-              onClick={() => setNameOpen(true)}
-            >
-              @{name}
-            </Button>
-            <Text type="secondary">
-              · {paymentLabel} · Shift+Enter to start
-            </Text>
-          </Space>
-          <Space>
-            <NamedAgentUsage directory={namedAgentDirectory} />
-            {agents.length > 0 && (
-              <Button type="text" disabled={busy} onClick={onCancel}>
-                Cancel
+        {(isFirstRun || busy) && (
+          <PreparationStatus active={busy} phase={preparationPhase} />
+        )}
+        {!isFirstRun && (
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              justifyContent: "space-between",
+            }}
+          >
+            <Space size={4} wrap>
+              <Text type="secondary">Shift+Enter to start</Text>
+              <Button
+                type="link"
+                disabled={busy || uploading || !!problem || atLimit}
+                onClick={() => void create(undefined, true)}
+              >
+                Create without a task
               </Button>
-            )}
-          </Space>
-        </div>
+            </Space>
+            <Space>
+              <NamedAgentUsage directory={namedAgentDirectory} />
+              {agents.length > 0 && (
+                <Button type="text" disabled={busy} onClick={onCancel}>
+                  Cancel
+                </Button>
+              )}
+            </Space>
+          </div>
+        )}
         {paymentSourceError && (
           <Alert
             role="alert"
@@ -1163,32 +1776,31 @@ function NewAgentPanel({
           />
         )}
       </Modal>
-      <Modal
-        open={nameOpen}
-        title="Agent name"
-        okText="Done"
-        okButtonProps={{ disabled: !!problem }}
-        cancelButtonProps={{ style: { display: "none" } }}
-        onOk={() => setNameOpen(false)}
-        onCancel={() => setNameOpen(false)}
-      >
-        <AgentNameInput
-          id="new-agent-name-dialog"
-          value={name}
-          onChange={setName}
-          problem={name.trim() ? problem : undefined}
-          busy={busy || !!pending}
-          onEnter={() => {
-            if (!problem) setNameOpen(false);
-          }}
-        />
-      </Modal>
+      {createProjectMounted.current && (
+        <CocalcErrorBoundary
+          scope="agents.create-project"
+          resetKeys={[createProjectOpen]}
+        >
+          <Suspense fallback={null}>
+            <NewProjectCreator
+              key={projectCreatorInstance}
+              default_value={projectCreationTitle}
+              open={createProjectOpen}
+              onClose={closeProjectCreator}
+              onCreated={selectProject}
+            />
+          </Suspense>
+        </CocalcErrorBoundary>
+      )}
+      <MembershipDetailsModal
+        open={membershipDetailsOpen}
+        onClose={() => setMembershipDetailsOpen(false)}
+      />
     </div>
   );
 }
 
 function AgentProjectContext({
-  selectedNetworkId,
   showEditorControls,
   agent,
   workspaceAgents,
@@ -1201,7 +1813,6 @@ function AgentProjectContext({
   onClose,
   onOpenDocs,
 }: {
-  selectedNetworkId?: string;
   showEditorControls: boolean;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1496,7 +2107,6 @@ function AgentProjectContext({
           onBrowseAllArtifacts: () => {
             if (accountId) openLibrary();
           },
-          selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
           hideTopControls: false,
@@ -1515,11 +2125,13 @@ function AgentProjectContext({
 
 function AgentsWorkspaceNavigation({
   onOpenInProject,
+  onOpenTerminal,
   foregroundColor,
   workspaceItems,
   onOpenDocs,
 }: {
   onOpenInProject?: () => void;
+  onOpenTerminal?: () => void;
   foregroundColor?: string;
   workspaceItems?: import("antd").MenuProps["items"];
   onOpenDocs?: () => void;
@@ -1531,6 +2143,7 @@ function AgentsWorkspaceNavigation({
       isLoggedIn={!!accountId}
       pageStyle={pageStyle}
       onOpenInProject={onOpenInProject}
+      onOpenTerminal={onOpenTerminal}
       foregroundColor={foregroundColor}
       workspaceItems={workspaceItems}
       onOpenDocs={onOpenDocs}
@@ -1555,9 +2168,7 @@ function AgentWorkspace({
   onClose,
   onRegisteredThreadSelected,
   networks,
-  selectedNetworkId,
-  onSelectNetwork,
-  onOpenNetwork,
+  onEditNetworkTags,
 }: {
   onCopy: (agent: NamedAgent) => void;
   onFresh: (agent: NamedAgent) => void;
@@ -1578,12 +2189,13 @@ function AgentWorkspace({
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
   networks: AgentNetwork[];
-  selectedNetworkId?: string;
-  onSelectNetwork: (network: AgentNetwork) => void;
-  onOpenNetwork: (network: AgentNetwork) => void;
+  onEditNetworkTags: (agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [selectedThread, setSelectedThread] = useState(agent.thread_id);
+  const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
+    agent.endpoint.agent_id,
+    agent.thread_id,
+  );
   const [headerAppearance, setHeaderAppearance] = useState<{
     threadId: string;
     value: AgentHeaderAppearance;
@@ -1627,6 +2239,7 @@ function AgentWorkspace({
     selectedThread,
   );
   const displayedAgent = selectedAgent ?? agent;
+  const networkTagCount = networksForAgent(networks, displayedAgent).length;
   const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
     agent.endpoint.project_id,
     "users",
@@ -1661,7 +2274,9 @@ function AgentWorkspace({
       }
     },
     [
+      agent.endpoint.agent_id,
       agent.endpoint.project_id,
+      agent.thread_id,
       agent.path,
       onRegisteredThreadSelected,
       workspaceAgents,
@@ -1823,6 +2438,9 @@ function AgentWorkspace({
           display: "flex",
           gap: 12,
           padding: "2px 12px",
+          height: 64,
+          flexShrink: 0,
+          boxSizing: "border-box",
         }}
       >
         {onShowList && (
@@ -1832,7 +2450,7 @@ function AgentWorkspace({
             onClick={onShowList}
           />
         )}
-        {onToggleAgentSidebar && agentSidebarHidden != null && (
+        {onToggleAgentSidebar && agentSidebarHidden && (
           <AgentsSidebarToggle
             hidden={agentSidebarHidden}
             onToggle={onToggleAgentSidebar}
@@ -1900,7 +2518,7 @@ function AgentWorkspace({
               gap: 8,
               minWidth: 0,
               width: "100%",
-              flexWrap: "wrap",
+              flexWrap: "nowrap",
               fontSize: 12,
             }}
           >
@@ -1930,14 +2548,17 @@ function AgentWorkspace({
             ) : (
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
             )}
-            {!unregistered && networks.length > 0 && (
-              <AgentNetworkPills
-                networks={networks}
-                maxVisible={2}
-                selectedNetworkId={selectedNetworkId}
-                onSelect={onSelectNetwork}
-                onOpen={onOpenNetwork}
-              />
+            {!unregistered && (
+              <Button
+                type="text"
+                size="small"
+                aria-label={`Edit network tags for @${displayedAgent.name}`}
+                onClick={() => onEditNetworkTags(displayedAgent)}
+                style={{ color: "inherit", height: "auto", padding: 0 }}
+              >
+                Network tags
+                {networkTagCount ? ` (${networkTagCount})` : ""}
+              </Button>
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
@@ -1989,6 +2610,7 @@ function AgentWorkspace({
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
             onOpenDocs={openDocs}
+            onOpenTerminal={() => runFrameAction("terminal")}
             workspaceItems={[
               {
                 key: "workspace-terminal",
@@ -2132,39 +2754,46 @@ function AgentWorkspace({
           }
         />
       )}
+      {active && agent.available && (
+        <AgentHostRecovery projectId={agent.endpoint.project_id} />
+      )}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
-        <AgentProjectContext
-          selectedNetworkId={selectedNetworkId}
-          showEditorControls={showEditorControls}
-          agent={agent}
-          workspaceAgents={workspaceAgents}
-          active={active}
-          accountId={accountId}
-          onSelectedThread={handleSelectedThread}
-          onAgentActivity={onAgentActivity}
-          onChatActions={setChatActions}
-          onClose={onClose}
-          onOpenDocs={openDocs}
-          onThreadAppearance={(threadId, value) => {
-            if (threadId === selectedThread) {
-              setHeaderAppearance((current) =>
-                current?.threadId === threadId &&
-                sameAgentHeaderAppearance(current.value, value)
-                  ? current
-                  : { threadId, value },
+        <AvailableConversation
+          available={agent.available}
+          retry={refreshNamedAgents}
+        >
+          <AgentProjectContext
+            showEditorControls={showEditorControls}
+            agent={agent}
+            workspaceAgents={workspaceAgents}
+            active={active}
+            accountId={accountId}
+            onSelectedThread={handleSelectedThread}
+            onAgentActivity={onAgentActivity}
+            onChatActions={setChatActions}
+            onClose={onClose}
+            onOpenDocs={openDocs}
+            onThreadAppearance={(threadId, value) => {
+              if (threadId === selectedThread) {
+                setHeaderAppearance((current) =>
+                  current?.threadId === threadId &&
+                  sameAgentHeaderAppearance(current.value, value)
+                    ? current
+                    : { threadId, value },
+                );
+              }
+              const registered = findWorkspaceAgentForThread(
+                workspaceAgents,
+                agent.endpoint.project_id,
+                agent.path,
+                threadId,
               );
-            }
-            const registered = findWorkspaceAgentForThread(
-              workspaceAgents,
-              agent.endpoint.project_id,
-              agent.path,
-              threadId,
-            );
-            if (registered) {
-              onAgentAppearance(registered.endpoint.agent_id, value);
-            }
-          }}
-        />
+              if (registered) {
+                onAgentAppearance(registered.endpoint.agent_id, value);
+              }
+            }}
+          />
+        </AvailableConversation>
       </div>
       <Drawer
         destroyOnHidden={false}
@@ -2199,6 +2828,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
+  const liveProjects = useTypedRedux("projects", "project_map");
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
@@ -2221,11 +2851,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
     | undefined;
-  const [search, setSearch] = useState("");
-  const [networkFilterId, setNetworkFilterId] = useState(
-    readAgentNetworkFilter,
-  );
   const [networkDetailsId, setNetworkDetailsId] = useState<string>();
+  const [networkTagsAgent, setNetworkTagsAgent] = useState<NamedAgent>();
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -2266,12 +2893,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         icon={<Icon name="bars" />}
         onClick={() => setMobileList(true)}
       />
-    ) : (
+    ) : agentSidebarHidden ? (
       <AgentsSidebarToggle
         hidden={agentSidebarHidden}
         onToggle={toggleAgentSidebar}
       />
-    );
+    ) : null;
   }
 
   const toggleAgentSidebar = useCallback(() => {
@@ -2288,8 +2915,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }, [active]);
   const agents = directory?.agents ?? [];
   const networks = networkDirectory?.networks ?? [];
-  const selectedNetwork = networks.find(
-    ({ agent_network_id }) => agent_network_id === networkFilterId,
+  const networksByAgent = useMemo(
+    () => indexAgentNetworks(networks),
+    [networks],
   );
   const detailsNetwork = networks.find(
     ({ agent_network_id }) => agent_network_id === networkDetailsId,
@@ -2304,35 +2932,28 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
-  const creatingSourceAgent =
-    agents.find(
-      ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
-    ) ?? selected;
-
   useEffect(() => {
-    if (!networkDirectory || !networkFilterId) return;
-    if (selectedNetwork) {
-      rememberAgentNetworkFilter(networkFilterId);
-      return;
-    }
-    rememberAgentNetworkFilter();
-    setNetworkFilterId(undefined);
-  }, [networkDirectory, networkFilterId, selectedNetwork]);
+    if (!active) return;
+    set_window_title(
+      libraryOpen
+        ? "Library"
+        : creating
+          ? "New Agent"
+          : selected
+            ? `@${selected.name} - Agents`
+            : "Agents",
+    );
+  }, [active, libraryOpen, creating, selected?.name]);
+  const creatingSourceAgent = agentFirstRunStarted(accountId)
+    ? undefined
+    : (agents.find(
+        ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
+      ) ?? selected);
 
-  const networkFallback =
-    selectedNetwork &&
-    !creating &&
-    (!selected || !networksForAgent([selectedNetwork], selected).length)
-      ? agents.find(
-          (agent) => networksForAgent([selectedNetwork], agent).length > 0,
-        )
-      : undefined;
   useWorkspaceRoute({
     active: active && !libraryOpen,
     activeAgentId,
     selected,
-    networkFallback,
-    mountAgent,
   });
 
   useEffect(() => {
@@ -2369,56 +2990,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       return next;
     });
   }, [selected?.endpoint.agent_id, libraryOpen, active]);
-
-  const visibleGroups = useMemo(() => {
-    const value = search.trim().toLowerCase();
-    const filter = (agent: NamedAgent) => {
-      if (
-        selectedNetwork &&
-        !networksForAgent([selectedNetwork], agent).length
-      ) {
-        return false;
-      }
-      return (
-        !value ||
-        [
-          agent.name,
-          agentAppearances.get(agent.endpoint.agent_id)?.name,
-          agent.thread_title,
-          agent.project_title,
-          agent.description,
-        ]
-          .filter(Boolean)
-          .some((part) => `${part}`.toLowerCase().includes(value))
-      );
-    };
-    return {
-      pinned: agentOrganization.groups.pinned.filter(filter),
-      unpinned: agentOrganization.groups.unpinned.filter(filter),
-      hidden: agentOrganization.groups.hidden.filter(filter),
-    };
-  }, [agentAppearances, agentOrganization.groups, search, selectedNetwork]);
-  const recencySections = useMemo(
-    () =>
-      groupAgentsByRecency(
-        visibleGroups.unpinned,
-        agentOrganization.organization.lastOpened,
-      ),
-    [agentOrganization.organization.lastOpened, visibleGroups.unpinned],
-  );
-  const projectGroups = useMemo(
-    () =>
-      groupAgentsByProject(
-        visibleGroups.pinned,
-        visibleGroups.unpinned,
-        agentOrganization.organization.lastOpened,
-      ),
-    [
-      agentOrganization.organization.lastOpened,
-      visibleGroups.pinned,
-      visibleGroups.unpinned,
-    ],
-  );
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
@@ -2484,12 +3055,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }),
       "",
     );
-  }
-
-  function selectNetwork(network?: AgentNetwork) {
-    const next = network?.agent_network_id;
-    rememberAgentNetworkFilter(next);
-    setNetworkFilterId(next);
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -2845,6 +3410,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     hidden = false,
     showProjectTitle = true,
   ) {
+    const projectTitle = agentProjectTitle(
+      agent,
+      liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
+        | string
+        | undefined,
+    );
     const active =
       !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
@@ -2884,8 +3455,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={`${theme.title}, @${agent.name}, ${agent.project_title || agent.endpoint.project_id}`}
-            title={`@${agent.name} · ${agent.project_title || agent.endpoint.project_id}`}
+            aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
+            title={`@${agent.name} · ${projectTitle}`}
             onClick={() => selectAgent(agent)}
             style={{
               alignItems: "center",
@@ -2922,9 +3493,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 {theme.title}
               </Text>
               <Text type="secondary" ellipsis style={{ display: "block" }}>
-                {showProjectTitle
-                  ? agent.project_title || agent.endpoint.project_id
-                  : `@${agent.name}`}
+                @{agent.name}
+                {showProjectTitle && ` · ${projectTitle}`}
               </Text>
             </span>
           </button>
@@ -3017,6 +3587,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       projectAgentIds?: string[];
       showProjectTitle?: boolean;
     } = {},
+    search = "",
   ) {
     if (search.trim() || !reorderable) {
       return group.map((agent) => (
@@ -3088,6 +3659,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <WorkspaceSidebarActions
+        onHideSidebar={isNarrow ? undefined : toggleAgentSidebar}
         footer={
           <div
             style={{
@@ -3123,215 +3695,269 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           setMobileList(false);
         }}
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
-          <Button
-            ref={libraryButton}
-            block
-            type="text"
-            style={{
-              justifyContent: "flex-start",
-              background: libraryOpen ? UI_COLORS.selected : undefined,
-            }}
-            icon={<Icon name="files" />}
-            aria-pressed={libraryOpen}
-            aria-current={libraryOpen ? "page" : undefined}
-            onClick={showLibrary}
-          >
-            Library
-          </Button>
-          {accountId && (
-            <AgentSearch
-              accountId={accountId}
-              agents={agents}
-              activity={agentOrganization.organization.lastOpened}
-              active={active}
-              onSelect={openSearchHit}
-              available={(agent) => agent.available}
-            />
-          )}
-          <AgentOrganizationControls
-            mode={agentOrganization.organization.mode}
-            groupByProject={agentOrganization.organization.groupByProject}
-            onMode={agentOrganization.setMode}
-            onGroupByProject={agentOrganization.setGroupByProject}
-          />
-          <Input
-            allowClear
-            aria-label="Filter agents by name"
-            placeholder="Filter agents by name"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {selectedNetwork && (
-            <AgentNetworkFilterBar
-              network={selectedNetwork}
-              onOpen={() =>
-                setNetworkDetailsId(selectedNetwork.agent_network_id)
-              }
-              onClear={() => selectNetwork()}
-            />
-          )}
-          {networkError && (
-            <Alert
-              role="alert"
-              type="warning"
-              showIcon
-              title="Unable to load Agent Networks"
-              description={networkError}
-            />
-          )}
-          {agentOrganization.saveError && (
-            <Alert
-              role="alert"
-              type="error"
-              showIcon
-              title={agentOrganization.saveError}
-            />
-          )}
-        </Space>
-        <div>
-          {agentOrganization.organization.groupByProject ? (
-            projectGroups.map((group) => {
-              const count = group.pinned.length + group.unpinned.length;
-              const collapsed =
-                !search.trim() &&
-                agentOrganization.organization.collapsedProjects.includes(
-                  group.projectId,
-                );
-              return (
-                <section
-                  key={group.projectId}
-                  aria-label={`${group.projectTitle} agents`}
-                  style={{ marginBottom: 8 }}
-                >
+        <AgentSidebarFilter
+          render={(search, input) => {
+            const filter = (agent: NamedAgent) =>
+              matchesAgentSidebarSearch({
+                agent,
+                appearanceName: agentAppearances.get(agent.endpoint.agent_id)
+                  ?.name,
+                networks:
+                  networksByAgent.get(
+                    agentNetworkLookupKey(
+                      agent.endpoint.project_id,
+                      agent.endpoint.agent_id,
+                    ),
+                  ) ?? [],
+                query: search,
+              });
+            const visibleGroups = {
+              pinned: agentOrganization.groups.pinned.filter(filter),
+              unpinned: agentOrganization.groups.unpinned.filter(filter),
+              hidden: agentOrganization.groups.hidden.filter(filter),
+            };
+            const recencySections = groupAgentsByRecency(
+              visibleGroups.unpinned,
+              agentOrganization.organization.lastOpened,
+            );
+            const projectGroups = groupAgentsByProject(
+              visibleGroups.pinned,
+              visibleGroups.unpinned,
+              agentOrganization.organization.lastOpened,
+            );
+            return (
+              <>
+                <Space direction="vertical" size={10} style={{ width: "100%" }}>
                   <Button
-                    type="text"
+                    ref={libraryButton}
                     block
-                    aria-expanded={!collapsed}
-                    onClick={() =>
-                      agentOrganization.setProjectCollapsed(
-                        group.projectId,
-                        !collapsed,
-                      )
-                    }
+                    type="text"
                     style={{
-                      alignItems: "center",
-                      background: UI_COLORS.surface,
-                      border: `1px solid ${UI_COLORS.border}`,
-                      display: "flex",
-                      fontWeight: 600,
                       justifyContent: "flex-start",
-                      paddingInline: 8,
-                      textAlign: "left",
+                      background: libraryOpen ? UI_COLORS.selected : undefined,
                     }}
-                    icon={
-                      <Icon name={collapsed ? "caret-right" : "caret-down"} />
-                    }
+                    icon={<Icon name="files" />}
+                    aria-pressed={libraryOpen}
+                    aria-current={libraryOpen ? "page" : undefined}
+                    onClick={showLibrary}
                   >
-                    <span
-                      title={group.projectTitle}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {group.projectTitle}
-                    </span>
-                    <Text type="secondary" style={{ marginLeft: 6 }}>
-                      {count}
-                    </Text>
+                    Library
                   </Button>
-                  {!collapsed && (
-                    <div
-                      role="list"
-                      aria-label={`Agents in ${group.projectTitle}`}
-                    >
-                      {renderSortableAgentGroup(group.pinned, true, true, {
-                        projectAgentIds: group.pinned.map(
-                          ({ endpoint }) => endpoint.agent_id,
-                        ),
-                        showProjectTitle: false,
-                      })}
+                  {accountId && (
+                    <AgentSearch
+                      accountId={accountId}
+                      agents={agents}
+                      activity={agentOrganization.organization.lastOpened}
+                      active={active}
+                      onSelect={openSearchHit}
+                      available={(agent) => agent.available}
+                    />
+                  )}
+                  <AgentOrganizationControls
+                    mode={agentOrganization.organization.mode}
+                    groupByProject={
+                      agentOrganization.organization.groupByProject
+                    }
+                    onMode={agentOrganization.setMode}
+                    onGroupByProject={agentOrganization.setGroupByProject}
+                  />
+                  {input}
+                  {networkError && (
+                    <Alert
+                      role="alert"
+                      type="warning"
+                      showIcon
+                      title="Unable to load Agent Networks"
+                      description={networkError}
+                    />
+                  )}
+                  <OrganizationSaveAlert
+                    error={agentOrganization.saveError}
+                    onRetry={agentOrganization.retrySave}
+                  />
+                </Space>
+                <div>
+                  {agentOrganization.organization.groupByProject ? (
+                    projectGroups.map((group) => {
+                      const count = group.pinned.length + group.unpinned.length;
+                      const collapsed =
+                        !search.trim() &&
+                        agentOrganization.organization.collapsedProjects.includes(
+                          group.projectId,
+                        );
+                      return (
+                        <section
+                          key={group.projectId}
+                          aria-label={`${group.projectTitle} agents`}
+                          style={{ marginBottom: 8 }}
+                        >
+                          <Button
+                            type="text"
+                            block
+                            aria-expanded={!collapsed}
+                            onClick={() =>
+                              agentOrganization.setProjectCollapsed(
+                                group.projectId,
+                                !collapsed,
+                              )
+                            }
+                            style={{
+                              alignItems: "center",
+                              background: UI_COLORS.surface,
+                              border: `1px solid ${UI_COLORS.border}`,
+                              display: "flex",
+                              fontWeight: 600,
+                              justifyContent: "flex-start",
+                              paddingInline: 8,
+                              textAlign: "left",
+                            }}
+                            icon={
+                              <Icon
+                                name={collapsed ? "caret-right" : "caret-down"}
+                              />
+                            }
+                          >
+                            <span
+                              title={group.projectTitle}
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {group.projectTitle}
+                            </span>
+                            <Text type="secondary" style={{ marginLeft: 6 }}>
+                              {count}
+                            </Text>
+                          </Button>
+                          {!collapsed && (
+                            <div
+                              role="list"
+                              aria-label={`Agents in ${group.projectTitle}`}
+                            >
+                              {renderSortableAgentGroup(
+                                group.pinned,
+                                true,
+                                true,
+                                {
+                                  projectAgentIds: group.pinned.map(
+                                    ({ endpoint }) => endpoint.agent_id,
+                                  ),
+                                  showProjectTitle: false,
+                                },
+                                search,
+                              )}
+                              {renderSortableAgentGroup(
+                                group.unpinned,
+                                false,
+                                agentOrganization.organization.mode ===
+                                  "custom",
+                                {
+                                  projectAgentIds: group.unpinned.map(
+                                    ({ endpoint }) => endpoint.agent_id,
+                                  ),
+                                  showProjectTitle: false,
+                                },
+                                search,
+                              )}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <div role="list" aria-label="Visible agents">
+                      {visibleGroups.pinned.length > 0 && (
+                        <Text
+                          type="secondary"
+                          style={{ display: "block", padding: 6 }}
+                        >
+                          Pinned
+                        </Text>
+                      )}
                       {renderSortableAgentGroup(
-                        group.unpinned,
-                        false,
-                        agentOrganization.organization.mode === "custom",
-                        {
-                          projectAgentIds: group.unpinned.map(
-                            ({ endpoint }) => endpoint.agent_id,
-                          ),
-                          showProjectTitle: false,
-                        },
+                        visibleGroups.pinned,
+                        true,
+                        true,
+                        {},
+                        search,
+                      )}
+                      {agentOrganization.organization.mode === "custom" ? (
+                        <>
+                          {visibleGroups.unpinned.length > 0 && (
+                            <Text
+                              type="secondary"
+                              style={{ display: "block", padding: 6 }}
+                            >
+                              Custom order
+                            </Text>
+                          )}
+                          {renderSortableAgentGroup(
+                            visibleGroups.unpinned,
+                            false,
+                            true,
+                            {},
+                            search,
+                          )}
+                        </>
+                      ) : (
+                        recencySections.map((section) => (
+                          <div key={section.key}>
+                            <Text
+                              type="secondary"
+                              style={{ display: "block", padding: 6 }}
+                            >
+                              {section.title}
+                            </Text>
+                            {renderSortableAgentGroup(
+                              section.agents,
+                              false,
+                              false,
+                              {},
+                              search,
+                            )}
+                          </div>
+                        ))
                       )}
                     </div>
                   )}
-                </section>
-              );
-            })
-          ) : (
-            <div role="list" aria-label="Visible agents">
-              {visibleGroups.pinned.length > 0 && (
-                <Text type="secondary" style={{ display: "block", padding: 6 }}>
-                  Pinned
-                </Text>
-              )}
-              {renderSortableAgentGroup(visibleGroups.pinned, true)}
-              {agentOrganization.organization.mode === "custom" ? (
-                <>
-                  {visibleGroups.unpinned.length > 0 && (
-                    <Text
-                      type="secondary"
-                      style={{ display: "block", padding: 6 }}
-                    >
-                      Custom order
-                    </Text>
-                  )}
-                  {renderSortableAgentGroup(visibleGroups.unpinned, false)}
-                </>
-              ) : (
-                recencySections.map((section) => (
-                  <div key={section.key}>
-                    <Text
-                      type="secondary"
-                      style={{ display: "block", padding: 6 }}
-                    >
-                      {section.title}
-                    </Text>
-                    {renderSortableAgentGroup(section.agents, false, false)}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          {visibleGroups.hidden.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <Button
-                type="text"
-                block
-                style={{ textAlign: "left" }}
-                icon={<Icon name={showHidden ? "caret-down" : "caret-right"} />}
-                aria-expanded={showHidden}
-                onClick={() => setShowHidden((value) => !value)}
-              >
-                Hidden ({visibleGroups.hidden.length})
-              </Button>
-              {showHidden && (
-                <div role="list" aria-label="Hidden agents">
-                  {visibleGroups.hidden.map((agent) => (
-                    <div
-                      key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
-                    >
-                      {renderAgentRow(agent, false, false, true)}
+                  {visibleGroups.hidden.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <Button
+                        type="text"
+                        block
+                        style={{ textAlign: "left" }}
+                        icon={
+                          <Icon
+                            name={showHidden ? "caret-down" : "caret-right"}
+                          />
+                        }
+                        aria-expanded={showHidden}
+                        onClick={() => setShowHidden((value) => !value)}
+                      >
+                        Hidden ({visibleGroups.hidden.length})
+                      </Button>
+                      {showHidden && (
+                        <div role="list" aria-label="Hidden agents">
+                          {visibleGroups.hidden.map((agent) => (
+                            <div
+                              key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                            >
+                              {renderAgentRow(agent, false, false, true)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+              </>
+            );
+          }}
+        />
       </WorkspaceSidebarActions>
     </aside>
   );
@@ -3481,7 +4107,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   zIndex: 3,
                 }}
               >
-                {!isNarrow ? (
+                {!isNarrow && agentSidebarHidden ? (
                   <AgentsSidebarToggle
                     hidden={agentSidebarHidden}
                     onToggle={toggleAgentSidebar}
@@ -3536,18 +4162,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 <Button onClick={refreshNamedAgents}>Retry directory</Button>
               }
             />
-          ) : agents.length === 0 ? (
-            <Empty
-              style={{ marginTop: 80 }}
-              description="Name an agent chat to make it available here."
-            >
-              <Button
-                type="link"
-                onClick={() => openAccountSettings({ page: "my-agents" })}
-              >
-                Manage named agents
-              </Button>
-            </Empty>
           ) : !selected ? (
             <Empty
               style={{ marginTop: 80 }}
@@ -3600,12 +4214,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     onAgentActivity={agentOrganization.recordActivity}
                     agentAppearances={agentAppearances}
                     onAgentAppearance={handleAgentAppearance}
-                    networks={networksForAgent(networks, agent)}
-                    selectedNetworkId={networkFilterId}
-                    onSelectNetwork={selectNetwork}
-                    onOpenNetwork={(network) =>
-                      setNetworkDetailsId(network.agent_network_id)
-                    }
+                    networks={networks}
+                    onEditNetworkTags={setNetworkTagsAgent}
                     onClose={() => {
                       setMountedWorkspaces((old) => {
                         const next = new Set(old);
@@ -3653,8 +4263,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onClose={() => startFresh(undefined)}
         />
       )}
+      {networkTagsAgent && networkDirectory && (
+        <AgentNetworkTagsEditor
+          agent={networkTagsAgent}
+          directory={networkDirectory}
+          onClose={() => setNetworkTagsAgent(undefined)}
+          onOpenNetwork={(network) =>
+            setNetworkDetailsId(network.agent_network_id)
+          }
+        />
+      )}
       <AgentNetworkDetailsModal
         network={detailsNetwork}
+        networks={networkDirectory?.networks}
+        onSelectNetwork={(network) =>
+          setNetworkDetailsId(network.agent_network_id)
+        }
         onClose={() => setNetworkDetailsId(undefined)}
         onChanged={refreshAgentNetworks}
       />

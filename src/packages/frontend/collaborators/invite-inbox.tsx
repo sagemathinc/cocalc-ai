@@ -71,6 +71,7 @@ type UseInviteInboxStateOptions = {
 
 export type InviteInboxState = {
   loading: boolean;
+  loaded: boolean;
   error: string;
   busy: string;
   incoming: ProjectCollabInviteRow[];
@@ -200,6 +201,7 @@ export function useInviteInboxState({
 }: UseInviteInboxStateOptions): InviteInboxState {
   const account_id = useTypedRedux("account", "account_id");
   const [loading, set_loading] = useState<boolean>(false);
+  const [loadedAccountId, set_loaded_account_id] = useState<string>();
   const [error, set_error] = useState<string>("");
   const [busy, set_busy] = useState<string>("");
   const [incoming, set_incoming] = useState<ProjectCollabInviteRow[]>([]);
@@ -212,6 +214,7 @@ export function useInviteInboxState({
     const updatesGlobalIncomingCount = project_id == null && includeIncoming;
     if (!account_id) {
       set_loading(false);
+      set_loaded_account_id(undefined);
       set_error("");
       set_incoming([]);
       set_outgoing([]);
@@ -255,6 +258,7 @@ export function useInviteInboxState({
         return;
       }
       const nextIncoming = incomingRows ?? [];
+      set_loaded_account_id(account_id);
       set_incoming(nextIncoming);
       set_outgoing(outgoingRows ?? []);
       set_blocks(blockRows ?? []);
@@ -369,6 +373,7 @@ export function useInviteInboxState({
 
   return {
     loading,
+    loaded: !!account_id && loadedAccountId === account_id,
     error,
     busy,
     incoming,

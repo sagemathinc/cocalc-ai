@@ -66,6 +66,9 @@ export class PersonalAgentStore {
       db: Query,
       account_id: string,
     ) => Promise<void> = assertPersonalAccountAuthority,
+    private readonly projectWasDeleted: (
+      project_id: string,
+    ) => Promise<boolean> = async () => false,
   ) {}
 
   async assertHome(account_id: string) {
@@ -138,6 +141,7 @@ export class PersonalAgentStore {
       )
     ).rows;
     const result: NamedAgent[] = [];
+    const deletedProjects = new Map<string, Promise<boolean>>();
     for (const row of rows) {
       const named = this.named(row);
       try {
@@ -145,6 +149,16 @@ export class PersonalAgentStore {
         named.path = identity.path;
         named.thread_id = identity.thread_id;
       } catch {
+        const projectId = named.endpoint.project_id;
+        if (!deletedProjects.has(projectId))
+          deletedProjects.set(
+            projectId,
+            this.projectWasDeleted(projectId).catch(() => false),
+          );
+        if (await deletedProjects.get(projectId)) {
+          await this.retire(account, { endpoint: named.endpoint });
+          continue;
+        }
         named.available = false;
       }
       result.push(named);
@@ -173,6 +187,20 @@ export class PersonalAgentStore {
       thread_title: opts.thread_title,
     };
     return this.locked(account, async (db) => {
+      // Older retirements kept every alias reserved. Reclaim those rows, but
+      // preserve redirects when the endpoint still has an active name.
+      await db.query(
+        `DELETE FROM agent_personal_names AS retired
+         WHERE retired.account_id=$1 AND retired.retired_at IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_personal_names AS active
+             WHERE active.account_id=retired.account_id
+               AND active.project_id=retired.project_id
+               AND active.agent_id=retired.agent_id
+               AND active.retired_at IS NULL
+           )`,
+        [account],
+      );
       const currentForEndpoint = (
         await db.query(
           "SELECT name FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
@@ -235,7 +263,7 @@ export class PersonalAgentStore {
     validateAgentEndpoint(opts.endpoint);
     await this.locked(account, async (db) => {
       await db.query(
-        "UPDATE agent_personal_names SET retired_at=now(),updated_at=now() WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+        "DELETE FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3",
         [account, opts.endpoint.project_id, opts.endpoint.agent_id],
       );
     });
@@ -301,8 +329,7 @@ export class PersonalAgentStore {
     members: AgentNetworkMemberLocator[],
     memberLimit: number,
   ) {
-    if (!Array.isArray(members) || members.length < 2)
-      throw new Error("agent_network_requires_two_members");
+    if (!Array.isArray(members)) throw new Error("invalid_network_members");
     if (members.length > Math.min(memberLimit, 64))
       throw new Error(`agent_network_member_limit_reached:${memberLimit}`);
     const seen = new Set<string>();
@@ -1116,8 +1143,6 @@ export class PersonalAgentStore {
           );
           if (!result.rows.length)
             throw new Error("agent_network_member_not_found");
-          if (activeMembers.length - 1 < 2)
-            throw new Error("agent_network_requires_two_members");
         } else if (options.action === "pause") {
           row.state = "paused";
         } else if (options.action === "resume") {
