@@ -59,8 +59,8 @@ beforeEach(() => {
     project_recovery_customer_warnings_enabled: false,
   });
   membership.mockResolvedValue({
-    source: "subscription",
-    subscription_cost: 10,
+    class: "admin",
+    source: "admin",
   });
   currentStatus.mockResolvedValue({
     snapshot_due_at: due,
@@ -157,7 +157,7 @@ test("the disabled switch performs no inventory scan or delivery", async () => {
   expect(eventGraph).not.toHaveBeenCalled();
 });
 
-test("an overdue paid snapshot warns current owners and collaborators with a Recovery link", async () => {
+test("an overdue admin-tier snapshot warns current owners and collaborators with a Recovery link", async () => {
   settings.mockResolvedValue({
     project_recovery_customer_warnings_enabled: true,
   });
@@ -321,7 +321,7 @@ test("free funding and newly confirmed recovery both suppress warnings", async (
   settings.mockResolvedValue({
     project_recovery_customer_warnings_enabled: true,
   });
-  membership.mockResolvedValueOnce({ source: "free" });
+  membership.mockResolvedValueOnce({ class: "free", source: "free" });
   const { runProjectRecoveryCustomerWarningCheck } =
     await import("./recovery-customer-warning-maintenance");
   await runProjectRecoveryCustomerWarningCheck({ checkedAt });

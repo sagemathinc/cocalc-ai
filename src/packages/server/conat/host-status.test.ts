@@ -115,6 +115,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
     resolveRuntimeMembershipMock = jest.fn(async () => ({
+      class: "free",
+      source: "free",
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({
@@ -314,7 +316,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     );
   });
 
-  it("uses the storage payer for priority and the owner for existing limits", async () => {
+  it("uses an admin-tier storage payer for priority and the owner for existing limits", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
       .mockResolvedValueOnce({
@@ -331,11 +333,11 @@ describe("listHostProjectMaintenanceSchedules", () => {
       });
     resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
       account_id === "sponsor-1"
-        ? { source: "subscription", subscription_cost: 10 }
-        : { source: "free" },
+        ? { class: "admin", source: "admin" }
+        : { class: "free", source: "free" },
     );
     getEffectiveMembershipUsageLimitsMock.mockImplementation((resolution) =>
-      resolution.source === "subscription"
+      resolution.class === "admin"
         ? {
             max_snapshots_per_project: 30,
             max_backups_per_project: 10,
@@ -377,8 +379,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
       });
     resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
       account_id === "course-sponsor-1"
-        ? { source: "subscription", subscription_cost: 10 }
-        : { source: "free" },
+        ? { class: "member", source: "subscription", subscription_cost: 10 }
+        : { class: "free", source: "free" },
     );
     const { listHostProjectMaintenanceSchedules } =
       await import("./host-status");
@@ -405,7 +407,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
       });
     resolveRuntimeMembershipMock.mockImplementation(async (account_id) => {
       if (account_id === "remote-owner") throw Error("home bay unavailable");
-      return { source: "free" };
+      return { class: "free", source: "free" };
     });
     const { listHostProjectMaintenanceSchedules } =
       await import("./host-status");
@@ -434,8 +436,8 @@ describe("listHostProjectMaintenanceSchedules", () => {
       });
     resolveRuntimeMembershipMock.mockImplementation(async (account_id) =>
       account_id === "sponsor-1"
-        ? { source: "subscription", subscription_cost: 10 }
-        : { source: "free" },
+        ? { class: "member", source: "subscription", subscription_cost: 10 }
+        : { class: "free", source: "free" },
     );
     const { listHostProjectMaintenanceSchedules } =
       await import("./host-status");
@@ -465,6 +467,8 @@ describe("initHostStatusService registerOnPremTunnel", () => {
     conatMock = jest.fn(async () => ({ ok: true }));
     queryMock = jest.fn();
     resolveRuntimeMembershipMock = jest.fn(async () => ({
+      class: "free",
+      source: "free",
       effective_limits: {},
     }));
     getEffectiveMembershipUsageLimitsMock = jest.fn(() => ({

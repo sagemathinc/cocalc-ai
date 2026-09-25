@@ -3,7 +3,42 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { storageFundingAccountId } from "./storage-service-class";
+import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import {
+  storageFundingAccountId,
+  storageServiceClassFromMembership,
+} from "./storage-service-class";
+
+describe("storage service class", () => {
+  const membership = (
+    membershipClass: string,
+    source: MembershipResolution["source"],
+  ) => ({ class: membershipClass, source }) as MembershipResolution;
+
+  it("prioritizes every non-free tier, including admin-assigned membership", () => {
+    expect(
+      storageServiceClassFromMembership(membership("admin", "admin")),
+    ).toBe("paying");
+    expect(
+      storageServiceClassFromMembership(membership("member", "subscription")),
+    ).toBe("paying");
+    expect(
+      storageServiceClassFromMembership(membership("student", "grant")),
+    ).toBe("paying");
+  });
+
+  it("keeps the free tier in the free class regardless of source", () => {
+    expect(storageServiceClassFromMembership(membership("free", "free"))).toBe(
+      "free",
+    );
+    expect(storageServiceClassFromMembership(membership("free", "admin"))).toBe(
+      "free",
+    );
+    expect(storageServiceClassFromMembership(membership("", "free"))).toBe(
+      "free",
+    );
+  });
+});
 
 describe("storage funding account", () => {
   it("uses explicit usage attribution even when the payer is not a collaborator", () => {

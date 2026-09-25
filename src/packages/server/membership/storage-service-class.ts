@@ -28,12 +28,8 @@ export function storageFundingAccountId({
 export function storageServiceClassFromMembership(
   resolution: MembershipResolution,
 ): StorageServiceClass {
-  return (resolution.source === "subscription" &&
-    Number(resolution.subscription_cost) > 0) ||
-    (resolution.source === "grant" &&
-      (resolution.grant_purchase_id != null ||
-        resolution.site_license_id != null ||
-        resolution.team_license_id != null))
-    ? "paying"
-    : "free";
+  // Recovery priority follows the effective membership tier, including
+  // administrator-assigned tiers. Payment provenance does not change it.
+  const membershipClass = resolution.class.trim().toLowerCase();
+  return membershipClass && membershipClass !== "free" ? "paying" : "free";
 }

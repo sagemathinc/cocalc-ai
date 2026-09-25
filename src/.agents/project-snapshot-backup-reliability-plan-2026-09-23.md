@@ -15,6 +15,12 @@ constraint. When safe capacity is insufficient, report and add capacity or fix
 the bottleneck; silently lengthening the backup interval is not an acceptable
 resolution.
 
+Here, **paying-funded** means the account funding project storage has an
+effective membership tier other than `free`, including an administrator-assigned
+`admin` tier. An actual purchase is not required for priority or customer
+warnings. The internal `paying` service-class value retains its existing name
+for compatibility; it represents this non-free tier policy.
+
 This plan covers project Btrfs snapshots and project Rustic backups. Bay
 database backups have a separate implementation and health check. A local
 snapshot does not protect against loss of its project host; an off-host backup

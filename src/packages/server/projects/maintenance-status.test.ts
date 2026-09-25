@@ -150,10 +150,10 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     expect(old.host_maintenance_block).toBeUndefined();
   });
 
-  it("classifies a critical recovery breach using the storage payer", async () => {
+  it("classifies an admin-tier storage payer for critical recovery health", async () => {
     resolveRuntimeMembershipMock.mockResolvedValue({
-      source: "subscription",
-      subscription_cost: 10,
+      class: "admin",
+      source: "admin",
     });
     const status = await statusFor({
       changedAt: "2026-04-11T00:00:00.000Z",
@@ -170,6 +170,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
 
   it("classifies a student course project using its sponsor account", async () => {
     resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
       source: "subscription",
       subscription_cost: 10,
     });
@@ -186,6 +187,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
 
   it("classifies an overdue paying project at its customer objective", async () => {
     resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
       source: "subscription",
       subscription_cost: 10,
     });
@@ -456,6 +458,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     const schedule = { frequent: 0, daily: 1, weekly: 0, monthly: 0 };
     const old = new Date(Date.now() - 4 * 60 * 60_000);
     resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
       source: "subscription",
       subscription_cost: 10,
     });
@@ -506,6 +509,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
     const now = Date.now();
     resolveRuntimeMembershipMock.mockImplementation(
       async (accountId: string) => ({
+        class: accountId === "paid-account" ? "member" : "free",
         source: accountId === "paid-account" ? "subscription" : "free",
         subscription_cost: accountId === "paid-account" ? 10 : 0,
       }),
@@ -593,6 +597,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
   it("counts repeated paid failures before the due-age incident threshold", async () => {
     const { getProjectRecoveryHealth } = await import("./maintenance-status");
     resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
       source: "subscription",
       subscription_cost: 10,
     });
@@ -635,6 +640,7 @@ describe("project recovery status after unchanged-content reconciliation", () =>
   it("uses the current usage payer when an overdue host report says free", async () => {
     const { getProjectRecoveryHealth } = await import("./maintenance-status");
     resolveRuntimeMembershipMock.mockResolvedValue({
+      class: "member",
       source: "subscription",
       subscription_cost: 10,
     });

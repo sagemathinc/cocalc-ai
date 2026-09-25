@@ -1354,10 +1354,11 @@ read-only query `17c61d56-e257-4899-8a91-4a4c6708bb0b` found exactly one
 matching transactional outbox row: `lane=critical`,
 `delivery_mode=immediate`, `status=sent`, `attempt_count=1`,
 `sent_at=2026-09-24T18:17:14.322Z`, and no error. The recipient was asked to
-confirm inbox receipt; that confirmation is pending. The named on-call remains
+confirm inbox receipt; on September 25 the recipient confirmed receiving
+multiple recovery drill emails. The named on-call remains
 configured, and `project_recovery_notifications_enabled` was verified false
-after the drill. This validates the staging send path and provider acceptance;
-it does not establish recipient receipt until the on-call confirms it.
+after the drill. This validates the staging send path, provider acceptance,
+and recipient receipt. The recipient did not identify a particular message ID.
 
 ## 2026-09-24 durable objective coverage audit
 
@@ -2164,10 +2165,11 @@ membership class `admin` from source `admin`, not a purchased subscription.
 The live membership-tier catalog lists only that hidden, non-purchasable
 admin tier, and a read-only quote for a one-seat monthly `member` team
 package failed because that tier is unavailable. No purchase or account
-mutation was made. This environment cannot presently provide a genuine
-paid-funded project for the dispatch-priority or customer-warning delivery
-drill. A test account with a purchased membership or a deliberately configured
-staging purchase tier is required for that gate.
+mutation was made. This purchase-based qualification assumption was corrected
+on September 25: the intended priority class includes every non-free
+membership tier, including `admin`. The administrator's staging projects can
+qualify the dispatch-priority and customer-warning paths once the corrected
+classifier is deployed and observed live.
 
 In the signed-in Chromium session, opening a project terminal recorded a
 369 ms browser-observed terminal-ready sample, with a 1 ms project-exec
@@ -2255,3 +2257,32 @@ For the 903 executed backups, all had
 were 2,173–27,286 ms for backups and 37–476 ms for snapshots. The query
 results were not truncated. This verifies persisted per-stage data in
 the bay attempt history; it does not establish sustained latency targets.
+
+## 2026-09-25 membership rule clarification and UI map
+
+The product owner clarified that recovery priority and customer warnings apply
+to the account funding storage whenever its effective membership tier is not
+`free`. This includes the staging administrator's `admin` tier; purchase
+provenance is not the criterion. The earlier purchase-based classifier had
+placed this administrator's projects in the free service class. The corrected
+classifier uses the effective tier and preserves the existing `paying` API
+value as the name for the non-free class. Focused tests cover admin-tier
+schedule classification, recovery health, and customer-warning selection.
+
+The user confirmed receiving multiple recovery drill emails on September 25.
+The separate daily recovery-debt report had already been confirmed.
+
+The project-facing staging2 UI is available at
+`/projects/<project-id>/settings#recovery`. The **Recovery** section of
+Project Settings has separate local snapshot and off-host backup status,
+including confirmed recovery points, next due times, and delay reasons. It
+also has Create Snapshot, Restore Snapshot, and Create Backup controls. The
+wide Settings layout has a **Recovery** summary in its health rail. Inside
+the project **Find/Search** view, the **Snapshots** and **Backups** tabs
+show the same recovery status above their browsing and restore controls.
+A project with a non-free storage funder and critically late recovery work
+also gets a top-of-project **Project recovery is delayed** banner with links
+to the relevant tabs. That banner appears only when its threshold is crossed.
+Operator recovery health, restore-drill coverage, and debt reports are
+available through CLI and email; there is no new standalone admin Recovery
+page in this change.
