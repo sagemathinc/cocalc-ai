@@ -1,0 +1,174 @@
+/*
+ * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
+ * License: MS-RSL – see LICENSE.md for details
+ */
+
+.cocalc-live-voice {
+  align-items: center;
+  background: var(--cocalc-ui-inset);
+  border: 1px solid var(--cocalc-ui-border);
+  border-radius: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 8px;
+  padding: 10px 14px;
+}
+
+.cocalc-live-voice-orb {
+  align-items: center;
+  display: flex;
+  flex: 0 0 42px;
+  height: 42px;
+  justify-content: center;
+  position: relative;
+}
+
+.cocalc-live-voice-orb-halo,
+.cocalc-live-voice-orb-core {
+  border-radius: 50%;
+  position: absolute;
+}
+
+.cocalc-live-voice-orb-halo {
+  background: var(--cocalc-ui-info);
+  height: 40px;
+  opacity: 0.17;
+  width: 40px;
+}
+
+.cocalc-live-voice-orb-core {
+  background: radial-gradient(
+    circle at 30% 25%,
+    var(--cocalc-ui-surface) 0%,
+    var(--cocalc-ui-info) 40%,
+    var(--cocalc-ui-primary) 85%
+  );
+  box-shadow: 0 2px 12px var(--cocalc-ui-shadow);
+  height: 26px;
+  width: 26px;
+}
+
+.cocalc-live-voice-orb-active .cocalc-live-voice-orb-halo {
+  animation: cocalc-live-voice-breathe 2.4s ease-in-out infinite;
+}
+
+.cocalc-live-voice-orb-active .cocalc-live-voice-orb-core {
+  animation: cocalc-live-voice-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes cocalc-live-voice-breathe {
+  50% {
+    opacity: 0.3;
+    transform: scale(1.16);
+  }
+}
+
+@keyframes cocalc-live-voice-glow {
+  50% {
+    box-shadow: 0 2px 18px var(--cocalc-ui-info);
+    transform: scale(0.92);
+  }
+}
+
+:root[data-animations="off"] .cocalc-live-voice-orb-active * {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cocalc-live-voice-orb-active * {
+    animation: none;
+  }
+}
+
+.cocalc-live-voice-main {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.cocalc-live-voice-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cocalc-live-voice-timer {
+  color: var(--cocalc-ui-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cocalc-live-voice-detail,
+.cocalc-live-voice-caption {
+  color: var(--cocalc-ui-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cocalc-live-voice-caption {
+  color: var(--cocalc-ui-text);
+  display: -webkit-box;
+  max-width: 54ch;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cocalc-live-voice-meters {
+  display: flex;
+  flex: 0 1 234px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cocalc-live-voice-meter {
+  flex: 1 1 100px;
+  min-width: 90px;
+}
+
+.cocalc-live-voice-meter-label {
+  color: var(--cocalc-ui-secondary);
+  display: flex;
+  font-size: 11px;
+  justify-content: space-between;
+}
+
+.cocalc-live-voice-meter-label strong {
+  color: var(--cocalc-ui-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cocalc-live-voice-meter .ant-progress {
+  display: block;
+  line-height: 1;
+  margin: 1px 0 0;
+}
+
+.cocalc-live-voice-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cocalc-live-voice-close {
+  margin-left: auto;
+}
+
+.cocalc-live-voice-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .cocalc-live-voice-meters {
+    flex: 1 1 100%;
+    order: 2;
+  }
+
+  .cocalc-live-voice-actions {
+    flex: 1 1 100%;
+    order: 3;
+  }
+}

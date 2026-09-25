@@ -105,6 +105,7 @@ allowBuilds:
   zeromq: true
 
 patchedDependencies:
+  react-native@0.86.0: patches/react-native@0.86.0.patch
   "@rc-component/portal@2.2.0": patches/@rc-component__portal@2.2.0.patch
   "@rc-component/tabs@1.7.0": patches/@rc-component__tabs@1.7.0.patch
   codemirror@5.65.20: patches/codemirror@5.65.20.patch

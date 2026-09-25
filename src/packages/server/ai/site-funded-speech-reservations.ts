@@ -42,10 +42,12 @@ export async function reserveSiteFundedSpeechGlobalLocal({
   requestId,
   accountId,
   reservedMicrousd,
+  persistent = false,
 }: {
   requestId: string;
   accountId: string;
   reservedMicrousd: number;
+  persistent?: boolean;
 }): Promise<SiteFundedSpeechGlobalReservation> {
   if (!Number.isSafeInteger(reservedMicrousd) || reservedMicrousd <= 0) {
     throw new Error("reservedMicrousd must be a positive safe integer");
@@ -153,7 +155,7 @@ export async function reserveSiteFundedSpeechGlobalLocal({
         accountId,
         start,
         reservedMicrousd,
-        new Date(Date.now() + RESERVATION_TTL_MS),
+        persistent ? "infinity" : new Date(Date.now() + RESERVATION_TTL_MS),
       ],
     );
     await client.query(

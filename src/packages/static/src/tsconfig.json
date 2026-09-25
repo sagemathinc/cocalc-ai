@@ -8,6 +8,6 @@
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
     "moduleResolution": "node",
-    "lib": ["es5", "es6", "es2017", "dom"]
+    "lib": ["es2022", "dom"]
   }
 }

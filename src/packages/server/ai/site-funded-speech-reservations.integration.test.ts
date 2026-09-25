@@ -144,4 +144,24 @@ describe("site-funded speech global reservations", () => {
       status: "released",
     });
   });
+
+  it("keeps a live reservation active until closure is reconciled", async () => {
+    const requestId = uuid();
+    await reserveSiteFundedSpeechGlobalLocal({
+      requestId,
+      accountId: uuid(),
+      reservedMicrousd: 100,
+      persistent: true,
+    });
+    const { rows } = await getPool().query(
+      `SELECT status, expires_at::text AS expires_at
+       FROM site_ai_speech_reservations WHERE request_id=$1`,
+      [requestId],
+    );
+    expect(rows[0]).toMatchObject({ status: "active", expires_at: "infinity" });
+    await finishSiteFundedSpeechGlobalLocal({
+      requestId,
+      status: "released",
+    });
+  });
 });

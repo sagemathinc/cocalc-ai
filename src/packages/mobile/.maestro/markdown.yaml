@@ -1,0 +1,27 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- tapOn:
+    text: "Open"
+    optional: true
+- openLink: "cocalc:///markdown-preview"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Wrap code"
+    timeout: 15000
+- tapOn: "Wrap code"
+- assertVisible: "Unwrap code"
+- takeScreenshot: markdown-wrapped
+- tapOn:
+    text: "Copy code block"
+    retryTapIfNoChange: true
+- assertVisible: "Copied"
+- takeScreenshot: markdown-copied
+- tapOn: "Unwrap code"
+- assertVisible: "Wrap code"
+- scrollUntilVisible:
+    element: "Results"
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: markdown-table

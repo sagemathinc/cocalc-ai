@@ -55,6 +55,11 @@ interface DictateButtonProps {
   threadId?: string;
   session: number;
   inputControlRef: MutableRefObject<ChatInputControl | null>;
+  onOpenVoiceOptions?: () => void;
+  voiceOptionsOpen?: boolean;
+  onStartReady?: (start: (() => void) | undefined) => void;
+  onBusyChange?: (busy: boolean) => void;
+  onAvailabilityChange?: (available: boolean) => void;
 }
 
 export function DictateButton(props: DictateButtonProps) {
@@ -67,6 +72,11 @@ function EnabledDictateButton({
   threadId,
   session,
   inputControlRef,
+  onOpenVoiceOptions,
+  voiceOptionsOpen,
+  onStartReady,
+  onBusyChange,
+  onAvailabilityChange,
 }: DictateButtonProps) {
   const currentSessionRef = useRef(session);
   currentSessionRef.current = session;
@@ -144,6 +154,23 @@ function EnabledDictateButton({
     });
   }, [begin]);
 
+  useEffect(() => {
+    onStartReady?.(requestStart);
+    return () => onStartReady?.(undefined);
+  }, [onStartReady, requestStart]);
+
+  useEffect(() => {
+    onBusyChange?.(
+      recorder.status === "requesting" ||
+        recorder.status === "recording" ||
+        recorder.status === "transcribing",
+    );
+  }, [onBusyChange, recorder.status]);
+
+  useEffect(() => {
+    onAvailabilityChange?.(!!recorder.capabilities?.input.enabled);
+  }, [onAvailabilityChange, recorder.capabilities?.input.enabled]);
+
   if (recorder.status === "recording") {
     const timeLabel = recordingTimeLabel(
       recorder.elapsedMs,
@@ -204,25 +231,32 @@ function EnabledDictateButton({
 
   const unavailable =
     recorder.status !== "loading" && !recorder.capabilities?.input.enabled;
-  const title = unavailable
-    ? (recorder.capabilities?.input.reason ??
-      recorder.error ??
-      "Dictation unavailable")
-    : "Dictate message";
+  const title = onOpenVoiceOptions
+    ? "Voice options"
+    : unavailable
+      ? (recorder.capabilities?.input.reason ??
+        recorder.error ??
+        "Dictation unavailable")
+      : "Dictate message";
   return (
     <>
       <Tooltip placement="bottomRight" title={title}>
         <Button
-          aria-label="Dictate message"
+          aria-label={onOpenVoiceOptions ? "Voice options" : "Dictate message"}
+          aria-expanded={onOpenVoiceOptions ? voiceOptionsOpen : undefined}
+          aria-controls={
+            onOpenVoiceOptions ? "cocalc-live-voice-panel" : undefined
+          }
           aria-busy={
             recorder.status === "loading" || recorder.status === "requesting"
           }
-          disabled={unavailable}
+          disabled={onOpenVoiceOptions ? false : unavailable}
           icon={<Icon name="audio" />}
           loading={
-            recorder.status === "loading" || recorder.status === "requesting"
+            !onOpenVoiceOptions &&
+            (recorder.status === "loading" || recorder.status === "requesting")
           }
-          onClick={requestStart}
+          onClick={onOpenVoiceOptions ?? requestStart}
           size="small"
         />
       </Tooltip>

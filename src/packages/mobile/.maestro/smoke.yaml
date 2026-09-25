@@ -1,0 +1,102 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- extendedWaitUntil:
+    visible: "Open local UI preview"
+    timeout: 30000
+- tapOn: "Open local UI preview"
+- waitForAnimationToEnd
+- assertVisible: "Open Research"
+- takeScreenshot: agents
+- tapOn: "Search agents.*"
+- inputText: Research
+- assertNotVisible: "Open Writing"
+- tapOn: "Pin Research"
+- assertVisible: "Unpin Research"
+- tapOn: "Unpin Research"
+- tapOn: "Open Research"
+- waitForAnimationToEnd
+- assertVisible: "Message Codex.*"
+- takeScreenshot: chat
+- tapOn: "Message Codex.*"
+- eraseText
+- inputText: "Hello from the simulator"
+- tapOn: "Dictate message"
+- assertVisible: "Finish dictation"
+- takeScreenshot: recording
+- tapOn: "Finish dictation"
+- assertVisible: ".*Please summarize the result.*"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertVisible: ".*Please summarize the result.*"
+- assertVisible: "Send message to Codex"
+- takeScreenshot: keyboard
+- tapOn: "Send message to Codex"
+- takeScreenshot: progress
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertVisible: ".*Preview reply: your message stayed on this device.*"
+- hideKeyboard
+- takeScreenshot: reply
+- scrollUntilVisible:
+    element:
+      id: "read-response-preview-message-5"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn:
+    id: "read-response-preview-message-5"
+    text: "Read response aloud"
+- assertVisible: "Stop read-aloud"
+- takeScreenshot: read-aloud
+- tapOn: "Stop read-aloud"
+- assertNotVisible: "Stop read-aloud"
+- tapOn: "Live voice"
+- assertVisible: ".*No microphone, audio playback, network, or charges.*"
+- takeScreenshot: live-confirmation
+- tapOn: "Start silent simulation"
+- assertVisible: "Simulate spoken task"
+- assertNotVisible: "Message Codex.*"
+- tapOn: "Simulate spoken task"
+- extendedWaitUntil:
+    visible: "Agent result is ready in chat."
+    timeout: 15000
+- takeScreenshot: live-result
+- tapOn: "Mute microphone"
+- assertVisible: "Unmute microphone"
+- takeScreenshot: live-muted
+- tapOn: "Unmute microphone"
+- tapOn: "End live call"
+- assertVisible: "Message Codex.*"
+- tapOn: "Live voice"
+- tapOn: "Start silent simulation"
+- tapOn: "Simulate spoken task"
+- tapOn: "Simulate disconnect"
+- assertVisible: ".*Simulated connection lost.*"
+- takeScreenshot: live-disconnected
+- tapOn: "Live voice"
+- tapOn: "Start silent simulation"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertNotVisible: "End live call"
+- assertVisible: "Message Codex.*"
+- swipe:
+    direction: DOWN
+    duration: 600
+- swipe:
+    direction: DOWN
+    duration: 600
+- scrollUntilVisible:
+    element: "Load earlier messages"
+    direction: UP
+    timeout: 15000
+- tapOn: "Load earlier messages"
+- assertVisible: ".*Earlier preview message.*"
+- takeScreenshot: history
+- swipe:
+    start: 1%, 45%
+    end: 90%, 45%
+    duration: 500
+- assertVisible: "Search agents.*"

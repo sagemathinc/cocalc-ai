@@ -110,4 +110,38 @@ describe("site-funded chat speech reservations", () => {
     );
     expect(rows[0].count).toBe(0);
   });
+
+  it("keeps live holds persistent and settles a retry only once", async () => {
+    const reservation = await reserveChatSpeechUsage({
+      accountId,
+      requestId: uuid(),
+      operation: "live",
+      model: "gpt-live-1",
+      reservedMicrousd: 100,
+    });
+    const hold = await getPool().query(
+      `SELECT expires_at::text AS expires_at FROM site_ai_speech_reservations
+       WHERE request_id=$1`,
+      [reservation.requestId],
+    );
+    expect(hold.rows[0].expires_at).toBe("infinity");
+    const settle = () =>
+      settleChatSpeechUsage({
+        reservation,
+        operation: "live",
+        model: "gpt-live-1",
+        costMicrousd: 80,
+        durationMs: 1_000,
+        elapsedMs: 1_000,
+      });
+    await settle();
+    await settle();
+    const usage = await getPool().query(
+      `SELECT tag, cost_microusd FROM ai_usage_log WHERE funded_event_id=$1`,
+      [reservation.requestId],
+    );
+    expect(usage.rows).toHaveLength(1);
+    expect(usage.rows[0]).toMatchObject({ tag: "chat-speech-live" });
+    expect(Number(usage.rows[0].cost_microusd)).toBe(80);
+  });
 });

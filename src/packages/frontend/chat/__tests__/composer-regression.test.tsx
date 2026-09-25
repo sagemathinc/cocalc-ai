@@ -197,6 +197,44 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(trigger.props.children.props.name).toBe("info-circle");
   });
 
+  it("applies a dictated transcript even while the rich-text editor is focused", () => {
+    const control = { current: null as ChatInputControl | null };
+    const allowFocusedValueUpdate = jest.fn();
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <ChatInput
+          input={value}
+          inputControlRef={control}
+          onChange={setValue}
+          on_send={() => undefined}
+          syncdb={syncdb}
+          date={0}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const setValueNow = jest.fn();
+    lastMarkdownInputProps.controlRef.current = {
+      allowNextValueUpdateWhileFocused: allowFocusedValueUpdate,
+      setValueNow,
+      getMarkdownPositionForSelection: () => null,
+    };
+    act(() => {
+      expect(control.current?.insertText("spoken words")).toBe(true);
+    });
+    expect(allowFocusedValueUpdate).toHaveBeenCalledTimes(1);
+    expect(setValueNow).toHaveBeenCalledWith("spoken words");
+    expect(lastMarkdownInputProps.value).toBe("spoken words");
+  });
+
   it("does not submit on ctrl-enter", () => {
     const syncdb = {
       set: jest.fn(),

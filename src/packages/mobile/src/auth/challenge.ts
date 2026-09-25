@@ -41,15 +41,15 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new Error("Sign-in was cancelled."));
       return;
     }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(new Error("Sign-in was cancelled."));
-      },
-      { once: true },
-    );
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new Error("Sign-in was cancelled."));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -85,15 +85,33 @@ export async function waitForLoginApproval({
   signal?: AbortSignal;
 }): Promise<LoginChallengeStatus & { redeem_token: string }> {
   while (true) {
-    const status = await postSiteApi<LoginChallengeStatus>({
-      site,
-      endpoint: "auth/cli/login/status",
-      body: {
-        challenge_id: challenge.challenge_id,
-        poll_token: challenge.poll_token,
-      },
-      signal,
-    });
+    if (Date.now() >= new Date(challenge.expires_at).valueOf())
+      throw new Error("The sign-in approval expired. Start sign-in again.");
+    let status: LoginChallengeStatus;
+    try {
+      status = await postSiteApi<LoginChallengeStatus>({
+        site,
+        endpoint: "auth/cli/login/status",
+        body: {
+          challenge_id: challenge.challenge_id,
+          poll_token: challenge.poll_token,
+        },
+        signal,
+      });
+    } catch (error) {
+      // iOS may suspend networking while the browser handles email and 2FA.
+      // Status polling is read-only: resume the same challenge until it expires.
+      if (
+        !signal?.aborted &&
+        /network|timed?\s*out|timeout|disconnected|connection.*lost/i.test(
+          String(error),
+        )
+      ) {
+        await delay(pollIntervalMs, signal);
+        continue;
+      }
+      throw error;
+    }
     if (status.state === "approved" && status.redeem_token) {
       return status as LoginChallengeStatus & { redeem_token: string };
     }

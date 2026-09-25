@@ -56,7 +56,7 @@
     "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --maxWorkers=1",
     "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest",
     "test:both": "pnpm test:psql && pnpm test:pglite",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=music-metadata",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\"",
     "prepublishOnly": "test"
   },
   "author": "SageMath, Inc.",
@@ -74,7 +74,6 @@
     "@cocalc/server": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@google-cloud/compute": "^6.9.1",
-    "google-auth-library": "^10.6.2",
     "@isaacs/ttlcache": "^1.4.1",
     "@node-saml/passport-saml": "^5.1.0",
     "@sendgrid/client": "^8.1.4",
@@ -92,6 +91,7 @@
     "dot-object": "^2.1.5",
     "express": "^5.2.1",
     "express-session": "^1.18.1",
+    "google-auth-library": "^10.6.2",
     "htmlparser2": "^8.0.2",
     "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
@@ -99,7 +99,6 @@
     "mediabunny": "1.55.7",
     "micro-key-producer": "^0.8.2",
     "ms": "2.1.2",
-    "music-metadata": "^11.15.0",
     "node-zendesk": "^5.0.13",
     "nodemailer": "^9.1.1",
     "passport": "^0.6.0",
@@ -109,7 +108,8 @@
     "random-key": "^0.3.2",
     "safe-json-stringify": "^1.2.0",
     "stripe": "^22.1.1",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "ws": "^8.21.0"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/server",
   "repository": {
@@ -128,6 +128,7 @@
     "@types/node-zendesk": "^2.0.15",
     "@types/nodemailer": "^8.0.1",
     "@types/passport": "^1.0.9",
+    "@types/ws": "^8.18.1",
     "axe-core": "^4.12.1",
     "pg": "^8.16.3",
     "playwright-core": "^1.57.0"

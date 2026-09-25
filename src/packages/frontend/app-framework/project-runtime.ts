@@ -40,7 +40,20 @@ export async function ensureProjectReduxRuntime(): Promise<void> {
   if (initializer != null) return;
   if (loadPromise == null) {
     loadPromise = loadWithRetry(
-      async () => await import("../project/redux/store"),
+      async () => {
+        // Editor registration can import project actions through an editor.
+        // Complete it before importing the actions class for this runtime.
+        await import("../editors/register-all");
+        // Load actions first. The project store needs its class and query
+        // definitions, and its production chunk can otherwise evaluate with
+        // an incomplete actions module while restoring a project session.
+        const projectActions = await import("../project/redux/actions");
+        const { init } = await import("../project/redux/store");
+        return {
+          init: (projectId: string, redux: AppRedux) =>
+            init(projectId, redux, projectActions),
+        };
+      },
       { name: "project Redux runtime" },
     )
       .then(({ init }) => registerProjectStoreInitializer(init))

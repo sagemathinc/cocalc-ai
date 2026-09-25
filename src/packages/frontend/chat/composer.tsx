@@ -87,6 +87,11 @@ export interface ChatRoomComposerProps {
   codexPaymentSourceLoading?: boolean;
   refreshCodexPaymentSource?: () => void;
   onOpenCodexPaymentConfig?: () => void;
+  voiceOptionsOpen?: boolean;
+  onToggleVoiceOptions?: () => void;
+  onDictationStartReady?: (start: (() => void) | undefined) => void;
+  onDictationBusyChange?: (busy: boolean) => void;
+  onDictationAvailabilityChange?: (available: boolean) => void;
   mobile?: boolean;
 }
 
@@ -147,6 +152,11 @@ export function ChatRoomComposer({
   codexPaymentSourceLoading = false,
   refreshCodexPaymentSource,
   onOpenCodexPaymentConfig,
+  voiceOptionsOpen,
+  onToggleVoiceOptions,
+  onDictationStartReady,
+  onDictationBusyChange,
+  onDictationAvailabilityChange,
   mobile = false,
 }: ChatRoomComposerProps) {
   const embeddingOptions = useChatEmbeddingOptions();
@@ -927,6 +937,11 @@ export function ChatRoomComposer({
               projectId={project_id}
               session={composerSession}
               threadId={selectedThread?.key}
+              onOpenVoiceOptions={onToggleVoiceOptions}
+              voiceOptionsOpen={voiceOptionsOpen}
+              onStartReady={onDictationStartReady}
+              onBusyChange={onDictationBusyChange}
+              onAvailabilityChange={onDictationAvailabilityChange}
             />
             {showComposerCodexConfig && selectedThread ? (
               <div

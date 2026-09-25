@@ -332,6 +332,11 @@ export default function ChatInput({
         position: at,
       });
       if (next.value === current) return false;
+      // Apply directly to Slate as well as the saved draft. The editor can
+      // consume a focused-update allowance on an intermediate render while
+      // the collaborative draft is still catching up.
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
+      controlRef.current?.setValueNow?.(next.value);
       currentInputRef.current = next.value;
       setInput(next.value);
       sentEchoGuardRef.current = null;
