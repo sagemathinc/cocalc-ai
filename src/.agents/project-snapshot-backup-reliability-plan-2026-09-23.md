@@ -287,6 +287,10 @@ and publish paid/free backlog and unknown counts. Fix the full-entitlement
 rolling backup failure and quota-blocked snapshot cleanup. Verify affected
 projects recover or are explicitly escalated. Until telemetry is complete,
 keep the earlier cluster estimate labeled approximate.
+Production reports of missing recovery points make this gate urgent: review
+and deploy the safety fixes with direct restore checks and active monitoring.
+The longer baseline and canary windows guide scheduler expansion; they do not
+delay repairs for projects already at risk.
 
 **Gate B — scheduler canary.** Implement paged reconciliation and independent
 lanes behind per-host flags. Run shadow due/priority calculations first, then
