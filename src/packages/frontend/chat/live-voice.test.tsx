@@ -22,11 +22,19 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 jest.mock("@cocalc/chat-client", () => ({
-  LiveDelegation: class {},
+  LiveDelegation: class {
+    close() {}
+    observe() {}
+    async event() {}
+  },
+  LIVE_VOICE_POLICY: jest.requireActual(
+    "../../chat-client/src/live-voice-policy",
+  ).LIVE_VOICE_POLICY,
 }));
 
 const props = {
   projectId: "project-1",
+  threadId: "agent-thread-1",
   messages: [],
   onDelegate: jest.fn(),
   visible: true,
@@ -35,6 +43,32 @@ const props = {
 beforeEach(() => {
   mockLiveVoice.mockReset();
   mockOpenAccountSettings.mockReset();
+});
+
+it("explains live voice and dictation in an accessible dialog", async () => {
+  mockLiveVoice.mockResolvedValue({
+    enabled: true,
+    max_seconds: 120,
+    funding_source: "site",
+  });
+  const user = userEvent.setup();
+  render(<ChatLiveVoice {...props} />);
+  await screen.findByText(
+    "Choose a live conversation or dictate a message to text.",
+  );
+  const trigger = screen.getByRole("button", { name: "How this works" });
+  await user.click(trigger);
+  const dialog = await screen.findByRole("dialog", { name: "How voice works" });
+  expect(dialog).toHaveTextContent(/up to eight recent completed messages/i);
+  expect(dialog).toHaveTextContent(/fresh authentication/i);
+  expect(dialog).toHaveTextContent(/review and send yourself/i);
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "How voice works" }),
+    ).toBeNull(),
+  );
+  expect(trigger).toHaveFocus();
 });
 
 it("times out a stalled microphone prompt and stops a late stream", async () => {
@@ -145,6 +179,88 @@ it("opens and closes voice options and offers one-shot dictation", async () => {
     />,
   );
   expect(screen.queryByText("Talk with your agent")).not.toBeInTheDocument();
+});
+
+it("ends an active call when the selected agent thread changes", async () => {
+  const track = { enabled: false, stop: jest.fn() };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+  const channel = {
+    readyState: "open",
+    close: jest.fn(),
+    send: jest.fn(),
+    onmessage: undefined as undefined | ((event: { data: string }) => void),
+  };
+  const peer = {
+    iceGatheringState: "complete",
+    localDescription: { sdp: "v=0\r\n" },
+    createDataChannel: () => channel,
+    createOffer: async () => ({ sdp: "v=0\r\n" }),
+    setLocalDescription: async () => {},
+    setRemoteDescription: async () => {},
+    addTrack: jest.fn(),
+    close: jest.fn(),
+  };
+  const priorPeer = global.RTCPeerConnection;
+  const priorDevices = navigator.mediaDevices;
+  const priorPlay = HTMLMediaElement.prototype.play;
+  const priorPause = HTMLMediaElement.prototype.pause;
+  Object.defineProperty(global, "RTCPeerConnection", {
+    configurable: true,
+    value: jest.fn(() => peer),
+  });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: jest.fn(async () => stream) },
+  });
+  HTMLMediaElement.prototype.play = jest.fn(async () => {});
+  HTMLMediaElement.prototype.pause = jest.fn();
+  mockLiveVoice.mockImplementation(async ({ action }) =>
+    action === "capabilities"
+      ? { enabled: true, max_seconds: 120, funding_source: "site" }
+      : action === "start"
+        ? {
+            enabled: true,
+            session_id: "session-1",
+            sdp: "answer",
+            expires_at: Date.now() + 120_000,
+          }
+        : { enabled: false },
+  );
+  try {
+    const user = userEvent.setup();
+    const view = render(<ChatLiveVoice {...props} />);
+    await screen.findByText(
+      "Choose a live conversation or dictate a message to text.",
+    );
+    await user.click(screen.getByRole("button", { name: "Live voice" }));
+    await user.click(screen.getByRole("button", { name: "Start live call" }));
+    await waitFor(() =>
+      expect(mockLiveVoice).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "start" }),
+      ),
+    );
+    channel.onmessage?.({ data: JSON.stringify({ type: "session.started" }) });
+    await screen.findByText("Voice is live");
+    view.rerender(<ChatLiveVoice {...props} threadId="agent-thread-2" />);
+    await waitFor(() =>
+      expect(mockLiveVoice).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "end", session_id: "session-1" }),
+      ),
+    );
+    expect(track.stop).toHaveBeenCalled();
+    expect(peer.close).toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(global, "RTCPeerConnection", {
+      configurable: true,
+      value: priorPeer,
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: priorDevices,
+    });
+    HTMLMediaElement.prototype.play = priorPlay;
+    HTMLMediaElement.prototype.pause = priorPause;
+  }
 });
 
 it("offers free users membership or their own key from a dialog", async () => {

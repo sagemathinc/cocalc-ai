@@ -5,6 +5,7 @@
 // Account-home-bay admission and accounting. WebRTC media goes directly from
 // the client to OpenAI; only control and usage events pass through this bay.
 import WebSocket from "ws";
+import { createHash } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -34,6 +35,11 @@ const RATE_MICROUSD_PER_MINUTE = 50_000;
 const MAX_COST_MICROUSD = (MAX_SECONDS * RATE_MICROUSD_PER_MINUTE) / 60;
 const API = "https://api.openai.com/v1/live/sessions";
 const MODEL = "gpt-live-1";
+const START_WINDOW_SECONDS = 60;
+const START_LIMITS = { account: 6, credential: 20, bay: 120 } as const;
+const MAX_CREDENTIAL_CALLS = 12;
+const FAILURE_WINDOW_SECONDS = 5 * 60;
+const FAILURE_LIMITS = { credential_failure: 5, bay_failure: 20 } as const;
 const base = { max_seconds: MAX_SECONDS, usd_per_minute: 0.05 };
 let schema: Promise<void> | undefined;
 let sweeping = false;
@@ -51,13 +57,15 @@ interface Lease {
   funding_source: FundingSource;
   usage_seconds: number;
   final_usage: boolean;
+  provider_closed: boolean;
+  close_attempts: number;
+  credential_hash?: string;
 }
 
 interface Monitor {
   socket: WebSocket;
-  closed: Promise<void>;
-  resolveClosed: () => void;
-  finalUsage: boolean;
+  confirmedClosed: Promise<void>;
+  providerClosed: boolean;
   usageSeconds: number;
 }
 const monitors = new Map<string, Monitor>();
@@ -78,10 +86,39 @@ async function ensureSchema() {
         closing_at TIMESTAMPTZ,
         ended BOOLEAN NOT NULL DEFAULT FALSE,
         usage_seconds INTEGER NOT NULL DEFAULT 0,
-        final_usage BOOLEAN NOT NULL DEFAULT FALSE
+        final_usage BOOLEAN NOT NULL DEFAULT FALSE,
+        provider_closed BOOLEAN NOT NULL DEFAULT FALSE,
+        close_attempts INTEGER NOT NULL DEFAULT 0,
+        retry_after TIMESTAMPTZ,
+        credential_hash TEXT,
+        credential_slot SMALLINT
       );
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS provider_closed BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS close_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS retry_after TIMESTAMPTZ;
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS credential_hash TEXT;
+      ALTER TABLE live_voice_sessions
+        ADD COLUMN IF NOT EXISTS credential_slot SMALLINT;
       CREATE UNIQUE INDEX IF NOT EXISTS live_voice_one_account
         ON live_voice_sessions(account_id) WHERE NOT ended;
+      CREATE UNIQUE INDEX IF NOT EXISTS live_voice_credential_slots
+        ON live_voice_sessions(credential_hash, credential_slot)
+        WHERE NOT ended;
+      CREATE INDEX IF NOT EXISTS live_voice_ended_retention
+        ON live_voice_sessions(created_at) WHERE ended;
+      CREATE TABLE IF NOT EXISTS live_voice_start_limits (
+        scope TEXT NOT NULL,
+        identifier TEXT NOT NULL,
+        window_start BIGINT NOT NULL,
+        attempts INTEGER NOT NULL,
+        PRIMARY KEY (scope, identifier, window_start)
+      );
+      CREATE INDEX IF NOT EXISTS live_voice_start_limits_retention
+        ON live_voice_start_limits(window_start);
     `,
     )
     .then(() => {})
@@ -90,6 +127,66 @@ async function ensureSchema() {
       throw error;
     });
   await schema;
+}
+
+function credentialHash(apiKey: string) {
+  return createHash("sha256").update(apiKey).digest("hex");
+}
+
+async function limitStartAttempts(accountId: string, keyId: string) {
+  const windowStart =
+    Math.floor(Date.now() / (START_WINDOW_SECONDS * 1000)) *
+    START_WINDOW_SECONDS;
+  const failureWindow =
+    Math.floor(Date.now() / (FAILURE_WINDOW_SECONDS * 1000)) *
+    FAILURE_WINDOW_SECONDS;
+  for (const [scope, identifier, maximum] of [
+    ["credential_failure", keyId, FAILURE_LIMITS.credential_failure],
+    ["bay_failure", "all", FAILURE_LIMITS.bay_failure],
+  ] as const) {
+    const { rows } = await getPool().query<{ attempts: number }>(
+      `SELECT attempts FROM live_voice_start_limits
+       WHERE scope=$1 AND identifier=$2 AND window_start=$3`,
+      [scope, identifier, failureWindow],
+    );
+    if ((rows[0]?.attempts ?? 0) >= maximum)
+      throw new Error(
+        "Live voice starts are temporarily paused after provider failures.",
+      );
+  }
+  for (const [scope, identifier, maximum] of [
+    ["account", accountId, START_LIMITS.account],
+    ["credential", keyId, START_LIMITS.credential],
+    ["bay", "all", START_LIMITS.bay],
+  ] as const) {
+    const { rows } = await getPool().query<{ attempts: number }>(
+      `INSERT INTO live_voice_start_limits
+         (scope,identifier,window_start,attempts) VALUES ($1,$2,$3,1)
+       ON CONFLICT (scope,identifier,window_start)
+       DO UPDATE SET attempts=live_voice_start_limits.attempts+1
+       RETURNING attempts`,
+      [scope, identifier, windowStart],
+    );
+    if (rows[0].attempts > maximum)
+      throw new Error("Too many live voice starts. Try again in a minute.");
+  }
+}
+
+async function recordProviderFailure(keyId: string) {
+  const windowStart =
+    Math.floor(Date.now() / (FAILURE_WINDOW_SECONDS * 1000)) *
+    FAILURE_WINDOW_SECONDS;
+  for (const [scope, identifier] of [
+    ["credential_failure", keyId],
+    ["bay_failure", "all"],
+  ] as const)
+    await getPool().query(
+      `INSERT INTO live_voice_start_limits
+         (scope,identifier,window_start,attempts) VALUES ($1,$2,$3,1)
+       ON CONFLICT (scope,identifier,window_start)
+       DO UPDATE SET attempts=live_voice_start_limits.attempts+1`,
+      [scope, identifier, windowStart],
+    );
 }
 
 async function ownCredential(
@@ -268,8 +365,10 @@ function attachMonitor(row: Lease, apiKey: string): Promise<void> {
     );
     let opened = false;
     let done = false;
-    let resolveClosed!: () => void;
-    const closed = new Promise<void>((r) => (resolveClosed = r));
+    let resolveConfirmedClosed!: () => void;
+    const confirmedClosed = new Promise<void>(
+      (r) => (resolveConfirmedClosed = r),
+    );
     const timeout = setTimeout(() => {
       if (!opened) socket.terminate();
     }, 8_000);
@@ -278,9 +377,8 @@ function attachMonitor(row: Lease, apiKey: string): Promise<void> {
       clearTimeout(timeout);
       monitors.set(row.request_id, {
         socket,
-        closed,
-        resolveClosed,
-        finalUsage: false,
+        confirmedClosed,
+        providerClosed: false,
         usageSeconds: 0,
       });
       resolve();
@@ -294,25 +392,26 @@ function attachMonitor(row: Lease, apiKey: string): Promise<void> {
       }
       const seconds = event.usage?.seconds;
       let update: Promise<unknown> = Promise.resolve();
+      const validSeconds =
+        typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0;
       if (
-        (event.type === "session.usage.updated" ||
-          event.type === "session.closed") &&
-        typeof seconds === "number" &&
-        Number.isFinite(seconds) &&
-        seconds >= 0
+        event.type === "session.closed" ||
+        (event.type === "session.usage.updated" && validSeconds)
       ) {
         const monitor = monitors.get(row.request_id);
-        if (monitor)
+        if (monitor && validSeconds)
           monitor.usageSeconds = Math.max(monitor.usageSeconds, seconds);
         update = getPool()
           .query(
             `UPDATE live_voice_sessions SET
                usage_seconds=GREATEST(usage_seconds,$2),
-               final_usage=final_usage OR $3
+               final_usage=final_usage OR $3,
+               provider_closed=provider_closed OR $4
              WHERE request_id=$1`,
             [
               row.request_id,
-              Math.min(MAX_SECONDS, Math.ceil(seconds)),
+              validSeconds ? Math.ceil(seconds) : 0,
+              event.type === "session.closed" && validSeconds,
               event.type === "session.closed",
             ],
           )
@@ -325,16 +424,16 @@ function attachMonitor(row: Lease, apiKey: string): Promise<void> {
       }
       if (event.type === "session.closed") {
         const monitor = monitors.get(row.request_id);
-        if (monitor) monitor.finalUsage = true;
-        resolveClosed();
-        void update.finally(() =>
-          finishSession(row.request_id).catch((error) =>
+        if (monitor) monitor.providerClosed = true;
+        void update.finally(() => {
+          resolveConfirmedClosed();
+          void finishSession(row.request_id).catch((error) =>
             log.warn("live voice finalization pending", {
               request_id: row.request_id,
               error: String(error),
             }),
-          ),
-        );
+          );
+        });
       }
     });
     socket.on("error", (error) => {
@@ -352,9 +451,43 @@ function attachMonitor(row: Lease, apiKey: string): Promise<void> {
       }
       if (monitors.get(row.request_id)?.socket === socket) {
         monitors.delete(row.request_id);
-        resolveClosed();
       }
     });
+  });
+}
+
+// Creation can succeed just before its provider ID fails to save. Close that
+// specific provider session with the key already in memory; never retry POST.
+async function closeUnrecordedProvider(providerId: string, apiKey: string) {
+  return await new Promise<boolean>((resolve) => {
+    const socket = new WebSocket(
+      `wss://api.openai.com/v1/live/sessions/${encodeURIComponent(providerId)}/attach`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    let done = false;
+    const finish = (closed: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(closed);
+    };
+    const timeout = setTimeout(() => {
+      socket.terminate();
+      finish(false);
+    }, 10_000);
+    socket.on("open", () =>
+      socket.send(JSON.stringify({ type: "session.close" })),
+    );
+    socket.on("message", (bytes) => {
+      try {
+        if (JSON.parse(String(bytes)).type === "session.closed") finish(true);
+      } catch {
+        // Keep waiting for a valid terminal event.
+      }
+    });
+    socket.on("error", () => finish(false));
+    socket.on("close", () => finish(false));
   });
 }
 
@@ -362,6 +495,7 @@ async function finishSession(request_id: string, knownFailure = false) {
   const { rows } = await getPool().query<Lease>(
     `UPDATE live_voice_sessions SET closing_at=NOW()
      WHERE request_id=$1 AND NOT ended
+       AND (retry_after IS NULL OR retry_after <= NOW())
        AND (closing_at IS NULL OR closing_at < NOW()-INTERVAL '30 seconds')
      RETURNING *`,
     [request_id],
@@ -372,8 +506,8 @@ async function finishSession(request_id: string, knownFailure = false) {
   try {
     if (row.provider_id) {
       if (
-        !row.final_usage &&
-        !monitor?.finalUsage &&
+        !row.provider_closed &&
+        !monitor?.providerClosed &&
         (!monitor || monitor.socket.readyState !== WebSocket.OPEN)
       ) {
         try {
@@ -388,15 +522,15 @@ async function finishSession(request_id: string, knownFailure = false) {
         }
       }
       if (
-        !row.final_usage &&
+        !row.provider_closed &&
         monitor?.socket.readyState === WebSocket.OPEN &&
-        !monitor.finalUsage
+        !monitor.providerClosed
       ) {
         monitor.socket.send(JSON.stringify({ type: "session.close" }));
         let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
-            monitor.closed,
+            monitor.confirmedClosed,
             new Promise((resolve) => {
               timeout = setTimeout(resolve, 3_000);
             }),
@@ -411,6 +545,33 @@ async function finishSession(request_id: string, knownFailure = false) {
       [request_id],
     );
     const usage = latest.rows[0] ?? row;
+    if (row.provider_id && monitor?.providerClosed && !usage.provider_closed) {
+      await getPool().query(
+        `UPDATE live_voice_sessions SET provider_closed=TRUE,
+           usage_seconds=GREATEST(usage_seconds,$2),
+           final_usage=final_usage OR $3 WHERE request_id=$1`,
+        [request_id, Math.ceil(monitor.usageSeconds), monitor.usageSeconds > 0],
+      );
+      usage.provider_closed = true;
+      if (monitor.usageSeconds > 0) {
+        usage.final_usage = true;
+        usage.usage_seconds = Math.max(
+          usage.usage_seconds,
+          monitor.usageSeconds,
+        );
+      }
+    }
+    if (row.provider_id && !usage.provider_closed)
+      throw new Error("Provider closure has not been confirmed.");
+    if (!row.provider_id && !knownFailure)
+      throw new Error("Provider creation outcome is unknown.");
+    if (usage.usage_seconds > MAX_SECONDS)
+      log.error("live voice provider duration exceeded reserved allowance", {
+        request_id,
+        provider_id: row.provider_id,
+        provider_seconds: usage.usage_seconds,
+        reserved_seconds: MAX_SECONDS,
+      });
     if (row.funding_source === "site") {
       const reservation: ChatSpeechUsageReservation = {
         accountId: row.account_id,
@@ -420,23 +581,12 @@ async function finishSession(request_id: string, knownFailure = false) {
       if (knownFailure) {
         await releaseChatSpeechUsage(reservation);
       } else {
-        const elapsed = Math.ceil(
-          (Date.now() - new Date(row.created_at).getTime()) / 1000,
-        );
-        // A timed-out creation request can have succeeded at the provider
-        // without returning its session ID. Charge the reserved upper bound.
-        const seconds =
-          !row.provider_id || !(usage.final_usage || monitor?.finalUsage)
-            ? MAX_SECONDS
-            : Math.min(
-                MAX_SECONDS,
-                Math.max(
-                  15,
-                  usage.final_usage || monitor?.finalUsage
-                    ? Math.max(usage.usage_seconds, monitor?.usageSeconds ?? 0)
-                    : elapsed,
-                ),
-              );
+        const seconds = !usage.final_usage
+          ? MAX_SECONDS
+          : Math.min(
+              MAX_SECONDS,
+              Math.max(15, usage.usage_seconds, monitor?.usageSeconds ?? 0),
+            );
         await settleChatSpeechUsage({
           reservation,
           projectId: row.project_id,
@@ -453,16 +603,36 @@ async function finishSession(request_id: string, knownFailure = false) {
       }
     }
     await getPool().query(
-      "UPDATE live_voice_sessions SET ended=TRUE, closing_at=NULL WHERE request_id=$1",
+      "UPDATE live_voice_sessions SET ended=TRUE, closing_at=NULL, retry_after=NULL WHERE request_id=$1",
       [request_id],
     );
     monitor?.socket.close();
     monitors.delete(request_id);
   } catch (error) {
-    await getPool().query(
-      "UPDATE live_voice_sessions SET closing_at=NULL WHERE request_id=$1 AND NOT ended",
-      [request_id],
-    );
+    const attempts = row.close_attempts + 1;
+    const retrySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+    await getPool()
+      .query(
+        `UPDATE live_voice_sessions SET closing_at=NULL,
+           close_attempts=close_attempts+1,
+           retry_after=NOW()+($2 * INTERVAL '1 second')
+         WHERE request_id=$1 AND NOT ended`,
+        [request_id, retrySeconds],
+      )
+      .catch((dbError) =>
+        log.error("live voice closure state could not be persisted", {
+          request_id,
+          provider_id: row.provider_id,
+          error: String(dbError),
+        }),
+      );
+    if (attempts >= 3)
+      log.error("live voice provider closure needs operator attention", {
+        request_id,
+        provider_id: row.provider_id,
+        attempts,
+        error: String(error),
+      });
     throw error;
   }
 }
@@ -476,6 +646,7 @@ async function sweep() {
       SELECT * FROM live_voice_sessions
       WHERE NOT ended AND
         (expires_at < NOW() OR heartbeat_at < NOW() - INTERVAL '25 seconds')
+        AND (retry_after IS NULL OR retry_after <= NOW())
       LIMIT 20
     `);
     for (const row of rows) {
@@ -491,6 +662,12 @@ async function sweep() {
         }),
       );
     }
+    await getPool().query(
+      "DELETE FROM live_voice_sessions WHERE ended AND created_at < NOW() - INTERVAL '30 days'",
+    );
+    await getPool().query(
+      "DELETE FROM live_voice_start_limits WHERE window_start < EXTRACT(EPOCH FROM NOW()) - 86400",
+    );
   } catch (error) {
     log.warn("live voice cleanup failed", { error: String(error) });
   } finally {
@@ -561,27 +738,48 @@ export async function liveVoice(
     );
     const key = choice.credential;
     if (!key) throw new Error(choice.reason ?? "Live voice is unavailable.");
+    const keyId = credentialHash(key.apiKey);
+    await limitStartAttempts(account_id, keyId);
     await sweep();
     const expires_at = Date.now() + MAX_SECONDS * 1000;
-    try {
-      await getPool().query(
+    let inserted = false;
+    for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+      const result = await getPool().query(
         `INSERT INTO live_voice_sessions
-           (request_id,account_id,project_id,expires_at,funding_source)
-         VALUES($1,$2,$3,$4,$5)`,
+           (request_id,account_id,project_id,expires_at,funding_source,
+            credential_hash,credential_slot)
+         SELECT $1,$2,$3,$4,$5,$6,available.slot
+         FROM generate_series(1,$7) AS available(slot)
+         WHERE NOT EXISTS (
+           SELECT 1 FROM live_voice_sessions AS active
+           WHERE NOT active.ended AND active.credential_hash=$6
+             AND active.credential_slot=available.slot
+         )
+         ORDER BY available.slot LIMIT 1
+         ON CONFLICT DO NOTHING RETURNING request_id`,
         [
           opts.request_id,
           account_id,
           project_id,
           new Date(expires_at),
           key.source,
+          keyId,
+          MAX_CREDENTIAL_CALLS,
         ],
       );
-    } catch (error) {
-      if ((error as any).code === "23505")
+      inserted = result.rows.length > 0;
+    }
+    if (!inserted) {
+      const active = await getPool().query(
+        `SELECT request_id FROM live_voice_sessions
+         WHERE account_id=$1 AND NOT ended LIMIT 1`,
+        [account_id],
+      );
+      if (active.rows.length)
         throw new Error(
           "A live call is already starting or active. End it before starting another; do not retry an uncertain start.",
         );
-      throw error;
+      throw new Error("This OpenAI key has too many active live calls.");
     }
     if (key.source === "site") {
       try {
@@ -601,6 +799,7 @@ export async function liveVoice(
       }
     }
     let provider_id: string | undefined;
+    let providerRecorded = false;
     let knownFailure = false;
     try {
       const response = await fetch(API, {
@@ -628,11 +827,13 @@ export async function liveVoice(
         transport?: { sdp?: string };
       };
       provider_id = result.session?.id;
-      if (provider_id)
+      if (provider_id) {
         await getPool().query(
           "UPDATE live_voice_sessions SET provider_id=$2, heartbeat_at=NOW() WHERE request_id=$1",
           [opts.request_id, provider_id],
         );
+        providerRecorded = true;
+      }
       if (!provider_id || typeof result.transport?.sdp !== "string")
         throw new Error("Invalid live voice session response.");
       await attachMonitor(
@@ -648,6 +849,8 @@ export async function liveVoice(
           ended: false,
           usage_seconds: 0,
           final_usage: false,
+          provider_closed: false,
+          close_attempts: 0,
         },
         key.apiKey,
       );
@@ -662,6 +865,55 @@ export async function liveVoice(
         allowance: choice.allowance,
       };
     } catch (error) {
+      if (!provider_id)
+        await recordProviderFailure(keyId).catch((recordError) =>
+          log.error("live voice provider failure could not be recorded", {
+            request_id: opts.request_id,
+            error: String(recordError),
+          }),
+        );
+      if (provider_id && !providerRecorded) {
+        try {
+          await getPool().query(
+            "UPDATE live_voice_sessions SET provider_id=$2 WHERE request_id=$1",
+            [opts.request_id, provider_id],
+          );
+          providerRecorded = true;
+        } catch (dbError) {
+          log.error("live voice provider ID could not be persisted", {
+            request_id: opts.request_id,
+            provider_id,
+            error: String(dbError),
+          });
+          const closed = await closeUnrecordedProvider(
+            provider_id,
+            key.apiKey,
+          ).catch(() => false);
+          if (closed) {
+            await getPool()
+              .query(
+                `UPDATE live_voice_sessions SET provider_id=$2,
+                   provider_closed=TRUE WHERE request_id=$1`,
+                [opts.request_id, provider_id],
+              )
+              .catch((retryError) =>
+                log.error("closed live voice session could not be recorded", {
+                  request_id: opts.request_id,
+                  provider_id,
+                  error: String(retryError),
+                }),
+              );
+          } else {
+            log.error(
+              "unrecorded live voice session needs operator attention",
+              {
+                request_id: opts.request_id,
+                provider_id,
+              },
+            );
+          }
+        }
+      }
       await finishSession(opts.request_id, knownFailure).catch((cleanupError) =>
         log.warn("live voice startup cleanup pending", {
           request_id: opts.request_id,
@@ -681,6 +933,12 @@ export async function liveVoice(
   if (!row) throw new Error("Live voice session not found.");
   if (action === "end") {
     if (!row.ended) await finishSession(row.request_id);
+    const latest = await getPool().query<Lease>(
+      "SELECT * FROM live_voice_sessions WHERE request_id=$1",
+      [row.request_id],
+    );
+    if (!latest.rows[0]?.ended)
+      throw new Error("Live voice provider closure is still pending.");
     return {
       ...base,
       enabled: false,

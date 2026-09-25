@@ -2203,10 +2203,14 @@ function ChatPanelContent({
     return resolveFromThreadKey(selectedThreadKey);
   }
 
-  async function sendVoiceTask(text: string): Promise<{ message_id: string }> {
+  async function sendVoiceTask(
+    text: string,
+    isCurrentThread: () => boolean,
+  ): Promise<{ message_id: string }> {
     if (
       readOnly ||
       !selectedThreadId ||
+      !isCurrentThread() ||
       selectedThreadMetadata?.agent_kind !== "acp" ||
       !aiAgentPolicyAllowed
     ) {
@@ -2220,6 +2224,8 @@ function ChatPanelContent({
       throw new Error("Configure this agent's payment source in chat first.");
     }
     await ensureProjectRunningForCodex({ project_id, redux });
+    if (!isCurrentThread())
+      throw new Error("The selected agent changed. Start a new voice call.");
     const { parent_message_id } = resolveReplyTarget();
     const chatIdentity = actions.reserveChatSendIdentity({
       reply_thread_id: selectedThreadId,
@@ -3144,6 +3150,7 @@ function ChatPanelContent({
       {selectedThreadMetadata?.agent_kind === "acp" && !effectiveReadOnly && (
         <ChatLiveVoice
           projectId={project_id}
+          threadId={selectedThreadId ?? ""}
           messages={liveVoiceMessages}
           onDelegate={sendVoiceTask}
           visible={isVisible && tabIsVisible && isChatForeground}

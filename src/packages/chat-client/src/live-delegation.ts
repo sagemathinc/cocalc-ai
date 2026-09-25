@@ -26,6 +26,7 @@ export class LiveDelegation {
   private tasks = new Map<string, string>();
   private closed = false;
   private progress = new Map<string, string>();
+  private pendingSubmission: Promise<void> | undefined;
 
   constructor(
     private send: (text: string) => Promise<{ message_id: string }>,
@@ -80,30 +81,37 @@ export class LiveDelegation {
       );
       return;
     }
-    try {
-      const accepted = await this.send(text);
-      if (this.closed) return; // Accepted work remains in the durable chat.
-      this.tasks.set(accepted.message_id, id);
-      this.append(
-        "session.thinking.append",
-        "The selected CoCalc agent accepted this request. It has not finished yet.",
-        id,
-      );
-      this.report("Agent accepted your spoken request.");
-    } catch (error) {
+    const submit = async () => {
       if (this.closed) return;
-      const detail = String(
-        error instanceof Error ? error.message : error,
-      ).slice(0, 800);
-      this.append(
-        "session.commentary.append",
-        "Agent submission reported this error: " +
-          detail +
-          ". Could not confirm acceptance. Explain the error and ask the user to check chat/settings before resending. Do not retry it.",
-        id,
-      );
-      this.report("Submission unconfirmed: " + detail);
-    }
+      try {
+        // ChatSendPipeline coalesces simultaneous sends to one thread. Wait
+        // for the previous acknowledgment so every spoken task gets its own ID.
+        const accepted = await this.send(text);
+        if (this.closed) return; // Accepted work remains in the durable chat.
+        this.tasks.set(accepted.message_id, id);
+        this.append(
+          "session.thinking.append",
+          "The selected CoCalc agent accepted this request. It has not finished yet.",
+          id,
+        );
+        this.report("Agent accepted your spoken request.");
+      } catch {
+        if (this.closed) return;
+        // Provider speech must not receive arbitrary backend errors, which can
+        // contain paths, snippets, or credential metadata.
+        this.append(
+          "session.commentary.append",
+          "Agent submission could not be confirmed. Ask the user to check chat and payment settings before resending. Do not retry it.",
+          id,
+        );
+        this.report("Submission unconfirmed. Check chat and payment settings.");
+      }
+    };
+    const operation = this.pendingSubmission
+      ? this.pendingSubmission.then(submit)
+      : submit();
+    this.pendingSubmission = operation;
+    await operation;
   }
 
   observe(messages: ProjectedChatMessage[]) {

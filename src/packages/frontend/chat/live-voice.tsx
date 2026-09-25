@@ -6,6 +6,7 @@ import { Button, Modal, Progress } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LiveDelegation,
+  LIVE_VOICE_POLICY,
   type LiveEvent,
   type ProjectedChatMessage,
 } from "@cocalc/chat-client";
@@ -29,6 +30,24 @@ interface Call {
   deadline?: ReturnType<typeof setTimeout>;
   rejectStartup?: (error: Error) => void;
   stopped: boolean;
+}
+
+function VoicePolicyDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title="How voice works" open={open} onCancel={onClose} footer={null}>
+      {LIVE_VOICE_POLICY.map(({ title, text }) => (
+        <p key={title}>
+          <strong>{title}.</strong> {text}
+        </p>
+      ))}
+    </Modal>
+  );
 }
 
 async function waitForIce(peer: RTCPeerConnection) {
@@ -83,6 +102,7 @@ export async function requestMicrophoneWithTimeout(
 
 export function ChatLiveVoice({
   projectId,
+  threadId,
   messages,
   onDelegate,
   visible,
@@ -92,8 +112,12 @@ export function ChatLiveVoice({
   dictationBusy = false,
 }: {
   projectId: string;
+  threadId: string;
   messages: ProjectedChatMessage[];
-  onDelegate: (text: string) => Promise<{ message_id: string }>;
+  onDelegate: (
+    text: string,
+    isCurrentThread: () => boolean,
+  ) => Promise<{ message_id: string }>;
   visible: boolean;
   panelOpen?: boolean;
   onClose?: () => void;
@@ -112,10 +136,11 @@ export function ChatLiveVoice({
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
+  const [showHow, setShowHow] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const callRef = useRef<Call | undefined>(undefined);
-  const delegateRef = useRef(onDelegate);
-  delegateRef.current = onDelegate;
+  const threadRef = useRef(threadId);
+  threadRef.current = threadId;
   const rpc = useCallback(
     (request: Omit<LiveVoiceRequest, "project_id">) =>
       webapp_client.conat_client.hub.system.liveVoice({
@@ -185,6 +210,9 @@ export function ChatLiveVoice({
     return () => void stop();
   }, [visible, stop]);
   useEffect(() => {
+    void stop();
+  }, [threadId, stop]);
+  useEffect(() => {
     const leave = () => {
       if (document.hidden) void stop();
     };
@@ -198,7 +226,9 @@ export function ChatLiveVoice({
   }, [stop]);
 
   const start = async () => {
-    if (!capabilities?.enabled || callRef.current) return;
+    if (!capabilities?.enabled || callRef.current || !threadId) return;
+    const boundThreadId = threadId;
+    const boundDelegate = onDelegate;
     setConfirming(false);
     setError("");
     setCaption("");
@@ -215,7 +245,7 @@ export function ChatLiveVoice({
     audio.autoplay = true;
     audio.setAttribute("playsinline", "true");
     const bridge = new LiveDelegation(
-      (text) => delegateRef.current(text),
+      (text) => boundDelegate(text, () => threadRef.current === boundThreadId),
       (type, content, delegation_id) => {
         if (channel.readyState === "open")
           channel.send(JSON.stringify({ type, content, delegation_id }));
@@ -384,6 +414,9 @@ export function ChatLiveVoice({
           <div className="cocalc-live-voice-detail">
             Turn a short recording into text for your message.
           </div>
+          <Button type="link" size="small" onClick={() => setShowHow(true)}>
+            How this works
+          </Button>
         </div>
         <div className="cocalc-live-voice-actions">
           <Button disabled={!onDictate || dictationBusy} onClick={onDictate}>
@@ -397,6 +430,7 @@ export function ChatLiveVoice({
             Close
           </Button>
         </div>
+        <VoicePolicyDialog open={showHow} onClose={() => setShowHow(false)} />
       </div>
     );
   }
@@ -468,9 +502,9 @@ export function ChatLiveVoice({
           </div>
         ) : confirming ? (
           <div className="cocalc-live-voice-detail">
-            Uses {included ? "included AI" : "your OpenAI key"} for up to two
-            minutes. Agent work may use a separate payment source and continue
-            after you hang up.
+            Uses {included ? "included AI" : "your OpenAI key"}. CoCalc asks the
+            voice service to stop after two minutes. Agent work may use a
+            separate payment source and continue after you hang up.
           </div>
         ) : !capabilities.enabled ? (
           <div className="cocalc-live-voice-detail">
@@ -480,6 +514,11 @@ export function ChatLiveVoice({
           <div className="cocalc-live-voice-detail">
             Choose a live conversation or dictate a message to text.
           </div>
+        )}
+        {!active && (
+          <Button type="link" size="small" onClick={() => setShowHow(true)}>
+            How this works
+          </Button>
         )}
         {caption && active && (
           <div className="cocalc-live-voice-caption" aria-live="polite">
@@ -637,6 +676,7 @@ export function ChatLiveVoice({
           </Button>
         </div>
       </Modal>
+      <VoicePolicyDialog open={showHow} onClose={() => setShowHow(false)} />
     </div>
   );
 }

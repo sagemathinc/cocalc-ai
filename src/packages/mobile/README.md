@@ -206,14 +206,18 @@ in the browser web app.
 Keys stay on the server; audio travels directly between the phone or browser
 and OpenAI. Session admission, heartbeat, and end operations route to the
 account's home bay; ordinary agent work uses the existing project-host chat
-transport. The server reserves the maximum call cost before creating a funded
-session, then settles the provider's final duration when confirmed. A lost
-provider response or unconfirmed final usage conservatively settles the full
-reservation.
+transport. The server reserves two minutes of site-funded usage before creating
+a call. It settles confirmed provider duration when `session.closed` arrives.
+If closure is unconfirmed, the lease and reservation remain open, the server
+retries closure, and operators receive error logs. A lost creation response
+without a provider ID requires operator reconciliation; the user cannot start
+another call while that lease is unresolved. Failed starts are limited per
+account, provider credential, and bay.
 
-Calls expire after 120 seconds, with a 25-second heartbeat lease and five-second
-server cleanup sweep. Lease records are durable across server restarts. These
-are application cleanup deadlines, not a provider-enforced monetary cap;
+CoCalc requests closure after 120 seconds, with a 25-second heartbeat lease
+and five-second server cleanup sweep. Lease records are durable across server
+restarts. These are application cleanup deadlines, not a provider-enforced
+monetary cap;
 staging must verify startup, sideband closure, final usage, network loss, and
 mobile audio routing with a real GPT-Live-enabled key before the beta flag is
 enabled for customers.

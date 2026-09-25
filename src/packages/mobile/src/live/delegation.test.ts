@@ -85,6 +85,51 @@ test("a correction after delegation offset is not folded into the earlier reques
   assert.deepEqual(sent, ["Plot x.", "Actually x squared."]);
 });
 
+test("overlapping spoken tasks wait for separate durable send acknowledgments", async () => {
+  let acceptFirst!: (value: { message_id: string }) => void;
+  const sent: string[] = [];
+  const accepted: string[] = [];
+  const bridge = new LiveDelegation(
+    (text) => {
+      sent.push(text);
+      return text === "First task."
+        ? new Promise((resolve) => {
+            acceptFirst = resolve;
+          })
+        : Promise.resolve({ message_id: "human-2" });
+    },
+    (type, _, id) => {
+      if (type === "session.thinking.append") accepted.push(id);
+    },
+    () => {},
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "First task.",
+    end_ms: 10,
+  });
+  const first = bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 11,
+    delegation: { id: "d1", target: "client" },
+  });
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "Second task.",
+    end_ms: 20,
+  });
+  const second = bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 21,
+    delegation: { id: "d2", target: "client" },
+  });
+  assert.deepEqual(sent, ["First task."]);
+  acceptFirst({ message_id: "human-1" });
+  await Promise.all([first, second]);
+  assert.deepEqual(sent, ["First task.", "Second task."]);
+  assert.deepEqual(accepted, ["d1", "d2"]);
+});
+
 test("uncertain admission is not retried or announced as accepted", async () => {
   let sends = 0;
   const updates: string[] = [];
@@ -109,7 +154,7 @@ test("uncertain admission is not retried or announced as accepted", async () => 
   await bridge.event(event);
   await bridge.event(event);
   assert.equal(sends, 1);
-  assert.match(updates[0], /Could not confirm/);
+  assert.match(updates[0], /could not be confirmed/);
 });
 
 test("ending the call fences late admission but does not cancel accepted work", async () => {
@@ -157,7 +202,7 @@ test("no transcript means no speculative backend submission", async () => {
   assert.equal(sends, 0);
 });
 
-test("explains payment submission errors to the voice intermediary without retrying", async () => {
+test("does not send raw submission errors to the voice provider", async () => {
   const updates: string[] = [];
   let sends = 0;
   const bridge = new LiveDelegation(
@@ -179,7 +224,8 @@ test("explains payment submission errors to the voice intermediary without retry
     delegation: { id: "d", target: "client" },
   });
   assert.equal(sends, 1);
-  assert.match(updates[0], /Selected ChatGPT credential is unavailable/);
+  assert.doesNotMatch(updates[0], /Selected ChatGPT credential is unavailable/);
+  assert.match(updates[0], /could not be confirmed/);
   assert.match(updates[0], /Do not retry/);
 });
 

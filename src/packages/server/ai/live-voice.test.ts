@@ -12,6 +12,8 @@ import {
 import getPool from "@cocalc/database/pool";
 
 const mockSockets: any[] = [];
+let mockAttachFailure = false;
+let mockConfirmClose = true;
 jest.mock("ws", () => {
   const { EventEmitter } = require("events");
   return {
@@ -22,10 +24,16 @@ jest.mock("ws", () => {
       constructor() {
         super();
         mockSockets.push(this);
-        queueMicrotask(() => this.emit("open"));
+        queueMicrotask(() =>
+          mockAttachFailure ? this.close() : this.emit("open"),
+        );
       }
       send(value: string) {
         if (JSON.parse(value).type === "session.close") {
+          if (!mockConfirmClose) {
+            queueMicrotask(() => this.close());
+            return;
+          }
           queueMicrotask(() =>
             this.emit(
               "message",
@@ -86,11 +94,17 @@ const oldFetch = global.fetch;
 const oldEnabled = process.env.COCALC_LIVE_VOICE_ENABLED;
 let query: jest.Mock;
 let row: any;
+let limits: Map<string, number>;
+let mockSlotsFull = false;
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockSockets.length = 0;
+  mockAttachFailure = false;
+  mockConfirmClose = true;
   row = undefined;
+  limits = new Map();
+  mockSlotsFull = false;
   process.env.COCALC_LIVE_VOICE_ENABLED = "1";
   jest.mocked(resolveMembershipForAccount).mockResolvedValue({
     class: "plus",
@@ -112,9 +126,19 @@ beforeEach(() => {
     .mocked(assertProjectCollaboratorAccessAllowRemote)
     .mockResolvedValue(undefined);
   query = jest.fn(async (sql: string, args?: any[]) => {
+    if (sql.includes("SELECT attempts FROM live_voice_start_limits")) {
+      const id = `${args?.[0]}:${args?.[1]}:${args?.[2]}`;
+      const attempts = limits.get(id);
+      return { rows: attempts == null ? [] : [{ attempts }] };
+    }
+    if (sql.includes("INSERT INTO live_voice_start_limits")) {
+      const id = `${args?.[0]}:${args?.[1]}:${args?.[2]}`;
+      const attempts = (limits.get(id) ?? 0) + 1;
+      limits.set(id, attempts);
+      return { rows: [{ attempts }] };
+    }
     if (sql.includes("INSERT INTO live_voice_sessions")) {
-      if (row && !row.ended)
-        throw Object.assign(new Error("duplicate session"), { code: "23505" });
+      if (mockSlotsFull || (row && !row.ended)) return { rows: [] };
       row = {
         request_id,
         account_id,
@@ -126,13 +150,22 @@ beforeEach(() => {
         ended: false,
         usage_seconds: 0,
         final_usage: false,
+        provider_closed: false,
+        close_attempts: 0,
       };
+      return { rows: [{ request_id }] };
     }
-    if (sql.includes("SET provider_id") && row) row.provider_id = args?.[1];
+    if (sql.includes("SET provider_id") && row) {
+      row.provider_id = args?.[1];
+      if (sql.includes("provider_closed=TRUE")) row.provider_closed = true;
+    }
     if (sql.includes("usage_seconds=GREATEST") && row) {
       row.usage_seconds = Math.max(row.usage_seconds, args?.[1]);
       row.final_usage = row.final_usage || args?.[2];
+      row.provider_closed = row.provider_closed || args?.[3];
     }
+    if (sql.includes("SET provider_closed=TRUE") && row)
+      row.provider_closed = true;
     if (sql.includes("SET closing_at=NOW()")) {
       if (!row || row.ended || row.closing_at) return { rows: [] };
       row.closing_at = new Date();
@@ -140,8 +173,12 @@ beforeEach(() => {
     }
     if (sql.includes("SET ended=TRUE") && row) row.ended = true;
     if (sql.includes("SET closing_at=NULL") && row) row.closing_at = null;
+    if (sql.includes("close_attempts=close_attempts+1") && row)
+      row.close_attempts++;
     if (sql.includes("SELECT * FROM live_voice_sessions WHERE request_id"))
       return { rows: row ? [{ ...row }] : [] };
+    if (sql.includes("WHERE account_id=$1 AND NOT ended LIMIT 1"))
+      return { rows: row && !row.ended ? [{ request_id }] : [] };
     return { rows: [] };
   });
   jest.mocked(getPool).mockReturnValue({ query } as any);
@@ -162,13 +199,17 @@ afterAll(() => {
   else process.env.COCALC_LIVE_VOICE_ENABLED = oldEnabled;
 });
 afterEach(async () => {
-  if (row && !row.ended)
+  mockAttachFailure = false;
+  mockConfirmClose = true;
+  if (row && !row.ended && row.provider_id) {
+    row.retry_after = null;
     await liveVoice({
       account_id,
       project_id,
       action: "end",
       session_id: request_id,
     });
+  }
 });
 
 it("fails closed unless enabled", async () => {
@@ -299,7 +340,7 @@ it("does not reserve twice for an uncertain repeated start", async () => {
   expect(reserveChatSpeechUsage).toHaveBeenCalledTimes(1);
 });
 
-it("settles the reserved upper bound when provider creation is uncertain", async () => {
+it("retains the reservation and lease when provider creation is uncertain", async () => {
   global.fetch = jest.fn(async () => {
     throw new Error("provider response lost");
   }) as typeof fetch;
@@ -312,8 +353,108 @@ it("settles the reserved upper bound when provider creation is uncertain", async
       sdp: "v=0\r\n",
     }),
   ).rejects.toThrow(/response lost/);
-  expect(settleChatSpeechUsage).toHaveBeenCalledWith(
-    expect.objectContaining({ costMicrousd: 100000, durationMs: 120000 }),
-  );
+  expect(settleChatSpeechUsage).not.toHaveBeenCalled();
+  expect(row.ended).toBe(false);
+  expect(row.close_attempts).toBe(1);
+});
+
+it("keeps a provider lease open if closure cannot be confirmed, then retries", async () => {
+  await liveVoice({
+    account_id,
+    project_id,
+    request_id,
+    action: "start",
+    sdp: "v=0\r\n",
+  });
+  mockSockets.at(-1).close();
+  mockAttachFailure = true;
+  await expect(
+    liveVoice({
+      account_id,
+      project_id,
+      action: "end",
+      session_id: request_id,
+    }),
+  ).rejects.toThrow(/not been confirmed/);
+  expect(row.ended).toBe(false);
+  expect(settleChatSpeechUsage).not.toHaveBeenCalled();
+  mockAttachFailure = false;
+  row.retry_after = null;
+  await liveVoice({
+    account_id,
+    project_id,
+    action: "end",
+    session_id: request_id,
+  });
   expect(row.ended).toBe(true);
+  expect(settleChatSpeechUsage).toHaveBeenCalledTimes(1);
+});
+
+it("closes a created provider session if saving its ID initially fails", async () => {
+  const originalQuery = query.getMockImplementation()!;
+  let failures = 2;
+  query.mockImplementation(async (sql: string, args?: any[]) => {
+    if (sql.includes("SET provider_id") && failures-- > 0)
+      throw new Error("database write unavailable");
+    return await originalQuery(sql, args);
+  });
+  await expect(
+    liveVoice({
+      account_id,
+      project_id,
+      request_id,
+      action: "start",
+      sdp: "v=0\r\n",
+    }),
+  ).rejects.toThrow(/database write unavailable/);
+  expect(mockSockets).toHaveLength(1);
+  expect(row.provider_id).toBe("live_test");
+  expect(row.provider_closed).toBe(true);
+  expect(row.ended).toBe(true);
+});
+
+it("opens a circuit breaker after repeated rejected starts with an own key", async () => {
+  jest.mocked(getExternalCredentialRouted).mockResolvedValue({
+    payload: "own-secret",
+  } as any);
+  global.fetch = jest.fn(
+    async () => new Response(null, { status: 400 }),
+  ) as typeof fetch;
+  const start = () =>
+    liveVoice({
+      account_id,
+      project_id,
+      request_id,
+      action: "start",
+      funding_preference: "own",
+      sdp: "v=0\r\n",
+    });
+  for (let i = 0; i < 5; i++)
+    await expect(start()).rejects.toThrow(/creation failed/);
+  await expect(start()).rejects.toThrow(/temporarily paused/);
+  expect(global.fetch).toHaveBeenCalledTimes(5);
+});
+
+it("throttles successful per-account starts and caps key concurrency", async () => {
+  const start = () =>
+    liveVoice({
+      account_id,
+      project_id,
+      request_id,
+      action: "start",
+      sdp: "v=0\r\n",
+    });
+  mockSlotsFull = true;
+  await expect(start()).rejects.toThrow(/too many active live calls/);
+  mockSlotsFull = false;
+  for (let i = 0; i < 5; i++) {
+    await start();
+    await liveVoice({
+      account_id,
+      project_id,
+      action: "end",
+      session_id: request_id,
+    });
+  }
+  await expect(start()).rejects.toThrow(/Too many live voice starts/);
 });

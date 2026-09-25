@@ -2378,6 +2378,7 @@ export interface BayOpsReserveSiteFundedSpeechRequest {
   requestId: string;
   accountId: string;
   reservedMicrousd: number;
+  persistent?: boolean;
 }
 
 export interface BayOpsFinishSiteFundedSpeechRequest {

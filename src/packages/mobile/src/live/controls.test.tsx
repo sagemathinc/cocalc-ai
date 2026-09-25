@@ -116,10 +116,18 @@ it("shows a membership or own-key dialog for free users", async () => {
       accessibilityLabel: name,
     });
   await act(async () => button("Live voice").props.onPress());
-  expect(screen.root.findByType("Modal").props.visible).toBe(true);
+  expect(
+    screen.root
+      .findAllByType("Modal")
+      .some((modal: any) => modal.props.visible),
+  ).toBe(true);
   await act(async () => button("Use my OpenAI key").props.onPress());
   expect(chooseFunding).toHaveBeenCalledWith("own");
-  expect(screen.root.findByType("Modal").props.visible).toBe(false);
+  expect(
+    screen.root
+      .findAllByType("Modal")
+      .every((modal: any) => !modal.props.visible),
+  ).toBe(true);
   await act(async () => screen.unmount());
 });
 
@@ -165,6 +173,24 @@ it("keeps idle voice options hidden until opened and offers dictation and close"
       />,
     );
   });
+  await act(async () =>
+    screen.root
+      .findByProps({ accessibilityLabel: "How this works" })
+      .props.onPress(),
+  );
+  expect(
+    screen.root
+      .findAllByType("Modal")
+      .some((modal: any) => modal.props.visible),
+  ).toBe(true);
+  expect(JSON.stringify(screen.toJSON())).toContain(
+    "ordinary messages from you",
+  );
+  await act(async () =>
+    screen.root
+      .findByProps({ accessibilityLabel: "Close voice explanation" })
+      .props.onPress(),
+  );
   await act(async () =>
     screen.root
       .findByProps({ accessibilityLabel: "Dictate message" })

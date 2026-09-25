@@ -11,6 +11,7 @@ import {
   Linking,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -18,6 +19,67 @@ import { usePalette } from "../ui/palette";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile } from "../preview/fixtures";
 import type { useLiveVoice } from "./use-live";
+import { LIVE_VOICE_POLICY } from "@cocalc/chat-client";
+
+function VoicePolicyModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const colors = usePalette();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          padding: 24,
+          backgroundColor: colors.scrim,
+        }}
+      >
+        <View
+          accessibilityViewIsModal
+          style={{
+            backgroundColor: colors.elevated,
+            borderRadius: 16,
+            padding: 20,
+            gap: 12,
+            maxHeight: "85%",
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 20, fontWeight: "700" }}>
+            How voice works
+          </Text>
+          <ScrollView contentContainerStyle={{ gap: 12 }}>
+            {LIVE_VOICE_POLICY.map(({ title, text }) => (
+              <Text key={title} style={{ color: colors.secondary }}>
+                <Text style={{ color: colors.text, fontWeight: "700" }}>
+                  {title}.{" "}
+                </Text>
+                {text}
+              </Text>
+            ))}
+          </ScrollView>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close voice explanation"
+            onPress={onClose}
+            style={{ minHeight: 44, justifyContent: "center" }}
+          >
+            <Text style={{ color: colors.link, fontWeight: "600" }}>Close</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 function VoiceOrb({ active }: { active: boolean }) {
   const colors = usePalette();
@@ -128,6 +190,7 @@ export function LiveVoiceControls({
   const colors = usePalette();
   const [confirming, setConfirming] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showHow, setShowHow] = useState(false);
   const [settingsError, setSettingsError] = useState<string>();
   const close = () => {
     setConfirming(false);
@@ -209,10 +272,14 @@ export function LiveVoiceControls({
         <Text style={{ color: colors.secondary, fontSize: 12 }}>
           Turn a short recording into text for your message.
         </Text>
+        <View style={{ alignSelf: "flex-start" }}>
+          {button("How this works", () => setShowHow(true), false, "link")}
+        </View>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {button("Dictate message", onDictate, disabled || dictationBusy)}
           {onClose && button("Close voice options", close, false, "link")}
         </View>
+        <VoicePolicyModal visible={showHow} onClose={() => setShowHow(false)} />
       </View>
     );
   }
@@ -348,7 +415,7 @@ export function LiveVoiceControls({
                   ? "Preparing microphone…"
                   : "Listening")
               : confirming
-                ? `Uses ${included ? "included AI" : "your OpenAI key"} for up to ${live.capabilities.max_seconds / 60} minutes. Agent work may continue after the call.`
+                ? `Uses ${included ? "included AI" : "your OpenAI key"}. CoCalc asks the voice service to stop after ${live.capabilities.max_seconds / 60} minutes. Agent work may continue after the call.`
                 : dictationBusy
                   ? "Dictation in progress. Finish or cancel below."
                   : live.capabilities.enabled
@@ -358,6 +425,11 @@ export function LiveVoiceControls({
           </Text>
         </View>
       </View>
+      {!active && (
+        <View style={{ alignSelf: "flex-start" }}>
+          {button("How this works", () => setShowHow(true), false, "link")}
+        </View>
+      )}
       {meters}
       {live.error ? (
         <Text accessibilityRole="alert" style={{ color: colors.danger }}>
@@ -512,6 +584,7 @@ export function LiveVoiceControls({
           </View>
         </View>
       </Modal>
+      <VoicePolicyModal visible={showHow} onClose={() => setShowHow(false)} />
     </View>
   );
 }
