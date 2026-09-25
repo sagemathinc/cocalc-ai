@@ -18,7 +18,6 @@ const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);
 const HUB_PROJECT_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "projects.exec": "project:exec",
   "projects.getProjectState": "project:read",
-  "projects.getProjectAddress": "project:read",
   "projects.getProjectCreated": "project:read",
   "projects.getProjectRunQuota": "project:read",
 };

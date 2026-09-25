@@ -68,6 +68,20 @@ describe("HTTP API key policy audit", () => {
     });
   });
 
+  it("does not allow project:read keys to retrieve the project address", async () => {
+    await expect(
+      assertHttpHubApiKeyAllowed({
+        principal: {
+          ...principal,
+          capabilities: ["project:read"],
+          allowed_project_ids: ["proj-1"],
+        },
+        name: "projects.getProjectAddress",
+        args: [{ project_id: "proj-1" }],
+      }),
+    ).rejects.toThrow("API keys are not allowed to call hub RPC");
+  });
+
   it("audits missing project capability denials", async () => {
     await expect(
       assertHttpProjectApiKeyAllowed({
