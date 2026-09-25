@@ -11,6 +11,7 @@ let touchClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let upsertClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let deleteClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let centralLogMock: jest.Mock;
+let resolveProjectReferenceMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -68,8 +69,14 @@ jest.mock("@cocalc/database/postgres/central-log", () => ({
   default: (...args: any[]) => centralLogMock(...args),
 }));
 
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  resolveProjectReferenceForMemberAllowRemote: (...args: any[]) =>
+    resolveProjectReferenceMock(...args),
+}));
+
 describe("manageApiKeys local bay access", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+  const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
   async function flushAuditEvents(): Promise<void> {
     await Promise.resolve();
@@ -112,6 +119,9 @@ describe("manageApiKeys local bay access", () => {
       async () => undefined,
     );
     centralLogMock = jest.fn(async () => undefined);
+    resolveProjectReferenceMock = jest.fn(async () => ({
+      users: { [ACCOUNT_ID]: { group: "collaborator" } },
+    }));
   });
 
   it("allows account-wide api key management", async () => {
@@ -172,6 +182,40 @@ describe("manageApiKeys local bay access", () => {
       `${sql}`.includes("UPDATE api_keys SET trunc=$1,hash=$2"),
     );
     expect(update).toBeTruthy();
+  });
+
+  it("requires full collaborator membership for a versioned viewer grant", async () => {
+    resolveProjectReferenceMock.mockResolvedValueOnce({
+      users: { [ACCOUNT_ID]: { group: "viewer" } },
+    });
+    const { default: manageApiKeys } = await import("./manage");
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        action: "create",
+        name: "viewer key",
+        scope: {
+          version: 1,
+          account: [],
+          projects: [
+            {
+              project_id: PROJECT_ID,
+              capabilities: ["file:read"],
+              viewer_read_roots: ["."],
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow("full collaborator access required");
+    expect(resolveProjectReferenceMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("INSERT INTO api_keys"),
+      ),
+    ).toBe(false);
   });
 
   it("audits deleted api keys without exposing the secret", async () => {

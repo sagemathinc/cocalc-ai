@@ -24,6 +24,8 @@ import type {
   ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
+import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
+import { resolveProjectReferenceForMemberAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
@@ -54,6 +56,28 @@ const API_KEY_V2_PREFIX = "sk-cc-v2";
 const API_KEY_V2_LEGACY_PREFIXES = new Set(["sk-cocalc-v2"]);
 const API_KEY_ID_BYTES = 12;
 const API_KEY_SECRET_BYTES = 32;
+
+async function assertScopeProjectsCollaborator({
+  account_id,
+  scope,
+}: {
+  account_id: string;
+  scope: ApiKeyScope;
+}): Promise<void> {
+  for (const { project_id } of scope.projects) {
+    const reference = await resolveProjectReferenceForMemberAllowRemote({
+      account_id,
+      project_id,
+    });
+    const member = reference?.users?.[account_id];
+    const group = typeof member === "string" ? member : member?.group;
+    if (!isProjectCollaboratorRole(group)) {
+      throw new Error(
+        `full collaborator access required for project ${project_id}`,
+      );
+    }
+  }
+}
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
 
@@ -296,6 +320,12 @@ async function createApiKey({
       : { capabilities: [], allowed_project_ids: [] };
   const canonicalScope =
     requestedScope == null ? null : normalizeApiKeyScopeV1(requestedScope);
+  if (canonicalScope != null) {
+    await assertScopeProjectsCollaborator({
+      account_id,
+      scope: canonicalScope,
+    });
+  }
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
@@ -459,6 +489,10 @@ async function doManageApiKeys({
       }
       if (scope !== undefined) {
         apiKey.scope = normalizeApiKeyScopeV1(scope);
+        await assertScopeProjectsCollaborator({
+          account_id,
+          scope: apiKey.scope,
+        });
         apiKey.capabilities = [];
         apiKey.allowed_project_ids = [];
         changed = true;

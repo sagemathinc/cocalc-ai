@@ -117,6 +117,18 @@ describe("scoped API key project-host issuance", () => {
     getApiKeyAuthorizationStateMock.mockResolvedValue(
       state(["file:read"], ["data"]),
     );
+    const { issueProjectHostApiKeyTokenLocal } =
+      await import("./project-host-api-key");
+    await issueProjectHostApiKeyTokenLocal(request);
+    expect(issueTokenMock.mock.calls[0][0].viewer_policy_hash).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+  });
+
+  it("requires a full collaborator even for a read-only key", async () => {
+    getApiKeyAuthorizationStateMock.mockResolvedValue(
+      state(["file:read"], ["data"]),
+    );
     resolveProjectReferenceMock.mockResolvedValue({
       host_id: hostId,
       runtime_lifecycle_revision: 7,
@@ -124,10 +136,10 @@ describe("scoped API key project-host issuance", () => {
     });
     const { issueProjectHostApiKeyTokenLocal } =
       await import("./project-host-api-key");
-    await issueProjectHostApiKeyTokenLocal(request);
-    expect(issueTokenMock.mock.calls[0][0].viewer_policy_hash).toMatch(
-      /^[a-f0-9]{64}$/,
+    await expect(issueProjectHostApiKeyTokenLocal(request)).rejects.toThrow(
+      "not authorized",
     );
+    expect(issueTokenMock).not.toHaveBeenCalled();
   });
 
   it("denies revoked revisions, host substitutions, and viewer writes", async () => {

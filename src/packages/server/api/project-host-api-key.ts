@@ -12,10 +12,7 @@ import type {
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 import { viewerPolicyForApiKeyGrant } from "@cocalc/util/api-key-scope";
-import {
-  isProjectCollaboratorRole,
-  isProjectViewerRole,
-} from "@cocalc/util/project-access";
+import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -78,16 +75,7 @@ export async function issueProjectHostApiKeyTokenLocal({
   });
   const member = reference?.users?.[account_id];
   const group = typeof member === "string" ? member : member?.group;
-  const needsCollaborator = grant.capabilities.some((capability) =>
-    ["project:exec", "file:write", "project:write", "codex:run"].includes(
-      capability,
-    ),
-  );
-  if (
-    reference?.host_id !== host_id ||
-    (!isProjectCollaboratorRole(group) && !isProjectViewerRole(group)) ||
-    (needsCollaborator && !isProjectCollaboratorRole(group))
-  ) {
+  if (reference?.host_id !== host_id || !isProjectCollaboratorRole(group)) {
     throw new Error("not authorized for project-host API key access");
   }
   const placement_revision = Number(reference.runtime_lifecycle_revision);

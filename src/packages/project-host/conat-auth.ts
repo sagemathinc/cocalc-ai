@@ -144,9 +144,7 @@ function userFromBearerToken({
     if (
       Number(project?.runtime_lifecycle_revision) !==
         claims.api_key.placement_revision ||
-      (!isProjectCollaboratorGroup(group) && !isProjectViewerRole(group)) ||
-      (claims.api_key.capabilities.includes("project:exec") &&
-        !isProjectCollaboratorGroup(group))
+      !isProjectCollaboratorGroup(group)
     ) {
       throw new Error("API key project-host binding is no longer valid");
     }
@@ -400,9 +398,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         Date.now() < Number(user.auth_lease_exp_s) * 1000 &&
         Number(project?.runtime_lifecycle_revision) ===
           binding.placement_revision &&
-        (isProjectCollaboratorGroup(group) || isProjectViewerRole(group)) &&
-        (!binding.capabilities.includes("project:exec") ||
-          isProjectCollaboratorGroup(group)) &&
+        isProjectCollaboratorGroup(group) &&
         isProjectHostApiKeySubjectAllowed({ binding, subject, type })
       );
     }
