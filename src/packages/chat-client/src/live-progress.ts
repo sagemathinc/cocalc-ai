@@ -118,7 +118,7 @@ export class LiveProgressContext {
     private append: (
       type: "session.thinking.append" | "session.commentary.append",
       content: string,
-      id: string,
+      delegationId: null,
     ) => void,
     private proactive = false,
   ) {}
@@ -163,7 +163,7 @@ export class LiveProgressContext {
     this.append(
       "session.thinking.append",
       `Current CoCalc progress: ${next.text} Answer status questions from this report only; say when details are unavailable.`,
-      next.turnId ?? "status",
+      null,
     );
     if (
       (urgent || this.proactive) &&
@@ -175,7 +175,7 @@ export class LiveProgressContext {
       this.append(
         "session.commentary.append",
         urgent ? next.text : `Progress update: ${next.milestone ?? next.text}`,
-        next.turnId ?? "status",
+        null,
       );
     }
   }

@@ -115,7 +115,20 @@ it("answers status questions without delegating work and ignores instructions", 
   expect(append).toHaveBeenCalledWith(
     "session.thinking.append",
     expect.stringContaining("I am checking tests"),
-    "agent-1",
+    null,
   );
+  context.close();
+});
+
+it("keeps unsolicited announcements session-wide instead of inventing a delegation ID", () => {
+  const append = jest.fn();
+  const context = new LiveProgressContext(append, true);
+  context.observe(snapshot(), "thread-1");
+  expect(append).toHaveBeenCalledWith(
+    "session.commentary.append",
+    expect.stringContaining("I am checking tests"),
+    null,
+  );
+  expect(append.mock.calls.every(([, , id]) => id === null)).toBe(true);
   context.close();
 });
