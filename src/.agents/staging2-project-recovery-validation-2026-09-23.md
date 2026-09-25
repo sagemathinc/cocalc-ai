@@ -212,7 +212,7 @@ the source commits above identify the tracked code used for the builds.
 | Recovery health after the assignment-fenced rollout                       | At 22:26:36 UTC, project recovery was healthy with 0 unknown statuses and 0 recorded overdue delay. Both project-host smoke checks passed on the deployed artifact.                                                                                                                                                                                                                                                                                                                             |
 | Typed-deferral follow-up recovery                                         | Fresh project `fec4a0da-99f7-44c3-8f16-283735073469` produced snapshot `2026-09-23T22:45:42.329Z` and Rustic backup `cf84a869403966082974f1bc85692a970f11411991e77218a5da204f70460dc8`; restoring its marker from that backup succeeded and returned the original bytes.                                                                                                                                                                                                                        |
 | Lease-cache worker and restore                                            | Fresh project `47db6b2a-9675-4ae2-834c-3923ba0ed935` produced snapshot `2026-09-23T22:59:55.646Z` and Rustic backup `65fa0f1aa72c18049e9f468d0dd5c8ce45b225b4e5dea3ea58243a36ddffccc8`. Restoring its marker succeeded and returned the original bytes. Project recovery health was healthy at 23:01 UTC, with 0 unknown statuses and 0 recorded overdue delay.                                                                                                                                 |
-| Stage-metrics worker and remote confirmation                              | Fresh project `9d1000b8-7f9e-4fc5-be53-0156c3047c94` on the canary host produced snapshot `2026-09-23T23:19:06.028Z` and remote backup `03a02eef9bfc40daaed0afc4c8f87534876cb970affabf3d9a578d96b8ee50b0` at 23:19:09 UTC. Restoring its marker from that backup succeeded; byte comparison matched `metrics-canary-2026-09-23T23:19Z`. Both hosts passed smoke. Live SQL inspection of individual stage fields remains pending fresh operator authorization.                                   |
+| Stage-metrics worker and remote confirmation                              | Fresh project `9d1000b8-7f9e-4fc5-be53-0156c3047c94` on the canary host produced snapshot `2026-09-23T23:19:06.028Z` and remote backup `03a02eef9bfc40daaed0afc4c8f87534876cb970affabf3d9a578d96b8ee50b0` at 23:19:09 UTC. Restoring its marker from that backup succeeded; byte comparison matched `metrics-canary-2026-09-23T23:19Z`. Both hosts passed smoke. An audited 24-hour bay query on September 25 confirmed individual stage timings; see the verification below.                   |
 | Durable host-ledger worker and restore                                    | Fresh project `ac76eb98-13fc-43f5-b207-30c70313b5e8` on the shared host produced snapshot `2026-09-23T23:31:02.893Z` and backup `3e575fd771127b3e233c408d30d4663a11a2a68efc54f3edf1d12cba2d7ab67d` at 23:30:46 UTC. Restoring its marker succeeded and matched `ledger-canary-2026-09-23T23:29Z`. Both hosts passed smoke.                                                                                                                                                                      |
 | Bay attempt history and due-to-success health                             | Fresh project `b528cb8d-797c-464c-8f60-1508789595c2` on the canary host produced snapshot `2026-09-23T23:47:34.523Z` and backup `2bf97db0e64c0f0627bcc24221dee6676a961865c5c9a7f90ac27c56f6493064` at 23:47:38 UTC. Restoring its marker succeeded and matched `attempt-health-canary-2026-09-23T23:46Z`. At 23:48 UTC operator health reported 5 successful attempts in 24 hours, 0 failed/deferred attempts, 0 unknown statuses, and 23-second backup p95 due-to-success from one completion. |
 
@@ -2233,3 +2233,21 @@ health was healthy with zero current delay, unknown status, or unaccounted
 due work and 4/4 active shards covered by passing remote-only drills.
 Overall site health remained warning for separate checks. Production is
 unchanged.
+
+### Audited bay stage-timing verification (2026-09-25)
+
+After fresh administrator authentication, two read-only staging2 bay queries
+(audit IDs `bcdcb9de-a950-46f5-b7fd-0f5b16834040` and
+`13c3d77b-c286-432b-b330-00b675b80830`) inspected
+`project_maintenance_attempts` for the preceding 24 hours. All 1,389
+successful snapshot attempts carried `stage_durations_ms`. Of 909
+successful backup attempts, 903 carried stage timings; the other six did not
+have that field. For successful backups with timings, all 903 had
+`candidate_discovery`, `queue_wait`,
+`change_detection`, `create`, `inventory`, `prune`, `confirmation`, and
+`reporting` values. All 1,389 successful snapshots had
+`candidate_discovery`, `queue_wait`, `change_detection`, `create`,
+`inventory`, `prune`, and `confirmation` values. The `create` values
+were 2,173–27,286 ms for backups and 37–476 ms for snapshots. The query
+results were not truncated. This verifies persisted per-stage data in
+the bay attempt history; it does not establish sustained latency targets.
