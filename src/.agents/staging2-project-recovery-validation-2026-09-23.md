@@ -2241,8 +2241,12 @@ After fresh administrator authentication, two read-only staging2 bay queries
 `13c3d77b-c286-432b-b330-00b675b80830`) inspected
 `project_maintenance_attempts` for the preceding 24 hours. All 1,389
 successful snapshot attempts carried `stage_durations_ms`. Of 909
-successful backup attempts, 903 carried stage timings; the other six did not
-have that field. For successful backups with timings, all 903 had
+successful backup rows, 903 carried stage timings. An additional read-only
+query (audit `c1d9aa55-2f56-4799-a757-70c8852303b6`) found that the other
+six were repository-confirmation reconciliation reports after failed bay
+acknowledgment or a changed generation, not new backup executions. Their
+`duration_ms` and byte counters were also absent, as expected for this path.
+For the 903 executed backups, all had
 `candidate_discovery`, `queue_wait`,
 `change_detection`, `create`, `inventory`, `prune`, `confirmation`, and
 `reporting` values. All 1,389 successful snapshots had
