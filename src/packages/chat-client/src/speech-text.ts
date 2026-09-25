@@ -98,7 +98,7 @@ export function markdownToSpeechText(markdown: string): string {
       continue;
     }
     if (token.type === "html_block") {
-      // Keep content audible until the shared document converter provides
+      // Keep content audible until the shared Markdown converter provides
       // semantic HTML nodes. Dropping this token would drop entire answers.
       parts.push(token.content.trim());
       continue;
