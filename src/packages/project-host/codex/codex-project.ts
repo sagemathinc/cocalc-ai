@@ -802,11 +802,14 @@ export async function createProjectCliTokenLease({
             projectId,
             err: `${error}`,
           });
-          await queueConnectorOperation(async () => {
-            if (connectorTurn === active) {
-              await fs.rm(connectorHostPath, { force: true });
-            }
-          });
+          if (connectorTurn === active) {
+            await endConnectorTurn().catch((err) => {
+              logger.warn("managed CoCalc connector revocation unconfirmed", {
+                projectId,
+                err: `${err}`,
+              });
+            });
+          }
         });
     }, 60_000);
     connectorTimer.unref();
