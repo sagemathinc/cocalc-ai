@@ -4,7 +4,12 @@
  */
 
 import { DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY } from "@cocalc/util/project-access";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import type { Filesystem } from "@cocalc/conat/files/fs";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   assertViewerCanonicalPathAllowed,
   createViewerReadOnlyFilesystem,
@@ -13,7 +18,7 @@ import {
 function mockFilesystem(
   overrides: Partial<Filesystem> = {},
 ): jest.Mocked<Filesystem> {
-  return {
+  const fs = {
     constants: jest.fn(async () => ({})),
     describeFile: jest.fn(async () => ({ mime: "text/plain" })),
     exists: jest.fn(async () => true),
@@ -27,9 +32,35 @@ function mockFilesystem(
     stat: jest.fn(async () => ({}) as any),
     ...overrides,
   } as jest.Mocked<Filesystem>;
+  (fs as any).readRegularFileAuthorized = jest.fn(async (opts) => {
+    const identity = await fs.canonicalSyncIdentityPath!(opts.path);
+    opts.authorizeCanonicalIdentity(identity);
+    return await fs.readFile(opts.path, opts.encoding, opts.lock);
+  });
+  return fs;
 }
 
 describe("viewer read-only filesystem boundary", () => {
+  it("rejects a FIFO through the real viewer read path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-"));
+    try {
+      await writeFile(join(root, "ok.txt"), "visible");
+      execFileSync("mkfifo", [join(root, "pipe")]);
+      const viewerFs = createViewerReadOnlyFilesystem({
+        fs: new SandboxedFilesystem(root),
+        readPolicy: DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+      });
+      await expect(viewerFs.readFile("ok.txt", "utf8")).resolves.toBe(
+        "visible",
+      );
+      await expect(viewerFs.readFile("pipe")).rejects.toMatchObject({
+        code: "EACCES",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("authorizes the canonical identity supplied by an opened handle", () => {
     expect(
       assertViewerCanonicalPathAllowed({

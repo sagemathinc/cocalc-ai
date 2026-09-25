@@ -14,7 +14,14 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { linkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -40,6 +47,53 @@ async function expectRejectsWithError(
 }
 
 const describeIfLinux = process.platform === "linux" ? describe : describe.skip;
+
+describeIfLinux("authorized regular-file reads", () => {
+  it("reads the authorized opened file after its path is replaced", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-read-"));
+    try {
+      writeFileSync(join(root, "approved.txt"), "approved");
+      writeFileSync(join(root, "private.txt"), "private");
+      const fs = new SandboxedFilesystem(root);
+      const content = await fs.readRegularFileAuthorized({
+        path: "approved.txt",
+        encoding: "utf8",
+        authorizeCanonicalIdentity: (identity) => {
+          expect(identity).toContain("approved.txt");
+          renameSync(join(root, "approved.txt"), join(root, "old.txt"));
+          symlinkSync("private.txt", join(root, "approved.txt"));
+        },
+      });
+      expect(content).toBe("approved");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects FIFOs and oversized regular files before reading", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-read-"));
+    try {
+      execFileSync("mkfifo", [join(root, "pipe")]);
+      writeFileSync(join(root, "large.txt"), "abcd");
+      const fs = new SandboxedFilesystem(root);
+      await expect(
+        fs.readRegularFileAuthorized({
+          path: "pipe",
+          authorizeCanonicalIdentity: () => {},
+        }),
+      ).rejects.toMatchObject({ code: "EACCES" });
+      await expect(
+        fs.readRegularFileAuthorized({
+          path: "large.txt",
+          maxBytes: 3,
+          authorizeCanonicalIdentity: () => {},
+        }),
+      ).rejects.toMatchObject({ code: "EFBIG" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("sandbox path containment", () => {
   it("recognizes Windows descendants without treating siblings as contained", () => {
