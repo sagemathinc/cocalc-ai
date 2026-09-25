@@ -41,7 +41,8 @@ function mockFilesystem(
 }
 
 describe("viewer read-only filesystem boundary", () => {
-  it("rejects a FIFO through the real viewer read path", async () => {
+  const itOnLinux = process.platform === "linux" ? it : it.skip;
+  itOnLinux("rejects a FIFO through the real viewer read path", async () => {
     const root = await mkdtemp(join(tmpdir(), "cocalc-viewer-"));
     try {
       await writeFile(join(root, "ok.txt"), "visible");
