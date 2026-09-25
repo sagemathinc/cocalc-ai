@@ -3,6 +3,7 @@ import {
   createServiceClient,
   createServiceHandler,
 } from "@cocalc/conat/service/typed";
+import callHub from "@cocalc/conat/hub/call-hub";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import type {
   CreateProjectOptions,
@@ -15,6 +16,7 @@ import type {
   HostExamRun,
   HostExamRuntimeStatus,
   HostPressureZone,
+  Hosts,
 } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type {
@@ -1213,25 +1215,17 @@ export interface HostStatusApi {
     next_cursor_updated_ms?: number;
     next_cursor_account_id?: string;
   }>;
-  listProjectMaintenanceSchedules: (opts: {
-    host_id: string;
-    active_days?: number;
-    limit?: number;
-    cursor_project_id?: string;
-    project_ids?: string[];
-  }) => Promise<HostProjectMaintenanceSchedule[]>;
-  confirmProjectMaintenanceAssignment: (opts: {
-    host_id: string;
-    project_id: string;
-    kind: "snapshot" | "backup";
-    schedule_revision: string;
-    observed_change_at: string | null;
-  }) => Promise<HostProjectMaintenanceAssignment>;
-  reportProjectMaintenance: (report: ProjectMaintenanceReport) => Promise<void>;
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
 }
+
+type HostMaintenanceApi = Pick<
+  Hosts,
+  | "listProjectMaintenanceSchedules"
+  | "confirmProjectMaintenanceAssignment"
+  | "reportProjectMaintenance"
+>;
 
 export interface HostRegistryApi {
   register: (info: HostRegistryRegistration) => Promise<void>;
@@ -1342,13 +1336,60 @@ export function createHostStatusClient({
 }: {
   client: Client;
   timeout?;
-}): HostStatusApi {
-  return createServiceClient<HostStatusApi>({
+}): HostStatusApi & HostMaintenanceApi {
+  const status = createServiceClient<HostStatusApi>({
     service: "project-host",
     subject: STATUS_SUBJECT,
     client,
     timeout,
   });
+  const maintenance = <T>(
+    name: string,
+    opts: { host_id?: string },
+  ): Promise<T> => {
+    if (!opts.host_id) throw Error("host_id is required for maintenance");
+    // The Hub API binds host_id to the authenticated host principal. A host
+    // cannot use this subject to nominate another host or forge its reports.
+    return callHub({
+      client,
+      host_id: opts.host_id,
+      name,
+      args: [opts],
+      timeout,
+    });
+  };
+  const maintenanceMethods: HostMaintenanceApi = {
+    listProjectMaintenanceSchedules: (
+      opts: Parameters<Hosts["listProjectMaintenanceSchedules"]>[0],
+    ) =>
+      maintenance<HostProjectMaintenanceSchedule[]>(
+        "hosts.listProjectMaintenanceSchedules",
+        opts,
+      ),
+    confirmProjectMaintenanceAssignment: (
+      opts: Parameters<Hosts["confirmProjectMaintenanceAssignment"]>[0],
+    ) =>
+      maintenance<HostProjectMaintenanceAssignment>(
+        "hosts.confirmProjectMaintenanceAssignment",
+        opts,
+      ),
+    reportProjectMaintenance: (report: ProjectMaintenanceReport) =>
+      maintenance<void>("hosts.reportProjectMaintenance", report),
+  };
+  // createServiceClient returns a proxy whose get trap synthesizes every
+  // method, including names assigned to its target. Intercept these three
+  // names before delegating to that proxy.
+  return new Proxy(status, {
+    get(target, prop, receiver) {
+      if (
+        typeof prop === "string" &&
+        Object.prototype.hasOwnProperty.call(maintenanceMethods, prop)
+      ) {
+        return maintenanceMethods[prop as keyof HostMaintenanceApi];
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as HostStatusApi & HostMaintenanceApi;
 }
 
 export function createHostStatusService({

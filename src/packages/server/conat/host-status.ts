@@ -33,7 +33,6 @@ import {
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import {
   ensureProjectMaintenanceStatusTable,
-  recordProjectMaintenanceStatus,
   snapshotScheduleRevision,
 } from "@cocalc/server/projects/maintenance-status";
 
@@ -688,27 +687,6 @@ export async function initHostStatusService() {
           next_cursor_updated_ms: last?.updated_ms,
           next_cursor_account_id: last?.account_id,
         };
-      },
-      async listProjectMaintenanceSchedules({
-        host_id,
-        active_days,
-        limit,
-        cursor_project_id,
-        project_ids,
-      }) {
-        return await listHostProjectMaintenanceSchedules({
-          host_id,
-          active_days,
-          limit,
-          cursor_project_id,
-          project_ids,
-        });
-      },
-      async confirmProjectMaintenanceAssignment(opts) {
-        return await confirmHostProjectMaintenanceAssignment(opts);
-      },
-      async reportProjectMaintenance(report) {
-        await recordProjectMaintenanceStatus(report);
       },
     },
   });

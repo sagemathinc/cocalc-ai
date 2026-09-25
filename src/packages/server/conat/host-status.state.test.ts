@@ -74,6 +74,18 @@ describe("host status project state ordering", () => {
     }));
   });
 
+  it("does not expose maintenance operations on the shared status subject", async () => {
+    const { initHostStatusService } = await import("./host-status");
+    const service = await initHostStatusService();
+    for (const name of [
+      "listProjectMaintenanceSchedules",
+      "confirmProjectMaintenanceAssignment",
+      "reportProjectMaintenance",
+    ]) {
+      expect(service).not.toHaveProperty(name);
+    }
+  });
+
   it("preserves event time and rejects reports older than authoritative state", async () => {
     const { initHostStatusService } = await import("./host-status");
     const service = await initHostStatusService();

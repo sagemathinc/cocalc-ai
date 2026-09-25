@@ -73,6 +73,7 @@ import type {
   HostManagedComponentStatus,
   HostRuntimeLogSource,
   ManagedComponentKind,
+  ProjectMaintenanceReport,
 } from "@cocalc/conat/project-host/api";
 import type {
   ProjectCopyRow,
@@ -84,6 +85,11 @@ import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import {
+  confirmHostProjectMaintenanceAssignment,
+  listHostProjectMaintenanceSchedules,
+} from "@cocalc/server/conat/host-status";
+import { recordProjectMaintenanceStatus } from "@cocalc/server/projects/maintenance-status";
 import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
@@ -1489,6 +1495,30 @@ async function assertRequestedHostFundingModeAllowed({
 }
 
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
+
+export async function listProjectMaintenanceSchedules(opts: {
+  host_id: string;
+  active_days?: number;
+  limit?: number;
+  cursor_project_id?: string;
+  project_ids?: string[];
+}) {
+  return await listHostProjectMaintenanceSchedules(opts);
+}
+
+export async function confirmProjectMaintenanceAssignment(opts: {
+  host_id: string;
+  project_id: string;
+  kind: "snapshot" | "backup";
+  schedule_revision: string;
+  observed_change_at: string | null;
+}) {
+  return await confirmHostProjectMaintenanceAssignment(opts);
+}
+
+export async function reportProjectMaintenance(opts: ProjectMaintenanceReport) {
+  await recordProjectMaintenanceStatus(opts);
+}
 
 export async function getBackupConfig({
   host_id,

@@ -155,6 +155,21 @@ const host_id = "00000000-0000-4000-8000-000000000020";
 const account_id = "00000000-0000-4000-8000-000000000010";
 const account_id2 = "00000000-0000-4000-8000-000000000011";
 
+test("a host cannot call another host's maintenance Hub API subject", async () => {
+  const otherHost = "00000000-0000-4000-8000-000000000021";
+  const user = { host_id };
+  expect(
+    await isAllowed({ user, subject: `hub.host.${host_id}.api`, type: "pub" }),
+  ).toBe(true);
+  expect(
+    await isAllowed({
+      user,
+      subject: `hub.host.${otherHost}.api`,
+      type: "pub",
+    }),
+  ).toBe(false);
+});
+
 beforeEach(() => {
   identityAuthenticate.mockReset();
   identityActiveRun.mockReset();
