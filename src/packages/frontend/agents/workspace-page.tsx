@@ -43,6 +43,7 @@ import {
 } from "./retryable-preparation";
 import { PreparationStatus } from "./preparation-status";
 import { AvailableConversation } from "./available-conversation";
+import { agentProjectTitle } from "./project-title";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
@@ -2412,6 +2413,9 @@ function AgentWorkspace({
           display: "flex",
           gap: 12,
           padding: "2px 12px",
+          height: 64,
+          flexShrink: 0,
+          boxSizing: "border-box",
         }}
       >
         {onShowList && (
@@ -2489,7 +2493,7 @@ function AgentWorkspace({
               gap: 8,
               minWidth: 0,
               width: "100%",
-              flexWrap: "wrap",
+              flexWrap: "nowrap",
               fontSize: 12,
             }}
           >
@@ -2799,6 +2803,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
+  const liveProjects = useTypedRedux("projects", "project_map");
   const { directory: networkDirectory, error: networkError } =
     useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
@@ -3380,6 +3385,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     hidden = false,
     showProjectTitle = true,
   ) {
+    const projectTitle = agentProjectTitle(
+      agent,
+      liveProjects?.getIn([agent.endpoint.project_id, "title"]) as
+        | string
+        | undefined,
+    );
     const active =
       !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
@@ -3419,8 +3430,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           <button
             type="button"
             aria-current={active ? "page" : undefined}
-            aria-label={`${theme.title}, @${agent.name}, ${agent.project_title || agent.endpoint.project_id}`}
-            title={`@${agent.name} · ${agent.project_title || agent.endpoint.project_id}`}
+            aria-label={`${theme.title}, @${agent.name}, ${projectTitle}`}
+            title={`@${agent.name} · ${projectTitle}`}
             onClick={() => selectAgent(agent)}
             style={{
               alignItems: "center",
@@ -3458,8 +3469,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               </Text>
               <Text type="secondary" ellipsis style={{ display: "block" }}>
                 @{agent.name}
-                {showProjectTitle &&
-                  ` · ${agent.project_title || agent.endpoint.project_id}`}
+                {showProjectTitle && ` · ${projectTitle}`}
               </Text>
             </span>
           </button>

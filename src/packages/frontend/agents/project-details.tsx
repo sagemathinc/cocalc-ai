@@ -13,7 +13,7 @@ import { RestartProject } from "@cocalc/frontend/project/settings/restart-projec
 import { useProjectSettingsSections } from "@cocalc/frontend/project/settings/sections";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
-import { ManagedEgress } from "@cocalc/frontend/project/settings/managed-egress";
+import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useNamedAgents } from "./api";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
@@ -83,17 +83,13 @@ function Details({
         >
           the files
         </Button>{" "}
-        and computing environment for these agents. Stopping it interrupts all
-        its agents and other work, including collaborators' processes.
+        and computing environment for agents in this project. Stopping the
+        project interrupts its agents and other work.
       </Typography.Paragraph>
       <Space wrap>
         <RestartProject project_id={projectId} />
         <StopProject project_id={projectId} disabled={state !== "running"} />
       </Space>
-      <Typography.Text type="secondary">
-        Starting a project does not resend a message. Your draft stays in the
-        composer.
-      </Typography.Text>
       <section aria-label="Agents sharing this project">
         <Typography.Title level={5}>Agents in this project</Typography.Title>
         <Space wrap>
@@ -121,7 +117,10 @@ function Details({
       <Storage projectId={projectId} onBrowse={browseFiles} />
       <section aria-label="Internet usage">
         <Typography.Title level={5}>Internet usage</Typography.Title>
-        <ManagedEgress project_id={projectId} embedded />
+        <ManagedEgressHistoryButton
+          project_id={projectId}
+          buttonText="View egress history"
+        />
       </section>
       <section aria-label="Project settings">
         <Typography.Title level={5}>Project settings</Typography.Title>
@@ -178,7 +177,7 @@ function Storage({
           project_id={projectId}
           buttonText="Inspect storage and free space"
         />
-        <Button onClick={() => void onBrowse()}>Browse</Button>
+        <Button onClick={() => void onBrowse()}>Browse files</Button>
       </Space>
     </section>
   );

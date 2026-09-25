@@ -106,7 +106,7 @@ export function useProjectSettingsSections({
         id: "people",
         icon: "users",
         label: "People",
-        title: "People",
+        title: "Add or Remove Collaborators",
         description:
           "Review project access. Viewers can remove themselves, but cannot manage other collaborators.",
         children: (
@@ -189,7 +189,7 @@ export function useProjectSettingsSections({
         id: "people",
         icon: "users",
         label: "People",
-        title: "People",
+        title: "Add or Remove Collaborators",
         description:
           "Invite collaborators, review pending invitations, and manage human access to this project.",
         children: (

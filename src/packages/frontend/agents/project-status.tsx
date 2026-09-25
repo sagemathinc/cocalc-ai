@@ -9,6 +9,7 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { agentProjectTitle } from "./project-title";
 
 const ProjectDetails = lazy(() => import("./project-details"));
 const WIDTH_KEY = "cocalc-agents-project-drawer-width";
@@ -60,7 +61,8 @@ export function AgentProjectStatus({
       return 560;
     }
   });
-  const title = project?.get("title") || agent.project_title || "Agent project";
+  const title = agentProjectTitle(agent, project?.get("title"));
+  const label = `Project: ${title} · ${egressError ? "Account internet usage blocked" : projectStatusLabel(state, runQuota?.network)}`;
   function resize(value: number) {
     const next = Math.max(280, Math.min(window.innerWidth, value));
     setWidth(next);
@@ -74,18 +76,29 @@ export function AgentProjectStatus({
         type="text"
         size="small"
         onClick={() => setOpen(true)}
+        title={label}
+        aria-label={label}
         style={{
           color: "inherit",
           maxWidth: "100%",
-          height: "auto",
-          whiteSpace: "normal",
+          height: 24,
+          flex: "1 1 0",
+          minWidth: 0,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
           textAlign: "left",
         }}
       >
-        Project: {title} ·{" "}
-        {egressError
-          ? "Account internet usage blocked"
-          : projectStatusLabel(state, runQuota?.network)}
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
       </Button>
       <Drawer
         title={title}

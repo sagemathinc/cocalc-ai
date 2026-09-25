@@ -43,8 +43,8 @@ jest.mock("@cocalc/frontend/project/disk-usage/use-disk-usage", () => ({
   __esModule: true,
   default: () => ({ quotas: [], loading: false }),
 }));
-jest.mock("@cocalc/frontend/project/settings/managed-egress", () => ({
-  ManagedEgress: () => null,
+jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
+  ManagedEgressHistoryButton: ({ buttonText }) => <button>{buttonText}</button>,
 }));
 jest.mock("@cocalc/frontend/project/home-directory", () => ({
   getProjectHomeDirectory: () => "/home/user",
@@ -84,12 +84,19 @@ test("project agents are buttons; Browse leaves Agents; settings have one accord
   fireEvent.click(screen.getByRole("button", { name: "@helper" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   expect(navigate).toHaveBeenCalledWith("p", "a.chat", "t");
-  fireEvent.click(screen.getByRole("button", { name: "Browse" }));
+  fireEvent.click(screen.getByRole("button", { name: "Browse files" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
   expect(browse).toHaveBeenCalledWith("p", "/home/user");
   fireEvent.click(screen.getByRole("button", { name: "the files" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(3));
   expect(browse).toHaveBeenCalledTimes(2);
+  expect(
+    screen.getByRole("region", { name: "Internet usage" }).textContent,
+  ).toBe("Internet usageView egress history");
+  expect(screen.queryByText(/Starting a project does not resend/)).toBeNull();
+  expect(
+    screen.getByText(/and computing environment for agents in this project/),
+  ).toBeVisible();
   expect(
     screen.getByRole("heading", { name: "Project settings" }),
   ).toBeTruthy();
