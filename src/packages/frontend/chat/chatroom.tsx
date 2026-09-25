@@ -75,6 +75,10 @@ import {
   getDefaultNewThreadSetup,
   type NewThreadSetup,
 } from "./chatroom-thread-panel";
+import {
+  reconcileCodexConfigWithSiteFundedPolicy,
+  reconcileNewThreadSetupWithSiteFundedPolicy,
+} from "./new-thread-funding";
 import type { ChatState } from "./store";
 import type { ChatMessage, ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
@@ -1597,15 +1601,57 @@ function ChatPanelContent({
     }
   }, [actions, selectedThreadId]);
 
+  const codexPaymentPreference = ((isSelectedThreadAI
+    ? selectedThreadMetadata?.acp_config?.paymentSource
+    : newThreadSetup.codexConfig.paymentSource) ??
+    "auto") as CodexPaymentSourcePreference;
+  const selectionThreadKey = selectedThreadKey ?? "";
+  const [codexCredentialId, setCodexCredentialId] = useState<
+    string | undefined
+  >();
+  useEffect(() => {
+    const load = () =>
+      setCodexCredentialId(
+        readCodexSubscriptionSelection({
+          accountId: account_id,
+          projectId: project_id,
+          threadKey: selectionThreadKey,
+        }),
+      );
+    load();
+    window.addEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+    return () =>
+      window.removeEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+  }, [account_id, project_id, selectionThreadKey]);
+  const {
+    paymentSource: codexPaymentSource,
+    loading: codexPaymentSourceLoading,
+    refresh: refreshCodexPaymentSource,
+  } = useCodexPaymentSource({
+    projectId: project_id,
+    preference: codexPaymentPreference,
+    credentialId:
+      codexPaymentPreference === "subscription" ? codexCredentialId : undefined,
+    enabled:
+      aiAgentPolicyAllowed &&
+      !readOnly &&
+      (isSelectedThreadAI || newThreadSetup.agentMode === "codex"),
+  });
+  const fundedNewThreadSetup = reconcileNewThreadSetupWithSiteFundedPolicy({
+    setup: newThreadSetup,
+    paymentSource: codexPaymentSource,
+  });
+
   const createThreadWithoutMessage = useCallback(
     async (metadataOnly = false, draft?: string) => {
-      const allowCodexAutomation = newThreadSetup.agentMode === "codex";
+      const setup = fundedNewThreadSetup;
+      const allowCodexAutomation = setup.agentMode === "codex";
       const automationEnabled =
-        !metadataOnly && newThreadSetup.automationConfig?.enabled === true;
+        !metadataOnly && setup.automationConfig?.enabled === true;
       if (automationEnabled) {
         const missingReason = automationConfigMissingReason({
           draft: buildAutomationDraft({
-            config: newThreadSetup.automationConfig,
+            config: setup.automationConfig,
             enabled: true,
             allowCodexRunKind: allowCodexAutomation,
           }),
@@ -1617,30 +1663,27 @@ function ChatPanelContent({
         }
       }
       const threadAgent =
-        newThreadSetup.agentMode != null
+        setup.agentMode != null
           ? {
-              mode: newThreadSetup.agentMode,
-              model:
-                newThreadSetup.codexConfig.model?.trim() ||
-                newThreadSetup.model?.trim(),
+              mode: setup.agentMode,
+              model: setup.codexConfig.model?.trim() || setup.model?.trim(),
               codexConfig:
-                newThreadSetup.agentMode === "codex"
+                setup.agentMode === "codex"
                   ? {
-                      ...newThreadSetup.codexConfig,
+                      ...setup.codexConfig,
                       model:
-                        newThreadSetup.codexConfig.model?.trim() ||
-                        newThreadSetup.model?.trim(),
+                        setup.codexConfig.model?.trim() || setup.model?.trim(),
                     }
                   : undefined,
             }
           : undefined;
       const threadKey = actions.createEmptyThread?.({
-        name: newThreadSetup.title.trim() || undefined,
+        name: setup.title.trim() || undefined,
         threadAgent,
         threadAppearance: {
-          color: newThreadSetup.color?.trim(),
-          icon: newThreadSetup.icon?.trim(),
-          image: newThreadSetup.image?.trim(),
+          color: setup.color?.trim(),
+          icon: setup.icon?.trim(),
+          image: setup.image?.trim(),
         },
       });
       if (!threadKey) {
@@ -1658,7 +1701,7 @@ function ChatPanelContent({
       setNewThreadSetup(defaultNewThreadSetup);
 
       const newThreadAutomationConfig = normalizeAutomationConfigForSave({
-        draft: newThreadSetup.automationConfig,
+        draft: setup.automationConfig,
         allowCodexRunKind: allowCodexAutomation,
       });
       if (automationEnabled && newThreadAutomationConfig) {
@@ -1678,7 +1721,7 @@ function ChatPanelContent({
       composerDraftKey,
       defaultNewThreadSetup,
       handleAutomationSave,
-      newThreadSetup,
+      fundedNewThreadSetup,
       setAllowAutoSelectThread,
       setSelectedThreadKey,
     ],
@@ -1998,43 +2041,6 @@ function ChatPanelContent({
     }
   }, [agentSessionRecords, path]);
 
-  const codexPaymentPreference = ((isSelectedThreadAI
-    ? selectedThreadMetadata?.acp_config?.paymentSource
-    : newThreadSetup.codexConfig.paymentSource) ??
-    "auto") as CodexPaymentSourcePreference;
-  const selectionThreadKey = selectedThreadKey ?? "";
-  const [codexCredentialId, setCodexCredentialId] = useState<
-    string | undefined
-  >();
-  useEffect(() => {
-    const load = () =>
-      setCodexCredentialId(
-        readCodexSubscriptionSelection({
-          accountId: account_id,
-          projectId: project_id,
-          threadKey: selectionThreadKey,
-        }),
-      );
-    load();
-    window.addEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
-    return () =>
-      window.removeEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
-  }, [account_id, project_id, selectionThreadKey]);
-  const {
-    paymentSource: codexPaymentSource,
-    loading: codexPaymentSourceLoading,
-    refresh: refreshCodexPaymentSource,
-  } = useCodexPaymentSource({
-    projectId: project_id,
-    preference: codexPaymentPreference,
-    credentialId:
-      codexPaymentPreference === "subscription" ? codexCredentialId : undefined,
-    enabled:
-      aiAgentPolicyAllowed &&
-      !readOnly &&
-      (isSelectedThreadAI || newThreadSetup.agentMode === "codex"),
-  });
-
   const indexedThreads = useMemo(() => {
     if (!threadIndex) return undefined;
     const next = new Map(threadIndex);
@@ -2221,6 +2227,8 @@ function ChatPanelContent({
       ? existingThreadMetadata?.acp_config?.paymentSource
       : newThreadSetup.codexConfig.paymentSource) ??
       codexPaymentPreference) as CodexPaymentSourcePreference;
+    let submissionNewThreadSetup = fundedNewThreadSetup;
+    let submissionExistingThreadConfig = existingThreadMetadata?.acp_config;
     if (isCodexSubmit) {
       if (opts?.immediate !== true) {
         try {
@@ -2232,9 +2240,31 @@ function ChatPanelContent({
                 ? codexCredentialId
                 : undefined,
           });
+          if (!reply_thread_id) {
+            submissionNewThreadSetup =
+              reconcileNewThreadSetupWithSiteFundedPolicy({
+                setup: newThreadSetup,
+                paymentSource: verifiedSource,
+              });
+          } else {
+            const corrected = reconcileCodexConfigWithSiteFundedPolicy({
+              config: {
+                ...existingThreadMetadata?.acp_config,
+                paymentSource: paymentPreference,
+              },
+              paymentSource: verifiedSource,
+            });
+            const current = existingThreadMetadata?.acp_config;
+            submissionExistingThreadConfig =
+              current?.model === corrected.model &&
+              current?.reasoning === corrected.reasoning &&
+              current?.serviceTier === corrected.serviceTier
+                ? current
+                : corrected;
+          }
           const selectedConfig = reply_thread_id
-            ? existingThreadMetadata?.acp_config
-            : newThreadSetup.codexConfig;
+            ? submissionExistingThreadConfig
+            : submissionNewThreadSetup.codexConfig;
           assertCodexFundingModelReady({
             config: {
               ...selectedConfig,
@@ -2279,6 +2309,14 @@ function ChatPanelContent({
         return;
       }
     }
+    if (
+      reply_thread_id &&
+      existingThreadMetadata?.agent_kind === "acp" &&
+      submissionExistingThreadConfig &&
+      submissionExistingThreadConfig !== existingThreadMetadata.acp_config
+    ) {
+      actions.setCodexConfig(reply_thread_id, submissionExistingThreadConfig);
+    }
     advanceComposerSession();
     if (!reply_thread_id) {
       setAllowAutoSelectThread(false);
@@ -2300,7 +2338,8 @@ function ChatPanelContent({
         ? newThreadSetup.title.trim()
         : undefined;
     const newThreadModel =
-      newThreadSetup.codexConfig.model?.trim() || newThreadSetup.model?.trim();
+      submissionNewThreadSetup.codexConfig.model?.trim() ||
+      submissionNewThreadSetup.model?.trim();
     const threadAgent =
       !reply_thread_id && newThreadSetup.agentMode
         ? {
@@ -2309,7 +2348,7 @@ function ChatPanelContent({
             codexConfig:
               newThreadSetup.agentMode === "codex"
                 ? {
-                    ...newThreadSetup.codexConfig,
+                    ...submissionNewThreadSetup.codexConfig,
                     model: newThreadModel,
                   }
                 : undefined,
@@ -2328,7 +2367,7 @@ function ChatPanelContent({
             const model = newThreadModel;
             if (!model) return undefined;
             const next: Partial<CodexThreadConfig> = {
-              ...newThreadSetup.codexConfig,
+              ...submissionNewThreadSetup.codexConfig,
               model,
             };
             const sessionMode = resolveCodexSessionMode(
@@ -2340,7 +2379,7 @@ function ChatPanelContent({
             return next;
           })()
         : reply_thread_id && existingThreadMetadata?.agent_kind === "acp"
-          ? (existingThreadMetadata.acp_config ??
+          ? (submissionExistingThreadConfig ??
             actions.getCodexConfig?.(reply_thread_id) ??
             undefined)
           : undefined;
@@ -3044,7 +3083,7 @@ function ChatPanelContent({
           });
         }}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
-        newThreadSetup={newThreadSetup}
+        newThreadSetup={fundedNewThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
         onCreateThread={async () => {
           await createThreadWithoutMessage();

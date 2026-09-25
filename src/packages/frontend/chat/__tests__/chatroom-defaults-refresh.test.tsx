@@ -13,6 +13,7 @@ let mockOtherSettings = {
     sessionMode: "workspace-write",
   },
 };
+let mockPaymentSource: any;
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -71,7 +72,7 @@ jest.mock("../use-chat-composer-draft", () => ({
 
 jest.mock("../use-codex-payment-source", () => ({
   useCodexPaymentSource: () => ({
-    paymentSource: undefined,
+    paymentSource: mockPaymentSource,
     loading: false,
     refresh: jest.fn(),
   }),
@@ -147,6 +148,7 @@ jest.mock("../external-side-chat-selection", () => ({
 describe("ChatPanel new thread defaults", () => {
   beforeEach(() => {
     renderChatRoomThreadPanel.mockClear();
+    mockPaymentSource = undefined;
     mockOtherSettings = {
       codex_new_chat_defaults: {
         model: "gpt-5.4",
@@ -154,6 +156,66 @@ describe("ChatPanel new thread defaults", () => {
         sessionMode: "workspace-write",
       },
     };
+  });
+
+  it("shows and creates a new membership chat with the site policy model", async () => {
+    mockOtherSettings = {
+      codex_new_chat_defaults: {
+        model: "gpt-6-astra",
+        reasoning: "low",
+        sessionMode: "workspace-write",
+      },
+    };
+    mockPaymentSource = {
+      source: "site-api-key",
+      siteFundedCodex: {
+        enabled: true,
+        policy: {
+          model: "gpt-6-luna",
+          reasoning: "medium",
+          serviceTier: "standard",
+        },
+      },
+    };
+    const actions = {
+      createEmptyThread: jest.fn(() => "new-thread"),
+      deleteDraft: jest.fn(),
+      getCodexConfig: jest.fn(),
+      getThreadMetadata: jest.fn(),
+      getMessagesInThread: jest.fn(() => []),
+    } as any;
+
+    render(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+
+    expect(
+      renderChatRoomThreadPanel.mock.lastCall?.[0]?.newThreadSetup,
+    ).toMatchObject({
+      model: "gpt-6-luna",
+      codexConfig: { model: "gpt-6-luna", reasoning: "medium" },
+    });
+    await act(async () => {
+      await renderChatRoomThreadPanel.mock.lastCall?.[0]?.onCreateThread();
+    });
+    expect(actions.createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadAgent: expect.objectContaining({
+          model: "gpt-6-luna",
+          codexConfig: expect.objectContaining({
+            model: "gpt-6-luna",
+            reasoning: "medium",
+          }),
+        }),
+      }),
+    );
   });
 
   it("uses refreshed defaults the next time new-chat setup is reset", () => {

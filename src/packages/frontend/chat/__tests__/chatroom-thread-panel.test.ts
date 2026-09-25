@@ -11,11 +11,85 @@ import {
   resolveThreadSearchHighlightQuery,
   threadSearchExcerpt,
 } from "../chatroom-thread-panel";
+import {
+  reconcileCodexConfigWithSiteFundedPolicy,
+  reconcileNewThreadSetupWithSiteFundedPolicy,
+} from "../new-thread-funding";
 import immutable from "immutable";
 import { COLORS } from "@cocalc/util/theme";
 import { getCodexSubscriptionDisplayName } from "../codex-subscription-label";
 
 describe("new thread setup patching", () => {
+  it("uses the membership policy in both the displayed and persisted new-chat config", () => {
+    const setup = reconcileNewThreadSetupWithSiteFundedPolicy({
+      setup: DEFAULT_NEW_THREAD_SETUP,
+      paymentSource: {
+        source: "site-api-key",
+        siteFundedCodex: {
+          enabled: true,
+          policy: {
+            model: "gpt-6-luna",
+            reasoning: "medium",
+            serviceTier: "standard",
+          },
+        },
+      } as any,
+    });
+    expect(setup).toMatchObject({
+      model: "gpt-6-luna",
+      codexConfig: {
+        model: "gpt-6-luna",
+        reasoning: "medium",
+        serviceTier: "standard",
+      },
+    });
+    expect(
+      reconcileNewThreadSetupWithSiteFundedPolicy({
+        setup: {
+          ...DEFAULT_NEW_THREAD_SETUP,
+          codexConfig: {
+            ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+            paymentSource: "subscription",
+          },
+        },
+        paymentSource: {
+          source: "site-api-key",
+          siteFundedCodex: {
+            enabled: true,
+            policy: {
+              model: "gpt-6-luna",
+              reasoning: "medium",
+              serviceTier: "standard",
+            },
+          },
+        } as any,
+      }),
+    ).toMatchObject({ model: DEFAULT_NEW_THREAD_SETUP.model });
+  });
+
+  it("corrects an existing thread's model and reasoning before a membership turn", () => {
+    expect(
+      reconcileCodexConfigWithSiteFundedPolicy({
+        config: {
+          paymentSource: "auto",
+          model: "gpt-6-astra",
+          reasoning: "low",
+          serviceTier: "standard",
+        },
+        paymentSource: {
+          source: "site-api-key",
+          siteFundedCodex: {
+            enabled: true,
+            policy: {
+              model: "gpt-6-luna",
+              reasoning: "medium",
+              serviceTier: "standard",
+            },
+          },
+        } as any,
+      }),
+    ).toMatchObject({ model: "gpt-6-luna", reasoning: "medium" });
+  });
   it("keeps generated subscription names stable when recency order changes", () => {
     const first = { id: "a", updatedAt: "2026-09-19T00:00:00Z" };
     const second = { id: "b", updatedAt: "2026-09-19T00:00:00Z" };
