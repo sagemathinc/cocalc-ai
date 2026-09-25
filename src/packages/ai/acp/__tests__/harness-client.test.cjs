@@ -353,7 +353,7 @@ test("subscription policy exposes only mediated project tools and refuses unknow
   ]) {
     const child = spawn(
       process.execPath,
-      [...profile.args, "--claude-adapter", flag],
+      [...profile.args, "--claude-adapter", "--expect-skill", flag],
       {
         env: {},
         stdio: "pipe",
@@ -367,6 +367,8 @@ test("subscription policy exposes only mediated project tools and refuses unknow
         profile,
       },
       async () => ({
+        systemPromptAppend:
+          "CoCalc skill fixture: use project_exec for CLI commands.",
         stdin: child.stdin,
         stdout: child.stdout,
         stderr: child.stderr,

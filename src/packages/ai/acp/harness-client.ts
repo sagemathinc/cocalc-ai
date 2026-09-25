@@ -42,6 +42,8 @@ function unsupportedCallback(method: string): () => Promise<never> {
 }
 
 export interface HarnessProcess {
+  /** Trusted launcher-owned instructions, never a user-supplied session option. */
+  systemPromptAppend?: string;
   stdout: Readable;
   stdin: Writable;
   stderr: Readable;
@@ -79,8 +81,13 @@ export type HarnessSessionPolicy = "default" | "claude-subscription-controller";
 
 const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
 
-export function claudeSubscriptionSessionMeta(): Record<string, unknown> {
+export function claudeSubscriptionSessionMeta(
+  systemPromptAppend?: string,
+): Record<string, unknown> {
   return {
+    ...(systemPromptAppend
+      ? { systemPrompt: { append: systemPromptAppend } }
+      : {}),
     claudeCode: {
       options: {
         tools: [],
@@ -434,7 +441,11 @@ export class AcpHarnessClient {
               ]
             : [],
         ...(this.sessionPolicy === "claude-subscription-controller"
-          ? { _meta: claudeSubscriptionSessionMeta() }
+          ? {
+              _meta: claudeSubscriptionSessionMeta(
+                this.process.systemPromptAppend,
+              ),
+            }
           : {}),
       };
       if (sessionId) {

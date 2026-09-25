@@ -34,7 +34,10 @@ import {
   createClaudeProjectToolBridge,
   type ClaudeProjectToolBridge,
 } from "./claude-project-tool-bridge";
-import { ensureProjectContainerRunning } from "../codex/codex-project";
+import {
+  ensureProjectContainerRunning,
+  getBuiltinClaudeSkillText,
+} from "../codex/codex-project";
 import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
@@ -175,6 +178,14 @@ export async function launchClaudeSubscriptionController(
   )
     throw Error("Invalid Claude subscription controller binding");
   const credentialId = credential.credentialId;
+  const skill = await getBuiltinClaudeSkillText();
+  const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
+This is an isolated subscription controller. Run ALL project filesystem and CLI operations through cocalc_project project_exec, not in the controller. Read applicable project CLAUDE.md instructions through that tool before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
+Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
+
+<cocalc-skill>
+${skill}
+</cocalc-skill>`;
   const registered = await getClaudeSubscriptionCredential({
     projectId,
     accountId,
@@ -296,6 +307,7 @@ export async function launchClaudeSubscriptionController(
         logger.warn("Claude controller stopped without cleanup", error),
       );
     return {
+      systemPromptAppend,
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

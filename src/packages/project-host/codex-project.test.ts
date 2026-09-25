@@ -1948,7 +1948,7 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     const projectHome = path.join(tmp, "project-home");
     await fs.mkdir(projectHome, { recursive: true });
 
-    const { getBuiltinLaunchpadSkillMounts } =
+    const { getBuiltinLaunchpadSkillMounts, getBuiltinClaudeSkillText } =
       await import("./codex/codex-project");
     const mounts = await getBuiltinLaunchpadSkillMounts(projectHome);
     const canonicalSkill = path.join(
@@ -1965,6 +1965,9 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     await expect(
       fs.readFile(path.join(mounts[0].source, "SKILL.md"), "utf8"),
     ).resolves.toBe(await fs.readFile(canonicalSkill, "utf8"));
+    await expect(getBuiltinClaudeSkillText()).resolves.toBe(
+      await fs.readFile(canonicalSkill, "utf8"),
+    );
   });
 });
 

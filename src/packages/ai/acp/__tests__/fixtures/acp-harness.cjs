@@ -103,6 +103,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         authMethods: [],
       });
     case "session/new":
+      if (
+        process.argv.includes("--expect-skill") &&
+        message.params._meta?.systemPrompt?.append !==
+          "CoCalc skill fixture: use project_exec for CLI commands."
+      )
+        return send({
+          id: message.id,
+          error: { code: -32602, message: "preloaded skill missing" },
+        });
       if (process.argv.includes("--claude-adapter")) {
         const options = message.params._meta?.claudeCode?.options;
         if (
@@ -111,6 +120,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           options.tools.length ||
           !Array.isArray(options.settingSources) ||
           options.settingSources.length ||
+          !Array.isArray(options.skills) ||
+          options.skills.length ||
+          !Array.isArray(options.plugins) ||
+          options.plugins.length ||
           message.params.mcpServers.length !== 1 ||
           message.params.mcpServers[0]?.name !== "cocalc_project" ||
           message.params.mcpServers[0]?.command !== "/opt/cocalc/bin/node" ||

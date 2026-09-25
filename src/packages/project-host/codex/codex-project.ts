@@ -903,6 +903,17 @@ export async function getBuiltinLaunchpadSkillMounts(
   return mounts;
 }
 
+/** First-party skill text only: never load controller instructions from project HOME. */
+export async function getBuiltinClaudeSkillText(
+  packagedSkillsRoot?: string,
+): Promise<string> {
+  const root = await resolvePackagedSkillsRoot(packagedSkillsRoot);
+  const text = await fs.readFile(join(root, "cocalc", "SKILL.md"), "utf8");
+  if (!text.trim() || Buffer.byteLength(text) > 128 * 1024)
+    throw Error("Invalid packaged CoCalc skill");
+  return text;
+}
+
 export async function getBuiltinClaudeSkillMount(
   projectHome: string,
   packagedSkillsRoot?: string,
