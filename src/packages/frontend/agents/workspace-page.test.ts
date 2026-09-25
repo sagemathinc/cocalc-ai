@@ -7,6 +7,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
   createDefaultAgentProject,
   freshAgentExecutionConfig,
+  newAgentFundingConfig,
   suggestedAgentName,
   suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
@@ -85,6 +86,55 @@ describe("new agent defaults", () => {
       paymentSource: "subscription",
       workingDirectory: "/home/user/work",
     });
+  });
+
+  it("uses the site policy before a first agent turn with automatic membership funding", () => {
+    const paymentSource: any = {
+      source: "site-api-key",
+      siteFundedCodex: {
+        enabled: true,
+        policy: { model: "gpt-6-luna", reasoning: "medium" },
+      },
+    };
+    const config = newAgentFundingConfig({
+      config: {
+        paymentSource: "auto",
+        model: "gpt-6-astra",
+        reasoning: "low",
+      },
+      paymentSource,
+      useSubscriptionDefault: true,
+    });
+    expect(config).toMatchObject({
+      model: "gpt-6-luna",
+      reasoning: "medium",
+    });
+    expect(() =>
+      assertCodexFundingModelReady({ config, paymentSource }),
+    ).not.toThrow();
+  });
+
+  it("defaults a new subscription-funded agent to Sol, but preserves chosen settings", () => {
+    const paymentSource: any = { source: "subscription" };
+    const config = {
+      paymentSource: "auto" as const,
+      model: "gpt-6-astra",
+      reasoning: "low" as const,
+    };
+    expect(
+      newAgentFundingConfig({
+        config,
+        paymentSource,
+        useSubscriptionDefault: true,
+      }),
+    ).toMatchObject({ model: "gpt-6-sol", reasoning: "medium" });
+    expect(
+      newAgentFundingConfig({
+        config,
+        paymentSource,
+        useSubscriptionDefault: false,
+      }),
+    ).toBe(config);
   });
 
   it("does not silently send a preferred model using transient membership funding", () => {

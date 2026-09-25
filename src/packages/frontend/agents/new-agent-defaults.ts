@@ -5,6 +5,8 @@
 
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type { CodexReasoningId } from "@cocalc/util/ai/codex";
 
 const AGENT_NAME_COUNTER_PREFIX = "cocalc-agent-name-counter-v1";
 
@@ -25,6 +27,33 @@ export async function createDefaultAgentProject({
   const title = suggestedAgentProjectTitle(request);
   const projectId = await createProject({ title, start: false });
   return { projectId, title };
+}
+
+export function newAgentFundingConfig<T extends CodexThreadConfig>({
+  config,
+  paymentSource,
+  useSubscriptionDefault,
+}: {
+  config: T;
+  paymentSource?: CodexPaymentSourceInfo;
+  useSubscriptionDefault: boolean;
+}): T {
+  const policy =
+    paymentSource?.source === "site-api-key" &&
+    paymentSource.siteFundedCodex?.enabled
+      ? paymentSource.siteFundedCodex.policy
+      : undefined;
+  if (policy) {
+    return {
+      ...config,
+      model: policy.model,
+      reasoning: policy.reasoning as CodexReasoningId,
+    };
+  }
+  if (paymentSource?.source === "subscription" && useSubscriptionDefault) {
+    return { ...config, model: "gpt-6-sol", reasoning: "medium" };
+  }
+  return config;
 }
 
 function agentNameCounterKey(accountId?: string): string {

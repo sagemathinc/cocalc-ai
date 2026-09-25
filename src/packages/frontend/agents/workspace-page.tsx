@@ -177,6 +177,7 @@ import {
 import {
   getDefaultCodexNewChatDefaults,
   getDefaultCodexSessionMode,
+  getStoredCodexNewChatDefaults,
 } from "@cocalc/frontend/chat/codex-defaults";
 import {
   fetchCodexPaymentSourceForSubmit,
@@ -192,14 +193,12 @@ import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
 import {
   createDefaultAgentProject,
   freshAgentExecutionConfig,
+  newAgentFundingConfig,
   rememberAgentName,
   suggestedAgentName,
   suggestedAgentProjectTitle,
 } from "./new-agent-defaults";
-import {
-  assertCodexFundingModelReady,
-  shouldUseExplicitMembershipModel,
-} from "@cocalc/frontend/chat/codex-submit-preflight";
+import { assertCodexFundingModelReady } from "@cocalc/frontend/chat/codex-submit-preflight";
 import { MembershipDetailsModal } from "@cocalc/frontend/project/start-button";
 import { showCodexProjectStartFailure } from "@cocalc/frontend/chat/codex-project-start-failure";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -468,6 +467,11 @@ function NewAgentPanel({
     [sourceAgent?.endpoint.agent_id],
   );
   const accountDefaults = useMemo(() => getDefaultCodexNewChatDefaults(), []);
+  const hasStoredAccountDefaults = useMemo(
+    () => getStoredCodexNewChatDefaults() != null,
+    [],
+  );
+  const modelCustomized = useRef(false);
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
       sourceAgent?.endpoint.project_id ||
@@ -543,7 +547,6 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
-    enabled: !!projectId,
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -632,25 +635,20 @@ function NewAgentPanel({
   }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
 
   useEffect(() => {
-    const policy = shouldUseExplicitMembershipModel({
-      preference: paymentPreference,
-      paymentSource,
-    })
-      ? paymentSource?.siteFundedCodex?.policy
-      : undefined;
     setConfig((current) => {
-      const next = policy
-        ? {
-            ...current,
-            model: policy.model,
-            reasoning: policy.reasoning as CodexReasoningId,
-          }
-        : modelCatalog?.length
+      const funded = newAgentFundingConfig({
+        config: current,
+        paymentSource,
+        useSubscriptionDefault:
+          !sourceAgent && !hasStoredAccountDefaults && !modelCustomized.current,
+      });
+      const next =
+        modelCatalog?.length && paymentSource?.source === "subscription"
           ? reconcileAgentConfig(
-              current,
-              defaultModelOptions(modelCatalog, current.model),
+              funded,
+              defaultModelOptions(modelCatalog, funded.model),
             )
-          : current;
+          : funded;
       return next.model === current.model &&
         next.reasoning === current.reasoning
         ? current
@@ -658,13 +656,15 @@ function NewAgentPanel({
     });
   }, [
     modelCatalog,
-    paymentPreference,
+    hasStoredAccountDefaults,
     paymentSource?.source,
     paymentSource?.siteFundedCodex,
+    sourceAgent,
   ]);
 
   async function prepare(
     targetProjectId: string | undefined = projectId,
+    executionConfig: NewAgentCodexConfig = config,
   ): Promise<PendingAgent> {
     if (pending) return pending;
     if (!targetProjectId) throw new Error("Create or select a project first.");
@@ -694,8 +694,8 @@ function NewAgentPanel({
       name: name.trim(),
       threadAgent: {
         mode: "codex",
-        model: config.model,
-        codexConfig: { ...config, workingDirectory },
+        model: executionConfig.model,
+        codexConfig: { ...executionConfig, workingDirectory },
       },
     });
     if (!threadId) throw new Error("Unable to create the agent thread");
@@ -707,8 +707,8 @@ function NewAgentPanel({
       projectId: targetProjectId,
       threadId,
       credentialId:
-        config.paymentSource === "subscription"
-          ? config.credentialId
+        executionConfig.paymentSource === "subscription"
+          ? executionConfig.credentialId
           : undefined,
     });
     setPending(created);
@@ -733,6 +733,7 @@ function NewAgentPanel({
       boundAccount.assertCurrent();
       let targetProjectId = projectId;
       let createdProjectTitle: string | undefined;
+      let executionConfig = config;
       if (!targetProjectId) {
         if (emailVerificationRequired) return;
         if (!projectMap) {
@@ -759,7 +760,29 @@ function NewAgentPanel({
               ? config.credentialId
               : undefined,
         });
-        assertCodexFundingModelReady({ config, paymentSource: source });
+        executionConfig = newAgentFundingConfig({
+          config,
+          paymentSource: source,
+          useSubscriptionDefault:
+            !sourceAgent &&
+            !hasStoredAccountDefaults &&
+            !modelCustomized.current,
+        });
+        if (
+          source.source === "subscription" &&
+          projectId === targetProjectId &&
+          modelCatalog?.length
+        ) {
+          executionConfig = reconcileAgentConfig(
+            executionConfig,
+            defaultModelOptions(modelCatalog, executionConfig.model),
+          );
+        }
+        assertCodexFundingModelReady({
+          config: executionConfig,
+          paymentSource: source,
+        });
+        if (executionConfig !== config) setConfig(executionConfig);
         if (
           !(await preflightNewAgentProjectStart({
             projectId: targetProjectId,
@@ -773,6 +796,7 @@ function NewAgentPanel({
         withoutTask ? undefined : request,
         targetProjectId,
         createdProjectTitle,
+        executionConfig,
       );
     } catch (err) {
       handleCreateError(err);
@@ -786,8 +810,9 @@ function NewAgentPanel({
     request?: string,
     targetProjectId?: string,
     projectTitleOverride?: string,
+    executionConfig: NewAgentCodexConfig = config,
   ): Promise<void> {
-    const created = await prepare(targetProjectId);
+    const created = await prepare(targetProjectId, executionConfig);
     boundAccount.assertCurrent();
     const api = personalAgentApi();
     const locator = {
@@ -822,7 +847,7 @@ function NewAgentPanel({
       const sent = actions.sendChat({
         input: request,
         reply_thread_id: created.threadId,
-        acpConfigOverride: config,
+        acpConfigOverride: executionConfig,
       });
       if (sent) {
         await actions.syncdb?.save();
@@ -950,12 +975,11 @@ function NewAgentPanel({
     reasoningOptions.find(({ id }) => id === config.reasoning)?.label ??
     config.reasoning ??
     "Reasoning";
-  const siteFundedPolicy = shouldUseExplicitMembershipModel({
-    preference: paymentPreference,
-    paymentSource,
-  })
-    ? paymentSource?.siteFundedCodex?.policy
-    : undefined;
+  const siteFundedPolicy =
+    paymentSource?.source === "site-api-key" &&
+    paymentSource.siteFundedCodex?.enabled
+      ? paymentSource.siteFundedCodex.policy
+      : undefined;
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
@@ -1195,13 +1219,15 @@ function NewAgentPanel({
                       disabled,
                     })),
                     selectedKeys: config.model ? [config.model] : [],
-                    onClick: ({ key }) =>
+                    onClick: ({ key }) => {
+                      modelCustomized.current = true;
                       setConfig((current) =>
                         reconcileAgentConfig(
                           { ...current, model: key },
                           modelOptions,
                         ),
-                      ),
+                      );
+                    },
                   }}
                   trigger={["click"]}
                 >
@@ -1225,11 +1251,13 @@ function NewAgentPanel({
                       label,
                     })),
                     selectedKeys: config.reasoning ? [config.reasoning] : [],
-                    onClick: ({ key }) =>
+                    onClick: ({ key }) => {
+                      modelCustomized.current = true;
                       setConfig((current) => ({
                         ...current,
                         reasoning: key as CodexReasoningId,
-                      })),
+                      }));
+                    },
                   }}
                   trigger={["click"]}
                 >
