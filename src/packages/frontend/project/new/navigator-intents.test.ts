@@ -180,7 +180,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         updated_at: "2026-03-18T00:00:00.000Z",
         status: "active",
         entrypoint: "global",
-        model: "gpt-5.4",
+        model: "gpt-6-sol",
       },
     ]);
     const threadIndex = new Map([
@@ -218,7 +218,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       openFloating: true,
       createNewThread: true,
       codexConfig: {
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
       },
     });
 
@@ -228,7 +228,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         name: "Write a proof",
         threadAgent: expect.objectContaining({
           mode: "codex",
-          model: "gpt-5.4-mini",
+          model: "gpt-6-luna",
         }),
       }),
     );
@@ -343,7 +343,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Rewrite this proof",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -441,7 +441,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Add a final sentence",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -497,7 +497,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Start tracking this workspace work",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -573,7 +573,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Retry workspace routing",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -667,7 +667,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Use the selected workspace fallback",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -744,7 +744,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Stay in the selected workspace while account state loads",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -813,7 +813,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Use the active tab path",
       forceCodex: true,
       openFloating: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -911,7 +911,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       visiblePrompt: "Investigate and fix this Jupyter notebook error.",
       title: "Fix notebook error",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -921,7 +921,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         name: "Codex",
         threadAgent: expect.objectContaining({
           mode: "codex",
-          model: "gpt-5.4-mini",
+          model: "gpt-6-luna",
         }),
       }),
     );
@@ -994,7 +994,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       visiblePrompt: "Full visible agent prompt",
       title: "Fresh thread",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       createNewThread: true,
       stageInComposer: true,
       openFloating: true,
@@ -1006,7 +1006,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         name: "Fresh thread",
         threadAgent: expect.objectContaining({
           mode: "codex",
-          model: "gpt-5.4-mini",
+          model: "gpt-6-luna",
         }),
       }),
     );
@@ -1094,7 +1094,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       visiblePrompt: "Investigate and fix this Jupyter notebook error.",
       title: "Fix notebook error",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
     });
 
     expect(ok).toBe(true);
@@ -1172,7 +1172,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Fix notebook error",
       tag: "intent:notebook-error",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       openFloating: true,
     });
 
@@ -1193,9 +1193,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       actions,
       message,
       tag: "intent:notebook-error",
-      threadModel: "gpt-5.4-mini",
+      threadModel: "gpt-6-luna",
       acpConfigOverride: expect.objectContaining({
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         workingDirectory: "/home/wstein/project/submit",
       }),
     });
@@ -1208,7 +1208,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         session_id: "thread-submit",
         thread_key: "thread-submit",
         title: "Codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         working_directory: "/home/wstein/project/submit",
       }),
       {
@@ -1226,7 +1226,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
 
   it("uses account Codex defaults when forceCodex has no explicit model", async () => {
     mockOtherSettings.codex_new_chat_defaults = {
-      model: "gpt-5.4",
+      model: "gpt-6-sol",
       reasoning: "high",
       sessionMode: "full-access",
     };
@@ -1281,9 +1281,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         threadAgent: expect.objectContaining({
           mode: "codex",
-          model: "gpt-5.4",
+          model: "gpt-6-sol",
           codexConfig: expect.objectContaining({
-            model: "gpt-5.4",
+            model: "gpt-6-sol",
             reasoning: "high",
             sessionMode: "full-access",
           }),
@@ -1294,9 +1294,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       actions,
       message,
       tag: "intent:jupyter-install-kernel",
-      threadModel: "gpt-5.4",
+      threadModel: "gpt-6-sol",
       acpConfigOverride: expect.objectContaining({
-        model: "gpt-5.4",
+        model: "gpt-6-sol",
         reasoning: "high",
         sessionMode: "full-access",
         workingDirectory: "/home/wstein",
@@ -1375,7 +1375,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Agent",
       tag: "intent:jupyter-generate-cell:below",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       openFloating: true,
       waitForAgent: false,
     });
@@ -1389,7 +1389,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         session_id: "thread-existing-fast",
         thread_key: "thread-existing-fast",
         title: "Agent",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         working_directory: "/home/wstein/project/fast",
       }),
       {
@@ -1403,7 +1403,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         session_id: "thread-existing-fast",
         thread_key: "thread-existing-fast",
         title: "Codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         working_directory: "/home/wstein/project/fast",
       }),
       {
@@ -1469,7 +1469,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         updated_at: "2026-03-20T00:00:00.000Z",
         status: "active",
         entrypoint: "file",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         working_directory: "/home/wstein/project/live",
       },
     });
@@ -1539,7 +1539,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Agent",
       tag: "intent:jupyter-generate-cell:below",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       openFloating: true,
       waitForAgent: false,
     });
@@ -1561,9 +1561,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       actions: openedActions,
       message,
       tag: "intent:jupyter-generate-cell:below",
-      threadModel: "gpt-5.4-mini",
+      threadModel: "gpt-6-luna",
       acpConfigOverride: expect.objectContaining({
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         workingDirectory: "/home/wstein/project/live",
       }),
     });
@@ -1583,7 +1583,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
   });
 
   it.each([
-    ["gpt-5.4-mini", "gpt-5.4-mini"],
+    ["gpt-6-luna", "gpt-6-luna"],
     [undefined, "gpt-5.6-terra"],
   ])(
     "creates a fresh thread with requested model %s or account default %s",
@@ -1732,7 +1732,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         updated_at: "2026-03-20T00:00:01.000Z",
         status: "active",
         entrypoint: "file",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
       },
     ]);
     const save = jest.fn().mockResolvedValue(undefined);
@@ -1789,7 +1789,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Fix notebook error",
       tag: "intent:notebook-error",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       openFloating: true,
     });
 
@@ -1849,7 +1849,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         title: "Agent",
         tag: "intent:jupyter-generate-cell:below",
         forceCodex: true,
-        codexConfig: { model: "gpt-5.4-mini" },
+        codexConfig: { model: "gpt-6-luna" },
         openFloating: true,
       });
       expect(mockBeginAgentSessionLaunch).toHaveBeenCalledWith(
@@ -1869,9 +1869,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
           name: "Agent",
           threadAgent: expect.objectContaining({
             mode: "codex",
-            model: "gpt-5.4-mini",
+            model: "gpt-6-luna",
             codexConfig: expect.objectContaining({
-              model: "gpt-5.4-mini",
+              model: "gpt-6-luna",
               workingDirectory: "/home/wstein",
             }),
           }),
@@ -1903,9 +1903,9 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         actions,
         message,
         tag: "intent:jupyter-generate-cell:below",
-        threadModel: "gpt-5.4-mini",
+        threadModel: "gpt-6-luna",
         acpConfigOverride: expect.objectContaining({
-          model: "gpt-5.4-mini",
+          model: "gpt-6-luna",
           workingDirectory: "/home/wstein",
         }),
       });
@@ -1960,7 +1960,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         title: "Agent",
         tag: "intent:jupyter-generate-cell:below",
         forceCodex: true,
-        codexConfig: { model: "gpt-5.4-mini" },
+        codexConfig: { model: "gpt-6-luna" },
         openFloating: true,
         waitForAgent: false,
       });
@@ -2029,7 +2029,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
         updated_at: "2026-03-20T00:00:01.000Z",
         status: "active",
         entrypoint: "file",
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
       },
     ]);
     const save = jest.fn().mockResolvedValue(undefined);
@@ -2085,7 +2085,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       title: "Agent",
       tag: "intent:jupyter-generate-cell:below",
       forceCodex: true,
-      codexConfig: { model: "gpt-5.4-mini" },
+      codexConfig: { model: "gpt-6-luna" },
       openFloating: true,
     });
 

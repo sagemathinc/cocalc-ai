@@ -1,6 +1,8 @@
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
+import { installThreadSuccessorFence } from "./acp-thread-successors";
+
 const TABLE = "acp_turns";
 
 export type AcpTurnLeaseState = "running" | "completed" | "error" | "aborted";
@@ -67,6 +69,7 @@ function init(): void {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN thread_id TEXT`);
   }
   ensureAcpTableMigrated(TABLE);
+  installThreadSuccessorFence(TABLE);
 }
 
 let initialized = false;

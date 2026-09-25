@@ -42,6 +42,7 @@ import {
 } from "./mention-all";
 import { useMentionableUsers } from "./mentionable-users";
 import { parseAgentMention } from "@cocalc/util/agent-mentions";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
@@ -1363,14 +1364,14 @@ export function MarkdownInput(props: Props) {
     if (!mentionsOpen) {
       return;
     }
-    const v = mentionableUsers(undefined, {
+    const v = mentionableUsers(mentions_search, {
       avatarLLMSize: 20,
       avatarUserSize: 20,
     });
     if (v.length > 0) {
       set_mentions(v);
     }
-  }, [mentionableUsers, mentionsOpen]);
+  }, [mentionableUsers, mentionsOpen, mentions_search]);
 
   function close_mentions() {
     set_mentions(undefined);
@@ -1415,7 +1416,7 @@ export function MarkdownInput(props: Props) {
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
           const agentReference = parseAgentMention(account_id);
-          if (agentReference) {
+          if (agentReference || parseArtifactMention(account_id)) {
             if (cm.current == null) return;
             // Store the bound markup in the draft itself, not ephemeral CodeMirror marks.
             const from = mentions_cursor_ref.current.from;
@@ -1426,7 +1427,7 @@ export function MarkdownInput(props: Props) {
             );
             close_mentions();
             cm.current.getInputField().focus({ preventScroll: true });
-            agentMentions.onSelect?.(agentReference);
+            if (agentReference) agentMentions.onSelect?.(agentReference);
             return;
           }
           const text =

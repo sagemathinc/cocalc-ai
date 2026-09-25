@@ -334,15 +334,23 @@ export default function PublicTopNav({
           </Text>
         </span>
       ) : null}
+      {!config?.openai_disabled && (
+        <Button
+          href={appPath("agents")}
+          icon={<Icon name="robot" />}
+          size={isCompact ? "small" : "middle"}
+          type="primary"
+        >
+          Agents
+        </Button>
+      )}
       <Button
         href={appPath("projects")}
+        type={config?.openai_disabled ? "primary" : "default"}
+        icon={<Icon name="edit" />}
         size={isCompact ? "small" : "middle"}
-        type="primary"
       >
         Projects
-      </Button>
-      <Button href={appPath("settings")} size={isCompact ? "small" : "middle"}>
-        Settings
       </Button>
     </>
   ) : null;

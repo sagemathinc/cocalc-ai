@@ -30,6 +30,14 @@ export function isPaygService(service: Service): boolean {
 }
 
 export const QUOTA_SPEC: QuotaSpec = {
+  "credit-transfer": {
+    display: "Account Credit Transfer",
+    noSet: true,
+    color: "blue",
+    category: "money",
+    description:
+      "Account credit transferred between accounts; not a customer payment or compute usage.",
+  },
   credit: {
     display: "Credit",
     noSet: true,

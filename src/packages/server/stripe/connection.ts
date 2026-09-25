@@ -21,6 +21,7 @@ import {
   finishStripeMutation,
   isStripeMutationAuthorityEnforcementEnabled,
 } from "@cocalc/server/purchases/billing-authority/context";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 
 // See https://stripe.com/docs/api/versioning
 const apiVersion = "2026-04-22.dahlia";
@@ -98,6 +99,14 @@ export function createAuthorityGuardedStripeHttpClient(
 }
 
 export async function getConn(): Promise<StripeWithPublishableKey> {
+  if (getConfiguredClusterRole() === "attached") {
+    throw Object.assign(
+      new Error(
+        "Stripe provider access is seed-only; route billing through the billing authority",
+      ),
+      { code: 503, status: 503 },
+    );
+  }
   if (stripe != null && Date.now() - last <= 1000 * 60) {
     return stripe;
   }

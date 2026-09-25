@@ -11,12 +11,16 @@ const execFileMock = jest.fn();
 const execMock = jest.fn();
 const mockStartProjectWithAdmission = jest.fn();
 const refreshSubscriptionAuthFromRegistryMock = jest.fn();
+const pullSubscriptionAuthFromRegistryMock = jest.fn();
+const syncSubscriptionAuthToRegistryIfChangedMock = jest.fn();
 const restrictedEgressCloseMock = jest.fn();
 const startRestrictedCodexEgressProxySessionMock = jest.fn(async () => ({
   proxyUrl:
     "http://cocalc-codex:restricted-token@host.containers.internal:43128",
   close: restrictedEgressCloseMock,
 }));
+const closeSiteFundedTurnMock = jest.fn();
+const beginSiteFundedCodexTurnMock = jest.fn();
 const resolveHostContainersInternalAddressMock = jest.fn(
   async () => "10.206.0.1",
 );
@@ -98,14 +102,22 @@ jest.mock("./codex/codex-auth", () => ({
 }));
 
 jest.mock("./codex/codex-auth-registry", () => ({
+  pullSubscriptionAuthFromRegistry: (...args: any[]) =>
+    pullSubscriptionAuthFromRegistryMock(...args),
   refreshSubscriptionAuthFromRegistry: (...args: any[]) =>
     refreshSubscriptionAuthFromRegistryMock(...args),
-  syncSubscriptionAuthToRegistryIfChanged: jest.fn(),
+  syncSubscriptionAuthToRegistryIfChanged: (...args: any[]) =>
+    syncSubscriptionAuthToRegistryIfChangedMock(...args),
 }));
 
 jest.mock("./codex/restricted-egress-proxy", () => ({
   startRestrictedCodexEgressProxySession: () =>
     startRestrictedCodexEgressProxySessionMock(),
+}));
+
+jest.mock("./codex/codex-site-metering", () => ({
+  beginSiteFundedCodexTurn: (...args: any[]) =>
+    beginSiteFundedCodexTurnMock(...args),
 }));
 
 jest.mock("./last-edited", () => ({
@@ -173,9 +185,7 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("initCodexProjectRunner", () => {
-  const originalMessagingEnabled = process.env.COCALC_AGENT_MESSAGING_ENABLED;
   beforeEach(() => {
-    delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
     hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
     hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
     spawnMock.mockReset();
@@ -204,8 +214,27 @@ describe("initCodexProjectRunner", () => {
     refreshSubscriptionAuthFromRegistryMock.mockResolvedValue({
       refreshed: true,
     });
+    pullSubscriptionAuthFromRegistryMock.mockReset();
+    pullSubscriptionAuthFromRegistryMock.mockResolvedValue({ pulled: false });
+    syncSubscriptionAuthToRegistryIfChangedMock.mockReset();
+    syncSubscriptionAuthToRegistryIfChangedMock.mockResolvedValue({
+      ok: true,
+    });
     restrictedEgressCloseMock.mockReset();
     startRestrictedCodexEgressProxySessionMock.mockClear();
+    closeSiteFundedTurnMock.mockReset().mockResolvedValue(undefined);
+    beginSiteFundedCodexTurnMock.mockReset().mockResolvedValue({
+      reservation: { reservationId: "reservation-id" },
+      policy: {
+        contextWindowTokens: 128_000,
+        autoCompactTokenLimit: 96_000,
+      },
+      providerBaseUrl: "http://127.0.0.1:1234/v1",
+      providerToken: "site-funded-proxy-token",
+      finish: jest.fn(),
+      beginTurn: jest.fn(),
+      close: closeSiteFundedTurnMock,
+    });
     resolveHostContainersInternalAddressMock.mockClear();
     hubApi.hosts.issueProjectHostAgentAuthToken.mockReset();
     hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValue({
@@ -215,15 +244,9 @@ describe("initCodexProjectRunner", () => {
 
   afterEach(() => {
     setCodexProjectSpawner(null);
-    if (originalMessagingEnabled === undefined) {
-      delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
-    } else {
-      process.env.COCALC_AGENT_MESSAGING_ENABLED = originalMessagingEnabled;
-    }
   });
 
   it("attaches late registration to the next turn without replacing the app-server", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const proc = new FakeProc();
     spawnMock.mockReturnValue(proc);
     execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
@@ -296,8 +319,48 @@ describe("initCodexProjectRunner", () => {
     expect(hubApi.agent.endIdentityRun).toHaveBeenCalledTimes(1);
   });
 
-  it("exports each scoped run's reference sidecar in the actual process environment", async () => {
+  it("releases a site-funded reservation when agent identity setup fails", async () => {
     process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-site-funded-identity-fail-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "site-api-key",
+      contextId: "site-funded-identity-fail",
+      env: { OPENAI_API_KEY: "site-api-key" },
+    });
+    hubApi.agent.issueIdentity.mockRejectedValueOnce(
+      new Error("identity setup failed"),
+    );
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+
+    await expect(
+      getCodexProjectSpawner()!.spawnCodexAppServer!({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        agentSessionKey: "thread-1\0turn-1",
+        cwd: "/home/user",
+        env: {
+          COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+        },
+        siteFundedTurn: {
+          fundedTurnId: "00000000-0000-4000-8000-000000000002",
+          idempotencyKey: "site-funded-identity-fail",
+          path: "/home/user/send.chat",
+        },
+      }),
+    ).rejects.toThrow("identity setup failed");
+
+    expect(beginSiteFundedCodexTurnMock).toHaveBeenCalledTimes(1);
+    expect(closeSiteFundedTurnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("exports each scoped run's reference sidecar in the actual process environment", async () => {
     spawnMock.mockImplementation(() => new FakeProc());
     execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
       cb(null, "true\n", ""),
@@ -514,7 +577,7 @@ describe("initCodexProjectRunner", () => {
 
     const { initCodexProjectRunner } = await import("./codex/codex-project");
     initCodexProjectRunner();
-    await getCodexProjectSpawner()!.spawnCodexAppServer!({
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
       isolatedCodexHome: true,
@@ -843,7 +906,6 @@ describe("initCodexProjectRunner", () => {
   });
 
   it("revokes a late identity if the runtime closes during issuance", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const home = await mkTempDir("codex-project-late-identity-close-");
     const { createProjectCliTokenLease } =
       await import("./codex/codex-project");
@@ -1311,6 +1373,85 @@ describe("initCodexProjectRunner", () => {
     ).rejects.toThrow("unchanged access token");
     expect(spawnMock.mock.calls[0][1]).not.toContain(
       "OPENAI_API_KEY=secret-key",
+    );
+  });
+
+  it("syncs a recovered selected subscription back to its exact registry row", async () => {
+    const proc = new FakeProc();
+    spawnMock.mockReturnValue(proc);
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await mkTempDir("codex-project-selected-recovery-");
+    const home = path.join(tmp, "home");
+    const defaultHome = path.join(tmp, "subscriptions", "default-a");
+    const selectedHome = path.join(tmp, "subscriptions", "selected-b");
+    const selectedCredentialId = "00000000-0000-4000-8000-000000000002";
+    await fs.mkdir(home, { recursive: true });
+    await fs.mkdir(defaultHome, { recursive: true });
+    await fs.mkdir(selectedHome, { recursive: true });
+    const accessToken = jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "workspace-b",
+        chatgpt_plan_type: "pro",
+      },
+    });
+    await fs.writeFile(
+      path.join(selectedHome, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          access_token: accessToken,
+          account_id: "workspace-b",
+        },
+      }),
+    );
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-b",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+      env: {},
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      paymentSource: "subscription",
+    });
+
+    expect(spawned.credentialId).toBe(selectedCredentialId);
+    await spawned.validateSubscriptionCredential?.();
+    expect(pullSubscriptionAuthFromRegistryMock).toHaveBeenCalledWith({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+      onlyIfNewer: true,
+      requireAuthority: true,
+    });
+
+    for (const listener of proc.listeners("exit")) {
+      await listener(0);
+    }
+
+    expect(syncSubscriptionAuthToRegistryIfChangedMock).toHaveBeenCalledWith({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+    });
+    expect(
+      syncSubscriptionAuthToRegistryIfChangedMock,
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({ codexHome: defaultHome }),
     );
   });
 

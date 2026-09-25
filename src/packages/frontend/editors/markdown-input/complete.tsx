@@ -22,6 +22,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface Item {
+  onSelect?: () => void;
   group?: string;
   label?: ReactNode;
   value: string;
@@ -69,12 +70,17 @@ export function Complete({
     (e?) => {
       const key = e?.key ?? selected_key_ref.current;
       if (typeof key === "string") {
+        const action = items.find((item) => item.value === key)?.onSelect;
+        if (action) {
+          action();
+          return;
+        }
         onSelect(key);
       } else {
         onCancel();
       }
     },
-    [onSelect, onCancel],
+    [items, onSelect, onCancel],
   );
 
   const onKeyDown = useCallback(
@@ -101,7 +107,7 @@ export function Complete({
           break;
       }
     },
-    [onCancel, onSelect],
+    [onCancel, select],
   );
 
   useEffect(() => {

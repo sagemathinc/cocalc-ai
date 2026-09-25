@@ -17,6 +17,13 @@ Table({
     email_address: {
       type: "string",
     },
+    account_id: {
+      type: "uuid",
+    },
+    identity_generation: {
+      type: "integer",
+      pg_type: "BIGINT",
+    },
     expire: {
       type: "timestamp",
     },

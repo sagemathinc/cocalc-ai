@@ -49,7 +49,12 @@ prices, subscriptions".
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import type { PoolClient } from "@cocalc/database/pool";
+import {
+  billingAccountsTable,
+  ensureBillingAccount,
+} from "@cocalc/server/purchases/billing-account";
+import { isValidBillingAccount } from "./billing-account";
 import getLogger from "@cocalc/backend/logger";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { currentStripeSite, getStripeCustomerId } from "./stripe/util";
@@ -95,7 +100,7 @@ export async function createStripeUsageBasedSubscription(
   if (curSubscription != null && !curSubscription.id.startsWith("card")) {
     throw Error("user already has an active usage-based subscription");
   }
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidBillingAccount(account_id))) {
     throw Error("account must be valid");
   }
   const stripe = await getConn();
@@ -198,9 +203,11 @@ export async function cancelUsageSubscription(account_id: string) {
 // This always checks with stripe that the subscription exists and is
 // currently active so do not call it too much.
 export async function getUsageSubscription(account_id: string) {
+  await ensureBillingAccount(account_id);
+  const table = billingAccountsTable();
   const db = getPool();
   const { rows } = await db.query(
-    "SELECT stripe_usage_subscription, stripe_customer_id FROM accounts WHERE account_id=$1",
+    `SELECT stripe_usage_subscription, stripe_customer_id FROM ${table} WHERE account_id=$1`,
     [account_id],
   );
   if (rows.length == 0) {
@@ -278,9 +285,11 @@ export async function setUsageSubscription({
   account_id: string;
   subscription_id: string; // note: set to "" instead of null so that frontend will update properly; this is just a shortcoming in our changefeeds
 }) {
+  await ensureBillingAccount(account_id);
+  const table = billingAccountsTable();
   const pool = getPool();
   await pool.query(
-    "UPDATE accounts SET stripe_usage_subscription=$1 WHERE account_id=$2",
+    `UPDATE ${table} SET stripe_usage_subscription=$1 WHERE account_id=$2`,
     [subscription_id, account_id],
   );
 }
@@ -351,16 +360,28 @@ export async function collectPayment({
 
 export async function hasUsageSubscription(
   account_id: string,
+  client?: PoolClient,
 ): Promise<boolean> {
-  const pool = getPool();
+  await ensureBillingAccount(account_id, client ?? getPool());
+  const table = billingAccountsTable();
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
-    "SELECT stripe_usage_subscription FROM accounts WHERE account_id=$1",
+    `SELECT stripe_usage_subscription, monthly_collection,
+       EXISTS(SELECT 1 FROM statements WHERE account_id=$1 AND paid_purchase_id IS NULL
+         AND (monthly_collection->>'state'='requires_review' OR
+           (monthly_collection->>'state' IN ('claimed','issued') AND automatic_payment<clock_timestamp()-interval '10 minutes'))) AS collection_blocked
+     FROM ${table} WHERE account_id=$1`,
     [account_id],
   );
   if (rows.length == 0) {
     throw Error(`no such account ${account_id}`);
   }
-  return !!rows[0].stripe_usage_subscription;
+  // Explicit account consent supersedes legacy enrollment, including opt-out.
+  return rows[0].monthly_collection != null
+    ? !rows[0].collection_blocked &&
+        rows[0].monthly_collection.enabled === true &&
+        rows[0].monthly_collection.terms_version === 1
+    : !!rows[0].stripe_usage_subscription;
 }
 
 /*

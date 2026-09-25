@@ -2,7 +2,7 @@ import getConn from "@cocalc/server/stripe/connection";
 import { getStripeCustomerId } from "./util";
 import processPaymentIntents from "./process-payment-intents";
 import type { StripeData } from "@cocalc/util/stripe/types";
-import getPool from "@cocalc/database/pool";
+import { publishBillingAccountProjection } from "../billing-account";
 //import getLogger from "@cocalc/backend/logger";
 //const logger = getLogger("purchases:stripe:get-payments");
 
@@ -139,9 +139,8 @@ async function setBalanceAlert({ account_id, data }) {
     // starts with "requires"
     n += 1;
   }
-  const pool = getPool();
-  await pool.query("UPDATE accounts SET balance_alert=$2 WHERE account_id=$1", [
+  await publishBillingAccountProjection({
     account_id,
-    n > 0,
-  ]);
+    balance_alert: n > 0,
+  });
 }

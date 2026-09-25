@@ -88,8 +88,8 @@ Logs: `/tmp/agent-mentions-{cli,server,conat,host}-tests.log` and
 ## Deployment And First Live Pass
 
 The ignored wrapper `/home/user/cocalc-ai/src/.local/agent-mentions-hub.sh`
-selects this worktree and the existing three dev bay databases. It adds
-`COCALC_AGENT_PERSONAL_MESSAGING_ENABLED=1` alongside the existing messaging flags.
+selects this worktree and the existing three dev bay databases. The historical
+wrapper configuration predates always-on agent messaging.
 Host override files in `/tmp/agent-mentions-{source,qa}-host.local.env` have been
 installed on both hosts, preserving existing settings. All three hubs now use
 this worktree. Both hosts initially installed candidate `26bf9c3202fa`, then

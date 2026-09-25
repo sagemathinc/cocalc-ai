@@ -4,13 +4,21 @@
  */
 
 import { render, waitFor } from "@testing-library/react";
-import $ from "jquery";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useProcessLinks } from "../elements/hooks";
 
-const processSmcLinks = jest.fn();
-const plugins = $.fn as any;
-const originalProcessSmcLinks = plugins.process_smc_links;
+const mockProcessLinks = jest.fn();
+const mockProjectActions = {};
+
+jest.mock("@cocalc/frontend/misc/process-links/generic", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockProcessLinks(...args),
+}));
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
+  redux: { getActions: () => mockProjectActions },
+}));
 
 function HookHarness() {
   const ref = useProcessLinks(["image.png"], { doubleClick: false });
@@ -19,16 +27,7 @@ function HookHarness() {
 
 describe("Slate process_smc_links context", () => {
   beforeEach(() => {
-    processSmcLinks.mockReset();
-    plugins.process_smc_links = processSmcLinks;
-  });
-
-  afterEach(() => {
-    if (originalProcessSmcLinks == null) {
-      delete plugins.process_smc_links;
-    } else {
-      plugins.process_smc_links = originalProcessSmcLinks;
-    }
+    mockProcessLinks.mockReset();
   });
 
   it("uses FileContext when rendered outside a frame", async () => {
@@ -44,11 +43,15 @@ describe("Slate process_smc_links context", () => {
     );
 
     await waitFor(() =>
-      expect(processSmcLinks).toHaveBeenCalledWith({
-        project_id: "project-1",
-        file_path: "/home/user/work",
-        doubleClick: false,
-      }),
+      expect(mockProcessLinks).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          projectId: "project-1",
+          filePath: "/home/user/work",
+          doubleClick: false,
+          projectActions: mockProjectActions,
+        }),
+      ),
     );
   });
 });

@@ -4,6 +4,7 @@
  */
 
 let ensureCourseManagerAccessMock: jest.Mock;
+let hardDeleteProjectMock: jest.Mock;
 let listInvitesMock: jest.Mock;
 let removeCollaboratorMock: jest.Mock;
 let respondInviteMock: jest.Mock;
@@ -11,6 +12,7 @@ let respondInviteMock: jest.Mock;
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getActions: () => ({
+      hard_delete_project: (...args: any[]) => hardDeleteProjectMock(...args),
       remove_collaborator: (...args: any[]) => removeCollaboratorMock(...args),
     }),
   },
@@ -36,6 +38,7 @@ describe("StudentProjectsActions.removeFromAllStudentProjects", () => {
     ensureCourseManagerAccessMock = jest.fn(async ({ project_ids }) =>
       project_ids.map((project_id) => ({ project_id })),
     );
+    hardDeleteProjectMock = jest.fn(async () => undefined);
     listInvitesMock = jest.fn(async () => []);
     removeCollaboratorMock = jest.fn(async () => undefined);
     respondInviteMock = jest.fn(async () => undefined);
@@ -149,5 +152,58 @@ describe("StudentProjectsActions.removeFromAllStudentProjects", () => {
 
     expect(respondInviteMock).not.toHaveBeenCalled();
     expect(removeCollaboratorMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("StudentProjectsActions.deleteAllStudentProjects", () => {
+  beforeEach(() => {
+    hardDeleteProjectMock = jest.fn(async () => undefined);
+    removeCollaboratorMock = jest.fn(async () => undefined);
+  });
+
+  function createActions() {
+    const store = {
+      get_student_ids: () => ["student-1"],
+      getIn: ([, studentId, field]: string[]) => {
+        if (studentId !== "student-1") return undefined;
+        if (field === "project_id") return "student-project";
+        if (field === "account_id") return "student-account";
+        return undefined;
+      },
+    };
+    const courseActions = {
+      get_store: () => store,
+      set: jest.fn(),
+      set_activity: jest.fn(() => 1),
+      set_error: jest.fn(),
+    };
+    return {
+      actions: new StudentProjectsActions(courseActions as any),
+      courseActions,
+    };
+  }
+
+  it("propagates fresh-auth failures to the modal wrapper", async () => {
+    const freshAuthFailure = Object.assign(
+      new Error("fresh auth is required"),
+      { code: "fresh_auth_required" },
+    );
+    hardDeleteProjectMock.mockRejectedValue(freshAuthFailure);
+    const { actions, courseActions } = createActions();
+
+    await expect(actions.deleteAllStudentProjects()).rejects.toBe(
+      freshAuthFailure,
+    );
+    expect(courseActions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("continues to report ordinary deletion failures in the course", async () => {
+    hardDeleteProjectMock.mockRejectedValue(new Error("project is protected"));
+    const { actions, courseActions } = createActions();
+
+    await expect(actions.deleteAllStudentProjects()).resolves.toBeUndefined();
+    expect(courseActions.set_error).toHaveBeenCalledWith(
+      expect.stringContaining("project is protected"),
+    );
   });
 });

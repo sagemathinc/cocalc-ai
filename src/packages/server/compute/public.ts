@@ -10,9 +10,14 @@ export function publicComputeVmMetadata(
     ssh_public_keys: _sshPublicKeys,
     project_ssh_public_keys: _projectSshPublicKeys,
     provider_observation: _providerObservation,
+    billing,
     runtime,
     ...publicMetadata
   } = metadata ?? {};
+  if (billing != null && typeof billing === "object") {
+    const { course_funding: _courseFunding, ...publicBilling } = billing;
+    publicMetadata.billing = publicBilling;
+  }
   if (runtime == null || typeof runtime !== "object") return publicMetadata;
   const {
     ssh_public_key: _runtimeSshPublicKey,

@@ -2,6 +2,7 @@ import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
+import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
 export interface AcpAutomationConfig {
   enabled?: boolean;
@@ -77,18 +78,21 @@ export interface AcpAutomationRecord {
 export interface AcpChatContext {
   // Trusted receiving service marks model-authored messages; never bind their refs.
   agent_message?: boolean;
-  // Revalidate the directional grant before executing a queued agent message.
+  // Revalidate legacy delivery rows before execution; new work never sets these.
   agent_delivery_id?: string;
   agent_delivery_generation?: string;
   // Immutable provenance for reauthorizing an RPC message at queue execution.
   agent_rpc_execution?: {
-    version: 2;
+    version: 3;
     source: AgentRpcSource;
     source_run_id?: string;
     target: AgentEndpoint;
     target_path: string;
     target_thread_id: string;
-    link_id: string;
+    agent_network_id: string;
+    network_generation: string;
+    account_generation: number;
+    configured_delivery: "queued" | "live";
     principal_account_id: string;
     guidance: boolean;
   };
@@ -104,6 +108,8 @@ export interface AcpChatContext {
   api_url?: string;
   // Browser session initiating this turn (for agent/browser automation routing).
   browser_id?: string;
+  // The initiating chat surface supports workbench tabs.
+  workbench?: boolean;
   // Schema-v2 identities for robust row targeting.
   message_id?: string;
   thread_id?: string;
@@ -213,13 +219,19 @@ export type AcpControlRequest = {
   path: string;
   thread_id: string;
   user_message_id: string;
-  action: "cancel" | "send_immediately" | "resend" | "resend_with_model";
+  action:
+    | "cancel"
+    | "send_immediately"
+    | "resend"
+    | "resend_with_model"
+    | "prepare_fresh_conversation";
   // Only for retrying a confirmed ChatGPT model-unavailable rejection.
   model_recovery?: { model: string; expected_model: string };
 };
 
 export type AcpControlResponse = {
   ok: boolean;
+  successor_thread_id?: string;
   state?:
     | "queued"
     | "running"
@@ -296,7 +308,7 @@ export type AcpAttentionQuestion = {
 };
 
 export type AcpAttentionAction = {
-  kind: "fresh_auth" | "agent_messaging";
+  kind: "fresh_auth";
   reference: string;
   expires_at: number;
 };
@@ -500,6 +512,10 @@ export type AcpStreamEvent =
       };
       output?: string;
     }
+  | ({ type: "peerMessage" } & Omit<
+      AgentMessageRuntimeEvent,
+      "type" | "version"
+    >)
   | {
       type: "attention";
       request: AcpAttentionRecord;

@@ -42,7 +42,7 @@ export function getCodexPaymentSourceOptions(
         : "Membership-funded Codex usage is not currently available for this account.",
       disabled: !includedAvailable,
     },
-    ...(paymentSource?.hasSubscription
+    ...(paymentSource?.hasSubscription || paymentSource?.subscriptions?.length
       ? [
           {
             value: "subscription" as const,
@@ -89,27 +89,31 @@ const paymentSourceInflight = new Map<
 function cacheKey(
   projectId?: string,
   preference: CodexPaymentSourcePreference = "auto",
+  credentialId?: string,
 ): string {
-  return `${projectId?.trim() || ""}:${preference}`;
+  return `${projectId?.trim() || ""}:${preference}:${credentialId ?? ""}`;
 }
 
 function getCachedPaymentSource(
   projectId?: string,
   preference: CodexPaymentSourcePreference = "auto",
+  credentialId?: string,
 ): PaymentSourceCacheEntry | undefined {
-  return paymentSourceCache.get(cacheKey(projectId, preference));
+  return paymentSourceCache.get(cacheKey(projectId, preference, credentialId));
 }
 
 async function fetchPaymentSourceCached({
   projectId,
   force = false,
   preference = "auto",
+  credentialId,
 }: {
   projectId?: string;
   force?: boolean;
   preference?: CodexPaymentSourcePreference;
+  credentialId?: string;
 }): Promise<PaymentSourceCacheEntry> {
-  const key = cacheKey(projectId, preference);
+  const key = cacheKey(projectId, preference, credentialId);
   const cached = paymentSourceCache.get(key);
   const now = Date.now();
   if (!force && cached && now - cached.fetchedAt <= CACHE_TTL_MS) {
@@ -124,6 +128,7 @@ async function fetchPaymentSourceCached({
         await webapp_client.conat_client.hub.system.getCodexPaymentSource({
           project_id: projectId?.trim() || undefined,
           preference,
+          credential_id: credentialId,
         });
       const entry: PaymentSourceCacheEntry = {
         paymentSource: result as CodexPaymentSourceInfo,
@@ -152,14 +157,17 @@ async function fetchPaymentSourceCached({
 export async function fetchCodexPaymentSourceForSubmit({
   projectId,
   preference = "auto",
+  credentialId,
 }: {
   projectId?: string;
   preference?: CodexPaymentSourcePreference;
+  credentialId?: string;
 }): Promise<CodexPaymentSourceInfo> {
   const entry = await fetchPaymentSourceCached({
     projectId,
     preference,
     force: true,
+    credentialId,
   });
   if (entry.error) {
     throw new Error(entry.error);
@@ -301,11 +309,13 @@ export function getCodexPaymentSourceTooltip(
 export function useCodexPaymentSource({
   projectId,
   preference = "auto",
+  credentialId,
   enabled = true,
   pollMs = 60_000,
 }: {
   projectId?: string;
   preference?: CodexPaymentSourcePreference;
+  credentialId?: string;
   enabled?: boolean;
   pollMs?: number;
 }) {
@@ -321,7 +331,7 @@ export function useCodexPaymentSource({
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const cached = getCachedPaymentSource(projectId, preference);
+    const cached = getCachedPaymentSource(projectId, preference, credentialId);
     if (cached?.paymentSource) {
       setPaymentSource(cached.paymentSource);
       setError(cached.error ?? "");
@@ -339,6 +349,7 @@ export function useCodexPaymentSource({
           projectId,
           force: refreshToken > 0,
           preference,
+          credentialId,
         });
         if (cancelled) return;
         if (entry.paymentSource) {
@@ -358,7 +369,7 @@ export function useCodexPaymentSource({
     return () => {
       cancelled = true;
     };
-  }, [enabled, preference, projectId, refreshToken]);
+  }, [credentialId, enabled, preference, projectId, refreshToken]);
 
   useEffect(() => {
     if (!enabled) return;

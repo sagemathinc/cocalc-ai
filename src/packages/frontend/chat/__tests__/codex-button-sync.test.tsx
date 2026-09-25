@@ -33,6 +33,7 @@ jest.mock("antd", () => {
   const React = require("react");
   const Radio = ({ children }: any) => <label>{children}</label>;
   Radio.Group = ({ children }: any) => <div>{children}</div>;
+  Radio.Button = ({ children }: any) => <button>{children}</button>;
   return {
     __esModule: true,
     Alert: ({ children, description, title }: any) => (
@@ -46,6 +47,13 @@ jest.mock("antd", () => {
       <button onClick={onClick} aria-label={ariaLabel}>
         {children}
       </button>
+    ),
+    Collapse: ({ items }: any) => (
+      <div>
+        {items?.map((item: any) => (
+          <div key={item.key}>{item.label}</div>
+        ))}
+      </div>
     ),
     Divider: () => <div />,
     Dropdown: ({ children, menu, onOpenChange }: any) => {
@@ -80,9 +88,30 @@ jest.mock("antd", () => {
         </span>
       );
     },
-    Input: () => <input />,
+    Input: ({ allowClear: _allowClear, onPressEnter, ...props }: any) => (
+      <input
+        {...props}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") onPressEnter?.();
+        }}
+      />
+    ),
     Modal: jest.requireActual("antd").Modal,
-    Popover: ({ children }: any) => <>{children}</>,
+    Popover: ({ children, content }: any) => {
+      const [open, setOpen] = React.useState(false);
+      const child = React.Children.only(children);
+      return (
+        <span>
+          {React.cloneElement(child, {
+            onClick: (event: any) => {
+              child.props.onClick?.(event);
+              setOpen(!open);
+            },
+          })}
+          {open ? <div role="dialog">{content}</div> : null}
+        </span>
+      );
+    },
     Progress: ({ "aria-label": ariaLabel }: any) => (
       <div aria-label={ariaLabel} />
     ),
@@ -104,7 +133,9 @@ jest.mock("antd", () => {
         <div>{String(value ?? "")}</div>
       );
     },
-    Space: ({ children }: any) => <div>{children}</div>,
+    Space: Object.assign(({ children }: any) => <div>{children}</div>, {
+      Compact: ({ children }: any) => <div>{children}</div>,
+    }),
     Tag: ({ children }: any) => <span>{children}</span>,
     Tooltip: ({ children }: any) => <div>{children}</div>,
     Typography: {
@@ -113,7 +144,12 @@ jest.mock("antd", () => {
     Form: Object.assign(({ children }: any) => <div>{children}</div>, {
       useForm: () => [stableForm],
       useWatch: (name: string) => mockWatchedFormValues[name],
-      Item: ({ children }: any) => <div>{children}</div>,
+      Item: ({ children, label }: any) => (
+        <div>
+          {label}
+          {children}
+        </div>
+      ),
     }),
   };
 });
@@ -138,6 +174,10 @@ jest.mock("@cocalc/frontend/lite", () => ({
   lite: false,
 }));
 
+jest.mock("@cocalc/frontend/project/directory-selector", () => () => (
+  <div>directory selector</div>
+));
+
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => <span>later</span>,
 }));
@@ -156,6 +196,7 @@ jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
 
 jest.mock("@cocalc/frontend/account/lite-ai-settings", () => () => null);
 
+// The actual field's keyboard, popover, and Form binding have separate coverage.
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -205,6 +246,42 @@ describe("CodexConfigButton", () => {
     window.localStorage.clear();
   });
 
+  it("opens the compact mobile settings button with the keyboard and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexConfigButton
+        compact="icon"
+        threadKey="thread-mobile"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-6-astra", reasoning: "medium" }}
+        actions={
+          { getCodexConfig: () => undefined, setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Codex settings",
+      exact: true,
+    });
+    expect(trigger.textContent).toBe("");
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Agent settings",
+    });
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Agent settings" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   it("shows model and thinking level in the phone summary and opens settings", async () => {
     render(
       <CodexConfigButton
@@ -223,14 +300,102 @@ describe("CodexConfigButton", () => {
     });
     expect(button.textContent?.toLowerCase()).toBe("gpt-6-astra medium");
     fireEvent.click(button);
-    expect(
-      await screen.findByText(
-        /These settings apply to the selected Codex thread/,
-      ),
-    ).toBeTruthy();
+    expect(await screen.findByText("Runtime")).toBeTruthy();
     expect(
       screen.getByRole("combobox", { name: "Payment source" }),
     ).toBeTruthy();
+  });
+
+  it("offers direct runtime controls in the composer rail", async () => {
+    const actions = {
+      getCodexConfig: jest.fn(() => undefined),
+      setCodexConfig: jest.fn(),
+    } as any;
+    render(
+      <CodexConfigButton
+        compact="composer"
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{
+          model: "gpt-6-sol",
+          reasoning: "medium",
+          serviceTier: "fast",
+          paymentSource: "subscription",
+          workingDirectory: "/home/user/work",
+        }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+        actions={actions}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Working directory: .*\/home\/user\/work/,
+      }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Working directory" }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Change model. Current model: gpt-6-sol",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "gpt-6-astra" }));
+    expect(actions.setCodexConfig).toHaveBeenCalledWith(
+      "thread-1",
+      expect.objectContaining({ model: "gpt-6-astra" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Change speed. Current speed: Fast" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "More agent settings" }),
+    ).toBeTruthy();
+  });
+
+  it("labels settings changed during an active turn as next-turn settings", async () => {
+    const actions = {
+      getCodexConfig: () => undefined,
+      setCodexConfig: jest.fn(),
+    } as any;
+    const { rerender } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "medium" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Next turn")).toBeNull();
+      expect(stableForm.setFieldsValue).toHaveBeenCalled();
+    });
+
+    rerender(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "high" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    expect(await screen.findByText("Next turn")).toBeTruthy();
   });
 
   it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
@@ -300,7 +465,7 @@ describe("CodexConfigButton", () => {
     expect(
       codexModelOptionsForCatalog().find(({ default: isDefault }) => isDefault)
         ?.value,
-    ).toBe("gpt-5.6-sol");
+    ).toBe("gpt-6-astra");
     const initial = codexModelOptionsForCatalog().find(
       ({ value }) => value === "gpt-6-astra",
     );
@@ -1260,15 +1425,70 @@ describe("CodexConfigButton", () => {
     await user.click(await screen.findByRole("button", { name: "Got it" }));
 
     fireEvent.click(screen.getByText("Codex"));
-    expect(document.body.textContent).toContain(
-      "Switching an established personal session into membership-funded mode is disabled",
+    fireEvent.click(
+      screen.getByRole("button", { name: "Help: Payment source" }),
     );
+    expect(document.body.textContent).toContain(
+      "Established sessions may restrict switching to membership funding",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Help: Runtime" }));
     await waitFor(() => {
       expect(
         screen.getByText("compact usage meters usage loaded"),
       ).toBeTruthy();
     });
     expect(actions.setCodexConfig).not.toHaveBeenCalled();
+  });
+
+  it("uses a custom subscription label and opens credential management in place", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{ paymentSource: "subscription" }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          credentialId: "credential-security",
+          subscriptions: [
+            {
+              id: "credential-security",
+              label: "Security review",
+              email: "private@example.com",
+              updatedAt: "2026-09-19T00:00:00Z",
+            },
+          ],
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const source = await screen.findByRole("button", {
+      name: "Change Codex payment source",
+    });
+    expect(source.textContent).toBe("Security review");
+    expect(screen.queryByText("private@example.com")).toBeNull();
+
+    await user.click(source);
+    await user.click(
+      screen.getByRole("button", { name: "Manage subscriptions" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Codex Payment & Credentials",
+      }),
+    ).toBeTruthy();
   });
 
   it.each([
@@ -1482,6 +1702,7 @@ describe("CodexConfigButton", () => {
     );
 
     fireEvent.click(screen.getByText("Codex"));
+    fireEvent.click(screen.getByRole("button", { name: "Help: Runtime" }));
     expect(screen.getByLabelText("5-hour limit: 75% remaining")).toBeTruthy();
     expect(screen.getByLabelText("7-day limit: 80% remaining")).toBeTruthy();
   });
@@ -1543,6 +1764,9 @@ describe("CodexConfigButton", () => {
     expect(screen.queryByText("Read only")).toBeNull();
 
     fireEvent.click(screen.getByText("Codex"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Help: Full project access" }),
+    );
     expect(document.body.textContent).toContain(
       "Codex has full access to this project",
     );
@@ -1572,7 +1796,7 @@ describe("CodexConfigButton", () => {
     );
 
     fireEvent.click(screen.getByText("Codex"));
-    expect(screen.getByText("Codex configuration for this chat")).toBeTruthy();
+    expect(screen.getByText("Runtime")).toBeTruthy();
     unmount();
     window.localStorage.setItem("cocalc.chat.codexControlsCollapsed", "1");
 
@@ -1626,7 +1850,7 @@ describe("CodexConfigButton", () => {
     expect(screen.getByLabelText("Expand Codex controls")).toBeTruthy();
   });
 
-  it("shows the ChatGPT Codex usage link in payment settings", async () => {
+  it("omits the obsolete external usage link from payment settings", async () => {
     render(
       <CodexConfigButton
         threadKey="thread-1"
@@ -1646,7 +1870,7 @@ describe("CodexConfigButton", () => {
     });
     fireEvent.click(screen.getByText("ChatGPT"));
 
-    expect(screen.getByText("Open ChatGPT Codex Usage")).not.toBeNull();
+    expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
   });
 
   it("shows compact ChatGPT usage in the settings summary", async () => {
@@ -1674,6 +1898,7 @@ describe("CodexConfigButton", () => {
     );
 
     fireEvent.click(screen.getByText("Codex"));
+    fireEvent.click(screen.getByRole("button", { name: "Help: Runtime" }));
 
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
@@ -1686,13 +1911,7 @@ describe("CodexConfigButton", () => {
         screen.getByText("compact usage meters usage loaded"),
       ).toBeTruthy();
     });
-    const text = document.body.textContent ?? "";
-    expect(text.indexOf("Codex configuration for this chat")).toBeLessThan(
-      text.indexOf("compact usage meters usage loaded"),
-    );
-    expect(text.indexOf("compact usage meters usage loaded")).toBeLessThan(
-      text.indexOf("Payment & Credentials"),
-    );
+    expect(screen.getByText("Runtime")).toBeTruthy();
   });
 
   it("shows cached compact ChatGPT usage while refreshing live usage", async () => {
@@ -1748,6 +1967,7 @@ describe("CodexConfigButton", () => {
     );
 
     fireEvent.click(screen.getByText("Codex"));
+    fireEvent.click(screen.getByRole("button", { name: "Help: Runtime" }));
 
     await waitFor(() => {
       expect(

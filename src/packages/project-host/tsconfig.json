@@ -19,6 +19,7 @@
   ],
   "references": [
     { "path": "../backend" },
+    { "path": "../chat" },
     { "path": "../chat-client" },
     { "path": "../conat" },
     { "path": "../lite" },

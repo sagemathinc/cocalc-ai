@@ -71,17 +71,10 @@ September 15 verification used PostgreSQL 18.4, found zero leftover fixture
 databases after testing, and stopped the disposable cluster. No dev-site or
 production database was changed.
 
-These are process environment flags, not the account UI preference. Only the
-literal value `1` enables each flag; leave unset for a new, disabled deployment.
-Changing service environment requires a controlled service reload/restart.
-
-| Flag                                         | Purpose                                   |
-| -------------------------------------------- | ----------------------------------------- |
-| `COCALC_AGENT_MESSAGING_ENABLED`             | Master messaging service/identity gate    |
-| `COCALC_AGENT_MESSAGING_RPC_ENABLED`         | Single-attempt RPC path                   |
-| `COCALC_AGENT_PERSONAL_MESSAGING_ENABLED`    | Human-scoped names/connections            |
-| `COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED` | Binary attachment path and receive limits |
-| `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED`        | External sender enrollment/service        |
+Agent messaging, personal connections, bounded attachments, and external sender
+enrollment are normal CoCalc services. They do not have process-environment
+rollout switches. Deploy matching hub and host components before exposing the
+experimental account UI.
 
 Initial aggregate controls in the remediation candidate are deliberately
 conservative:
@@ -94,10 +87,9 @@ conservative:
   `agent-messaging-release-progress.md`. Maintenance is restrictive cleanup only;
   it never replays or reinterprets pending/uncertain work.
 
-Apply intended controls consistently to account-home and project-owning bays;
-the project-host identity lease also uses the master flag. Do not treat changing
-one bay as an instantaneous cluster-wide kill switch. Subscription setup reads
-some flags at startup. Record the effective process configuration after reload.
+Apply admission and resource controls consistently to account-home and
+project-owning bays. Pause/revoke operations are authorization controls, not an
+instantaneous cluster-wide cancellation mechanism.
 
 Account AI settings uses `other_settings.experimental_agent_messaging === true`.
 Missing/false hides naming, agent mention suggestions and connection setup.
@@ -105,19 +97,18 @@ It does not revoke permissions, cancel work, or disable CLI messaging. Existing
 chat content and the My Agents management route must remain accessible. Do not
 bulk-enable this preference for existing users.
 
-Disabling admissions does not retract already accepted work. A timeout is not
-rejection. Inspect the original attempt instead of resending. Do not replay legacy
-pending or uncertain records. Pausing/revoking permissions is distinct from
-stopping an already running agent turn. Restrictive management must remain
-available; do not remove its UI route during rollout.
+Pausing or revoking permissions does not retract already accepted work. A timeout
+is not rejection. Inspect the original attempt instead of resending. Do not replay
+legacy pending or uncertain records. Restrictive management must remain available;
+do not remove its UI route during rollout.
 
 ## Deployment sequence (requires approval)
 
 1. Finish the outstanding review and ordinary final-candidate smoke tests; pin
    a clean source SHA. Build all deployable artifacts from that SHA and record
    their manifests, hashes, and previous known-good versions.
-2. Keep messaging site flags unset/off and account UI opt-in default-off. Apply
-   the repository's normal declarative schema synchronization on each owning bay.
+2. Keep the account UI opt-in default-off. Apply the repository's normal
+   declarative schema synchronization on each owning bay.
    Preserve existing rows and keep backups; do not run destructive down-migrations.
 3. Install receiving-side services before callers. In particular, the new
    host-history RPC must exist on host-owning bays before account-home callers
@@ -125,8 +116,7 @@ available; do not remove its UI route during rollout.
    silently drop attachments or choose a different delivery mechanism.
 4. Roll out matching project-host/runtime, project/tools and browser artifacts;
    verify observed versions rather than assuming a successful upload is activation.
-5. Only after explicit approval, enable the desired site gates for a limited
-   rollout. William and Blaec opt in individually. Perform a fresh named-agent
+5. William and Blaec opt in individually. Perform a fresh named-agent
    request/reply with a bounded attachment across hosts/bays, recording attempt
    IDs, acceptance, recipient digest and correlated reply separately.
 
@@ -145,12 +135,13 @@ Inspect without repeating either mutation (load matching dev hub environment):
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile agent-attachments-qa host deploy status b96028c9-7d3e-4953-a8c9-52f8a5ce52ca --json
 ```
 
-For a future approved rollback, first disable new admissions consistently, inspect
-in-flight work, then use an explicit recorded artifact version. Do not blindly
-select the previous artifact: an earlier dirty build failed its health check.
-Keep database state and approvals intact. Recheck service versions and ordinary
-messaging before reopening gates. This procedure is not a claim that the full
-final-candidate rollback has been exercised.
+For a future approved rollback, first pause affected account communication or
+revoke the relevant connections, inspect in-flight work, then use an explicit
+recorded artifact version. Do not blindly select the previous artifact: an earlier
+dirty build failed its health check. Keep database state and approvals intact.
+Recheck service versions and ordinary messaging before resuming communication.
+This procedure is not a claim that the full final-candidate rollback has been
+exercised.
 
 ## Current prerequisites and next step
 

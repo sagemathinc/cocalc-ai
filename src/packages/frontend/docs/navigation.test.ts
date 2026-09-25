@@ -84,6 +84,24 @@ describe("docs navigation", () => {
     window.removeEventListener(PROJECT_DOCS_OPEN_EVENT, listener);
   });
 
+  it("lets an embedded surface handle project docs without changing tabs", () => {
+    const listener = (event: Event) => event.preventDefault();
+    window.addEventListener(PROJECT_DOCS_OPEN_EVENT, listener);
+
+    openProjectDocs({
+      projectId: "project-1",
+      slug: "collaboration/chat",
+    });
+
+    expect(
+      window.localStorage.getItem(projectDocsStorageKey("project-1")),
+    ).toBe("collaboration/chat");
+    expect(mockSetPageActiveTab).not.toHaveBeenCalled();
+    expect(mockSetFlyoutExpanded).not.toHaveBeenCalled();
+
+    window.removeEventListener(PROJECT_DOCS_OPEN_EVENT, listener);
+  });
+
   it("opens a global app docs page", () => {
     openAppDocs("/docs/admin/users");
 

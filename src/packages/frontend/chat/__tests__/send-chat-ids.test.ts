@@ -97,6 +97,25 @@ function bindRealDeleteDraft(actions: any): void {
 }
 
 describe("sendChat identity fields", () => {
+  it("persists posts without dispatching and excludes them from agent history", () => {
+    const actions = makeActions();
+    actions.sendChat({
+      input: "note for people",
+      postOnly: true,
+      chatIdentity: {
+        date: "2025-01-01T00:00:00.000Z",
+        message_id: "post",
+        thread_id: "post-thread",
+      },
+    });
+    const row = actions.syncdb.set.mock.calls
+      .map(([row]) => row)
+      .find((row) => row.event === "chat");
+    expect(row.post_only).toBe(true);
+    expect(actions.processAI).not.toHaveBeenCalled();
+    actions.getMessagesInThread = () => [row];
+    expect(actions.getLLMHistory(row.thread_id)).toEqual([]);
+  });
   it("reads and updates the model from live ImmerDB thread rows without losing session settings", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";
     const config = {
@@ -174,6 +193,50 @@ describe("sendChat identity fields", () => {
     expect(savedConfig.model).toBe("gpt-5.4-mini");
   });
 
+  it("retains pinned artifact feedback on the sent message and refuses a different thread", () => {
+    const feedback = {
+      schema_version: 1,
+      artifact_id: "artifact",
+      thread_id: "thread",
+      title: "Draft",
+      markdown: "Hello",
+      rendered_text: "Hello",
+      start: 0,
+      end: 5,
+      quote: "Hello",
+    };
+    const actions = makeActions();
+    actions.sendChat({
+      input: "Shorten this",
+      chatIdentity: {
+        date: "2026-02-21T17:00:00.000Z",
+        thread_id: "thread",
+        message_id: "feedback-message",
+      },
+      reply_thread_id: "thread",
+      artifact_feedback: feedback,
+    });
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifact_feedback: feedback,
+        thread_id: "thread",
+      }),
+    );
+    actions.syncdb.set.mockClear();
+    expect(
+      actions.sendChat({
+        input: "Wrong thread",
+        chatIdentity: {
+          date: "2026-02-21T17:00:00.000Z",
+          thread_id: "other",
+          message_id: "rejected-message",
+        },
+        reply_thread_id: "other",
+        artifact_feedback: feedback,
+      }),
+    ).toBe("");
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     jest

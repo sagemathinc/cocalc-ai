@@ -12,6 +12,15 @@ import {
   type EmailLane,
 } from "@cocalc/util/notification-email";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  FINANCIAL_RECEIPT_NOTICE_TYPES,
+  FINANCIAL_RECEIPT_MAX_ATTEMPTS,
+  FINANCIAL_RECEIPT_RETRY_BASE_MS,
+  FINANCIAL_RECEIPT_RETRY_CAP_MS,
+  financialReceiptRetryDelayMs,
+  isFinancialReceipt,
+  verifiedFinancialReceiptEmail,
+} from "./financial-receipt-email";
 
 export type NotificationEmailDeliveryMode = "immediate" | "digest" | "off";
 
@@ -81,7 +90,7 @@ export interface EnqueueNotificationEmailInput {
 
 export type NotificationEmailRevalidation =
   | { action: "send" }
-  | { action: "skip"; reason: string }
+  | { action: "skip"; reason: string; status?: "skipped_unverified" }
   | { action: "reschedule"; scheduled_at: Date; reason: string };
 
 export function codexNotificationEmailEnabled(): boolean {
@@ -219,7 +228,18 @@ export async function claimQueuedNotificationEmails(opts?: {
   const db = queryable(opts?.db);
   const limit = Math.max(1, Math.min(100, Math.floor(opts?.limit ?? 25)));
   const result = await db.query(
-    `UPDATE notification_email_outbox
+    `WITH exhausted AS (
+       UPDATE notification_email_outbox SET status='failed', updated_at=NOW(),
+         last_error=COALESCE(last_error, 'Financial receipt retry limit reached after abandoned delivery')
+       WHERE email_id IN (
+         SELECT email_id FROM notification_email_outbox
+         WHERE summary_json#>>'{summary,notice_type}'=ANY($2::text[])
+           AND delivery_mode='immediate' AND attempt_count >= $3
+           AND status='sending' AND updated_at < NOW() - interval '15 minutes'
+         ORDER BY updated_at LIMIT $1 FOR UPDATE SKIP LOCKED
+       ) RETURNING email_id
+     )
+     UPDATE notification_email_outbox
         SET status = 'sending',
             attempt_count = attempt_count + 1,
             updated_at = NOW()
@@ -228,15 +248,29 @@ export async function claimQueuedNotificationEmails(opts?: {
         FROM notification_email_outbox
         WHERE (status = 'queued'
                OR (status = 'sending'
-                   AND updated_at < NOW() - interval '15 minutes'))
+                   AND updated_at < NOW() - interval '15 minutes')
+               OR (status IN ('failed', 'skipped_no_backend')
+                   AND summary_json#>>'{summary,notice_type}'=ANY($2::text[])
+                   AND updated_at <= NOW() - LEAST($5::double precision,
+                     $4::double precision * POWER(2, LEAST(GREATEST(attempt_count-1,0),6))) * interval '1 millisecond'))
+          AND (COALESCE(summary_json#>>'{summary,notice_type}'=ANY($2::text[]),false)=false
+               OR (attempt_count < $3 AND sent_at IS NULL))
           AND delivery_mode = 'immediate'
           AND scheduled_at <= NOW()
+          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+            WHERE f.payer_account_id=notification_email_outbox.target_account_id AND f.state <> 'active')
         ORDER BY scheduled_at ASC, created_at ASC, email_id ASC
         LIMIT $1
         FOR UPDATE SKIP LOCKED
       )
       RETURNING *`,
-    [limit],
+    [
+      limit,
+      FINANCIAL_RECEIPT_NOTICE_TYPES,
+      FINANCIAL_RECEIPT_MAX_ATTEMPTS,
+      FINANCIAL_RECEIPT_RETRY_BASE_MS,
+      FINANCIAL_RECEIPT_RETRY_CAP_MS,
+    ],
   );
   return result.rows as NotificationEmailOutboxRow[];
 }
@@ -257,6 +291,8 @@ export async function claimDigestNotificationEmails(opts?: {
        SELECT target_account_id
        FROM notification_email_outbox
        WHERE status = 'queued'
+         AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+           WHERE f.payer_account_id=notification_email_outbox.target_account_id AND f.state <> 'active')
          AND delivery_mode = 'digest'
          AND scheduled_at <= NOW()
          AND ($2::BOOLEAN
@@ -342,6 +378,35 @@ export async function markNotificationEmailFailed(opts: {
   );
 }
 
+/** Durable retry of the existing receipt row, not a new financial operation.
+ * Compare the claim attempt so a timed-out sender cannot overwrite a newer claim
+ * or resurrect a terminal destination-verification decision.
+ */
+export async function markFinancialReceiptEmailFailed(opts: {
+  email_id: string;
+  attempt_count: number;
+  error: string | Error;
+  db?: Queryable;
+}): Promise<void> {
+  const delay = financialReceiptRetryDelayMs(opts.attempt_count);
+  await queryable(opts.db).query(
+    `UPDATE notification_email_outbox
+        SET status='failed', last_error=$3,
+            scheduled_at=NOW() + $4::double precision * interval '1 millisecond',
+            updated_at=NOW()
+      WHERE email_id=$1 AND status='sending' AND sent_at IS NULL
+        AND attempt_count=$2 AND delivery_mode='immediate'
+        AND summary_json#>>'{summary,notice_type}'=ANY($5::text[])`,
+    [
+      normalizeUuid(opts.email_id, "email id"),
+      opts.attempt_count,
+      opts.error instanceof Error ? opts.error.message : `${opts.error}`,
+      delay,
+      FINANCIAL_RECEIPT_NOTICE_TYPES,
+    ],
+  );
+}
+
 export async function markNotificationEmailStatus(opts: {
   email_id: string;
   status: Exclude<NotificationEmailStatus, "queued" | "sending" | "sent">;
@@ -395,8 +460,40 @@ export async function revalidateNotificationEmail(opts: {
   row: NotificationEmailOutboxRow;
   now?: Date;
   db?: Queryable;
+  // Server resolves the current directory home immediately before delivery.
+  financial_home?: { current: string; local: string };
 }): Promise<NotificationEmailRevalidation> {
   const { row } = opts;
+  if (isFinancialReceipt(row.summary_json?.summary)) {
+    const skip = (): NotificationEmailRevalidation => ({
+      action: "skip",
+      status: "skipped_unverified",
+      reason:
+        "Financial receipt destination is no longer verified on this home bay",
+    });
+    const home = opts.financial_home;
+    if (
+      !home ||
+      home.current !== home.local ||
+      row.summary_json.financial_receipt_home_bay_id !== home.local ||
+      row.delivery_mode !== "immediate"
+    )
+      return skip();
+    const { rows } = await queryable(opts.db).query(
+      `SELECT email_address, email_address_verified, banned, deleted, home_bay_id
+         FROM accounts WHERE account_id=$1::uuid LIMIT 1`,
+      [row.target_account_id],
+    );
+    const account = rows[0];
+    const email = verifiedFinancialReceiptEmail(account);
+    if (
+      !email ||
+      email !== row.recipient_email ||
+      account.home_bay_id !== home.local
+    )
+      return skip();
+    return { action: "send" };
+  }
   if (row.category === "ai" && !codexNotificationEmailEnabled()) {
     return { action: "skip", reason: "Codex notification email is disabled" };
   }

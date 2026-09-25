@@ -18,7 +18,11 @@ import {
   RESUME_SUBSCRIPTION,
   TEAM_LICENSE_CHANGE,
 } from "@cocalc/util/db-schema/purchases";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import {
+  billingAccountsTable,
+  ensureBillingAccount,
+  getBillingAccountProfile,
+} from "@cocalc/server/purchases/billing-account";
 import { stripeToDecimal, decimalToStripe } from "@cocalc/util/stripe/calc";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { url } from "@cocalc/server/messages/send";
@@ -45,6 +49,7 @@ const RESERVED_USER_METADATA_KEYS = new Set([
   "account_id",
   "cocalc_site",
   "checkout_key",
+  "checkout_instance_id",
   "confirm",
   "lineItems",
   "processed",
@@ -83,17 +88,18 @@ export function normalizeStripeLineItems(lineItems: unknown): unknown {
   });
 }
 
-async function setStripeCustomerId({
+export async function setStripeCustomerId({
   account_id,
   id,
-  client,
+  client = getPool(),
 }: {
   account_id: string;
   id: string;
-  client: PoolClient;
+  client?: Pick<PoolClient, "query">;
 }): Promise<void> {
+  const table = billingAccountsTable();
   await client.query(
-    "UPDATE accounts SET stripe_customer_id=$2::TEXT WHERE account_id=$1",
+    `UPDATE ${table} SET stripe_customer_id=$2::TEXT WHERE account_id=$1`,
     [account_id, id],
   );
 }
@@ -179,9 +185,11 @@ export async function getStripeCustomerId({
   account_id: string;
   create: boolean;
 }): Promise<string | undefined> {
+  await ensureBillingAccount(account_id);
+  const table = billingAccountsTable();
   const db = getPool();
   const { rows } = await db.query(
-    "SELECT stripe_customer_id FROM accounts WHERE account_id=$1",
+    `SELECT stripe_customer_id FROM ${table} WHERE account_id=$1`,
     [account_id],
   );
   const stripe_customer_id = rows[0]?.stripe_customer_id;
@@ -197,7 +205,7 @@ export async function getStripeCustomerId({
   const client = await getTransactionClient();
   try {
     const { rows } = await client.query(
-      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      `SELECT stripe_customer_id FROM ${table} WHERE account_id=$1 FOR UPDATE`,
       [account_id],
     );
     if (rows.length == 0) {
@@ -224,12 +232,13 @@ export async function getStripeCustomerId({
       await client.query("COMMIT");
       return undefined;
     }
+    const profile = await getBillingAccountProfile(account_id);
     const id = await createStripeCustomer({
       account_id,
-      email: row.email_address,
-      display_name: row.display_name,
-      first_name: row.first_name,
-      last_name: row.last_name,
+      email: profile.email_address,
+      display_name: profile.display_name,
+      first_name: profile.first_name,
+      last_name: profile.last_name,
     });
     await setStripeCustomerId({ account_id, id, client });
     await client.query("COMMIT");
@@ -273,11 +282,12 @@ export async function getAccountIdFromStripeCustomerId(
   customer: string,
 ): Promise<string | undefined> {
   const pool = getPool();
+  const table = billingAccountsTable();
   // I think this is a linear search on the entire accounts table, probably.
   // This should basically never happen, but I'm implementing it just
   // in case.
   const { rows } = await pool.query(
-    "SELECT account_id FROM accounts WHERE stripe_customer_id=$1",
+    `SELECT account_id FROM ${table} WHERE stripe_customer_id=$1`,
     [customer],
   );
   if (rows.length == 1) {
@@ -289,7 +299,12 @@ export async function getAccountIdFromStripeCustomerId(
   try {
     const customerObject = await stripe.customers.retrieve(customer);
     const account_id = customerObject["metadata"]?.["account_id"];
-    if (account_id && (await isValidAccount(account_id))) {
+    if (account_id) {
+      try {
+        await ensureBillingAccount(account_id);
+      } catch {
+        return rows[0]?.account_id;
+      }
       // check if it is valid, because, e.g., stripe might have all kinds
       // of crazy data... e.g., all dev servers use the SAME stripe testing
       // account.  Also the account could be purged from our records, so

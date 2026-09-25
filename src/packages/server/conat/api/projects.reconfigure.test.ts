@@ -6,6 +6,7 @@ let publishLroSummaryMock: jest.Mock;
 let triggerWorkerMock: jest.Mock;
 let poolQueryMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveProjectBaysMock: jest.Mock;
 let remoteReconfigureMock: jest.Mock;
 let remoteGetOperationMock: jest.Mock;
 let remoteCancelOperationMock: jest.Mock;
@@ -63,6 +64,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+  resolveProjectBays: (...args: any[]) => resolveProjectBaysMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -126,6 +128,12 @@ describe("course reconfiguration LRO admission", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     triggerWorkerMock = jest.fn();
     resolveProjectBayMock = jest.fn(async () => ({ bay_id: "bay-local" }));
+    resolveProjectBaysMock = jest.fn(
+      async (projectIds: string[]) =>
+        new Map(
+          projectIds.map((projectId) => [projectId, { bay_id: "bay-local" }]),
+        ),
+    );
     remoteReconfigureMock = jest.fn();
     remoteGetOperationMock = jest.fn();
     remoteCancelOperationMock = jest.fn(async () => undefined);
@@ -195,6 +203,46 @@ describe("course reconfiguration LRO admission", () => {
     });
     expect(firstInput.students[0].create).toBe(true);
     expect(recoveredInput.snapshot_hash).toBe(firstInput.snapshot_hash);
+  });
+
+  it("allocates a new project after an active student's recorded project was permanently deleted", async () => {
+    resolveProjectBaysMock.mockResolvedValue(
+      new Map([[STUDENT_PROJECT_ID, null]]),
+    );
+    const { reconfigureCourseProjects } = await import("./projects");
+
+    await reconfigureCourseProjects(request(STUDENT_PROJECT_ID));
+    const input = createLroDetailedMock.mock.calls[0][0].input;
+
+    expect(input.students[0]).toMatchObject({
+      student_id: "student-1",
+      create: true,
+    });
+    expect(input.students[0].project_id).not.toBe(STUDENT_PROJECT_ID);
+    expect(input.students[0].project_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("also replaces a deleted project id recovered from persisted operation state", async () => {
+    previousInput = {
+      students: [
+        {
+          student_id: "student-1",
+          project_id: STUDENT_PROJECT_ID,
+        },
+      ],
+    };
+    resolveProjectBaysMock.mockResolvedValue(
+      new Map([[STUDENT_PROJECT_ID, null]]),
+    );
+    const { reconfigureCourseProjects } = await import("./projects");
+
+    await reconfigureCourseProjects(request());
+    const student = createLroDetailedMock.mock.calls[0][0].input.students[0];
+
+    expect(student).toMatchObject({ student_id: "student-1", create: true });
+    expect(student.project_id).not.toBe(STUDENT_PROJECT_ID);
   });
 
   it("uses semantic snapshot identity across map and student ordering", async () => {

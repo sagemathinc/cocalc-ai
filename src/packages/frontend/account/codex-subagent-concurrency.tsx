@@ -12,6 +12,7 @@ import {
   MAX_CODEX_CONCURRENT_SUBAGENTS,
   normalizeCodexMaxConcurrentSubagents,
 } from "@cocalc/util/ai/codex-subagent-concurrency";
+import { Panel } from "@cocalc/frontend/antd-bootstrap";
 export * from "@cocalc/util/ai/codex-subagent-concurrency";
 
 const { Paragraph, Text } = Typography;
@@ -53,14 +54,20 @@ export function CodexSubagentConcurrencyField({
     [],
   );
 
-  return (
+  const content = (
     <div
       style={{ marginTop: compact ? 0 : 16, marginBottom: compact ? 0 : 16 }}
     >
-      <div style={{ marginBottom: 6 }}>
-        <Text strong>{CODEX_SUBAGENTS_LABEL}</Text>{" "}
-        <Text type="secondary">(Account-wide)</Text>
-      </div>
+      {compact ? (
+        <div style={{ marginBottom: 6 }}>
+          <Text strong>{CODEX_SUBAGENTS_LABEL}</Text>{" "}
+          <Text type="secondary">(Account-wide)</Text>
+        </div>
+      ) : (
+        <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          This setting applies account-wide.
+        </Paragraph>
+      )}
       <Select
         aria-label="Maximum concurrent Codex subagents"
         value={value == null ? "automatic" : `${value}`}
@@ -74,6 +81,11 @@ export function CodexSubagentConcurrencyField({
         change applies when a Codex session is next loaded.
       </Paragraph>
     </div>
+  );
+  return compact ? (
+    content
+  ) : (
+    <Panel header={CODEX_SUBAGENTS_LABEL}>{content}</Panel>
   );
 }
 

@@ -4,7 +4,6 @@ import {
   agentInboxPrefix,
   allowsAgentSubject,
   parseAgentMessagingSubject,
-  validateAgentMessage,
   validateAgentInspection,
 } from "./protocol";
 
@@ -50,15 +49,12 @@ test("identity may publish only its exact sealed subject and subscribe only to i
   ).toBe(false);
 });
 
-test("inspection has bounded pages and cannot select another identity", () => {
-  for (const request of [
-    { action: "whoami" },
-    { action: "destinations", limit: 100 },
-    { action: "messages", cursor: agent },
-  ])
-    expect(() => validateAgentInspection(request as any)).not.toThrow();
+test("inspection exposes only the caller's sealed identity", () => {
+  expect(() => validateAgentInspection({ action: "whoami" })).not.toThrow();
   for (const request of [
     { action: "whoami", agent_id: target },
+    { action: "destinations", limit: 100 },
+    { action: "messages", cursor: agent },
     { action: "messages", limit: 0 },
     { action: "messages", limit: 101 },
     { action: "messages", cursor: "bad" },
@@ -76,26 +72,4 @@ test("sealed subjects reject extra segments and wildcards", () => {
     `agent-messaging.${agent}.${run}.extra`,
   ])
     expect(() => parseAgentMessagingSubject(subject)).toThrow();
-});
-test("message validation bounds bytes and requires a single explicit target", () => {
-  const request = {
-    action: "send" as const,
-    request_id: run,
-    target_agent_id: target,
-    body: "hello",
-  };
-  expect(() => validateAgentMessage(request)).not.toThrow();
-  for (const patch of [
-    { body: "" },
-    { body: "a".repeat(32769) },
-    { body: "\u00e9".repeat(16385) },
-    { request_id: "bad" },
-    { guidance: "true" },
-    { target_agent_id: undefined },
-    { target: { project_id: target, path: "a.chat", thread_id: run } },
-  ]) {
-    expect(() =>
-      validateAgentMessage({ ...request, ...patch } as any),
-    ).toThrow();
-  }
 });

@@ -490,6 +490,7 @@ const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
   "blockquote",
   "guidance",
+  "agent-message",
   "html_block",
   "meta",
   "math_block",

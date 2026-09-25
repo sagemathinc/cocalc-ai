@@ -1,6 +1,10 @@
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import {
+  billingAccountsTable,
+  ensureBillingAccount,
+} from "@cocalc/server/purchases/billing-account";
+import {
   moneyToDbString,
   toDecimal,
   type MoneyValue,
@@ -58,13 +62,15 @@ export default async function getBalance({
   );
   const balance = toDecimal(rows[0]?.balance ?? 0);
   if (!noSave) {
+    await ensureBillingAccount(account_id, pool);
+    const table = billingAccountsTable();
     const now = Date.now();
     if (
       forceSave ||
       now - (lastUpdate[account_id] ?? 0) >= MIN_BALANCE_UPDATE_MS
     ) {
       lastUpdate[account_id] = now;
-      await pool.query("UPDATE accounts SET balance=$2 WHERE account_id=$1", [
+      await pool.query(`UPDATE ${table} SET balance=$2 WHERE account_id=$1`, [
         account_id,
         moneyToDbString(balance),
       ]);

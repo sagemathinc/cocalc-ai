@@ -33,6 +33,12 @@ export async function assertBillingReady(
   account_id: string,
 ): Promise<BillingReadiness> {
   const readiness = await getBillingReadiness(account_id);
+  return assertBillingReadiness(readiness);
+}
+
+export function assertBillingReadiness(
+  readiness: BillingReadiness,
+): BillingReadiness {
   if (readiness.hasBillingDetails && readiness.hasPaymentMethod) {
     return readiness;
   }

@@ -113,6 +113,7 @@ import {
 } from "@cocalc/server/project-host/access";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import {
   enqueueCloudVmWork,
@@ -156,10 +157,17 @@ import {
   createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
 import {
+  createExternalCredentialRouted,
+  ensureDefaultExternalCredentialRouted,
+  getExternalCredentialByIdRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
+  listAccountExternalCredentialsRouted,
   refreshCodexSubscriptionAuthRouted,
+  revokeExternalCredentialByIdAndSelectorRouted,
+  touchExternalCredentialByIdRouted,
   touchExternalCredentialRouted,
+  updateExternalCredentialByIdRouted,
   upsertExternalCredentialRouted,
 } from "@cocalc/server/external-credentials/routing";
 import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
@@ -224,6 +232,7 @@ import {
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolStatus,
@@ -402,6 +411,8 @@ function pool() {
   return getPool();
 }
 
+const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
+const CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY = "cocalc_default";
 const HOST_CONNECTION_CACHE_TTL_MS = 5_000;
 const HOST_CONNECTION_CACHE_MAX_ENTRIES = 5_000;
 
@@ -2738,12 +2749,22 @@ function normalizeExternalCredentialSelector({
   };
 }
 
+function assertExternalCredentialId(id: string | undefined): void {
+  if (id != null && !isValidUUID(id)) {
+    throw new Error("credential_id must be a UUID");
+  }
+}
+
 export async function upsertExternalCredential({
   host_id,
   project_id,
   selector,
   payload,
   metadata,
+  credential_id,
+  create,
+  max_active,
+  deduplicate_metadata,
 }: {
   host_id?: string;
   project_id: string;
@@ -2757,7 +2778,12 @@ export async function upsertExternalCredential({
   };
   payload: string;
   metadata?: Record<string, any>;
+  credential_id?: string;
+  create?: boolean;
+  max_active?: number;
+  deduplicate_metadata?: { key: string; value: string };
 }): Promise<{ id: string; created: boolean }> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -2795,24 +2821,112 @@ export async function upsertExternalCredential({
     });
   }
 
-  return await upsertExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  const isAccountSubscription =
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account";
+  const safeMetadata = { ...(metadata ?? {}) };
+  if (isAccountSubscription) {
+    delete safeMetadata[CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY];
+  }
+  if (credential_id) {
+    const existing = await getExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      touchLastUsed: false,
+    });
+    if (!existing) throw new Error("credential is unavailable");
+    if (
+      isAccountSubscription &&
+      existing.metadata?.provider_account_id &&
+      safeMetadata.provider_account_id !== existing.metadata.provider_account_id
+    ) {
+      throw new Error(
+        "reconnect must use the same ChatGPT account; add a new subscription instead",
+      );
+    }
+    const updated = await updateExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+    });
+    if (!updated) throw new Error("credential is unavailable");
+    return { id: credential_id, created: false };
+  }
+  if (create) {
+    return await createExternalCredentialRouted({
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+      maxActive: max_active,
+      deduplicateMetadata: deduplicate_metadata,
+      defaultMetadataKey: isAccountSubscription
+        ? CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY
+        : undefined,
+    });
+  }
+  if (isAccountSubscription) {
+    const currentDefault = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    if (currentDefault) {
+      const updated = await updateExternalCredentialByIdRouted({
+        id: currentDefault.id,
+        selector: routedSelector,
+        payload,
+        metadata: safeMetadata,
+        revive: currentDefault.revoked != null,
+      });
+      if (!updated) throw new Error("credential is unavailable");
+      return { id: currentDefault.id, created: false };
+    }
+    const historic = await listAccountExternalCredentialsRouted({
+      owner_account_id: routedSelector.owner_account_id!,
+      provider: routedSelector.provider,
+      kind: routedSelector.kind,
+      scope: "account",
+      includeRevoked: true,
+    });
+    if (historic.length) {
+      throw new Error("default credential is unavailable");
+    }
+    const created = await createExternalCredentialRouted({
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+      maxActive: max_active ?? 10,
+      deduplicateMetadata: deduplicate_metadata,
+      defaultMetadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    return created;
+  }
+  const result = await upsertExternalCredentialRouted({
+    selector: routedSelector,
     payload,
-    metadata: metadata ?? {},
+    metadata: safeMetadata,
   });
+  return result;
 }
 
 export async function getExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2824,6 +2938,7 @@ export async function getExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<
   | {
       id: string;
@@ -2836,6 +2951,7 @@ export async function getExternalCredential({
     }
   | undefined
 > {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -2873,16 +2989,42 @@ export async function getExternalCredential({
     });
   }
 
-  const result = await getExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
-  });
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  let resolvedCredentialId = credential_id;
+  if (
+    !resolvedCredentialId &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    resolvedCredentialId = (
+      await ensureDefaultExternalCredentialRouted({
+        selector: routedSelector,
+        metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+      })
+    )?.id;
+  }
+  const isDefaultSubscriptionLookup =
+    !credential_id &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account";
+  if (isDefaultSubscriptionLookup && !resolvedCredentialId) {
+    return undefined;
+  }
+  const result = resolvedCredentialId
+    ? await getExternalCredentialByIdRouted({
+        id: resolvedCredentialId,
+        selector: routedSelector,
+      })
+    : await getExternalCredentialRouted({ selector: routedSelector });
   if (!result) {
     return undefined;
   }
@@ -2901,17 +3043,20 @@ export async function refreshCodexSubscriptionAuth({
   host_id,
   project_id,
   owner_account_id,
+  credential_id,
   previous_access_token_hash,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
+  credential_id?: string;
   previous_access_token_hash: string;
 }): Promise<{
   payload: string;
   updated: Date;
   refreshed: boolean;
 }> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!owner_account_id) {
@@ -2927,6 +3072,7 @@ export async function refreshCodexSubscriptionAuth({
   });
   return await refreshCodexSubscriptionAuthRouted({
     owner_account_id,
+    credential_id,
     previous_access_token_hash,
   });
 }
@@ -2935,6 +3081,7 @@ export async function hasExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2946,7 +3093,9 @@ export async function hasExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<boolean> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -2984,22 +3133,40 @@ export async function hasExternalCredential({
     });
   }
 
-  return await hasExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
-  });
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  if (credential_id) {
+    return !!(await getExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      touchLastUsed: false,
+    }));
+  }
+  if (
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    const designated = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    return designated?.revoked == null && designated != null;
+  }
+  return await hasExternalCredentialRouted({ selector: routedSelector });
 }
 
 export async function touchExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -3011,7 +3178,9 @@ export async function touchExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<boolean> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -3049,14 +3218,65 @@ export async function touchExternalCredential({
     });
   }
 
-  return await touchExternalCredentialRouted({
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  let resolvedCredentialId = credential_id;
+  if (
+    !resolvedCredentialId &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    const designated = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    if (!designated || designated.revoked) return false;
+    resolvedCredentialId = designated.id;
+  }
+  return resolvedCredentialId
+    ? await touchExternalCredentialByIdRouted({
+        id: resolvedCredentialId,
+        selector: routedSelector,
+      })
+    : await touchExternalCredentialRouted({ selector: routedSelector });
+}
+
+export async function releaseCodexDeviceAuthLease({
+  host_id,
+  project_id,
+  owner_account_id,
+  lease_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+  lease_id: string;
+}): Promise<boolean> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!isValidUUID(project_id)) throw new Error("invalid project_id");
+  if (!isValidUUID(owner_account_id)) {
+    throw new Error("invalid owner_account_id");
+  }
+  assertExternalCredentialId(lease_id);
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  return await revokeExternalCredentialByIdAndSelectorRouted({
+    id: lease_id,
     selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
+      provider: "openai",
+      kind: "codex-device-auth-lease",
+      scope: "account",
+      owner_account_id,
     },
   });
 }
@@ -3273,22 +3493,35 @@ export async function recordCodexSiteUsage({
 function usageLimitAndRemainingMicrousd(
   status: Awaited<ReturnType<typeof getAIUsageStatus>>,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const usage = status.windows.find((entry) => entry.window === window);
   return {
     limit: aiUsageUnitsToMicrousd(usage?.limit),
     remaining: aiUsageUnitsToMicrousd(usage?.remaining),
+    creditsByFundedTurn: usage?.site_funded_credits_microusd ?? {},
   };
 }
 
 function overviewLimitAndRemainingMicrousd(
   overview: AccountUsageOverview,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const meter = overview.meters.find(({ id }) => id === `ai-${window}`);
+  const credits = overview.site_funded_codex_credits?.windows.find(
+    (entry) => entry.window === window,
+  );
   return {
     limit: aiUsageUnitsToMicrousd(meter?.limit),
     remaining: aiUsageUnitsToMicrousd(meter?.remaining),
+    creditsByFundedTurn: credits?.credits_microusd ?? {},
   };
 }
 
@@ -3370,7 +3603,10 @@ export async function reserveSiteFundedCodexTurn({
       ? await (async () => {
           const [membership, usageStatus] = await Promise.all([
             resolveMembershipForAccount(account_id),
-            getAIUsageStatus({ account_id }),
+            getAIUsageStatus({
+              account_id,
+              include_site_funded_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3385,7 +3621,10 @@ export async function reserveSiteFundedCodexTurn({
           });
           const [membership, overview] = await Promise.all([
             accountHome.getMembership({ account_id }),
-            accountHome.getAccountUsageOverview({ account_id }),
+            accountHome.getAccountUsageOverview({
+              account_id,
+              include_site_funded_codex_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3394,6 +3633,10 @@ export async function reserveSiteFundedCodexTurn({
           ] as const;
         })();
   const paid = membership.source !== "free";
+  const accountConcurrency =
+    getEffectiveMembershipUsageLimits(membership).acp_max_running_per_account ??
+    configuration.policy?.maxConcurrentTurnsPerAccount ??
+    DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
   if (account5h.limit <= 0 || account7d.limit <= 0) {
     return {
       allowed: false,
@@ -3417,9 +3660,14 @@ export async function reserveSiteFundedCodexTurn({
     homeBayId,
     owningBayId: getConfiguredBayId(),
     membershipTier: membership.class,
-    policy: configuration.policy,
+    policy: {
+      ...configuration.policy,
+      maxConcurrentTurnsPerAccount: accountConcurrency,
+    },
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
+    accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
+    accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
     surface: path?.endsWith(".ipynb")
       ? "jupyter"
       : path?.endsWith(".chat")
@@ -6393,11 +6641,6 @@ export async function startHost({
   }
   const row = await loadHostForStartStop(id, actor);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
-  await assertRequestedHostFundingModeAllowed({
-    account_id: billingOwner,
-    machine_cloud: row.metadata?.machine?.cloud,
-    funding_mode: currentHostFundingMode(row.metadata),
-  });
   assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
@@ -6406,6 +6649,11 @@ export async function startHost({
     required: hostActionRequiresInteractiveFreshAuth(
       row.metadata?.machine?.cloud,
     ),
+  });
+  await assertRequestedHostFundingModeAllowed({
+    account_id: billingOwner,
+    machine_cloud: row.metadata?.machine?.cloud,
+    funding_mode: currentHostFundingMode(row.metadata),
   });
   await assertNoPendingDestructiveHostOp(row.id);
   await assertDedicatedHostAdmissionForAccount({

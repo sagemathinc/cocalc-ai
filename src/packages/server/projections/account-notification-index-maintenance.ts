@@ -9,6 +9,10 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
+import {
+  startLowCreditNotificationMaintenance,
+  stopLowCreditNotificationMaintenance,
+} from "@cocalc/server/notifications/low-credit";
 
 const logger = getLogger("server:projections:account-notification-index");
 
@@ -260,6 +264,7 @@ export function startAccountNotificationIndexProjectionMaintenance(): void {
     return;
   }
   if (timer) return;
+  startLowCreditNotificationMaintenance();
   startedAt = new Date();
   timer = setInterval(() => {
     void runAccountNotificationIndexProjectionMaintenanceTick();
@@ -274,6 +279,7 @@ export function startAccountNotificationIndexProjectionMaintenance(): void {
 }
 
 export function stopAccountNotificationIndexProjectionMaintenance(): void {
+  stopLowCreditNotificationMaintenance();
   if (!timer) return;
   clearInterval(timer);
   timer = undefined;

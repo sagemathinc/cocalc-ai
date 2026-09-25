@@ -22,6 +22,8 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
+import { ArtifactCards } from "./artifacts";
+import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
 import {
   DropdownMenu,
   Gap,
@@ -56,14 +58,15 @@ import {
   getLiveResponseMarkdown,
   getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
+  type CodexThreadConfig,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
+import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
-  resetAcpThreadState,
   resendCanceledAcpTurn,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
@@ -104,6 +107,9 @@ import { sendGitCommitAgentTurn } from "./git-commit-agent-turn";
 import { getDefaultNewThreadSetup } from "./chatroom-thread-panel";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
+import { useChatEmbeddingOptions } from "./embedding-options";
+import { openProjectFileResult } from "./open-result";
+import { projectFileTargetFromHref } from "./project-file-target";
 import { CodexQuotaHelp } from "./codex-quota-help";
 import { formatCodexErrorMarkdown } from "./codex-error-presentation";
 import {
@@ -124,6 +130,7 @@ import {
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getQueuedMessageEditHelpText,
   limitCodexActivityBlocks,
+  resolveCodexOverflowMenuLocation,
   resolveCodexShowActivityButtonState,
   resolveEditedMessageForSave,
   resolveEffectiveGenerating,
@@ -145,6 +152,10 @@ import {
   ChatReadAloudButton,
   CodexFinalResponseCopy,
 } from "./codex-final-response-copy";
+import {
+  agentMessageFence,
+  stripAgentRpcPrompt,
+} from "./agent-message-presentation";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -378,7 +389,12 @@ export function getFocusMessageButtonStyle(): CSSProperties {
 function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
-      detail: string;
+      source_label: string;
+      source_agent_id: string;
+      source_project_id?: string;
+      direction: "incoming";
+      agent_network_id?: string;
+      attempt_id?: string;
     }
   | undefined {
   const raw = field<any>(message, "agent_rpc");
@@ -386,16 +402,32 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const source = rpc?.source;
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
-  const short = agentId.length > 12 ? `${agentId.slice(0, 8)}...` : agentId;
+  const evidence = {
+    direction: "incoming" as const,
+    source_label:
+      typeof rpc.source_label === "string" && rpc.source_label.trim()
+        ? rpc.source_label.trim()
+        : source.kind === "external"
+          ? `External agent ${agentId.slice(0, 8)}`
+          : `Agent ${agentId.slice(0, 8)}`,
+    source_agent_id: agentId,
+    source_project_id:
+      typeof source.project_id === "string" ? source.project_id : undefined,
+    agent_network_id:
+      typeof rpc.agent_network_id === "string"
+        ? rpc.agent_network_id
+        : undefined,
+    attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
+  };
   if (source.kind === "external") {
     return {
-      label: `External agent ${short}`,
-      detail: `Authenticated external agent ${agentId}, installation ${source.installation_id ?? "unknown"}`,
+      ...evidence,
+      label: "External agent message",
     };
   }
   return {
-    label: `Agent ${short}`,
-    detail: `Authenticated agent ${agentId} from project ${source.project_id ?? "unknown"}`,
+    ...evidence,
+    label: "Agent message",
   };
 }
 
@@ -438,6 +470,7 @@ export default function Message({
 }: Props) {
   const intl = useIntl();
   const narrow = useNarrowChatViewport();
+  const embeddingOptions = useChatEmbeddingOptions();
   const fullWidthContent = narrow && (mode === "sidechat" || !show_avatar);
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
@@ -570,9 +603,9 @@ export default function Message({
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const messageRowRef = useRef<HTMLDivElement>(null);
-  const zenTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const openZenMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
-    zenTriggerRef.current = event.currentTarget;
+  const zenTriggerRef = useRef<HTMLElement | null>(null);
+  const openZenMessage = (event?: React.MouseEvent<HTMLElement>) => {
+    zenTriggerRef.current = event?.currentTarget ?? null;
     setShowZenMessage(true);
   };
   const closeZenMessage = () => {
@@ -673,6 +706,10 @@ export default function Message({
     });
   }, [acpInterrupted, generating, isCodexThread]);
   const showDeleteButton = showEditButton && !effectiveGenerating;
+  const codexOverflowMenuLocation = resolveCodexOverflowMenuLocation({
+    generating: effectiveGenerating,
+    isAgentMessage: isCodexAgentMessage,
+  });
 
   useEffect(() => {
     if (isEditing) return;
@@ -1065,17 +1102,27 @@ export default function Message({
     }
     return recordCodexFirstResponseVisible(responseParentMessageId);
   }, [isCodexThread, renderedMessageValue, responseParentMessageId]);
-  const renderedMessageMarkdown = useMemo(
-    () =>
-      is_viewers_message
-        ? renderedMessageValue
-        : formatCodexErrorMarkdown(
-            linkifyCommitHashes(renderedMessageValue),
-            lite,
-            acpState === "error",
-          ),
-    [is_viewers_message, renderedMessageValue, acpState],
-  );
+  const renderedMessageMarkdown = useMemo(() => {
+    const formattedValue = is_viewers_message
+      ? renderedMessageValue
+      : formatCodexErrorMarkdown(
+          linkifyCommitHashes(renderedMessageValue),
+          lite,
+          acpState === "error",
+        );
+    const rawRpc = field<any>(message, "agent_rpc");
+    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const value = rpcAttribution
+      ? stripAgentRpcPrompt(formattedValue, rpc)
+      : formattedValue;
+    return rpcAttribution ? agentMessageFence(value, rpcAttribution) : value;
+  }, [
+    is_viewers_message,
+    renderedMessageValue,
+    acpState,
+    rpcAttribution,
+    message,
+  ]);
   const showCodexErrorHelp =
     isCodexThread && !is_viewers_message && acpState === "error";
   const acpResubmitParentMessage = (() => {
@@ -1282,7 +1329,14 @@ export default function Message({
     actions?.setFragment(d);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    url.hash = Fragment.encode({ chat: toMsString(d) });
+    const fragment = {
+      chat: toMsString(d),
+      ...(embeddingOptions.agentWorkspace && messageThreadId
+        ? { thread: messageThreadId }
+        : {}),
+    };
+    url.hash = Fragment.encode(fragment);
+    Fragment.set(fragment);
     window.history.replaceState({}, "", url.href);
     const ok = await copyTextToClipboard({ text: url.href });
     if (ok) {
@@ -1578,6 +1632,7 @@ export default function Message({
   }
 
   function renderMessageHeader(lighten) {
+    if (isCodexAgentMessage) return null;
     return (
       <div
         style={{
@@ -1591,6 +1646,11 @@ export default function Message({
           message={message}
           edit={showEditButton ? edit_message : undefined}
         />
+        {useCodexSelectToolbar && codexOverflowMenuLocation === "header" ? (
+          <span style={{ marginLeft: "auto" }}>
+            {renderCodexOverflowMenu()}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -1807,7 +1867,7 @@ export default function Message({
     );
   }
 
-  function renderCodexMessageActions() {
+  function getCodexOverflowItems(): MenuItems {
     const hasVisibleCompletedActivity =
       inlineCodexActivityMode === "completed" &&
       Array.isArray(completedCodexActivityBlocks) &&
@@ -1829,72 +1889,48 @@ export default function Message({
       effectiveGenerating,
       isLastMessageInThread,
     });
-    const buttons: ReactNode[] = [
-      <Tooltip key="focus" placement="top" title="Focus this message">
-        <Button
-          size="small"
-          type="text"
-          style={getFocusMessageButtonStyle()}
-          aria-label="Focus this message"
-          aria-haspopup="dialog"
-          onClick={openZenMessage}
-        >
-          <Icon name="expand-arrows" />
-        </Button>
-      </Tooltip>,
-    ];
-    const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.unshift(readAloud);
-    if (!read_only) {
-      buttons.unshift(
-        <Tooltip key="git-browser" placement="bottom" title="Open git browser">
-          <Button
-            size="small"
-            type="text"
-            style={{ color: UI_COLORS.muted }}
-            onClick={() => void openGitBrowserFromMessage()}
-            icon={<Icon name="git" />}
-          />
-        </Tooltip>,
-      );
-    }
-
-    if (showShowActivityButton && onExpandedCodexActivityChange) {
-      buttons.splice(
-        0,
-        0,
-        <span key="show-activity" style={{ marginTop: "-5px" }}>
-          <Tip
-            placement="bottom"
-            title={
-              showActivityButtonState.disabled &&
-              showActivityButtonState.label === "Activity not available"
-                ? "No saved agent activity is available for this turn"
-                : "Show the full agent activity for this turn"
-            }
-          >
-            <Button
-              size="small"
-              type="text"
-              disabled={showActivityButtonState.disabled}
-              loading={showActivityButtonState.loading}
-              style={{
-                color: UI_COLORS.muted,
-                fontSize: "12px",
-              }}
-              onClick={() => {
-                if (showActivityButtonState.disabled) return;
-                onExpandedCodexActivityChange(true);
-              }}
-            >
-              {showActivityButtonState.label}
-            </Button>
-          </Tip>
-        </span>,
-      );
-    }
-
     const overflowItems: MenuItems = [
+      {
+        key: "info",
+        label: "Info",
+        onClick: () => {
+          const configValue = (key: keyof CodexThreadConfig) =>
+            (threadCodexConfig as any)?.get?.(key) ?? threadCodexConfig?.[key];
+          const details = [
+            ["Model", configValue("model") ?? isLLMThread],
+            ["Thinking", configValue("reasoning")],
+            [
+              "Speed",
+              configValue("serviceTier") === "fast" ? "Fast" : "Standard",
+            ],
+            ["Payment", configValue("paymentSource") ?? "Automatic"],
+            ["Working directory", configValue("workingDirectory")],
+          ].filter((entry) => entry[1]);
+          Modal.info({
+            title: "Agent response info",
+            content: (
+              <dl
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr",
+                  gap: "6px 14px",
+                }}
+              >
+                <dt>Started</dt>
+                <dd style={{ margin: 0 }}>
+                  <TimeAgo date={new Date(acpStartedAtMs ?? date)} />
+                </dd>
+                {details.flatMap(([label, value]) => [
+                  <dt key={`${label}-label`}>{label}</dt>,
+                  <dd key={`${label}-value`} style={{ margin: 0 }}>
+                    {`${value}`}
+                  </dd>,
+                ])}
+              </dl>
+            ),
+          });
+        },
+      },
       {
         key: "copy-whole",
         label: "Copy whole message",
@@ -1910,6 +1946,40 @@ export default function Message({
         },
       },
     ];
+
+    if (showShowActivityButton && onExpandedCodexActivityChange) {
+      overflowItems.push({
+        key: "show-activity",
+        label: showActivityButtonState.loading
+          ? "Loading activity…"
+          : showActivityButtonState.label,
+        disabled:
+          showActivityButtonState.disabled || showActivityButtonState.loading,
+        onClick: () => {
+          if (
+            showActivityButtonState.disabled ||
+            showActivityButtonState.loading
+          ) {
+            return;
+          }
+          onExpandedCodexActivityChange(true);
+        },
+      });
+    }
+
+    if (!read_only) {
+      overflowItems.push({
+        key: "git-browser",
+        label: "Open git browser",
+        onClick: () => void openGitBrowserFromMessage(),
+      });
+    }
+
+    overflowItems.push({
+      key: "focus",
+      label: "Focus message",
+      onClick: () => openZenMessage(),
+    });
 
     if (acpPrompt.trim()) {
       overflowItems.push({
@@ -1957,17 +2027,33 @@ export default function Message({
       });
     }
 
-    if (overflowItems.length > 0) {
-      buttons.push(
-        <DropdownMenu
-          key="more"
-          items={overflowItems}
-          title={<Icon name="ellipsis-vertical" />}
-          size="small"
-          style={{ color: UI_COLORS.muted }}
-        />,
-      );
+    return overflowItems;
+  }
+
+  function renderCodexOverflowMenu() {
+    const overflowItems = getCodexOverflowItems();
+    if (overflowItems.length === 0) return null;
+    return (
+      <DropdownMenu
+        items={overflowItems}
+        title={<Icon name="ellipsis-vertical" />}
+        size="small"
+        style={{ color: UI_COLORS.muted }}
+        ariaLabel="More message actions"
+      />
+    );
+  }
+
+  function renderCodexMessageActions() {
+    const buttons: ReactNode[] = [];
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.push(readAloud);
+
+    if (codexOverflowMenuLocation === "footer") {
+      buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
     }
+
+    if (buttons.length === 0) return null;
 
     return (
       <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
@@ -2219,14 +2305,31 @@ export default function Message({
       shouldRenderInterleavedCodexActivityBody &&
       !suppressPlaceholderBody &&
       value.trim().length > 0;
-    const openCommitFromMessage = (e: any) => {
+    const openResultFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
-      const hash = parseGitCommitLink(anchor?.getAttribute("href"));
-      if (!hash) return;
+      const href = anchor?.getAttribute("href");
+      const hash = parseGitCommitLink(href);
+      if (hash) {
+        e.preventDefault();
+        e.stopPropagation();
+        void openGitBrowserFromMessage(hash);
+        return;
+      }
+      if (!embeddingOptions.openFilesInWorkbench || !actions) return;
+      const file = projectFileTargetFromHref({
+        href,
+        projectId: project_id,
+        basePath: activityBasePath,
+      });
+      if (!file) return;
       e.preventDefault();
       e.stopPropagation();
-      void openGitBrowserFromMessage(hash);
+      openProjectFileResult(actions, {
+        kind: "file",
+        ...file,
+        threadId: messageThreadId,
+      });
     };
     const retainedSessionId = field<string>(message, "acp_thread_id");
     const stopRetainedWork = async () => {
@@ -2308,20 +2411,6 @@ export default function Message({
               ? stopRetainedWork
               : undefined
           }
-          onContinue={
-            !effectiveGenerating &&
-            !acpInterrupted &&
-            !read_only &&
-            isLastMessageInThread &&
-            actions != null
-              ? () =>
-                  actions.sendReply({
-                    message,
-                    reply: "continue",
-                    noNotification: true,
-                  })
-              : undefined
-          }
           openDrawerToken={openActivityDrawerToken}
           focusAttentionId={focusAttentionId}
           jumpText={undefined}
@@ -2360,7 +2449,7 @@ export default function Message({
           ? renderInterleavedCodexBody({
               blocks: activityBlocksToRender,
               message_class,
-              openCommitFromMessage,
+              openCommitFromMessage: openResultFromMessage,
               showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
               onHideActivity:
@@ -2385,65 +2474,103 @@ export default function Message({
               />
             ),
             children: (
-              <div onClickCapture={openCommitFromMessage}>
-                {messageBodyMode === "select" ? (
-                  renderSelectableMarkdownBody({
-                    value,
-                    message_class,
-                    style: MARKDOWN_STYLE,
-                  })
-                ) : (
-                  <StaticMarkdown
-                    style={MARKDOWN_STYLE}
-                    value={value}
-                    className={message_class}
-                    editorTheme={editorTheme}
-                    highlightQuery={searchHighlight}
-                    inlineCodeLinks={
-                      Array.isArray(inlineCodeLinks)
-                        ? inlineCodeLinks
-                        : undefined
-                    }
-                    inlineCodeProjectRoot={activityBasePath}
+              <ContextualReply
+                actions={actions}
+                projectId={project_id ?? ""}
+                path={path ?? ""}
+                disabled={
+                  read_only ||
+                  !project_id ||
+                  !path ||
+                  !msgWrittenByLLM ||
+                  !messageThreadId
+                }
+                source={{
+                  kind: "message",
+                  id: field<string>(message, "message_id") ?? `${date}`,
+                  thread_id: messageThreadId ?? "",
+                  title: "Assistant response",
+                }}
+              >
+                <div onClickCapture={openResultFromMessage}>
+                  {messageBodyMode === "select" ? (
+                    renderSelectableMarkdownBody({
+                      value,
+                      message_class,
+                      style: MARKDOWN_STYLE,
+                    })
+                  ) : (
+                    <StaticMarkdown
+                      style={MARKDOWN_STYLE}
+                      value={value}
+                      className={message_class}
+                      editorTheme={editorTheme}
+                      highlightQuery={searchHighlight}
+                      inlineCodeLinks={
+                        Array.isArray(inlineCodeLinks)
+                          ? inlineCodeLinks
+                          : undefined
+                      }
+                      inlineCodeProjectRoot={activityBasePath}
+                    />
+                  )}
+                  <CodexQuotaHelp
+                    message={value}
+                    projectId={project_id}
+                    isError={showCodexErrorHelp}
                   />
-                )}
-                <CodexQuotaHelp
-                  message={value}
-                  projectId={project_id}
-                  isError={showCodexErrorHelp}
-                />
-              </div>
+                </div>
+              </ContextualReply>
             ),
           })
         ) : !shouldRenderInterleavedCodexActivityBody &&
           !suppressPlaceholderBody &&
           value.trim().length > 0 ? (
-          <div onClickCapture={openCommitFromMessage}>
-            {messageBodyMode === "select" ? (
-              renderSelectableMarkdownBody({
-                value,
-                message_class,
-                style: MARKDOWN_STYLE,
-              })
-            ) : (
-              <StaticMarkdown
-                style={MARKDOWN_STYLE}
-                value={value}
-                className={message_class}
-                editorTheme={editorTheme}
-                highlightQuery={searchHighlight}
-                inlineCodeLinks={
-                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-                }
-                inlineCodeProjectRoot={activityBasePath}
+          <ContextualReply
+            actions={actions}
+            projectId={project_id ?? ""}
+            path={path ?? ""}
+            disabled={
+              read_only ||
+              !project_id ||
+              !path ||
+              !msgWrittenByLLM ||
+              !messageThreadId
+            }
+            source={{
+              kind: "message",
+              id: field<string>(message, "message_id") ?? `${date}`,
+              thread_id: messageThreadId ?? "",
+              title: "Assistant response",
+            }}
+          >
+            <div onClickCapture={openResultFromMessage}>
+              {messageBodyMode === "select" ? (
+                renderSelectableMarkdownBody({
+                  value,
+                  message_class,
+                  style: MARKDOWN_STYLE,
+                })
+              ) : (
+                <StaticMarkdown
+                  style={MARKDOWN_STYLE}
+                  value={value}
+                  className={message_class}
+                  editorTheme={editorTheme}
+                  highlightQuery={searchHighlight}
+                  inlineCodeLinks={
+                    Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                  }
+                  inlineCodeProjectRoot={activityBasePath}
+                />
+              )}
+              <CodexQuotaHelp
+                message={value}
+                projectId={project_id}
+                isError={showCodexErrorHelp}
               />
-            )}
-            <CodexQuotaHelp
-              message={value}
-              projectId={project_id}
-              isError={showCodexErrorHelp}
-            />
-          </div>
+            </div>
+          </ContextualReply>
         ) : null}
         {!showCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
@@ -2520,49 +2647,6 @@ export default function Message({
     );
   }
 
-  function renderInterruptedControls() {
-    if (
-      actions == null ||
-      !acpInterrupted ||
-      effectiveGenerating ||
-      !isCodexThread ||
-      !isLastMessageInThread
-    ) {
-      return null;
-    }
-    if (!messageThreadId) return null;
-    return (
-      <div
-        style={{
-          marginTop: "8px",
-          display: "flex",
-          justifyContent: "flex-start",
-          alignItems: "center",
-          gap: "8px",
-          flexWrap: "wrap",
-        }}
-      >
-        <Button
-          size="small"
-          onClick={() => {
-            resetAcpThreadState({
-              actions,
-              threadId: messageThreadId,
-            });
-            actions.sendReply({
-              message,
-              reply: "continue",
-              noNotification: true,
-            });
-          }}
-          title="Ask Codex to continue from this interrupted turn"
-        >
-          <Icon name="step-forward" /> Continue
-        </Button>
-      </div>
-    );
-  }
-
   function renderForkNotice() {
     const navigation = resolveForkThreadNavigation({ actions, message });
     if (!navigation.fragment) return null;
@@ -2600,10 +2684,7 @@ export default function Message({
     const marginTop =
       !is_prev_sender && is_viewers_message ? MARGIN_TOP_VIEWER : "5px";
 
-    const padding = selected
-      ? { paddingTop: 6, paddingLeft: 6, paddingRight: 6 }
-      : { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
-    const baseBottomPadding = selected ? 6 : 9;
+    const padding = { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
     const messageStyle: CSSProperties = {
       color,
       background,
@@ -2611,7 +2692,7 @@ export default function Message({
       borderRadius: "5px",
       marginTop,
       fontSize: `${font_size}px`,
-      paddingBottom: baseBottomPadding,
+      paddingBottom: 9,
       ...padding,
       ...(is_viewers_message && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
@@ -2619,35 +2700,40 @@ export default function Message({
       ...(mode === "sidechat"
         ? { marginLeft: "5px", marginRight: "5px" }
         : undefined),
-      ...(selected ? { border: "3px solid #66bb6a" } : undefined),
+      ...(selected
+        ? { boxShadow: `inset 3px 0 0 ${UI_COLORS.success}` }
+        : undefined),
     } as const;
 
     return (
       <Col key={1} xs={mainXS}>
-        <div
-          style={{ display: "flex", margin: "10px 0 -10px 0" }}
-          onClick={() => {
-            const d = dateValue(message);
-            if (d != null) actions?.setFragment(d);
-          }}
-        >
-          {rpcAttribution ? (
-            <Tooltip
-              title={`${rpcAttribution.detail}. This project transcript is collaborator-editable; authorization was checked separately at delivery time.`}
-            >
-              <Tag icon={<Icon name="robot" />}>{rpcAttribution.label}</Tag>
-            </Tooltip>
-          ) : !is_prev_sender && !is_viewers_message && senderId ? (
+        {!rpcAttribution &&
+        !isCodexAgentMessage &&
+        !is_prev_sender &&
+        !is_viewers_message &&
+        senderId ? (
+          <div
+            style={{ display: "flex", margin: "10px 0 -10px 0" }}
+            onClick={() => {
+              const d = dateValue(message);
+              if (d != null) actions?.setFragment(d);
+            }}
+          >
             <Name sender_name={senderName} />
-          ) : undefined}
-        </div>
+          </div>
+        ) : null}
         <div style={messageStyle} className="smc-chat-message">
           {renderMessageHeader(lighten)}
           {messageBodyMode === "edit"
             ? renderEditMessage()
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
-          {renderInterruptedControls()}
+          <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
+          <ArtifactCards
+            actions={actions}
+            threadId={field<string>(message, "thread_id")}
+            messageId={field<string>(message, "message_id")}
+          />
           {renderMessageActions()}
         </div>
         {renderHistory()}
@@ -2987,6 +3073,8 @@ export default function Message({
   );
 
   const renderAcpState = () => {
+    if (field<boolean>(message, "post_only"))
+      return <Tag>Posted · Not sent to agent</Tag>;
     if (!acpStateToRender) return null;
     if (acpStateToRender === "queue") {
       return (
@@ -3087,7 +3175,7 @@ export default function Message({
           onOpenActivityLog={openActivityFromGitBrowser}
         />
       ) : null}
-      {acpStateToRender ? (
+      {acpStateToRender || field<boolean>(message, "post_only") ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>
         </div>

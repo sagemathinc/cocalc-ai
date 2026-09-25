@@ -7,6 +7,8 @@ import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import getBalance from "./get-balance";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
+import { publishBillingAccountProjection } from "./billing-account";
 
 const logger = getLogger("purchases:refresh-balance");
 
@@ -19,6 +21,20 @@ export async function publishAccountBalanceUpdateBestEffort({
 }): Promise<void> {
   const accountId = `${account_id ?? ""}`.trim();
   if (!accountId) {
+    return;
+  }
+  if (isBillingAuthorityEnabled()) {
+    try {
+      await publishBillingAccountProjection({
+        account_id: accountId,
+        balance: toDecimal(balance).toNumber(),
+      });
+    } catch (err) {
+      logger.warn("failed to publish account balance projection", {
+        account_id: accountId,
+        err: `${err}`,
+      });
+    }
     return;
   }
   const publisher = db().publishAccountRowFeedEventsBestEffort;

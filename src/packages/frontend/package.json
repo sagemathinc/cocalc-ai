@@ -43,6 +43,7 @@
     "@cocalc/assets": "workspace:*",
     "@cocalc/cdn": "workspace:*",
     "@cocalc/chat": "workspace:*",
+    "@cocalc/chat-client": "workspace:*",
     "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/docs": "workspace:*",

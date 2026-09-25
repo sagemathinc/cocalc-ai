@@ -116,6 +116,19 @@ describe("public shell rendering", () => {
     expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
   });
 
+  it("hides the crawler fallback before deferred public scripts run", async () => {
+    const { html } = await renderPublicShell(request("/"));
+    const guardIndex = html.indexOf('id="cocalc-public-prerender-guard"');
+    const fallbackIndex = html.indexOf('data-cocalc-public-prerender="home"');
+
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(guardIndex).toBeLessThan(fallbackIndex);
+    expect(html).toContain(
+      "html.cocalc-public-starting [data-cocalc-public-prerender]{visibility:hidden}",
+    );
+    expect(html).toContain("e.classList.remove(c)},30000)");
+  });
+
   it.each([
     ["/", "home", "Keep people, AI agents, and project work together."],
     ["/products", "products", "Ways to Run CoCalc"],

@@ -1,4 +1,5 @@
 import dust from "./dust";
+import { browseProjectDirectory } from "../browse-directory";
 import getStorageHistory from "./storage-history";
 import getStorageOverview from "./storage-overview";
 import useDiskUsage, {
@@ -948,8 +949,7 @@ export default function DiskUsage({
   }, []);
 
   async function handleBrowsePath(path: string) {
-    const actions = redux.getProjectActions(project_id);
-    actions.set_current_path(path);
+    await browseProjectDirectory(project_id, path);
     setExpand(false);
   }
 

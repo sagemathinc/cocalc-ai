@@ -4,8 +4,19 @@
  */
 
 import { fromJS } from "immutable";
+import { renderHook } from "@testing-library/react";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 
 const mockGetStore = jest.fn();
+const mockUseNamedAgents = jest.fn();
+let mockAllowAgentMentions = false;
+const mockProjectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+let mockArtifactNames: any[] = [];
+
+jest.mock("@cocalc/frontend/agents/artifact-names", () => ({
+  useArtifactNames: () => ({ names: mockArtifactNames }),
+}));
 
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: () => null,
@@ -20,7 +31,27 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ project_id: "project-1" }),
+  useProjectContext: () => ({ project_id: mockProjectId }),
+}));
+
+jest.mock("@cocalc/frontend/agents/api", () => ({
+  namedAgentReference: (agent) => ({
+    version: 1,
+    name: agent.name,
+    target: agent.endpoint,
+    naming_account_id: agent.account_id,
+  }),
+  useNamedAgents: (enabled) => mockUseNamedAgents(enabled),
+  useAgentNetworks: () => ({
+    directory: { networks: [], controls: { paused: false } },
+  }),
+}));
+
+jest.mock("@cocalc/frontend/agents/mention-context", () => ({
+  useAgentMentionContext: () => ({
+    allowAgentMentions: mockAllowAgentMentions,
+    states: {},
+  }),
 }));
 
 import {
@@ -28,10 +59,10 @@ import {
   getMentionAllAccountIds,
   mentionDisplayText,
 } from "./mention-all";
-import { mentionableUsers } from "./mentionable-users";
+import { mentionableUsers, useMentionableUsers } from "./mentionable-users";
 
 describe("mentionableUsers", () => {
-  const project_id = "project-1";
+  const project_id = mockProjectId;
   const alice = "11111111-1111-4111-8111-111111111111";
   const bob = "22222222-2222-4222-8222-222222222222";
   const viewer = "33333333-3333-4333-8333-333333333333";
@@ -63,6 +94,56 @@ describe("mentionableUsers", () => {
 
   beforeEach(() => {
     mockGetStore.mockReset();
+    mockAllowAgentMentions = false;
+    mockArtifactNames = [];
+    mockUseNamedAgents.mockReset();
+    jest.mocked(useTypedRedux).mockReset();
+    mockUseNamedAgents.mockReturnValue({
+      directory: {
+        enabled: true,
+        agents: [
+          {
+            name: "illustrator",
+            account_id: alice,
+            endpoint: {
+              project_id,
+              agent_id: "44444444-4444-4444-8444-444444444444",
+            },
+            available: true,
+          },
+        ],
+      },
+    });
+  });
+
+  it("suggests only personally named artifacts in this project", () => {
+    mockStores(jest.fn());
+    mockAllowAgentMentions = true;
+    mockArtifactNames = [
+      { name: "nb1", project_id, entry_id: "a".repeat(64), active: true },
+      {
+        name: "elsewhere",
+        project_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        entry_id: "b".repeat(64),
+        active: true,
+      },
+    ];
+    const { result } = renderHook(() => useMentionableUsers());
+    const items = result.current("nb");
+    expect(
+      items.find((item) => item.group === "Artifacts")?.label,
+    ).toBeTruthy();
+    expect(
+      parseArtifactMention(
+        items.find((item) => item.group === "Artifacts")!.value,
+      ),
+    ).toEqual({
+      version: 1,
+      project_id,
+      entry_id: "a".repeat(64),
+      name: "nb1",
+    });
+    expect(items.some((item) => item.search === "elsewhere")).toBe(false);
   });
 
   it("keeps unresolved collaborators visible while their names hydrate", () => {
@@ -134,5 +215,24 @@ describe("mentionableUsers", () => {
       mentionDisplayText(ALL_PROJECT_COLLABORATORS_MENTION_ID, "@ignored"),
     ).toBe("@all");
     expect(mentionDisplayText(alice, "@Ada Lovelace")).toBe("@Ada Lovelace");
+  });
+
+  it("excludes named agents outside an agent thread", () => {
+    mockStores(jest.fn().mockReturnValue("Ada Lovelace"));
+    const { result } = renderHook(() => useMentionableUsers());
+
+    const items = result.current(undefined);
+    expect(items.map(({ group }) => group)).not.toContain("Agents");
+    expect(mockUseNamedAgents).toHaveBeenCalledWith(false);
+  });
+
+  it("includes named agents when the agent thread opts in", () => {
+    mockAllowAgentMentions = true;
+    mockStores(jest.fn().mockReturnValue("Ada Lovelace"));
+    const { result } = renderHook(() => useMentionableUsers());
+
+    const items = result.current("illustrator");
+    expect(items.map(({ group }) => group)).toContain("Other agents");
+    expect(mockUseNamedAgents).toHaveBeenCalledWith(true);
   });
 });

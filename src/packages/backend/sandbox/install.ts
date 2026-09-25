@@ -112,28 +112,28 @@ type CodexArch = "x64" | "arm64";
 
 const CODEX_RELEASE_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "47aa244350797dc42e6ba63277d49fc7bcd5cd1df3b640519520e8c4a975dbbb",
+    codex: "b77fd874b5a50202565cf2f3e5453da7e02b0a2267536ba3f89191228c828c9c",
     "codex-code-mode-host":
-      "8d89bb4641dd1c0169382bc19a525cb42bc2b3507813d4206d43a0f44927a995",
+      "479fe7126c887c139dd566b841cdb43cd958b624ae9b3da45c6deb5d7a0209c6",
   },
   arm64: {
-    codex: "6c2f8826255e564395a865353aca742c30f5c672b7ed968fc59409a09826c1c2",
+    codex: "31fdecc5cc723c606107b2e1a4c827c7ff723772bcb2020524f9eee610f9fa90",
     "codex-code-mode-host":
-      "c5a103f2e5c8cb698174ae557b8ea817671c32c0cb345174fcd2edd18dd92e73",
+      "03608f5c74cfed1b81c19c0600dacdc200e66d7ee7940688834c48f5b8c3e1c1",
   },
 };
 
 // Stock and patched Codex report the same version; verify the matched pair.
 const CODEX_BINARY_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "c732a36fcfbed3c1d981ffb4bc9e836ab871dffe51c8716add2359733d6e109e",
+    codex: "dfd786bf2c7aa91be045f01180d275970f645edcbac8627ea320535d56c6462d",
     "codex-code-mode-host":
-      "4335d114dde1732d28d00c0ee940f7a1683c4aedd1eb6512fd8c8f3a2746866f",
+      "103f8a655d328f925ab14b8966a169c447a5e6ed476edac30b3304d668fef914",
   },
   arm64: {
-    codex: "96449434101c323be451985e02bb645f98458e4fd9d9f1866c5f180d2c339b7e",
+    codex: "8969d5fe2e65325b1c1f061cc99d17ae34812733f2df1b47241a1627cca91669",
     "codex-code-mode-host":
-      "53151b473541cdd3574df79a0aea41b92136a1526c03df4276a1a4027d88d594",
+      "7fe28fe6f1bd341313148c9c168dee1c00a7286f65b2c830b556d4957667af90",
   },
 };
 
@@ -399,16 +399,16 @@ export const SPEC = {
     },
     BASE: "https://github.com/sagemathinc/sshpiper-binaries/releases",
   },
-  // https://github.com/openai/codex/releases
+  // Patched portable binaries, including the matching code-mode companion.
   codex: {
     optional: false,
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.153.4",
+    VERSION: "0.156.0",
     platforms: ["linux"],
     script: () => getCodexInstallScript(SPEC.codex.VERSION),
-    BASE: "https://github.com/openai/codex/releases",
+    BASE: "https://github.com/sagemathinc/codex/releases",
   },
   blit: {
     optional: false,

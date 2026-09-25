@@ -33,6 +33,64 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 }
 
 describe("evaluateDedicatedHostAdmission", () => {
+  it("preserves the postpaid commitment envelope for personal starts", () => {
+    const policy = snapshot({
+      funding_mode: "account-postpaid",
+      has_usage_subscription: true,
+      postpaid_committed_usd: "900",
+      effective_limits: {
+        credit_spend_limit_5h_usd: 300,
+        credit_spend_limit_7d_usd: 1000,
+      },
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "100",
+      },
+    });
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: policy as any,
+      }),
+    ).toMatchObject({ allowed: false, code: "postpaid_usage_window_exceeded" });
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: { ...policy, postpaid_committed_usd: "899" } as any,
+      }),
+    ).toMatchObject({ allowed: true, funding_lane: "credit" });
+  });
+  it("does not allow a prepaid VM to spend credit held for sponsorship", () => {
+    for (const action of ["create", "start", "resize"] as const) {
+      expect(
+        evaluateDedicatedHostAdmission({
+          action,
+          machine_cloud: "gcp",
+          snapshot: snapshot({
+            balance: "1000",
+            prepaid_spendable_balance: "0",
+          }) as any,
+        }),
+      ).toMatchObject({ allowed: false, code: "prepaid_balance_required" });
+    }
+  });
+
+  it("allows prepaid admission when some unreserved credit remains", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: snapshot({
+          balance: "1000",
+          prepaid_spendable_balance: "25",
+        }) as any,
+      }),
+    ).toEqual({ allowed: true, funding_lane: "prepaid" });
+  });
   it("allows self-host actions without billable-host checks", () => {
     expect(
       evaluateDedicatedHostAdmission({

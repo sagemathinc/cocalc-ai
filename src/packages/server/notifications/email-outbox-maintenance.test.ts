@@ -8,12 +8,20 @@ import {
   sendQueuedNotificationEmailBatch,
 } from "./email-outbox-maintenance";
 import { getServerSettings } from "@cocalc/database/settings";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountById: jest.fn(),
+}));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "local",
+}));
 
 const claimQueuedNotificationEmails = jest.fn();
 const claimDigestNotificationEmails = jest.fn();
 const markNotificationEmailSent = jest.fn();
 const markNotificationEmailsSent = jest.fn();
 const markNotificationEmailFailed = jest.fn();
+const markFinancialReceiptEmailFailed = jest.fn();
 const markNotificationEmailStatus = jest.fn();
 const requeueNotificationEmail = jest.fn();
 const revalidateNotificationEmail = jest.fn();
@@ -29,6 +37,8 @@ jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
     markNotificationEmailsSent(...args),
   markNotificationEmailFailed: (...args: unknown[]) =>
     markNotificationEmailFailed(...args),
+  markFinancialReceiptEmailFailed: (...args: unknown[]) =>
+    markFinancialReceiptEmailFailed(...args),
   markNotificationEmailStatus: (...args: unknown[]) =>
     markNotificationEmailStatus(...args),
   requeueNotificationEmail: (...args: unknown[]) =>
@@ -94,6 +104,80 @@ describe("notification email outbox maintenance", () => {
     claimDigestNotificationEmails.mockResolvedValue([]);
     requeueNotificationEmail.mockResolvedValue(undefined);
     revalidateNotificationEmail.mockResolvedValue({ action: "send" });
+  });
+
+  it("resolves financial receipt current home and preserves strict skip status before any send", async () => {
+    const row = {
+      ...ROW,
+      summary_json: {
+        summary: { notice_type: "billing_course_funding_receipt" },
+      },
+    };
+    claimQueuedNotificationEmails.mockResolvedValue([row]);
+    (getClusterAccountById as jest.Mock).mockResolvedValue({
+      home_bay_id: "moved",
+    });
+    revalidateNotificationEmail.mockResolvedValue({
+      action: "skip",
+      status: "skipped_unverified",
+      reason: "home changed",
+    });
+    const sender = jest.fn();
+    await sendQueuedNotificationEmailBatch({ sender });
+    expect(revalidateNotificationEmail).toHaveBeenCalledWith({
+      row,
+      financial_home: { current: "moved", local: "local" },
+    });
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped_unverified" }),
+    );
+    expect(sender).not.toHaveBeenCalled();
+  });
+
+  it("never falls back to a stale local financial destination when directory lookup fails", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: { notice_type: "billing_credit_transfer_receipt" },
+        },
+      },
+    ]);
+    (getClusterAccountById as jest.Mock).mockRejectedValue(
+      new Error("directory unavailable"),
+    );
+    const sender = jest.fn();
+    await sendQueuedNotificationEmailBatch({ sender });
+    expect(sender).not.toHaveBeenCalled();
+    expect(revalidateNotificationEmail).not.toHaveBeenCalled();
+    expect(markFinancialReceiptEmailFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: ROW.email_id,
+        attempt_count: ROW.attempt_count,
+      }),
+    );
+    expect(markNotificationEmailFailed).not.toHaveBeenCalled();
+  });
+
+  it("does not let financial receipts bypass verification through a digest", async () => {
+    claimDigestNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        delivery_mode: "digest",
+        summary_json: {
+          summary: { notice_type: "billing_course_funding_receipt" },
+        },
+      },
+    ]);
+    const sender = jest.fn();
+    await sendDailyNotificationDigestBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+    });
+    expect(sender).not.toHaveBeenCalled();
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped_unverified" }),
+    );
   });
 
   it("sends claimed immediate notification email and marks it sent", async () => {
@@ -417,6 +501,76 @@ describe("notification email outbox maintenance", () => {
             "notification email requires the site setting help_email to be configured",
         }),
       }),
+    );
+  });
+
+  it.each(["missing-help", "no-backend", "smtp"])(
+    "durably retries a financial receipt after %s without creating another receipt",
+    async (failure) => {
+      const row = {
+        ...ROW,
+        attempt_count: 2,
+        responsible_account_id: null,
+        category: "billing",
+        lane: "critical",
+        summary_json: {
+          summary: { notice_type: "billing_course_funding_receipt" },
+        },
+      };
+      claimQueuedNotificationEmails.mockResolvedValue([row]);
+      (getClusterAccountById as jest.Mock).mockResolvedValue({
+        home_bay_id: "local",
+      });
+      if (failure === "missing-help")
+        getServerSettingsMock.mockResolvedValue({
+          help_email: "",
+          site_name: "CoCalc",
+        } as any);
+      const sender = jest.fn(async () => {
+        throw new Error("SMTP unavailable");
+      });
+      await sendQueuedNotificationEmailBatch({
+        sender,
+        emailConfigured: jest.fn(async () => failure !== "no-backend"),
+      });
+      expect(markFinancialReceiptEmailFailed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email_id: ROW.email_id,
+          attempt_count: 2,
+          error: expect.any(Error),
+        }),
+      );
+      expect(markNotificationEmailFailed).not.toHaveBeenCalled();
+      expect(markNotificationEmailSent).not.toHaveBeenCalled();
+      expect(revalidateNotificationEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ row }),
+      );
+    },
+  );
+
+  it("revalidates a retried financial receipt and never retries a revoked verification", async () => {
+    const row = {
+      ...ROW,
+      attempt_count: 3,
+      summary_json: {
+        summary: { notice_type: "billing_course_funding_receipt" },
+      },
+    };
+    claimQueuedNotificationEmails.mockResolvedValue([row]);
+    (getClusterAccountById as jest.Mock).mockResolvedValue({
+      home_bay_id: "local",
+    });
+    revalidateNotificationEmail.mockResolvedValue({
+      action: "skip",
+      status: "skipped_unverified",
+      reason: "Verification revoked",
+    });
+    const sender = jest.fn();
+    await sendQueuedNotificationEmailBatch({ sender });
+    expect(sender).not.toHaveBeenCalled();
+    expect(markFinancialReceiptEmailFailed).not.toHaveBeenCalled();
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped_unverified" }),
     );
   });
 

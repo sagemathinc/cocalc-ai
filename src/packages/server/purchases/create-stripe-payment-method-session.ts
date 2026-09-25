@@ -22,9 +22,12 @@ See:
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
-import getEmailAddress from "@cocalc/server/accounts/get-email-address";
+import {
+  billingAccountsTable,
+  ensureBillingAccount,
+  getBillingAccountProfile,
+} from "@cocalc/server/purchases/billing-account";
 import { getStripeCustomerId } from "./stripe/util";
 import { getCurrentSession } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
@@ -52,9 +55,7 @@ export default async function createStripePaymentMethodSession(
   if ((await getCurrentSession(account_id)) != null) {
     throw Error("there is already an active stripe checkout session");
   }
-  if (!(await isValidAccount(account_id))) {
-    throw Error("account must be valid");
-  }
+  await ensureBillingAccount(account_id);
   if (!success_url) {
     throw Error("success_url must be nontrivial");
   }
@@ -68,7 +69,9 @@ export default async function createStripePaymentMethodSession(
     client_reference_id: account_id,
     customer,
     customer_email:
-      customer == null ? await getEmailAddress(account_id) : undefined,
+      customer == null
+        ? (await getBillingAccountProfile(account_id)).email_address
+        : undefined,
     tax_id_collection: { enabled: true },
     //     automatic_tax: {
     //       enabled: true,
@@ -80,8 +83,9 @@ export default async function createStripePaymentMethodSession(
     },
   });
   const db = getPool();
+  const table = billingAccountsTable();
   await db.query(
-    "UPDATE accounts SET stripe_checkout_session=$2 WHERE account_id=$1",
+    `UPDATE ${table} SET stripe_checkout_session=$2 WHERE account_id=$1`,
     [account_id, { id: session.id, url: session.url }],
   );
   return session;

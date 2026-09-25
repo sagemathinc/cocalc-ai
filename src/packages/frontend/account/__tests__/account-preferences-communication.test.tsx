@@ -26,6 +26,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         setOtherSettingsMany(...args),
     }),
   },
+  useActions: () => ({
+    set_other_settings: (...args: unknown[]) => setOtherSettings(...args),
+    set_other_settings_many: (...args: unknown[]) =>
+      setOtherSettingsMany(...args),
+  }),
   useTypedRedux: (...args: unknown[]) => useTypedRedux(...args),
 }));
 
@@ -144,6 +149,10 @@ jest.mock("@cocalc/frontend/i18n", () => ({
   labels: {
     communication: { defaultMessage: "Communication" },
   },
+}));
+
+jest.mock("../low-credit-notification-setting", () => ({
+  LowCreditNotificationSetting: () => <div>Credit reminders</div>,
 }));
 
 function immutableLike(values: Record<string, unknown>) {

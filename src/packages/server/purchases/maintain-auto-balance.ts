@@ -17,6 +17,7 @@ import {
   ensureAutoBalanceValid,
 } from "@cocalc/util/db-schema/accounts";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 
 const logger = getLogger("purchase:maintain-auto-balance");
 
@@ -25,10 +26,11 @@ export default async function maintainAutoBalance({
 }: { max_accounts?: number } = {}) {
   logger.debug("maintainAutoBalance");
   const pool = getPool();
+  const accountTable = billingAccountsTable();
 
   // These are very obviously accounts we should investigate:
   const { rows: rows1 } = await pool.query(`
-      SELECT account_id, auto_balance FROM accounts
+      SELECT account_id, auto_balance FROM ${accountTable}
            WHERE auto_balance IS NOT NULL
            AND auto_balance->>'enabled' = 'true'
            AND balance IS NOT NULL
@@ -36,7 +38,7 @@ export default async function maintainAutoBalance({
            AND deleted IS NOT TRUE
            AND NOT EXISTS (
              SELECT 1 FROM billing_authority_account_fences AS fence
-              WHERE fence.account_id=accounts.account_id AND fence.frozen
+             WHERE fence.account_id=${accountTable}.account_id AND fence.frozen
            )
            AND (auto_balance#>'{trigger}')::numeric >= balance
        `);
@@ -48,18 +50,18 @@ export default async function maintainAutoBalance({
   // time if there are open purchases.  So we also grab all accounts with active open recent PAYG purchases
   // that have auto payments configured.
   const { rows: rows2 } = await pool.query(`
-      SELECT accounts.account_id AS account_id, accounts.auto_balance AS auto_balance FROM purchases, accounts
-           WHERE purchases.account_id = accounts.account_id
+      SELECT billing.account_id AS account_id, billing.auto_balance AS auto_balance FROM purchases, ${accountTable} billing
+           WHERE purchases.account_id = billing.account_id
            AND purchases.time >= NOW() - INTERVAL '1 week'
            AND purchases.cost IS NULL
            AND (purchases.cost_per_hour IS NOT NULL OR purchases.cost_so_far IS NOT NULL)
-           AND accounts.auto_balance IS NOT NULL
+           AND billing.auto_balance IS NOT NULL
            AND auto_balance->>'enabled' = 'true'
-           AND accounts.banned IS NOT TRUE
-           AND accounts.deleted IS NOT TRUE
+           AND billing.banned IS NOT TRUE
+           AND billing.deleted IS NOT TRUE
            AND NOT EXISTS (
              SELECT 1 FROM billing_authority_account_fences AS fence
-              WHERE fence.account_id=accounts.account_id AND fence.frozen
+              WHERE fence.account_id=billing.account_id AND fence.frozen
            )
        `);
   const n = accounts.size;
@@ -99,7 +101,7 @@ export default async function maintainAutoBalance({
       if (status != null) {
         await pool.query(
           `
-        UPDATE accounts
+        UPDATE ${accountTable}
           SET auto_balance = auto_balance || jsonb_build_object('reason', $2::text, 'status', $3::jsonb, 'time', $4::numeric)
           WHERE account_id = $1`,
           [account_id, reason, status, Date.now()],
@@ -107,7 +109,7 @@ export default async function maintainAutoBalance({
       } else {
         await pool.query(
           `
-        UPDATE accounts
+        UPDATE ${accountTable}
           SET auto_balance = auto_balance || jsonb_build_object('reason', $2::text, 'time', $3::numeric)
           WHERE account_id = $1`,
           [account_id, reason, Date.now()],
@@ -120,7 +122,7 @@ export default async function maintainAutoBalance({
       try {
         await pool.query(
           `
-          UPDATE accounts
+          UPDATE ${accountTable}
             SET auto_balance = auto_balance || jsonb_build_object('reason', $2::text)
             WHERE account_id = $1
           `,

@@ -21,7 +21,13 @@ import type {
   LineItem,
   CustomerSessionSecret,
 } from "@cocalc/util/stripe/types";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   createPaymentIntent,
   createSetupIntent,
@@ -55,6 +61,7 @@ import {
 import { LineItemsTable, moneyToString } from "./line-items";
 import { AddressButton, StripeAddressElement } from "./address";
 import CancelPaymentIntent from "./cancel-payment-intent";
+import { uuid } from "@cocalc/util/misc";
 
 const PAYMENT_UPDATE_DEBOUNCE = 2000;
 const PAYMENT_INTENT_PROCESSING_TIMEOUT_MS = 75_000;
@@ -363,6 +370,7 @@ function StripeCheckout({
   const [progressPhase, setProgressPhase] = useState<
     "loading-form" | "confirming" | null
   >(null);
+  const checkoutInstanceId = useRef(uuid()).current;
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   const updateSecret = useCallback(
@@ -382,6 +390,7 @@ function StripeCheckout({
                   description,
                   purpose,
                   metadata,
+                  checkout_instance_id: checkoutInstanceId,
                 });
               });
               if (!completed) {

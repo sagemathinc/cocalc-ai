@@ -4,7 +4,10 @@
  */
 
 import centralLog from "@cocalc/database/postgres/central-log";
-import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  isBillingAccountAdmin,
+  requireBillingAccountDangerousAuth,
+} from "@cocalc/server/purchases/billing-account";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { dispatchCrmSeedRequest } from "@cocalc/server/crm/dispatch";
@@ -14,7 +17,6 @@ import {
 } from "@cocalc/server/crm/feature-flags";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import type { AdminCrmApi } from "@cocalc/conat/hub/api/crm";
-import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 type Method = keyof AdminCrmApi;
 type Input<K extends Method> = Parameters<AdminCrmApi[K]>[0];
@@ -32,7 +34,7 @@ type Request = {
 async function requireAdmin(opts: Request, fresh: boolean): Promise<string> {
   const accountId = `${opts.account_id ?? ""}`.trim();
   if (!accountId) throw Error("must be signed in");
-  if (!(await isAdmin(accountId))) {
+  if (!(await isBillingAccountAdmin(accountId))) {
     throw Object.assign(Error("admin privileges required"), { code: 403 });
   }
   const reason = `${opts.reason ?? ""}`.trim();
@@ -43,7 +45,7 @@ async function requireAdmin(opts: Request, fresh: boolean): Promise<string> {
     throw Error("audit reason must be at most 2000 characters");
   }
   if (fresh) {
-    await requireDangerousSessionAuth({
+    await requireBillingAccountDangerousAuth({
       account_id: accountId,
       browser_id: opts.browser_id,
       session_hash: opts.session_hash,

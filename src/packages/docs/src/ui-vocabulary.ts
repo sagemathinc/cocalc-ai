@@ -68,6 +68,7 @@ const FILE_TAB = "frontend/project/page/file-tab.tsx";
 const HOST_DRAWER = "frontend/hosts/components/host-drawer.tsx";
 const EXAM_PANEL = "frontend/hosts/components/host-exam-panel.tsx";
 const VMS = "frontend/project/compute-vms.tsx";
+const VM_POWER_CONTROLS = "frontend/project/compute-vm-power-controls.tsx";
 const JUPYTER_COMMANDS = "frontend/jupyter/commands.ts";
 const JUPYTER_EDITOR = "frontend/frame-editors/jupyter-editor/editor.ts";
 const STUDIO_CONTROLS = "frontend/jupyter/studio/studio-controls.tsx";
@@ -692,7 +693,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ([key, label, text]): UiVocabularyEntry => ({
       id: `vms.${key}`,
       label,
-      anchors: [def(VMS, text)],
+      anchors: [
+        def(key === "stop" || key === "start" ? VM_POWER_CONTROLS : VMS, text),
+      ],
       // The docs name the Manage menu only through its items, as "Manage > …".
       usedIn: [
         key === "manage"

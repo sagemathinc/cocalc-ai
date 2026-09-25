@@ -82,6 +82,7 @@ export default async function bootstrap(req, res) {
   const display_name = displayNameFromAccount(account) || undefined;
   let jupyter_line_numbers: boolean | undefined;
   let appearance_theme: AppearancePreference | undefined;
+  let openai_disabled: boolean | undefined;
   if (home_bay_id === getConfiguredBayId()) {
     const { rows } = await getPool().query(
       "SELECT editor_settings, other_settings FROM accounts WHERE account_id=$1::UUID",
@@ -89,8 +90,10 @@ export default async function bootstrap(req, res) {
     );
     jupyter_line_numbers =
       rows[0]?.editor_settings?.jupyter_line_numbers === true;
-    if (rows[0])
+    if (rows[0]) {
       appearance_theme = accountAppearancePreference(rows[0].other_settings);
+      openai_disabled = rows[0].other_settings?.openai_disabled === true;
+    }
   }
   let requestedProjectWindow;
   try {
@@ -132,6 +135,7 @@ export default async function bootstrap(req, res) {
     display_name,
     jupyter_line_numbers,
     appearance_theme,
+    openai_disabled,
     home_bay_id,
     home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
     impersonation: await getImpersonationBootstrapInfo({ req, account_id }),

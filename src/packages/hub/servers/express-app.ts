@@ -56,6 +56,10 @@ import {
   isLaunchpadMode,
   isSoftwareLicenseActivated,
 } from "@cocalc/server/software-licenses/activation";
+import {
+  fundingApprovalRelatedOrigin,
+  resolveFundingApprovalConfiguration,
+} from "@cocalc/server/compute/funding/approval-config";
 
 const logger = getLogger("hub:servers:express-app");
 
@@ -224,6 +228,17 @@ export default async function init(opts: Options): Promise<{
     (!isLaunchpadMode() || isEnabled(process.env.COCALC_ENABLE_ANALYTICS));
   if (analyticsEnabled) {
     await initAnalytics(router, database);
+  } else {
+    // The consent-aware frontend always probes this same-origin endpoint.
+    // Keep disabled analytics silent without loading code or recording data.
+    router.get("/analytics.js", (_req, res) => {
+      res.set("Cache-Control", "no-store");
+      res.type("application/javascript").send("");
+    });
+    router.post("/analytics.js", (_req, res) => {
+      res.set("Cache-Control", "no-store");
+      res.status(204).end();
+    });
   }
 
   // The /static content, used by docker, development, etc.
@@ -265,6 +280,29 @@ export default async function init(opts: Options): Promise<{
     const target =
       basePath === "/" ? "/settings/profile" : `${basePath}/settings/profile`;
     res.redirect(target);
+  });
+
+  router.get("/.well-known/webauthn", async (req, res) => {
+    try {
+      const resolved = await resolveFundingApprovalConfiguration();
+      const config =
+        resolved.state === "configured" ? resolved.config : undefined;
+      const relatedOrigin = config
+        ? fundingApprovalRelatedOrigin(config)
+        : undefined;
+      const rpId = config?.webauthn_rp_id?.trim().toLowerCase();
+      if (!relatedOrigin || !rpId || req.hostname.toLowerCase() !== rpId) {
+        res.sendStatus(404);
+        return;
+      }
+      res.set({
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+      });
+      res.status(200).send(JSON.stringify({ origins: [relatedOrigin] }));
+    } catch {
+      res.sendStatus(404);
+    }
   });
 
   router.use("/api/python", staticCompression, express.static(PYTHON_API_PATH));

@@ -1054,6 +1054,7 @@ describe("open_file wait_for_ready", () => {
     canonicalSyncIdentityPath.mockResolvedValue(path);
     await open_file(actions, {
       path,
+      embedded: true,
       foreground: false,
       foreground_project: false,
       wait_for_ready: true,
@@ -1062,6 +1063,7 @@ describe("open_file wait_for_ready", () => {
     expect(actions.initFileRedux).toHaveBeenCalledWith(path, undefined, {
       syncIdentityPathIsCanonical: true,
     });
+    expect(ensureProjectIsOpen).not.toHaveBeenCalled();
     expect(actions.foreground_project).not.toHaveBeenCalled();
     expect(actions.set_active_tab).not.toHaveBeenCalled();
   });

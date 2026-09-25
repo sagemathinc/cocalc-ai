@@ -1,9 +1,7 @@
 /*
- * Hook for chat composer drafts using the shared draft controller architecture.
- * Draft text is private/account-scoped in AKV and survives refreshes.
+ * Account-private composer drafts shared by all views of a conversation.
  */
-
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AkvDraftAdapter, DraftController } from "@cocalc/frontend/drafts";
 import {
   get_local_storage,
@@ -11,142 +9,15 @@ import {
   delete_local_storage,
 } from "@cocalc/frontend/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { getLogger } from "@cocalc/conat/logger";
+
+const logger = getLogger("chat:composer-drafts");
 
 export const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
-export const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+export const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const MAX_LOCAL_DRAFT_CHARS = 200_000;
 const MAX_SHADOW_ENTRIES = 500;
 const LOCAL_WRITE_DEBOUNCE_MS = 350;
-
-type ShadowState = {
-  text: string;
-  updatedAt: number;
-};
-
-// Process-local optimistic draft state, used to defeat stale remote reads when
-// switching composer keys quickly (e.g., send in new thread then "New Chat").
-const shadowDraftState = new Map<string, ShadowState>();
-
-function setShadow(key: string, value: ShadowState): void {
-  shadowDraftState.set(key, value);
-  if (shadowDraftState.size <= MAX_SHADOW_ENTRIES) return;
-  const toDelete = shadowDraftState.size - MAX_SHADOW_ENTRIES;
-  const iter = shadowDraftState.keys();
-  for (let i = 0; i < toDelete; i++) {
-    const next = iter.next();
-    if (next.done) break;
-    shadowDraftState.delete(next.value);
-  }
-}
-
-function storeLocalDraftSnapshot(localStorageKey: string, text: string): void {
-  if (text.trim().length === 0 || text.length > MAX_LOCAL_DRAFT_CHARS) {
-    delete_local_storage(localStorageKey);
-    return;
-  }
-  set_local_storage(localStorageKey, text);
-}
-
-function composerDraftStorageKey({
-  project_id,
-  path,
-  composerDraftKey,
-  suffix,
-}: {
-  project_id: string;
-  path: string;
-  composerDraftKey: number;
-  suffix?: string;
-}): string {
-  const base = `${project_id}:${path}:${composerDraftKey}`;
-  return suffix ? `${base}:${suffix}` : base;
-}
-
-function composerDraftLocalStorageKey(storageKey: string): string {
-  return `chat-composer-draft:${storageKey}`;
-}
-
-export async function writeChatComposerDraft({
-  account_id,
-  project_id,
-  path,
-  composerDraftKey,
-  text,
-  append = false,
-  suffix,
-}: {
-  account_id?: string;
-  project_id: string;
-  path: string;
-  composerDraftKey: number;
-  text: string;
-  append?: boolean;
-  suffix?: string;
-}): Promise<string> {
-  const storageKey = composerDraftStorageKey({
-    project_id,
-    path,
-    composerDraftKey,
-    suffix,
-  });
-  const localStorageKey = composerDraftLocalStorageKey(storageKey);
-  const trimmedText = `${text ?? ""}`.trim();
-  if (!trimmedText) return "";
-
-  let existing = "";
-  const shadow = shadowDraftState.get(storageKey);
-  if (shadow) {
-    existing = shadow.text;
-  } else {
-    const local = get_local_storage(localStorageKey);
-    existing =
-      typeof local === "string"
-        ? local
-        : typeof local === "number"
-          ? `${local}`
-          : "";
-  }
-
-  let adapter: AkvDraftAdapter | null = null;
-  if (account_id) {
-    const cn = webapp_client.conat_client.conat();
-    const kv = cn.sync.akv<any>({
-      account_id,
-      name: CHAT_DRAFT_STORE,
-    });
-    adapter = new AkvDraftAdapter({
-      kv,
-      defaultTtlMs: CHAT_DRAFT_TTL_MS,
-    });
-    if (!existing.trim()) {
-      try {
-        existing = (await adapter.load(storageKey))?.text ?? "";
-      } catch (err) {
-        console.warn("chat draft load failed", err);
-      }
-    }
-  }
-
-  const next =
-    append && existing.trim()
-      ? `${existing.replace(/\s+$/g, "")}\n\n${trimmedText}`
-      : trimmedText;
-  const now = Date.now();
-  setShadow(storageKey, { text: next, updatedAt: now });
-  storeLocalDraftSnapshot(localStorageKey, next);
-  if (adapter) {
-    try {
-      await adapter.save(
-        storageKey,
-        { text: next, updatedAt: now, composing: next.trim().length > 0 },
-        { ttlMs: CHAT_DRAFT_TTL_MS },
-      );
-    } finally {
-      adapter.close();
-    }
-  }
-  return next;
-}
 
 interface UseChatComposerDraftOptions {
   account_id?: string;
@@ -158,245 +29,258 @@ interface UseChatComposerDraftOptions {
 }
 
 interface UseChatComposerDraftResult {
+  ready: boolean;
   input: string;
   setInput: (value: string) => void;
   clearInput: () => Promise<void>;
   clearComposerDraft: (draftKey: number) => Promise<void>;
 }
 
-export function useChatComposerDraft({
-  account_id,
-  project_id,
-  path,
-  composerDraftKey,
-  debounceMs,
-  suffix,
-}: UseChatComposerDraftOptions): UseChatComposerDraftResult {
-  const [input, setInputState] = useState("");
-  const controllerRef = useRef<DraftController | null>(null);
-  const pendingLocalWriteRef = useRef<{
-    timer?: ReturnType<typeof setTimeout>;
-    value: string;
-  }>({ value: "" });
+function storageKey(opts: UseChatComposerDraftOptions): string {
+  const base = `${opts.project_id}:${opts.path}:${opts.composerDraftKey}`;
+  return opts.suffix ? `${base}:${opts.suffix}` : base;
+}
 
-  const storageKey = useMemo(
-    () =>
-      composerDraftStorageKey({
-        project_id,
-        path,
-        composerDraftKey,
-        suffix,
+function identity(opts: UseChatComposerDraftOptions): string {
+  return JSON.stringify([opts.account_id ?? null, storageKey(opts)]);
+}
+
+type Shadow = { text: string; updatedAt: number };
+const shadows = new Map<string, Shadow>();
+const sessions = new Map<string, DraftSession>();
+
+function remember(key: string, snapshot: Shadow) {
+  shadows.delete(key);
+  shadows.set(key, snapshot);
+  if (shadows.size > MAX_SHADOW_ENTRIES) {
+    shadows.delete(shadows.keys().next().value!);
+  }
+}
+
+function storeLocal(key: string, text: string) {
+  if (!text.trim() || text.length > MAX_LOCAL_DRAFT_CHARS) {
+    delete_local_storage(key);
+  } else {
+    set_local_storage(key, text);
+  }
+}
+
+class DraftSession {
+  readonly controller: DraftController;
+  readonly ready: Promise<unknown>;
+  private readonly adapter: AkvDraftAdapter;
+  private refs = 0;
+  private generation = 0;
+  private timer?: ReturnType<typeof setTimeout>;
+  private readonly localKey: string;
+
+  constructor(
+    private readonly id: string,
+    opts: UseChatComposerDraftOptions,
+  ) {
+    const key = storageKey(opts);
+    // Remote keys remain unchanged inside the account-scoped AKV. Migrate the
+    // old browser-local snapshot once, so upgrading does not discard a draft
+    // whose debounced remote save had not completed.
+    this.localKey = `chat-composer-draft:${id}`;
+    let local = get_local_storage(this.localKey);
+    const legacyKey = `chat-composer-draft:${key}`;
+    if (local == null && !shadows.has(id)) {
+      local = get_local_storage(legacyKey);
+      if (typeof local === "string") storeLocal(this.localKey, local);
+    }
+    delete_local_storage(legacyKey);
+    const shadow = shadows.get(id);
+    this.adapter = new AkvDraftAdapter({
+      kv: webapp_client.conat_client.conat().sync.akv<any>({
+        account_id: opts.account_id!,
+        name: CHAT_DRAFT_STORE,
       }),
-    [project_id, path, composerDraftKey, suffix],
-  );
-  const localStorageKey = useMemo(
-    () => composerDraftLocalStorageKey(storageKey),
-    [storageKey],
-  );
-
-  const adapter = useMemo(() => {
-    if (!account_id) return null;
-    const cn = webapp_client.conat_client.conat();
-    const kv = cn.sync.akv<any>({
-      account_id,
-      name: CHAT_DRAFT_STORE,
-    });
-    return new AkvDraftAdapter({
-      kv,
       defaultTtlMs: CHAT_DRAFT_TTL_MS,
     });
-  }, [account_id]);
+    this.controller = new DraftController({
+      key,
+      adapter: this.adapter,
+      debounceMs: opts.debounceMs,
+      initialText: shadow?.text ?? (typeof local === "string" ? local : ""),
+      initialUpdatedAt: shadow?.updatedAt ?? 0,
+      onError: (error) => logger.warn("draft persistence failed", error),
+    });
+    this.controller.subscribe((snapshot) => {
+      remember(id, snapshot);
+      clearTimeout(this.timer);
+      if (!snapshot.text.trim()) storeLocal(this.localKey, "");
+      else
+        this.timer = setTimeout(
+          () => this.saveLocal(),
+          LOCAL_WRITE_DEBOUNCE_MS,
+        );
+    });
+    this.ready = this.controller.init();
+  }
 
+  retain() {
+    this.refs++;
+    this.generation++;
+  }
+
+  release() {
+    this.refs--;
+    if (this.refs) return;
+    this.saveLocal();
+    const generation = ++this.generation;
+    // Keep the session available during flushing. Rapid remounts, StrictMode,
+    // and programmatic writes reuse its serialized persistence chain.
+    void this.ready.then(async () => {
+      await this.controller.flush();
+      if (this.refs || generation !== this.generation) return;
+      this.saveLocal();
+      void this.controller.dispose();
+      this.adapter.close();
+      sessions.delete(this.id);
+    });
+  }
+
+  private saveLocal() {
+    clearTimeout(this.timer);
+    storeLocal(this.localKey, this.controller.getSnapshot().text);
+  }
+
+  setText(text: string) {
+    this.controller.setText(text);
+    this.controller.setComposing(!!text.trim());
+  }
+
+  async clear() {
+    // Persist a tombstone, not a deletion, so a stale remote load cannot
+    // resurrect a sent draft. All writes use the controller's ordered chain.
+    await this.controller.clear({ persistEmpty: true });
+  }
+}
+
+function acquire(opts: UseChatComposerDraftOptions): DraftSession | undefined {
+  if (!opts.account_id) return;
+  const id = identity(opts);
+  let session = sessions.get(id);
+  if (!session) {
+    session = new DraftSession(id, opts);
+    sessions.set(id, session);
+  }
+  session.retain();
+  return session;
+}
+
+export async function writeChatComposerDraft(
+  opts: UseChatComposerDraftOptions & { text: string; append?: boolean },
+): Promise<string> {
+  const text = `${opts.text ?? ""}`.trim();
+  if (!text) return "";
+  const session = acquire(opts);
+  if (!session) return "";
+  try {
+    await session.ready;
+    const existing = session.controller.getSnapshot().text;
+    const next =
+      opts.append && existing.trim()
+        ? `${existing.replace(/\s+$/g, "")}\n\n${text}`
+        : text;
+    session.setText(next);
+    await session.controller.flush();
+    return next;
+  } finally {
+    session.release();
+  }
+}
+
+export function useChatComposerDraft(
+  opts: UseChatComposerDraftOptions,
+): UseChatComposerDraftResult {
+  const { account_id, project_id, path, composerDraftKey, suffix, debounceMs } =
+    opts;
+  const id = identity(opts);
+  const [state, setState] = useState({ id, input: "", ready: false });
+  const current = useRef<{ id: string; session: DraftSession } | undefined>(
+    undefined,
+  );
   useEffect(() => {
-    let closed = false;
-    if (!adapter) {
-      setInputState("");
+    const session = acquire({
+      account_id,
+      project_id,
+      path,
+      composerDraftKey,
+      suffix,
+      debounceMs,
+    });
+    if (!session) {
+      setState({ id, input: "", ready: false });
       return;
     }
-    const local = get_local_storage(localStorageKey);
-    let localText =
-      typeof local === "string"
-        ? local
-        : typeof local === "number"
-          ? `${local}`
-          : "";
-    let localUpdatedAt = 0;
-    const shadow = shadowDraftState.get(storageKey);
-    if (shadow && shadow.updatedAt > localUpdatedAt) {
-      localText = shadow.text;
-      localUpdatedAt = shadow.updatedAt;
-    }
-    const controller = new DraftController({
-      key: storageKey,
-      adapter,
-      debounceMs,
-      initialText: localText,
-      initialUpdatedAt: localUpdatedAt,
-      onError: (err) => console.warn("chat draft controller error", err),
+    current.current = { id, session };
+    let closed = false;
+    setState({
+      id,
+      input: session.controller.getSnapshot().text,
+      ready: false,
     });
-    controllerRef.current = controller;
-    const unsub = controller.subscribe((snapshot) => {
-      if (!closed) {
-        setShadow(storageKey, {
-          text: snapshot.text,
-          updatedAt: snapshot.updatedAt,
+    const unsubscribe = session.controller.subscribe(({ text }) => {
+      setState((old) => ({
+        id,
+        input: text,
+        ready: old.id === id && old.ready,
+      }));
+    });
+    void session.ready.then(() => {
+      if (!closed)
+        setState({
+          id,
+          input: session.controller.getSnapshot().text,
+          ready: true,
         });
-        setInputState(snapshot.text);
-      }
     });
-    void controller.init();
     return () => {
       closed = true;
-      unsub();
-      const snapshot = controller.getSnapshot();
-      setShadow(storageKey, {
-        text: snapshot.text,
-        updatedAt: snapshot.updatedAt,
-      });
-      storeLocalDraftSnapshot(localStorageKey, snapshot.text);
-      if (controllerRef.current === controller) {
-        controllerRef.current = null;
-      }
-      void controller.dispose();
+      unsubscribe();
+      current.current = undefined;
+      session.release();
     };
-  }, [adapter, storageKey, debounceMs, localStorageKey]);
-
-  useEffect(() => {
-    return () => {
-      adapter?.close();
-    };
-  }, [adapter]);
-
-  const cancelPendingLocalWrite = useCallback(() => {
-    const pending = pendingLocalWriteRef.current;
-    if (pending.timer != null) {
-      clearTimeout(pending.timer);
-      pending.timer = undefined;
-    }
-  }, []);
-
-  const scheduleLocalWrite = useCallback(
-    (value: string) => {
-      cancelPendingLocalWrite();
-      if (value.trim().length === 0 || value.length > MAX_LOCAL_DRAFT_CHARS) {
-        delete_local_storage(localStorageKey);
-        return;
-      }
-      pendingLocalWriteRef.current.value = value;
-      pendingLocalWriteRef.current.timer = setTimeout(() => {
-        const text = pendingLocalWriteRef.current.value;
-        if (text.trim().length === 0 || text.length > MAX_LOCAL_DRAFT_CHARS) {
-          delete_local_storage(localStorageKey);
-        } else {
-          set_local_storage(localStorageKey, text);
-        }
-        pendingLocalWriteRef.current.timer = undefined;
-      }, LOCAL_WRITE_DEBOUNCE_MS);
-    },
-    [cancelPendingLocalWrite, localStorageKey],
-  );
-
-  useEffect(() => {
-    return () => {
-      cancelPendingLocalWrite();
-    };
-  }, [cancelPendingLocalWrite, localStorageKey]);
+  }, [id, account_id, project_id, path, composerDraftKey, suffix, debounceMs]);
 
   const setInput = useCallback(
-    (value: string) => {
-      const now = Date.now();
-      setShadow(storageKey, { text: value, updatedAt: now });
-      scheduleLocalWrite(value);
-      const controller = controllerRef.current;
-      if (!controller) {
-        setInputState(value);
-        return;
-      }
-      controller.setText(value);
-      controller.setComposing(value.trim().length > 0);
+    (text: string) => {
+      if (current.current?.id === id) current.current.session.setText(text);
     },
-    [scheduleLocalWrite, storageKey],
+    [id],
   );
-
-  const clearInput = useCallback(async () => {
-    const now = Date.now();
-    cancelPendingLocalWrite();
-    setShadow(storageKey, { text: "", updatedAt: now });
-    delete_local_storage(localStorageKey);
-    const controller = controllerRef.current;
-    if (!controller) {
-      setInputState("");
-      if (adapter) {
-        await adapter.save(
-          storageKey,
-          { text: "", updatedAt: now, composing: false },
-          { ttlMs: CHAT_DRAFT_TTL_MS },
-        );
-      }
-      return;
-    }
-    await controller.clear();
-    if (adapter) {
-      // Write an explicit empty snapshot so key switches do not reload stale
-      // remote text due async clear races.
-      await adapter.save(
-        storageKey,
-        { text: "", updatedAt: now, composing: false },
-        { ttlMs: CHAT_DRAFT_TTL_MS },
-      );
-    }
-  }, [adapter, cancelPendingLocalWrite, localStorageKey, storageKey]);
-
   const clearComposerDraft = useCallback(
     async (draftKey: number) => {
-      const key = composerDraftStorageKey({
+      const session = acquire({
+        account_id,
         project_id,
         path,
         composerDraftKey: draftKey,
         suffix,
       });
-      const localKey = `chat-composer-draft:${key}`;
-      const now = Date.now();
-      cancelPendingLocalWrite();
-      setShadow(key, { text: "", updatedAt: now });
-      delete_local_storage(localKey);
-      if (!adapter) {
-        if (draftKey === composerDraftKey) {
-          setInputState("");
-        }
-        return;
+      if (!session) return;
+      try {
+        // Clear immediately, even if an initial remote read is still pending.
+        await session.clear();
+      } finally {
+        session.release();
       }
-      if (draftKey === composerDraftKey) {
-        const controller = controllerRef.current;
-        if (!controller) {
-          setInputState("");
-          return;
-        }
-        await controller.clear();
-        await adapter.save(
-          key,
-          { text: "", updatedAt: now, composing: false },
-          { ttlMs: CHAT_DRAFT_TTL_MS },
-        );
-        return;
-      }
-      await adapter.save(
-        key,
-        { text: "", updatedAt: now, composing: false },
-        { ttlMs: CHAT_DRAFT_TTL_MS },
-      );
     },
-    [
-      adapter,
-      cancelPendingLocalWrite,
-      composerDraftKey,
-      path,
-      project_id,
-      suffix,
-    ],
+    [account_id, project_id, path, suffix],
   );
-
-  return { input, setInput, clearInput, clearComposerDraft };
+  const clearInput = useCallback(
+    () => clearComposerDraft(composerDraftKey),
+    [clearComposerDraft, composerDraftKey],
+  );
+  return {
+    input: state.id === id ? state.input : "",
+    ready: state.id === id && state.ready,
+    setInput,
+    clearInput,
+    clearComposerDraft,
+  };
 }
 
 export function writeChatComposerAcpPromptDraft(

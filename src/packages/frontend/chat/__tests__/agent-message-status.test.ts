@@ -214,7 +214,6 @@ describe("AgentMessageStatus", () => {
 
   it("keeps post-turn retained work visible and stoppable", () => {
     const onInterrupt = jest.fn();
-    const onContinue = jest.fn();
     render(
       React.createElement(AgentMessageStatus, {
         show: true,
@@ -226,21 +225,18 @@ describe("AgentMessageStatus", () => {
         activeDescendantThreadIds: ["child-1"],
         backgroundTerminalProcesses: 1,
         onInterrupt,
-        onContinue,
       }),
     );
 
     expect(screen.getByText(/Manager finished/)).toBeTruthy();
     expect(screen.getByText(/1 subagent is still running/)).toBeTruthy();
     expect(screen.getByText(/background command/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Stop all" }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 
-  it("offers continuation after a stopped turn without retained work", () => {
-    const onContinue = jest.fn();
+  it("does not add a continuation control after a stopped turn", () => {
     render(
       React.createElement(AgentMessageStatus, {
         show: true,
@@ -249,12 +245,10 @@ describe("AgentMessageStatus", () => {
         date: 1000,
         logRefs: {},
         activityContext: {} as any,
-        onContinue,
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     expect(screen.queryByText(/Manager finished/)).toBeNull();
   });
 
@@ -314,9 +308,62 @@ describe("AgentMessageStatus", () => {
     expect(screen.getByText("Codex activity")).toBeTruthy();
     expect(screen.getByText("use the smaller API")).toBeTruthy();
   });
+
+  it("shows outgoing peer messages while activity is collapsed", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        logEvents: [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "peerMessage",
+              direction: "outgoing",
+              target: { project_id: "project", agent_id: "agent" },
+              target_name: "reviewer",
+              body: "Please check the proof.",
+              agent_network_id: "session",
+              attempt_id: "attempt",
+              outcome: "accepted",
+              observed_at: 1,
+            },
+          },
+        ] as any,
+      }),
+    );
+
+    expect(screen.getByText("To @reviewer")).toBeTruthy();
+    expect(screen.getByText("Please check the proof.")).toBeTruthy();
+  });
 });
 
 describe("AttachedSteerStatusList", () => {
+  it("labels compact incoming agent guidance as received", () => {
+    render(
+      React.createElement(AttachedSteerStatusList, {
+        attachedSteers: [
+          {
+            messageId: "agent-guidance-1",
+            date: 1000,
+            state: "sent",
+            text: "```agent-message direction=incoming from=%40reviewer\nUse 5.\n```",
+          },
+        ],
+      }),
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Agent guidance received" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Guidance sent")).toBeNull();
+  });
+
   it("keeps quoted guidance distinct from the user's follow-up", () => {
     render(
       React.createElement(AttachedSteerStatusList, {

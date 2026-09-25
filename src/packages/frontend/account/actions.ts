@@ -4,6 +4,7 @@
  */
 
 import { join } from "path";
+import { isSettingsDrawerOpen } from "./settings-drawer-state";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { AccountClient } from "@cocalc/frontend/client/account";
 import api from "@cocalc/frontend/client/api";
@@ -180,6 +181,7 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   push_state(url?: string): void {
+    if (isSettingsDrawerOpen()) return;
     if (url == null) {
       url = this._last_history_state;
     }

@@ -19,4 +19,24 @@ describe("managed compute GCP setup", () => {
     expect(script).toContain("cocalc-compute-https");
     expect(script).toContain("--action=ALLOW --rules=tcp:443");
   });
+
+  it("uses only mutable flags when updating existing firewall rules", () => {
+    const updateCommands = script.match(
+      /gcloud compute firewall-rules update[\s\S]*?(?=\n\s*(?:else|fi))/g,
+    );
+    expect(updateCommands).toHaveLength(3);
+    for (const command of updateCommands ?? []) {
+      expect(command).not.toContain("--network");
+      expect(command).not.toContain("--direction");
+      expect(command).not.toContain("--action");
+      expect(command).toContain("--rules=");
+    }
+  });
+
+  it("allows a distinct controller service account in a shared project", () => {
+    expect(script).toContain("SA_NAME=${SA_NAME:-cocalc-compute-vm}");
+    expect(script).toContain(
+      'SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"',
+    );
+  });
 });

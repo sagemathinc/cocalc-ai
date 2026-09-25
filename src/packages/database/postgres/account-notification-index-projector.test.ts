@@ -72,6 +72,57 @@ describe("account_notification_index projector", () => {
     );
   }
 
+  it.each([
+    null,
+    {},
+    { "old@example.com": true },
+    { "local@example.com": true },
+  ])(
+    "queues required financial receipts only to explicitly verified current primary: %j",
+    async (verified) => {
+      await seedAccounts();
+      await getPool().query(
+        "UPDATE accounts SET email_address_verified=$2::jsonb WHERE account_id=$1",
+        [LOCAL_ACCOUNT_ID, JSON.stringify(verified)],
+      );
+      const summary = {
+        notice_type: "billing_course_funding_receipt",
+        title: "Course funding allocated",
+      };
+      await createNotificationEventGraph({
+        kind: "account_notice",
+        source_bay_id: OTHER_BAY_ID,
+        origin_kind: "system",
+        payload_json: summary,
+        targets: [
+          {
+            target_account_id: LOCAL_ACCOUNT_ID,
+            target_home_bay_id: LOCAL_BAY_ID,
+            summary_json: summary,
+          },
+        ],
+      });
+      await drainAccountNotificationIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        dry_run: false,
+      });
+      const { rows } = await getPool().query(
+        "SELECT recipient_email,status,lane,summary_json FROM notification_email_outbox",
+      );
+      const allowed = !!verified?.["local@example.com"];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        recipient_email: allowed ? "local@example.com" : null,
+        status: allowed ? "queued" : "skipped_unverified",
+        lane: "critical",
+        summary_json: {
+          required: true,
+          financial_receipt_home_bay_id: LOCAL_BAY_ID,
+        },
+      });
+    },
+  );
+
   async function appendMentionOutboxRow(opts?: {
     target_account_id?: string;
     target_home_bay_id?: string;

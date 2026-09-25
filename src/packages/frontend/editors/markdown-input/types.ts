@@ -43,6 +43,8 @@ export type UndoMode = "auto" | "local" | "external";
 export interface MultiMarkdownInputProps {
   cacheId?: string;
   value?: string;
+  mergeRemoteValues?: boolean;
+  getRemoteValue?: () => string;
   defaultMode?: Mode;
   fixedMode?: Mode;
   onChange: (value: string) => void;
@@ -64,6 +66,7 @@ export interface MultiMarkdownInputProps {
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;
   modeSwitchPlacement?: "float" | "toolbar";
+  reserveModeSwitchSpace?: boolean;
   modeSwitchRightContent?: ReactNode;
   disableModeSwitchShortcuts?: boolean;
   autoFocus?: boolean;

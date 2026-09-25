@@ -15,7 +15,7 @@ Use case:
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "./billing-account";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import createCredit from "./create-credit";
 import getLogger from "@cocalc/backend/logger";
@@ -58,7 +58,7 @@ export default async function createInvoice({
   if (!description?.trim()) {
     throw Error("description must be nontrivial");
   }
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidBillingAccount(account_id))) {
     throw Error("account must be valid");
   }
   const stripe = await getConn();
@@ -164,7 +164,7 @@ export async function createCreditFromPaidStripeInvoice(
   }
   logger.debug("createCreditFromPaidStripeInvoice -- metadata=", metadata);
   const { account_id } = metadata;
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidBillingAccount(account_id))) {
     logger.debug(
       "createCreditFromPaidStripeInvoice -- invalid account_id!",
       account_id,
@@ -264,7 +264,7 @@ intent = {
   }
 
   const { account_id } = metadata;
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidBillingAccount(account_id))) {
     logger.debug(
       "createCreditFromPaidStripePaymentIntent -- invalid account_id!",
       account_id,

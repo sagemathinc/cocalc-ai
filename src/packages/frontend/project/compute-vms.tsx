@@ -27,7 +27,9 @@ import {
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useComputeVmCatalog } from "./use-compute-vm-catalog";
 
 import type {
@@ -44,7 +46,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { CopyToClipBoard, Icon, TimeAgo } from "@cocalc/frontend/components";
-import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
+import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
 import {
@@ -88,13 +90,48 @@ import {
 import { normalizeSpotRecoveryPolicy } from "../hosts/utils/spot-recovery-policy";
 import {
   vmCreateCli,
+  vmCreateCliProblem,
   volumeCreateCli,
+  volumeCreateCliProblem,
   type VmCreateCliValues,
   type VolumeCreateCliValues,
 } from "./compute-vms-cli";
+import {
+  createVmWithHomeVolume,
+  grantAdditionalVmProjectAccess,
+  prepareCourseFundedVmValues,
+  prepareConnectedProjectSshKeys,
+  vmCreationAttempt,
+  type VmCreationAttempt,
+} from "./compute-vm-create-workflow";
+import {
+  ConnectedProjectsSelect,
+  defaultCourseConnectedProjectIds,
+  resolveCourseConnectedProjectIds,
+  vmConnectedProjects,
+  type VmConnectedProject,
+} from "./compute-vm-connected-projects";
+import VolumeFundingStatus, {
+  VolumeRetentionNotice,
+  VolumeFundingDetailsButton,
+} from "./compute-volume-funding-status";
+import {
+  volumeCourseSource,
+  volumeFundingLabel,
+  volumeFundingUnavailable,
+  volumeResizeFunding,
+} from "./compute-volume-funding";
+import {
+  requireSponsoredHomeVolumes,
+  SPONSORED_VOLUME_UNSUPPORTED,
+} from "@cocalc/util/compute-volume-funding";
 import { egressRateLabel, providerEgressIsFree } from "./compute-vms-egress";
 import { vmStartupExpectation } from "./compute-vms-startup";
-import { readProjectDeployPublicKey } from "./settings/project-to-project-ssh-service";
+import {
+  ensureProjectDeployPublicKey,
+  readProjectDeployPublicKey,
+} from "./settings/project-to-project-ssh-service";
+import { ensureProjectCourseInfo } from "./use-project-course";
 import { NebiusCapacityPicker } from "../hosts/components/nebius-capacity-picker";
 import { getHostsPageHref, openHostsPage } from "../hosts/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -179,8 +216,20 @@ function effectiveVolumeSizeGb(
   return sizeGb;
 }
 
-interface VmDraft extends VmCreateCliValues {
+import VmStopAfter from "./compute-vm-stop-after";
+import ComputeFundingSelect from "./compute-funding-select";
+import VmFundingStatus from "./compute-vm-funding-status";
+import VmPowerControls from "./compute-vm-power-controls";
+import VmShutdownButton from "./compute-vm-shutdown-button";
+import FundingHelp from "./compute-funding-help";
+import VmPersonalFunding from "./compute-vm-personal-funding";
+import CourseCreditSummary from "./course-credit-summary";
+import { CourseVmTemplateSelect } from "./course-vm-template-select";
+import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
+
+export interface VmDraft extends VmCreateCliValues {
   use_project_ssh_key: boolean;
+  connected_project_ids?: string[];
 }
 
 type VolumeDraft = VolumeCreateCliValues;
@@ -412,13 +461,14 @@ function originalTtlMinutes(vm: ComputeVm): number | null {
 export function VmCreateModal({
   open,
   project_id,
-  catalog,
+  catalog: baseCatalog,
   creationUnavailable,
   catalogLoading = false,
   onRetryCatalog,
   volumes,
   initial,
   projectSshPublicKey,
+  connectedProjects = [],
   sshKeys,
   saving,
   error,
@@ -426,6 +476,8 @@ export function VmCreateModal({
   onGenerateProjectSshKey,
   onCancel,
   onCreate,
+  mode = "create",
+  intro,
 }: {
   open: boolean;
   project_id?: string;
@@ -436,27 +488,45 @@ export function VmCreateModal({
   volumes: ComputeVolume[];
   initial: VmDraft;
   projectSshPublicKey: string | null;
+  connectedProjects?: VmConnectedProject[];
   sshKeys: Array<{ label: string; value: string }>;
   saving: boolean;
   error?: string;
-  preferredR2Region: ReturnType<typeof mapCountryRegionToR2Region>;
+  preferredR2Region?: ReturnType<typeof mapCountryRegionToR2Region>;
   onGenerateProjectSshKey?: () => Promise<string | undefined>;
   onCancel: () => void;
   onCreate: (values: VmDraft) => Promise<void>;
+  mode?: "create" | "recommendation";
+  intro?: ReactNode;
 }) {
+  const recommendationMode = mode === "recommendation";
   const [form] = Form.useForm<VmDraft>();
-  const creationBlocked = catalogLoading || !!creationUnavailable;
+  const [recommendationCatalog, setRecommendationCatalog] =
+    useState<ComputeCatalog>();
+  const [recommendationPending, setRecommendationPending] = useState(false);
+  const [recommendationEditVersion, setRecommendationEditVersion] = useState(0);
+  const [recommendedSource, setRecommendedSource] =
+    useState<CourseFundingSourceSummary>();
+  const catalog = recommendationCatalog ?? baseCatalog;
+  useEffect(() => setRecommendationCatalog(undefined), [baseCatalog, open]);
+  const [fundingUnavailable, setFundingUnavailable] = useState(false);
   const [draft, setDraft] = useState<Partial<VmDraft>>(initial);
   const [sortRegionsByPrice, setSortRegionsByPrice] = useState(false);
   const [sortMachinesByPrice, setSortMachinesByPrice] = useState(false);
   const [usePersistentHomeVolume, setUsePersistentHomeVolume] = useState(false);
   const [confirmedDraft, setConfirmedDraft] = useState<VmDraft>();
   const [sshKeyError, setSshKeyError] = useState<string>();
+  const connectedProjectsSelectionHandled = useRef(false);
   const pricingSettings = useHostPricingSettings();
 
   useEffect(() => {
     if (!open) return;
-    form.setFieldsValue(initial);
+    connectedProjectsSelectionHandled.current = false;
+    form.setFieldsValue({
+      funding_source: undefined,
+      accept_course_retention: false,
+      ...initial,
+    });
     setDraft(initial);
     setSortRegionsByPrice(false);
     setSortMachinesByPrice(false);
@@ -482,6 +552,23 @@ export function VmCreateModal({
   const selectedVolume = volumes.find(
     (volume) => volume.name === draft.home_volume,
   );
+  const volumeUnsupported =
+    catalog.sponsored_home_volumes !== true &&
+    ((!!draft.funding_source &&
+      (!!draft.create_home_volume || !!draft.home_volume)) ||
+      (selectedVolume != null && !!volumeCourseSource(selectedVolume)));
+  const creationBlocked =
+    catalogLoading ||
+    !!creationUnavailable ||
+    fundingUnavailable ||
+    recommendationPending ||
+    volumeUnsupported;
+  const courseProjectIds = useMemo(
+    () => defaultCourseConnectedProjectIds(connectedProjects),
+    [connectedProjects],
+  );
+  const creationProjectId =
+    project_id ?? draft.connected_project_ids?.[0] ?? undefined;
   const selection: ProviderSelection = {
     operating_system: operatingSystem,
     architecture: draft.architecture,
@@ -604,9 +691,27 @@ export function VmCreateModal({
   }, [form, minimumBootDiskGb, open]);
 
   const patchDraft = (patch: Partial<VmDraft>) => {
+    setConfirmedDraft(undefined);
     form.setFieldsValue(patch);
     setDraft((current) => ({ ...current, ...patch }));
   };
+
+  useEffect(() => {
+    if (
+      !open ||
+      !draft.funding_source ||
+      connectedProjectsSelectionHandled.current ||
+      courseProjectIds.length === 0
+    ) {
+      return;
+    }
+    connectedProjectsSelectionHandled.current = true;
+    form.setFieldValue("connected_project_ids", courseProjectIds);
+    setDraft((current) => ({
+      ...current,
+      connected_project_ids: courseProjectIds,
+    }));
+  }, [courseProjectIds, draft.funding_source, form, open]);
 
   const chooseGcpMachine = (
     nextSelection: ProviderSelection,
@@ -642,6 +747,8 @@ export function VmCreateModal({
 
   const withResolvedSshKey = (values: VmDraft): VmDraft => ({
     ...values,
+    expected_home_volume_funding_version:
+      selectedVolume?.funding_status?.funding_version,
     ssh_public_key:
       project_id && values.use_project_ssh_key
         ? (projectSshPublicKey ?? "")
@@ -649,7 +756,11 @@ export function VmCreateModal({
   });
 
   const reviewCreate = () => {
-    if (creationBlocked) return;
+    if (
+      creationBlocked ||
+      (selectedVolume && volumeFundingUnavailable(selectedVolume))
+    )
+      return;
     void form
       .validateFields()
       .then((values) => setConfirmedDraft(withResolvedSshKey(values)));
@@ -658,88 +769,155 @@ export function VmCreateModal({
   return (
     <Modal
       open={open}
-      title={initial.name ? `Create ${initial.name}` : "Create virtual machine"}
+      title={
+        recommendationMode
+          ? "Configure recommended virtual machine"
+          : initial.name
+            ? `Create ${initial.name}`
+            : "Create virtual machine"
+      }
       onCancel={onCancel}
       footer={
-        <Flex vertical gap={12}>
-          {error && (
-            <Alert
-              showIcon
-              type="error"
-              title="Unable to create VM"
-              description={error}
-              style={{ textAlign: "left" }}
-            />
-          )}
+        recommendationMode ? (
           <Flex justify="flex-end" gap={8}>
             <Button disabled={saving} onClick={onCancel}>
               Cancel
             </Button>
-            <Popconfirm
-              open={!creationBlocked && confirmedDraft != null}
-              title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
-              description={
-                confirmedDraft && (
-                  <Space direction="vertical" size={2}>
-                    <Text>
-                      {confirmedDraft.operating_system === "windows"
-                        ? "Windows Server 2022"
-                        : "Ubuntu 24.04"}{" "}
-                      · {confirmedDraft.machine_type} ·{" "}
-                      {confirmedDraft.zone ?? confirmedDraft.region}
-                    </Text>
-                    <Text strong>
-                      Boot disk: {confirmedDraft.boot_disk_gb} GB
-                    </Text>
-                    <Text>
-                      Pricing: {pricingLabel(confirmedDraft.pricing_model)}
-                      {price
-                        ? ` · ${price.hourly_label} (${price.monthly_label})`
-                        : " · price unavailable"}
-                    </Text>
-                    <Text>
-                      Home:{" "}
-                      {confirmedDraft.create_home_volume
-                        ? `new ${confirmedDraft.new_home_volume_size_gb} GB persistent volume`
-                        : confirmedDraft.home_volume
-                          ? `persistent volume ${confirmedDraft.home_volume}`
-                          : "boot disk"}
-                    </Text>
-                    <Text type="secondary">
-                      The boot disk size cannot currently be changed after
-                      creation.
-                    </Text>
-                  </Space>
-                )
+            <Button
+              type="primary"
+              loading={saving}
+              disabled={creationBlocked || saving || !price}
+              onClick={() =>
+                void form.validateFields().then((values) => onCreate(values))
               }
-              okText="Create VM"
-              cancelText="Review"
-              okButtonProps={{ loading: saving }}
-              onConfirm={() => {
-                if (creationBlocked || !confirmedDraft) return;
-                const values = confirmedDraft;
-                setConfirmedDraft(undefined);
-                void onCreate(values);
-              }}
-              onCancel={() => setConfirmedDraft(undefined)}
             >
-              <Button
-                type="primary"
-                loading={saving}
-                disabled={
-                  creationBlocked ||
-                  saving ||
-                  (draft.create_home_volume && !newVolumePrice)
-                }
-                onClick={reviewCreate}
-              >
-                Create VM
-              </Button>
-            </Popconfirm>
+              Apply recommendation
+            </Button>
           </Flex>
-        </Flex>
+        ) : (
+          <Flex vertical gap={12}>
+            {error && (
+              <Alert
+                showIcon
+                type="error"
+                title="Unable to create VM"
+                description={error}
+                style={{ textAlign: "left" }}
+              />
+            )}
+            <Flex justify="flex-end" gap={8}>
+              <Button disabled={saving} onClick={onCancel}>
+                Cancel
+              </Button>
+              <Popconfirm
+                open={!creationBlocked && confirmedDraft != null}
+                title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
+                description={
+                  confirmedDraft && (
+                    <Space direction="vertical" size={2}>
+                      <Text>
+                        {confirmedDraft.operating_system === "windows"
+                          ? "Windows Server 2022"
+                          : "Ubuntu 24.04"}{" "}
+                        · {confirmedDraft.machine_type} ·{" "}
+                        {confirmedDraft.zone ?? confirmedDraft.region}
+                      </Text>
+                      <Text strong>
+                        Boot disk: {confirmedDraft.boot_disk_gb} GB
+                      </Text>
+                      {confirmedDraft.funding_source && (
+                        <>
+                          <Text strong>
+                            VM compute paid from your selected course allowance.
+                            No automatic charge to your personal account.
+                          </Text>
+                          <Text>
+                            Course funding reserves up to 72 hours of stopped
+                            boot storage. An earlier deletion deadline still
+                            applies. Deletion permanently removes software and
+                            data on this VM, not notebooks saved in your CoCalc
+                            project. VM files are not backed up automatically.
+                          </Text>
+                        </>
+                      )}
+                      <Text>
+                        Pricing: {pricingLabel(confirmedDraft.pricing_model)}
+                        {price
+                          ? ` · ${price.hourly_label} (${price.monthly_label})`
+                          : " · price unavailable"}
+                      </Text>
+                      <Text>
+                        Home:{" "}
+                        {confirmedDraft.create_home_volume
+                          ? `new ${confirmedDraft.new_home_volume_size_gb} GB persistent volume`
+                          : confirmedDraft.home_volume
+                            ? `persistent volume ${confirmedDraft.home_volume}`
+                            : "boot disk"}
+                      </Text>
+                      <Text type="secondary">
+                        The boot disk size cannot currently be changed after
+                        creation.
+                      </Text>
+                      {selectedVolume && (
+                        <VolumeFundingStatus volume={selectedVolume} />
+                      )}
+                      {confirmedDraft.create_home_volume &&
+                        confirmedDraft.funding_source && (
+                          <VolumeRetentionNotice />
+                        )}
+                      <Text>
+                        Connected projects:{" "}
+                        {confirmedDraft.connected_project_ids?.length ?? 0}
+                      </Text>
+                    </Space>
+                  )
+                }
+                okText="Create VM"
+                cancelText="Review"
+                okButtonProps={{ loading: saving }}
+                styles={{ root: { maxWidth: 480 } }}
+                onConfirm={() => {
+                  if (
+                    creationBlocked ||
+                    !confirmedDraft ||
+                    (selectedVolume && volumeFundingUnavailable(selectedVolume))
+                  )
+                    return;
+                  const values = confirmedDraft;
+                  setConfirmedDraft(undefined);
+                  void onCreate(values);
+                }}
+                onCancel={() => setConfirmedDraft(undefined)}
+              >
+                <Button
+                  type="primary"
+                  loading={saving}
+                  disabled={
+                    creationBlocked ||
+                    saving ||
+                    (selectedVolume != null &&
+                      volumeFundingUnavailable(selectedVolume)) ||
+                    (!!draft.funding_source &&
+                      !!draft.create_home_volume &&
+                      !draft.accept_course_retention) ||
+                    (draft.create_home_volume && !newVolumePrice)
+                  }
+                  onClick={reviewCreate}
+                >
+                  Create VM
+                </Button>
+              </Popconfirm>
+            </Flex>
+          </Flex>
+        )
       }
-      styles={{ body: { maxHeight: "calc(100vh - 190px)", overflowY: "auto" } }}
+      styles={{
+        body: {
+          maxHeight: "calc(100vh - 190px)",
+          overflowY: "auto",
+          paddingInlineEnd: 36,
+        },
+      }}
       width={920}
     >
       {catalogLoading ? (
@@ -772,50 +950,135 @@ export function VmCreateModal({
         form={form}
         layout="vertical"
         initialValues={initial}
-        onValuesChange={(changedValues) =>
-          setDraft((current) => ({ ...current, ...changedValues }))
-        }
+        onValuesChange={(changedValues) => {
+          const retention = Object.prototype.hasOwnProperty.call(
+            changedValues,
+            "funding_source",
+          )
+            ? { accept_course_retention: false }
+            : {};
+          if ("accept_course_retention" in retention)
+            form.setFieldsValue(retention);
+          setDraft((current) => ({
+            ...current,
+            ...changedValues,
+            ...retention,
+          }));
+          setConfirmedDraft(undefined);
+          setRecommendationEditVersion((version) => version + 1);
+        }}
       >
-        <Flex gap={12} wrap>
-          <Form.Item
-            name="name"
-            label="VM title"
-            rules={[
-              {
-                required: true,
-                whitespace: true,
-                message: "Enter a descriptive title for this VM.",
-              },
-              {
-                pattern: /^[a-z][a-z0-9-]{0,31}$/,
-                message:
-                  "Use at most 32 lowercase letters, digits, or hyphens.",
-              },
-            ]}
-            style={{ flex: "1 1 220px" }}
-          >
-            <Input autoFocus placeholder="e.g. llama-benchmark" />
-          </Form.Item>
-          <Form.Item
-            name="funding_mode"
-            label="Funding"
-            rules={[{ required: true }]}
-            style={{ flex: "1 1 320px" }}
-          >
-            <Select
-              options={catalog.funding_modes.map((mode) => ({
-                value: mode.value,
-                label: mode.label,
-                disabled: !mode.allowed,
-                title: mode.reason,
-              }))}
+        {intro}
+        {!recommendationMode && (
+          <Form.Item name="funding_source" label="Course funding">
+            <ComputeFundingSelect
+              disabled={saving}
+              defaultToCourseFunding={open}
+              onChange={(funding_source) => {
+                connectedProjectsSelectionHandled.current = funding_source
+                  ? courseProjectIds.length > 0
+                  : false;
+                patchDraft({
+                  funding_source,
+                  ...(funding_source
+                    ? { connected_project_ids: courseProjectIds }
+                    : undefined),
+                });
+              }}
+              onLaneChange={(funding_mode) =>
+                patchDraft({
+                  funding_mode,
+                  allow_on_demand_fallback: false,
+                })
+              }
+              onUnavailable={setFundingUnavailable}
+              onSourceLoaded={setRecommendedSource}
             />
           </Form.Item>
-        </Flex>
+        )}
+        {!recommendationMode && (
+          <Form.Item name="connected_project_ids" label="Project SSH access">
+            <ConnectedProjectsSelect
+              projects={connectedProjects}
+              disabled={saving}
+              onUserChange={() => {
+                connectedProjectsSelectionHandled.current = true;
+              }}
+            />
+          </Form.Item>
+        )}
+        {!recommendationMode &&
+          recommendedSource?.grant_id === draft.funding_source?.grant_id &&
+          !!recommendedSource?.recommended_vm_templates?.length && (
+            <CourseVmTemplateSelect
+              templates={recommendedSource.recommended_vm_templates}
+              sourceKey={`${recommendedSource.payer_account_id}:${recommendedSource.pool_id}:${recommendedSource.grant_id}`}
+              fundingMode={draft.funding_mode}
+              disabled={saving}
+              defaultToFirst
+              onPendingChange={setRecommendationPending}
+              resetKey={recommendationEditVersion}
+              onApply={(config, freshCatalog) => {
+                setRecommendationCatalog(freshCatalog);
+                setConfirmedDraft(undefined);
+                patchDraft(config);
+              }}
+            />
+          )}
+        {!recommendationMode ? (
+          <Flex gap={12} wrap>
+            <Form.Item
+              name="name"
+              label="VM title"
+              rules={[
+                {
+                  required: true,
+                  whitespace: true,
+                  message: "Enter a descriptive title for this VM.",
+                },
+                {
+                  pattern: /^[a-z][a-z0-9-]{0,31}$/,
+                  message:
+                    "Use at most 32 lowercase letters, digits, or hyphens.",
+                },
+              ]}
+              style={{ flex: "1 1 220px" }}
+            >
+              <Input autoFocus placeholder="e.g. llama-benchmark" />
+            </Form.Item>
+            <Form.Item
+              name="funding_mode"
+              label="Funding"
+              hidden={!!draft.funding_source}
+              required={false}
+              rules={[{ required: true }]}
+              style={{ flex: "1 1 320px" }}
+            >
+              <Select
+                options={catalog.funding_modes.map((mode) => ({
+                  value: mode.value,
+                  label: mode.label,
+                  disabled: !mode.allowed,
+                  title: mode.reason,
+                }))}
+              />
+            </Form.Item>
+          </Flex>
+        ) : (
+          <>
+            <Form.Item name="name" hidden>
+              <Input />
+            </Form.Item>
+            <Form.Item name="funding_mode" hidden>
+              <Input />
+            </Form.Item>
+          </>
+        )}
         <Flex gap={12} wrap>
           <Form.Item
             name="operating_system"
             label="Operating system"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 260px" }}
           >
@@ -851,6 +1114,7 @@ export function VmCreateModal({
           <Form.Item
             name="provider"
             label="Cloud provider"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 220px" }}
           >
@@ -939,6 +1203,7 @@ export function VmCreateModal({
           <Form.Item
             name="architecture"
             label="Architecture"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 180px", order: -1 }}
           >
@@ -1053,6 +1318,7 @@ export function VmCreateModal({
           <Flex gap={12} wrap>
             <Form.Item
               name="region"
+              required={false}
               label={
                 <Flex align="center" justify="space-between" gap={12}>
                   <span>Region</span>
@@ -1118,6 +1384,7 @@ export function VmCreateModal({
             <Form.Item
               name="zone"
               label="Zone"
+              required={false}
               rules={[{ required: provider === "gcp" }]}
               style={{ flex: "1 1 280px" }}
             >
@@ -1216,6 +1483,7 @@ export function VmCreateModal({
           {provider === "gcp" && (
             <Form.Item
               name="machine_type"
+              required={false}
               label={
                 <Flex align="center" justify="space-between" gap={12}>
                   <span>Machine</span>
@@ -1260,6 +1528,7 @@ export function VmCreateModal({
           <Form.Item
             name="boot_disk_gb"
             label="Boot disk (GB)"
+            required={false}
             rules={[
               { required: true },
               {
@@ -1287,7 +1556,7 @@ export function VmCreateModal({
             Boot disks cannot currently be enlarged after VM creation.
           </Text>
         </Flex>
-        {operatingSystem === "linux" && (
+        {!recommendationMode && operatingSystem === "linux" && (
           <>
             <Form.Item name="create_home_volume" hidden valuePropName="checked">
               <Checkbox />
@@ -1329,6 +1598,7 @@ export function VmCreateModal({
                 style={{ marginBottom: draft.create_home_volume ? 12 : 16 }}
               >
                 <Select
+                  aria-label="Home volume"
                   value={
                     draft.create_home_volume ? "__new__" : draft.home_volume
                   }
@@ -1339,13 +1609,14 @@ export function VmCreateModal({
                     },
                     ...availableVolumes.map((volume) => ({
                       value: volume.name,
-                      label: `${volume.name} · ${volume.effective_size_gb} GB · ${volume.region}${volume.zone ? `/${volume.zone}` : ""}${
+                      label: `${volume.name} · ${volumeFundingLabel(volume)} · ${volume.effective_size_gb} GB · ${volume.region}${volume.zone ? `/${volume.zone}` : ""}${
                         volume.region === draft.region &&
                         (!volume.zone || volume.zone === draft.zone)
                           ? ""
                           : " · unavailable in this location"
                       }`,
                       disabled:
+                        volumeFundingUnavailable(volume) ||
                         volume.region !== draft.region ||
                         (!!volume.zone && volume.zone !== draft.zone),
                     })),
@@ -1370,12 +1641,51 @@ export function VmCreateModal({
                 />
               </Form.Item>
             )}
+            {usePersistentHomeVolume && selectedVolume && (
+              <VolumeFundingStatus volume={selectedVolume} />
+            )}
+            {volumeUnsupported && (
+              <Alert
+                showIcon
+                type="warning"
+                title={SPONSORED_VOLUME_UNSUPPORTED}
+              />
+            )}
+            {usePersistentHomeVolume &&
+              draft.create_home_volume &&
+              draft.funding_source && (
+                <>
+                  <VolumeRetentionNotice />
+                  <Form.Item
+                    name="accept_course_retention"
+                    valuePropName="checked"
+                    rules={[
+                      {
+                        validator: (_, value) =>
+                          value
+                            ? Promise.resolve()
+                            : Promise.reject(
+                                Error(
+                                  "Accept the home volume retention policy.",
+                                ),
+                              ),
+                      },
+                    ]}
+                  >
+                    <Checkbox>
+                      I accept this home volume's independent course-funded
+                      retention and deletion policy.
+                    </Checkbox>
+                  </Form.Item>
+                </>
+              )}
             {usePersistentHomeVolume && draft.create_home_volume && (
               <>
                 <Flex gap={12} wrap>
                   <Form.Item
                     name="new_home_volume_name"
                     label="New home volume name"
+                    required={false}
                     rules={[
                       { required: true },
                       {
@@ -1391,6 +1701,7 @@ export function VmCreateModal({
                   <Form.Item
                     name="new_home_volume_size_gb"
                     label="Size (GB)"
+                    required={false}
                     rules={volumeSizeRules(provider)}
                     style={{ flex: "1 1 160px" }}
                   >
@@ -1492,6 +1803,11 @@ export function VmCreateModal({
               : "Price estimate unavailable for this selection"}
           </Button>
         </Popover>
+        {!recommendationMode && (
+          <Form.Item name="stop_after_minutes" style={{ marginBottom: 8 }}>
+            <VmStopAfter />
+          </Form.Item>
+        )}
         <Collapse
           ghost
           items={[
@@ -1501,7 +1817,9 @@ export function VmCreateModal({
               forceRender: true,
               children: (
                 <>
-                  <Title level={5}>Pricing and lifetime</Title>
+                  <Title level={5}>
+                    {recommendationMode ? "Pricing" : "Pricing and lifetime"}
+                  </Title>
                   <Flex gap={12} wrap>
                     {provider !== "nebius" && (
                       <Form.Item
@@ -1530,29 +1848,31 @@ export function VmCreateModal({
                         </Radio.Group>
                       </Form.Item>
                     )}
-                    <Form.Item
-                      name="ttl_minutes"
-                      label="Optional deletion deadline"
-                      extra="Leave blank to run until you stop it or membership funding is unavailable."
-                      style={{ flex: "1 1 260px" }}
-                    >
-                      <Select
-                        allowClear
-                        placeholder="No deadline"
-                        options={[
-                          { value: 30, label: "30 minutes" },
-                          { value: 60, label: "1 hour" },
-                          { value: 240, label: "4 hours" },
-                          { value: 480, label: "8 hours" },
-                          { value: 1440, label: "1 day" },
-                        ].filter(
-                          ({ value }) =>
-                            value <= catalog.limits.max_ttl_minutes,
-                        )}
-                      />
-                    </Form.Item>
+                    {!recommendationMode && (
+                      <Form.Item
+                        name="ttl_minutes"
+                        label="Optional deletion deadline"
+                        extra="Deletion is separate from scheduled stop. Retained disks remain billable after stopping."
+                        style={{ flex: "1 1 260px" }}
+                      >
+                        <Select
+                          allowClear
+                          placeholder="No deadline"
+                          options={[
+                            { value: 30, label: "30 minutes" },
+                            { value: 60, label: "1 hour" },
+                            { value: 240, label: "4 hours" },
+                            { value: 480, label: "8 hours" },
+                            { value: 1440, label: "1 day" },
+                          ].filter(
+                            ({ value }) =>
+                              value <= catalog.limits.max_ttl_minutes,
+                          )}
+                        />
+                      </Form.Item>
+                    )}
                   </Flex>
-                  {draft.pricing_model === "spot" && (
+                  {!recommendationMode && draft.pricing_model === "spot" && (
                     <Form.Item
                       name="allow_on_demand_fallback"
                       valuePropName="checked"
@@ -1564,112 +1884,130 @@ export function VmCreateModal({
                       </Checkbox>
                     </Form.Item>
                   )}
-                  <Divider />
-                  <Title level={5}>SSH access</Title>
-                  {project_id && (
+                  {!recommendationMode && (
                     <>
-                      <Form.Item
-                        name="configure_project_ssh"
-                        valuePropName="checked"
-                      >
-                        <Checkbox disabled={!draft.use_project_ssh_key}>
-                          Add a managed SSH alias to this project&apos;s{" "}
-                          <Text code>~/.ssh/config</Text> when the VM is ready
-                        </Checkbox>
-                      </Form.Item>
-                      {projectSshPublicKey ? (
-                        <Form.Item
-                          name="use_project_ssh_key"
-                          valuePropName="checked"
-                        >
-                          <Checkbox>
-                            Add this project&apos;s SSH key from{" "}
-                            <Text code>.ssh/id_ed25519.pub</Text>
-                          </Checkbox>
-                        </Form.Item>
-                      ) : (
+                      <Divider />
+                      <Title level={5}>SSH access</Title>
+                      {project_id && (
+                        <>
+                          <Form.Item
+                            name="configure_project_ssh"
+                            valuePropName="checked"
+                          >
+                            <Checkbox disabled={!draft.use_project_ssh_key}>
+                              Add a managed SSH alias to this project&apos;s{" "}
+                              <Text code>~/.ssh/config</Text> when the VM is
+                              ready
+                            </Checkbox>
+                          </Form.Item>
+                          {projectSshPublicKey ? (
+                            <Form.Item
+                              name="use_project_ssh_key"
+                              valuePropName="checked"
+                            >
+                              <Checkbox>
+                                Add this project&apos;s SSH key from{" "}
+                                <Text code>.ssh/id_ed25519.pub</Text>
+                              </Checkbox>
+                            </Form.Item>
+                          ) : (
+                            <Alert
+                              showIcon
+                              type="info"
+                              title="This project does not have an SSH keypair yet."
+                              description="Create an encrypted project SSH keypair, then use its public key for this VM. The project does not need to restart."
+                              action={
+                                <Button
+                                  size="small"
+                                  loading={saving}
+                                  onClick={() => {
+                                    setSshKeyError(undefined);
+                                    void onGenerateProjectSshKey?.()
+                                      .then((publicKey) => {
+                                        if (publicKey) {
+                                          patchDraft({
+                                            use_project_ssh_key: true,
+                                          });
+                                        }
+                                      })
+                                      .catch((err) =>
+                                        setSshKeyError(String(err)),
+                                      );
+                                  }}
+                                >
+                                  Create project SSH keypair
+                                </Button>
+                              }
+                              style={{ marginBottom: 16 }}
+                            />
+                          )}
+                        </>
+                      )}
+                      {sshKeyError && (
                         <Alert
                           showIcon
-                          type="info"
-                          title="This project does not have an SSH keypair yet."
-                          description="Create an encrypted project SSH keypair, then use its public key for this VM. The project does not need to restart."
-                          action={
-                            <Button
-                              size="small"
-                              loading={saving}
-                              onClick={() => {
-                                setSshKeyError(undefined);
-                                void onGenerateProjectSshKey?.()
-                                  .then((publicKey) => {
-                                    if (publicKey) {
-                                      patchDraft({
-                                        use_project_ssh_key: true,
-                                      });
-                                    }
-                                  })
-                                  .catch((err) => setSshKeyError(String(err)));
-                              }}
-                            >
-                              Create project SSH keypair
-                            </Button>
-                          }
+                          type="warning"
+                          title="Unable to create project SSH keypair"
+                          description={sshKeyError}
                           style={{ marginBottom: 16 }}
+                        />
+                      )}
+                      <Form.Item
+                        name="ssh_public_key"
+                        label={
+                          project_id && projectSshPublicKey
+                            ? "Other SSH public key (optional)"
+                            : "SSH public key (optional)"
+                        }
+                        extra={
+                          draft.use_project_ssh_key
+                            ? "Uncheck the project key above to select a different initial key."
+                            : sshKeys.length
+                              ? "Select an account key, or leave blank. The CoCalc CLI can authorize your local key later when you run cocalc vm ssh."
+                              : "Leave blank to authorize your local key later with cocalc vm ssh, or paste a public key now."
+                        }
+                      >
+                        {sshKeys.length ? (
+                          <Select
+                            allowClear
+                            disabled={draft.use_project_ssh_key}
+                            options={sshKeys}
+                            placeholder="No initial key"
+                          />
+                        ) : (
+                          <Input.TextArea
+                            autoSize={{ minRows: 2, maxRows: 4 }}
+                            disabled={draft.use_project_ssh_key}
+                          />
+                        )}
+                      </Form.Item>
+                      <Divider />
+                      <Text strong>Equivalent CLI command</Text>
+                      <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
+                        The command reproduces the form exactly, including an
+                        initial SSH key or an explicitly keyless VM.
+                      </Paragraph>
+                      {volumeUnsupported || vmCreateCliProblem(draft) ? (
+                        <Alert
+                          type="warning"
+                          title={
+                            volumeUnsupported
+                              ? SPONSORED_VOLUME_UNSUPPORTED
+                              : vmCreateCliProblem(draft)
+                          }
+                        />
+                      ) : (
+                        <CopyToClipBoard
+                          value={vmCreateCli({
+                            api,
+                            project_id: creationProjectId,
+                            values: withResolvedSshKey(draft as VmDraft),
+                          })}
+                          {...COPYABLE_PROPS}
                         />
                       )}
                     </>
                   )}
-                  {sshKeyError && (
-                    <Alert
-                      showIcon
-                      type="warning"
-                      title="Unable to create project SSH keypair"
-                      description={sshKeyError}
-                      style={{ marginBottom: 16 }}
-                    />
-                  )}
-                  <Form.Item
-                    name="ssh_public_key"
-                    label={
-                      project_id && projectSshPublicKey
-                        ? "Other SSH public key (optional)"
-                        : "SSH public key (optional)"
-                    }
-                    extra={
-                      draft.use_project_ssh_key
-                        ? "Uncheck the project key above to select a different initial key."
-                        : sshKeys.length
-                          ? "Select an account key, or leave blank. The CoCalc CLI can authorize your local key later when you run cocalc vm ssh."
-                          : "Leave blank to authorize your local key later with cocalc vm ssh, or paste a public key now."
-                    }
-                  >
-                    {sshKeys.length ? (
-                      <Select
-                        allowClear
-                        disabled={draft.use_project_ssh_key}
-                        options={sshKeys}
-                        placeholder="No initial key"
-                      />
-                    ) : (
-                      <Input.TextArea
-                        autoSize={{ minRows: 2, maxRows: 4 }}
-                        disabled={draft.use_project_ssh_key}
-                      />
-                    )}
-                  </Form.Item>
-                  <Divider />
-                  <Text strong>Equivalent CLI command</Text>
-                  <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
-                    The command reproduces the form exactly, including an
-                    initial SSH key or an explicitly keyless VM.
-                  </Paragraph>
-                  <CopyToClipBoard
-                    value={vmCreateCli({
-                      api,
-                      project_id,
-                      values: withResolvedSshKey(draft as VmDraft),
-                    })}
-                    {...COPYABLE_PROPS}
-                  />
                 </>
               ),
             },
@@ -1680,7 +2018,7 @@ export function VmCreateModal({
   );
 }
 
-function VolumeCreateModal({
+export function VolumeCreateModal({
   open,
   project_id,
   catalog,
@@ -1699,6 +2037,8 @@ function VolumeCreateModal({
   const initialProvider = catalog.defaults.provider;
   const initial = {
     name: "home-data",
+    funding_source: undefined,
+    accept_course_retention: false,
     provider: initialProvider,
     funding_mode: catalog.default_funding_mode,
     region: catalog.defaults.region,
@@ -1706,6 +2046,11 @@ function VolumeCreateModal({
     size_gb: normalizedVolumeSizeGb(initialProvider, 50),
   };
   const [draft, setDraft] = useState<Partial<VolumeDraft>>(initial);
+  const [fundingUnavailable, setFundingUnavailable] = useState(false);
+  const fundingProblem =
+    draft.funding_source && catalog.sponsored_home_volumes !== true
+      ? SPONSORED_VOLUME_UNSUPPORTED
+      : volumeCreateCliProblem(draft);
   const pricingSettings = useHostPricingSettings();
   const api = globalThis.location?.origin ?? "https://cocalc.ai";
   const provider = draft.provider ?? initial.provider;
@@ -1769,7 +2114,9 @@ function VolumeCreateModal({
       title="Create persistent home volume"
       okText="Create volume"
       confirmLoading={saving}
-      okButtonProps={{ disabled: !diskEstimate }}
+      okButtonProps={{
+        disabled: !diskEstimate || fundingUnavailable || !!fundingProblem,
+      }}
       onCancel={onCancel}
       onOk={() => void form.validateFields().then(onCreate)}
       width={650}
@@ -1790,9 +2137,44 @@ function VolumeCreateModal({
             <Input autoFocus />
           </Form.Item>
         </Flex>
+        <Form.Item name="funding_source" label="Course funding">
+          <ComputeFundingSelect
+            disabled={saving}
+            onChange={(funding_source) =>
+              patchDraft({ funding_source, accept_course_retention: false })
+            }
+            onLaneChange={(funding_mode) => patchDraft({ funding_mode })}
+            onUnavailable={setFundingUnavailable}
+          />
+        </Form.Item>
+        {draft.funding_source && (
+          <>
+            <VolumeRetentionNotice />
+            <Form.Item
+              name="accept_course_retention"
+              valuePropName="checked"
+              rules={[
+                {
+                  validator: (_, value) =>
+                    value
+                      ? Promise.resolve()
+                      : Promise.reject(
+                          Error("Accept the home volume retention policy."),
+                        ),
+                },
+              ]}
+            >
+              <Checkbox>
+                I accept this home volume's independent course-funded retention
+                and deletion policy.
+              </Checkbox>
+            </Form.Item>
+          </>
+        )}
         <Flex gap={12} wrap>
           <Form.Item
             name="funding_mode"
+            hidden={!!draft.funding_source}
             label="Funding"
             rules={[{ required: true }]}
             style={{ flex: "1 1 260px" }}
@@ -1926,22 +2308,28 @@ function VolumeCreateModal({
       />
       <Divider />
       <Text strong>Equivalent CLI command</Text>
-      <CopyToClipBoard
-        value={volumeCreateCli({ api, project_id, values: draft })}
-        {...COPYABLE_PROPS}
-      />
+      {fundingProblem ? (
+        <Alert type="info" title={fundingProblem} />
+      ) : (
+        <CopyToClipBoard
+          value={volumeCreateCli({ api, project_id, values: draft })}
+          {...COPYABLE_PROPS}
+        />
+      )}
     </Modal>
   );
 }
 
-function VolumeResizeModal({
+export function VolumeResizeModal({
   volume,
+  sponsoredHomeVolumes,
   maxSizeGb,
   saving,
   onCancel,
   onResize,
 }: {
   volume?: ComputeVolume;
+  sponsoredHomeVolumes?: boolean;
   maxSizeGb: number;
   saving: boolean;
   onCancel: () => void;
@@ -1968,9 +2356,21 @@ function VolumeResizeModal({
       title={volume ? "Enlarge " + volume.name : "Enlarge volume"}
       okText="Enlarge volume"
       confirmLoading={saving}
+      okButtonProps={{
+        disabled:
+          !volume ||
+          volumeFundingUnavailable(volume) ||
+          (!!volumeCourseSource(volume) && sponsoredHomeVolumes !== true),
+      }}
       onCancel={onCancel}
       onOk={() => void form.validateFields().then(onResize)}
     >
+      {volume && <VolumeFundingStatus volume={volume} />}
+      {volume &&
+        volumeCourseSource(volume) &&
+        sponsoredHomeVolumes !== true && (
+          <Alert showIcon type="warning" title={SPONSORED_VOLUME_UNSUPPORTED} />
+        )}
       <Form<VolumeResizeDraft> form={form} layout="vertical">
         <Form.Item
           name="size_gb"
@@ -2292,11 +2692,13 @@ function VmStartModal({
   vm?: ComputeVm;
   catalog: ComputeCatalog;
   onCancel: () => void;
-  onStart: (vm: ComputeVm) => Promise<boolean>;
+  onStart: (vm: ComputeVm, stopAfterMinutes: number | null) => Promise<boolean>;
 }) {
   const [starting, setStarting] = useState(false);
+  const [stopAfterMinutes, setStopAfterMinutes] = useState<number | null>(null);
 
   useEffect(() => setStarting(false), [vm]);
+  useEffect(() => setStopAfterMinutes(vm?.stop_after_minutes ?? null), [vm]);
 
   if (!vm) return null;
   const hostCatalog = providerCatalog(catalog, vm.provider);
@@ -2317,7 +2719,7 @@ function VmStartModal({
       onOk={async () => {
         setStarting(true);
         try {
-          await onStart(vm);
+          await onStart(vm, stopAfterMinutes);
         } finally {
           setStarting(false);
         }
@@ -2329,6 +2731,7 @@ function VmStartModal({
           {pricingLabel(vm.desired_pricing_model)}
         </Text>
         <NebiusCapacityNotice catalog={hostCatalog} selection={selection} />
+        <VmStopAfter value={stopAfterMinutes} onChange={setStopAfterMinutes} />
         <Text type="secondary">
           To choose a different machine or pricing model, cancel and use the
           Manage menu while this VM is stopped.
@@ -2338,13 +2741,54 @@ function VmStartModal({
   );
 }
 
-function VmDetailsModal({
+function VmStopScheduleModal({
   vm,
-  homeVolume,
-  onClose,
+  onCancel,
+  onSave,
 }: {
   vm?: ComputeVm;
+  onCancel: () => void;
+  onSave: (vm: ComputeVm, stopAfterMinutes: number | null) => Promise<boolean>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [stopAfterMinutes, setStopAfterMinutes] = useState<number | null>(null);
+
+  useEffect(() => setSaving(false), [vm]);
+  useEffect(() => setStopAfterMinutes(vm?.stop_after_minutes ?? null), [vm]);
+  if (!vm) return null;
+  return (
+    <Modal
+      open
+      title={`Shutdown timer for ${vm.name}`}
+      okText="Save timer"
+      cancelText="Cancel"
+      confirmLoading={saving}
+      onCancel={onCancel}
+      onOk={async () => {
+        setSaving(true);
+        try {
+          await onSave(vm, stopAfterMinutes);
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <VmStopAfter value={stopAfterMinutes} onChange={setStopAfterMinutes} />
+    </Modal>
+  );
+}
+
+export function VmDetailsModal({
+  open,
+  vm,
+  homeVolume,
+  accountId,
+  onClose,
+}: {
+  open: boolean;
+  vm?: ComputeVm;
   homeVolume?: ComputeVolume;
+  accountId?: string;
   onClose: () => void;
 }) {
   if (!vm) return null;
@@ -2353,79 +2797,124 @@ function VmDetailsModal({
     : vm.machine_type;
   return (
     <Modal
-      open
+      open={open}
+      modalRender={(node) => (
+        <KeyboardBoundary boundary="vm-details">{node}</KeyboardBoundary>
+      )}
+      destroyOnHidden
       title={
-        <Space>
+        <Flex wrap align="center" gap={8} style={{ paddingRight: 32 }}>
           <Icon name="server" />
-          <span>{vm.name}</span>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {vm.name}
+          </span>
           <Tag>{vmDisplayState(vm)}</Tag>
-        </Space>
+        </Flex>
       }
       footer={<Button onClick={onClose}>Close</Button>}
       onCancel={onClose}
       width={760}
     >
-      <Paragraph type="secondary">
-        Account-owned virtual machine created{" "}
-        <TimeAgo date={new Date(vm.created_at)} />.
-      </Paragraph>
-      <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
-        <Descriptions.Item label="Name">{vm.name}</Descriptions.Item>
-        <Descriptions.Item label="VM ID">
-          <Text copyable={{ text: vm.id }} code>
-            {vm.id}
+      <Flex vertical gap={20} style={{ minWidth: 0 }}>
+        <section aria-label="Machine configuration">
+          <Text strong style={{ fontSize: 18 }}>
+            {vm.cpu} vCPU · {vm.ram_gb} GB RAM
+            {vm.gpu_type ? ` · ${machineLabel}` : ""}
           </Text>
-        </Descriptions.Item>
-        <Descriptions.Item label="Provider">
-          {getProviderDescriptor(vm.provider).label}
-        </Descriptions.Item>
-        <Descriptions.Item label="Location">
-          {vm.zone ?? vm.region}
-        </Descriptions.Item>
-        <Descriptions.Item label="Instance">{machineLabel}</Descriptions.Item>
-        <Descriptions.Item label="Machine type">
-          {vm.machine_type}
-        </Descriptions.Item>
-        <Descriptions.Item label="Resources">
-          {vm.cpu} vCPU · {vm.ram_gb} GB RAM
-        </Descriptions.Item>
-        <Descriptions.Item label="Architecture">
-          {vm.architecture}
-        </Descriptions.Item>
-        <Descriptions.Item label="Operating system">
-          {vm.operating_system === "windows"
-            ? "Windows Server 2022"
-            : vm.operating_system_version || "Linux"}
-        </Descriptions.Item>
-        <Descriptions.Item label="Pricing">
-          {pricingLabel(vm.effective_pricing_model)} · {hourlyPrice(vm)}
-        </Descriptions.Item>
-        <Descriptions.Item label="Boot disk">
-          {vm.boot_disk_gb} GB
-        </Descriptions.Item>
-        <Descriptions.Item label="Home volume">
-          {homeVolume
-            ? `${homeVolume.name} · ${homeVolume.effective_size_gb} GB · ${homeVolume.attachment_state}`
-            : vm.home_volume_id
-              ? `ID ${vm.home_volume_id}`
-              : "None"}
-        </Descriptions.Item>
-        <Descriptions.Item label="Created">
-          {new Date(vm.created_at).toLocaleString()}
-        </Descriptions.Item>
-        <Descriptions.Item label="Updated">
-          {new Date(vm.updated_at).toLocaleString()}
-        </Descriptions.Item>
-        <Descriptions.Item label="SSH hostname" span={2}>
-          {vm.public_hostname ? (
-            <Text copyable={{ text: vm.public_hostname }} code>
-              {vm.public_hostname}
+          <div>
+            <Text type="secondary">
+              {getProviderDescriptor(vm.provider).label} ·{" "}
+              {vm.zone ?? vm.region}
             </Text>
-          ) : (
-            "Not assigned"
+          </div>
+          <div style={{ marginTop: 8 }}>
+            {vm.operating_system === "windows"
+              ? "Windows Server 2022"
+              : vm.operating_system_version || "Linux"}
+            {" · "}
+            {vm.boot_disk_gb} GB boot disk
+          </div>
+          <div>
+            <Text strong>{hourlyPrice(vm)}</Text>
+            {" · "}
+            {pricingLabel(vm.effective_pricing_model)}
+          </div>
+        </section>
+        <VmFundingStatus funding={vm.funding_status} />
+        {vm.owner_account_id === accountId &&
+          vm.funding_status?.funding_version && (
+            <VmPersonalFunding
+              key={vm.id}
+              vmId={vm.id}
+              fundingVersion={vm.funding_status.funding_version}
+              homeVolumeIds={vm.home_volume_id ? [vm.home_volume_id] : []}
+              api={webapp_client.conat_client.hub.compute}
+            />
           )}
-        </Descriptions.Item>
-      </Descriptions>
+        <section aria-label="Connection and storage">
+          <Text strong>Connection and storage</Text>
+          <Descriptions
+            column={1}
+            size="small"
+            styles={{
+              label: { minWidth: 110 },
+              content: { minWidth: 0, overflowWrap: "anywhere" },
+            }}
+          >
+            <Descriptions.Item label="SSH hostname">
+              {vm.public_hostname ? (
+                <Text copyable style={{ overflowWrap: "anywhere" }}>
+                  {vm.public_hostname}
+                </Text>
+              ) : (
+                "Available when the VM is ready"
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Home volume">
+              <Space orientation="vertical" size={4}>
+                {homeVolume
+                  ? `${homeVolume.name} · ${homeVolume.effective_size_gb} GB`
+                  : vm.home_volume_id
+                    ? "Attached"
+                    : "None"}
+                {homeVolume && (
+                  <VolumeFundingDetailsButton
+                    volume={homeVolume}
+                    label="Storage funding and retention"
+                  />
+                )}
+              </Space>
+            </Descriptions.Item>
+          </Descriptions>
+        </section>
+        <details>
+          <summary style={{ cursor: "pointer" }}>Technical details</summary>
+          <Descriptions
+            column={1}
+            size="small"
+            style={{ marginTop: 12 }}
+            styles={{ content: { overflowWrap: "anywhere" } }}
+          >
+            <Descriptions.Item label="VM ID">
+              <Text copyable={{ text: vm.id }} code>
+                {vm.id}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Machine type">
+              {vm.machine_type}
+            </Descriptions.Item>
+            <Descriptions.Item label="Architecture">
+              {vm.architecture}
+            </Descriptions.Item>
+            <Descriptions.Item label="Created">
+              <TimeAgo date={new Date(vm.created_at)} />
+            </Descriptions.Item>
+            <Descriptions.Item label="Updated">
+              <TimeAgo date={new Date(vm.updated_at)} />
+            </Descriptions.Item>
+          </Descriptions>
+        </details>
+      </Flex>
     </Modal>
   );
 }
@@ -2649,6 +3138,12 @@ export function ProjectComputeVms({
   const projectId = project_id?.trim() || undefined;
   const accountMode = projectId == null;
   const accountSshKeys = useRedux("account", "ssh_keys");
+  const accountId = useTypedRedux("account", "account_id");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const connectedProjectCandidates = useMemo(
+    () => vmConnectedProjects(projectMap, accountId),
+    [accountId, projectMap],
+  );
   const sshKeys = sshKeyOptions(accountSshKeys);
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
@@ -2669,7 +3164,12 @@ export function ProjectComputeVms({
     [],
   );
   const [accessVm, setAccessVm] = useState<ComputeVm>();
-  const [detailsVm, setDetailsVm] = useState<ComputeVm>();
+  const [detailsVm, setDetailsVmValue] = useState<ComputeVm>();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const setDetailsVm = (vm: ComputeVm) => {
+    setDetailsVmValue(vm);
+    setDetailsOpen(true);
+  };
   const [directSshKeys, setDirectSshKeys] = useState<ComputeVmSshKey[]>([]);
   const [loadingDirectSshKeys, setLoadingDirectSshKeys] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2677,12 +3177,39 @@ export function ProjectComputeVms({
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [vmModalOpen, setVmModalOpen] = useState(false);
+  const [courseConnectedProjectIds, setCourseConnectedProjectIds] = useState<
+    Set<string>
+  >(new Set());
+  useEffect(() => {
+    if (!vmModalOpen) return;
+    let active = true;
+    void resolveCourseConnectedProjectIds({
+      projects: connectedProjectCandidates,
+      getCourseInfo: ensureProjectCourseInfo,
+    }).then((projectIds) => {
+      if (active) setCourseConnectedProjectIds(projectIds);
+    });
+    return () => {
+      active = false;
+    };
+  }, [connectedProjectCandidates, vmModalOpen]);
+  const connectedProjects = useMemo(
+    () =>
+      connectedProjectCandidates.map((project) => ({
+        ...project,
+        course:
+          project.course || courseConnectedProjectIds.has(project.project_id),
+      })),
+    [connectedProjectCandidates, courseConnectedProjectIds],
+  );
   const [vmCreateError, setVmCreateError] = useState<string>();
+  const vmCreateAttempt = useRef<VmCreationAttempt | undefined>(undefined);
   const [volumeModalOpen, setVolumeModalOpen] = useState(false);
   const [resizeVolumeTarget, setResizeVolumeTarget] = useState<ComputeVolume>();
   const [ttlVm, setTtlVm] = useState<ComputeVm>();
   const [machineTypeVm, setMachineTypeVm] = useState<ComputeVm>();
   const [startVm, setStartVm] = useState<ComputeVm>();
+  const [stopScheduleVm, setStopScheduleVm] = useState<ComputeVm>();
   const [machineTypeError, setMachineTypeError] = useState<string>();
   const [vmInitial, setVmInitial] = useState<VmDraft>();
   const [projectSshPublicKey, setProjectSshPublicKey] = useState<string | null>(
@@ -2855,24 +3382,25 @@ export function ProjectComputeVms({
       machine_type: catalog?.defaults.machine_type ?? "e2-standard-2",
       pricing_model: "on_demand",
       storage_mode: "persistent",
-      disk_type: "balanced",
+      disk_type: defaultProvider === "nebius" ? "ssd" : "balanced",
       disk_gb: catalog?.defaults.boot_disk_gb ?? 20,
     };
-    const nearestRegion = catalog
-      ? sortRegionOptionsByPreference({
-          options: compatibleOptions(
-            getGcpRegionOptions(defaultCatalog, {
-              ...defaultSelection,
-              region: undefined,
-              zone: undefined,
-            }),
-          ),
-          preference: "closest",
-          preferredRegion: preferredR2Region,
-        })[0]?.value
-      : undefined;
+    const nearestRegion =
+      catalog && defaultProvider === "gcp"
+        ? sortRegionOptionsByPreference({
+            options: compatibleOptions(
+              getGcpRegionOptions(defaultCatalog, {
+                ...defaultSelection,
+                region: undefined,
+                zone: undefined,
+              }),
+            ),
+            preference: "closest",
+            preferredRegion: preferredR2Region,
+          })[0]?.value
+        : undefined;
     const nearestZone =
-      catalog && nearestRegion
+      catalog && defaultProvider === "gcp" && nearestRegion
         ? compatibleOptions(
             getGcpZoneOptions(defaultCatalog, {
               ...defaultSelection,
@@ -2881,26 +3409,69 @@ export function ProjectComputeVms({
             }),
           )[0]?.value
         : undefined;
-    const zone = nearestZone ?? catalogDefaultZone;
+    const zone =
+      defaultProvider === "gcp"
+        ? (nearestZone ?? catalogDefaultZone)
+        : undefined;
+    const nebiusDefault =
+      catalog && defaultProvider === "nebius"
+        ? (getNebiusPlacementOptions(
+            defaultCatalog,
+            {
+              ...defaultSelection,
+              pricing_model: "spot",
+              disk_gb: Math.max(Number(defaultSelection.disk_gb ?? 0), 40),
+            },
+            "gpu",
+          )[0] ??
+          getNebiusPlacementOptions(
+            defaultCatalog,
+            { ...defaultSelection, pricing_model: "on_demand" },
+            "cpu",
+          )[0])
+        : undefined;
+    const pricingModel = nebiusDefault?.gpuCount ? "spot" : "on_demand";
+    const region =
+      defaultProvider === "gcp"
+        ? regionFromZone(zone)
+        : (nebiusDefault?.region ?? catalog?.defaults.region ?? "");
+    const machineType =
+      nebiusDefault?.machineType ??
+      catalog?.defaults.machine_type ??
+      "e2-standard-2";
     return {
       name: "",
       provider: defaultProvider,
       operating_system: catalog?.defaults.operating_system ?? "linux",
       funding_mode: catalog?.default_funding_mode ?? "account-prepaid",
       architecture: catalog?.defaults.architecture ?? "x86_64",
-      region: regionFromZone(zone),
+      region,
       zone,
-      machine_type: catalog?.defaults.machine_type ?? "e2-standard-2",
-      pricing_model: "on_demand",
-      allow_on_demand_fallback: false,
+      machine_type: machineType,
+      provider_platform: nebiusDefault?.platform,
+      pricing_model: pricingModel,
+      allow_on_demand_fallback: pricingModel === "spot",
+      gpu_type: nebiusDefault?.gpuLabel,
+      gpu_count: nebiusDefault?.gpuCount ?? 0,
       ttl_minutes: catalog?.defaults.ttl_minutes ?? null,
-      boot_disk_gb: catalog?.defaults.boot_disk_gb ?? 20,
+      stop_after_minutes: 360,
+      boot_disk_gb:
+        defaultProvider === "nebius"
+          ? Math.max(
+              catalog?.defaults.boot_disk_gb ?? 40,
+              getNebiusMinimumBootDiskGb(defaultCatalog, {
+                region,
+                machine_type: machineType,
+              }),
+            )
+          : (catalog?.defaults.boot_disk_gb ?? 20),
       create_home_volume: false,
       new_home_volume_name: availableName(
         "vm-home",
         volumes.map((volume) => volume.name),
       ),
       new_home_volume_size_gb: 50,
+      connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
       ssh_public_key: sshKeys[0]?.value ?? "",
@@ -2908,6 +3479,12 @@ export function ProjectComputeVms({
   };
 
   const openSimilar = (vm: ComputeVm) => {
+    if (!catalog?.providers.includes(vm.provider)) {
+      setError(
+        `${getProviderDescriptor(vm.provider).label} is not configured for new managed compute VMs.`,
+      );
+      return;
+    }
     const ttlMinutes = originalTtlMinutes(vm);
     const suggestedVolumeStem = similarName(vm.name, allRows);
     setVmInitial({
@@ -2926,6 +3503,7 @@ export function ProjectComputeVms({
         ttlMinutes == null
           ? null
           : Math.min(ttlMinutes, catalog?.limits.max_ttl_minutes ?? ttlMinutes),
+      stop_after_minutes: vm.stop_after_minutes ?? null,
       boot_disk_gb: vm.boot_disk_gb,
       create_home_volume: false,
       new_home_volume_name: availableName(
@@ -2933,6 +3511,7 @@ export function ProjectComputeVms({
         volumes.map((volume) => volume.name),
       ),
       new_home_volume_size_gb: 50,
+      connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
       ssh_public_key: sshKeys[0]?.value ?? "",
@@ -3079,70 +3658,95 @@ export function ProjectComputeVms({
     setSaving(true);
     setVmCreateError(undefined);
     let createdVolumeName: string | undefined;
+    let createdVmName: string | undefined;
+    const connectedProjectIds = Array.from(
+      new Set(values.connected_project_ids ?? []),
+    );
+    const creationProjectId = projectId ?? connectedProjectIds[0];
+    const attempt = vmCreationAttempt(
+      vmCreateAttempt.current,
+      values,
+      creationProjectId,
+    );
+    vmCreateAttempt.current = attempt;
+    const { vmKey, volumeKey } = attempt;
     try {
       const completed = await runFreshAuthAction(async () => {
-        let homeVolume = values.home_volume;
-        if (values.create_home_volume) {
-          if (!values.new_home_volume_name || !values.new_home_volume_size_gb) {
-            throw new Error("A new home volume name and size are required.");
-          }
-          const createdVolume =
-            await webapp_client.conat_client.hub.compute.createVolume({
-              project_id: projectId,
-              name: values.new_home_volume_name,
-              provider: values.provider,
-              funding_mode: values.funding_mode,
-              region: values.region,
-              zone: values.zone,
-              size_gb: values.new_home_volume_size_gb,
-              idempotency_key: uuid(),
-              browser_id: webapp_client.browser_id,
-            });
-          createdVolumeName = createdVolume.name;
-          homeVolume = createdVolume.name;
-        }
-        await webapp_client.conat_client.hub.compute.createVm({
-          project_id: projectId,
-          name: values.name,
-          provider: values.provider,
-          operating_system: values.operating_system,
-          funding_mode: values.funding_mode,
-          architecture: values.architecture,
-          region: values.region,
-          zone: values.zone,
-          machine_type: values.machine_type,
-          provider_spec: values.provider_platform
-            ? { platform: values.provider_platform }
-            : undefined,
-          gpu_type:
-            values.gpu_type && values.gpu_type !== "none"
-              ? values.gpu_type
-              : undefined,
-          gpu_count: values.gpu_count,
-          pricing_model: values.pricing_model,
-          allow_on_demand_fallback: values.allow_on_demand_fallback,
-          ttl_minutes: values.ttl_minutes ?? null,
-          boot_disk_gb: values.boot_disk_gb,
-          home_volume: homeVolume,
-          ssh_public_key: values.ssh_public_key,
-          configure_project_ssh: values.configure_project_ssh,
-          idempotency_key: uuid(),
-          browser_id: webapp_client.browser_id,
+        const projectKeys = await prepareConnectedProjectSshKeys({
+          projectIds: connectedProjectIds,
+          ensureProjectKey: ensureProjectDeployPublicKey,
         });
+        const primaryProjectKey = creationProjectId
+          ? (projectKeys.get(creationProjectId) ??
+            (await ensureProjectDeployPublicKey(creationProjectId)).trim())
+          : null;
+        const prepared = await prepareCourseFundedVmValues({
+          values,
+          project_id: creationProjectId,
+          projectSshPublicKey: primaryProjectKey,
+          generateProjectSshKey: async () => primaryProjectKey ?? "",
+        });
+        if (projectId && prepared.projectSshPublicKey !== projectSshPublicKey) {
+          setProjectSshPublicKey(prepared.projectSshPublicKey);
+        }
+        const createValues =
+          creationProjectId && primaryProjectKey
+            ? {
+                ...prepared.values,
+                configure_project_ssh: true,
+                ssh_public_key: primaryProjectKey,
+              }
+            : prepared.values;
+        const vm = await createVmWithHomeVolume({
+          api: webapp_client.conat_client.hub.compute,
+          values: createValues,
+          project_id: creationProjectId,
+          browser_id: webapp_client.browser_id,
+          vmKey,
+          volumeKey,
+          onVolumeCreated: (volume) => {
+            createdVolumeName = volume.name;
+          },
+        });
+        createdVmName = vm.name;
+        await grantAdditionalVmProjectAccess({
+          api: webapp_client.conat_client.hub.compute,
+          browser_id: webapp_client.browser_id,
+          vm_id: vm.id,
+          primary_project_id: creationProjectId,
+          projectKeys,
+          idempotencyKey: vmKey,
+        });
+        const directSshKey = `${values.ssh_public_key ?? ""}`.trim();
+        if (
+          !values.funding_source &&
+          directSshKey &&
+          directSshKey !== primaryProjectKey
+        ) {
+          await webapp_client.conat_client.hub.compute.authorizeSshKey({
+            browser_id: webapp_client.browser_id,
+            id_or_name: vm.id,
+            ssh_public_key: directSshKey,
+            idempotency_key: `${vmKey}:direct-ssh`,
+          });
+        }
       });
       if (!completed) return;
+      vmCreateAttempt.current = undefined;
       setVmModalOpen(false);
       setNotice(`VM '${values.name}' requested.`);
       await load();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setVmCreateError(
-        createdVolumeName
-          ? "Volume '" +
+        createdVmName
+          ? `VM '${createdVmName}' was created, but SSH access setup did not finish: ${message}. Retry creation to safely resume the same request.`
+          : createdVolumeName
+            ? "Volume '" +
               createdVolumeName +
               "' was created and retained, but VM creation failed: " +
               message
-          : message,
+            : message,
       );
     } finally {
       setSaving(false);
@@ -3183,6 +3787,7 @@ export function ProjectComputeVms({
   const setVmRunning = async (
     vm: ComputeVm,
     running: boolean,
+    stopAfterMinutes?: number | null,
   ): Promise<boolean> => {
     setError(undefined);
     try {
@@ -3192,6 +3797,9 @@ export function ProjectComputeVms({
           id_or_name: vm.id,
           idempotency_key: uuid(),
           ...(running ? { browser_id: webapp_client.browser_id } : {}),
+          ...(running && stopAfterMinutes !== undefined
+            ? { stop_after_minutes: stopAfterMinutes }
+            : {}),
         });
       };
       if (running) {
@@ -3201,6 +3809,30 @@ export function ProjectComputeVms({
         await execute();
       }
       setNotice(`VM '${vm.name}' is ${running ? "starting" : "stopping"}.`);
+      await load();
+      return true;
+    } catch (err) {
+      setError(`${err}`);
+      return false;
+    }
+  };
+
+  const saveVmStopSchedule = async (
+    vm: ComputeVm,
+    stopAfterMinutes: number | null,
+  ): Promise<boolean> => {
+    setError(undefined);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        await webapp_client.conat_client.hub.compute.startVm({
+          id_or_name: vm.id,
+          idempotency_key: uuid(),
+          browser_id: webapp_client.browser_id,
+          stop_after_minutes: stopAfterMinutes,
+        });
+      });
+      if (!completed) return false;
+      setNotice(`Shutdown timer for '${vm.name}' was updated.`);
       await load();
       return true;
     } catch (err) {
@@ -3295,6 +3927,13 @@ export function ProjectComputeVms({
   };
 
   const changeVolumeFunding = (volume: ComputeVolume) => {
+    if (volumeCourseSource(volume)) {
+      Modal.info({
+        title: `Funding for ${volume.name}`,
+        content: <VolumeFundingStatus volume={volume} />,
+      });
+      return;
+    }
     let fundingMode = volume.funding_mode;
     Modal.confirm({
       title: `Change funding for ${volume.name}`,
@@ -3361,17 +4000,26 @@ export function ProjectComputeVms({
   const createVolume = async (values: VolumeDraft) => {
     setSaving(true);
     setError(undefined);
+    const idempotency_key = uuid();
     try {
+      const problem = volumeCreateCliProblem(values);
+      if (problem) throw Error(problem);
       const completed = await runFreshAuthAction(async () => {
+        if (values.funding_source)
+          requireSponsoredHomeVolumes(
+            await webapp_client.conat_client.hub.compute.getCatalog({}),
+          );
         await webapp_client.conat_client.hub.compute.createVolume({
           project_id,
           name: values.name,
           provider: values.provider,
           funding_mode: values.funding_mode,
+          funding_source: values.funding_source,
+          accept_course_retention: values.accept_course_retention,
           region: values.region,
           zone: values.zone,
           size_gb: values.size_gb,
-          idempotency_key: uuid(),
+          idempotency_key,
           browser_id: webapp_client.browser_id,
         });
       });
@@ -3390,12 +4038,19 @@ export function ProjectComputeVms({
     if (!resizeVolumeTarget) return;
     setSaving(true);
     setError(undefined);
+    const idempotency_key = uuid();
     try {
+      const funding = volumeResizeFunding(resizeVolumeTarget);
       const completed = await runFreshAuthAction(async () => {
+        if (volumeCourseSource(resizeVolumeTarget))
+          requireSponsoredHomeVolumes(
+            await webapp_client.conat_client.hub.compute.getCatalog({}),
+          );
         await webapp_client.conat_client.hub.compute.resizeVolume({
           id_or_name: resizeVolumeTarget.id,
           size_gb: values.size_gb,
-          idempotency_key: uuid(),
+          ...funding,
+          idempotency_key,
           browser_id: webapp_client.browser_id,
         });
       });
@@ -3418,12 +4073,13 @@ export function ProjectComputeVms({
 
   const deleteVolume = async (volume: ComputeVolume) => {
     setError(undefined);
+    const idempotency_key = uuid();
     try {
       const completed = await runFreshAuthAction(async () => {
         await webapp_client.conat_client.hub.compute.deleteVolume({
           id_or_name: volume.id,
           confirm_name: volume.name,
-          idempotency_key: uuid(),
+          idempotency_key,
           browser_id: webapp_client.browser_id,
         });
       });
@@ -3462,7 +4118,7 @@ export function ProjectComputeVms({
     {
       title: "Status",
       dataIndex: "state",
-      width: 165,
+      width: 135,
       render: (state: string, vm) => {
         const providerState = vm.provider_state;
         const displayState = vmDisplayState(vm);
@@ -3475,7 +4131,11 @@ export function ProjectComputeVms({
             : undefined;
         const startupExpectation = vmStartupExpectation(vm);
         return (
-          <Space direction="vertical" size={1} style={{ minWidth: 0 }}>
+          <Space
+            direction="vertical"
+            size={1}
+            style={{ minWidth: 0, width: "100%", maxWidth: "100%" }}
+          >
             <Popover
               trigger="click"
               title={`Status of ${vm.name}`}
@@ -3546,10 +4206,29 @@ export function ProjectComputeVms({
                   </Text>
                 }
               >
-                <Button danger size="small" type="link" style={{ padding: 0 }}>
+                <Button
+                  danger
+                  size="small"
+                  type="link"
+                  style={{
+                    padding: 0,
+                    height: "auto",
+                    maxWidth: "100%",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    textAlign: "left",
+                  }}
+                >
                   Cloud check issue
                 </Button>
               </Popover>
+            )}
+            {vm.stop_at && vm.desired_state === "running" && (
+              <VmShutdownButton
+                name={vm.name}
+                stopAt={vm.stop_at}
+                onClick={() => setStopScheduleVm(vm)}
+              />
             )}
             {vm.expires_at && (
               <Text type="secondary">
@@ -3594,7 +4273,19 @@ export function ProjectComputeVms({
                   </Space>
                 }
               >
-                <Button danger size="small" type="link" style={{ padding: 0 }}>
+                <Button
+                  danger
+                  size="small"
+                  type="link"
+                  style={{
+                    padding: 0,
+                    height: "auto",
+                    maxWidth: "100%",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    textAlign: "left",
+                  }}
+                >
                   {providerErrorSummary(vm.error)}
                 </Button>
               </Popover>
@@ -3605,7 +4296,7 @@ export function ProjectComputeVms({
     },
     {
       title: "Configuration",
-      width: 220,
+      width: 175,
       render: (_, vm) => {
         const machineLabel = vm.gpu_type
           ? `${vm.gpu_count}x ${vm.gpu_type}`
@@ -3651,122 +4342,147 @@ export function ProjectComputeVms({
         const egressLabel = egressRateLabel(vm);
         const freeEgress = providerEgressIsFree(vm.provider);
         return (
-          <Popover
-            trigger="click"
-            title={`Cost and usage for ${vm.name}`}
-            content={
-              <Space
-                direction="vertical"
-                size={10}
-                style={{ width: 430, maxWidth: "80vw" }}
-              >
-                {estimate ? (
-                  <HostPriceBreakdown
-                    estimate={estimate}
-                    title={`${pricingLabel(vm.effective_pricing_model)} running cost`}
-                  />
-                ) : (
-                  <Text>Running cost: {hourlyPrice(vm)}</Text>
-                )}
-                {stoppedEstimate && (
-                  <HostPriceBreakdown
-                    compact
-                    estimate={stoppedEstimate}
-                    title="Stopped cost"
-                  />
-                )}
-                <Text>
-                  Current-month egress: {gb.toFixed(gb >= 10 ? 1 : 3)} GB ·{" "}
-                  {freeEgress
-                    ? "free"
-                    : vm.funding_mode === "site-funded"
-                      ? "$0.10/GB · paid by site"
-                      : `$0.10/GB · $${cost.toFixed(2)} charged`}
-                </Text>
-                <Text type="secondary">
-                  Lifetime egress:{" "}
-                  {(Number(egress.lifetime_bytes) / 1_000_000_000).toFixed(3)}{" "}
-                  GB · ${Number(egress.lifetime_cost_usd).toFixed(2)}.
-                  {egress.stale
-                    ? " Usage reporting is delayed; these totals may lag."
-                    : ""}
-                </Text>
-                <Text type="secondary">
-                  The boot disk remains billable while stopped and cannot
-                  currently be enlarged after creation.
-                </Text>
-              </Space>
-            }
-          >
-            <Button
-              type="link"
-              style={{
-                height: "auto",
-                maxWidth: "100%",
-                overflow: "hidden",
-                padding: 0,
-                textAlign: "left",
-                whiteSpace: "normal",
-                width: "100%",
-              }}
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            <Popover
+              trigger="click"
+              title={`Cost and usage for ${vm.name}`}
+              content={
+                <Space
+                  direction="vertical"
+                  size={10}
+                  style={{ width: 430, maxWidth: "80vw" }}
+                >
+                  {estimate ? (
+                    <HostPriceBreakdown
+                      estimate={estimate}
+                      title={`${pricingLabel(vm.effective_pricing_model)} running cost`}
+                    />
+                  ) : (
+                    <Text>Running cost: {hourlyPrice(vm)}</Text>
+                  )}
+                  {stoppedEstimate && (
+                    <HostPriceBreakdown
+                      compact
+                      estimate={stoppedEstimate}
+                      title="Stopped cost"
+                    />
+                  )}
+                  <Text>
+                    Current-month egress: {gb.toFixed(gb >= 10 ? 1 : 3)} GB ·{" "}
+                    {freeEgress
+                      ? "free"
+                      : vm.funding_mode === "site-funded"
+                        ? "$0.10/GB · paid by site"
+                        : `$0.10/GB · $${cost.toFixed(2)} charged`}
+                  </Text>
+                  <Text type="secondary">
+                    Lifetime egress:{" "}
+                    {(Number(egress.lifetime_bytes) / 1_000_000_000).toFixed(3)}{" "}
+                    GB · ${Number(egress.lifetime_cost_usd).toFixed(2)}.
+                    {egress.stale
+                      ? " Usage reporting is delayed; these totals may lag."
+                      : ""}
+                  </Text>
+                  <Text type="secondary">
+                    The boot disk remains billable while stopped and cannot
+                    currently be enlarged after creation.
+                  </Text>
+                </Space>
+              }
             >
-              <span
+              <Button
+                type="link"
                 style={{
-                  alignItems: "stretch",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 3,
+                  height: "auto",
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  padding: 0,
+                  textAlign: "left",
+                  whiteSpace: "normal",
                   width: "100%",
                 }}
               >
-                <PriceSummaryRow
-                  label="Standard"
-                  current={
-                    vm.state !== "stopped" &&
-                    vm.effective_pricing_model === "on_demand"
-                  }
-                  estimate={standardEstimate}
-                />
-                <PriceSummaryRow
-                  label="Spot"
-                  current={
-                    vm.state !== "stopped" &&
-                    vm.effective_pricing_model === "spot"
-                  }
-                  estimate={spotEstimate}
-                />
-                <PriceSummaryRow
-                  label="Stopped"
-                  note="disk only"
-                  current={vm.state === "stopped"}
-                  estimate={stoppedEstimate}
-                />
-                {freeEgress ? (
-                  <Text type="secondary" style={{ paddingInline: 4 }}>
-                    Egress is free
-                  </Text>
-                ) : (
-                  <Text type="secondary" style={{ paddingInline: 4 }}>
-                    {egressLabel} · {gb.toFixed(gb >= 10 ? 1 : 3)} GB
-                    {egress.stale ? " · usage reporting delayed" : ""}
-                  </Text>
-                )}
-              </span>
-            </Button>
-          </Popover>
+                <span
+                  style={{
+                    alignItems: "stretch",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                    width: "100%",
+                  }}
+                >
+                  <PriceSummaryRow
+                    label="Standard"
+                    current={
+                      vm.state !== "stopped" &&
+                      vm.effective_pricing_model === "on_demand"
+                    }
+                    estimate={standardEstimate}
+                  />
+                  <PriceSummaryRow
+                    label="Spot"
+                    current={
+                      vm.state !== "stopped" &&
+                      vm.effective_pricing_model === "spot"
+                    }
+                    estimate={spotEstimate}
+                  />
+                  <PriceSummaryRow
+                    label="Stopped"
+                    note="disk only"
+                    current={vm.state === "stopped"}
+                    estimate={stoppedEstimate}
+                  />
+                  {freeEgress ? (
+                    <Text type="secondary" style={{ paddingInline: 4 }}>
+                      Egress is free
+                    </Text>
+                  ) : (
+                    <Text type="secondary" style={{ paddingInline: 4 }}>
+                      {egressLabel} · {gb.toFixed(gb >= 10 ? 1 : 3)} GB
+                      {egress.stale ? " · usage reporting delayed" : ""}
+                    </Text>
+                  )}
+                </span>
+              </Button>
+            </Popover>
+            <Text type="secondary">
+              Outgoing traffic
+              <FundingHelp title="Egress">
+                Egress means all outgoing network traffic from this VM,
+                including downloads from it, SSH responses, and notebook results
+                sent back to your project. Usage is metered continuously and
+                charged as reports are processed, with a five-minute
+                finalization delay plus provider/reporting latency. Totals
+                normally update within minutes, not once per day; delayed
+                reports can take longer. GCP samples this metric every 60
+                seconds, a sample can take up to another 150 seconds to appear,
+                and course-funded VMs are checked about every 60 seconds. CoCalc
+                requests a stop after the network spending threshold is
+                observed. Because measurement happens after traffic is sent, the
+                course payer remains responsible for finalized usage reported
+                after that threshold. Incoming traffic is not egress. The
+                provider's rate shown here applies.
+              </FundingHelp>
+            </Text>
+          </Space>
         );
       },
+    },
+    {
+      title: "Course funding",
+      width: 230,
+      render: (_, vm) =>
+        vm.funding_status ? (
+          <VmFundingStatus funding={vm.funding_status} compact />
+        ) : (
+          <Text type="secondary">No course funding</Text>
+        ),
     },
     {
       title: "Actions",
       width: 185,
       render: (_, vm) => {
-        const transitioning = ["starting", "stopping", "deleting"].includes(
-          vm.state,
-        );
-        const stopDisabled = ["stopping", "deleting"].includes(vm.state);
-        const running =
-          vm.desired_state === "running" && vm.state !== "stopped";
         const cliCommand = `cocalc vm ssh ${vm.name}`;
         const directCommand = vm.public_hostname
           ? `ssh ${vm.ssh_user || "user"}@${vm.public_hostname}`
@@ -3883,6 +4599,22 @@ export function ProjectComputeVms({
                     Public TCP ports: {vm.public_ports.join(", ")}. HTTPS
                     certificates and services are managed by you.
                   </Text>
+                  <Text>
+                    Run notebook code on this VM using a remote Jupyter kernel
+                    while keeping the notebook in your CoCalc project.
+                  </Text>
+                  <Button
+                    onClick={() =>
+                      projectId
+                        ? openProjectDocs({
+                            projectId,
+                            slug: "jupyter/remote-kernels",
+                          })
+                        : openAppDocs("jupyter/remote-kernels")
+                    }
+                  >
+                    Remote Jupyter kernels
+                  </Button>
                 </Space>
               }
             >
@@ -3890,34 +4622,19 @@ export function ProjectComputeVms({
                 Connect
               </Button>
             </Popover>
-            {accountMode &&
-              (running ? (
-                <Popconfirm
-                  title={`Stop ${vm.name}?`}
-                  description="Compute and Windows license charges stop, but persistent disk charges continue."
-                  okText="Stop VM"
-                  cancelText="Keep running"
-                  onConfirm={() => void setVmRunning(vm, false)}
-                >
-                  <Button size="small" disabled={stopDisabled}>
-                    Stop
-                  </Button>
-                </Popconfirm>
-              ) : (
-                <Button
-                  size="small"
-                  disabled={transitioning}
-                  onClick={() => {
-                    if (vm.provider === "nebius") {
-                      setStartVm(vm);
-                    } else {
-                      void setVmRunning(vm, true);
-                    }
-                  }}
-                >
-                  Start
-                </Button>
-              ))}
+            <VmPowerControls
+              vm={vm}
+              accountMode={accountMode}
+              accountId={accountId}
+              onStop={() => void setVmRunning(vm, false)}
+              onStart={() => {
+                if (vm.provider === "nebius") {
+                  setStartVm(vm);
+                } else {
+                  void setVmRunning(vm, true);
+                }
+              }}
+            />
             {accountMode && (
               <Button size="small" onClick={() => setAccessVm(vm)}>
                 Projects ({linkedProjectCount})
@@ -3952,7 +4669,13 @@ export function ProjectComputeVms({
                         ? "Change deletion deadline"
                         : "Set deletion deadline",
                     },
-                    { key: "similar", label: "Create similar" },
+                    {
+                      key: "similar",
+                      disabled: !catalog?.providers.includes(vm.provider),
+                      label: catalog?.providers.includes(vm.provider)
+                        ? "Create similar"
+                        : "Create similar (provider unavailable)",
+                    },
                     { key: "funding", label: "Change funding" },
                     { type: "divider" },
                     {
@@ -3989,7 +4712,7 @@ export function ProjectComputeVms({
                       Modal.confirm({
                         title: `Delete ${vm.name}?`,
                         content:
-                          "The VM, persistent boot disk, public address, and DNS record are deleted. An attached persistent home volume is retained independently.",
+                          "Your notebooks and saved outputs in your CoCalc project remain. This deletes the VM and its boot disk, including installed software and data not copied elsewhere. VM files are not automatically backed up. An attached home volume is retained and billed independently.",
                         okText: "Delete VM",
                         okButtonProps: { danger: true },
                         onOk: () => deleteVm(vm),
@@ -4058,6 +4781,19 @@ export function ProjectComputeVms({
         ).toFixed(2)}/month · ${volume.funding_mode}`,
     },
     {
+      title: "Payer and retention",
+      render: (_, volume) => (
+        <VolumeFundingDetailsButton
+          volume={volume}
+          personalApi={
+            volume.owner_account_id === accountId
+              ? webapp_client.conat_client.hub.compute
+              : undefined
+          }
+        />
+      ),
+    },
+    {
       title: "Actions",
       render: (_, volume) => {
         const attached =
@@ -4066,7 +4802,9 @@ export function ProjectComputeVms({
           <Flex gap={4} wrap>
             <Button
               size="small"
-              disabled={volume.state !== "ready"}
+              disabled={
+                volume.state !== "ready" || volumeFundingUnavailable(volume)
+              }
               onClick={() => setResizeVolumeTarget(volume)}
             >
               Enlarge
@@ -4076,7 +4814,15 @@ export function ProjectComputeVms({
             </Button>
             <Popconfirm
               title={`Permanently delete ${volume.name}?`}
-              description="All data on this volume will be lost."
+              description={
+                <div style={{ maxWidth: "min(380px, calc(100vw - 48px))" }}>
+                  <Text strong>
+                    All data on this home volume will be permanently lost. No
+                    automatic backup is available.
+                  </Text>
+                  <VolumeFundingStatus volume={volume} />
+                </div>
+              }
               okText="Delete volume"
               okButtonProps={{ danger: true }}
               disabled={attached}
@@ -4213,6 +4959,7 @@ export function ProjectComputeVms({
           </Button>
         </Space>
       </Flex>
+      {accountMode && <CourseCreditSummary />}
       {error && (
         <Alert
           closable
@@ -4319,9 +5066,11 @@ export function ProjectComputeVms({
           <Flex
             align="center"
             justify="space-between"
+            wrap
+            gap={12}
             style={{ marginTop: 28 }}
           >
-            <div>
+            <div style={{ flex: "1 1 260px", minWidth: 0 }}>
               <Flex align="center" gap={4}>
                 <Title level={4} style={{ marginBottom: 0 }}>
                   Persistent home volumes
@@ -4406,6 +5155,7 @@ export function ProjectComputeVms({
           volumes={volumes}
           initial={vmInitial}
           projectSshPublicKey={projectSshPublicKey}
+          connectedProjects={connectedProjects}
           sshKeys={sshKeys}
           saving={saving}
           error={vmCreateError}
@@ -4452,15 +5202,25 @@ export function ProjectComputeVms({
           vm={startVm}
           catalog={catalog}
           onCancel={() => setStartVm(undefined)}
-          onStart={async (vm) => {
-            const started = await setVmRunning(vm, true);
+          onStart={async (vm, stopAfterMinutes) => {
+            const started = await setVmRunning(vm, true, stopAfterMinutes);
             if (started) setStartVm(undefined);
             return started;
           }}
         />
       )}
+      <VmStopScheduleModal
+        vm={stopScheduleVm}
+        onCancel={() => setStopScheduleVm(undefined)}
+        onSave={async (vm, stopAfterMinutes) => {
+          const saved = await saveVmStopSchedule(vm, stopAfterMinutes);
+          if (saved) setStopScheduleVm(undefined);
+          return saved;
+        }}
+      />
       {catalog && (
         <VolumeResizeModal
+          sponsoredHomeVolumes={catalog?.sponsored_home_volumes}
           volume={resizeVolumeTarget}
           maxSizeGb={catalog.limits.max_volume_gb}
           saving={saving}
@@ -4470,13 +5230,17 @@ export function ProjectComputeVms({
       )}
       <FreshAuthModal {...freshAuthModalProps} />
       <VmDetailsModal
-        vm={detailsVm}
+        open={detailsOpen}
+        vm={
+          detailsVm && (rows.find((vm) => vm.id === detailsVm.id) ?? detailsVm)
+        }
+        accountId={accountId}
         homeVolume={
           detailsVm?.home_volume_id
             ? volumesById.get(detailsVm.home_volume_id)
             : undefined
         }
-        onClose={() => setDetailsVm(undefined)}
+        onClose={() => setDetailsOpen(false)}
       />
       <VmAccessModal
         vm={accessVm}

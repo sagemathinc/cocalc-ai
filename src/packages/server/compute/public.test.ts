@@ -6,6 +6,19 @@
 import { publicComputeVmMetadata } from "./public";
 
 describe("managed compute public metadata", () => {
+  it("does not expose the internal sponsor reservation or payer routing reference", () => {
+    expect(
+      publicComputeVmMetadata({
+        billing: {
+          funding_mode: "account-prepaid",
+          course_funding: {
+            source: { payer_account_id: "payer" },
+            binding: { payer_authority_epoch: "private" },
+          },
+        },
+      }),
+    ).toEqual({ billing: { funding_mode: "account-prepaid" } });
+  });
   it("removes every authorized-key snapshot without hiding runtime state", () => {
     expect(
       publicComputeVmMetadata({

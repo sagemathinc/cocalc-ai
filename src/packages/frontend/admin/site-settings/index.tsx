@@ -45,6 +45,7 @@ import type {
   CloudflareTunnelApplyResult,
   GlobalConfigPropagationStatus,
 } from "@cocalc/conat/hub/api/system";
+import type { FundingApprovalReadiness } from "@cocalc/conat/hub/api/compute-funding";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
@@ -175,6 +176,10 @@ export default function SiteSettings({
   const [cloudflareApplyResult, setCloudflareApplyResult] =
     useState<CloudflareTunnelApplyResult | null>(null);
   const [cloudflareApplyError, setCloudflareApplyError] = useState<string>("");
+  const [fundingApprovalStatus, setFundingApprovalStatus] =
+    useState<FundingApprovalReadiness | null>(null);
+  const [fundingApprovalLoading, setFundingApprovalLoading] = useState(false);
+  const [fundingApprovalError, setFundingApprovalError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const [data, setData] = useState<Data | null>(null);
   const [isSet, setIsSet] = useState<IsSet | null>(null);
@@ -195,7 +200,24 @@ export default function SiteSettings({
   useEffect(() => {
     load();
     void loadSiteSettingsPropagationStatus();
+    void loadFundingApprovalStatus();
   }, []);
+
+  async function loadFundingApprovalStatus(force = false): Promise<void> {
+    setFundingApprovalLoading(true);
+    setFundingApprovalError("");
+    try {
+      setFundingApprovalStatus(
+        await webapp_client.conat_client.hub.system.getFundingApprovalReadiness(
+          { force },
+        ),
+      );
+    } catch (err) {
+      setFundingApprovalError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setFundingApprovalLoading(false);
+    }
+  }
 
   const prevExpandAllRef = useRef<boolean>(expandAll);
   const openedScopedDetailsRef = useRef(false);
@@ -831,6 +853,7 @@ export default function SiteSettings({
             error: result.error,
           },
         });
+        await loadFundingApprovalStatus(true);
       });
     } catch (err) {
       setCloudflareApplyError(err instanceof Error ? err.message : `${err}`);
@@ -1024,6 +1047,47 @@ export default function SiteSettings({
       (!effectiveCloudflareStatus.running || effectiveCloudflareStatus.error);
     return (
       <div>
+        {!IS_STAR_SETUP_PROFILE && (
+          <div
+            style={{
+              maxWidth: "800px",
+              margin: "0 auto 20px auto",
+            }}
+          >
+            <Alert
+              showIcon
+              type={
+                fundingApprovalStatus?.state === "ready"
+                  ? "success"
+                  : fundingApprovalStatus?.state === "disabled"
+                    ? "info"
+                    : "warning"
+              }
+              title={
+                fundingApprovalStatus?.state === "ready"
+                  ? "Secure financial authorization is ready"
+                  : fundingApprovalStatus?.state === "disabled"
+                    ? "Secure financial authorization is disabled"
+                    : "Secure financial authorization needs attention"
+              }
+              description={
+                fundingApprovalError ||
+                fundingApprovalStatus?.reason ||
+                fundingApprovalStatus?.origin ||
+                "Checking configuration and public HTTPS routing."
+              }
+              action={
+                <Button
+                  icon={<Icon name="refresh" />}
+                  loading={fundingApprovalLoading}
+                  onClick={() => void loadFundingApprovalStatus(true)}
+                >
+                  Verify
+                </Button>
+              }
+            />
+          </div>
+        )}
         {showCloudflareWarning && (
           <Alert
             type="warning"

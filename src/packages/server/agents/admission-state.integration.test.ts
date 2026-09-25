@@ -15,7 +15,6 @@ const describeDb =
 
 describeDb("shared agent RPC admission state", () => {
   beforeAll(async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     await syncSchema({
       agent_rpc_admission_state: SCHEMA.agent_rpc_admission_state,
     });

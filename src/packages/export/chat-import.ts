@@ -8,6 +8,11 @@ import {
   buildThreadRecord,
   buildThreadStateRecord,
   CHAT_SCHEMA_V2,
+  validateArtifact,
+  validateArtifactPublication,
+  validateArtifactFeedback,
+  artifactKey,
+  artifactPublicationKey,
   type ChatMessageRecordV2,
   type ChatThreadConfigRecord,
   type InlineCodeLink,
@@ -77,6 +82,7 @@ interface ImportedCodexContext {
 }
 
 interface ImportedThreadData {
+  artifacts?: unknown[];
   thread_id: string;
   title?: string;
   archived?: boolean;
@@ -104,6 +110,7 @@ interface ImportedThreadData {
 }
 
 interface ImportedMessageRow {
+  artifact_feedback?: unknown;
   event?: string;
   message_kind?: string;
   message_id?: string;
@@ -299,7 +306,44 @@ export async function importChatBundle(
           : undefined,
       });
       copyImportedMessageFields(message, row);
+      if (row.artifact_feedback) {
+        const feedback = validateArtifactFeedback(row.artifact_feedback);
+        if (feedback.thread_id !== sourceThreadId)
+          throw Error(
+            "artifact feedback belongs to a different imported thread",
+          );
+        (message as any).artifact_feedback = {
+          ...feedback,
+          thread_id: newThreadId,
+        };
+      }
       importedRows.push(message);
+    }
+    for (const raw of threadData.artifacts ?? []) {
+      if ((raw as any)?.thread_id !== sourceThreadId)
+        throw Error("artifact belongs to a different imported thread");
+      if ((raw as any)?.event === "chat-artifact") {
+        const artifact = validateArtifact(raw);
+        importedRows.push({
+          ...artifact,
+          ...artifactKey({ ...artifact, thread_id: newThreadId }),
+        });
+      } else {
+        const publication = validateArtifactPublication(raw);
+        const messageId = messageIdMap.get(publication.message_id);
+        if (!messageId)
+          throw Error(
+            "artifact publication references a missing imported message",
+          );
+        importedRows.push({
+          ...publication,
+          ...artifactPublicationKey(
+            { ...publication, thread_id: newThreadId },
+            publication.operation_id,
+          ),
+          message_id: messageId,
+        });
+      }
     }
   }
 

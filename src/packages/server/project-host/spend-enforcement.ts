@@ -112,7 +112,11 @@ function prepaidReason(
   snapshot: AccountLocalDedicatedHostPolicySnapshot,
   limitingWindow?: string,
 ): { code: string; reason: string } {
-  if (toDecimal(snapshot.balance ?? 0).lte(0)) {
+  if (
+    toDecimal(snapshot.prepaid_spendable_balance ?? snapshot.balance ?? 0).lte(
+      0,
+    )
+  ) {
     return {
       code: "prepaid_balance_exhausted",
       reason: "prepaid balance is exhausted",
@@ -223,7 +227,7 @@ export function evaluateDedicatedHostBillingEnforcement({
       pushRunway(
         runways,
         "prepaid_balance",
-        toDecimal(snapshot.balance ?? 0)
+        toDecimal(snapshot.prepaid_spendable_balance ?? snapshot.balance ?? 0)
           .div(hourly)
           .toNumber(),
       );
@@ -261,7 +265,9 @@ export function evaluateDedicatedHostBillingEnforcement({
       "credit_7d",
       runwayHours({
         limit: limits.credit_spend_limit_7d_usd,
-        used: usage.credit_7d_usd,
+        used: toDecimal(usage.credit_7d_usd).add(
+          snapshot.postpaid_committed_usd ?? 0,
+        ),
         hourly,
       }),
     );

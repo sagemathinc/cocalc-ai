@@ -118,6 +118,8 @@ export type CodexProjectSpawner = {
     touchReason?: string | false;
     siteFundedTurn?: CodexSiteFundedTurnRequest;
     paymentSource?: CodexPaymentSourcePreference;
+    credentialId?: string;
+    codexHome?: string;
   }) => Promise<{
     proc: ChildProcess;
     cmd: string;
@@ -131,6 +133,8 @@ export type CodexProjectSpawner = {
     runtimeEnv?: Record<string, string>;
     setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
     siteFundedTurn?: CodexSiteFundedTurnRuntime;
+    credentialId?: string;
+    validateSubscriptionCredential?: () => Promise<void>;
   }>;
 };
 

@@ -446,6 +446,19 @@ export function getQueuedMessageEditHelpText({
   return "If you edit and save this message before the next turn, then it will be used.";
 }
 
+export type CodexOverflowMenuLocation = "header" | "footer" | "hidden";
+
+export function resolveCodexOverflowMenuLocation({
+  generating,
+  isAgentMessage,
+}: {
+  generating: boolean;
+  isAgentMessage: boolean;
+}): CodexOverflowMenuLocation {
+  if (!isAgentMessage) return "header";
+  return generating ? "hidden" : "footer";
+}
+
 export function shouldShowAcpResubmitToAgentButton({
   hasActions,
   hasParentMessage,

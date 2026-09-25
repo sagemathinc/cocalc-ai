@@ -5,6 +5,8 @@ import maintainMembershipAnalytics from "./maintain-membership-analytics";
 import maintainComputeRevenueAnalyticsProjection from "./maintain-compute-revenue-analytics";
 import { executeBillingAuthorityCommand } from "./billing-authority/client";
 import type { BillingAuthorityMaintenanceTask } from "./billing-authority/protocol";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 
 const logger = getLogger("purchases:maintenance");
 
@@ -24,6 +26,20 @@ interface MaintenanceDescription {
 }
 
 const FUNCTIONS: MaintenanceDescription[] = [
+  {
+    f: authorityMaintenance("monthly-collections"),
+    desc: "collect explicitly authorized monthly statements",
+    requiresStripe: true,
+  },
+  {
+    f: authorityMaintenance("credit-transfers"),
+    desc: "reconcile pending account credit transfers",
+  },
+  {
+    f: authorityMaintenance("provider-refunds"),
+    desc: "reconcile pending provider refunds",
+    requiresStripe: true,
+  },
   {
     f: authorityMaintenance("subscriptions"),
     desc: "maintain subscriptions",
@@ -96,6 +112,13 @@ function getEnabledMaintenanceFunctions(
 
 export default function startPurchasesMaintenanceLoop() {
   if (started) {
+    return;
+  }
+  if (
+    isBillingAuthorityEnabled() &&
+    getConfiguredClusterRole() === "attached"
+  ) {
+    logger.info("purchase maintenance loop is seed-bay only");
     return;
   }
   started = true;

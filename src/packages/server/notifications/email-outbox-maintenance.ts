@@ -8,6 +8,7 @@ import {
   claimDigestNotificationEmails,
   claimQueuedNotificationEmails,
   markNotificationEmailFailed,
+  markFinancialReceiptEmailFailed,
   markNotificationEmailSent,
   markNotificationEmailStatus,
   markNotificationEmailsSent,
@@ -26,6 +27,9 @@ import {
   renderNotificationEmailMarkdownText,
 } from "./email-format";
 import { isValidUUID } from "@cocalc/util/misc";
+import { isFinancialReceipt } from "@cocalc/database/postgres/financial-receipt-email";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 const logger = getLogger("server:notifications:email-outbox");
 
@@ -291,11 +295,25 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
     opts?.sendLimitChecker ?? checkNotificationEmailSendLimitForAccount;
   for (const row of rows) {
     try {
-      const revalidation = await revalidateNotificationEmail({ row });
+      const financial = isFinancialReceipt(row.summary_json?.summary);
+      const current = financial
+        ? await getClusterAccountById(row.target_account_id)
+        : undefined;
+      const revalidation = await revalidateNotificationEmail({
+        row,
+        ...(financial
+          ? {
+              financial_home: {
+                current: current?.banned ? "" : (current?.home_bay_id ?? ""),
+                local: getConfiguredBayId(),
+              },
+            }
+          : {}),
+      });
       if (revalidation.action === "skip") {
         await markNotificationEmailStatus({
           email_id: row.email_id,
-          status: "skipped_preference",
+          status: revalidation.status ?? "skipped_preference",
           error: revalidation.reason,
         });
         continue;
@@ -309,6 +327,8 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
         continue;
       }
       if (!(await emailConfigured(row.lane))) {
+        if (financial)
+          throw new Error(`no backend configured for ${row.lane} email lane`);
         await markNotificationEmailStatus({
           email_id: row.email_id,
           status: "skipped_no_backend",
@@ -346,10 +366,16 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
       await markNotificationEmailSent({ email_id: row.email_id });
       result.sent += 1;
     } catch (err) {
-      await markNotificationEmailFailed({
+      const failure = {
         email_id: row.email_id,
         error: err instanceof Error ? err : `${err}`,
-      });
+      };
+      if (isFinancialReceipt(row.summary_json?.summary)) {
+        await markFinancialReceiptEmailFailed({
+          ...failure,
+          attempt_count: row.attempt_count,
+        });
+      } else await markNotificationEmailFailed(failure);
       result.failed += 1;
       logger.warn("failed to send notification email outbox row", {
         email_id: row.email_id,
@@ -411,6 +437,15 @@ export async function sendDailyNotificationDigestBatch(opts?: {
   for (const targetRows of rowsByTarget.values()) {
     const sendableRows: NotificationEmailOutboxRow[] = [];
     for (const row of targetRows) {
+      // Required financial receipts are immediate, never a digest bypass.
+      if (isFinancialReceipt(row.summary_json?.summary)) {
+        await markNotificationEmailStatus({
+          email_id: row.email_id,
+          status: "skipped_unverified",
+          error: "Financial receipt cannot be delivered in a digest",
+        });
+        continue;
+      }
       if (!row.recipient_email) {
         await markNotificationEmailStatus({
           email_id: row.email_id,

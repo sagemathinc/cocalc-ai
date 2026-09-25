@@ -247,11 +247,13 @@ export function useProjectContextProvider({
   is_active,
   mainWidthPx,
   publicDirectoryShare,
+  manageWorkspaceSelection = true,
 }: {
   project_id: string;
   is_active: boolean;
   mainWidthPx: number;
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
+  manageWorkspaceSelection?: boolean;
 }): ProjectContextState {
   const actions = useActions({ project_id });
   const { project, group } = useProject(project_id);
@@ -376,6 +378,7 @@ export function useProjectContextProvider({
   const workspaceRestoreStableMatchesRef = useRef<number>(0);
 
   useEffect(() => {
+    if (!manageWorkspaceSelection) return;
     const activePath = tab_to_path(active_project_tab ?? "");
     if (!activePath) return;
     const record = workspaces.resolveWorkspaceForPath(activePath);
@@ -391,9 +394,11 @@ export function useProjectContextProvider({
     workspaces.resolveWorkspaceForPath,
     workspaces.updateWorkspace,
     workspaces.records,
+    manageWorkspaceSelection,
   ]);
 
   useLayoutEffect(() => {
+    if (!manageWorkspaceSelection) return;
     const currentSelectionKey =
       workspaces.selection.kind === "workspace"
         ? `workspace:${workspaces.selection.workspace_id}`
@@ -572,6 +577,7 @@ export function useProjectContextProvider({
     workspaces.matchesPath,
     workspaces.records,
     workspaces.selection,
+    manageWorkspaceSelection,
   ]);
 
   useEffect(() => {

@@ -9,7 +9,7 @@ describe("site-funded Codex policy", () => {
   it("parses bounded operator settings", () => {
     const config = siteFundedCodexConfigurationFromSettings({
       site_funded_codex_enabled: "yes",
-      site_funded_codex_model: "gpt-5.6-luna",
+      site_funded_codex_model: "gpt-6-luna",
       site_funded_codex_max_turn_usd: "0.025",
       site_funded_codex_max_turn_seconds: "600",
       site_funded_codex_max_input_tokens_per_request: "90000",
@@ -22,7 +22,8 @@ describe("site-funded Codex policy", () => {
     });
     expect(config.enabled).toBe(true);
     expect(config.policy).toMatchObject({
-      model: "gpt-5.6-luna",
+      version: 7,
+      model: "gpt-6-luna",
       reasoning: "medium",
       serviceTier: "standard",
       maxConcurrentTurnsPerAccount: 2,
@@ -44,6 +45,14 @@ describe("site-funded Codex policy", () => {
       site_funded_codex_reasoning: "low",
     });
     expect(config.policy.reasoning).toBe("low");
+    expect(config.policy.model).toBe("gpt-6-luna");
+  });
+
+  it("keeps the previous priced model available for rollback", () => {
+    const config = siteFundedCodexConfigurationFromSettings({
+      site_funded_codex_model: "gpt-5.6-luna",
+    });
+    expect(config.policy.model).toBe("gpt-5.6-luna");
   });
 
   it("fails closed for an unpriced model", () => {

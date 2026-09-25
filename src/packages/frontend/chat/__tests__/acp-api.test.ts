@@ -6,6 +6,7 @@ import {
   runThreadAutomationNow,
   resendCanceledAcpTurn,
   resetAcpApiStateForTests,
+  sanitizeSharedCodexConfig,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
 
@@ -59,7 +60,11 @@ describe("processAcpLLM", () => {
     resetAcpApiStateForTests();
   });
 
-  it("uses steer for Send Now without interrupting the active turn", async () => {
+  it.each([
+    [undefined, false],
+    [true, true],
+    [false, false],
+  ])("uses steer with surface=%s (workbench=%s)", async (surface, enabled) => {
     jest.spyOn(Date, "now").mockReturnValue(4700);
     mockSteerAcp.mockResolvedValue({
       ok: true,
@@ -79,6 +84,7 @@ describe("processAcpLLM", () => {
     };
 
     const actions: any = {
+      workbenchEnabled: surface,
       syncdb: {
         save: jest.fn().mockResolvedValue(undefined),
         set: jest.fn(),
@@ -99,7 +105,7 @@ describe("processAcpLLM", () => {
         ]),
       getThreadMetadata: jest.fn(() => undefined),
       getMessagesInThread: jest.fn(() => []),
-      getCodexConfig: jest.fn(() => undefined),
+      getCodexConfig: jest.fn(() => ({})),
       sendReply: jest.fn(),
     };
 
@@ -127,14 +133,28 @@ describe("processAcpLLM", () => {
     });
 
     expect(mockSteerAcp).toHaveBeenCalledTimes(1);
+    expect(mockSteerAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat: expect.objectContaining({ workbench: enabled }),
+      }),
+    );
     expect(mockStreamAcp).not.toHaveBeenCalled();
     expect(mockInterruptAcp).not.toHaveBeenCalled();
     expect(acpState.get("message:user-msg-47")).toBe("sent");
     expect(actions.syncdb.set).toHaveBeenCalledWith(
       expect.objectContaining({
         message_id: "user-msg-47",
+        acp_state: "sending",
+      }),
+    );
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: "user-msg-47",
         acp_state: "sent",
       }),
+    );
+    expect(actions.syncdb.set.mock.invocationCallOrder[0]).toBeLessThan(
+      actions.syncdb.save.mock.invocationCallOrder[0],
     );
   });
 
@@ -757,6 +777,21 @@ describe("processAcpLLM", () => {
   });
 });
 
+describe("sanitizeSharedCodexConfig", () => {
+  it("removes collaborator-persisted credential selectors", () => {
+    expect(
+      sanitizeSharedCodexConfig({
+        paymentSource: "subscription",
+        model: "gpt-5.4",
+        credentialId: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toEqual({
+      paymentSource: "subscription",
+      model: "gpt-5.4",
+    });
+  });
+});
+
 describe("automation controls", () => {
   afterEach(() => {
     jest.clearAllMocks();
@@ -1053,6 +1088,7 @@ describe("queued ACP controls", () => {
           user_parent_message_id: undefined,
           parent_message_id: "user-msg-missing",
           thread_id: "thread-missing",
+          workbench: false,
         }),
       }),
       { timeout: expect.any(Number) },

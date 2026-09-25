@@ -39,7 +39,13 @@ import {
   enqueueComputeVolumeReconciliation,
   listComputeVolumesForInventory,
   listOwnedComputeVolumes,
+  updateComputeVolume,
 } from "./volume-db";
+import {
+  ComputeWorkLeaseLostError,
+  markCurrentComputeWorkLeaseCompleted,
+  runWithComputeWorkLease,
+} from "./work-lease";
 import {
   activeComputeVmProjectKeys,
   grantComputeVmProjectAccess,
@@ -171,6 +177,25 @@ function volumeInput(
 }
 
 describe("compute VM durable state", () => {
+  it("persists a scheduled stop separately from deletion and does not refresh it on create retry", async () => {
+    const input = {
+      ...vmInput(),
+      stop_after_minutes: 360,
+      stop_at: new Date(Date.now() + 360 * 60000),
+      stop_generation: 1,
+      expires_at: null,
+    };
+    const created = await insertComputeVm(input);
+    expect(created.stop_after_minutes).toBe(360);
+    expect(created.stop_at).toEqual(input.stop_at);
+    expect(created.expires_at).toBeNull();
+    const retry = await insertComputeVm({
+      ...input,
+      stop_at: new Date(Date.now() + 720 * 60000),
+    });
+    expect(retry.stop_at).toEqual(created.stop_at);
+    expect(retry.stop_generation).toBe(1);
+  });
   it("records provider interruptions on the active instance generation", async () => {
     const vm = await insertComputeVm(vmInput());
     await insertComputeInstance(vm);
@@ -654,6 +679,7 @@ describe("compute VM durable state", () => {
     await heartbeatComputeWork({
       id: claimed.id,
       worker_id: "worker-heartbeat",
+      attempt: claimed.attempt,
     });
 
     const { rows } = await getPool().query(
@@ -697,7 +723,12 @@ describe("compute VM durable state", () => {
     const claimedFirstVm = firstClaim.find(
       ({ resource_id }) => resource_id === firstVm.id,
     )!;
-    await finishComputeWork({ id: claimedFirstVm.id, state: "done" });
+    await finishComputeWork({
+      id: claimedFirstVm.id,
+      worker_id: "worker-a",
+      attempt: claimedFirstVm.attempt,
+      state: "done",
+    });
     const nextClaim = await claimComputeWork({
       worker_id: "worker-b",
       limit: 3,
@@ -707,6 +738,112 @@ describe("compute VM durable state", () => {
       resource_id: firstVm.id,
       action: "stop",
     });
+  });
+
+  it("rejects completion from a worker whose lease was reclaimed", async () => {
+    const vm = await insertComputeVm(vmInput());
+    await enqueueComputeWork({
+      resource_id: vm.id,
+      action: "provision",
+      idempotency_key: "provision-reclaimed",
+    });
+    const [stale] = await claimComputeWork({
+      worker_id: "worker-stale",
+      limit: 1,
+    });
+    await getPool().query(
+      "UPDATE compute_resource_work SET locked_at=NOW() - interval '20 minutes' WHERE id=$1",
+      [stale.id],
+    );
+    const [current] = await claimComputeWork({
+      worker_id: "worker-current",
+      limit: 1,
+    });
+
+    expect(
+      await finishComputeWork({
+        id: stale.id,
+        worker_id: "worker-stale",
+        attempt: stale.attempt,
+        state: "done",
+      }),
+    ).toBe(false);
+    const { rows } = await getPool().query(
+      "SELECT state,locked_by,attempt FROM compute_resource_work WHERE id=$1",
+      [stale.id],
+    );
+    expect(rows[0]).toEqual({
+      state: "in_progress",
+      locked_by: "worker-current",
+      attempt: current.attempt,
+    });
+  });
+
+  it.each([
+    ["vm", "reconcile"],
+    ["volume", "reconcile_volume"],
+  ] as const)(
+    "fences stale %s resource writes after lease reclamation",
+    async (resourceKind, action) => {
+      const resource =
+        resourceKind === "vm"
+          ? await insertComputeVm(vmInput())
+          : await insertComputeVolume(volumeInput(), 2);
+      await enqueueComputeWork({
+        resource_kind: resourceKind,
+        resource_id: resource.id,
+        action,
+        idempotency_key: `fence-${resourceKind}`,
+      });
+      const [stale] = await claimComputeWork({
+        worker_id: "worker-stale",
+        limit: 1,
+      });
+      await runWithComputeWorkLease(
+        {
+          id: stale.id,
+          worker_id: "worker-stale",
+          attempt: stale.attempt,
+        },
+        async () => {
+          await getPool().query(
+            "UPDATE compute_resource_work SET locked_at=NOW() - interval '20 minutes' WHERE id=$1",
+            [stale.id],
+          );
+          const [current] = await claimComputeWork({
+            worker_id: "worker-current",
+            limit: 1,
+          });
+          expect(current.attempt).toBeGreaterThan(stale.attempt);
+          const update =
+            resourceKind === "vm"
+              ? updateComputeVm(resource.id, { state: "failed" })
+              : updateComputeVolume(resource.id, { state: "failed" });
+          await expect(update).rejects.toBeInstanceOf(
+            ComputeWorkLeaseLostError,
+          );
+        },
+      );
+      const currentResource =
+        resourceKind === "vm"
+          ? await getComputeVmById(resource.id)
+          : await getComputeVolumeById(resource.id);
+      expect(currentResource?.state).toBe(resource.state);
+    },
+  );
+
+  it("never permits resource writes after a work generation is completed", async () => {
+    const vm = await insertComputeVm(vmInput());
+    await runWithComputeWorkLease(
+      { id: randomUUID(), worker_id: "worker-complete", attempt: 1 },
+      async () => {
+        markCurrentComputeWorkLeaseCompleted();
+        await expect(
+          updateComputeVm(vm.id, { state: "failed" }),
+        ).rejects.toBeInstanceOf(ComputeWorkLeaseLostError);
+      },
+    );
+    expect((await getComputeVmById(vm.id))?.state).toBe(vm.state);
   });
 
   it("turns an expired lease into durable delete work", async () => {

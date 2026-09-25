@@ -23,6 +23,52 @@ async function createAdminAccount(account_id: string) {
 }
 
 describe("admin balance adjustments", () => {
+  it("does not allow a non-admin to change another account's balance", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await expect(
+      adminPurchase({
+        admin_account_id,
+        user_account_id,
+        price: 25,
+        product: "balance",
+        source: "free",
+      }),
+    ).rejects.toThrow("must be an admin");
+    const { rows } = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1",
+      [user_account_id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("does not adjust a non-local account's ledger", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createAdminAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1",
+      [user_account_id, `other-${uuid()}`],
+    );
+    await expect(
+      adminPurchase({
+        admin_account_id,
+        user_account_id,
+        price: 25,
+        product: "balance",
+        source: "free",
+      }),
+    ).rejects.toThrow(/homed on/);
+    const { rows } = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1",
+      [user_account_id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
   it("keeps internal notes out of user-visible purchase notes", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();

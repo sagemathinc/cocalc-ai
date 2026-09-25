@@ -75,6 +75,82 @@ jest.mock("@cocalc/server/hosts/public-route-probe", () => ({
     probePublicRouteMock(...args),
 }));
 
+describe("project-host public route policy", () => {
+  it("defaults managed GCP hosts to proxied public-IP routing", async () => {
+    const { desiredHostPublicRouteMode } = await import("./public-route");
+
+    expect(
+      desiredHostPublicRouteMode({
+        metadata: { machine: { cloud: "gcp" } },
+      }),
+    ).toBe("cloudflare-proxy");
+  });
+
+  it("preserves an explicit tunnel route override", async () => {
+    const { desiredHostPublicRouteMode } = await import("./public-route");
+
+    expect(
+      desiredHostPublicRouteMode({
+        metadata: {
+          machine: { cloud: "gcp" },
+          public_route: { desired_mode: "cloudflare-tunnel" },
+        },
+      }),
+    ).toBe("cloudflare-tunnel");
+  });
+
+  it("keeps non-GCP managed hosts on tunnel routing by default", async () => {
+    const { desiredHostPublicRouteMode } = await import("./public-route");
+
+    expect(
+      desiredHostPublicRouteMode({
+        metadata: { machine: { cloud: "nebius" } },
+      }),
+    ).toBe("cloudflare-tunnel");
+  });
+
+  it("reclaims a route migration abandoned by a terminated worker", async () => {
+    const { hostPublicRouteMigrationInProgress } =
+      await import("./public-route");
+    const nowMs = new Date("2026-09-20T20:00:00.000Z").getTime();
+
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: {
+            public_route: {
+              status: "preparing",
+              started_at: "2026-09-20T19:55:00.000Z",
+            },
+          },
+        },
+        nowMs,
+      ),
+    ).toBe(true);
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: {
+            public_route: {
+              status: "preparing",
+              started_at: "2026-09-20T17:00:00.000Z",
+            },
+          },
+        },
+        nowMs,
+      ),
+    ).toBe(false);
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: { public_route: { status: "preparing" } },
+        },
+        nowMs,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("project-host public route migration", () => {
   let row: any;
 

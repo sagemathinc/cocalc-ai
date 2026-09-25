@@ -162,7 +162,27 @@ describe("/api/v2/auth/bootstrap", () => {
     await bootstrap(req, res);
     expect(mockPoolQuery).not.toHaveBeenCalled();
     expect(res._getJSONData()).not.toHaveProperty("appearance_theme");
+    expect(res._getJSONData()).not.toHaveProperty("openai_disabled");
   });
+
+  it.each([true, false])(
+    "returns the home-bay AI opt-out (%s)",
+    async (disabled) => {
+      mockGetAccountId.mockResolvedValue("account-1");
+      mockGetClusterAccountById.mockResolvedValue({ home_bay_id: "bay-0" });
+      mockPoolQuery.mockResolvedValue({
+        rows: [{ other_settings: { openai_disabled: disabled } }],
+      });
+      const { req, res } = createMocks({
+        method: "POST",
+        url: "/api/v2/auth/bootstrap",
+      });
+      const { default: bootstrap } = await import("./bootstrap");
+      await bootstrap(req, res);
+      expect(res._getJSONData().openai_disabled).toBe(disabled);
+      expect(res._getJSONData()).not.toHaveProperty("other_settings");
+    },
+  );
 
   it("includes a bounded project window on the authoritative home bay", async () => {
     mockGetAccountId.mockResolvedValue("account-1");

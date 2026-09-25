@@ -124,6 +124,8 @@ export async function sendUpcomingRenewalNotifications({
   // is within the next 7 days.
 
   const pool = getPool();
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   const cutoff = "1 week";
   const bounded = Number.isFinite(limit);
   const query = `
@@ -132,7 +134,7 @@ export async function sendUpcomingRenewalNotifications({
     WHERE
       status != 'canceled' AND
       NOT EXISTS (
-        SELECT 1 FROM accounts AS account
+        SELECT 1 FROM ${accountTable} AS account
         WHERE account.account_id=subscriptions.account_id
           AND (account.banned IS TRUE OR account.deleted IS TRUE)
       ) AND

@@ -23,7 +23,7 @@ import { HandoutsActions } from "./handouts/actions";
 import { ConfigurationActions } from "./configuration/actions";
 import { ExportActions } from "./export/actions";
 import { ProjectsStore } from "../projects/store";
-import { bind_methods } from "@cocalc/util/misc";
+import { bind_methods, uuid } from "@cocalc/util/misc";
 // React libraries
 import { Actions, TypedMap } from "../app-framework";
 import { Map as iMap } from "immutable";
@@ -174,6 +174,15 @@ export class CourseActions extends Actions<CourseState> {
           this.startSyncdbMutationDrain();
         }
       });
+  };
+
+  // Read after synchronization so mounting another panel cannot replace an ID.
+  ensure_course_id = (): void => {
+    this.mutateSyncdb((syncdb) => {
+      if (syncdb.get_one({ table: "settings" })?.get("course_id")) return;
+      syncdb.set({ table: "settings", course_id: uuid() });
+      syncdb.commit({ emitChangeImmediately: true });
+    });
   };
 
   // Set one object in the syncdb

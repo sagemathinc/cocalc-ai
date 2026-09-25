@@ -29,8 +29,10 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { parseAgentMention } from "@cocalc/util/agent-mentions";
+import { parseArtifactMention } from "@cocalc/util/artifact-mentions";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { createAgentMention } from "./elements/agent-mention";
+import { createArtifactMention } from "./elements/artifact-mention";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
 import {
   EditorFunctions,
@@ -101,6 +103,7 @@ import { slateDiff } from "./slate-diff";
 import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
+import { registerMarkdownSelection } from "./selection-source";
 import type { RenderElementProps } from "./slate-react";
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
@@ -432,6 +435,8 @@ interface Props {
   hideSearch?: boolean;
   saveDebounceMs?: number;
   remoteMergeIdleMs?: number;
+  mergeRemoteValues?: boolean; // Opt in when value comes from a collaborative record.
+  getRemoteValue?: () => string;
   ignoreRemoteMergesWhileFocused?: boolean;
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
@@ -515,6 +520,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
+    mergeRemoteValues = false,
+    getRemoteValue,
     ignoreRemoteMergesWhileFocused,
     selectionRef,
     style,
@@ -544,11 +551,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const showHelpModal = reduxHelpOpen ?? localHelpOpen;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
+  const selectionRootRef = useRef<HTMLDivElement>(null);
   const [change, setChange] = useState<number>(0);
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(value ?? ""),
   );
   const valueRef = useRef<string | undefined>(value);
+  const reconciledValueRef = useRef<string | undefined>(value);
+  const getRemoteValueRef = useRef(getRemoteValue);
+  getRemoteValueRef.current = getRemoteValue;
   valueRef.current = value;
   const remoteMergeConfig =
     typeof window === "undefined"
@@ -631,7 +642,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     };
 
     if (getValueRef != null) {
-      getValueRef.current = ed.getMarkdownValue;
+      getValueRef.current = () => {
+        const remote = getRemoteValueRef.current?.() ?? valueRef.current;
+        return mergeRemoteValues && remote !== reconciledValueRef.current
+          ? mergeHelperRef.current.previewMerge({
+              remote: remote ?? "",
+              local: ed.getMarkdownValue(),
+            }).merged
+          : ed.getMarkdownValue();
+      };
     }
 
     ed.getPlainValue = (fragment?) => {
@@ -777,6 +796,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     return ed as SlateEditor;
   }, [localHistory]);
+
+  useEffect(() => {
+    const root = (divRef ?? selectionRootRef).current;
+    if (!root) return;
+    return registerMarkdownSelection(root, (range) => {
+      const selected = ReactEditor.toSlateRange(editor, range);
+      if (!selected)
+        throw Error("Could not map the selected passage to Markdown.");
+      return slate_to_markdown(Editor.fragment(editor, selected));
+    });
+  }, [editor, divRef]);
 
   useEffect(() => {
     editor.preserveBlankLines = preserveBlankLines;
@@ -1035,6 +1065,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     isVisible,
     editor,
     insertMention: (editor, account_id) => {
+      const artifactReference = parseArtifactMention(account_id);
+      if (artifactReference) {
+        Transforms.insertNodes(editor, [
+          createArtifactMention(artifactReference),
+          { text: " " },
+        ]);
+        return;
+      }
       const agentReference = parseAgentMention(account_id);
       if (agentReference) {
         Transforms.insertNodes(editor, [
@@ -1169,6 +1207,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const codeDecorate = useCallback(
     ([node, path]): DecoratedRange[] => {
       if (!Text.isText(node)) return [];
+      // The render entry can be stale while an external update replaces blocks.
+      if (!Node.has(editor, path)) return [];
       const lineEntry = Editor.above(editor, {
         at: path,
         match: (n) => SlateElement.isElement(n) && n.type === "code_line",
@@ -1345,6 +1385,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
     if (actions._syncstring == null) {
+      if (mergeRemoteValues && !read_only && value != null) {
+        if (value !== "Loading...") restoreScroll();
+        if (reconciledValueRef.current === value) return;
+        reconciledValueRef.current = value;
+        mergeHelperRef.current.handleRemote({
+          remote: value,
+          getLocal: () => editor.getMarkdownValue(),
+          applyMerged: (merged) => applyMergedRemoteValue(merged, value),
+        });
+        return;
+      }
       const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
       if (
         ignoreRemoteWhileFocused &&
@@ -1390,7 +1441,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-    const markdown = editor.getMarkdownValue();
+    const remote = getRemoteValueRef.current?.() ?? valueRef.current;
+    const markdown =
+      mergeRemoteValues && remote !== reconciledValueRef.current
+        ? mergeHelperRef.current.previewMerge({
+            remote: remote ?? "",
+            local: editor.getMarkdownValue(),
+          }).merged
+        : editor.getMarkdownValue();
     const currentMarkdown = valueRef.current;
     if (
       currentMarkdown != null &&
@@ -2992,7 +3050,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   let body = (
     <ChangeContext.Provider value={{ change, editor }}>
       <div
-        ref={divRef}
+        ref={divRef ?? selectionRootRef}
         className={noVfill || height === "auto" ? undefined : "smc-vfill"}
         style={{
           overflow: noVfill || height === "auto" ? undefined : "hidden",

@@ -25,6 +25,7 @@ import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
 import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 
 const { Text, Paragraph } = Typography;
@@ -59,6 +60,7 @@ export function PublishPanel({
   project_id: string;
 }): React.JSX.Element {
   const actions = useActions({ project_id });
+  const { disableSharing } = useStudentProjectFunctionality(project_id);
   const [shares, setShares] = useState<PublicDirectoryShareSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -159,17 +161,29 @@ export function PublishPanel({
         <Button
           type="primary"
           icon={<Icon name="link" />}
+          disabled={disableSharing}
           onClick={() => void openPublishModal("/home/user")}
         >
           Publish entire project
         </Button>
-        <Button onClick={() => setFolderPickerOpen(true)}>
+        <Button
+          disabled={disableSharing}
+          onClick={() => setFolderPickerOpen(true)}
+        >
           Publish folder...
         </Button>
         <Button onClick={() => void loadShares()} loading={loading}>
           Refresh
         </Button>
       </Space>
+
+      {disableSharing ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="Publishing is disabled by this course's student project settings."
+        />
+      ) : null}
 
       {error ? <Alert type="error" showIcon title={error} /> : null}
 

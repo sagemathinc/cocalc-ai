@@ -148,16 +148,16 @@ it("resynchronizes when saved defaults actually change or are removed", async ()
   rerender(
     <CodexDefaultsPanel
       other_settings={Map({
-        [KEY]: fromJS({ model: "gpt-5.4", reasoning: "high" }),
+        [KEY]: fromJS({ model: "gpt-6-sol", reasoning: "high" }),
       })}
     />,
   );
-  expect(within(container).getByTitle("gpt-5.4")).toBeVisible();
+  expect(within(container).getByTitle("gpt-6-sol")).toBeVisible();
   expect(within(container).getByTitle("High")).toBeVisible();
   rerender(
     <CodexDefaultsPanel
       other_settings={Map({
-        [KEY]: fromJS({ model: "gpt-5.4", reasoning: "low" }),
+        [KEY]: fromJS({ model: "gpt-6-sol", reasoning: "low" }),
       })}
     />,
   );

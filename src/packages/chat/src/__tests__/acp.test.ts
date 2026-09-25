@@ -18,6 +18,20 @@ import {
 } from "../acp";
 
 describe("buildCodexAcpConfig", () => {
+  test("copies an exact subscription credential into the turn snapshot", () => {
+    expect(
+      buildCodexAcpConfig({
+        config: {
+          paymentSource: "subscription",
+          credentialId: "00000000-0000-4000-8000-000000000001",
+        },
+      }),
+    ).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+    });
+  });
+
   test("preserves Fast mode for a dynamically advertised model", () => {
     expect(
       buildCodexAcpConfig({

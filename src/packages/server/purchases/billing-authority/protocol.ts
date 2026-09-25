@@ -32,6 +32,9 @@ export type BillingAuthorityHttpOperation =
   | "set-default-payment-method";
 
 export type BillingAuthorityMaintenanceTask =
+  | "monthly-collections"
+  | "credit-transfers"
+  | "provider-refunds"
   | "automatic-payments"
   | "auto-balance"
   | "payment-intents"
@@ -45,11 +48,19 @@ export type BillingAuthorityCommercialMaintenanceTask =
   | "stripe-events";
 
 export type BillingAuthorityAccountLocalOperation =
+  | "apply-funding-approval"
   | "admin-create-membership-package-purchase"
   | "admin-provision-site-license"
   | "legacy-apply-financial-home-bay"
   | "legacy-apply-financial-migration"
   | "legacy-configure-financial-renewal-home-bay"
+  | "compute-funding-check"
+  | "compute-funding-fallback"
+  | "compute-funding-lookup"
+  | "compute-funding-reserve"
+  | "compute-funding-settle"
+  | "get-dedicated-host-financial-snapshot"
+  | "update-billing-account-home"
   | "purchase-team-license-change";
 
 export interface BillingAuthorityHubApiCall {
@@ -189,6 +200,11 @@ export type BillingAuthorityTransportRequest =
       reason: string;
       actor_account_id?: string;
     }
+  | {
+      action: "stripe-webhook-raw";
+      body_base64: string;
+      signature: string;
+    }
   | { action: "health" };
 
 export type BillingAuthorityTransportResponse =
@@ -306,6 +322,8 @@ export function billingAuthorityAccountIds(
       values.push(
         ...stringFields(command.input, [
           "user_account_id",
+          "payer_account_id",
+          "recipient_account_id",
           "customer_account_id",
           "owner_account_id",
           "target_account_id",

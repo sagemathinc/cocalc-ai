@@ -180,6 +180,7 @@ import {
 } from "./commands/software";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
 import { registerVmCommand, type VmCommandDeps } from "./commands/vm";
+import { registerComputeFundingCommand } from "./commands/compute-funding";
 import {
   registerProjectCommand,
   type ProjectCommandDeps,
@@ -2409,6 +2410,7 @@ const {
 const {
   projectChatSendData,
   projectChatThreadCreateData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
@@ -2604,10 +2606,12 @@ async function waitForLro(
     timeoutMs,
     pollMs,
     onUpdate,
+    scope,
   }: {
     timeoutMs: number;
     pollMs: number;
     onUpdate?: Parameters<typeof waitForLroCore>[0]["onUpdate"];
+    scope?: Parameters<typeof waitForLroCore>[0]["scope"];
   },
 ): Promise<LroStatus> {
   return await waitForLroCore({
@@ -2617,6 +2621,7 @@ async function waitForLro(
     pollMs,
     terminalStatuses: TERMINAL_LRO_STATUSES,
     onUpdate,
+    scope,
   });
 }
 
@@ -2998,6 +3003,7 @@ const projectCommandDeps = {
   resolveProjectConatClient,
   projectChatThreadCreateData,
   projectChatSendData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
@@ -3258,6 +3264,7 @@ const workspacesApi = createWorkspacesApi<
 });
 
 const execCommandDeps = {
+  projectChatArtifactData,
   withContext,
   tasksApi,
   textApi,
@@ -3340,6 +3347,7 @@ registerHostCommand(program, hostCommandDeps);
 
 const vmCommandDeps = { withContext } satisfies VmCommandDeps;
 registerVmCommand(program, vmCommandDeps);
+registerComputeFundingCommand(program, { withContext });
 
 async function main() {
   try {

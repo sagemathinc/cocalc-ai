@@ -15,6 +15,7 @@ const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
   converted: limits,
 }));
 const setAcpAdmissionDenialRecorderMock = jest.fn();
+const setCodexCredentialAdmissionResolverMock = jest.fn();
 const setContainerExecMock = jest.fn();
 const setPreferContainerExecutorMock = jest.fn();
 const loggerDebugMock = jest.fn();
@@ -25,6 +26,7 @@ const initProjectRunnerConatClientMock = jest.fn();
 const initProjectRunnerFilesystemMock = jest.fn();
 const sandboxExecMock = jest.fn();
 const initCodexProjectRunnerMock = jest.fn();
+const initCodexAttachmentBlobReaderMock = jest.fn();
 const initCodexGeneratedImageBlobWriterMock = jest.fn();
 const initCodexSiteKeyGovernorMock = jest.fn();
 const configureProjectHostAcpContainerFileIOMock = jest.fn();
@@ -96,6 +98,8 @@ jest.mock("@cocalc/lite/hub/acp", () => ({
     setAcpAdmissionDenialRecorderMock(...args),
   setAcpAdmissionLimitsProvider: (...args: any[]) =>
     setAcpAdmissionLimitsProviderMock(...args),
+  setCodexCredentialAdmissionResolver: (...args: any[]) =>
+    setCodexCredentialAdmissionResolverMock(...args),
   setAcpSessionPublisherOverride: (...args: any[]) =>
     setAcpSessionPublisherOverrideMock(...args),
   publishActiveAcpSessions: (...args: any[]) =>
@@ -134,6 +138,8 @@ jest.mock("./codex/codex-project", () => ({
 }));
 
 jest.mock("./codex/generated-image-blobs", () => ({
+  initCodexAttachmentBlobReader: (...args: any[]) =>
+    initCodexAttachmentBlobReaderMock(...args),
   initCodexGeneratedImageBlobWriter: (...args: any[]) =>
     initCodexGeneratedImageBlobWriterMock(...args),
 }));
@@ -229,7 +235,10 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(wireSystemApiMock).toHaveBeenCalledTimes(1);
     expect(wireHostsApiMock).toHaveBeenCalledTimes(1);
     expect(wireNotificationsApiMock).toHaveBeenCalledTimes(1);
+    expect(initCodexAttachmentBlobReaderMock).toHaveBeenCalledTimes(1);
+    expect(initCodexGeneratedImageBlobWriterMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
+    expect(setCodexCredentialAdmissionResolverMock).toHaveBeenCalledTimes(1);
     expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
     expect(initProjectRunnerConatClientMock).toHaveBeenCalledTimes(1);

@@ -1,3 +1,4 @@
+import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import getPool from "@cocalc/database/pool";
@@ -32,6 +33,7 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
@@ -86,17 +88,22 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
+  ensureDefaultExternalCredentialRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   listAccountExternalCredentialsRouted,
   revokeAccountExternalCredentialRouted,
   revokeExternalCredentialBySelectorRouted,
   upsertExternalCredentialRouted,
+  updateExternalCredentialLabelByIdRouted,
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
-import { aiUsageUnitsToMicrousd } from "@cocalc/server/ai/usage-units";
+import {
+  AI_USAGE_UNITS_PER_DOLLAR,
+  aiUsageUnitsToMicrousd,
+} from "@cocalc/server/ai/usage-units";
 import {
   cancelChatSpeech as cancelChatSpeechLocal,
   getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
@@ -104,8 +111,12 @@ import {
   transcribeChatAudio as transcribeChatAudioLocal,
 } from "@cocalc/server/ai/chat-speech";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
-import { getSiteFundedCodexPoolStatus } from "@cocalc/server/ai/site-funded-codex-reservations";
+import {
+  getSiteFundedCodexAccountReservationStatus,
+  getSiteFundedCodexPoolStatus,
+} from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
+import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
   enqueueRootfsPrepullForHost,
   enqueueRootfsPrepullForRunningHosts,
@@ -139,6 +150,10 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
+import {
+  getFundingApprovalReadiness as getFundingApprovalReadiness0,
+  initCourseFundingApprovalService,
+} from "@cocalc/server/compute/funding/approval-startup";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { ensureStarInviteRegistrationToken } from "@cocalc/server/auth/bootstrap-admin";
 import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
@@ -816,6 +831,15 @@ export async function getBayDrainPreflight({
 type SiteSettingUpdate = { name: string; value: string };
 export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
+export const SEED_ONLY_SITE_SETTINGS = new Set([
+  "stripe_secret_key",
+  "stripe_webhook_secret",
+]);
+
+export function isSeedOnlySiteSetting(name: string): boolean {
+  return SEED_ONLY_SITE_SETTINGS.has(`${name ?? ""}`.trim());
+}
+
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
   ...Object.keys(SITE_SETTINGS_EXTRAS),
@@ -1135,6 +1159,9 @@ async function propagateSiteSettingsToBays(
   ]
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
+  const remoteSettings = settings.filter(
+    ({ name }) => !isSeedOnlySiteSetting(name),
+  );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
   ];
@@ -1152,7 +1179,7 @@ async function propagateSiteSettingsToBays(
   const results = await Promise.allSettled(
     remoteBayIds.map(async (bay_id) => {
       const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
-      for (const setting of settings) {
+      for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
       }
       return bay_id;
@@ -1173,11 +1200,11 @@ async function propagateSiteSettingsToBays(
     }
     bays.push(
       result.status === "fulfilled"
-        ? { bay_id, status: "applied", count: settings.length, version }
+        ? { bay_id, status: "applied", count: remoteSettings.length, version }
         : {
             bay_id,
             status: "failed",
-            count: settings.length,
+            count: remoteSettings.length,
             version,
             error,
           },
@@ -2088,6 +2115,7 @@ export async function getLaunchHealth({
     configResult,
     smokeResult,
     adminAlertsResult,
+    intrusionObservationsResult,
   ] = await Promise.allSettled([
     getPool("medium").query("SELECT 1"),
     getServerSettings(),
@@ -2107,6 +2135,7 @@ export async function getLaunchHealth({
     }),
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
+    getHostIntrusionObservationSummary(),
   ]);
 
   const settings =
@@ -2189,6 +2218,10 @@ export async function getLaunchHealth({
   const adminAlerts =
     adminAlertsResult.status === "fulfilled"
       ? adminAlertsResult.value
+      : undefined;
+  const intrusionObservations =
+    intrusionObservationsResult.status === "fulfilled"
+      ? intrusionObservationsResult.value
       : undefined;
   const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
@@ -2327,6 +2360,28 @@ export async function getLaunchHealth({
           : (adminAlerts?.alerts.map(
               (alert) => `${alert.sent_at} ${alert.subject}`,
             ) ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-host-intrusion-observations",
+      label: "Project host intrusion observations",
+      level:
+        intrusionObservationsResult.status === "rejected" ||
+        !intrusionObservations ||
+        intrusionObservations.missing_hosts > 0 ||
+        intrusionObservations.stale_hosts > 0 ||
+        intrusionObservations.incomplete_hosts > 0
+          ? "unknown"
+          : "healthy",
+      summary:
+        intrusionObservationsResult.status === "rejected"
+          ? "Unable to review retained project-host intrusion observations."
+          : !intrusionObservations
+            ? "No project-host intrusion observation summary is available."
+            : `${intrusionObservations.observed_hosts}/${intrusionObservations.active_hosts} active hosts observed; ${intrusionObservations.recently_changed_hosts} had retained security-state changes in the last 24 hours.`,
+      details:
+        intrusionObservationsResult.status === "rejected"
+          ? [`${intrusionObservationsResult.reason}`]
+          : (intrusionObservations?.details ?? []),
     }),
     launchHealthCheck({
       id: "kill-switches",
@@ -2700,6 +2755,18 @@ export async function getLaunchHealth({
     counts,
     checks,
   };
+}
+
+export async function getFundingApprovalReadiness({
+  account_id,
+  force,
+}: {
+  account_id?: string;
+  force?: boolean;
+} = {}) {
+  await assertAdmin(account_id);
+  if (force === true) await initCourseFundingApprovalService();
+  return await getFundingApprovalReadiness0({ force: force === true });
 }
 
 export async function getBillingAuthorityStatus({
@@ -5690,7 +5757,7 @@ export async function adminResetPasswordLink({
   if (!email) {
     throw Error("passwords are only defined for accounts with email");
   }
-  const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
+  const id = await createReset(email, "", 60 * 60 * 24, user_account_id); // 24 hour ttl seems reasonable for this.
   return `/auth/password-reset/${id}`;
 }
 
@@ -6628,6 +6695,77 @@ async function assertProjectCollaborator(
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
 }
 
+export async function assertCodexPaymentSourceCaller({
+  account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  project_id?: string;
+  host_id?: string;
+}): Promise<void> {
+  if (!host_id) {
+    if (project_id) {
+      await assertProjectCollaborator(account_id, project_id);
+    }
+    return;
+  }
+  if (!project_id) {
+    throw new Error("project_id is required for project-host Codex admission");
+  }
+  const { rowCount } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND users ? $3::text
+      LIMIT 1
+    `,
+    [project_id, host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error(
+      "project host is not authorized for this account payment source",
+    );
+  }
+}
+
+export async function getAIUsageStatusForAccountHome(account_id: string) {
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (home_bay_id === getConfiguredBayId()) {
+    return await getAIUsageStatus({ account_id });
+  }
+  const overview = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).getAccountUsageOverview({ account_id });
+  return {
+    units_per_dollar: AI_USAGE_UNITS_PER_DOLLAR,
+    windows: (["5h", "7d"] as const).map((window) => {
+      const meter = overview.meters.find(
+        (item) => item.source === "ai_usage_status" && item.window === window,
+      );
+      const date = (value?: Date | string) =>
+        value == null ? undefined : new Date(value);
+      return {
+        window,
+        used: meter?.used ?? 0,
+        limit: meter?.limit,
+        remaining: meter?.remaining,
+        starts_at: date(meter?.starts_at),
+        resets_at: date(meter?.resets_at),
+        reset_at: date(meter?.reset_at),
+        reset_in: meter?.reset_in,
+      };
+    }),
+  };
+}
+
 export async function listExternalCredentials({
   account_id,
   provider,
@@ -6681,6 +6819,34 @@ export async function revokeExternalCredential({
     owner_account_id: account_id,
   });
   return { revoked };
+}
+
+export async function updateCodexSubscriptionLabel({
+  account_id,
+  id,
+  label,
+}: {
+  account_id?: string;
+  id: string;
+  label?: string;
+}) {
+  if (!account_id) throw Error("must be signed in");
+  if (!id) throw Error("id must be specified");
+  const normalizedLabel = `${label ?? ""}`.trim();
+  if (normalizedLabel.length > 60) {
+    throw Error("label must be at most 60 characters");
+  }
+  const updated = await updateExternalCredentialLabelByIdRouted({
+    id,
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    label: normalizedLabel || undefined,
+  });
+  return { updated };
 }
 
 export async function setOpenAiApiKey({
@@ -6926,11 +7092,15 @@ export async function cancelChatSpeech(
 export async function getCodexPaymentSource({
   account_id,
   project_id,
+  host_id,
   preference = "auto",
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
+  host_id?: string;
   preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6941,8 +7111,9 @@ export async function getCodexPaymentSource({
   const accountKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
   );
-  if (project_id) {
-    await assertProjectCollaborator(account_id, project_id);
+  await assertCodexPaymentSourceCaller({ account_id, project_id, host_id });
+  if (credential_id && preference !== "subscription") {
+    throw Error("credential_id requires the subscription payment source");
   }
 
   const settings = await getServerSettings();
@@ -6951,7 +7122,7 @@ export async function getCodexPaymentSource({
     !(await isAiLaunchDisabled()) &&
     !!`${settings.openai_api_key ?? ""}`.trim();
   const siteAiUsageStatus = hasSiteApiKey
-    ? await getAIUsageStatus({ account_id })
+    ? await getAIUsageStatusForAccountHome(account_id)
     : undefined;
   const usage5h = siteAiUsageStatus?.windows.find(
     ({ window }) => window === "5h",
@@ -6978,6 +7149,12 @@ export async function getCodexPaymentSource({
       if (!configuration.enabled) {
         siteFundedCodex = { enabled: false };
       } else {
+        const membership = await resolveMembershipForAccount(account_id);
+        const accountConcurrency =
+          getEffectiveMembershipUsageLimits(membership)
+            .acp_max_running_per_account ??
+          configuration.policy?.maxConcurrentTurnsPerAccount ??
+          DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
         const limit5hMicrousd = aiUsageUnitsToMicrousd(usage5h?.limit);
         const limit7dMicrousd = aiUsageUnitsToMicrousd(usage7d?.limit);
         const account = {
@@ -6997,13 +7174,22 @@ export async function getCodexPaymentSource({
           seedBayId === getConfiguredBayId()
             ? {
                 pools: await getSiteFundedCodexPoolStatus(),
+                accountReservations:
+                  await getSiteFundedCodexAccountReservationStatus({
+                    accountId: account_id,
+                  }),
               }
             : await getInterBayBridge()
                 .bayOps(seedBayId, { timeout_ms: 15_000 })
-                .getSiteFundedCodexStatus({});
+                .getSiteFundedCodexStatus({ accountId: account_id });
+        account.activeReservedMicrousd =
+          fundingStatus.accountReservations?.reservedMicrousd ?? 0;
         siteFundedCodex = {
           enabled: true,
-          policy: configuration.policy,
+          policy: {
+            ...configuration.policy,
+            maxConcurrentTurnsPerAccount: accountConcurrency,
+          },
           status: { ...fundingStatus, account },
         };
       }
@@ -7045,7 +7231,20 @@ export async function getCodexPaymentSource({
       },
     }),
   ]);
-  const subscriptionCredential = subscriptionCredentials[0];
+  const defaultSubscription = await ensureDefaultExternalCredentialRouted({
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    metadataKey: "cocalc_default",
+  });
+  const activeDefaultSubscription =
+    defaultSubscription?.revoked == null ? defaultSubscription : undefined;
+  const subscriptionCredential = credential_id
+    ? subscriptionCredentials.find(({ id }) => id === credential_id)
+    : activeDefaultSubscription;
   const hasSubscription = subscriptionCredential != null;
   const subscriptionUpdatedAt = subscriptionCredential
     ? new Date(subscriptionCredential.updated).toISOString()
@@ -7080,8 +7279,10 @@ export async function getCodexPaymentSource({
   } as const;
   let unavailableReason: string | undefined;
   if (preference !== "auto") {
-    if (sourceAvailable[preference]) {
-      source = preference;
+    const requestedSource =
+      preference === "subscription-credential" ? "subscription" : preference;
+    if (sourceAvailable[requestedSource]) {
+      source = requestedSource;
     } else {
       source = "none";
       unavailableReason = `The selected Codex payment source (${preference}) is not configured.`;
@@ -7104,6 +7305,24 @@ export async function getCodexPaymentSource({
     source,
     hasSubscription,
     subscriptionRevision,
+    credentialId: subscriptionCredential?.id,
+    subscriptions: subscriptionCredentials.map((credential) => ({
+      id: credential.id,
+      label:
+        typeof credential.metadata?.label === "string"
+          ? credential.metadata.label
+          : undefined,
+      email:
+        typeof credential.metadata?.email === "string"
+          ? credential.metadata.email
+          : undefined,
+      plan:
+        typeof credential.metadata?.plan_type === "string"
+          ? credential.metadata.plan_type
+          : undefined,
+      isDefault: credential.id === activeDefaultSubscription?.id,
+      updatedAt: new Date(credential.updated).toISOString(),
+    })),
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
@@ -7141,12 +7360,14 @@ export async function getSiteFundedCodexAdminStatus({
 export async function getCodexUsageStatus({
   account_id,
   project_id,
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
   refresh_models?: boolean;
   timeout?: number;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -7155,6 +7376,8 @@ export async function getCodexUsageStatus({
   const paymentSource = await getCodexPaymentSource({
     account_id,
     project_id,
+    preference: credential_id ? "subscription" : "auto",
+    credential_id,
   });
   if (paymentSource.source !== "subscription") {
     return {
@@ -8662,4 +8885,12 @@ export async function clearProviderSetupChallenge({
     throw Error("must be an admin");
   }
   return await clearProviderSetupChallenge0({ account_id, id });
+}
+
+export async function liveVoice(opts: Parameters<typeof liveVoiceLocal>[0]) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.liveVoice({ ...opts, account_id: opts.account_id })
+    : await liveVoiceLocal(opts);
 }

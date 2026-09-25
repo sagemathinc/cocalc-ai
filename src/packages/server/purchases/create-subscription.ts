@@ -4,7 +4,7 @@ import type {
   Subscription,
 } from "@cocalc/util/db-schema/subscriptions";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "./billing-account";
 import {
   assertNoCompetingMembershipSubscription,
   lockMembershipSubscriptionAccount,
@@ -31,7 +31,7 @@ export default async function createSubscription(
   // since data isn't user supplied, but it's still good to be careful.
 
   try {
-    if (!(await isValidAccount(opts.account_id))) {
+    if (!(await isValidBillingAccount(opts.account_id, client ?? undefined))) {
       throw Error("account_id must be valid");
     }
     const costValue = toDecimal(opts.cost);

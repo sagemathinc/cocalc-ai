@@ -70,11 +70,9 @@ Before rollout:
 2. Disable admission and stop old delivery/recovery workers on every involved bay
    and host. Mixed versions are not a supported cutover strategy: old processes
    can still act on legacy state.
-3. Upgrade the hub/host/ACP-worker/CLI set and run normal schema sync. Keep flags
-   off until the participating components are aligned.
-4. Enable `COCALC_AGENT_MESSAGING_ENABLED=1` and
-   `COCALC_AGENT_MESSAGING_RPC_ENABLED=1` for the pilot; approve fresh RPC links.
-   V1 grants do not authorize the new path.
+3. Upgrade the hub/host/ACP-worker/CLI set and run normal schema sync before
+   exposing the account UI. Mixed component versions are not supported.
+4. Approve fresh RPC links for the pilot. V1 grants do not authorize the new path.
 5. Rollback first disables admission. Do not restore old workers against pending
    records without explicit disposition. Already-admitted RPC jobs retain ordinary
    ACP lifecycle semantics; rollback is not cancellation or a replay tool.

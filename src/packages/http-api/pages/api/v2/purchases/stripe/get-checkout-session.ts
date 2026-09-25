@@ -32,7 +32,8 @@ async function get(req) {
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({ account_id, endpoint: "purchases/stripe/get-checkout-session" });
 
-  const { purpose, description, lineItems, metadata } = getParams(req);
+  const { purpose, description, lineItems, metadata, checkout_instance_id } =
+    getParams(req);
   assertInteractivePaymentPurpose(purpose);
 
   return await executeBillingHttpCommand("get-checkout-session", {
@@ -41,5 +42,6 @@ async function get(req) {
     description,
     lineItems,
     metadata,
+    checkout_instance_id,
   });
 }

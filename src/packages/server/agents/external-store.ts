@@ -3,13 +3,13 @@ import {
   parseExternalAgentToken,
   validateExternalAgentApproval,
   validateExternalAgentLabel,
+  type ExternalAgentInboxMessage,
   type ExternalAgentInstallation,
-  type ExternalAgentSource,
 } from "@cocalc/conat/agents/external";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import {
-  validateAgentEndpoint,
-  type AgentEndpoint,
+  agentRpcSourceKey,
+  type AgentRpcSource,
 } from "@cocalc/conat/agents/rpc";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import {
@@ -28,7 +28,7 @@ export type ExternalEnrollment = {
   secret_hash: string;
   label: string;
   agent_id?: string;
-  targets: AgentEndpoint[];
+  agent_network_id: string;
   ttl_seconds: number;
 };
 type Row = Omit<ExternalAgentInstallation, "created_at" | "expires_at"> & {
@@ -63,10 +63,6 @@ async function accountSecurity(account: string, issued_at?: Date) {
 export class ExternalAgentStore {
   constructor(
     private readonly db: AgentStore,
-    private readonly validateTarget: (
-      account: string,
-      target: AgentEndpoint,
-    ) => Promise<void>,
     private readonly hooks: Hooks = {},
   ) {}
 
@@ -104,7 +100,7 @@ export class ExternalAgentStore {
       state: row.state,
       created_at: new Date(row.created_at).toISOString(),
       expires_at: new Date(row.expires_at).toISOString(),
-      destinations: row.destinations,
+      agent_network_id: row.agent_network_id,
     };
   }
 
@@ -157,15 +153,12 @@ export class ExternalAgentStore {
       !/^[a-f0-9]{64}$/.test(options.secret_hash)
     )
       throw new Error("invalid external secret hash");
-    const opts = {
-      ...options,
-      targets: options.targets.map((t) => ({ ...t })),
-    };
+    const opts = { ...options };
     const approval = [
       opts.label.trim(),
       opts.agent_id ?? "",
       `${opts.ttl_seconds}`,
-      ...opts.targets.map((t) => `${t.project_id}/${t.agent_id}`).sort(),
+      opts.agent_network_id,
     ];
     // The default is the first-party cookie-backed fresh-auth gate. Network
     // adapters must never substitute an agent-controlled approval timestamp.
@@ -179,9 +172,6 @@ export class ExternalAgentStore {
           allow_actor_impersonation: false,
         });
       });
-    await freshAuth(account, session_hash);
-    for (const target of opts.targets)
-      await this.validateTarget(account, target);
     await freshAuth(account, session_hash);
     return this.locked(account, async (db, controls) => {
       current();
@@ -241,16 +231,12 @@ export class ExternalAgentStore {
           [agent_id, account, opts.label.trim()],
         );
       }
-      const destinations = opts.targets.map((target) => ({
-        target,
-        link_id: randomUUID(),
-      }));
       current();
       const row = (
         await db.query(
           `INSERT INTO agent_external_installations
-        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,destinations,expires_at)
-        VALUES($1,$2,$3,$4,$5,'active',$6,$7::jsonb,$8::jsonb,$9) RETURNING *`,
+        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_network_id,expires_at)
+        VALUES($1,$2,$3,$4,$5,'active',$6,$7::jsonb,$8,$9) RETURNING *`,
           [
             opts.installation_id,
             account,
@@ -259,7 +245,7 @@ export class ExternalAgentStore {
             opts.secret_hash,
             controls.generation,
             JSON.stringify(approval),
-            JSON.stringify(destinations),
+            opts.agent_network_id,
             new Date(Date.now() + opts.ttl_seconds * 1000),
           ],
         )
@@ -366,32 +352,125 @@ export class ExternalAgentStore {
     });
   }
 
-  /** Trusted inter-bay admission recheck, not a public installation-ID login. */
-  async check(account: string, installation: string, target: AgentEndpoint) {
-    validateAgentEndpoint(target);
-    const read = () =>
-      this.locked(account, async (db, controls) => {
-        const row = await this.active(db, account, installation, controls);
-        const destination = row.destinations.find(
-          (d) =>
-            d.target.project_id === target.project_id &&
-            d.target.agent_id === target.agent_id,
-        );
-        if (!destination) throw new Error("external_destination_not_approved");
-        const source: ExternalAgentSource = {
-          kind: "external",
-          account_id: account,
-          agent_id: row.agent_id,
-          installation_id: installation,
-        };
-        return {
-          source,
-          destination,
-          expires_at: new Date(row.expires_at).toISOString(),
-        };
-      });
-    await read();
-    await this.validateTarget(account, target);
-    return read();
+  async enqueue(opts: {
+    account_id: string;
+    installation_id: string;
+    attempt_id: string;
+    agent_network_id: string;
+    network_generation: string;
+    source: AgentRpcSource;
+    body: string;
+  }): Promise<ExternalAgentInboxMessage> {
+    requireUuid(opts.attempt_id, "attempt_id");
+    requireUuid(opts.agent_network_id, "agent_network_id");
+    requireUuid(opts.network_generation, "network_generation");
+    if (
+      typeof opts.body !== "string" ||
+      !opts.body.trim() ||
+      Buffer.byteLength(opts.body, "utf8") > 32768
+    )
+      throw new Error("invalid external inbox body");
+    return this.locked(opts.account_id, async (db, controls) => {
+      const installation = await this.active(
+        db,
+        opts.account_id,
+        opts.installation_id,
+        controls,
+      );
+      if (installation.agent_network_id !== opts.agent_network_id)
+        throw new Error("external_network_mismatch");
+      const existing = (
+        await db.query(
+          "SELECT * FROM agent_external_inbox WHERE account_id=$1 AND attempt_id=$2",
+          [opts.account_id, opts.attempt_id],
+        )
+      ).rows[0];
+      if (existing) {
+        if (
+          existing.installation_id !== opts.installation_id ||
+          existing.agent_network_id !== opts.agent_network_id ||
+          existing.network_generation !== opts.network_generation ||
+          existing.body !== opts.body ||
+          agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
+        )
+          throw new Error("external_inbox_idempotency_conflict");
+        return this.publicInbox(existing);
+      }
+      const pending = (
+        await db.query(
+          `SELECT count(*) AS count FROM agent_external_inbox
+           WHERE account_id=$1 AND installation_id=$2 AND state='pending' AND expires_at>now()`,
+          [opts.account_id, opts.installation_id],
+        )
+      ).rows[0];
+      if (+pending.count >= 1000) throw new Error("external_inbox_capacity");
+      const row = (
+        await db.query(
+          `INSERT INTO agent_external_inbox
+           (message_id,attempt_id,account_id,installation_id,agent_network_id,
+            network_generation,source,body,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now()+interval '7 days') RETURNING *`,
+          [
+            randomUUID(),
+            opts.attempt_id,
+            opts.account_id,
+            opts.installation_id,
+            opts.agent_network_id,
+            opts.network_generation,
+            JSON.stringify(opts.source),
+            opts.body,
+          ],
+        )
+      ).rows[0];
+      await db.query(
+        "DELETE FROM agent_external_inbox WHERE account_id=$1 AND expires_at<=now()",
+        [opts.account_id],
+      );
+      return this.publicInbox(row);
+    });
+  }
+
+  private publicInbox(row: any): ExternalAgentInboxMessage {
+    return {
+      message_id: row.message_id,
+      attempt_id: row.attempt_id,
+      agent_network_id: row.agent_network_id,
+      source: row.source,
+      body: row.body,
+      created_at: new Date(row.created_at).toISOString(),
+      expires_at: new Date(row.expires_at).toISOString(),
+    };
+  }
+
+  async inbox(account: string, installation: string, limit = 50) {
+    const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
+    return this.locked(account, async (db, controls) => {
+      await this.active(db, account, installation, controls);
+      return (
+        await db.query(
+          `SELECT * FROM agent_external_inbox
+           WHERE account_id=$1 AND installation_id=$2 AND state='pending' AND expires_at>now()
+           ORDER BY created_at,message_id LIMIT $3`,
+          [account, installation, bounded],
+        )
+      ).rows.map((row) => this.publicInbox(row));
+    });
+  }
+
+  async acknowledge(account: string, installation: string, message_id: string) {
+    requireUuid(message_id, "message_id");
+    return this.locked(account, async (db, controls) => {
+      await this.active(db, account, installation, controls);
+      const result = await db.query(
+        `UPDATE agent_external_inbox
+         SET state='acknowledged',acknowledged_at=COALESCE(acknowledged_at,now())
+         WHERE account_id=$1 AND installation_id=$2 AND message_id=$3
+         RETURNING message_id`,
+        [account, installation, message_id],
+      );
+      if (!result.rows.length)
+        throw new Error("external_inbox_message_not_found");
+      return { acknowledged: true as const, message_id };
+    });
   }
 }

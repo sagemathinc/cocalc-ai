@@ -4,6 +4,7 @@
  */
 
 import dayjs from "dayjs";
+import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
@@ -24,6 +25,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
+import { membershipPackageCoversCourseProject } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import {
   is_valid_email_address as isValidEmailAddress,
@@ -225,10 +227,12 @@ function isMembershipTierVisibleForPackageKind({
 async function getPurchasableMembershipTierForPackageKind({
   kind,
   membership_class,
+  client,
   allow_course_tier_for_team = false,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
+  client?: PoolClient;
   allow_course_tier_for_team?: boolean;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
@@ -238,6 +242,7 @@ async function getPurchasableMembershipTierForPackageKind({
   }
   const tier = await getSeedMembershipTierById({
     id: membership_class,
+    client,
   });
   if (
     !tier ||
@@ -1418,11 +1423,7 @@ async function assertValidCourseSeatProject({
   if (!isValidUUID(project_id)) {
     throw Error("course seat project_id must be a valid UUID");
   }
-  const course_project_id = `${pkg.metadata?.course_project_id ?? ""}`.trim();
-  if (!isValidUUID(course_project_id)) {
-    throw Error("course package is missing a valid course_project_id");
-  }
-  if (project_id === course_project_id) {
+  if (membershipPackageCoversCourseProject(pkg.metadata, project_id)) {
     throw Error(
       "course seat must target a student project, not the instructor course project",
     );
@@ -1433,9 +1434,18 @@ async function assertValidCourseSeatProject({
     trusted_admin,
     client,
   });
-  if (course?.type !== "student" || course.project_id !== course_project_id) {
+  // Validate the requested course against both the authoritative student
+  // project and the package's full set of links, not just its legacy first link.
+  const course_project_id =
+    `${assignment_metadata?.course_project_id ?? course?.project_id ?? ""}`.trim();
+  if (
+    course?.type !== "student" ||
+    !isValidUUID(course_project_id) ||
+    course.project_id !== course_project_id ||
+    !membershipPackageCoversCourseProject(pkg.metadata, course_project_id)
+  ) {
     throw Error(
-      `course seat project must be a student project linked to course ${course_project_id}`,
+      `course seat project must be a student project linked to course ${pkg.metadata?.course_project_id ?? "covered by this package"}`,
     );
   }
   const courseAccountId = `${course.account_id ?? ""}`.trim() || undefined;
@@ -1700,6 +1710,7 @@ async function getTierSeatQuote({
   interval,
   starts_at,
   expires_at,
+  client,
   allow_course_tier_for_team = false,
 }: {
   product: MembershipPackageProduct;
@@ -1707,12 +1718,14 @@ async function getTierSeatQuote({
   interval: "month" | "year";
   starts_at?: Date;
   expires_at?: Date;
+  client?: PoolClient;
   allow_course_tier_for_team?: boolean;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
     kind,
     membership_class,
+    client,
     allow_course_tier_for_team,
   });
   const seat_price = getMembershipPrice(tier, interval);
@@ -1774,6 +1787,7 @@ async function resolveMembershipPackageQuoteInternal(
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
+      client,
     });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
@@ -1792,6 +1806,7 @@ async function resolveMembershipPackageQuoteInternal(
           ).seat_price
         : (
             await getTierSeatQuote({
+              client,
               product: { ...product, kind: existing.kind },
               membership_class: existing.membership_class,
               interval:
@@ -1848,6 +1863,7 @@ async function resolveMembershipPackageQuoteInternal(
     throw Error("membership_class is required");
   }
   return await getTierSeatQuote({
+    client,
     product: { ...product, kind, seat_count },
     membership_class,
     interval,
@@ -2111,6 +2127,61 @@ async function syncUpdatedGrantForAssignment({
       grant,
     },
     client,
+  });
+}
+
+export async function linkCourseMembershipPackage({
+  account_id,
+  package_id,
+  course_project_id,
+}: {
+  account_id: string;
+  package_id: string;
+  course_project_id: string;
+}): Promise<void> {
+  if (!isValidUUID(package_id) || !isValidUUID(course_project_id)) {
+    throw Error("valid package_id and course_project_id required");
+  }
+  const assertOwnerAndKind = (pkg: MembershipPackageRecord) => {
+    if (pkg.owner_account_id !== account_id) {
+      throw Error("must own membership package");
+    }
+    if (pkg.kind !== "course") {
+      throw Error("only course packages can be linked to courses");
+    }
+  };
+  const pkg = await getMembershipPackage({ package_id });
+  if (!pkg) throw Error("membership package not found");
+  assertOwnerAndKind(pkg);
+  // Project authorization can use another pool connection or a remote bay.
+  // Finish it before holding a transaction, then recheck ownership under lock.
+  await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id: course_project_id,
+    warmRoute: false,
+  });
+  await withPackageOwnerWriteFence({
+    package_id,
+    action: "link course membership package",
+    fn: async ({ client, pkg }) => {
+      assertOwnerAndKind(pkg);
+      const metadata = pkg.metadata ?? {};
+      const ids = new Set<string>(
+        [
+          metadata.course_project_id,
+          ...(Array.isArray(metadata.course_project_ids)
+            ? metadata.course_project_ids
+            : []),
+        ].filter(
+          (id): id is string => typeof id === "string" && isValidUUID(id),
+        ),
+      );
+      ids.add(course_project_id);
+      await client.query(
+        "UPDATE membership_packages SET metadata=$2::jsonb, updated=NOW() WHERE id=$1",
+        [package_id, { ...metadata, course_project_ids: [...ids] }],
+      );
+    },
   });
 }
 

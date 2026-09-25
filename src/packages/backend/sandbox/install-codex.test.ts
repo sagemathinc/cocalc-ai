@@ -6,7 +6,7 @@ jest.mock("fs/promises", () => ({
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: jest
     .fn()
-    .mockResolvedValue({ stdout: "codex-cli 0.153.4", stderr: "" }),
+    .mockResolvedValue({ stdout: "codex-cli 0.156.0", stderr: "" }),
 }));
 
 describe.each(["x64", "arm64"])("patched Codex identity (%s)", (arch) => {

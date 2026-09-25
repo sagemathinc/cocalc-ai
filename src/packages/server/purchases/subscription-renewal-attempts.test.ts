@@ -99,6 +99,32 @@ describe("durable subscription renewal attempts", () => {
     expect(firstClaim[0].attempt_count).toBe(1);
   });
 
+  it("claims due attempts when centralized billing omits the legacy bay predicate", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(1, "minute").toDate(),
+      },
+    );
+    const previous = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+    try {
+      const claimed = await claimDueSubscriptionRenewalAttempts({ limit: 10 });
+      expect(claimed.map(({ subscription_id }) => subscription_id)).toContain(
+        subscription_id,
+      );
+    } finally {
+      if (previous == null) {
+        delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+      } else {
+        process.env.COCALC_BILLING_AUTHORITY_ENABLED = previous;
+      }
+    }
+  });
+
   it("cancels only the specified subscription's open attempt", async () => {
     const firstAccount = uuid();
     const secondAccount = uuid();

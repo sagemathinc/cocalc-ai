@@ -12,6 +12,11 @@ import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { cachedAgentNameContext } from "./name-context";
 import type { AgentNameContext } from "./name-context";
+import {
+  namedAgentLimitReached,
+  NamedAgentLimitAlert,
+  NamedAgentUsage,
+} from "./agent-limit";
 
 /** Name metadata is saved only inside the explicitly approved action, before its grant. */
 export function useSourceAgentName(
@@ -37,8 +42,10 @@ export function useSourceAgentName(
         ? fallback
         : undefined));
   const problem = agentNameProblem(name, directory?.agents ?? [], source);
+  const atLimit = namedAgentLimitReached(directory);
   const canApprove =
-    !!known || (!!source && !!directory && !loading && !error && !problem);
+    !!known ||
+    (!!source && !!directory && !loading && !error && !problem && !atLimit);
   return {
     known,
     canApprove,
@@ -49,6 +56,8 @@ export function useSourceAgentName(
             Name this source agent before approving communication. The name is
             in your account.
           </p>
+          <NamedAgentLimitAlert directory={directory} />
+          <NamedAgentUsage directory={directory} />
           <AgentNameInput
             id={`${id}-source-name`}
             label="Source agent name"

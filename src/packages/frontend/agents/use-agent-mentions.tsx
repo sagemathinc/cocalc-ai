@@ -2,20 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Alert } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   agentMentionReferenceMap,
   extractAgentMentions,
 } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
-import { ConnectionApproval } from "./connection-approval";
-import type { ApprovalTarget } from "./connection-approval";
+import { NetworkApproval } from "./network-approval";
+import type { NetworkApprovalTarget } from "./network-approval";
 import { hasUnboundAgentName } from "./unbound-mentions";
-import { useAgentMessagingUI } from "./use-ui-preference";
 
 export function useAgentMentions({
   projectId,
@@ -33,16 +29,14 @@ export function useAgentMentions({
   restoreFocus: () => void;
 }) {
   const accountId = useTypedRedux("account", "account_id");
-  const enabled = useAgentMessagingUI();
-  const { directory } = useNamedAgents(enabled);
-  const [approval, setApproval] = useState<ApprovalTarget>();
+  const { directory } = useNamedAgents(runnable);
+  const [approval, setApproval] = useState<NetworkApprovalTarget>();
   const [error, setError] = useState("");
   const [states, setStates] = useState<Record<string, string>>({});
   const pending = useRef<((approved: boolean) => void) | undefined>(undefined);
   const selectionLock = useRef(false);
   const sendLock = useRef(false);
   const generation = useRef(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   useEffect(() => {
     generation.current += 1;
     setApproval(undefined);
@@ -53,7 +47,7 @@ export function useAgentMentions({
       pending.current?.(false);
       pending.current = undefined;
     };
-  }, [accountId, projectId, path, threadId, enabled]);
+  }, [accountId, projectId, path, threadId]);
 
   function closeApproval(approved: boolean) {
     setApproval(undefined);
@@ -78,15 +72,12 @@ export function useAgentMentions({
       thread_id: threadId,
     });
     if (!identity) {
-      const completed = await runFreshAuthAction(async () => {
-        if (epoch !== generation.current) return;
-        identity = await api.registerIdentity({
-          project_id: projectId,
-          path,
-          thread_id: threadId,
-        });
+      if (epoch !== generation.current) return;
+      identity = await api.registerIdentity({
+        project_id: projectId,
+        path,
+        thread_id: threadId,
       });
-      if (!completed) return;
     }
     if (!identity || epoch !== generation.current) return;
     return { project_id: projectId, agent_id: identity.agent_id };
@@ -108,40 +99,49 @@ export function useAgentMentions({
       throw new Error(
         `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
       );
-    const connections = await api.listPersonalConnections({});
+    const networks = await api.listAgentNetworks({ limit: 100 });
     if (epoch !== generation.current) return false;
-    if (!connections.enabled)
-      throw new Error("Personal agent messaging is not enabled on this site.");
-    if (connections.controls?.paused)
+    if (networks.controls.paused)
       throw new Error(
-        "Your agent communication is paused. Resume it in My Agents before sending.",
+        "Your agent communication is paused. Resume it in Agents before sending.",
       );
-    const links = connections.connections.filter(
-      (connection) =>
-        sameEndpoint(connection.source, source) &&
-        sameEndpoint(connection.target, reference.target),
-    );
-    const active = links.some(
-      (link) =>
-        link.status === "active" &&
-        !link.paused &&
-        !link.revoked_at &&
-        (!link.expires_at || Date.parse(link.expires_at) > Date.now()),
+    const active = networks.networks.some(
+      (network) =>
+        network.state === "active" &&
+        network.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, source),
+        ) &&
+        network.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, reference.target),
+        ),
     );
     const stateKey = reference.target.agent_id;
     if (active) {
-      setStates((states) => ({ ...states, [stateKey]: "Connected" }));
+      setStates((states) => ({ ...states, [stateKey]: "Network active" }));
       return true;
     }
-    if (
-      links.some(
-        (link) => link.status === "paused" || link.status === "revoked",
-      )
-    )
+    const inactive = networks.networks.some(
+      (network) =>
+        network.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, source),
+        ) &&
+        network.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, reference.target),
+        ),
+    );
+    if (inactive)
       throw new Error(
-        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in My Agents; your draft has not been sent.`,
+        `The shared Agent Network with @${reference.name} is paused or closed. Review it in Agents; your draft has not been sent.`,
       );
-    setStates((states) => ({ ...states, [stateKey]: "Needs approval" }));
+    setStates((states) => ({ ...states, [stateKey]: "Needs network" }));
     if (pending.current) return false;
     const approved = await new Promise<boolean>((resolve) => {
       pending.current = resolve;
@@ -170,30 +170,33 @@ export function useAgentMentions({
       });
     });
     if (!approved || epoch !== generation.current) return false;
-    // Approval does not snapshot permission. Confirm the resulting state before sending.
-    const refreshed = await api.listPersonalConnections({});
+    const refreshed = await api.listAgentNetworks({ limit: 100 });
     const connected =
-      !refreshed.controls?.paused &&
-      refreshed.connections.some(
-        (link) =>
-          sameEndpoint(link.source, source) &&
-          sameEndpoint(link.target, reference.target) &&
-          link.status === "active" &&
-          !link.paused &&
-          !link.revoked_at &&
-          (!link.expires_at || Date.parse(link.expires_at) > Date.now()),
+      !refreshed.controls.paused &&
+      refreshed.networks.some(
+        (network) =>
+          network.state === "active" &&
+          network.members.some(
+            (member) =>
+              member.kind === "registered" &&
+              sameEndpoint(member.endpoint, source),
+          ) &&
+          network.members.some(
+            (member) =>
+              member.kind === "registered" &&
+              sameEndpoint(member.endpoint, reference.target),
+          ),
       );
     if (!connected)
       throw new Error(
-        "The connection is not active. Your draft has not been sent.",
+        "The Agent Network is not active. Your draft has not been sent.",
       );
-    setStates((states) => ({ ...states, [stateKey]: "Connected" }));
+    setStates((states) => ({ ...states, [stateKey]: "Network active" }));
     return true;
   }
 
   async function onSelect(reference: AgentMentionReference) {
-    if (!enabled || !runnable || selectionLock.current || sendLock.current)
-      return;
+    if (!runnable || selectionLock.current || sendLock.current) return;
     selectionLock.current = true;
     setError("");
     try {
@@ -209,7 +212,6 @@ export function useAgentMentions({
     // Do not change the synchronous normal-chat send path when no agent
     // reference needs preflight. The lock belongs to the approval flow only.
     if (
-      !enabled ||
       !runnable ||
       (!extractAgentMentions(value).length &&
         !directory?.agents.some((agent) =>
@@ -248,8 +250,9 @@ export function useAgentMentions({
 
   return {
     accountId,
-    agents: enabled ? (directory?.agents ?? []) : [],
+    agents: runnable ? (directory?.agents ?? []) : [],
     context: {
+      allowAgentMentions: runnable,
       onSelect: (reference: AgentMentionReference) => {
         void onSelect(reference);
       },
@@ -262,7 +265,7 @@ export function useAgentMentions({
         agent.path === path &&
         agent.thread_id === threadId,
     ),
-    ui: enabled && (
+    ui: (
       <>
         {error && (
           <div role="alert">
@@ -271,24 +274,40 @@ export function useAgentMentions({
               title="Agent mention needs attention"
               description={
                 <>
-                  {error} <a href="/settings/my-agents">My Agents</a>
+                  {error}{" "}
+                  <a
+                    href="/settings/my-agents"
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      openAccountSettings({ page: "my-agents" });
+                    }}
+                  >
+                    Agents
+                  </a>
                 </>
               }
             />
           </div>
         )}
         {Object.entries(states).some(
-          ([, state]) => state === "Needs approval",
+          ([, state]) => state === "Needs network",
         ) && (
           <div role="status">
-            Agent reference needs approval. Your draft is preserved; Send will
-            check again.
+            Agent reference needs an Agent Network. Your draft is preserved;
+            Send will check again.
           </div>
         )}
         {approval && (
-          <ConnectionApproval value={approval} onClose={closeApproval} />
+          <NetworkApproval value={approval} onClose={closeApproval} />
         )}
-        <FreshAuthModal {...freshAuthModalProps} />
       </>
     ),
   };

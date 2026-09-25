@@ -3962,12 +3962,18 @@ export class BaseEditorActions<
     this.set_active_id(shell_id);
   };
 
-  public async terminal(id: string, no_switch: boolean = false): Promise<void> {
+  public async terminal(
+    id: string,
+    no_switch: boolean = false,
+    workingDirectory?: string,
+  ): Promise<void> {
     // Check if there is already a terminal and if so, just focus it.
     let shell_id: string | undefined = this.getMostRecentShellId();
     if (shell_id == null) {
       // No such terminal already, so we make one and focus it.
-      shell_id = this.split_frame("col", id, "terminal");
+      shell_id = this.split_frame("col", id, "terminal", {
+        cwd: workingDirectory,
+      });
       if (shell_id == null) return;
     }
     if (no_switch) return;

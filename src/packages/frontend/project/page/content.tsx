@@ -398,6 +398,17 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   }
 };
 
+/** Render one project editor without the surrounding project desktop. */
+export function EmbeddedProjectFile({
+  path,
+  isVisible,
+}: {
+  path: string;
+  isVisible: boolean;
+}) {
+  return <TabContent tab_name={`editor-${path}`} is_visible={isVisible} />;
+}
+
 interface EditorProps {
   path: string;
   project_id: string;

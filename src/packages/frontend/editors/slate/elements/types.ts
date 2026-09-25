@@ -32,6 +32,8 @@ import type { Generic } from "./generic";
 import "./generic";
 import type { Guidance } from "./guidance";
 import "./guidance";
+import type { AgentMessage } from "./agent-message";
+import "./agent-message";
 import type { Hashtag } from "./hashtag";
 import "./hashtag/editable";
 import type { Heading } from "./heading";
@@ -59,6 +61,8 @@ import "./math/editable";
 import type { Mention } from "./mention";
 import type { AgentMention } from "./agent-mention";
 import "./agent-mention";
+import type { ArtifactMention } from "./artifact-mention";
+import "./artifact-mention";
 import "./mention/editable";
 import type { Meta } from "./meta";
 import "./meta/editable";
@@ -74,6 +78,7 @@ import type { Marks } from "../markdown-to-slate/handle-marks";
 declare module "slate" {
   export interface CustomTypes {
     Element:
+      | AgentMessage
       | Meta
       | References
       | Checkbox
@@ -95,6 +100,7 @@ declare module "slate" {
       | JupyterMarkdownCell
       | Mention
       | AgentMention
+      | ArtifactMention
       | Table
       | THead
       | TBody

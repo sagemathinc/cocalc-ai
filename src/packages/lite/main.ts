@@ -23,11 +23,14 @@ import { localPathFileserver } from "@cocalc/backend/conat/files/local-path";
 import { createLiteJupyterFilesystemHandlers } from "./jupyter-ipynb";
 import { init as initBugCounter } from "@cocalc/project/bug-counter";
 import { init as initChangefeeds } from "./hub/changefeeds";
-import { init as initHubApi } from "./hub/api";
+import { hubApi, init as initHubApi } from "./hub/api";
+import { createLiteArtifactCatalog } from "./artifacts/service";
+import { LitePersonalLibrary } from "./artifacts/personal-library";
 import { init as initAcp } from "./hub/acp";
 import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
   account_id,
+  data,
   conatPassword,
   conatPasswordPath,
   setConatPassword,
@@ -222,16 +225,40 @@ export async function main(opts?: {
   // waiting on fs.project-* subscribers that have not been registered yet.
   logger.debug("start fs service");
   const path = process.cwd();
-  localPathFileserver({
+  // Standalone entrypoint only: project-host imports hub/api, not this lifecycle.
+  const artifactCatalog = createLiteArtifactCatalog({
+    directory: join(data, "artifact-catalog"),
+    path,
+    project_id,
+    account_id,
+  });
+  hubApi.artifactCatalog = artifactCatalog.api;
+  const personalLibrary = new LitePersonalLibrary({
+    filename: join(data, "personal-library.sqlite"),
+    account_id,
+    project_id,
+    artifactExists: async (projectId, entryId) =>
+      !!(await artifactCatalog.api.getEntry({
+        account_id,
+        project_id: projectId,
+        entry_id: entryId,
+      })),
+  });
+  hubApi.personalLibrary = personalLibrary;
+  process.once("exit", () => personalLibrary.close());
+  await localPathFileserver({
     client: conatClient,
     path,
     project_id,
     unsafeMode: true,
+    wrapFilesystem: artifactCatalog.wrapFilesystem,
     jupyter: createLiteJupyterFilesystemHandlers({
       client: conatClient,
       project_id,
     }),
   });
+  artifactCatalog.start();
+  process.once("exit", artifactCatalog.stop);
 
   logger.debug("start acp conat server");
   await initAcp(conatClient);

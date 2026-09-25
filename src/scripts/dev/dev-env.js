@@ -657,6 +657,17 @@ function resolveHubPassword(statusInfo, opts = {}) {
   return "";
 }
 
+function clearHubScopedAuth(exportsMap) {
+  // Project/agent runtimes commonly inject rotating token files. The CLI
+  // prefers those files over inline auth, so a hub operator shell must clear
+  // both forms before selecting the local hub-password flow.
+  exportsMap.COCALC_AGENT_TOKEN = "";
+  exportsMap.COCALC_AGENT_TOKEN_FILE = "";
+  exportsMap.COCALC_BEARER_TOKEN_FILE = "";
+  exportsMap.COCALC_CLI_AGENT_MODE = "";
+  exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
+}
+
 function parseBrowserIdFromResult(stdout) {
   try {
     const parsed = JSON.parse(stdout || "{}");
@@ -893,9 +904,7 @@ function main() {
     exportsMap.COCALC_LITE_CONNECTION_INFO = "";
     // Clear stale Lite/agent env so hub CLI commands do not silently
     // connect to the wrong local service.
-    exportsMap.COCALC_AGENT_TOKEN = "";
-    exportsMap.COCALC_CLI_AGENT_MODE = "";
-    exportsMap.COCALC_PROJECT_INFO_SCOPE = "";
+    clearHubScopedAuth(exportsMap);
     // Clear stale project-scoped auth so generic hub CLI commands do not
     // accidentally authenticate as a project when the shell previously came
     // from Lite or a project runtime.
@@ -983,4 +992,5 @@ module.exports = {
   hubPasswordCandidates,
   resolveHubPassword,
   resolveHubTarget,
+  clearHubScopedAuth,
 };

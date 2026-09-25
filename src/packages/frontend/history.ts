@@ -66,6 +66,7 @@ import {
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { handoffToPrivateProjectApp } from "@cocalc/frontend/project/private-app-handoff";
 import { parsePrivateProjectAppHandoffTarget } from "@cocalc/frontend/project-routing";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
 import {
   APP_NAVIGATION_EVENT,
@@ -84,7 +85,9 @@ function params(): string {
   const page = redux.getStore("page");
   const u = new URL(location.href);
   if (page != null) {
-    for (const param of ["get_api_key", "test"]) {
+    // `network` was briefly used by the Agents page and must not survive
+    // navigation now that its filter is localStorage-only.
+    for (const param of ["get_api_key", "test", "network"]) {
       const val = page.get(param);
       if (val) {
         u.searchParams.set(param, val);
@@ -98,7 +101,6 @@ function params(): string {
 
 // The last explicitly set url.
 let last_url: string | undefined = undefined;
-let last_full_url: string | undefined = undefined;
 
 function isPublicApp(): boolean {
   return Boolean((globalThis as any).__cocalc_public_app);
@@ -131,18 +133,16 @@ export function set_url_with_search(
   current.search = params();
   const query_params =
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
-  const full_url = join(
-    appBasePath,
-    url + query_params + (hash ?? location.hash),
-  );
-  if (
-    full_url === last_full_url &&
-    full_url === location.pathname + location.search + location.hash
-  ) {
-    // nothing to do
+  // Empty Library segments are invalid selections, not redundant separators.
+  // path.join would turn /library//project/entry into a different, valid route.
+  const full_url = /^\/?library(?:\/|$)/.test(url)
+    ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
+    : join(appBasePath, url + query_params + (hash ?? location.hash));
+  if (full_url === location.pathname + location.search + location.hash) {
+    // Back/Forward can change the current URL without going through set_url.
+    // Rewriting that URL would push a duplicate and discard Forward history.
     return;
   }
-  last_full_url = full_url;
   history.pushState({}, "", full_url);
   consumeGitReviewOnlyNavigation(new URL(location.href));
   window.dispatchEvent(new Event(APP_NAVIGATION_EVENT));
@@ -185,6 +185,25 @@ export function load_target(
     return;
   }
   switch (parsed.page) {
+    case "agents":
+      redux.getActions("page").setState({
+        library_open: parsed.library === true,
+        library_project_id: parsed.artifact_project_id,
+        library_entry_id: parsed.artifact_entry_id,
+        // Library overlays the workspace; keep its selected conversation.
+        ...(!parsed.library
+          ? {
+              active_agent_id: parsed.agent_id,
+              active_agent_name:
+                parsed.agent_id && !is_valid_uuid_string(parsed.agent_id)
+                  ? parsed.agent_id
+                  : undefined,
+            }
+          : {}),
+      });
+      redux.getActions("page").set_active_tab("agents", change_history);
+      break;
+
     case "project": {
       const privateApp = parsePrivateProjectAppHandoffTarget(parsed.target);
       if (privateApp != null) {

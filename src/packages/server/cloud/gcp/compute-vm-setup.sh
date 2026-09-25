@@ -218,8 +218,7 @@ done <"$TMP_DIR/subnet-plan.tsv"
 
 if gcloud compute firewall-rules describe cocalc-compute-ssh --project "$PROJECT_ID" >/dev/null 2>&1; then
   gcloud compute firewall-rules update cocalc-compute-ssh \
-    --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
-    --priority=1000 --action=ALLOW --rules=tcp:22 \
+    --project "$PROJECT_ID" --priority=1000 --rules=tcp:22 \
     --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
 else
   gcloud compute firewall-rules create cocalc-compute-ssh \
@@ -230,8 +229,7 @@ fi
 
 if gcloud compute firewall-rules describe cocalc-compute-https --project "$PROJECT_ID" >/dev/null 2>&1; then
   gcloud compute firewall-rules update cocalc-compute-https \
-    --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
-    --priority=1000 --action=ALLOW --rules=tcp:443 \
+    --project "$PROJECT_ID" --priority=1000 --rules=tcp:443 \
     --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
 else
   gcloud compute firewall-rules create cocalc-compute-https \
@@ -247,8 +245,7 @@ ensure_egress_rule() {
   local name="$1" priority="$2" action="$3" ranges="$4"
   if gcloud compute firewall-rules describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
     gcloud compute firewall-rules update "$name" \
-      --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
-      --priority="$priority" --action="$action" --rules=all \
+      --project "$PROJECT_ID" --priority="$priority" --rules=all \
       --destination-ranges="$ranges" --target-tags="$NETWORK_TAG"
   else
     gcloud compute firewall-rules create "$name" \

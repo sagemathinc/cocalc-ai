@@ -30,15 +30,18 @@ describe("Stripe payment intent launch kill switches", () => {
 
     const { default: createPaymentIntent } =
       await import("./create-payment-intent");
+    const beforeInvoiceCreate = jest.fn();
 
     await expect(
       createPaymentIntent({
         account_id: "11111111-1111-4111-8111-111111111111",
         purpose: "admin-payment",
         lineItems: [{ description: "test", amount: 10 }],
+        beforeInvoiceCreate,
       }),
     ).rejects.toThrow("Payment checkout is temporarily disabled");
     expect(assertPaymentCheckoutAllowedMock).toHaveBeenCalledTimes(1);
     expect(getConnMock).not.toHaveBeenCalled();
+    expect(beforeInvoiceCreate).not.toHaveBeenCalled();
   });
 });

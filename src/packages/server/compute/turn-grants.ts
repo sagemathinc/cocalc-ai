@@ -10,38 +10,65 @@ import { COMPUTE_AGENT_GRANTS_PROJECT_DETAIL_FIELD } from "@cocalc/conat/hub/api
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import siteUrl from "../hub/site-url";
 
-export interface ComputeAgentAuth {
-  account_id: string;
-  project_id: string;
-  token_fingerprint: string;
-  issued_at_s: number;
-  expires_at_s: number;
+import type {
+  ComputeAgentAuth,
+  ComputeAgentGrantRequest,
+  ComputeAgentGrantAuthorization,
+  ComputeAgentGrantCheck,
+  ComputeAgentGrantCheckResult,
+} from "@cocalc/util/compute-agent-auth";
+export type {
+  ComputeAgentAuth,
+  ComputeAgentAction,
+  ComputeAgentGrantRequest,
+  ComputeAgentGrantAuthorization,
+} from "@cocalc/util/compute-agent-auth";
+import { isMultiBayCluster } from "@cocalc/server/cluster-config";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+
+async function grantHome(account_id: string): Promise<string> {
+  const result = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (!result.home_bay_id)
+    throw Error("The compute account home is unavailable.");
+  return result.home_bay_id;
 }
 
-export type ComputeAgentAction =
-  | "read"
-  | "data-plane"
-  | "availability"
-  | "billable"
-  | "destructive";
-
-export interface ComputeAgentGrantRequest {
-  operation?: string;
-  operation_id?: string;
-  vm_id?: string;
-  allow_create?: boolean;
-  provider?: "gcp" | "nebius";
-  machine_class?: string;
-  funding_mode?: string;
-  active_vms?: number;
-  hourly_usd?: number;
-  total_authorized_usd?: number;
-  ttl_minutes?: number;
+export async function checkAgentComputeGrantOnHome(
+  opts: ComputeAgentGrantCheck,
+): Promise<ComputeAgentGrantCheckResult> {
+  if (
+    !opts.auth ||
+    (await grantHome(opts.auth.account_id)) !== getConfiguredBayId()
+  )
+    throw Error("Compute account home changed; refresh and retry.");
+  try {
+    return { authorization: (await requireAgentComputeGrant(opts))! };
+  } catch (err) {
+    return agentComputeApprovalRequired(err);
+  }
 }
 
-export interface ComputeAgentGrantAuthorization {
-  grant_id: string;
-  project_vm_availability_scope: boolean;
+export function agentComputeApprovalRequired(
+  err: any,
+): Extract<ComputeAgentGrantCheckResult, { approval_required: unknown }> {
+  if (err?.code !== "agent_grant_required") throw err;
+  return {
+    approval_required: {
+      message: err.message,
+      code: "agent_grant_required",
+      grant_id: err.grant_id,
+      request_id: err.request_id,
+      approval_url: err.approval_url,
+      expires_at: err.expires_at,
+      project_id: err.project_id,
+    },
+  };
 }
 
 function isSamePendingRequest(
@@ -90,13 +117,9 @@ function validateAgentAuth(auth: ComputeAgentAuth): void {
   }
 }
 
-export async function requireAgentComputeGrant(opts: {
-  auth?: ComputeAgentAuth;
-  action: ComputeAgentAction;
-  project_id: string;
-  vm_id?: string;
-  request?: ComputeAgentGrantRequest;
-}): Promise<ComputeAgentGrantAuthorization | undefined> {
+export async function requireAgentComputeGrant(
+  opts: ComputeAgentGrantCheck,
+): Promise<ComputeAgentGrantAuthorization | undefined> {
   if (!opts.auth) return;
   validateAgentAuth(opts.auth);
   if (opts.auth.project_id !== opts.project_id) {
@@ -114,6 +137,22 @@ export async function requireAgentComputeGrant(opts: {
       new Error("managed-compute mutation is missing an operation identity"),
       { code: 403 },
     );
+  }
+  if (isMultiBayCluster()) {
+    const bay = await grantHome(opts.auth.account_id);
+    if (bay !== getConfiguredBayId()) {
+      const result = await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: bay,
+        timeout: 5000,
+      }).computeOwnerCheckAgentGrant(opts);
+      if ("approval_required" in result)
+        throw Object.assign(
+          new Error(result.approval_required.message),
+          result.approval_required,
+        );
+      return result.authorization;
+    }
   }
   const pool = getPool();
   let { rows } = await pool.query(

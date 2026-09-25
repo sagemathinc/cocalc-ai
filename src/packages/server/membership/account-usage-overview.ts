@@ -466,14 +466,21 @@ async function addDedicatedHostSpendMeters({
 
 export async function getAccountUsageOverviewForAccount({
   account_id,
+  include_site_funded_codex_credits = false,
 }: {
   account_id: string;
+  include_site_funded_codex_credits?: boolean;
 }): Promise<AccountUsageOverview> {
   const [details, aiUsage] = await Promise.all([
     resolveMembershipDetailsForAccount(account_id, {
       refresh_usage_status: true,
     }),
-    getAIUsageStatus({ account_id }),
+    getAIUsageStatus({
+      account_id,
+      ...(include_site_funded_codex_credits
+        ? { include_site_funded_credits: true }
+        : {}),
+    }),
   ]);
   const meters: AccountUsageMeter[] = [];
   const measurement_warnings = addMembershipUsageMeters({
@@ -528,5 +535,13 @@ export async function getAccountUsageOverviewForAccount({
       managed_cpu: details.usage_status?.managed_cpu_recent_events,
     },
     measurement_warnings,
+    site_funded_codex_credits: include_site_funded_codex_credits
+      ? {
+          windows: aiUsage.windows.map((window) => ({
+            window: window.window,
+            credits_microusd: window.site_funded_credits_microusd ?? {},
+          })),
+        }
+      : undefined,
   };
 }

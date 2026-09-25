@@ -8,15 +8,12 @@ import {
 } from "@cocalc/conat/agents/protocol";
 
 export function agentMessagingEnabled(): boolean {
-  return process.env.COCALC_AGENT_MESSAGING_ENABLED === "1";
+  return true;
 }
 
-export function assertAgentMessagingEnabled(): void {
-  if (!agentMessagingEnabled())
-    throw new Error("agent messaging is not enabled on this bay");
-}
+export function assertAgentMessagingEnabled(): void {}
 
-export function normalizeAgentPath(path: string): string {
+function normalizePath(path: string): string {
   if (
     typeof path !== "string" ||
     !path.trim() ||
@@ -25,7 +22,11 @@ export function normalizeAgentPath(path: string): string {
   ) {
     throw new Error("invalid chat path");
   }
-  const normalized = posix.resolve("/home/user", path);
+  return posix.resolve("/home/user", path);
+}
+
+export function normalizeAgentPath(path: string): string {
+  const normalized = normalizePath(path);
   if (!normalized.endsWith(".chat"))
     throw new Error("agent requires a .chat path");
   return normalized;
@@ -85,9 +86,13 @@ export class AgentStore {
     path: string,
     threadId: string,
   ): Promise<AgentIdentity | undefined> {
+    const normalizedPath = normalizePath(path);
+    // Some Codex entry points use virtual paths rather than persisted chats.
+    // They are not registered messaging agents, so an identity lookup is a miss.
+    if (!normalizedPath.endsWith(".chat")) return;
     const { rows } = await this.query<AgentIdentity>(
       "SELECT * FROM agent_identities WHERE project_id=$1 AND path=$2 AND thread_id=$3 AND disabled_at IS NULL",
-      [projectId, normalizeAgentPath(path), threadId],
+      [projectId, normalizedPath, threadId],
     );
     return rows[0];
   }
@@ -113,6 +118,11 @@ export class AgentStore {
       if (recoverExpiredRunId === runId)
         throw new Error("expired identity recovery requires a new run");
       rowCount = await this.transaction(async (db) => {
+        const current = await db.query(
+          "SELECT agent_id FROM agent_identities WHERE agent_id=$1 AND thread_id=$2 AND disabled_at IS NULL FOR SHARE",
+          [agent.agent_id, agent.thread_id],
+        );
+        if (!current.rows[0]) throw new Error("agent conversation changed");
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
@@ -162,6 +172,11 @@ export class AgentStore {
       });
     } else {
       rowCount = await this.transaction(async (db) => {
+        const current = await db.query(
+          "SELECT agent_id FROM agent_identities WHERE agent_id=$1 AND thread_id=$2 AND disabled_at IS NULL FOR SHARE",
+          [agent.agent_id, agent.thread_id],
+        );
+        if (!current.rows[0]) throw new Error("agent conversation changed");
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);

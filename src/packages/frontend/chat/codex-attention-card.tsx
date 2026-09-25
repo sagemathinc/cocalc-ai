@@ -18,13 +18,13 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { CODEX_ATTENTION_ANSWER_MAX_LENGTH } from "@cocalc/util/ai/codex-attention";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
-import { AgentMessagingRequests } from "@cocalc/frontend/agents/messaging-requests";
 
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
@@ -92,31 +92,6 @@ export function CodexAttentionCard({
   draft?: CodexAttentionDraft;
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
-  if (initialRecord.action?.kind === "agent_messaging") {
-    return (
-      <section
-        aria-label="Codex needs attention"
-        data-codex-attention-id={initialRecord.attention_id}
-        tabIndex={-1}
-        style={{
-          border: `1px solid ${UI_COLORS.warning}`,
-          borderRadius: 8,
-          padding: 12,
-          width: "100%",
-          color: UI_COLORS.text,
-          background: UI_COLORS.warningBg,
-        }}
-      >
-        <Title level={5}>Agent requests messaging approval</Title>
-        <AgentMessagingRequests
-          projectId={initialRecord.project_id}
-          path={initialRecord.path}
-          threadId={initialRecord.thread_id}
-          requestId={initialRecord.action.reference}
-        />
-      </section>
-    );
-  }
   return (
     <RuntimeCodexAttentionCard
       initialRecord={initialRecord}
@@ -228,7 +203,11 @@ function RuntimeCodexAttentionCard({
     [draft, record.questions],
   );
   const canSubmit = record.questions.every(
-    ({ id }) => (answers[id]?.length ?? 0) > 0,
+    ({ id }) =>
+      (answers[id]?.length ?? 0) > 0 &&
+      answers[id].every(
+        (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
+      ),
   );
 
   const respond = async (decline = false) => {
@@ -467,6 +446,23 @@ function RuntimeCodexAttentionCard({
                         }));
                       }}
                     />
+                    <div role="status" aria-live="polite">
+                      <Text
+                        type={
+                          (draft.other[question.id] ?? "").trim().length >
+                          CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                            ? "danger"
+                            : "secondary"
+                        }
+                      >
+                        {(draft.other[question.id] ?? "").trim().length} /{" "}
+                        {CODEX_ATTENTION_ANSWER_MAX_LENGTH} characters
+                        {(draft.other[question.id] ?? "").trim().length >
+                        CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                          ? ` (${(draft.other[question.id] ?? "").trim().length - CODEX_ATTENTION_ANSWER_MAX_LENGTH} over the limit)`
+                          : ""}
+                      </Text>
+                    </div>
                   </div>
                 ) : null}
               </fieldset>

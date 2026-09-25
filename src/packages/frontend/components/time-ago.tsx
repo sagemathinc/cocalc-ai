@@ -332,7 +332,7 @@ function msUntilRelativeTimeTextChange(
   return Math.max(1000, high);
 }
 
-function RelativeTimeText({
+export function RelativeTimeText({
   date,
   live,
 }: {

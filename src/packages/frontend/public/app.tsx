@@ -241,6 +241,7 @@ export default function PublicApp({
           account_email_address: bootstrap?.email_address,
           account_id: bootstrap?.account_id,
           is_authenticated: !!bootstrap?.signed_in,
+          openai_disabled: bootstrap.openai_disabled,
         };
         authOverride.current = auth;
         setResolvedConfig((current) => ({

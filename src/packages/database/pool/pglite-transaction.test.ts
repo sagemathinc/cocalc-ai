@@ -6,6 +6,29 @@
 import { PglitePool } from "./pglite";
 
 describe("PglitePool transaction isolation", () => {
+  it("serializes simultaneous BEGIN calls from different clients", async () => {
+    const pool = new PglitePool();
+    const first = await pool.connect();
+    const second = await pool.connect();
+    let secondBegan = false;
+    try {
+      const firstBegin = first.query("BEGIN");
+      const secondBegin = second.query("BEGIN").then(() => {
+        secondBegan = true;
+      });
+      await firstBegin;
+      expect(secondBegan).toBe(false);
+      await first.query("COMMIT");
+      await secondBegin;
+      expect(secondBegan).toBe(true);
+      await second.query("COMMIT");
+    } finally {
+      first.release();
+      second.release();
+      await pool.end();
+    }
+  });
+
   it("does not interleave unrelated pool queries into a client transaction", async () => {
     const pool = new PglitePool();
     const table = `pglite_tx_${Date.now()}`;

@@ -2,6 +2,8 @@ import {
   authFirstRequireAccount,
   authFirstRequireAccountWithBoundSession,
 } from "./util";
+import type { CreditTransferApi } from "@cocalc/util/credit-transfers";
+import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type { MoneyValue } from "@cocalc/util/money";
 import type { AutoBalanceConfig } from "@cocalc/util/db-schema/accounts";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
@@ -37,6 +39,8 @@ export interface MembershipUsageLimits {
   total_storage_soft_bytes?: number;
   total_storage_hard_bytes?: number;
   max_projects?: number;
+  max_named_agents?: number;
+  max_agent_network_members?: number;
   max_sponsored_running_projects?: number;
   max_snapshots_per_project?: number;
   max_backups_per_project?: number;
@@ -129,6 +133,8 @@ export interface AccountUsageLimitOverrides {
   total_storage_soft_bytes?: NumericLimitRule;
   total_storage_hard_bytes?: NumericLimitRule;
   max_projects?: NumericLimitRule;
+  max_named_agents?: NumericLimitRule;
+  max_agent_network_members?: NumericLimitRule;
   max_sponsored_running_projects?: NumericLimitRule;
   max_snapshots_per_project?: NumericLimitRule;
   max_backups_per_project?: NumericLimitRule;
@@ -1560,9 +1566,15 @@ export interface AccountUsageOverview {
     managed_cpu?: ManagedCpuEventSummary[];
   };
   measurement_warnings: string[];
+  site_funded_codex_credits?: {
+    windows: Array<{
+      window: "5h" | "7d";
+      credits_microusd: Record<string, number>;
+    }>;
+  };
 }
 
-export interface Purchases {
+export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
   getBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMinBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   setAutoBalance: (opts?: {
@@ -1703,6 +1715,11 @@ export interface Purchases {
     expires_at?: Date | string | null;
     allowed_domains?: string[];
   }) => Promise<MembershipPackageDetails>;
+  linkCourseMembershipPackage: (opts: {
+    account_id?: string;
+    package_id: string;
+    course_project_id: string;
+  }) => Promise<void>;
   getMembershipPackages: (opts?: {
     account_id?: string;
     user_account_id?: string;
@@ -1986,6 +2003,12 @@ export interface Purchases {
 // Public purchase RPCs act on account-owned billing and entitlement state.
 // Internal and inter-bay callers use separate service contracts.
 export const purchases = {
+  getMonthlyCollection: authFirstRequireAccount,
+  proposeMonthlyCollection: authFirstRequireAccount,
+  previewCreditTransfer: authFirstRequireAccount,
+  proposeCreditTransfer: authFirstRequireAccount,
+  getCreditTransferStatus: authFirstRequireAccount,
+  listCreditTransfers: authFirstRequireAccount,
   getBalance: authFirstRequireAccount,
   getMinBalance: authFirstRequireAccount,
   setAutoBalance: authFirstRequireAccount,
@@ -2011,6 +2034,7 @@ export const purchases = {
   purchaseTeamLicenseChange: authFirstRequireAccount,
   updateMembershipPackage: authFirstRequireAccount,
   getMembershipPackages: authFirstRequireAccount,
+  linkCourseMembershipPackage: authFirstRequireAccount,
   assignMembershipPackageSeat: authFirstRequireAccount,
   revokeMembershipPackageSeat: authFirstRequireAccount,
   assignSiteLicensePoolSeat: authFirstRequireAccount,

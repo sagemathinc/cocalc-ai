@@ -38,6 +38,16 @@ list spacing collapses.
   margin-top: 0;
 }
 
+/* Agent messages are summaries in the transcript; inspection reveals detail. */
+.cocalc-slate-agent-message-body > * {
+  display: inline;
+  margin: 0;
+}
+
+.cocalc-slate-agent-message-body br {
+  display: none;
+}
+
 .cocalc-slate-render > :last-child {
   margin-bottom: 0;
 }

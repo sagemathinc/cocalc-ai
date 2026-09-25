@@ -215,14 +215,20 @@ describe("sandboxed destination attachment staging", () => {
     async (loseAck) => {
       const f = file();
       const e: AgentRpcEnvelope = {
-        version: 2,
+        version: 3,
         body: "Review this file",
         path: "/home/user/recv.chat",
         source: { project_id: randomUUID(), agent_id: randomUUID() },
+        source_label: "@source",
         target: { project_id: randomUUID(), agent_id: randomUUID() },
+        target_label: "@target",
         run_id: randomUUID(),
         account_id: randomUUID(),
-        link_id: randomUUID(),
+        agent_network_id: randomUUID(),
+        network_generation: randomUUID(),
+        account_generation: 0,
+        configured_delivery: "queued",
+        guidance: false,
         attempt_id: randomUUID(),
         permit_id: randomUUID(),
         thread_id: randomUUID(),

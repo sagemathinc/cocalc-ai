@@ -137,7 +137,7 @@ describe("site-funded Codex provider proxy", () => {
     expect(upstreamProjectHeader).toBeUndefined();
     expect(upstreamCustomHeader).toBeUndefined();
     expect(upstreamBody).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
       reasoning: { effort: "medium" },
       service_tier: "default",
       background: false,
@@ -153,7 +153,7 @@ describe("site-funded Codex provider proxy", () => {
         reservationId: session.reservationId,
         providerRequestId: "resp-1",
         requestSequence: 1,
-        model: "gpt-5.6-luna",
+        model: DEFAULT_SITE_FUNDED_CODEX_POLICY.model,
         inputTokens: 10_000,
         cachedInputTokens: 6_000,
         outputTokens: 500,

@@ -17,6 +17,7 @@ import { calendarMonthStart } from "./billing-period";
 import { COST_OR_METERED_COST } from "./get-balance";
 import getBalance, { getBalanceAsOf } from "./get-balance";
 import type { MoneyValue } from "@cocalc/util/money";
+import { getBillingAccountProfile } from "./billing-account";
 
 interface Options {
   account_id?: string;
@@ -77,14 +78,8 @@ export default async function getPurchases({
   FROM purchases AS p`;
   } else {
     query =
-      "SELECT p.id, p.time, p.cost, p.period_start, p.period_end, p.cost_per_hour, p.cost_so_far, p.service, p.description, p.invoice_id, p.project_id, p.notes" +
-      (includeName
-        ? ", a.email_address, a.display_name, a.first_name, a.last_name "
-        : "") +
+      "SELECT p.id, p.account_id, p.time, p.cost, p.period_start, p.period_end, p.cost_per_hour, p.cost_so_far, p.service, p.description, p.invoice_id, p.project_id, p.notes" +
       " FROM purchases as p";
-    if (includeName) {
-      query += " INNER JOIN accounts as a ON p.account_id = a.account_id ";
-    }
   }
 
   if (account_id) {
@@ -160,7 +155,23 @@ export default async function getPurchases({
     isolationLevel: "REPEATABLE READ",
   });
   try {
-    const { rows: purchases } = await client.query(query, params);
+    const { rows } = await client.query(query, params);
+    const purchases = rows as Array<Record<string, any>>;
+    if (includeName) {
+      const profiles = new Map<
+        string,
+        Awaited<ReturnType<typeof getBillingAccountProfile>>
+      >();
+      for (const purchase of purchases) {
+        if (!profiles.has(purchase.account_id)) {
+          profiles.set(
+            purchase.account_id,
+            await getBillingAccountProfile(purchase.account_id),
+          );
+        }
+        Object.assign(purchase, profiles.get(purchase.account_id));
+      }
+    }
     const balance =
       account_id != null
         ? cutoff_end != null

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Menu } from "antd";
+import { Menu, Tabs } from "antd";
 import React from "react";
 import { useIntl } from "react-intl";
 
@@ -18,6 +18,7 @@ interface Props {
   attention_count: number;
   news_unread: number;
   style: React.CSSProperties;
+  horizontal?: boolean;
 }
 
 export function NotificationNav({
@@ -27,8 +28,34 @@ export function NotificationNav({
   attention_count,
   news_unread,
   style,
+  horizontal = false,
 }: Props) {
   const intl = useIntl();
+
+  if (horizontal) {
+    return (
+      <Tabs
+        aria-label="Notification filters"
+        activeKey={filter}
+        onChange={(key) => on_click(key as NotificationFilter)}
+        size="small"
+        tabBarGutter={16}
+        style={style}
+        items={[
+          { key: "attention", label: `Attention (${attention_count})` },
+          {
+            key: "unread",
+            label: `${intl.formatMessage(MSGS.unread)} (${unread_count})`,
+          },
+          { key: "read", label: intl.formatMessage(MSGS.read) },
+          {
+            key: "allNews",
+            label: `${intl.formatMessage(MSGS.news)} (${news_unread})`,
+          },
+        ]}
+      />
+    );
+  }
 
   const ITEMS: MenuItems = [
     {

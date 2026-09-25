@@ -11,6 +11,7 @@ import {
   disposeAcpAgents,
   runDetachedAcpQueueWorker,
   setAcpAdmissionLimitsProvider,
+  setCodexCredentialAdmissionResolver,
   setAcpSessionPublisherOverride,
   publishActiveAcpSessions,
 } from "@cocalc/lite/hub/acp";
@@ -21,7 +22,10 @@ import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/
 import { initConatClient as initProjectRunnerConatClient } from "@cocalc/project-runner/run/conat-client";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
-import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs";
+import {
+  initCodexAttachmentBlobReader,
+  initCodexGeneratedImageBlobWriter,
+} from "./codex/generated-image-blobs";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { wireHostsApi } from "./hub/hosts";
@@ -107,6 +111,21 @@ function configureProjectHostAcpRuntime(): void {
       await getProjectOwnerEffectiveLimits(id),
     );
   });
+  setCodexCredentialAdmissionResolver(async (opts) => {
+    const client = getMasterConatClient();
+    if (!client) {
+      throw new Error("master hub connection unavailable");
+    }
+    return {
+      ...(await callHub({
+        client,
+        name: "system.getCodexPaymentSource",
+        args: [opts],
+        host_id: getLocalHostId(),
+      })),
+      credentialPinRequired: true,
+    };
+  });
   configureProjectHostAcpAdmissionDenialRecorder();
   setContainerExec((opts) =>
     sandboxExec({
@@ -118,6 +137,7 @@ function configureProjectHostAcpRuntime(): void {
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
+  initCodexAttachmentBlobReader();
   initCodexGeneratedImageBlobWriter();
 }
 

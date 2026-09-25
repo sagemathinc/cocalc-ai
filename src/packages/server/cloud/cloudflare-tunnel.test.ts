@@ -536,4 +536,159 @@ describe("deleteCloudflareTunnel", () => {
       ]),
     );
   });
+
+  it("publishes an additional hostname on an existing hub tunnel", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cloudflare_mode: "self",
+      dns: "lite2b.cocalc.ai",
+      project_hosts_cloudflare_tunnel_account_id: "account-id",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+    }));
+    const fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: [{ name: "cocalc.ai", id: "zone-id" }],
+          }),
+        };
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: [] }),
+        };
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: { id: "approval-id" } }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, result: {} }),
+      };
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureCloudflareTunnelHostname } =
+      await import("./cloudflare-tunnel");
+    await ensureCloudflareTunnelHostname({
+      tunnel: {
+        id: "tunnel-id",
+        name: "hub-lite2b",
+        hostname: "lite2b.cocalc.ai",
+        tunnel_secret: "secret",
+        account_id: "account-id",
+      },
+      hostname: "approve.lite2b.cocalc.ai",
+    });
+
+    await expect(
+      ensureCloudflareTunnelHostname({
+        tunnel: {
+          id: "tunnel-id",
+          name: "hub-lite2b",
+          hostname: "lite2b.cocalc.ai",
+          tunnel_secret: "secret",
+          account_id: "account-id",
+        },
+        hostname: "approve-lite2b.cocalc.ai",
+      }),
+    ).rejects.toThrow("must be within 'lite2b.cocalc.ai'");
+    await ensureCloudflareTunnelHostname({
+      tunnel: {
+        id: "tunnel-id",
+        name: "hub-lite2b",
+        hostname: "lite2b.cocalc.ai",
+        tunnel_secret: "secret",
+        account_id: "account-id",
+      },
+      hostname: "approve-lite2b.cocalc.ai",
+      allowOutsideConfiguredDns: true,
+    });
+
+    const written = fetchMock.mock.calls
+      .map(([, init]) => init?.body)
+      .filter(Boolean)
+      .map((body) => JSON.parse(String(body)));
+    expect(written).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "approve.lite2b.cocalc.ai",
+          content: "tunnel-id.cfargotunnel.com",
+          proxied: true,
+        }),
+        expect.objectContaining({
+          name: "approve-lite2b.cocalc.ai",
+          content: "tunnel-id.cfargotunnel.com",
+          proxied: true,
+        }),
+      ]),
+    );
+  });
+
+  it("does not replace an unrelated record for a protected hostname", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cloudflare_mode: "self",
+      dns: "cocalc.ai",
+      project_hosts_cloudflare_tunnel_account_id: "account-id",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+    }));
+    const fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: [{ name: "cocalc.ai", id: "zone-id" }],
+          }),
+        };
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: [
+              {
+                id: "unrelated-id",
+                type: "A",
+                name: "authorize.cocalc.ai",
+                content: "192.0.2.1",
+              },
+            ],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, result: {} }),
+      };
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureCloudflareTunnelHostname } =
+      await import("./cloudflare-tunnel");
+    await expect(
+      ensureCloudflareTunnelHostname({
+        tunnel: {
+          id: "tunnel-id",
+          name: "hub-cocalc",
+          hostname: "cocalc.ai",
+          tunnel_secret: "secret",
+          account_id: "account-id",
+        },
+        hostname: "authorize.cocalc.ai",
+        protectExisting: true,
+      }),
+    ).rejects.toThrow("unrelated A record");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+  });
 });

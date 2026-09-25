@@ -5,6 +5,7 @@
 
 import type { PoolClient } from "@cocalc/database/pool";
 import type { Status } from "@cocalc/util/db-schema/subscriptions";
+import { lockAccountSpending } from "./lock-account-spending";
 
 type Queryable = Pick<PoolClient, "query">;
 
@@ -53,6 +54,9 @@ export async function lockMembershipSubscriptionAccount({
   account_id: string;
   client: PoolClient;
 }): Promise<void> {
+  // Keep spending -> subscription ordering even for callers that only change
+  // subscription state; debit paths and sponsorship use the same payer lock.
+  await lockAccountSpending(client, account_id);
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
     `${LOCK_PREFIX}${account_id}`,
   ]);

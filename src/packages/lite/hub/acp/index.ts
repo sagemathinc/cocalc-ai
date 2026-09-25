@@ -52,7 +52,10 @@ import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   FileAdapter,
@@ -89,6 +92,7 @@ import {
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
+  projectBlobMaterializationRoots,
   rewriteBlobReferencesInPrompt,
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
@@ -106,6 +110,7 @@ import {
 } from "@cocalc/chat";
 import { prepareChatSend } from "@cocalc/chat/send";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
+import { prepareFreshConversation } from "./fresh-conversation";
 import {
   appendStreamMessage,
   appendGeneratedImageMarkdown,
@@ -233,7 +238,10 @@ import {
   withCurrentAutomationSettings,
 } from "./automation-settings";
 import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
-import { resolveHumanTurnMentions } from "./turn-mentions";
+import {
+  resolveHumanTurnMentions,
+  resolveHumanTurnArtifactMentions,
+} from "./turn-mentions";
 import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
   decodeAcpInterruptCandidateIds,
@@ -306,6 +314,12 @@ import {
 import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
+import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+
+export {
+  pinCodexCredentialAtAdmission,
+  setCodexCredentialAdmissionResolver,
+} from "./codex-credential-admission";
 
 export {
   acpAdmissionLimitsFromEffectiveLimits,
@@ -372,6 +386,10 @@ const ACP_INSTANCE_ID =
   `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
+type AttachmentBlobReader = (opts: {
+  uuid: string;
+  projectId: string;
+}) => Promise<Buffer | undefined>;
 type GeneratedImageBlobWriter = (opts: {
   uuid: string;
   blob: Buffer;
@@ -380,6 +398,13 @@ type GeneratedImageBlobWriter = (opts: {
 }) => Promise<void>;
 
 let generatedImageBlobWriter: GeneratedImageBlobWriter | undefined;
+let attachmentBlobReader: AttachmentBlobReader | undefined;
+
+export function setAttachmentBlobReader(
+  reader: AttachmentBlobReader | undefined,
+): void {
+  attachmentBlobReader = reader;
+}
 
 export function setGeneratedImageBlobWriter(
   writer: GeneratedImageBlobWriter | undefined,
@@ -4319,6 +4344,10 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
+    if (event.type === "event" && event.event.type === "peerMessage") {
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
     if (event.type === "event" && this.livePreviewText) {
       // The complete activity stream can publish tool and reasoning events
       // independently. Flush text queued before that activity so the inline
@@ -7635,6 +7664,10 @@ async function executeAcpRequest({
     request,
     hubApi.agent,
   );
+  const artifactReferences = await resolveHumanTurnArtifactMentions(
+    request,
+    hubApi.artifactCatalog,
+  );
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -7682,6 +7715,13 @@ async function executeAcpRequest({
   );
   const { prompt, local_images, cleanup } = await materializeBlobs(
     request.prompt ?? "",
+    projectId,
+    useContainer && hostProjectRoot
+      ? projectBlobMaterializationRoots({
+          hostProjectRoot,
+          runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+        })
+      : undefined,
   );
   if (!conatClient) {
     throw Error("conat client must be initialized");
@@ -7758,7 +7798,9 @@ async function executeAcpRequest({
         ...request,
         mentionReferences,
         readPendingGoal: chatWriter?.readPendingGoal,
-        prompt: augmentPromptWithAgentMentions(prompt, mentionReferences),
+        prompt: artifactReferences.length
+          ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
+          : augmentPromptWithAgentMentions(prompt, mentionReferences),
         local_images,
         runtime_env: runtimeEnv,
         config: effectiveConfig,
@@ -8168,6 +8210,7 @@ async function enqueueAutomationRun(
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  const userMessageContent = automationMessageLabel(row, opts.manual);
   let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
   let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
 
@@ -8194,7 +8237,7 @@ async function enqueueAutomationRun(
           sender_id: automationSenderId,
           date: userDate,
           prevHistory: [],
-          content: automationMessageLabel(row, opts.manual),
+          content: userMessageContent,
           generating: false,
           message_id: user_message_id,
           thread_id: row.thread_id,
@@ -8217,8 +8260,9 @@ async function enqueueAutomationRun(
     automation_id: row.automation_id,
     automation_title: row.title ?? undefined,
     automation_revision: automationSettingsRevision(row),
+    user_message_content: userMessageContent,
   };
-  const request: AcpJobRequest =
+  let request: AcpJobRequest =
     row.run_kind === "command"
       ? {
           request_kind: "command",
@@ -8240,6 +8284,8 @@ async function enqueueAutomationRun(
           config: automationConfig,
           chat,
         };
+
+  request = await pinCodexCredentialAtAdmission(request);
 
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(request, admissionLimits),
@@ -9023,6 +9069,17 @@ export function automationRecordFromThreadProjection({
   };
 }
 
+export function recoveredAutomationRequiresActiveAdmission(
+  row: AcpAutomationRow,
+): boolean {
+  return (
+    row.enabled &&
+    (row.status === "active" ||
+      row.status === "running" ||
+      row.status === "error")
+  );
+}
+
 async function recoverAcpAutomationFromThreadProjection({
   project_id,
   path,
@@ -9072,6 +9129,26 @@ async function recoverAcpAutomationFromThreadProjection({
   });
   const row = normalizeAcpAutomationRecord(record);
   if (!row) return;
+  if (recoveredAutomationRequiresActiveAdmission(row)) {
+    throwIfAcpAdmissionDenied(
+      admitActiveAcpAutomationForProject(
+        {
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+          automation_id: row.automation_id,
+        },
+        await resolveAcpAdmissionLimits({
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+        }),
+      ),
+      "automation",
+    );
+  }
   const restored = upsertAcpAutomation(row);
   await publishAutomationRecordToProjectIndex(restored);
   logger.warn("recovered ACP automation from thread projection", {
@@ -10798,11 +10875,12 @@ async function enqueueChatAcpTurn({
   request: AcpRequest;
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
-  if (!request.chat) {
-    throw new Error("chat metadata is required to enqueue an ACP turn");
-  }
   if (!conatClient) {
     throw new Error("conat client must be initialized");
+  }
+  request = await pinCodexCredentialAtAdmission(request);
+  if (!request.chat) {
+    throw new Error("chat metadata is required to enqueue an ACP turn");
   }
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(
@@ -11648,6 +11726,12 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "prepare_fresh_conversation") {
+    return {
+      ok: true,
+      successor_thread_id: await prepareFreshConversation(request, client),
+    };
+  }
   if (request.action === "cancel") {
     const row = cancelQueuedAcpJob({
       project_id,
@@ -11904,12 +11988,16 @@ export async function init(
   }
 }
 
-async function materializeBlobs(prompt: string): Promise<{
+async function materializeBlobs(
+  prompt: string,
+  projectId: string,
+  projectRoots?: { host: string; runtime: string },
+): Promise<{
   prompt: string;
   local_images: string[];
   cleanup: () => Promise<void>;
 }> {
-  if (!blobStore) {
+  if (!blobStore && !attachmentBlobReader) {
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
@@ -11921,22 +12009,45 @@ async function materializeBlobs(prompt: string): Promise<{
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
+  const hostTempRoot = projectRoots?.host ?? os.tmpdir();
+  await fs.mkdir(hostTempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`),
+    path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
   );
+  const runtimeTempDir = projectRoots
+    ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
+    : tempDir;
   const attachments: MaterializedBlobAttachment[] = [];
   let bytes = 0;
   try {
     for (const ref of unique) {
       try {
-        const data = await blobStore!.get(ref.uuid);
+        let data: Buffer | Uint8Array | string | undefined;
+        if (attachmentBlobReader) {
+          try {
+            data = await attachmentBlobReader({
+              projectId,
+              uuid: ref.uuid,
+            });
+          } catch (err) {
+            logger.warn("failed to read project chat blob", {
+              project_id: projectId,
+              ref,
+              err,
+            });
+          }
+        }
+        data ??= await blobStore?.get(ref.uuid);
         if (data == null) continue;
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
         const safeName = buildSafeBlobFilename(ref);
-        const filePath = path.join(tempDir, safeName);
-        await fs.writeFile(filePath, buffer);
+        const hostFilePath = path.join(tempDir, safeName);
+        const runtimeFilePath = projectRoots
+          ? path.posix.join(runtimeTempDir, safeName)
+          : hostFilePath;
+        await fs.writeFile(hostFilePath, buffer);
         bytes += buffer.byteLength;
-        attachments.push({ ref, path: filePath });
+        attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {
         logger.warn("failed to materialize blob", { ref, err });
       }

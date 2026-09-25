@@ -14,6 +14,7 @@ const mockEnsureProjectReduxRuntime = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
+    getStore: () => undefined,
     getProjectActions: () => ({ open_file }),
     getActions: () => ({ mark, markMany }),
   },

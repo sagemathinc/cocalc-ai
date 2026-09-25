@@ -5,6 +5,12 @@ import { set_url } from "@cocalc/frontend/history";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
+import { setNotificationsOpen } from "../notifications/drawer-state";
+import { openLibrary } from "../agents/library-navigation";
+
+jest.mock("../notifications/drawer-state", () => ({
+  setNotificationsOpen: jest.fn(),
+}));
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const { AppRedux } = jest.requireActual("@cocalc/util/redux/AppRedux");
@@ -125,6 +131,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.requireMock("@cocalc/frontend/client/handle-target").default =
+    "projects";
   for (const name of names) {
     redux.removeActions(name);
     redux.removeStore(name);
@@ -132,7 +140,36 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
-  it.each(["account", "admin", "docs", "projects", "notifications"])(
+  it.each([false, true])(
+    "keeps Agents navigation in the assigned exam project (AI disabled=%s)",
+    async (disabled) => {
+      redux.createActions("customize").setState({
+        exam_mode: true,
+        project_id: B,
+      });
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: disabled },
+      });
+      await actions.set_active_tab("agents");
+      expect(page().get("active_top_tab")).toBe(B);
+      expect(projectActions[B].show).toHaveBeenCalled();
+      expect(set_url).not.toHaveBeenCalledWith(
+        expect.stringContaining("/agents"),
+      );
+    },
+  );
+  it.each([true, false])(
+    "redirects disabled AI away from Agents (change_history=%s)",
+    async (changeHistory) => {
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: true },
+      });
+      await actions.set_active_tab("agents", changeHistory);
+      expect(page().get("active_top_tab")).toBe("projects");
+      expect(set_url).toHaveBeenLastCalledWith("/projects");
+    },
+  );
+  it.each(["account", "admin", "docs", "agents", "projects"])(
     "remembers the selected project while opening %s",
     async (route) => {
       await actions.set_active_tab(B);
@@ -144,6 +181,105 @@ describe("project context across global navigation", () => {
       expect(projectActions[B].hide).toHaveBeenCalledTimes(1);
       if (route === "account") expect(accountPush).toHaveBeenCalledTimes(1);
       if (route === "admin") expect(set_url).toHaveBeenLastCalledWith("/admin");
+    },
+  );
+
+  it("opens notifications in a drawer without leaving the selected project", async () => {
+    await actions.set_active_tab(B);
+    await actions.set_active_tab("notifications");
+    expect(setNotificationsOpen).toHaveBeenCalledWith(true);
+    expect(page().get("active_top_tab")).toBe(B);
+    expect(page().get("last_project_tab")).toBe(B);
+    expect(projectActions[B].hide).not.toHaveBeenCalled();
+  });
+
+  it("opens the selected agent's stable workspace URL", async () => {
+    actions.setState({
+      active_agent_id: "agent-123",
+      active_agent_name: "reviewer",
+    });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/agents/reviewer", undefined);
+  });
+
+  it("agent identity canonicalization does not implicitly close Library", () => {
+    actions.setState({
+      active_agent_id: "reviewer",
+      library_open: true,
+      library_project_id: A,
+      library_entry_id: "entry",
+    });
+    actions.setState({
+      active_agent_id: "agent-123",
+      active_agent_name: "reviewer",
+    });
+    expect(page().get("library_open")).toBe(true);
+    expect(page().get("library_project_id")).toBe(A);
+    expect(page().get("library_entry_id")).toBe("entry");
+  });
+
+  it("opens Library from a project without changing the selected agent", async () => {
+    actions.setState({
+      active_agent_id: "agent-123",
+      active_agent_name: "reviewer",
+    });
+    await actions.set_active_tab(B);
+    await openLibrary(A, "entry");
+    expect(page().get("active_top_tab")).toBe("agents");
+    expect(page().get("last_project_tab")).toBe(B);
+    expect(page().get("active_agent_id")).toBe("agent-123");
+    expect(page().get("active_agent_name")).toBe("reviewer");
+    expect(projectActions[B].hide).toHaveBeenCalledTimes(1);
+    expect(set_url).toHaveBeenLastCalledWith(`/library/${A}/entry`, "");
+  });
+
+  it.each([false, true])(
+    "retains the Library URL when selecting Agents (detail=%s)",
+    async (detail) => {
+      actions.setState({
+        active_agent_id: "agent-123",
+        active_agent_name: "reviewer",
+        library_open: true,
+        library_project_id: detail ? A : undefined,
+        library_entry_id: detail ? B : undefined,
+      });
+      await actions.set_active_tab("account");
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        detail ? `/library/${A}/${B}` : "/library",
+        "",
+      );
+      expect(page().get("active_agent_id")).toBe("agent-123");
+      expect(page().get("active_agent_name")).toBe("reviewer");
+      jest.mocked(set_url).mockClear();
+      await actions.set_active_tab("agents", false);
+      expect(set_url).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["library", `library/${A}/${B}`, "agents/reviewer"])(
+    "initializes scalar route state on reload of %s",
+    (target) => {
+      jest.requireMock("@cocalc/frontend/client/handle-target").default =
+        target;
+      redux.removeStore("page");
+      init_store();
+      const library = target.startsWith("library");
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("library_open")).toBe(library);
+      expect(page().get("library_project_id")).toBe(
+        target.includes(A) ? A : undefined,
+      );
+      expect(page().get("library_entry_id")).toBe(
+        target.includes(B) ? B : undefined,
+      );
+      expect(page().get("active_agent_id")).toBe(
+        library ? undefined : "reviewer",
+      );
+      expect(page().get("active_agent_name")).toBe(
+        library ? undefined : "reviewer",
+      );
+      expect(page().get("last_project_tab")).toBeUndefined();
     },
   );
 

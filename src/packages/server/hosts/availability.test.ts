@@ -391,9 +391,9 @@ describe("classifyHostAvailabilitySnapshot", () => {
   it("identifies host pressure states that need admin attention", () => {
     const row = _test.pressureAlertRow({
       id: "246d760c-c160-46ee-a749-08a623f39d5e",
+      name: "asia-1",
       status: "running",
       metadata: {
-        name: "asia-1",
         pressure: {
           zone: "emergency",
           last_action_status: "no_candidates",
@@ -406,8 +406,54 @@ describe("classifyHostAvailabilitySnapshot", () => {
       pressure_zone: "emergency",
       pressure_action_status: "no_candidates",
       pressure_reason: "memory_available_bytes<=2147483648",
+      pressure_category: "memory",
     });
-    expect(_test.formatHostPressureAlertBody([row!])).toContain("asia-1");
+    expect(_test.formatHostPressureAlertBody([row!])).toContain("host=asia-1");
+  });
+
+  it("includes fresh leading-project context for storage I/O pressure", () => {
+    const now = 2_000_000;
+    const row = _test.pressureAlertRow(
+      {
+        id: "d0102bef-c8f8-4f63-9c70-450162bac80b",
+        name: "wstein",
+        status: "running",
+        metric_collected_at: new Date(now - 30_000),
+        metric_memory_used_percent: 13,
+        metric_running_project_count: 5,
+        metric_io_containment: {
+          top_projects: [
+            {
+              project_id: "b6351099-3c72-458c-aa7e-4b7f4a47c0e7",
+              sampled_at: new Date(now - 30_000).toISOString(),
+              read_bytes_per_second: 90 * 1024 ** 2,
+              write_bytes_per_second: 512 * 1024,
+              read_iops: 2155,
+              write_iops: 5,
+            },
+          ],
+        },
+        metadata: {
+          pressure: {
+            zone: "emergency",
+            evaluated_at_ms: now - 30_000,
+            last_action_status: "no_candidates",
+            last_action_reason: "storage_io_emergency:state=emergency",
+          },
+        },
+      },
+      now,
+    );
+
+    expect(row).toMatchObject({
+      pressure_category: "storage_io",
+      leading_io_project: {
+        project_id: "b6351099-3c72-458c-aa7e-4b7f4a47c0e7",
+      },
+    });
+    expect(_test.formatHostPressureAlertBody([row!])).toContain(
+      "host=wstein host_id=d0102bef-c8f8-4f63-9c70-450162bac80b zone=emergency pressure=storage_io action=no_candidates leading_project_id=b6351099-3c72-458c-aa7e-4b7f4a47c0e7 io_rate=90.5MiB/s io_iops=2160",
+    );
   });
 
   it("ignores stale host pressure actions when recent metrics are normal", () => {

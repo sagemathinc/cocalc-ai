@@ -20,6 +20,7 @@ const CHAT_PENDING_LEASE_TTL_MS = 30_000;
 const pendingChatBrowserSessionId = uuid();
 
 export type PendingChatSend = {
+  artifact_feedback?: import("@cocalc/chat").ArtifactFeedback;
   project_id: string;
   path: string;
   browser_session_id: string;
@@ -33,12 +34,18 @@ export type PendingChatSend = {
   reply_thread_id?: string;
   parent_message_id?: string;
   send_mode?: "immediate";
+  postOnly?: boolean;
   name?: string;
   threadAgent?: NewThreadAgentOptions;
   threadAppearance?: NewThreadAppearanceOptions;
   acpConfigOverride?: Partial<CodexThreadConfig>;
   shouldMarkNotSent?: boolean;
 };
+
+// Credential selection is intentionally not captured here. Recovery of an
+// unsent, unadmitted message is a new admission and uses the thread's current
+// Codex-bar settings. An admitted execution and its internal retries keep the
+// settings with which that execution started.
 
 export type PendingChatOutboxEntry = BrowserOutboxEntry<PendingChatSend>;
 

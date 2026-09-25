@@ -19,9 +19,18 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./icon";
-import { DndContext, DragOverlay, closestCenter } from "@dnd-kit/core";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import {
   SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -85,6 +94,13 @@ export function SortableList({
   children,
   disabled,
 }: Props) {
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
   function onDragEnd(event) {
     const { active, over } = event;
     setDragId(null);
@@ -108,7 +124,12 @@ export function SortableList({
 
   return (
     <DndContext
+      // Live announcements are not list items; keep them outside semantic lists.
+      accessibility={{
+        container: typeof document !== "undefined" ? document.body : undefined,
+      }}
       collisionDetection={closestCenter}
+      sensors={sensors}
       onDragStart={(event) => {
         setDragId(`${event.active.id}`);
         onDragStart?.(event.active.id);
@@ -187,10 +208,14 @@ export function DragHandle({
   id,
   children,
   style,
+  ariaLabel,
+  title,
 }: {
   id: string | number;
   children?: ReactNode;
   style?: CSSProperties;
+  ariaLabel?: string;
+  title?: string;
 }) {
   const context = useContext(SortableHandleContext);
   if (context != null && context.id == id) {
@@ -205,6 +230,8 @@ export function DragHandle({
         }}
         {...attributes}
         {...listeners}
+        aria-label={ariaLabel}
+        title={title}
       >
         {children ? children : <Icon name="bars" />}
       </div>
@@ -212,7 +239,12 @@ export function DragHandle({
   }
 
   return (
-    <StandaloneDragHandle id={id} style={style}>
+    <StandaloneDragHandle
+      id={id}
+      style={style}
+      ariaLabel={ariaLabel}
+      title={title}
+    >
       {children}
     </StandaloneDragHandle>
   );
@@ -222,10 +254,14 @@ function StandaloneDragHandle({
   id,
   children,
   style,
+  ariaLabel,
+  title,
 }: {
   id: string | number;
   children?: ReactNode;
   style?: CSSProperties;
+  ariaLabel?: string;
+  title?: string;
 }) {
   const { attributes, listeners, setActivatorNodeRef } = useSortable({ id });
   return (
@@ -238,6 +274,8 @@ function StandaloneDragHandle({
       }}
       {...attributes}
       {...listeners}
+      aria-label={ariaLabel}
+      title={title}
     >
       {children ? children : <Icon name="bars" />}
     </div>

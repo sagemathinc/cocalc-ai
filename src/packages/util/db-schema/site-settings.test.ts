@@ -1,6 +1,7 @@
 import { SCHEMA } from "./types";
 import "./site-settings";
 import { site_settings_conf } from "./site-defaults";
+import { EXTRAS } from "./site-settings-extras";
 
 const queryMock = jest.fn();
 
@@ -55,5 +56,18 @@ describe("dangerous project-host provider settings", () => {
     expect(setting.hidden).not.toBe(true);
     expect(setting.group).toBe("Compute / Project Hosts");
     expect(setting.subgroup).toBe("Enable Providers");
+  });
+});
+
+describe("site-funded Codex model setting", () => {
+  it("accepts every model with an exact funded price", () => {
+    const setting = EXTRAS.site_funded_codex_model;
+    expect(setting.default).toBe("gpt-6-luna");
+    expect(typeof setting.valid).toBe("function");
+
+    const valid = setting.valid as (value: string) => boolean;
+    expect(valid("gpt-6-luna")).toBe(true);
+    expect(valid("gpt-5.6-luna")).toBe(true);
+    expect(valid("gpt-6-sol")).toBe(false);
   });
 });

@@ -16,7 +16,15 @@ Table({
       "last_renewal_attempt_at",
       "updated",
     ],
-    pg_unique_indexes: ["owner_account_id"],
+    pg_custom_indexes: [
+      {
+        // Keep the existing index name so schema convergence replaces its
+        // definition on deployed databases, retaining canceled license history.
+        name: "team_licenses_owner_account_id_unique_idx",
+        query: "(owner_account_id) WHERE status IS DISTINCT FROM 'canceled'",
+        unique: true,
+      },
+    ],
     user_query: {
       get: {
         admin: true,

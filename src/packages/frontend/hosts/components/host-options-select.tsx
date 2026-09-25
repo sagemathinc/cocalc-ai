@@ -4,11 +4,12 @@
  */
 
 import { Select } from "antd";
-import type { CSSProperties } from "react";
+import type { AriaAttributes, CSSProperties } from "react";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { HostFieldOption } from "../providers/registry";
 
-type HostOptionsSelectProps = {
+type HostOptionsSelectProps = AriaAttributes & {
+  id?: string;
   options?: HostFieldOption[];
   disabled?: boolean;
   placeholder?: string;
@@ -214,11 +215,13 @@ export function HostOptionsSelect({
   onChange,
   size,
   style,
+  ...accessibility
 }: HostOptionsSelectProps) {
   const groupedOptions = groupHostOptions(options);
   const hasDetailLabels = options?.some((option) => !!option.detailLabel);
   return (
     <Select
+      {...accessibility}
       key={hostOptionsRevision(options)}
       options={groupedOptions as any}
       disabled={disabled}

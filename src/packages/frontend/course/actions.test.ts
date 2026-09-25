@@ -4,6 +4,7 @@
  */
 
 import { CourseActions } from "./actions";
+import { Map } from "immutable";
 
 function deferred() {
   let resolve!: () => void;
@@ -14,6 +15,50 @@ function deferred() {
 }
 
 describe("CourseActions SyncDB mutations", () => {
+  it("initializes a course identity once and preserves an existing identity", () => {
+    let settings = Map<string, string>();
+    const syncdb = {
+      get_state: () => "ready",
+      get_one: () => settings,
+      set: jest.fn((value) => {
+        settings = settings.merge(value);
+      }),
+      commit: jest.fn(),
+    };
+    const actions = new CourseActions("course", { getStore: jest.fn() } as any);
+    actions.syncdb = syncdb as any;
+    actions.ensure_course_id();
+    const identity = settings.get("course_id");
+    expect(identity).toMatch(/^[a-f0-9-]{36}$/);
+    actions.ensure_course_id();
+    expect(settings.get("course_id")).toBe(identity);
+    expect(syncdb.set).toHaveBeenCalledTimes(1);
+    expect(syncdb.commit).toHaveBeenCalledWith({ emitChangeImmediately: true });
+  });
+
+  it("does not replace a course identity loaded while synchronization was pending", async () => {
+    const ready = deferred();
+    let state = "init";
+    let settings = Map<string, string>();
+    const syncdb = {
+      get_state: () => state,
+      get_one: () => settings,
+      set: jest.fn(),
+      commit: jest.fn(),
+      wait_until_ready: () => ready.promise,
+    };
+    const actions = new CourseActions("course", { getStore: jest.fn() } as any);
+    actions.syncdb = syncdb as any;
+    actions.ensure_course_id();
+    settings = Map({ course_id: "already-assigned" });
+    state = "ready";
+    const drain = (actions as any).syncdbMutationDrain;
+    ready.resolve();
+    await drain;
+    expect(syncdb.set).not.toHaveBeenCalled();
+    expect(syncdb.commit).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     jest.useFakeTimers();
   });

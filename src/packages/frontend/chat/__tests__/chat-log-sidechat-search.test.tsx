@@ -18,6 +18,7 @@ import {
   MessageList,
 } from "../chat-log";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
+import { ChatEmbeddingOptionsProvider } from "../embedding-options";
 
 const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
@@ -567,47 +568,54 @@ describe("ChatLog sidechat search jumps", () => {
     );
   });
 
-  it("scrolls to a search match in sidechat even when it is not the active editor tab", async () => {
-    render(
-      <ChatLog
-        project_id="project-1"
-        path=".local/share/cocalc/navigator.chat"
-        messages={
-          new Map([
-            [
-              "1000",
-              {
-                date: 1000,
-                sender_id: "acct-1",
-                history: [{ content: "first 123 message" }],
-              },
-            ],
-            [
-              "2000",
-              {
-                date: 2000,
-                sender_id: "acct-1",
-                history: [{ content: "second message" }],
-              },
-            ],
-          ]) as any
-        }
-        mode="sidechat"
-        actions={{} as any}
-        selectedThread="thread-1"
-        searchJumpDate="1000"
-        searchJumpToken={1}
-      />,
-    );
+  it.each(["sidechat", "agent"])(
+    "scrolls to a search match in %s even when it is not the active editor tab",
+    async (surface) => {
+      render(
+        <ChatEmbeddingOptionsProvider
+          value={{ agentWorkspace: surface === "agent" }}
+        >
+          <ChatLog
+            project_id="project-1"
+            path=".local/share/cocalc/navigator.chat"
+            messages={
+              new Map([
+                [
+                  "1000",
+                  {
+                    date: 1000,
+                    sender_id: "acct-1",
+                    history: [{ content: "first 123 message" }],
+                  },
+                ],
+                [
+                  "2000",
+                  {
+                    date: 2000,
+                    sender_id: "acct-1",
+                    history: [{ content: "second message" }],
+                  },
+                ],
+              ]) as any
+            }
+            mode={surface === "sidechat" ? "sidechat" : "standalone"}
+            actions={{} as any}
+            selectedThread="thread-1"
+            searchJumpDate="1000"
+            searchJumpToken={1}
+          />
+        </ChatEmbeddingOptionsProvider>,
+      );
 
-    await waitFor(() =>
-      expect(mockScrollToIndex).toHaveBeenCalledWith({
-        index: 0,
-        align: "center",
-        behavior: "auto",
-      }),
-    );
-  });
+      await waitFor(() =>
+        expect(mockScrollToIndex).toHaveBeenCalledWith({
+          index: 0,
+          align: "center",
+          behavior: "auto",
+        }),
+      );
+    },
+  );
 
   it("does not force-scroll to the bottom when a generating chat tab returns to the foreground", async () => {
     const scrollToBottomRef = { current: undefined as any };
@@ -751,6 +759,64 @@ describe("ChatLog sidechat search jumps", () => {
       latestVirtuosoProps?.atBottomStateChange?.(false);
     });
 
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
+  });
+
+  it("keeps following after a send overrides an Agents reading position", async () => {
+    const cacheId = JSON.stringify(["agents-send", "thread-1"]);
+    saveChatViewportAnchor(cacheId, {
+      atBottom: false,
+      date: "1000",
+      offsetPx: 0,
+      savedAt: Date.now(),
+    });
+    const scrollToBottomRef = { current: undefined as any };
+    const messages = new Map([
+      [
+        "1000",
+        {
+          date: 1000,
+          sender_id: "acct-1",
+          history: [{ content: "old message" }],
+        },
+      ],
+    ]);
+    const view = (rows: typeof messages) => (
+      <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+        <ChatLog
+          project_id="project-1"
+          path="thread.chat"
+          messages={rows as any}
+          mode="standalone"
+          actions={{ clearScrollRequest: jest.fn() } as any}
+          selectedThread="thread-1"
+          scrollCacheId="agents-send"
+          scrollToBottomRef={scrollToBottomRef}
+        />
+      </ChatEmbeddingOptionsProvider>
+    );
+    const { rerender } = render(view(messages));
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
+    act(() => scrollToBottomRef.current(true));
+    const next = new Map(messages);
+    next.set("2000", {
+      date: 2000,
+      sender_id: "acct-1",
+      history: [{ content: "new prompt" }],
+    });
+    rerender(view(next));
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
+    expect(loadChatViewportAnchor(cacheId)?.atBottom).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: /newest messages/i }),
+    ).toBeNull();
+    // A later deliberate scroll must still let the user read older output.
+    act(() => {
+      fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
+        deltaY: -100,
+      });
+      latestVirtuosoProps?.atBottomStateChange?.(false);
+    });
     await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
   });
 

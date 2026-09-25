@@ -157,6 +157,26 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(onModeChange).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["editor", "markdown"] as const)(
+    "fills the remaining toolbar body in %s mode without subtracting its height twice",
+    (defaultMode) => {
+      render(
+        <MultiMarkdownInput
+          value="Text"
+          onChange={() => {}}
+          defaultMode={defaultMode}
+          height="100%"
+          modeSwitchPlacement="toolbar"
+        />,
+      );
+      expect(
+        defaultMode === "editor"
+          ? latestEditableProps.height
+          : latestMarkdownProps.height,
+      ).toBe("100%");
+    },
+  );
+
   it("renders the mode switch in a toolbar row when requested", () => {
     render(
       <MultiMarkdownInput
@@ -170,6 +190,28 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(screen.getByText("help")).not.toBeNull();
     expect(screen.getByTestId("mode-switch")).not.toBeNull();
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
+  });
+
+  it("reserves the toolbar row while its controls are hidden", () => {
+    const { container } = render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        height="60px"
+        hideModeSwitch
+        modeSwitchPlacement="toolbar"
+        reserveModeSwitchSpace
+        modeSwitchRightContent={<span>help</span>}
+      />,
+    );
+
+    const shell = container.firstElementChild as HTMLElement;
+    const toolbar = shell.firstElementChild as HTMLElement;
+    expect(shell.style.display).toBe("flex");
+    expect(toolbar.style.minHeight).toBe("28px");
+    expect(screen.queryByText("help")).toBeNull();
+    expect(screen.queryByTestId("mode-switch")).toBeNull();
+    expect(latestEditableProps.height).toBe("100%");
   });
 
   it("opts unbounded markdown edit cells out of browser scroll anchoring", () => {

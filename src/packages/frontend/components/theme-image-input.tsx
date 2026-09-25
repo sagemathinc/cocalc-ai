@@ -3,18 +3,9 @@ import { Alert, Button, Space, Typography, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { useMemo, useState } from "react";
 import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ThemeImageChoice } from "@cocalc/frontend/theme/types";
-import { join } from "path";
-
-export function blobImageUrl(
-  blob: string | undefined | null,
-  filename = "theme-image.png",
-) {
-  const trimmed = `${blob ?? ""}`.trim();
-  if (!trimmed) return undefined;
-  return `${join(appBasePath, "blobs", encodeURIComponent(filename))}?uuid=${encodeURIComponent(trimmed)}`;
-}
+import { blobImageUrl } from "./theme-image-url";
+export { blobImageUrl } from "./theme-image-url";
 
 async function uploadThemeImageBlob(
   file: Blob & { name?: string },

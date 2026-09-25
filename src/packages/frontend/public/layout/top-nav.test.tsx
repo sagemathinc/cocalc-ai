@@ -52,6 +52,28 @@ describe("PublicTopNav", () => {
     setViewportWidth(1280);
   });
 
+  it.each([1280, 375])(
+    "hides Agents for signed-in AI opt-out at width %s",
+    async (width) => {
+      setViewportWidth(width);
+      const user = userEvent.setup();
+      render(
+        <PublicConfigProvider
+          config={{ is_authenticated: true, openai_disabled: true }}
+        >
+          <PublicTopNav />
+        </PublicConfigProvider>,
+      );
+      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      const projects = screen.getByRole("link", { name: "Projects" });
+      expect(projects).toHaveAttribute("href", "/projects");
+      projects.focus();
+      expect(projects).toHaveFocus();
+      await user.tab();
+      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+    },
+  );
+
   it("uses the compact appearance selector in desktop navigation", async () => {
     await renderTopNav(<PublicTopNav />);
 
@@ -73,7 +95,7 @@ describe("PublicTopNav", () => {
     return result;
   }
 
-  it("uses Projects and Settings as authenticated app actions", async () => {
+  it("uses Agents and Projects as authenticated app actions", async () => {
     await render(
       <PublicConfigProvider
         config={{
@@ -89,8 +111,13 @@ describe("PublicTopNav", () => {
 
     expect(screen.getByText("Alice Example")).not.toBeNull();
     expect(screen.queryByText("alice@example.com")).toBeNull();
-    expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    const agents = screen.getByRole("link", { name: "Agents" });
+    const projects = screen.getByRole("link", { name: "Projects" });
+    expect(agents).toHaveAttribute("href", "/agents");
+    expect(agents.querySelector('svg[data-icon="robot"]')).not.toBeNull();
+    expect(projects).toHaveAttribute("href", "/projects");
+    expect(projects.querySelector('svg[data-icon="edit"]')).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
     expect(
       within(screen.getByRole("menu", { name: "Public pages" }))

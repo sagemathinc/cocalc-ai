@@ -13,6 +13,8 @@ import { type LroApi, lro } from "./lro";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
+import { type ArtifactCatalogApi, artifactCatalog } from "./artifact-catalog";
+import { type PersonalLibraryApi, personalLibrary } from "./personal-library";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AdminDbApi, adminDb } from "./admin-db";
@@ -22,6 +24,7 @@ import { type AdminCrashesApi, adminCrashes } from "./admin-crashes";
 import { type AiSessionsApi, aiSessions } from "./ai-sessions";
 import { type LegacyMigration, legacyMigration } from "./legacy-migration";
 import { type ComputeApi, compute } from "./compute";
+import { type ComputeFundingApi, computeFunding } from "./compute-funding";
 import {
   type PublicDirectoryShares,
   publicDirectoryShares,
@@ -48,6 +51,8 @@ export interface HubApi {
   ssh: Ssh;
   reflect: ReflectApi;
   agent: AgentApi;
+  artifactCatalog: ArtifactCatalogApi;
+  personalLibrary: PersonalLibraryApi;
   notifications: Notifications;
   adminData: AdminData;
   adminDb: AdminDbApi;
@@ -57,6 +62,7 @@ export interface HubApi {
   aiSessions: AiSessionsApi;
   legacyMigration: LegacyMigration;
   compute: ComputeApi;
+  computeFunding: ComputeFundingApi;
   publicDirectoryShares: PublicDirectoryShares;
   growthAnalytics: GrowthAnalyticsApi;
   commercialOrders: CommercialOrdersApi;
@@ -83,6 +89,8 @@ const HubApiStructure = {
   ssh,
   reflect,
   agent,
+  artifactCatalog,
+  personalLibrary,
   notifications,
   adminData,
   adminDb,
@@ -92,6 +100,7 @@ const HubApiStructure = {
   aiSessions,
   legacyMigration,
   compute,
+  computeFunding,
   publicDirectoryShares,
   growthAnalytics,
   commercialOrders,

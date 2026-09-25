@@ -41,3 +41,23 @@ export function resolveManagedVmCreateSshAuthorization(opts: {
     configure_project_ssh: configureProjectSsh,
   };
 }
+
+export function resolveVmCreateSshAuthorization(opts: {
+  requested_key?: string;
+  configure_project_ssh?: boolean;
+  project_key?: string | null;
+  course_funded: boolean;
+  has_project_context: boolean;
+}): { ssh_public_key: string; configure_project_ssh: boolean } {
+  const forceManagedProjectAccess =
+    opts.course_funded && opts.has_project_context;
+  return resolveManagedVmCreateSshAuthorization({
+    requested_key: forceManagedProjectAccess
+      ? (opts.project_key ?? undefined)
+      : opts.requested_key,
+    configure_project_ssh: opts.course_funded
+      ? forceManagedProjectAccess
+      : opts.configure_project_ssh,
+    project_key: opts.project_key,
+  });
+}

@@ -383,6 +383,7 @@ describe("StripePayment", () => {
       lineItems: [{ description: "Pro membership, annual", amount: 1440 }],
       purpose: "membership-change",
       metadata: undefined,
+      checkout_instance_id: expect.any(String),
     });
   });
 

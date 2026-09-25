@@ -97,7 +97,7 @@ import {
   readChatStoreArchived,
   readChatStoreArchivedHit,
   rotateChatStore,
-  searchChatStoreArchived,
+  searchChatStore,
   vacuumChatStore,
 } from "./sqlite/chat-offload";
 import {
@@ -576,6 +576,29 @@ async function codexDeviceAuthStartLite(opts: {
   });
 }
 
+async function codexDeviceAuthStartV2Lite(opts: {
+  account_id?: string;
+  project_id?: string;
+  credential_id?: string;
+  create?: boolean;
+}) {
+  if (opts.credential_id || opts.create !== true) {
+    throw new Error(
+      "Selecting or reconnecting multiple ChatGPT subscriptions requires a project host.",
+    );
+  }
+  return await codexDeviceAuthStartLite(opts);
+}
+
+async function getCodexCredentialSelectionCapabilityLite(opts: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<{ version: 2; credentialLifecycle: true }> {
+  requireLiteAccountId(opts.account_id);
+  requireLiteProjectId(opts.project_id);
+  return { version: 2, credentialLifecycle: true };
+}
+
 async function codexDeviceAuthStatusLite(opts: {
   account_id?: string;
   project_id?: string;
@@ -655,6 +678,23 @@ async function codexUploadAuthFileLite(opts: {
   });
   clearLiteCodexModelCatalog(accountId);
   return { ok: true as const, ...result };
+}
+
+async function codexUploadAuthFileV2Lite(opts: {
+  account_id?: string;
+  project_id?: string;
+  filename?: string;
+  content: string;
+  credential_id?: string;
+  create?: boolean;
+}) {
+  if (opts.credential_id || opts.create !== true) {
+    throw new Error(
+      "Targeted ChatGPT auth-file upload requires a project host.",
+    );
+  }
+  const result = await codexUploadAuthFileLite(opts);
+  return { ...result, synced: true as const, credentialId: "lite-default" };
 }
 
 async function getLocalSubscriptionAuthRevision(
@@ -1447,9 +1487,13 @@ export const hubApi: HubApi = {
     getProjectBackupSchedule: getProjectBackupScheduleLite,
     getProjectActiveOperation: getProjectActiveOperationLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
+    codexDeviceAuthStartV2: codexDeviceAuthStartV2Lite,
+    getCodexCredentialSelectionCapability:
+      getCodexCredentialSelectionCapabilityLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
     codexUploadAuthFile: codexUploadAuthFileLite,
+    codexUploadAuthFileV2: codexUploadAuthFileV2Lite,
     chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {
       return await getChatStoreStats({
         chat_path: opts.chat_path,
@@ -1523,6 +1567,7 @@ export const hubApi: HubApi = {
       });
     },
     chatStoreSearch: (opts: {
+      include_head?: boolean;
       chat_path: string;
       query: string;
       db_path?: string;
@@ -1531,15 +1576,19 @@ export const hubApi: HubApi = {
       limit?: number;
       offset?: number;
     }) => {
-      return searchChatStoreArchived({
-        chat_path: opts.chat_path,
-        query: opts.query,
-        db_path: opts.db_path,
-        thread_id: opts.thread_id,
-        exclude_thread_ids: opts.exclude_thread_ids,
-        limit: opts.limit,
-        offset: opts.offset,
-      });
+      return searchChatStore(
+        {
+          include_head: opts.include_head,
+          chat_path: opts.chat_path,
+          query: opts.query,
+          db_path: opts.db_path,
+          thread_id: opts.thread_id,
+          exclude_thread_ids: opts.exclude_thread_ids,
+          limit: opts.limit,
+          offset: opts.offset,
+        },
+        "lite-local",
+      );
     },
     chatStoreDelete: (opts: {
       chat_path: string;

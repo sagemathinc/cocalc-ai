@@ -468,6 +468,8 @@ load_config() {
   HUB_DEV_CLUSTER_CONFIG="${HUB_DEV_CLUSTER_CONFIG:-}"
   HUB_DEV_CLUSTER_JSON="${HUB_DEV_CLUSTER_JSON:-}"
   HUB_ENABLE_SECOND_BAY="${HUB_ENABLE_SECOND_BAY:-0}"
+  HUB_FUNDING_QA="${HUB_FUNDING_QA:-0}"
+  HUB_FUNDING_QA_DEPLOYMENT_ID="${HUB_FUNDING_QA_DEPLOYMENT_ID:-${COCALC_CLUSTER_ID:-dev-cluster}-funding}"
   HUB_SECOND_BAY_ID="${HUB_SECOND_BAY_ID:-bay-1}"
   HUB_SECOND_BAY_PORT="${HUB_SECOND_BAY_PORT:-$((HUB_PORT + 10))}"
   HUB_SECOND_BAY_BIND_HOST="${HUB_SECOND_BAY_BIND_HOST:-$HUB_BIND_HOST}"
@@ -501,6 +503,29 @@ load_config() {
       fi
     fi
   fi
+}
+
+configure_funding_qa_env() {
+  local data_base="${1:-}"
+  if [ "$HUB_FUNDING_QA" != "1" ]; then
+    return 0
+  fi
+  local pg_root socket_hash
+  if [ -n "$data_base" ]; then
+    pg_root="$data_base/postgres"
+  else
+    pg_root="$SRC_DIR/data/app/postgres"
+  fi
+  socket_hash="$(printf '%s' "$pg_root" | sha256sum | cut -c1-8)"
+  export COCALC_FUNDING_ISOLATED_QA=yes
+  export COCALC_FUNDING_QA_TRUSTED_DEV_CLUSTER=yes
+  export COCALC_FUNDING_QA_DATABASE=smc
+  export COCALC_FUNDING_QA_WORKTREE="$SRC_DIR"
+  export COCALC_FUNDING_QA_PG_DATA_DIRECTORY="$pg_root/postgres"
+  export COCALC_FUNDING_QA_PG_SOCKET="${XDG_RUNTIME_DIR:-$HOME/.local/share}/cocalc/pg-$socket_hash"
+  export COCALC_FUNDING_QA_DEPLOYMENT_ID="$HUB_FUNDING_QA_DEPLOYMENT_ID"
+  export COCALC_COMPUTE_DEPLOYMENT_ID="$HUB_FUNDING_QA_DEPLOYMENT_ID"
+  export COCALC_COMPUTE_VM_ENVIRONMENT=development
 }
 
 software_endpoint_mode() {
@@ -781,6 +806,7 @@ start_cluster_bay() {
     else
       unset DATA_BASE
     fi
+    configure_funding_qa_env "$data_dir"
     export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
     export COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE
     export COCALC_CONAT_MAX_CONNECTIONS_PER_USER
@@ -1133,6 +1159,7 @@ start_daemon() {
       else
         unset DATA_BASE
       fi
+      configure_funding_qa_env "$primary_data_dir"
       export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
       export COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE
       export COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE="$(software_endpoint_mode)"
@@ -1439,6 +1466,8 @@ HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
 HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
 HUB_DEV_CLUSTER_CONFIG=$HUB_DEV_CLUSTER_CONFIG
 HUB_DEV_CLUSTER_JSON=$HUB_DEV_CLUSTER_JSON
+HUB_FUNDING_QA=$HUB_FUNDING_QA
+HUB_FUNDING_QA_DEPLOYMENT_ID=$HUB_FUNDING_QA_DEPLOYMENT_ID
 COCALC_BAY_ID=$COCALC_BAY_ID
 COCALC_BAY_LABEL=$COCALC_BAY_LABEL
 COCALC_BAY_REGION=$COCALC_BAY_REGION

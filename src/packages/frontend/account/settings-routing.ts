@@ -4,6 +4,10 @@
  */
 
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  isSettingsDrawerOpen,
+  setSettingsDrawerOpen,
+} from "./settings-drawer-state";
 import type {
   BillingSubTabType,
   LicensesSubTabType,
@@ -217,6 +221,23 @@ export function openAccountSettings(
   },
 ): void {
   const changeHistory = opts?.changeHistory ?? true;
+  if (
+    changeHistory &&
+    (isSettingsDrawerOpen() ||
+      redux.getStore("page")?.get("active_top_tab") === "agents")
+  ) {
+    applyAccountSettingsRoute(
+      redux.getActions("account"),
+      { page: route.page === "index" ? "profile" : route.page },
+      {
+        openMembershipPlanChooser: opts?.openMembershipPlanChooser,
+        pushHistory: false,
+      },
+    );
+    setSettingsDrawerOpen(true);
+    return;
+  }
+  setSettingsDrawerOpen(false);
   redux.getActions("page").set_active_tab("account", changeHistory);
   applyAccountSettingsRoute(redux.getActions("account"), route, {
     openMembershipPlanChooser: opts?.openMembershipPlanChooser,

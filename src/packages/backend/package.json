@@ -55,7 +55,7 @@
   "dependencies": {
     "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",
-    "@cocalc/openat2": "^0.1.0",
+    "@cocalc/openat2": "^0.1.2",
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",

@@ -23,6 +23,7 @@ import {
   buildProjectHostBrowserSessionCookie,
   clearProjectHostBrowserSessionCookie,
   createProjectHostBrowserSessionToken,
+  restrictedBrowserSessionTtlSeconds,
   resolveProjectHostBrowserSessionFromCookieHeader,
 } from "./browser-session";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
@@ -59,6 +60,7 @@ const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
   envNumber("COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
 );
+const HTTP_SESSION_TOKEN_VERSION = "project-host-http-session-v2";
 const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
   5_000,
   envNumber("COCALC_PROJECT_HOST_HTTP_REVOKE_SWEEP_MS", 30_000),
@@ -112,6 +114,7 @@ function readCookieValues(header: string | undefined, name: string): string[] {
 export type AuthorizedAccountContext = {
   account_id: string;
   issued_at_s: number;
+  restricted_exp_s?: number;
   actor: "account";
   revalidate_collaborator?: boolean;
 };
@@ -154,14 +157,31 @@ function sessionSignature(payload: string): string {
 export function createProjectHostHttpSessionToken({
   account_id,
   now_ms = Date.now(),
+  ttl_seconds = HTTP_SESSION_TTL_SECONDS,
+  restricted_exp_s,
 }: {
   account_id: string;
   now_ms?: number;
+  ttl_seconds?: number;
+  restricted_exp_s?: number;
 }): string {
+  const now_s = Math.floor(now_ms / 1000);
+  const requestedTtl =
+    restricted_exp_s == null ? ttl_seconds : restricted_exp_s - now_s;
+  if (!Number.isFinite(requestedTtl) || requestedTtl <= 0) {
+    throw new Error("authorization expired");
+  }
+  const ttl = Math.max(
+    1,
+    Math.min(HTTP_SESSION_TTL_SECONDS, Math.floor(requestedTtl)),
+  );
+  const exp = now_s + ttl;
   const payload = JSON.stringify({
+    v: HTTP_SESSION_TOKEN_VERSION,
     account_id,
-    iat: Math.floor(now_ms / 1000),
-    exp: Math.floor(now_ms / 1000) + HTTP_SESSION_TTL_SECONDS,
+    iat: now_s,
+    exp,
+    ...(restricted_exp_s == null ? {} : { restricted_exp_s: exp }),
     nonce: randomBytes(12).toString("hex"),
   });
   const encoded = base64UrlEncode(payload);
@@ -177,6 +197,7 @@ export function verifyProjectHostHttpSessionToken(
       account_id: string;
       iat_s: number;
       exp_s: number;
+      restricted_exp_s?: number;
     }
   | undefined {
   const [encoded, sig] = token.split(".");
@@ -196,14 +217,30 @@ export function verifyProjectHostHttpSessionToken(
   } catch {
     return;
   }
+  if (payload?.v !== HTTP_SESSION_TOKEN_VERSION) return;
   const account_id = `${payload?.account_id ?? ""}`;
   const iat = Number(payload?.iat ?? 0);
   const exp = Number(payload?.exp ?? 0);
+  const restrictedExp =
+    payload?.restricted_exp_s == null
+      ? undefined
+      : Number(payload.restricted_exp_s);
   if (!isValidUUID(account_id)) return;
   if (!Number.isFinite(iat)) return;
   if (!Number.isFinite(exp)) return;
+  if (
+    restrictedExp != null &&
+    (!Number.isSafeInteger(restrictedExp) || restrictedExp !== exp)
+  ) {
+    return;
+  }
   if (exp < Math.floor(now_ms / 1000)) return;
-  return { account_id, iat_s: iat, exp_s: exp };
+  return {
+    account_id,
+    iat_s: iat,
+    exp_s: exp,
+    ...(restrictedExp == null ? {} : { restricted_exp_s: restrictedExp }),
+  };
 }
 
 export function resolveProjectHostHttpSessionFromCookieHeader(
@@ -428,6 +465,7 @@ export function createProjectHostHttpProxyAuth({
     socket: Socket | Duplex;
     account_id: string;
     issued_at_s: number;
+    restricted_exp_s?: number;
     project_id?: string;
     actor: "account";
     revalidate_collaborator: boolean;
@@ -436,10 +474,17 @@ export function createProjectHostHttpProxyAuth({
   const verifyClaimsAndGetAccountId = (claims: {
     sub: string;
     act?: string;
+    auth_actor?: "account" | "agent";
   }): string => {
     const actor = claims.act ?? "account";
     if (actor !== "account") {
       throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
+    }
+    if (claims.auth_actor === "agent") {
+      throw new HttpAuthError(
+        403,
+        "agent credentials cannot authorize project-host HTTP access",
+      );
     }
     if (!isValidUUID(claims.sub)) {
       throw new HttpAuthError(401, "invalid account id in auth token");
@@ -459,12 +504,25 @@ export function createProjectHostHttpProxyAuth({
     }
   };
 
+  const bearerRestrictedExp = (claims: {
+    browser_session_exp_s?: number;
+  }): number | undefined => {
+    try {
+      restrictedBrowserSessionTtlSeconds(claims.browser_session_exp_s);
+    } catch (err: any) {
+      throw new HttpAuthError(401, err?.message ?? "authorization expired");
+    }
+    return claims.browser_session_exp_s;
+  };
+
   const sessionAccountId = (
     req: IncomingMessage,
   ):
     | {
         account_id: string;
         iat_s: number;
+        exp_s: number;
+        restricted_exp_s?: number;
       }
     | undefined => {
     const tokenCount = readCookieValues(
@@ -491,6 +549,8 @@ export function createProjectHostHttpProxyAuth({
     | {
         account_id: string;
         iat_s: number;
+        exp_s: number;
+        restricted_exp_s?: number;
       }
     | undefined => {
     return resolveProjectHostBrowserSessionFromCookieHeader(
@@ -525,8 +585,23 @@ export function createProjectHostHttpProxyAuth({
     res: ServerResponse,
     account_id: string,
     project_id: string,
+    restricted_exp_s?: number,
   ) => {
-    const sessionToken = createProjectHostHttpSessionToken({ account_id });
+    const now_ms = Date.now();
+    let restrictedTtl: number | undefined;
+    try {
+      restrictedTtl = restrictedBrowserSessionTtlSeconds(
+        restricted_exp_s,
+        Math.floor(now_ms / 1000),
+      );
+    } catch (err: any) {
+      throw new HttpAuthError(401, err?.message ?? "authorization expired");
+    }
+    const sessionToken = createProjectHostHttpSessionToken({
+      account_id,
+      now_ms,
+      ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
+    });
     appendSetCookie(
       res,
       buildProjectHostSessionCookieDeletion({
@@ -536,13 +611,23 @@ export function createProjectHostHttpProxyAuth({
     );
     appendSetCookie(
       res,
-      buildProjectHostSessionCookie({ req, sessionToken, project_id }),
+      buildProjectHostSessionCookie({
+        req,
+        sessionToken,
+        project_id,
+        ...(restrictedTtl == null ? {} : { max_age_seconds: restrictedTtl }),
+      }),
     );
     appendSetCookie(
       res,
       buildProjectHostBrowserSessionCookie({
         req,
-        sessionToken: createProjectHostBrowserSessionToken({ account_id }),
+        sessionToken: createProjectHostBrowserSessionToken({
+          account_id,
+          now_ms,
+          ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
+        }),
+        ...(restrictedTtl == null ? {} : { max_age_seconds: restrictedTtl }),
       }),
     );
   };
@@ -696,10 +781,12 @@ export function createProjectHostHttpProxyAuth({
         res,
         accountFromBrowserSession.account_id,
         project_id,
+        accountFromBrowserSession.restricted_exp_s,
       );
       setAuthContext(req, {
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
+        restricted_exp_s: accountFromBrowserSession.restricted_exp_s,
         actor: "account",
       });
       if (cleanQueryTokenOrRedirect(req, res, project_id)) {
@@ -726,6 +813,7 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, {
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
+        restricted_exp_s: accountFromSession.restricted_exp_s,
         actor: "account",
       });
       if (cleanQueryTokenOrRedirect(req, res, project_id)) {
@@ -745,17 +833,19 @@ export function createProjectHostHttpProxyAuth({
     }
     const claims = verifyBearerClaims(token);
     const account_id = verifyClaimsAndGetAccountId(claims);
+    const restricted_exp_s = bearerRestrictedExp(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     await authorizeAccountForHttpRequest({ account_id, project_id, req });
     setAuthContext(req, {
       account_id,
       issued_at_s: claims.iat,
+      restricted_exp_s,
       actor: "account",
     });
     if (source === "header") {
       delete req.headers.authorization;
     }
-    setSessionCookie(req, res, account_id, project_id);
+    setSessionCookie(req, res, account_id, project_id, restricted_exp_s);
     if (cleanQueryTokenOrRedirect(req, res, project_id)) {
       return;
     }
@@ -779,6 +869,7 @@ export function createProjectHostHttpProxyAuth({
       const context = {
         account_id: accountFromBrowserSession.account_id,
         issued_at_s: accountFromBrowserSession.iat_s,
+        restricted_exp_s: accountFromBrowserSession.restricted_exp_s,
         actor: "account" as const,
         revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
       };
@@ -799,6 +890,7 @@ export function createProjectHostHttpProxyAuth({
       const context = {
         account_id: accountFromSession.account_id,
         issued_at_s: accountFromSession.iat_s,
+        restricted_exp_s: accountFromSession.restricted_exp_s,
         actor: "account" as const,
         revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
       };
@@ -818,11 +910,13 @@ export function createProjectHostHttpProxyAuth({
     }
     const claims = verifyBearerClaims(token);
     const account_id = verifyClaimsAndGetAccountId(claims);
+    const restricted_exp_s = bearerRestrictedExp(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
     const context: AuthorizedAccountContext = {
       account_id,
       issued_at_s: claims.iat,
+      restricted_exp_s,
       actor: "account",
       revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
     };
@@ -846,6 +940,7 @@ export function createProjectHostHttpProxyAuth({
       socket,
       account_id: context.account_id,
       issued_at_s: context.issued_at_s,
+      restricted_exp_s: context.restricted_exp_s,
       project_id: req.url?.split("/")[1],
       actor: context.actor,
       revalidate_collaborator: context.revalidate_collaborator === true,
@@ -865,6 +960,12 @@ export function createProjectHostHttpProxyAuth({
         continue;
       }
       try {
+        if (
+          entry.restricted_exp_s != null &&
+          entry.restricted_exp_s <= Math.floor(Date.now() / 1000)
+        ) {
+          throw new HttpAuthError(401, "authorization expired");
+        }
         assertNotRevoked({
           account_id: entry.account_id,
           issued_at_s: entry.issued_at_s,

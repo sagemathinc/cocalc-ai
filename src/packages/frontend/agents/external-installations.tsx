@@ -72,16 +72,10 @@ export function ExternalAgentInstallations({
         External Agent Installations
       </h3>
       <p>
-        Separate send-only credentials for agents on other computers or sites.
-        Account pause and revoke-all also apply. No access to browse your
-        projects.
+        Network-scoped credentials for agents on other computers or sites. Each
+        installation sends and receives only within its approved Agent Network.
+        Account pause and revoke-all also apply.
       </p>
-      {directory && !directory.enabled && (
-        <p role="status">
-          External sending is disabled on this site. Existing installations can
-          still be revoked.
-        </p>
-      )}
       {error && <Alert type="error" role="alert" title={error} />}
       {notice && <p role="status">{notice}</p>}
       <Space orientation="vertical" style={{ width: "100%" }}>
@@ -100,13 +94,6 @@ export function ExternalAgentInstallations({
                     ? "Active unless account communication is paused"
                     : "Expired"}
                 . Expires {new Date(item.expires_at).toLocaleString()}.
-              </p>
-              <p>
-                {item.destinations.length} approved destination(s). Installation{" "}
-                <code style={{ overflowWrap: "anywhere" }}>
-                  {item.installation_id}
-                </code>
-                .
               </p>
               {active && (
                 <Button

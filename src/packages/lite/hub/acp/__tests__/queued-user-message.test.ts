@@ -89,6 +89,32 @@ describe("queued user message refresh helpers", () => {
     ).toBe(request);
   });
 
+  it("preserves an automation prompt behind its visible run label", () => {
+    const visibleLabel = "Manual run: hi";
+    const request = {
+      project_id: "proj-1",
+      account_id: "acct-1",
+      prompt: "Please generate a random number.",
+      chat: {
+        project_id: "proj-1",
+        path: "thread.chat",
+        thread_id: "thread-1",
+        parent_message_id: "user-1",
+        message_id: "assistant-1",
+        message_date: "2026-05-07T21:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        automation_id: "automation-1",
+        user_message_content: visibleLabel,
+      },
+    };
+    expect(
+      applyQueuedUserMessageEditToRequest({
+        request,
+        latestContent: visibleLabel,
+      }),
+    ).toBe(request);
+  });
+
   it("uses a real visible-message edit instead of the hidden ACP prompt", () => {
     const request = {
       project_id: "proj-1",

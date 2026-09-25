@@ -11,6 +11,7 @@ import {
   AIUsageStatus,
 } from "@cocalc/frontend/misc/ai-usage-status";
 import { HelpIcon, Text } from "@cocalc/frontend/components";
+import TransferButton from "./transfer-button";
 
 export default function BalanceModal({
   onRefresh,
@@ -94,6 +95,7 @@ export default function BalanceModal({
         </div>
       </div>
       <ShowError error={error} setError={setError} />
+      <TransferButton onApplied={handleRefresh} />
       {stripeEnabled && (
         <Payments
           unfinished

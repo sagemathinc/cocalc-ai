@@ -1,4 +1,8 @@
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import {
+  ArtifactSearchResults,
+  ArtifactBrowserButton,
+} from "@cocalc/frontend/chat/artifact-discovery";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import type { EditorDescription } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { Card, Input } from "antd";
@@ -427,6 +431,8 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       </Card>
       <div className="smc-vfill">
         <div style={{ overflow: "auto", padding: "15px" }}>
+          <ArtifactBrowserButton actions={chatActions} />
+          <ArtifactSearchResults actions={chatActions} query={search} />
           <div
             style={{
               color: UI_COLORS.secondary,
@@ -436,7 +442,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
           >
             {!search?.trim() && <span>Enter a search above</span>}
             {combinedResult.length === 0 && search?.trim() && (
-              <span>No Matches</span>
+              <span>No matching messages</span>
             )}
           </div>
           {combinedResult.map((hit) => (

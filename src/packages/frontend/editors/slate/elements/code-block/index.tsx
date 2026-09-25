@@ -24,6 +24,7 @@ import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
 import CodeCopyButton from "./copy-button";
 import { guidanceFromMarkdownFence } from "../guidance";
+import { agentMessageFromMarkdownFence } from "../agent-message";
 
 export const CODE_BLOCK_TEXTAREA_STYLE: React.CSSProperties = {
   width: "100%",
@@ -480,6 +481,8 @@ export function toSlate({ token }) {
   if (token.type === "fence") {
     const guidance = guidanceFromMarkdownFence({ info, value });
     if (guidance != null) return guidance;
+    const agentMessage = agentMessageFromMarkdownFence({ info, value });
+    if (agentMessage != null) return agentMessage;
   }
   return {
     type: "code_block",

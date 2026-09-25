@@ -22,7 +22,7 @@ import {
   type MobileSiteProfile,
 } from "../storage/site-profiles";
 
-const CONNECT_TIMEOUT_MS = 15_000;
+const CONNECT_TIMEOUT_MS = 30_000;
 
 export class SessionExpiredError extends Error {
   constructor(message = "Your CoCalc session has expired. Sign in again.") {
@@ -127,7 +127,18 @@ export async function openSiteSession(profileId: string): Promise<SiteSession> {
     );
   }
 
-  const hubClient = await createHubClient({ profile, credential });
+  let hubClient: Client;
+  try {
+    hubClient = await createHubClient({ profile, credential });
+  } catch (error) {
+    if (
+      !/network|timed?\s*out|timeout|disconnected|connection.*lost/i.test(
+        String(error),
+      )
+    )
+      throw error;
+    hubClient = await createHubClient({ profile, credential });
+  }
   const call = async ({
     name,
     args,

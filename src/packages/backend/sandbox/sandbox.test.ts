@@ -14,7 +14,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { rmSync, symlinkSync } from "node:fs";
+import { linkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -141,6 +141,204 @@ describeIfLinux("baseline mutator parity behavior", () => {
     await fs.mkdir("cp-dir");
     await fs.cp(["cp-source.txt"], "cp-dir");
     expect(await fs.readFile("cp-dir/cp-source.txt", "utf8")).toBe("cp-data");
+  });
+
+  it("does not overwrite regular files when cp force is false", async () => {
+    await fs.writeFile("cp-no-clobber-source.txt", "new");
+    await fs.writeFile("cp-no-clobber-target.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source.txt", "cp-no-clobber-target.txt", {
+      force: false,
+    });
+
+    expect(await fs.readFile("cp-no-clobber-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
+  it("does not stage data when a no-clobber destination already exists", async () => {
+    await fs.writeFile("cp-fast-path-source.txt", "new");
+    await fs.writeFile("cp-fast-path-target.txt", "existing");
+    const copyFile = fs.copyFile;
+    fs.copyFile = jest.fn(copyFile);
+
+    try {
+      await fs.cp("cp-fast-path-source.txt", "cp-fast-path-target.txt", {
+        force: false,
+      });
+      expect(fs.copyFile).not.toHaveBeenCalled();
+    } finally {
+      fs.copyFile = copyFile;
+    }
+  });
+
+  it("rejects a no-clobber copy onto the same inode", async () => {
+    await fs.writeFile("cp-same-file.txt", "data");
+
+    await expect(
+      fs.cp("cp-same-file.txt", "cp-same-file.txt", {
+        force: false,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EINVAL" });
+  });
+
+  it("treats a destination symlink as an existing entry", async () => {
+    await fs.writeFile("cp-symlink-source.txt", "data");
+    await symlink(
+      "cp-symlink-source.txt",
+      join(tempDir, "test-mutators", "cp-symlink-target.txt"),
+    );
+
+    await fs.cp("cp-symlink-source.txt", "cp-symlink-target.txt", {
+      force: false,
+    });
+    expect(await fs.readlink("cp-symlink-target.txt")).toBe(
+      "cp-symlink-source.txt",
+    );
+
+    await expect(
+      fs.cp("cp-symlink-source.txt", "cp-symlink-target.txt", {
+        force: false,
+        errorOnExist: true,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+  });
+
+  it("supports a no-clobber destination at NAME_MAX", async () => {
+    const destination = "d".repeat(255);
+    await fs.writeFile("cp-name-max-source.txt", "data");
+
+    await fs.cp("cp-name-max-source.txt", destination, { force: false });
+
+    expect(await fs.readFile(destination, "utf8")).toBe("data");
+  });
+
+  it("does not overwrite nested regular files during recursive cp", async () => {
+    await fs.mkdir("cp-no-clobber-source/nested", { recursive: true });
+    await fs.mkdir("cp-no-clobber-target/nested", { recursive: true });
+    await fs.writeFile("cp-no-clobber-source/nested/existing.txt", "new");
+    await fs.writeFile("cp-no-clobber-source/nested/added.txt", "added");
+    await fs.writeFile("cp-no-clobber-target/nested/existing.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source", "cp-no-clobber-target", {
+      recursive: true,
+      force: false,
+    });
+
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/existing.txt", "utf8"),
+    ).toBe("existing");
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/added.txt", "utf8"),
+    ).toBe("added");
+  });
+
+  it("reports existing regular files when cp errorOnExist is set", async () => {
+    await fs.writeFile("cp-existing-source.txt", "new");
+    await fs.writeFile("cp-existing-target.txt", "existing");
+
+    await expect(
+      fs.cp("cp-existing-source.txt", "cp-existing-target.txt", {
+        force: false,
+        errorOnExist: true,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+    expect(await fs.readFile("cp-existing-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
+  it("does not overwrite a file created concurrently with force false", async () => {
+    await fs.writeFile("cp-race-source.txt", "source");
+    const target = await fs.getOpenAt2DualPathTarget(
+      "cp-race-source.txt",
+      "cp-race-target.txt",
+    );
+    expect(target).not.toBeNull();
+    const copyFileNoReplace = target.root.copyFileNoReplace;
+    target.root.copyFileNoReplace = (src: string, dest: string) => {
+      writeFileSync(join(fs.path, dest), "user-data");
+      return copyFileNoReplace.call(target.root, src, dest);
+    };
+
+    try {
+      await fs.cp("cp-race-source.txt", "cp-race-target.txt", {
+        force: false,
+      });
+    } finally {
+      target.root.copyFileNoReplace = copyFileNoReplace;
+    }
+
+    expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
+  });
+
+  it("rejects a destination raced into a hard link to the source", async () => {
+    await fs.writeFile("cp-race-hardlink-source.txt", "source");
+    const target = await fs.getOpenAt2DualPathTarget(
+      "cp-race-hardlink-source.txt",
+      "cp-race-hardlink-target.txt",
+    );
+    expect(target).not.toBeNull();
+    const copyFileNoReplace = target.root.copyFileNoReplace;
+    target.root.copyFileNoReplace = (src: string, dest: string) => {
+      linkSync(join(fs.path, src), join(fs.path, dest));
+      return copyFileNoReplace.call(target.root, src, dest);
+    };
+
+    try {
+      await expect(
+        fs.cp("cp-race-hardlink-source.txt", "cp-race-hardlink-target.txt", {
+          force: false,
+        }),
+      ).rejects.toMatchObject({ code: "ERR_FS_CP_EINVAL" });
+    } finally {
+      target.root.copyFileNoReplace = copyFileNoReplace;
+    }
+  });
+
+  it("fails closed when atomic no-replace copy is unavailable", async () => {
+    await fs.writeFile("cp-no-replace-source.txt", "source");
+    const getTarget = fs.getOpenAt2DualPathTarget;
+    fs.getOpenAt2DualPathTarget = async () => null;
+
+    try {
+      await expect(
+        fs.cp("cp-no-replace-source.txt", "cp-no-replace-target.txt", {
+          force: false,
+        }),
+      ).rejects.toMatchObject({ code: "ENOTSUP" });
+    } finally {
+      fs.getOpenAt2DualPathTarget = getTarget;
+    }
+
+    expect(await fs.exists("cp-no-replace-target.txt")).toBe(false);
+  });
+
+  it("does not expose staging entries during a no-clobber copy", async () => {
+    await fs.writeFile("cp-atomic-source.txt", "source");
+    const sandboxRoot = join(tempDir, "test-mutators");
+    const initialEntries = new Set(await readdir(sandboxRoot));
+    await fs.cp("cp-atomic-source.txt", "cp-atomic-target.txt", {
+      force: false,
+    });
+
+    expect(await fs.readFile("cp-atomic-target.txt", "utf8")).toBe("source");
+    expect(
+      (await readdir(sandboxRoot)).filter(
+        (name) => !initialEntries.has(name) && name !== "cp-atomic-target.txt",
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects copying a file onto an existing directory", async () => {
+    await fs.writeFile("cp-file-to-dir-source.txt", "source");
+    await fs.mkdir("cp-file-to-dir-target");
+
+    await expect(
+      fs.cp("cp-file-to-dir-source.txt", "cp-file-to-dir-target", {
+        force: false,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_NON_DIR_TO_DIR" });
   });
 
   it("preserves dangling symlinks during recursive cp", async () => {

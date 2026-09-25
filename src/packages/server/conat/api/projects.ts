@@ -929,6 +929,21 @@ export async function reconfigureCourseProjectsLocal({
       ...(student.send_email_invite ? { send_email_invite: true } : {}),
     };
   });
+  const existingActiveProjects = normalizedStudents.filter(
+    (student) => !student.deleted && !student.create,
+  );
+  const existingProjectBays = await resolveProjectBays(
+    existingActiveProjects.map((student) => student.project_id),
+  );
+  for (const student of existingActiveProjects) {
+    if (existingProjectBays.get(student.project_id) != null) continue;
+    seenStudentProjectIds.delete(student.project_id);
+    let project_id = randomUUID();
+    while (seenStudentProjectIds.has(project_id)) project_id = randomUUID();
+    student.project_id = project_id;
+    student.create = true;
+    seenStudentProjectIds.add(project_id);
+  }
   const graceDays = settings.student_membership_grace_days;
   if (
     graceDays !== undefined &&
@@ -6924,6 +6939,35 @@ export async function codexDeviceAuthStart({
   );
 }
 
+export async function codexDeviceAuthStartV2({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id?: string;
+  create?: boolean;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "use Codex");
+  throw Error(
+    "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function getCodexCredentialSelectionCapability({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "credential selection capability is not implemented on the central hub; call a project-host endpoint via project routing",
+  );
+}
+
 export async function codexDeviceAuthStatus({
   account_id,
   project_id,
@@ -6960,6 +7004,24 @@ export async function codexUploadAuthFile({
   project_id: string;
   filename?: string;
   content: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "upload Codex auth");
+  throw Error(
+    "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function codexUploadAuthFileV2({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  filename?: string;
+  content: string;
+  credential_id?: string;
+  create?: boolean;
 }): Promise<never> {
   await assertCollab({ account_id, project_id });
   await assertAccountTrustedForProductAccess(account_id!, "upload Codex auth");
@@ -7134,6 +7196,8 @@ export async function chatStoreReadArchivedHit({
 }
 
 export async function chatStoreSearch({
+  artifacts,
+  include_head,
   account_id,
   project_id,
   chat_path,
@@ -7144,6 +7208,8 @@ export async function chatStoreSearch({
   limit,
   offset,
 }: {
+  artifacts?: boolean;
+  include_head?: boolean;
   account_id?: string;
   project_id: string;
   chat_path: string;
@@ -7155,16 +7221,21 @@ export async function chatStoreSearch({
   offset?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await workspaceChatStoreSearch({
-    project_id,
-    chat_path,
-    query,
-    db_path,
-    thread_id,
-    exclude_thread_ids,
-    limit,
-    offset,
-  });
+  return await workspaceChatStoreSearch(
+    {
+      artifacts,
+      include_head,
+      project_id,
+      chat_path,
+      query,
+      db_path,
+      thread_id,
+      exclude_thread_ids,
+      limit,
+      offset,
+    },
+    account_id ?? "",
+  );
 }
 
 export async function chatStoreDelete({

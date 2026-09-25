@@ -8,6 +8,7 @@ import { Map } from "immutable";
 import { cloneElement } from "react";
 
 import {
+  activeProjectIdForSiteLicenseBanner,
   hasVisibleStudentCourseProject,
   SiteLicenseClaimBanner,
   sortSiteLicenseOpportunities,
@@ -122,6 +123,16 @@ function Harness() {
 }
 
 describe("SiteLicenseClaimBanner", () => {
+  it("does not treat application routes as project ids", () => {
+    expect(activeProjectIdForSiteLicenseBanner("agents")).toBe("");
+    expect(activeProjectIdForSiteLicenseBanner("projects")).toBe("");
+    expect(
+      activeProjectIdForSiteLicenseBanner(
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();

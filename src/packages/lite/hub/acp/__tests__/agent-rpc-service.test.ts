@@ -11,13 +11,19 @@ import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
 
 function fixture() {
   const e: AgentRpcEnvelope = {
-    version: 2,
+    version: 3,
     attempt_id: randomUUID(),
     permit_id: randomUUID(),
     source: { project_id: randomUUID(), agent_id: randomUUID() },
+    source_label: "@reviewer",
     target: { project_id: randomUUID(), agent_id: randomUUID() },
+    target_label: "@builder",
     run_id: randomUUID(),
-    link_id: randomUUID(),
+    agent_network_id: randomUUID(),
+    network_generation: randomUUID(),
+    account_generation: 0,
+    configured_delivery: "queued",
+    guidance: false,
     account_id: randomUUID(),
     path: "/home/user/recv.chat",
     thread_id: randomUUID(),
@@ -88,7 +94,7 @@ test("external snapshot send preserves attribution and target execution account 
   expect(row.agent_rpc.source).toEqual(e.source);
   expect(row.agent_rpc).not.toHaveProperty("source_run_id");
   expect(JSON.stringify(row)).toContain("external agent");
-  expect(JSON.stringify(row)).toContain("cannot receive messages");
+  expect(JSON.stringify(row)).toContain("Replies require current membership");
 });
 
 test("startup must not admit a thread changed away from ACP", async () => {
@@ -128,7 +134,7 @@ test("startup uses current thread configuration and chat ancestry", async () => 
   expect(prepared.request.chat.agent_message).toBe(true);
 });
 
-test("external source cannot use live paths or guidance", async () => {
+test("external source may use session delivery but not live project paths", async () => {
   const { e, deps, service, db } = fixture();
   e.source = {
     kind: "external",
@@ -138,14 +144,36 @@ test("external source cannot use live paths or guidance", async () => {
   };
   delete e.run_id;
   e.guidance = true;
-  await expect(service.submit(e)).rejects.toThrow("external agents");
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "accepted",
+  });
   e.guidance = false;
+  e.attempt_id = randomUUID();
   e.file_references = [
     { kind: "project-file", path: "/home/user/secret" } as any,
   ];
   await expect(service.submit(e)).rejects.toThrow("external agents");
-  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(db.set).toHaveBeenCalledTimes(1);
+});
+
+test("reports when a named recipient is not configured as an agent", async () => {
+  const { e, service, db, deps } = fixture();
+  db.get()[0] = {
+    event: "chat-thread-config",
+    thread_id: e.thread_id,
+    agent_kind: null,
+    acp_config: null,
+  };
+
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "rejected",
+    code: "target_not_agent",
+    reason: expect.stringContaining("enable agent execution"),
+    chat_effect: "none",
+  });
   expect(db.set).not.toHaveBeenCalled();
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
 });
 
 test.each([
@@ -309,11 +337,16 @@ test("idle wake and busy queue use one existing admission call with target ident
   expect(prepared.request.chat.agent_delivery_id).toBeUndefined();
   expect(db.set).toHaveBeenCalledTimes(1);
   expect(db.set.mock.calls[0][0].agent_rpc).toEqual({
-    version: 2,
+    version: 3,
     source: e.source,
+    source_label: e.source_label,
     target: e.target,
+    target_label: e.target_label,
     source_run_id: e.run_id,
-    link_id: e.link_id,
+    agent_network_id: e.agent_network_id,
+    agent_network_generation: e.network_generation,
+    configured_delivery: e.configured_delivery,
+    effective_delivery: "queued",
     attempt_id: e.attempt_id,
   });
   expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
@@ -495,45 +528,24 @@ test("concurrent calls for the same attempt share startup and admission", async 
   expect(deps.admit).toHaveBeenCalledTimes(1);
 });
 
-test.each([undefined, "0", "1"])(
-  "host evidence is principal scoped independently of personal flag %s",
-  async (flag) => {
-    const previous = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    if (flag == null)
-      delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = flag;
-    try {
-      const { e, deps, service } = fixture();
-      const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
-      expect((await service.submit(e)).outcome).toBe("accepted");
-      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
-        "accepted",
-      );
-      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
-        "unknown",
-      );
-      expect(service.inspect(e.source, e).outcome).toBe("unknown");
-      expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
-      deps.admit = jest.fn(async () => {
-        throw new Error("lost Q acknowledgment");
-      });
-      expect((await service.submit(q)).outcome).toBe("unknown");
-      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
-        "accepted",
-      );
-      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
-        "unknown",
-      );
-      await service.submit(q);
-      expect(deps.admit).toHaveBeenCalledTimes(1);
-      expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
-    } finally {
-      if (previous == null)
-        delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-      else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previous;
-    }
-  },
-);
+test("host evidence is scoped to the personal principal", async () => {
+  const { e, deps, service } = fixture();
+  const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
+  expect((await service.submit(e)).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, q.account_id).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e).outcome).toBe("unknown");
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+  deps.admit = jest.fn(async () => {
+    throw new Error("lost Q acknowledgment");
+  });
+  expect((await service.submit(q)).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, q.account_id).outcome).toBe("unknown");
+  await service.submit(q);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+});
 
 test("inspection never falls back to legacy unscoped evidence", async () => {
   const { e, deps } = fixture();

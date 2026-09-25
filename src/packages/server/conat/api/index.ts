@@ -44,6 +44,8 @@ import * as hosts from "./hosts";
 import * as software from "./software";
 import * as lro from "./lro";
 import * as agent from "./agent";
+import * as artifactCatalog from "./artifact-catalog";
+import * as personalLibrary from "./personal-library";
 import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as adminDb from "./admin-db";
@@ -53,6 +55,7 @@ import * as adminCrashes from "./admin-crashes";
 import * as aiSessions from "./ai-sessions";
 import * as legacyMigration from "./legacy-migration";
 import * as compute from "./compute";
+import * as computeFunding from "./compute-funding";
 import * as publicDirectoryShares from "./public-directory-shares";
 import * as growthAnalytics from "./growth-analytics";
 import * as commercialOrders from "./commercial-orders";
@@ -106,6 +109,8 @@ export const hubApi: HubApi = {
   software,
   lro,
   agent,
+  artifactCatalog,
+  personalLibrary,
   notifications,
   adminData,
   adminDb,
@@ -115,6 +120,7 @@ export const hubApi: HubApi = {
   aiSessions,
   legacyMigration,
   compute,
+  computeFunding,
   publicDirectoryShares,
   growthAnalytics,
   commercialOrders,
@@ -196,15 +202,13 @@ async function serve() {
   startAccountSecurityStateSyncLoop();
   const cn = await conat({ noCache: true });
   let stopAgentMessaging = async () => {};
-  if (process.env.COCALC_AGENT_MESSAGING_ENABLED === "1") {
-    try {
-      const { startAgentMessaging } =
-        await import("@cocalc/server/agents/messaging");
-      stopAgentMessaging = await startAgentMessaging(cn);
-    } catch (error) {
-      // Experimental messaging must not take the ordinary hub API offline.
-      logger.warn("agent messaging unavailable", { error: `${error}` });
-    }
+  try {
+    const { startAgentMessaging } =
+      await import("@cocalc/server/agents/messaging");
+    stopAgentMessaging = await startAgentMessaging(cn);
+  } catch (error) {
+    // Messaging startup must not take the ordinary hub API offline.
+    logger.warn("agent messaging unavailable", { error: `${error}` });
   }
   const subscriptions = await Promise.all(
     HUB_API_SUBJECTS.map(async (subject) => ({

@@ -6,8 +6,8 @@ import {
   getIdentity,
   getMentionIdentity,
   recoverIdentity,
-  listGrants,
-  listMessageReceipts,
+  startFreshConversation,
+  startFreshConversationLocal,
 } from "./api";
 import { agentIdentityControl } from "./identity-control";
 
@@ -19,7 +19,6 @@ const owner = jest.fn(),
 const query = jest.fn(),
   find = jest.fn(),
   get = jest.fn(),
-  receipts = jest.fn(),
   fabric = jest.fn();
 const transaction = jest.fn(async (fn) => fn({ query }));
 const remote = {
@@ -27,14 +26,20 @@ const remote = {
   resolve: jest.fn(),
   register: jest.fn(),
   recover: jest.fn(),
+  startFreshConversation: jest.fn(),
   get: jest.fn(),
-  listGrants: jest.fn(),
-  listMessageReceipts: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
 const sourceHostAccess = jest.fn();
 const localProject = jest.fn();
 const chatReady = jest.fn();
+const prepareFresh = jest.fn();
+jest.mock("@cocalc/conat/ai/acp/client", () => ({
+  controlAcp: (...args) => prepareFresh(...args),
+}));
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  conatWithProjectRoutingForAccount: () => ({ routed: true }),
+}));
 let bay = "entry";
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => bay,
@@ -58,10 +63,6 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
 jest.mock("./store", () => ({
   agentStore: () => ({ query, find, get, transaction }),
   normalizeAgentPath: (s) => s,
-}));
-jest.mock("./inspection", () => ({
-  ...jest.requireActual("./inspection"),
-  ownMessageReceipts: (...a) => receipts(...a),
 }));
 jest.mock("./chat", () => ({
   withAgentChat: async (a, fn) => {
@@ -95,10 +96,7 @@ beforeEach(() => {
     agent_id: request.thread_id,
     created_by: account_id,
   });
-  receipts.mockReset().mockResolvedValue({ items: [] });
   remote.get.mockReset().mockResolvedValue({ agent_id: "remote" });
-  remote.listGrants.mockReset().mockResolvedValue({ items: [] });
-  remote.listMessageReceipts.mockReset().mockResolvedValue({ items: [] });
   remote.list.mockReset().mockResolvedValue([]);
   remote.resolve.mockReset().mockResolvedValue({ agent_id: "remote" });
   remote.register
@@ -109,11 +107,99 @@ beforeEach(() => {
     .mockResolvedValue({ agent_id: "recovered-remote" });
 });
 
-const inspections = [
-  { read: getIdentity, method: "get" as const },
-  { read: listGrants, method: "listGrants" as const },
-  { read: listMessageReceipts, method: "listMessageReceipts" as const },
-];
+const inspections = [{ read: getIdentity, method: "get" as const }];
+
+test("fresh conversations route by project owner", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    expected_thread_id: "old",
+  };
+  remote.startFreshConversation.mockResolvedValue({ thread_id: "new" });
+  await expect(startFreshConversation(opts)).resolves.toEqual({
+    thread_id: "new",
+  });
+  expect(remote.startFreshConversation).toHaveBeenCalledWith({
+    ...opts,
+    route: { bay_id: "owner", epoch: 3 },
+  });
+  expect(prepareFresh).not.toHaveBeenCalled();
+});
+
+test("fresh preparation precedes database locking and retries do not switch twice", async () => {
+  const agent_id = randomUUID(),
+    successor = randomUUID();
+  const opts = { account_id, project_id, agent_id, expected_thread_id: "old" };
+  const identity = {
+    agent_id,
+    project_id,
+    created_by: account_id,
+    thread_id: "old",
+    path: request.path,
+  };
+  get.mockResolvedValue(identity);
+  prepareFresh.mockImplementation(async () => {
+    expect(transaction).not.toHaveBeenCalled();
+    return { ok: true, successor_thread_id: successor };
+  });
+  query.mockImplementation(async (sql, params) => {
+    if (sql.startsWith("SELECT * FROM agent_identities"))
+      return { rows: [identity] };
+    if (sql.startsWith("UPDATE agent_identities SET thread_id")) {
+      expect(params[0]).toBe(agent_id);
+      expect(JSON.parse(params[2])[0].thread_id).toBe("old");
+      return {
+        rows: [
+          {
+            ...identity,
+            thread_id: successor,
+            conversation_history: JSON.parse(params[2]),
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  const next = await startFreshConversationLocal(opts);
+  expect(next.agent_id).toBe(agent_id);
+  expect(next.thread_id).toBe(successor);
+  expect(
+    query.mock.calls.some(([sql]) =>
+      sql.startsWith("UPDATE agent_identity_runs"),
+    ),
+  ).toBe(true);
+  get.mockResolvedValue(next);
+  await expect(startFreshConversationLocal(opts)).resolves.toEqual(next);
+  expect(prepareFresh).toHaveBeenCalledTimes(1);
+});
+
+test("non-registrants and host preparation failures cannot switch the identity", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    expected_thread_id: "old",
+  };
+  get.mockResolvedValue({
+    ...opts,
+    created_by: randomUUID(),
+    thread_id: "old",
+  });
+  await expect(startFreshConversationLocal(opts)).rejects.toThrow("registrant");
+  expect(prepareFresh).not.toHaveBeenCalled();
+  get.mockResolvedValue({
+    ...opts,
+    created_by: account_id,
+    thread_id: "old",
+    path: request.path,
+  });
+  prepareFresh.mockRejectedValue(new Error("Finish or cancel"));
+  await expect(startFreshConversationLocal(opts)).rejects.toThrow(
+    "Finish or cancel",
+  );
+  expect(transaction).not.toHaveBeenCalled();
+});
 
 test("host mention lookup validates source and routes target under the human, not embedded fields", async () => {
   const sourceProject = randomUUID();
@@ -198,7 +284,6 @@ test.each(inspections)(
       }),
     ).rejects.toThrow("does not belong");
     expect(query).not.toHaveBeenCalled();
-    expect(receipts).not.toHaveBeenCalled();
     expect(fabric).not.toHaveBeenCalled();
   },
 );
@@ -214,41 +299,8 @@ test.each(inspections)(
   },
 );
 
-test.each(["listGrants", "listMessageReceipts"] as const)(
-  "%s retains pagination and endpoint registrant checks",
-  async (method) => {
-    const read = method === "listGrants" ? listGrants : listMessageReceipts;
-    const opts = {
-      account_id,
-      project_id,
-      agent_id: request.thread_id,
-      limit: 1,
-      cursor: randomUUID(),
-    };
-    await read(opts);
-    expect(remote[method]).toHaveBeenCalledWith({
-      ...opts,
-      route: { bay_id: "owner", epoch: 3 },
-    });
-    bay = "owner";
-    get.mockResolvedValue({ project_id, created_by: randomUUID() });
-    await expect(
-      agentIdentityControl[method]({
-        ...opts,
-        route: { bay_id: "owner", epoch: 3 },
-      }),
-    ).rejects.toThrow("registrant");
-    expect(query).not.toHaveBeenCalled();
-    expect(receipts).not.toHaveBeenCalled();
-  },
-);
-
 test("malformed pagination or locator fails before fabric lookup", async () => {
   const opts = { account_id, project_id, agent_id: request.thread_id };
-  await expect(listGrants({ ...opts, limit: 101 })).rejects.toThrow();
-  await expect(
-    listMessageReceipts({ ...opts, cursor: "bad" }),
-  ).rejects.toThrow();
   await expect(getIdentity({ ...opts, project_id: "bad" })).rejects.toThrow();
   expect(fabric).not.toHaveBeenCalled();
   expect(get).not.toHaveBeenCalled();
@@ -287,27 +339,17 @@ test("remote reads use exact project ownership and whitelist arguments", async (
   expect(find).not.toHaveBeenCalled();
 });
 
-test("remote registration verifies fresh auth and replaces caller attestation", async () => {
-  const before = Date.now();
+test("remote registration uses ordinary project authorization", async () => {
   await registerIdentity({
     ...request,
     session_hash: "bound-session",
     fresh_auth_at: 1,
   } as any);
-  expect(fresh).toHaveBeenCalledWith(
-    expect.objectContaining({
-      account_id,
-      session_hash: "bound-session",
-      allow_actor_impersonation: false,
-    }),
-  );
-  const forwarded = remote.register.mock.calls[0][0];
-  expect(forwarded).toEqual({
+  expect(fresh).not.toHaveBeenCalled();
+  expect(remote.register).toHaveBeenCalledWith({
     ...request,
     route: { bay_id: "owner", epoch: 3 },
-    fresh_auth_at: expect.any(Number),
   });
-  expect(forwarded.fresh_auth_at).toBeGreaterThanOrEqual(before);
   expect(query).not.toHaveBeenCalled();
 });
 
@@ -338,13 +380,12 @@ test("remote recovery verifies fresh auth and forwards only the identity locator
   expect(forwarded.fresh_auth_at).toBeGreaterThanOrEqual(before);
 });
 
-test("failed human auth never routes registration", async () => {
-  fresh.mockRejectedValue(new Error("fresh auth required"));
-  await expect(registerIdentity(request)).rejects.toThrow(
-    "fresh auth required",
-  );
-  expect(owner).not.toHaveBeenCalled();
-  expect(fabric).not.toHaveBeenCalled();
+test("failed project authorization never completes registration", async () => {
+  bay = "owner";
+  actor.mockRejectedValue(new Error("not a collaborator"));
+  await expect(registerIdentity(request)).rejects.toThrow("not a collaborator");
+  expect(owner).toHaveBeenCalledWith(project_id);
+  expect(query).not.toHaveBeenCalled();
 });
 
 test.each([
@@ -398,9 +439,9 @@ test("owner rechecks local access before identity reads and registration", async
   const opts = { ...request, route: { bay_id: "owner", epoch: 3 } };
   await agentIdentityControl.list(opts);
   await agentIdentityControl.resolve(opts);
-  await agentIdentityControl.register({ ...opts, fresh_auth_at: Date.now() });
+  await agentIdentityControl.register(opts);
   expect(actor).toHaveBeenCalledTimes(4); // registration also checks after chat readiness
-  expect(fresh).not.toHaveBeenCalled(); // attested on entry; no remote session copy
+  expect(fresh).not.toHaveBeenCalled();
   expect(remoteClient).not.toHaveBeenCalled();
 });
 
@@ -477,18 +518,3 @@ test.each([
   expect(query).not.toHaveBeenCalled();
   expect(fabric).not.toHaveBeenCalled();
 });
-
-test.each([undefined, NaN, 0, Date.now() + 60_000])(
-  "invalid fresh attestation %s cannot register",
-  async (fresh_auth_at) => {
-    bay = "owner";
-    await expect(
-      agentIdentityControl.register({
-        ...request,
-        route: { bay_id: "owner", epoch: 3 },
-        fresh_auth_at,
-      } as any),
-    ).rejects.toThrow("attestation");
-    expect(query).not.toHaveBeenCalled();
-  },
-);

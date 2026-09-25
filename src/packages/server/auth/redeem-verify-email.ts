@@ -76,6 +76,7 @@ export async function redeemVerifyEmailLocal(
     if (email_address_verified?.[email_address]) {
       await updateClusterAccountEmailAddressVerified({
         account_id,
+        email_address,
         email_address_verified: true,
       });
       // nothing to do.
@@ -111,6 +112,7 @@ export async function redeemVerifyEmailLocal(
   });
   await updateClusterAccountEmailAddressVerified({
     account_id,
+    email_address,
     email_address_verified: true,
   });
   recordServerGrowthEvent({

@@ -43,6 +43,7 @@ import type {
   NumChildren,
 } from "./types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import { useChatEmbeddingOptions } from "./embedding-options";
 import type { ThreadIndexEntry } from "./message-cache";
 import { getMessageAtDate, newest_content } from "./utils";
 import {
@@ -61,6 +62,7 @@ import {
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
+import { agentRpcMessageMarkdown } from "./agent-message-presentation";
 import {
   CodexAttentionCard,
   type CodexAttentionDraft,
@@ -311,8 +313,11 @@ function collectSteers({
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const text = newest_content(message)?.trim();
-    if (!messageId || !text) continue;
+    const rawText = newest_content(message)?.trim();
+    if (!messageId || !rawText) continue;
+    const rawRpc = field<any>(message, "agent_rpc");
+    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const text = rpc ? agentRpcMessageMarkdown(rawText, rpc) : rawText;
     const anchoredParentId = resolveSteerAnchorMessageId({
       message,
       byMessageId,
@@ -541,6 +546,7 @@ export function ChatLog({
     [messages, visibleKeys, acpState, docVersion],
   );
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const { agentWorkspace } = useChatEmbeddingOptions();
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const isForegroundChatTab =
@@ -548,10 +554,11 @@ export function ChatLog({
   const canAutoScroll =
     isVisible &&
     !anyOverlayOpen &&
-    (mode === "sidechat" || isForegroundChatTab);
+    (agentWorkspace || mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
   const keepBottomAnchoredRef = useRef(false);
+  const resumeBottomFollowingRef = useRef<(() => void) | undefined>(undefined);
   const { dates: sortedDates, numChildren } = useMemo<{
     dates: string[];
     numChildren: NumChildren;
@@ -674,6 +681,7 @@ export function ChatLog({
     scrollToBottomRef.current = (force?: boolean) => {
       if (!canAutoScrollRef.current) return;
       if (manualScrollRef.current && !force) return;
+      if (force) resumeBottomFollowingRef.current?.();
       manualScrollRef.current = false;
       setManualScroll(false);
       keepBottomAnchoredRef.current = true;
@@ -735,6 +743,7 @@ export function ChatLog({
             scrollToBottomRef,
             scrollToIndex,
             keepBottomAnchoredRef,
+            resumeBottomFollowingRef,
             acpState,
             attachedSteersByParentMessageId:
               steerCollections.attachedByParentMessageId,
@@ -885,6 +894,7 @@ export function MessageList({
   scrollToBottomRef,
   scrollToIndex,
   keepBottomAnchoredRef,
+  resumeBottomFollowingRef,
   acpState,
   attachedSteersByParentMessageId,
   activitySteersByAssistantMessageId,
@@ -924,6 +934,7 @@ export function MessageList({
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
   scrollToIndex?: null | number;
   keepBottomAnchoredRef?: MutableRefObject<boolean>;
+  resumeBottomFollowingRef?: MutableRefObject<(() => void) | undefined>;
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
   activitySteersByAssistantMessageId?: Map<string, AttachedSteerMessage[]>;
@@ -1197,7 +1208,33 @@ export function MessageList({
     }
   };
 
+  const resumeBottomFollowing = useCallback(() => {
+    // Explicit sends/newest requests supersede cached reading positions,
+    // including delayed offset restoration already scheduled for them.
+    clearAnchorRestoreTimers();
+    userScrollIntentRef.current = false;
+    if (keepBottomAnchoredRef) keepBottomAnchoredRef.current = true;
+    if (manualScrollRef) manualScrollRef.current = false;
+    setManualScroll?.(false);
+    setAtBottom(true);
+    saveChatViewportAnchor(cacheId, {
+      atBottom: true,
+      date: sortedDatesRef.current[sortedDatesRef.current.length - 1],
+      offsetPx: 0,
+      savedAt: Date.now(),
+    });
+  }, [cacheId, keepBottomAnchoredRef, manualScrollRef, setManualScroll]);
+
+  useEffect(() => {
+    if (!resumeBottomFollowingRef) return;
+    resumeBottomFollowingRef.current = resumeBottomFollowing;
+    return () => {
+      resumeBottomFollowingRef.current = undefined;
+    };
+  }, [resumeBottomFollowingRef, resumeBottomFollowing]);
+
   const forceScrollToBottom = useCallback(() => {
+    resumeBottomFollowing();
     scheduleAnchorCapture(true);
     if (keepBottomAnchoredRef) {
       keepBottomAnchoredRef.current = true;
@@ -1208,6 +1245,7 @@ export function MessageList({
     setManualScroll?.(false);
     scrollToBottomRef?.current?.(true);
   }, [
+    resumeBottomFollowing,
     keepBottomAnchoredRef,
     manualScrollRef,
     scheduleAnchorCapture,

@@ -39,6 +39,8 @@ import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
+import { NotificationsDrawer } from "../notifications/drawer";
+import { SettingsDrawer } from "../account/settings-drawer";
 import { useAppContext } from "./context";
 import { CocalcErrorBoundary } from "./error-boundary";
 import { FullscreenButton } from "./fullscreen-button";
@@ -181,6 +183,7 @@ export const Page: React.FC = () => {
     surfaceReady,
     work: "modals",
   });
+  const requestedSettingsModal = useTypedRedux("page", "settingsModal");
   const showPostSurfaceBanners = usePostSurfaceWork({
     mode: startupPerformance.mode,
     surfaceReady,
@@ -217,6 +220,9 @@ export const Page: React.FC = () => {
   }, []);
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const aiDisabled = !!otherSettings?.get("openai_disabled");
+  const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
   const show_connection = useTypedRedux("page", "show_connection");
@@ -469,6 +475,26 @@ export const Page: React.FC = () => {
     );
   }
 
+  function render_agents_nav_button(): React.JSX.Element | null {
+    if (aiDisabled) return null;
+    return (
+      <NavTab
+        style={{
+          height: `${pageStyle.height}px`,
+          margin: "0",
+          overflow: "hidden",
+        }}
+        name="agents"
+        active_top_tab={active_top_tab}
+        tooltip="Work with registered agents, chats, artifacts, and terminals"
+        icon="robot"
+        label="Agents"
+        hide_label={isNarrow}
+        ariaLabel="Agents"
+      />
+    );
+  }
+
   // register a default drag and drop handler, that prevents
   // accidental file drops
   // TEST: make sure that usual drag'n'drop activities
@@ -503,6 +529,8 @@ export const Page: React.FC = () => {
       onDrop={drop}
     >
       {show_connection && <ConnectionInfo />}
+      <NotificationsDrawer />
+      <SettingsDrawer />
       <VersionWarning />
       {showPostSurfaceBanners ? (
         <PostSurfaceSlot scope="app.post-surface-banners">
@@ -517,14 +545,44 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
-      {!lite && !examMode && !fullscreen && !isAuthView && (
-        <nav className="smc-top-bar" style={topBarStyle}>
-          <AppLogo size={pageStyle.height} />
-          {is_logged_in && render_project_nav_button()}
-          {render_hosts_tab()}
-          {!isNarrow ? (
-            showPostSurfaceNavigation ? (
-              <PostSurfaceSlot scope="app.post-surface-project-navigation">
+      {!lite &&
+        !examMode &&
+        !fullscreen &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <nav className="smc-top-bar" style={topBarStyle}>
+            <AppLogo size={pageStyle.height} />
+            {is_logged_in && render_agents_nav_button()}
+            {is_logged_in && render_project_nav_button()}
+            {render_hosts_tab()}
+            {!isNarrow ? (
+              showPostSurfaceNavigation ? (
+                <PostSurfaceSlot scope="app.post-surface-project-navigation">
+                  <PostSurfaceProjectsNav
+                    height={pageStyle.height}
+                    onModeChange={setProjectsNavMode}
+                    style={projectsNavStyle}
+                  />
+                </PostSurfaceSlot>
+              ) : (
+                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
+              )
+            ) : (
+              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
+              <div style={{ flex: "1 1 auto" }} />
+            )}
+            {render_right_nav()}
+          </nav>
+        )}
+      {fullscreen && !isAuthView && render_fullscreen()}
+      {!lite &&
+        !examMode &&
+        isNarrow &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <>
+            {showPostSurfaceNavigation ? (
+              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
                 <PostSurfaceProjectsNav
                   height={pageStyle.height}
                   onModeChange={setProjectsNavMode}
@@ -532,31 +590,10 @@ export const Page: React.FC = () => {
                 />
               </PostSurfaceSlot>
             ) : (
-              <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
-            )
-          ) : (
-            // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
-            <div style={{ flex: "1 1 auto" }} />
-          )}
-          {render_right_nav()}
-        </nav>
-      )}
-      {fullscreen && !isAuthView && render_fullscreen()}
-      {!lite && !examMode && isNarrow && !isAuthView && (
-        <>
-          {showPostSurfaceNavigation ? (
-            <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
-              <PostSurfaceProjectsNav
-                height={pageStyle.height}
-                onModeChange={setProjectsNavMode}
-                style={projectsNavStyle}
-              />
-            </PostSurfaceSlot>
-          ) : (
-            <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
-          )}
-        </>
-      )}
+              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
+            )}
+          </>
+        )}
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}
@@ -574,7 +611,7 @@ export const Page: React.FC = () => {
         !isAuthView &&
         fullscreen !== "kiosk" &&
         fullscreen !== "project" && <QuickNavigation />}
-      {showPostSurfaceModals && !examMode ? (
+      {(showPostSurfaceModals || !!requestedSettingsModal) && !examMode ? (
         <PostSurfaceSlot scope="app.post-surface-modals">
           <PostSurfaceModals />
         </PostSurfaceSlot>

@@ -53,6 +53,31 @@ jest.mock("use-debounce", () => ({
 }));
 
 describe("ChatInput send lifecycle regressions", () => {
+  it("routes Ctrl+Enter to Post and Shift+Enter to the agent", () => {
+    const send = jest.fn();
+    const post = jest.fn();
+    render(
+      <ChatInput
+        input="hello"
+        onChange={() => {}}
+        on_send={send}
+        on_post={post}
+        syncdb={
+          {
+            set: jest.fn(),
+            commit: jest.fn(),
+            set_cursor_locs: jest.fn(),
+          } as any
+        }
+        date={0}
+      />,
+    );
+    act(() => lastMarkdownInputProps.onCtrlEnter("hello people"));
+    expect(post).toHaveBeenCalledWith("hello people");
+    expect(send).not.toHaveBeenCalled();
+    act(() => lastMarkdownInputProps.onShiftEnter("hello agent"));
+    expect(send).toHaveBeenCalledWith("hello agent");
+  });
   beforeEach(() => {
     lastMarkdownInputProps = null;
     jest.useFakeTimers();
@@ -149,6 +174,7 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.redoMode).toBe("local");
     expect(lastMarkdownInputProps.hideHelp).toBe(true);
     expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
+    expect(lastMarkdownInputProps.reserveModeSwitchSpace).toBe(true);
     expect(lastMarkdownInputProps.disableModeSwitchShortcuts).toBe(true);
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
     expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);
@@ -169,6 +195,44 @@ describe("ChatInput send lifecycle regressions", () => {
     const trigger = markdownHelpPopover.props.children;
     expect(trigger.props["aria-label"]).toBe("Markdown help");
     expect(trigger.props.children.props.name).toBe("info-circle");
+  });
+
+  it("applies a dictated transcript even while the rich-text editor is focused", () => {
+    const control = { current: null as ChatInputControl | null };
+    const allowFocusedValueUpdate = jest.fn();
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      return (
+        <ChatInput
+          input={value}
+          inputControlRef={control}
+          onChange={setValue}
+          on_send={() => undefined}
+          syncdb={syncdb}
+          date={0}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const setValueNow = jest.fn();
+    lastMarkdownInputProps.controlRef.current = {
+      allowNextValueUpdateWhileFocused: allowFocusedValueUpdate,
+      setValueNow,
+      getMarkdownPositionForSelection: () => null,
+    };
+    act(() => {
+      expect(control.current?.insertText("spoken words")).toBe(true);
+    });
+    expect(allowFocusedValueUpdate).toHaveBeenCalledTimes(1);
+    expect(setValueNow).toHaveBeenCalledWith("spoken words");
+    expect(lastMarkdownInputProps.value).toBe("spoken words");
   });
 
   it("does not submit on ctrl-enter", () => {

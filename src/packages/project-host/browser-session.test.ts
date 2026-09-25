@@ -1,10 +1,49 @@
+import { createHmac } from "node:crypto";
+import { conatPassword } from "@cocalc/backend/data";
 import {
   buildProjectHostBrowserSessionCookie,
   buildProjectHostBrowserSessionCookieDeletion,
   createProjectHostBrowserSessionToken,
+  issueProjectHostBrowserSessionFromBearer,
   restrictedBrowserSessionTtlSeconds,
+  resolveLegacyProjectHostBrowserSessionForExamMigration,
   resolveProjectHostBrowserSessionFromCookieHeader,
+  verifyProjectHostBrowserSessionToken,
 } from "./browser-session";
+
+const mockVerifyProjectHostAuthToken = jest.fn();
+
+jest.mock("@cocalc/conat/auth/project-host-token", () => ({
+  verifyProjectHostAuthToken: (...args: any[]) =>
+    mockVerifyProjectHostAuthToken(...args),
+}));
+
+jest.mock("./auth-public-key", () => ({
+  getProjectHostAuthPublicKey: () => "test-public-key",
+}));
+
+jest.mock("./sqlite/account-revocations", () => ({
+  getAccountRevokedBeforeMs: () => undefined,
+}));
+
+function createResponse() {
+  const headers = new Map<string, string | string[]>();
+  return {
+    getHeader: jest.fn((name: string) => headers.get(name)),
+    setHeader: jest.fn((name: string, value: string | string[]) => {
+      headers.set(name, value);
+    }),
+    headers,
+  } as any;
+}
+
+function createLegacySessionToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", conatPassword)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
+}
 
 describe("project-host shared browser session", () => {
   it("issues a host-wide secure session cookie", () => {
@@ -93,12 +132,47 @@ describe("project-host shared browser session", () => {
     });
   });
 
+  it("rejects pre-cutover full-lifetime browser session tokens", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "11".repeat(12),
+    });
+
+    expect(
+      verifyProjectHostBrowserSessionToken(legacyToken, now_s * 1000),
+    ).toBeUndefined();
+  });
+
+  it("exposes exact legacy browser tokens only to exam migration", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      iat: now_s,
+      exp: now_s + 60,
+      nonce: "22".repeat(12),
+    });
+    const header = `cocalc_project_host_session=${encodeURIComponent(legacyToken)}`;
+
+    expect(
+      resolveProjectHostBrowserSessionFromCookieHeader(header),
+    ).toBeUndefined();
+    expect(
+      resolveLegacyProjectHostBrowserSessionForExamMigration(header),
+    ).toMatchObject({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      exp_s: now_s + 60,
+    });
+  });
+
   it("bounds an exam browser session token and cookie to the requested ttl", () => {
     const now = Date.now();
     const token = createProjectHostBrowserSessionToken({
       account_id: "00000000-1000-4000-8000-000000000001",
       now_ms: now,
-      ttl_seconds: 600,
+      restricted_exp_s: Math.floor(now / 1000) + 600,
     });
     expect(
       resolveProjectHostBrowserSessionFromCookieHeader(
@@ -108,6 +182,7 @@ describe("project-host shared browser session", () => {
       account_id: "00000000-1000-4000-8000-000000000001",
       iat_s: Math.floor(now / 1000),
       exp_s: Math.floor(now / 1000) + 600,
+      restricted_exp_s: Math.floor(now / 1000) + 600,
     });
     expect(
       buildProjectHostBrowserSessionCookie({
@@ -133,15 +208,35 @@ describe("project-host shared browser session", () => {
       const token = createProjectHostBrowserSessionToken({
         account_id: "00000000-1000-4000-8000-000000000001",
         now_ms: Date.now(),
-        ttl_seconds: 10,
+        restricted_exp_s: 1010,
       });
       expect(
         resolveProjectHostBrowserSessionFromCookieHeader(
           `cocalc_project_host_session=${encodeURIComponent(token)}`,
         ),
-      ).toMatchObject({ exp_s: 1010 });
+      ).toMatchObject({ exp_s: 1010, restricted_exp_s: 1010 });
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("rejects agent bearers at browser-session redemption", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: "00000000-1000-4000-8000-000000000001",
+      act: "account",
+      auth_actor: "agent",
+      iat: now_s,
+      exp: now_s + 600,
+    });
+
+    expect(() =>
+      issueProjectHostBrowserSessionFromBearer({
+        req: { headers: {}, socket: {} } as any,
+        res: createResponse(),
+        host_id: "00000000-1000-4000-8000-000000000099",
+        token: "agent-token",
+      }),
+    ).toThrow("agent credentials cannot create a browser session");
   });
 });

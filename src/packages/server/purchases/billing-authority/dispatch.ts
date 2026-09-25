@@ -165,8 +165,46 @@ async function dispatchAccountLocal(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   switch (operation) {
+    case "compute-funding-check":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-reservations")
+      ).checkComputeVmFundingLocal(input as any);
+    case "compute-funding-fallback":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-fallback-reason")
+      ).getComputeVmFallbackDecisionLocal(input as any);
+    case "compute-funding-lookup":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-lookup")
+      ).lookupComputeVmFundingLocal(input as any);
+    case "compute-funding-reserve":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-reservations")
+      ).reserveComputeVmFundingLocal(input as any);
+    case "compute-funding-settle":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-settlement")
+      ).settleComputeVmFundingLocal(input as any);
+    case "get-dedicated-host-financial-snapshot":
+      return await (
+        await import("@cocalc/server/project-host/admission")
+      ).getDedicatedHostFinancialSnapshotLocal(`${input.account_id ?? ""}`, {
+        needs_postpaid_snapshot: input.needs_postpaid_snapshot === true,
+      });
+    case "update-billing-account-home":
+      await (
+        await import("@cocalc/server/purchases/billing-account")
+      ).updateBillingAccountLifecycle({
+        account_id: `${input.account_id ?? ""}`,
+        home_bay_id: `${input.home_bay_id ?? ""}`,
+      });
+      return null;
     case "admin-create-membership-package-purchase":
       return await adminCreateMembershipPackagePurchase(input as any);
+    case "apply-funding-approval":
+      return await (
+        await import("@cocalc/server/compute/funding/approvals")
+      ).applyFundingApprovalCommand(input as any);
     case "admin-provision-site-license":
       return await adminProvisionSiteLicense(input as any);
     case "legacy-apply-financial-home-bay":
@@ -190,6 +228,19 @@ async function dispatchMaintenance(
   task: Extract<BillingAuthorityCommand, { kind: "maintenance" }>["task"],
 ): Promise<void> {
   switch (task) {
+    case "monthly-collections":
+      return await (
+        await import("../monthly-collection-worker")
+      ).maintainMonthlyCollections({ limit: 1 });
+    case "credit-transfers":
+      return await (
+        await import("../credit-transfers/worker")
+      ).default({ limit: 1 });
+    case "provider-refunds":
+      await (
+        await import("../provider-refund-worker")
+      ).reconcileProviderRefunds({ limit: 1 });
+      return;
     case "automatic-payments":
       return await maintainAutomaticPayments({ max_statements: 1 });
     case "auto-balance":

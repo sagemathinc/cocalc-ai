@@ -15,10 +15,13 @@ jest.mock("../use-bound-account", () => ({
 
 const installation = {
   installation_id: "test-installation",
+  account_id: "test-account",
+  agent_id: "test-agent",
+  agent_network_id: "test-network",
   label: "Security assistant",
   state: "active",
+  created_at: new Date().toISOString(),
   expires_at: new Date(Date.now() + 86400000).toISOString(),
-  destinations: [],
 };
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -39,6 +42,7 @@ test("keyboard revocation removes action and restores focus to the section headi
   const revoke = await screen.findByRole("button", {
     name: "Revoke Security assistant",
   });
+  expect(screen.queryByText("test-network")).toBeNull();
   await user.tab();
   expect(document.activeElement).toBe(revoke);
   jest.mocked(postAuthApi).mockResolvedValueOnce({
@@ -74,24 +78,4 @@ test("changed account prevents an action rather than reusing the new session", a
   await user.click(revoke);
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(postAuthApi).toHaveBeenCalledTimes(1);
-});
-
-test("site kill switch leaves existing installations inspectable and revocable", async () => {
-  jest
-    .mocked(postAuthApi)
-    .mockResolvedValue({ enabled: false, installations: [installation] });
-  const user = userEvent.setup();
-  render(<ExternalAgentInstallations />);
-  const revoke = await screen.findByRole("button", {
-    name: "Revoke Security assistant",
-  });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "External sending is disabled",
-  );
-  await user.click(revoke);
-  expect(postAuthApi).toHaveBeenLastCalledWith({
-    origin: "https://home.test",
-    endpoint: "auth/cli/agent/installations",
-    body: { action: "revoke", installation_id: installation.installation_id },
-  });
 });

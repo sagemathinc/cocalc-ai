@@ -86,6 +86,8 @@ mkdir -p "$OUT"
 cd "$ROOT"
 
 echo "- Bundle entry point with @vercel/ncc"
+"$ROOT/scripts/ncc.sh" build packages/backend/dist/chat-store/search-worker.js \
+  -o "$OUT"/chat-search-worker
 "$ROOT/scripts/ncc.sh" build packages/project/bin/cocalc-project.js \
   -o "$OUT"/bundle \
   --source-map \

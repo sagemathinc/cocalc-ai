@@ -7,6 +7,7 @@ const mockPoolQuery = jest.fn();
 const mockSend = jest.fn();
 const mockAdminAlert = jest.fn();
 const mockRecordMembershipAnalyticsEvent = jest.fn();
+const mockLockAccountSpending = jest.fn();
 const mockClient = {
   query: (...args: any[]) => mockPoolQuery(...args),
   release: jest.fn(),
@@ -16,6 +17,10 @@ jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => mockClient,
   getTransactionClient: jest.fn(async () => mockClient),
+}));
+
+jest.mock("./lock-account-spending", () => ({
+  lockAccountSpending: (...args: any[]) => mockLockAccountSpending(...args),
 }));
 
 jest.mock("@cocalc/server/messages/send", () => ({
@@ -41,6 +46,7 @@ import cancelSubscription, { parseSubscriptionId } from "./cancel-subscription";
 describe("cancelSubscription", () => {
   beforeEach(() => {
     mockPoolQuery.mockReset();
+    mockLockAccountSpending.mockReset().mockResolvedValue(undefined);
     mockSend.mockReset().mockResolvedValue(undefined);
     mockAdminAlert.mockReset().mockResolvedValue(undefined);
     mockRecordMembershipAnalyticsEvent.mockReset().mockResolvedValue(true);
@@ -138,6 +144,13 @@ describe("cancelSubscription", () => {
     });
 
     expect(mockPoolQuery).toHaveBeenCalledTimes(5);
+    expect(mockLockAccountSpending).toHaveBeenCalledWith(
+      mockClient,
+      "owner-account",
+    );
+    expect(mockLockAccountSpending.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPoolQuery.mock.invocationCallOrder[0],
+    );
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({
         to_ids: ["owner-account"],

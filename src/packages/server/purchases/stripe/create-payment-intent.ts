@@ -22,9 +22,12 @@ import { decimalToStripe, grandTotal } from "@cocalc/util/stripe/calc";
 import {
   RESUME_SUBSCRIPTION,
   SUBSCRIPTION_RENEWAL,
+  ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import { resumeSubscriptionSetPaymentIntent } from "./create-subscription-payment";
 import { bindSubscriptionRenewalPaymentIntent } from "../subscription-renewal-attempts";
+import { bindAdminMembershipPayment } from "../admin-membership-orders";
+import { toDecimal } from "@cocalc/util/money";
 import send, { name, support, url } from "@cocalc/server/messages/send";
 import { delay } from "awaiting";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
@@ -44,6 +47,7 @@ export default async function createPaymentIntent({
   processImmediately = true,
   idempotencyKeyPrefix,
   allowedPaymentMethodTypes,
+  beforeInvoiceCreate,
 }: {
   account_id: string;
   purpose: string;
@@ -69,6 +73,9 @@ export default async function createPaymentIntent({
   idempotencyKeyPrefix?: string;
   // Restrict automatic collection to explicitly supported instant methods.
   allowedPaymentMethodTypes?: string[];
+  // Reserve local fulfillment state after preflight, before a payable invoice
+  // can exist. Throwing here must prevent every invoice-creation attempt.
+  beforeInvoiceCreate?: () => Promise<void>;
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
   lineItems = normalizeStripeLineItems(lineItems) as LineItem[];
   logger.debug("createPaymentIntent", {
@@ -160,6 +167,7 @@ export default async function createPaymentIntent({
     ...invoiceCreateParams,
     automatic_tax: { enabled: true },
   };
+  await beforeInvoiceCreate?.();
   invoice = idempotencyKeyPrefix
     ? await stripe.invoices.create(createParams, {
         idempotencyKey: `${idempotencyKeyPrefix}:invoice`,
@@ -526,6 +534,14 @@ export async function recordPaymentIntent({
       attempt_id: metadata.renewal_attempt_id,
       payment_intent_id: paymentIntentId,
       stripe_invoice_id: metadata.invoice_id,
+    });
+  } else if (purpose === ADMIN_MEMBERSHIP_PACKAGE_PURCHASE) {
+    await bindAdminMembershipPayment({
+      account_id,
+      order_id: metadata.admin_membership_order_id,
+      payment_intent_id: paymentIntentId,
+      stripe_invoice_id: metadata.invoice_id,
+      amount: toDecimal(metadata.total_excluding_tax_usd).div(100),
     });
   }
 }

@@ -154,9 +154,7 @@ describe("getStripeCustomerId", () => {
     mockGetPool.mockReturnValue(pool);
     mockGetTransactionClient.mockResolvedValue(client);
     mockGetConn.mockResolvedValue(stripe);
-    pool.query.mockResolvedValue({ rows: [{}] });
-    pool.connect.mockResolvedValue(client);
-    client.query.mockImplementation(async (query: string) => {
+    pool.query.mockImplementation(async (query: string) => {
       if (query.startsWith("SELECT email_address")) {
         return {
           rows: [
@@ -169,6 +167,12 @@ describe("getStripeCustomerId", () => {
           ],
         };
       }
+      return { rows: [{}] };
+    });
+    pool.connect.mockResolvedValue(client);
+    client.query.mockImplementation(async (query: string) => {
+      if (query.includes("stripe_customer_id") && query.includes("FOR UPDATE"))
+        return { rows: [{ stripe_customer_id: null }] };
       return { rows: [] };
     });
     client.release.mockResolvedValue(undefined);
@@ -202,7 +206,7 @@ describe("getStripeCustomerId", () => {
     ).resolves.toBe("cus_created");
 
     expect(client.query).toHaveBeenCalledWith(
-      "SELECT email_address, display_name, first_name, last_name, stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
+      "SELECT stripe_customer_id FROM accounts WHERE account_id=$1 FOR UPDATE",
       ["account-1"],
     );
     expect(stripe.customers.create).toHaveBeenCalledWith(

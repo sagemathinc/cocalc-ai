@@ -11,13 +11,6 @@ import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
 const mockMarkdownInput = jest.fn();
-const mockMessagingRequests = jest.fn();
-jest.mock("@cocalc/frontend/agents/messaging-requests", () => ({
-  AgentMessagingRequests: (props: any) => {
-    mockMessagingRequests(props);
-    return <button>Review typed connection request</button>;
-  },
-}));
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
   default: (props: any) => {
@@ -94,36 +87,6 @@ describe("Codex fresh-auth attention", () => {
         "https://cocalc.test",
       ),
     ).toBeUndefined();
-  });
-
-  it("routes messaging attention to the typed approval renderer, never generic responses", () => {
-    render(
-      <CodexAttentionCard
-        initialRecord={{
-          ...record,
-          attention_kind: "approval",
-          action: {
-            kind: "agent_messaging",
-            reference,
-            expires_at: Date.now() + 60000,
-          },
-        }}
-      />,
-    );
-    expect(
-      screen.getByRole("region", { name: "Codex needs attention" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Review typed connection request" }),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Send response" })).toBeNull();
-    expect(mockMessagingRequests).toHaveBeenCalledWith({
-      projectId: record.project_id,
-      path: record.path,
-      threadId: record.thread_id,
-      requestId: reference,
-    });
-    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalled();
   });
 
   it("renders an accessible action instead of question controls", async () => {
@@ -233,6 +196,33 @@ describe("Codex question attention", () => {
         }),
       ),
     );
+    view.unmount();
+  });
+
+  it("keeps oversized drafts visible and enables submission after shortening", async () => {
+    const user = userEvent.setup();
+    const record = {
+      ...questionRecord,
+      questions: [{ ...questionRecord.questions[0], isOther: true }],
+    };
+    jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
+      ok: true,
+      records: [record],
+    });
+    const view = render(<CodexAttentionCard initialRecord={record} />);
+    const input = screen.getByRole("textbox", {
+      name: "Custom answer for Region",
+    });
+    await user.click(input);
+    fireEvent.change(input, { target: { value: "a".repeat(32_001) } });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("a".repeat(32_001));
+    expect(screen.getByRole("status")).toHaveTextContent("1 over the limit");
+    expect(
+      screen.getByRole("button", { name: "Send response" }),
+    ).toBeDisabled();
+    fireEvent.change(input, { target: { value: "a".repeat(32_000) } });
+    expect(screen.getByRole("button", { name: "Send response" })).toBeEnabled();
     view.unmount();
   });
 

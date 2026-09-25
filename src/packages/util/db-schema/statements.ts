@@ -84,6 +84,10 @@ Table({
       type: "timestamp",
       desc: "If an automatic payment was attempted at all for this statement (and any subscriptions that will soon renew), then this the timestamp of that attempt.  Only one attempt to make a paymentIntent ever happens automatically.",
     },
+    monthly_collection: {
+      type: "map",
+      desc: "Durable explicit-consent collection claim and outcome. Contains a stable attempt UUID, consent version and authorized amount. Unknown provider outcomes require reconciliation, never a new automatic payment.",
+    },
 
     automatic_payment_intent_id: {
       title: "Automatic Payment",

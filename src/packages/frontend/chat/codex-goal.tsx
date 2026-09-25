@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Button, Input, Modal } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -14,6 +14,8 @@ export function CodexGoalControl({
   request,
   ack,
   onChange,
+  openRequest = 0,
+  hideEmptyTrigger = false,
 }: {
   snapshot?: CodexGoalSnapshot;
   request?: CodexGoalCommand;
@@ -21,6 +23,8 @@ export function CodexGoalControl({
   onChange: (
     change: Omit<CodexGoalCommand, "id" | "sessionId">,
   ) => Promise<void>;
+  openRequest?: number;
+  hideEmptyTrigger?: boolean;
 }) {
   const narrow = useNarrowChatViewport();
   const [open, setOpen] = useState(false);
@@ -56,6 +60,10 @@ export function CodexGoalControl({
     setError("");
     setOpen(true);
   };
+  const showFromRequest = useEffectEvent(show);
+  useEffect(() => {
+    if (openRequest > 0) showFromRequest();
+  }, [openRequest]);
   const apply = async (change: Omit<CodexGoalCommand, "id" | "sessionId">) => {
     setBusy(true);
     setError("");
@@ -73,7 +81,12 @@ export function CodexGoalControl({
   return (
     <>
       <div
-        style={{ display: "flex", alignItems: "center", minWidth: 0, gap: 4 }}
+        style={{
+          display: hideEmptyTrigger && !label && !status ? "none" : "flex",
+          alignItems: "center",
+          minWidth: 0,
+          gap: 4,
+        }}
       >
         <button
           type="button"

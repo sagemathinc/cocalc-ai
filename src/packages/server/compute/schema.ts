@@ -59,3 +59,26 @@ export async function ensureComputeWorkQueueSchema(): Promise<void> {
     client.release();
   }
 }
+
+export async function ensureComputeScheduledStopSchema(): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('compute-scheduled-stop-schema-v1', 0))",
+    );
+    await client.query(`ALTER TABLE compute_vms
+      ADD COLUMN IF NOT EXISTS stop_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS stop_after_minutes INTEGER,
+      ADD COLUMN IF NOT EXISTS stop_generation INTEGER DEFAULT 0`);
+    await client.query(`CREATE INDEX IF NOT EXISTS compute_vms_scheduled_stop
+      ON compute_vms (owning_bay_id, stop_at)
+      WHERE deleted_at IS NULL AND stop_at IS NOT NULL`);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}

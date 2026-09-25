@@ -1,4 +1,5 @@
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 import TTL from "@isaacs/ttlcache";
 import type {
   MembershipClass,
@@ -52,8 +53,9 @@ function tierToEntitlements(
 async function buildMembershipCandidates(
   account_id: string,
   tiers: Record<string, MembershipTierRecord>,
+  client?: PoolClient,
 ): Promise<MembershipCandidate[]> {
-  const pool = getPool("medium");
+  const pool = client ?? getPool("medium");
   const [subResult, adminResult, adminGroupResult, grants] = await Promise.all([
     pool.query(
       `SELECT s.id, s.metadata, s.cost, s.interval,
@@ -96,21 +98,26 @@ async function buildMembershipCandidates(
          AND coalesce(deleted,false)=false`,
       [account_id],
     ),
-    listActiveMembershipGrantsForAccount(account_id),
+    listActiveMembershipGrantsForAccount(account_id, client),
   ]);
 
   const candidates: MembershipCandidate[] = [];
-  const packageMetadata = await getMembershipPackageMetadataForGrants(grants);
+  const packageMetadata = await getMembershipPackageMetadataForGrants(
+    grants,
+    client,
+  );
   const [siteLicenseDisplayNames, teamLicenseInfo] = await Promise.all([
-    getCurrentSiteLicenseDisplayNamesForGrants(grants),
-    getCurrentTeamLicenseInfoForPackageMetadata(packageMetadata),
+    getCurrentSiteLicenseDisplayNamesForGrants(grants, client),
+    getCurrentTeamLicenseInfoForPackageMetadata(packageMetadata, client),
   ]);
 
   for (const sub of subResult.rows) {
     const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getSeedMembershipTierById({ id: membershipClass }));
+      (client
+        ? undefined
+        : await getSeedMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "subscription",
@@ -133,7 +140,9 @@ async function buildMembershipCandidates(
     const membershipClass = admin.membership_class as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getSeedMembershipTierById({ id: membershipClass }));
+      (client
+        ? undefined
+        : await getSeedMembershipTierById({ id: membershipClass }));
     candidates.push({
       class: membershipClass,
       source: "admin",
@@ -161,7 +170,9 @@ async function buildMembershipCandidates(
     const membershipClass = grant.membership_class as MembershipClass;
     const tier =
       tiers[membershipClass] ??
-      (await getSeedMembershipTierById({ id: membershipClass }));
+      (client
+        ? undefined
+        : await getSeedMembershipTierById({ id: membershipClass }));
     const siteLicenseId = getMetadataString(grant.metadata, "site_license_id");
     const siteLicenseDisplayName =
       siteLicenseId == null
@@ -229,6 +240,7 @@ async function buildMembershipCandidates(
 
 async function getMembershipPackageMetadataForGrants(
   grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+  client?: PoolClient,
 ): Promise<Map<string, Record<string, unknown> | null>> {
   const packageIds = Array.from(
     new Set(
@@ -240,7 +252,7 @@ async function getMembershipPackageMetadataForGrants(
   if (packageIds.length === 0) {
     return new Map();
   }
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await (client ?? getPool("medium")).query<{
     id: string;
     metadata: Record<string, unknown> | null;
   }>(
@@ -254,6 +266,7 @@ async function getMembershipPackageMetadataForGrants(
 
 async function getCurrentTeamLicenseInfoForPackageMetadata(
   packageMetadata: Map<string, Record<string, unknown> | null>,
+  client?: PoolClient,
 ): Promise<
   Map<string, { status?: string; current_period_end?: Date | string }>
 > {
@@ -267,7 +280,7 @@ async function getCurrentTeamLicenseInfoForPackageMetadata(
   if (teamLicenseIds.length === 0) {
     return new Map();
   }
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await (client ?? getPool("medium")).query<{
     id: string;
     status?: string | null;
     current_period_end?: Date | string | null;
@@ -290,6 +303,7 @@ async function getCurrentTeamLicenseInfoForPackageMetadata(
 
 async function getCurrentSiteLicenseDisplayNamesForGrants(
   grants: Awaited<ReturnType<typeof listActiveMembershipGrantsForAccount>>,
+  client?: PoolClient,
 ): Promise<Map<string, { name?: string; organization_name?: string }>> {
   const siteLicenseIds = Array.from(
     new Set(
@@ -301,7 +315,7 @@ async function getCurrentSiteLicenseDisplayNamesForGrants(
   if (siteLicenseIds.length === 0) {
     return new Map();
   }
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await (client ?? getPool("medium")).query<{
     id: string;
     name?: string | null;
     organization_name?: string | null;
@@ -341,12 +355,19 @@ function formatDate(date: Date | string): string {
 
 async function buildMembershipResolutionForAccount(
   account_id: string,
+  options?: { client: PoolClient; tiers: Record<string, MembershipTierRecord> },
 ): Promise<{
   candidates: MembershipCandidate[];
   selected: MembershipResolution;
 }> {
-  const tiers = await getSeedMembershipTierMap({ includeDisabled: true });
-  const candidates = await buildMembershipCandidates(account_id, tiers);
+  const tiers =
+    options?.tiers ??
+    (await getSeedMembershipTierMap({ includeDisabled: true }));
+  const candidates = await buildMembershipCandidates(
+    account_id,
+    tiers,
+    options?.client,
+  );
   const selected = pickBestMembership(candidates, tiers);
   return { candidates, selected };
 }
@@ -608,8 +629,15 @@ export async function resolveMembershipDetailsForAccount(
 
 export async function resolveMembershipForAccount(
   account_id: string,
+  options?: { client: PoolClient; tiers: Record<string, MembershipTierRecord> },
 ): Promise<MembershipResolution> {
-  const { selected } = await buildMembershipResolutionForAccount(account_id);
-  const override = await getActiveAccountEntitlementOverride(account_id);
+  const { selected } = await buildMembershipResolutionForAccount(
+    account_id,
+    options,
+  );
+  const override = await getActiveAccountEntitlementOverride(
+    account_id,
+    options?.client,
+  );
   return applyAccountEntitlementOverride({ membership: selected, override });
 }

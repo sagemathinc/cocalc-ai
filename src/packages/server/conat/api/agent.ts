@@ -6,36 +6,36 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+import {
+  createAgentNetwork as createAgentNetworkImpl,
+  resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,
+  updateAgentNetwork as updateAgentNetworkImpl,
+} from "@cocalc/server/agents/personal";
 export {
   listNamedAgents,
   nameAgent,
-  listPersonalConnections,
-  grantPersonalConnection,
-  setPersonalConnectionState,
+  retireNamedAgent,
+  listAgentNetworks,
+  listAgentNetworkActivity,
+  inspectAgentNetworkAttempt,
+  listAgentNetworkProposals,
   setPersonalMessagingState,
-  listPersonalConnectionRequests,
-  resolvePersonalConnectionRequest,
 } from "@cocalc/server/agents/personal";
-export const grantRpcLink = rpc.grantRpcLink;
-export const revokeRpcLink = rpc.revokeRpcLink;
-export const listRpcLinks = rpc.listRpcLinks;
+export const createAgentNetwork = createAgentNetworkImpl;
+export const updateAgentNetwork = updateAgentNetworkImpl;
+export const resolveAgentNetworkProposal = resolveAgentNetworkProposalImpl;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;
+export const startFreshConversation = identities.startFreshConversation;
 export const listIdentities = identities.listIdentities;
 export const getIdentity = identities.getIdentity;
 export const resolveIdentity = identities.resolveIdentity;
-export const listGrants = identities.listGrants;
-export const listMessageReceipts = identities.listMessageReceipts;
-export const grantMessaging = identities.grantMessaging;
-export const revokeMessaging = identities.revokeMessaging;
 export const disableIdentity = identities.disableIdentity;
 export const recoverIdentity = identities.recoverIdentity;
 export const issueIdentity = identities.issueIdentity;
 export const getMentionIdentity = identities.getMentionIdentity;
 export const endIdentityRun = identities.endIdentityRun;
-export const authorizeDelivery = identities.authorizeDelivery;
-export const beginMessageAdmission = identities.beginMessageAdmission;
 import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { projectApiClient } from "@cocalc/conat/project/api";
@@ -50,13 +50,13 @@ import type {
   AgentRunRequest,
   AgentRunResponse,
 } from "@cocalc/conat/hub/api/agent";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { resolveCurrentCodexModel } from "@cocalc/util/ai/codex";
 import * as projects from "./projects";
 import * as system from "./system";
 import { assertCollab } from "./util";
 import { assertAiLaunchAllowed } from "@cocalc/server/launch/kill-switches";
 
-const DEFAULT_PLANNER_MODEL = "gpt-5.4-mini";
+const DEFAULT_PLANNER_MODEL = "gpt-6-luna";
 const PLANNER_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
 
 function createBridge({
@@ -264,10 +264,7 @@ function parsePlannerOutput({
 }
 
 function getPlannerCodexModel(explicit?: string): string {
-  if (typeof explicit === "string" && isCodexModelName(explicit.trim())) {
-    return explicit.trim();
-  }
-  return DEFAULT_PLANNER_MODEL;
+  return resolveCurrentCodexModel(explicit) ?? DEFAULT_PLANNER_MODEL;
 }
 
 let plannerCodexAgent: Promise<AcpAgent> | undefined;
@@ -420,9 +417,7 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       : fallbackManifest;
   const manifest = manifest0.filter((entry) => !!entry?.actionType);
   let raw = "";
-  const configuredPlannerModel = [opts.model]
-    .map((value) => `${value ?? ""}`.trim())
-    .find((value) => isCodexModelName(value));
+  const configuredPlannerModel = resolveCurrentCodexModel(opts.model);
   try {
     raw = await runPlannerWithCodex({
       account_id,

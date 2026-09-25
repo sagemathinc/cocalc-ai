@@ -893,6 +893,8 @@ describe("membership packages", () => {
   });
 
   it("reserves custom package periods for admin-assisted purchases", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
     const starts_at = new Date("2026-09-01T00:00:00.000Z");
     const expires_at = new Date("2027-09-01T00:00:00.000Z");
     const product = {
@@ -910,7 +912,7 @@ describe("membership packages", () => {
     );
     await expect(
       purchaseMembershipPackage({
-        account_id: uuid(),
+        account_id,
         amount: 20,
         product,
       }),
@@ -1291,6 +1293,57 @@ describe("membership packages", () => {
       `course seat project must be a student project linked to course ${course_project_id}`,
     );
   });
+
+  it.each([true, false])(
+    "assigns seats for an additional course (explicit metadata: %s)",
+    async (explicit) => {
+      const owner_account_id = uuid(),
+        student_account_id = uuid();
+      const original = uuid(),
+        linked = uuid(),
+        student_project_id = uuid();
+      await createTestAccount(owner_account_id);
+      await createTestAccount(student_account_id);
+      await createCourseStudentProject({
+        project_id: student_project_id,
+        course_project_id: linked,
+        student_account_id,
+        owner_account_id,
+      });
+      const package_id = await createTestMembershipPackage({
+        owner_account_id,
+        kind: "course",
+        membership_class: "student",
+        seat_count: 1,
+        metadata: {
+          course_project_id: original,
+          course_project_ids: [original, linked],
+        },
+      });
+      await expect(
+        assignMembershipPackageSeat({
+          package_id,
+          account_id: student_account_id,
+          assigned_by_account_id: owner_account_id,
+          metadata: {
+            project_id: student_project_id,
+            ...(explicit ? { course_project_id: linked } : {}),
+          },
+        }),
+      ).resolves.toBeDefined();
+      await expect(
+        assignMembershipPackageSeat({
+          package_id,
+          account_id: student_account_id,
+          assigned_by_account_id: owner_account_id,
+          metadata: {
+            project_id: student_project_id,
+            course_project_id: original,
+          },
+        }),
+      ).rejects.toThrow("course seat project");
+    },
+  );
 
   it("rejects assigning a course seat to another student's project", async () => {
     const owner_account_id = uuid();

@@ -49,6 +49,48 @@ what Codex changes, keep terminals and notebooks running, use TimeTravel, and
 share the same project state with collaborators.
 `;
 
+export const MY_AGENTS_BODY = String.raw`
+## What Agents is
+
+**Agents** is an experimental workspace for explicitly registered CoCalc
+agents. It puts named agents from different projects in one list and opens each
+agent's existing chat, artifacts, and terminal frames without making the
+project filesystem layout the primary navigation.
+
+## Enable the workspace
+
+1. Open account **AI** settings.
+2. Turn on **Enable Agents Page (Experimental)**.
+3. Open **Agents** in the main navigation.
+
+Only registered named agents appear. Ordinary project chats are not scanned or
+automatically imported. Use **Open in project** whenever you need the complete
+project desktop.
+
+Use the star control to pin important agents. Pinned agents have their own
+manual order. The remaining list can follow your recently opened agents or a
+custom order; drag rows with a pointer or keyboard to arrange it. This
+organization is personal to your account and does not affect collaborators.
+
+**New Agent** lets you choose an existing project and working directory, name
+the agent, and optionally prepare its first request. The request is preserved as
+a draft in the new agent so you can review it before pressing **Send**. Creating
+the agent alone does not start project compute or approve messaging links.
+
+When enabled, Agents is also the normal destination after signing in.
+Explicit links to projects, files, settings, and other destinations continue to
+open the requested destination.
+
+Opening an agent reads its existing project-backed chat and does not by itself
+start project compute. Sending a prompt, running code, or opening a terminal can
+start compute under the project's normal authorization and quota rules.
+
+This preference controls discoverability only. Turning it off does not stop
+running work, revoke messaging connections, remove external installations, or
+change project permissions. Existing connection management remains available
+under account **Agents** settings.
+`;
+
 export const AI_CREDENTIALS_BODY = String.raw`
 ## What AI credentials are for
 

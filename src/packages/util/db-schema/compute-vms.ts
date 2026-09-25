@@ -146,6 +146,18 @@ Table({
       type: "timestamp",
       desc: "Optional guest-independent deletion deadline; membership spending limits still apply when null.",
     },
+    stop_at: {
+      type: "timestamp",
+      desc: "Absolute scheduled stop deadline; never deletes retained disks.",
+    },
+    stop_after_minutes: {
+      type: "number",
+      desc: "Saved owner stop duration. Null preserves untimed legacy VMs or an explicit opt-out.",
+    },
+    stop_generation: {
+      type: "number",
+      desc: "Monotonic scheduled-stop policy/start fencing generation.",
+    },
     stopped_at: { type: "timestamp", desc: "Most recent stop time." },
     deleted_at: { type: "timestamp", desc: "Logical deletion completion." },
     allow_on_demand_fallback: {

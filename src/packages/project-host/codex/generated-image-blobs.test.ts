@@ -1,4 +1,5 @@
 const callHub = jest.fn();
+const setAttachmentBlobReader = jest.fn();
 const setGeneratedImageBlobWriter = jest.fn();
 const getMasterConatClient = jest.fn(() => ({ id: "master-client" }));
 const getLocalHostId = jest.fn(() => "host-1");
@@ -19,6 +20,7 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 }));
 
 jest.mock("@cocalc/lite/hub/acp", () => ({
+  setAttachmentBlobReader: (...args: any[]) => setAttachmentBlobReader(...args),
   setGeneratedImageBlobWriter: (...args: any[]) =>
     setGeneratedImageBlobWriter(...args),
 }));
@@ -35,6 +37,7 @@ describe("project-host generated image blob writer", () => {
   beforeEach(() => {
     jest.resetModules();
     callHub.mockReset();
+    setAttachmentBlobReader.mockReset();
     setGeneratedImageBlobWriter.mockReset();
     getMasterConatClient.mockReset().mockReturnValue({ id: "master-client" });
     getLocalHostId.mockReset().mockReturnValue("host-1");
@@ -69,6 +72,28 @@ describe("project-host generated image blob writer", () => {
           blob: blob.toString("base64"),
         },
       ],
+      timeout: 60_000,
+    });
+  });
+
+  it("reads chat attachment blobs through the master hub", async () => {
+    const blob = Buffer.from("image");
+    callHub.mockResolvedValue({ blob: blob.toString("base64") });
+    const { initCodexAttachmentBlobReader } =
+      await import("./generated-image-blobs");
+
+    initCodexAttachmentBlobReader();
+
+    expect(setAttachmentBlobReader).toHaveBeenCalledTimes(1);
+    const reader = setAttachmentBlobReader.mock.calls[0][0];
+    await expect(
+      reader({ uuid: "blob-uuid", projectId: "project-1" }),
+    ).resolves.toEqual(blob);
+    expect(callHub).toHaveBeenCalledWith({
+      client: { id: "master-client" },
+      host_id: "host-1",
+      name: "db.getBlob",
+      args: [{ project_id: "project-1", uuid: "blob-uuid" }],
       timeout: 60_000,
     });
   });

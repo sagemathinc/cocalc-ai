@@ -1,0 +1,13 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- openLink: "cocalc:///missing-page"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "This link could not be opened"
+    timeout: 15000
+- assertVisible: "Open saved accounts"
+- takeScreenshot: unknown-link
+- tapOn: "Open saved accounts"
+- assertVisible: "CoCalc on mobile"

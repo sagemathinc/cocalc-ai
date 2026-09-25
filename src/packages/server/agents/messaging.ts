@@ -7,104 +7,51 @@ import type { Client } from "@cocalc/conat/core/client";
 import {
   agentInboxPrefix,
   parseAgentMessagingSubject,
-  validateAgentMessage,
   validateAgentInspection,
   type AgentInspectionRequest,
   type AgentInspectionResult,
-  type AgentMessageRequest,
-  type AgentMessageReceipt,
 } from "@cocalc/conat/agents/protocol";
 import getLogger from "@cocalc/backend/logger";
-import { agentStore, agentMessagingEnabled } from "./store";
+import { agentStore } from "./store";
 import { assertAgent, assertRun } from "./access";
-import { ownMessageReceipts } from "./inspection";
-import { personalMessagingEnabled } from "./personal";
 import { startAgentMessagingMaintenance } from "./maintenance";
+import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
 
 const logger = getLogger("agents:messaging");
-function receipt(
-  row: AgentMessageReceipt & {
-    execution_receipt?: AgentMessageReceipt["execution"];
-  },
-): AgentMessageReceipt {
-  return {
-    message_id: row.message_id,
-    request_id: row.request_id,
-    target_agent_id: row.target_agent_id,
-    state: row.state,
-    ...(row.execution_receipt ? { execution: row.execution_receipt } : {}),
-  };
-}
-
-export function acceptAgentMessage(
-  subject: string,
-  request: AgentMessageRequest,
-): Promise<AgentMessageReceipt>;
 export function acceptAgentMessage(
   subject: string,
   request: AgentInspectionRequest,
 ): Promise<AgentInspectionResult>;
 export async function acceptAgentMessage(
   subject: string,
-  request: AgentMessageRequest | AgentInspectionRequest,
-): Promise<AgentMessageReceipt | AgentInspectionResult> {
-  if (request?.action === "send")
-    throw new Error(
-      "Legacy delivery is retired; use --rpc with an approved RPC link",
-    );
-  if (request?.action === "receipt") validateAgentMessage(request);
-  else validateAgentInspection(request);
+  request: AgentInspectionRequest,
+): Promise<AgentInspectionResult> {
+  validateAgentInspection(request);
   const { agent_id, run_id } = parseAgentMessagingSubject(subject);
   const db = agentStore();
   const run = await db.activeRun(agent_id, run_id);
   await assertRun(run);
   const source = await db.get(agent_id);
   await assertAgent(source);
-  if (request.action === "whoami")
-    return {
-      identity: source,
-      run_id,
-      protocol_version: 1,
-      capabilities: ["whoami", "receipt", "messages"],
-    };
-  if (request.action === "destinations")
-    throw new Error(
-      "Legacy destinations are retired; use agent rpc destinations",
-    );
-  if (
-    personalMessagingEnabled() &&
-    (request.action === "messages" || request.action === "receipt")
-  )
-    throw new Error(
-      "Legacy shared receipts are not available to personal runs; use RPC inspect",
-    );
-  if (request.action === "messages")
-    return ownMessageReceipts(agent_id, request);
-  if (request.action === "receipt") {
-    const row = (
-      await db.query(
-        "SELECT * FROM agent_message_inbox WHERE source_agent_id=$1 AND request_id=$2",
-        [agent_id, request.request_id],
-      )
-    ).rows[0];
-    if (!row) throw new Error("receipt not found");
-    return receipt(row);
-  }
-  throw new Error(
-    "Legacy delivery is retired; use an explicitly approved RPC link and --rpc",
-  );
+  return {
+    identity: source,
+    run_id,
+    protocol_version: 3,
+    capabilities: ["whoami"],
+  };
 }
 
 export async function startAgentMessaging(
   client: Client,
   external = false,
 ): Promise<() => Promise<void>> {
-  if (!agentMessagingEnabled()) return async () => {};
-  const binary = process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED === "1";
-  const stopExternal =
-    !external && process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED === "1"
-      ? await startAgentMessaging(client, true)
-      : undefined;
+  if (!external) {
+    await retireLegacyAgentMessagingAuthority();
+  }
+  const binary = true;
+  const stopExternal = !external
+    ? await startAgentMessaging(client, true)
+    : undefined;
   const stopMaintenance = !external
     ? startAgentMessagingMaintenance()
     : undefined;
@@ -150,7 +97,7 @@ export async function startAgentMessaging(
         if (typeof reply !== "string" || !reply.startsWith(`${replyPrefix}.`))
           continue;
         const request = message.data;
-        if (request?.version === 2) {
+        if (request?.version === 3) {
           if (activeRpc.size >= (binary ? 4 : 32)) {
             await message.respond({
               error: "agent RPC admission capacity reached",
@@ -169,7 +116,7 @@ export async function startAgentMessaging(
                 .respond({
                   error:
                     error instanceof Error &&
-                    /^(approval_required|grant_expired|grant_paused|grant_revoked|principal_mismatch|connection_request_[a-z_]+)$/.test(
+                    /^(approval_required|network_paused|network_closed|network_stale|not_a_member|principal_mismatch|account_disabled|agent_unavailable)$/.test(
                       error.message,
                     )
                       ? error.message
@@ -182,7 +129,7 @@ export async function startAgentMessaging(
           void task.finally(() => activeRpc.delete(task));
           continue;
         }
-        if (external) throw new Error("external agents require RPC version 2");
+        if (external) throw new Error("external agents require RPC version 3");
         const result = await acceptAgentMessage(message.subject, request);
         await message.respond({ result });
       } catch (error) {

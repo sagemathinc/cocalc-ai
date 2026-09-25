@@ -16,8 +16,8 @@ function fixture(t, override = {}) {
     writeFileSync(
       join(dir, `manifest-linux-${arch}.json`),
       JSON.stringify({
-        version: "0.153.4",
-        tag: "rust-v0.153.4",
+        version: "0.156.0",
+        tag: "rust-v0.156.0",
         upstream_head: "pinned-commit",
         patches: ["tcp-timeout.patch", "lock-version.patch"],
         linux_libc: "musl",

@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 
 const mockGetSiteOpenAiApiKeyFromHub = jest.fn(async () => "site-key");
-const mockHasSubscriptionAuthInRegistry = jest.fn(async () => true);
+const mockPullSubscriptionAuthFromRegistry = jest.fn(async () => ({
+  pulled: false,
+}));
 
 function chatGptAccessToken({
   accountId,
@@ -40,9 +42,8 @@ jest.mock("./codex/codex-auth-registry", () => ({
   getProjectOpenAiApiKeyFromRegistry: jest.fn(async () => "project-key"),
   getSiteOpenAiApiKeyFromHub: (...args: unknown[]) =>
     mockGetSiteOpenAiApiKeyFromHub(...args),
-  hasSubscriptionAuthInRegistry: (...args: unknown[]) =>
-    mockHasSubscriptionAuthInRegistry(...args),
-  pullSubscriptionAuthFromRegistry: jest.fn(async () => ({ pulled: false })),
+  pullSubscriptionAuthFromRegistry: (...args: unknown[]) =>
+    mockPullSubscriptionAuthFromRegistry(...args),
   syncSubscriptionAuthToRegistryIfChanged: jest.fn(async () => undefined),
   touchSubscriptionAuthInRegistry: jest.fn(async () => undefined),
 }));
@@ -62,7 +63,9 @@ describe("Codex auth source preference", () => {
     await fs.mkdir(path.join(root, accountId), { recursive: true });
     await fs.writeFile(path.join(root, accountId, "auth.json"), "{}\n");
     mockGetSiteOpenAiApiKeyFromHub.mockClear();
-    mockHasSubscriptionAuthInRegistry.mockClear();
+    mockPullSubscriptionAuthFromRegistry.mockReset().mockResolvedValue({
+      pulled: false,
+    });
   });
 
   afterEach(async () => {
@@ -96,7 +99,50 @@ describe("Codex auth source preference", () => {
     expect(mockGetSiteOpenAiApiKeyFromHub).toHaveBeenCalledWith({
       forceRefresh: true,
     });
-    expect(mockHasSubscriptionAuthInRegistry).not.toHaveBeenCalled();
+    expect(mockPullSubscriptionAuthFromRegistry).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed account and credential ids before resolving cache paths", async () => {
+    const { resolveSubscriptionCodexHome } = await import("./codex/codex-auth");
+    expect(() => resolveSubscriptionCodexHome("..")).toThrow(
+      "invalid account id",
+    );
+    expect(() => resolveSubscriptionCodexHome(accountId, "..")).toThrow(
+      "invalid subscription credential id",
+    );
+  });
+
+  it("fails closed when a cached subscription cannot be reauthorized", async () => {
+    mockPullSubscriptionAuthFromRegistry.mockRejectedValueOnce(
+      new Error("hub unavailable"),
+    );
+    const { resolveCodexAuthRuntime } = await import("./codex/codex-auth");
+    await expect(
+      resolveCodexAuthRuntime({
+        projectId: "project-1",
+        accountId,
+        preference: "subscription",
+      }),
+    ).rejects.toThrow("hub unavailable");
+  });
+
+  it("uses a fail-safe wire mode for explicit credential selection", async () => {
+    const credentialId = "00000000-0000-4000-8000-000000000002";
+    const codexHome = path.join(root, accountId, credentialId);
+    await fs.mkdir(codexHome, { recursive: true });
+    await fs.writeFile(path.join(codexHome, "auth.json"), "{}\n");
+    const { resolveCodexAuthRuntime } = await import("./codex/codex-auth");
+    const runtime = await resolveCodexAuthRuntime({
+      projectId: "project-1",
+      accountId,
+      preference: "subscription-credential",
+      credentialId,
+    });
+    expect(runtime).toMatchObject({
+      source: "subscription",
+      credentialId,
+      codexHome,
+    });
   });
 
   it("changes the subscription identity when credentials are refreshed", async () => {

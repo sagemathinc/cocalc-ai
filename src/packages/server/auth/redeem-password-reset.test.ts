@@ -55,4 +55,19 @@ describe("redeemPasswordReset", () => {
     ).rejects.toThrow("Use Google single sign-on to access this account.");
     expect(mockSetClusterAccountPasswordFromReset).not.toHaveBeenCalled();
   });
+
+  it("binds the password update to the email proven by the reset token", async () => {
+    const { default: redeemPasswordReset } =
+      await import("./redeem-password-reset");
+    const password = "correct horse battery staple 12345!";
+
+    await expect(redeemPasswordReset(password, "reset-id")).resolves.toBe(
+      "00000000-0000-4000-8000-000000000001",
+    );
+    expect(mockSetClusterAccountPasswordFromReset).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      email_address: "user@example.com",
+      password,
+    });
+  });
 });

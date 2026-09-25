@@ -7,10 +7,14 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { workspaceChatStoreStats } from "./workspace-chat-store";
+import {
+  workspaceChatStoreStats,
+  workspaceChatStoreSearch,
+} from "./workspace-chat-store";
 
 let workspaceRuntime = true;
 const getChatStoreStats = jest.fn(async (opts) => opts);
+const searchChatStore = jest.fn(async (opts, account) => ({ opts, account }));
 const unexpectedServiceCall = jest.fn(() => {
   throw Error("path mapping must not start a filesystem or notebook service");
 });
@@ -38,6 +42,7 @@ jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
 
 jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
   getChatStoreStats: (opts) => getChatStoreStats(opts),
+  searchChatStore: (opts, account) => searchChatStore(opts, account),
 }));
 
 describe("workspace chat store", () => {
@@ -81,5 +86,28 @@ describe("workspace chat store", () => {
       }),
     ).rejects.toThrow("call a project-host endpoint via project routing");
     expect(getChatStoreStats).not.toHaveBeenCalled();
+  });
+
+  it("routes artifact queries through safe project paths and separate account admission", async () => {
+    await workspaceChatStoreSearch(
+      {
+        project_id: "project-1",
+        chat_path: "/home/user/a.chat",
+        query: "",
+        thread_id: "t",
+        artifacts: true,
+        offset: 25,
+      },
+      "account",
+    );
+    expect(searchChatStore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_path: join(root, "project-1", "a.chat"),
+        artifacts: true,
+        thread_id: "t",
+        offset: 25,
+      }),
+      "account",
+    );
   });
 });

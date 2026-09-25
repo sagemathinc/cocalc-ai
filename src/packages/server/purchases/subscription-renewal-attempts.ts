@@ -9,6 +9,8 @@ import type {
   SubscriptionRenewalAttemptState,
 } from "@cocalc/util/db-schema/subscription-renewal-attempts";
 import { toDecimal } from "@cocalc/util/money";
+import { lockAccountSpending } from "./lock-account-spending";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 type Queryable = Pick<PoolClient, "query">;
 
@@ -102,6 +104,8 @@ export async function scheduleSubscriptionRenewalAttempt({
 }
 
 export async function scheduleMissingSubscriptionRenewalAttempts(): Promise<number> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   await cancelStaleSubscriptionRenewalAttempts();
   await getPool().query(
     `UPDATE subscription_renewal_attempts
@@ -131,7 +135,7 @@ export async function scheduleMissingSubscriptionRenewalAttempts(): Promise<numb
       WHERE s.metadata->>'type'='membership'
         AND s.status='active'
         AND NOT EXISTS (
-          SELECT 1 FROM accounts AS account
+          SELECT 1 FROM ${accountTable} AS account
            WHERE account.account_id=s.account_id
              AND (account.banned IS TRUE OR account.deleted IS TRUE)
         )
@@ -203,6 +207,20 @@ export async function claimDueSubscriptionRenewalAttempts({
 }: {
   limit: number;
 }): Promise<SubscriptionRenewalAttempt[]> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const { isBillingAuthorityEnabled } =
+    await import("./billing-authority/config");
+  const accountTable = billingAccountsTable();
+  const legacyHomePredicate = isBillingAuthorityEnabled()
+    ? ""
+    : `AND EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
+            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
+          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))`;
+  const queryParams: (number | string)[] = [limit, RENEWAL_ATTEMPT_LEASE_MS];
+  if (legacyHomePredicate) {
+    queryParams.push(getConfiguredBayId());
+  }
   const { rows } = await getPool().query<SubscriptionRenewalAttempt>(
     `WITH candidates AS (
        SELECT a.id
@@ -214,11 +232,12 @@ export async function claimDueSubscriptionRenewalAttempts({
           AND s.status='active'
           AND s.current_period_end=a.period_end
         WHERE a.state IN ('scheduled','processing')
+          ${legacyHomePredicate}
           AND a.not_before <= NOW()
           AND a.next_attempt_at <= NOW()
           AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= NOW())
           AND NOT EXISTS (
-            SELECT 1 FROM accounts AS account
+            SELECT 1 FROM ${accountTable} AS account
              WHERE account.account_id=a.account_id
                AND (account.banned IS TRUE OR account.deleted IS TRUE)
           )
@@ -239,7 +258,7 @@ export async function claimDueSubscriptionRenewalAttempts({
        FROM candidates
       WHERE a.id=candidates.id
       RETURNING a.*`,
-    [limit, RENEWAL_ATTEMPT_LEASE_MS],
+    queryParams,
   );
   return rows;
 }
@@ -294,6 +313,7 @@ export async function bindSubscriptionRenewalPaymentIntent({
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    await lockAccountSpending(client, account_id);
     const { rows } = await client.query<SubscriptionRenewalAttempt>(
       `UPDATE subscription_renewal_attempts
           SET payment_intent_id=$4,

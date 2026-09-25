@@ -46,7 +46,7 @@ jest.mock("./settings-page-registry", () => ({
     "my-agents": {
       key: "my-agents",
       component: () => <p>My agents directory content</p>,
-      label: { id: "agents", defaultMessage: "My Agents" },
+      label: { id: "agents", defaultMessage: "Agents" },
       icon: "robot",
     },
     profile: {
@@ -118,7 +118,7 @@ test("resizing automatically switches navigation while preserving the selected p
   view.rerender(<Page />);
   expect(screen.queryByRole("menu")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Settings menu" })).toBeTruthy();
-  expect(screen.getByRole("heading", { name: "My Agents" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Agents" })).toBeTruthy();
   expect(screen.getByText("My agents directory content")).toBeTruthy();
   mockWidth = 1000;
   view.rerender(<Page />);
@@ -134,5 +134,5 @@ test("mobile settings menu retains readable page labels", () => {
   mockMobile = true;
   render(<Page />);
   expect(screen.getByRole("combobox", { name: "Settings menu" })).toBeTruthy();
-  expect(screen.getAllByText("My Agents").length).toBeGreaterThan(1);
+  expect(screen.getAllByText("Agents").length).toBeGreaterThan(1);
 });

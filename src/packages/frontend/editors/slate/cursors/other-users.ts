@@ -91,6 +91,8 @@ export const useCursorDecorate = ({
       }[] = [];
 
       if (Text.isText(node)) {
+        // Slate can briefly render an entry removed by an RTC-driven update.
+        if (!Node.has(editor, path)) return ranges;
         const lineEntry = Editor.above(editor, {
           at: path,
           match: (n) => Element.isElement(n) && n.type === "code_line",

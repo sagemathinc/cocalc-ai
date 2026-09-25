@@ -9,6 +9,7 @@ module.exports = {
     "^@cocalc/util/(.*)$": "<rootDir>/../util/dist/$1",
   },
   roots: [
+    "<rootDir>/artifacts",
     "<rootDir>/hub/acp/__tests__",
     "<rootDir>/hub/acp/executor/__tests__",
   ],

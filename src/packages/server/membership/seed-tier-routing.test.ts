@@ -85,6 +85,21 @@ describe("seed membership tier routing", () => {
     });
   });
 
+  it("uses the supplied transaction for a local seed tier lookup", async () => {
+    const { getSeedMembershipTierById } = await import("./tiers");
+    const query = jest.fn(async () => ({
+      rows: [{ id: "transaction-tier", disabled: false }],
+    }));
+    const tier = await getSeedMembershipTierById({
+      id: "transaction-tier",
+      client: { query } as any,
+    });
+    expect(tier?.id).toBe("transaction-tier");
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(getPoolMock).not.toHaveBeenCalled();
+    expect(getInterBayBridgeMock).not.toHaveBeenCalled();
+  });
+
   it("resolves a tier by id from the seed bay on attached bays", async () => {
     const getMembershipTiers = jest.fn(async () => [
       {

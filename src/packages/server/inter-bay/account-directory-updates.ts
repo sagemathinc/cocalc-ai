@@ -16,10 +16,12 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export async function updateClusterAccountEmailAddressVerified(opts: {
   account_id: string;
+  email_address: string;
   email_address_verified: boolean;
 }): Promise<AccountDirectoryEntry> {
   const normalized = {
     account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
+    email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
     email_address_verified: !!opts.email_address_verified,
   };
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {

@@ -72,7 +72,18 @@ const NORMALIZATION_FIELDS = FORM_SYNC_FIELDS.filter(
 function formPatchForDraft(form: FormInstance, draft: HostCreateDraft) {
   const patch: Record<string, unknown> = {};
   for (const field of FORM_SYNC_FIELDS) {
-    if (form.getFieldValue(field) !== draft[field]) {
+    const formValue = form.getFieldValue(field);
+    if (
+      field === "shared_disk_gb" &&
+      formValue === null &&
+      draft[field] === undefined
+    ) {
+      // InputNumber uses null while the user is replacing its contents. The
+      // canonical draft omits invalid sizes, but syncing undefined back here
+      // would make the scratch switch interpret the edit as an explicit off.
+      continue;
+    }
+    if (formValue !== draft[field]) {
       patch[field] = draft[field];
     }
   }

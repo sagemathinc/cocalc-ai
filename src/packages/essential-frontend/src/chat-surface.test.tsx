@@ -387,13 +387,13 @@ test("shows and updates the thread model, reasoning, and payment source", async 
     ),
   );
   fireEvent.change(screen.getByRole("combobox", { name: "Model" }), {
-    target: { value: "gpt-5.4-mini" },
+    target: { value: "gpt-6-luna" },
   });
   await waitFor(() =>
     expect(client.updateCodexThreadConfig).toHaveBeenCalledWith({
       thread_id: "thread-1",
       acp_config: expect.objectContaining({
-        model: "gpt-5.4-mini",
+        model: "gpt-6-luna",
         paymentSource: "auto",
       }),
     }),

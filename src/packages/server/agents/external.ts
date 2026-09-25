@@ -1,7 +1,7 @@
-import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import type { AgentRpcControlApi } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+import type { ExternalAgentEnqueueOptions } from "@cocalc/conat/agents/external";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
@@ -10,28 +10,12 @@ import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-
 import { claimExternalAgentLoginChallenge } from "@cocalc/server/auth/cli-auth";
 import { ExternalAgentStore } from "./external-store";
 import { agentStore } from "./store";
-import { getIdentity } from "./api";
-import {
-  validateExternalAgentSource,
-  type ExternalAgentSource,
-} from "@cocalc/conat/agents/external";
+import { personalAgentLimits, personalStore } from "./personal";
 
-export function assertExternalAgentLoginEnabled() {
-  for (const flag of [
-    "COCALC_AGENT_MESSAGING_ENABLED",
-    "COCALC_AGENT_MESSAGING_RPC_ENABLED",
-    "COCALC_AGENT_PERSONAL_MESSAGING_ENABLED",
-    "COCALC_AGENT_EXTERNAL_LOGIN_ENABLED",
-  ])
-    if (process.env[flag] !== "1")
-      throw new Error("external agent login is not enabled");
-}
+export function assertExternalAgentLoginEnabled() {}
 
 export function externalStore(db = agentStore()) {
-  return new ExternalAgentStore(db, async (account_id, target) => {
-    const identity = await getIdentity({ account_id, ...target });
-    if (identity.disabled_at) throw new Error("agent_unavailable");
-  });
+  return new ExternalAgentStore(db);
 }
 
 async function home(account_id: string) {
@@ -53,20 +37,10 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   const home_bay_id = await home(opts.account_id);
   if (home_bay_id !== opts.home_bay_id)
     throw new Error("stale external account home");
-  if (opts.action === "check-send") {
+  if (opts.action === "enqueue") {
     if (home_bay_id !== getConfiguredBayId())
-      throw new Error("external send requires account home");
-    validateExternalAgentSource(opts.source);
-    if (opts.source.account_id !== opts.account_id)
-      throw new Error("external principal mismatch");
-    const proof = await externalStore().check(
-      opts.account_id,
-      opts.source.installation_id,
-      opts.target,
-    );
-    if (proof.source.agent_id !== opts.source.agent_id)
-      throw new Error("external identity mismatch");
-    return { proof };
+      throw new Error("external inbox requires account home");
+    return { message: await externalStore().enqueue(opts) };
   }
   if (opts.action === "claim-enrollment") {
     if (
@@ -96,23 +70,18 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   throw new Error("unsupported external agent control operation");
 };
 
-export async function checkExternalAgentSend(
-  source: ExternalAgentSource,
-  target: AgentEndpoint,
+export async function enqueueExternalAgentMessage(
+  opts: ExternalAgentEnqueueOptions,
 ) {
-  assertExternalAgentLoginEnabled();
-  validateExternalAgentSource(source);
-  const home_bay_id = await home(source.account_id);
+  const home_bay_id = await home(opts.account_id);
   const result = await control(home_bay_id).external({
-    action: "check-send",
-    account_id: source.account_id,
+    ...opts,
+    action: "enqueue",
     home_bay_id,
-    source,
-    target,
   });
-  if (!("proof" in result))
-    throw new Error("invalid external authorization response");
-  return result.proof;
+  if (!("message" in result))
+    throw new Error("invalid external inbox response");
+  return result.message;
 }
 
 export async function approveExternalAgentLogin(opts: {
@@ -120,7 +89,7 @@ export async function approveExternalAgentLogin(opts: {
   session_hash: string;
   origin_bay_id: string;
   challenge_id: string;
-  targets: AgentEndpoint[];
+  agent_network_id: string;
   ttl_seconds: number;
   agent_id?: string;
 }) {
@@ -154,12 +123,33 @@ export async function approveExternalAgentLogin(opts: {
       installation_id: opts.challenge_id,
       secret_hash,
       label,
-      targets: opts.targets,
+      agent_network_id: opts.agent_network_id,
       ttl_seconds: opts.ttl_seconds,
       ...(opts.agent_id ? { agent_id: opts.agent_id } : {}),
     },
     new Date(expires_at).getTime(),
   );
+  try {
+    const { members } = await personalAgentLimits(opts.account_id);
+    await personalStore().updateNetwork(
+      opts.account_id,
+      {
+        request_id: opts.challenge_id,
+        agent_network_id: opts.agent_network_id,
+        action: "add-member",
+        member: {
+          kind: "external",
+          agent_id: installation.agent_id,
+          installation_id: installation.installation_id,
+        },
+      },
+      members,
+      true,
+    );
+  } catch (error) {
+    await externalStore().revoke(opts.account_id, installation.installation_id);
+    throw error;
+  }
   return { installation };
 }
 

@@ -1190,6 +1190,7 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
     runtimeDeploymentStatusRequests: [],
     runtimeDeploymentSetRequests: [],
   };
+  const waitScopes: any[] = [];
   const deps = makeDeps(capture, {
     listHosts: async () => [
       {
@@ -1205,6 +1206,10 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
         last_seen: new Date().toISOString(),
       },
     ],
+    waitForLro: async (_ctx, op_id, opts) => {
+      waitScopes.push({ op_id, scope: opts.scope });
+      return { op_id, status: "succeeded", timedOut: false };
+    },
   });
   const program = new Command();
   registerHostCommand(program, deps);
@@ -1222,6 +1227,16 @@ test("host upgrade --all-online --wait returns all successful hosts", async () =
   assert.equal(capture.data.status, "succeeded");
   assert.equal(capture.data.count, 2);
   assert.equal(capture.data.hosts.length, 2);
+  assert.deepEqual(waitScopes, [
+    {
+      op_id: "op-online-1",
+      scope: { type: "host", id: "online-1" },
+    },
+    {
+      op_id: "op-online-2",
+      scope: { type: "host", id: "online-2" },
+    },
+  ]);
 });
 
 test("host upgrade can preserve existing desired deployment state", async () => {

@@ -145,6 +145,9 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
           }
           const command = normalizeTerminalCommand(currentNode.get("command"));
           const args = normalizeTerminalArgs(currentNode.get("args"));
+          const cwd = currentNode.get("cwd");
+          const workingDirectory =
+            typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
           const terminal = new Terminal(
             actions,
             this._node_number(id),
@@ -152,7 +155,7 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             parent,
             command,
             args,
-            undefined,
+            workingDirectory,
             terminalThemeOverride,
             { autoStartProjectOnFirstConnect: true },
           );

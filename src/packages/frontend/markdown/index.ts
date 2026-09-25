@@ -15,89 +15,15 @@ export * from "./types";
 export * from "./table-of-contents";
 
 import MarkdownIt from "markdown-it";
-import emojiPlugin from "markdown-it-emoji";
-import { checkboxPlugin } from "./checkbox-plugin";
-import { hashtagPlugin } from "./hashtag-plugin";
-import { mentionPlugin } from "./mentions-plugin";
-import mathPlugin from "./math-plugin";
-import { blankLinesPlugin } from "./blank-lines-plugin";
-export { parseHeader } from "./header";
-
+import {
+  OPTIONS,
+  createMarkdownParser,
+  markdown_it_slate,
+} from "@cocalc/util/markdown/parser";
+export { OPTIONS, markdown_it_slate };
+export { parseHeader } from "@cocalc/util/markdown/header";
 const MarkdownItFrontMatter = require("markdown-it-front-matter");
-
-export const OPTIONS: MarkdownIt.Options = {
-  html: true,
-  typographer: false,
-  linkify: true,
-  breaks: false, // breaks=true is NOT liked by many devs.
-};
-
-const PLUGINS = [
-  [
-    mathPlugin,
-    {
-      delimiters: "cocalc",
-      engine: {
-        renderToString: (tex, options) => {
-          // We **used to** need to continue to support rendering to MathJax as an option,
-          // but texmath only supports katex.  Thus we output by default to
-          // html using script tags, which are then parsed later using our
-          // katex/mathjax plugin.
-          // We no longer support MathJax, so maybe this can be simplified?
-          return `<script type="math/tex${
-            options.displayMode ? "; mode=display" : ""
-          }">${tex}</script>`;
-        },
-      },
-    },
-  ],
-  [emojiPlugin],
-  [checkboxPlugin],
-  [hashtagPlugin],
-  [mentionPlugin],
-];
-
-function applyPlugins(m, plugins) {
-  for (const [plugin, options] of plugins) {
-    m.use(plugin, options);
-  }
-}
-
-function addBlankLineRenderer(m: MarkdownIt): void {
-  m.renderer.rules.blank_line = (tokens, idx) => {
-    const token = tokens[idx];
-    const line = token.map?.[0];
-    const lineAttr = line != null ? ` data-source-line="${line}"` : "";
-    return `<p class="cocalc-blank-line"${lineAttr}><br /></p>`;
-  };
-}
-
-export const markdown_it = new MarkdownIt(OPTIONS);
-applyPlugins(markdown_it, PLUGINS);
-markdown_it.use(blankLinesPlugin);
-addBlankLineRenderer(markdown_it);
-markdown_it.linkify.set({
-  fuzzyLink: false,
-  fuzzyEmail: false,
-  fuzzyIP: false,
-});
-
-// Parser used for Slate roundtrips; includes extra tokens for blank lines.
-export const markdown_it_slate = new MarkdownIt(OPTIONS);
-applyPlugins(markdown_it_slate, PLUGINS);
-markdown_it_slate.use(blankLinesPlugin);
-markdown_it_slate.linkify.set({
-  fuzzyLink: false,
-  fuzzyEmail: false,
-  fuzzyIP: false,
-});
-
-/*
-export function markdownParser() {
-  const m = new MarkdownIt(OPTIONS);
-  applyPlugins(m, PLUGINS);
-  return m;
-}*/
+export const markdown_it = createMarkdownParser({ renderBlankLines: true });
 
 /*
 Inject line numbers for sync.
@@ -121,16 +47,10 @@ function inject_linenumbers_plugin(md) {
   md.renderer.rules.list_item_open = injectLineNumbers;
   md.renderer.rules.table_open = injectLineNumbers;
 }
-const markdown_it_line_numbers = new MarkdownIt(OPTIONS);
-markdown_it_line_numbers.use(inject_linenumbers_plugin);
-applyPlugins(markdown_it_line_numbers, PLUGINS);
-markdown_it_line_numbers.use(blankLinesPlugin);
-markdown_it_line_numbers.linkify.set({
-  fuzzyLink: false,
-  fuzzyEmail: false,
-  fuzzyIP: false,
+const markdown_it_line_numbers = createMarkdownParser({
+  beforePlugins: inject_linenumbers_plugin,
+  renderBlankLines: true,
 });
-addBlankLineRenderer(markdown_it_line_numbers);
 
 /*
 Turn the given markdown *string* into an HTML *string*.

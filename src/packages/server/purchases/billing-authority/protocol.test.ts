@@ -12,6 +12,16 @@ const ACTOR = "11111111-1111-4111-8111-111111111111";
 const TARGET = "22222222-2222-4222-8222-222222222222";
 
 describe("billing authority account attribution", () => {
+  it("indexes the payer of an independent funding approval", () => {
+    expect(
+      billingAuthorityAccountIds({
+        kind: "account-local",
+        operation: "apply-funding-approval",
+        actor_account_id: ACTOR,
+        input: { payer_account_id: TARGET },
+      }),
+    ).toEqual([TARGET, ACTOR]);
+  });
   it("indexes both actor and target for cross-account HTTP commands", () => {
     const command = {
       kind: "http" as const,

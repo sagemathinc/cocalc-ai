@@ -28,10 +28,11 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { createPortal } from "react-dom";
+import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
+import { chatSearchIndex } from "@cocalc/util/chat-search";
 import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -52,6 +53,10 @@ import type {
   AcpAutomationConfig,
 } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
+import { SearchHitTime } from "./search-hit-time";
+import { ArtifactBrowserButton } from "./artifact-discovery";
+import { THREAD_SEARCH_EVENT } from "./thread-search-request";
+import { useChatEmbeddingOptions } from "./embedding-options";
 import { AgentMessageStatus } from "./agent-message-status";
 import CodexConfigButton, { codexModelOptionsForCatalog } from "./codex";
 import { ThreadAnchorButton } from "./thread-anchor-button";
@@ -95,6 +100,7 @@ import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
+import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
   clearCachedCodexModelCatalog,
   getLiveCodexUsageStatus,
@@ -290,6 +296,23 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
 
+export function getNewThreadPaymentSourceOptions(
+  paymentSource?: CodexPaymentSourceInfo,
+) {
+  return getCodexPaymentSourceOptions(paymentSource).flatMap((option) => {
+    if (option.value !== "subscription") return [option];
+    const subscriptions = paymentSource?.subscriptions ?? [];
+    if (!subscriptions.length) return [option];
+    return subscriptions.map((credential) => ({
+      value: `subscription:${credential.id}`,
+      label: getCodexSubscriptionDisplayName(credential, subscriptions),
+      description: credential.plan
+        ? `Use this ChatGPT ${credential.plan} subscription.`
+        : option.description,
+    }));
+  });
+}
+
 export function reconcileNewThreadSetupWithCodexCatalog({
   setup,
   catalog,
@@ -361,6 +384,22 @@ export function resolveThreadSearchHighlightQuery({
   threadSearchQuery: string;
 }): string {
   return threadSearchOpen ? threadSearchQuery : "";
+}
+
+export function threadSearchExcerpt(
+  content: string,
+  query: string,
+  maxLength = 180,
+): string {
+  const text = content
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length <= maxLength) return text;
+  const match = text.toLowerCase().indexOf(query.trim().toLowerCase());
+  const start = Math.max(0, match < 0 ? 0 : match - Math.floor(maxLength / 3));
+  const end = Math.min(text.length, start + maxLength);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
 }
 
 export function resolveCompactThreadBadgeAppearance({
@@ -485,6 +524,8 @@ interface ChatRoomThreadPanelProps {
   onNewChat: () => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
+  codexCredentialId?: string;
+  onCodexCredentialIdChange?: (credentialId: string) => void;
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: React.Dispatch<React.SetStateAction<NewThreadSetup>>;
@@ -498,6 +539,7 @@ interface ChatRoomThreadPanelProps {
   shortcutEnabled?: boolean;
   isVisible?: boolean;
   hideTopControls?: boolean;
+  codexConfigInComposer?: boolean;
   hideCompactThreadHeader?: boolean;
   allowSidebarToggle?: boolean;
   sidebarHidden?: boolean;
@@ -536,6 +578,8 @@ export function ChatRoomThreadPanel({
   onNewChat,
   codexPaymentSource,
   codexPaymentSourceLoading,
+  codexCredentialId,
+  onCodexCredentialIdChange,
   refreshCodexPaymentSource,
   newThreadSetup,
   onNewThreadSetupChange,
@@ -549,6 +593,7 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
   isVisible = true,
   hideTopControls = false,
+  codexConfigInComposer = false,
   hideCompactThreadHeader = false,
   allowSidebarToggle = false,
   sidebarHidden = false,
@@ -575,6 +620,7 @@ export function ChatRoomThreadPanel({
     () => getDefaultCodexNewChatDefaults(),
     [codexNewChatDefaultsSetting],
   );
+  const embeddingOptions = useChatEmbeddingOptions();
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [newThreadCodexModelCatalog, setNewThreadCodexModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
@@ -694,6 +740,7 @@ export function ChatRoomThreadPanel({
       projectId: project_id,
       includeModels: true,
       refreshModels: forceRefresh,
+      credentialId: codexPaymentSource.credentialId,
     })
       .then((status) => {
         if (cancelled || !status.models?.length) return;
@@ -863,21 +910,26 @@ export function ChatRoomThreadPanel({
     selectedThreadMeta,
   ]);
   const [interruptRequested, setInterruptRequested] = useState(false);
-  const threadSearchMatches = useMemo(() => {
+  const threadSearchResults = useMemo(() => {
     const needle = threadSearchQuery.trim().toLowerCase();
-    if (!needle) return [] as string[];
-    const matches: string[] = [];
+    if (!needle) return [] as Array<{ date: string; excerpt: string }>;
+    const matches: Array<{ date: string; excerpt: string }> = [];
     for (const message of selectedThreadMessages) {
-      const text = newest_content(message)
-        .replace(/<[^>]*>/g, " ")
-        .toLowerCase();
-      if (!text.includes(needle)) continue;
+      const content = newest_content(message);
+      if (chatSearchIndex(content, needle) < 0) continue;
       const d = dateValue(message);
       if (!d) continue;
-      matches.push(`${d.valueOf()}`);
+      matches.push({
+        date: `${d.valueOf()}`,
+        excerpt: threadSearchExcerpt(content, threadSearchQuery),
+      });
     }
-    return matches;
+    return matches.sort((a, b) => Number(b.date) - Number(a.date));
   }, [threadSearchQuery, selectedThreadMessages]);
+  const threadSearchMatches = useMemo(
+    () => threadSearchResults.map(({ date }) => date),
+    [threadSearchResults],
+  );
   const matchCount = threadSearchMatches.length;
   const normalizedCursor = useMemo(() => {
     if (!matchCount) return 0;
@@ -1145,6 +1197,42 @@ export function ChatRoomThreadPanel({
       setMaintenanceLoading(false);
     }
   }, [path, project_id]);
+
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (
+        !isVisible ||
+        detail?.projectId !== project_id ||
+        detail?.path !== path ||
+        detail?.threadId !== selectedThreadId
+      )
+        return;
+      if (detail.mode === "history" && !embeddingOptions.agentWorkspace) {
+        setArchivedHistoryOpen(true);
+        void loadArchivedHistory(0, false);
+      } else if (
+        detail.mode === "maintenance" &&
+        !embeddingOptions.agentWorkspace
+      ) {
+        setMaintenanceOpen(true);
+        void loadMaintenanceStats();
+      } else if (!detail.mode || detail.mode === "search") {
+        setThreadSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus?.(), 0);
+      }
+    };
+    window.addEventListener(THREAD_SEARCH_EVENT, open);
+    return () => window.removeEventListener(THREAD_SEARCH_EVENT, open);
+  }, [
+    project_id,
+    path,
+    selectedThreadId,
+    isVisible,
+    embeddingOptions.agentWorkspace,
+    loadArchivedHistory,
+    loadMaintenanceStats,
+  ]);
 
   const runMaintenanceAction = useCallback(
     async (label: string, action: () => Promise<any>) => {
@@ -1437,8 +1525,13 @@ export function ChatRoomThreadPanel({
         .find(({ value }) => value === codexModel)
         ?.serviceTiers?.includes("fast") ??
       codexModelSupportsFastMode(codexModel);
-    const paymentSourceOptions =
-      getCodexPaymentSourceOptions(codexPaymentSource);
+    const exactPaymentSourceOptions =
+      getNewThreadPaymentSourceOptions(codexPaymentSource);
+    const selectedPaymentSource =
+      (newThreadSetup.codexConfig.paymentSource ?? "auto") === "subscription" &&
+      codexCredentialId
+        ? `subscription:${codexCredentialId}`
+        : (newThreadSetup.codexConfig.paymentSource ?? "auto");
     const siteFundedPolicy =
       codexPaymentSource?.source === "site-api-key" &&
       codexPaymentSource.siteFundedCodex?.enabled
@@ -1727,23 +1820,36 @@ export function ChatRoomThreadPanel({
                     Payment source
                   </div>
                   <Select
-                    value={newThreadSetup.codexConfig.paymentSource ?? "auto"}
+                    value={selectedPaymentSource}
                     style={{ width: "100%" }}
-                    options={paymentSourceOptions}
+                    options={exactPaymentSourceOptions}
                     optionRender={(option) =>
                       renderOptionWithDescription({
                         title: `${option.data.label}`,
                         description: option.data.description,
                       })
                     }
-                    onChange={(value: CodexPaymentSourcePreference) =>
+                    onChange={(value: string) => {
+                      if (value.startsWith("subscription:")) {
+                        const credentialId = value.slice(
+                          "subscription:".length,
+                        );
+                        onCodexCredentialIdChange?.(credentialId);
+                        update({
+                          codexConfig: {
+                            ...newThreadSetup.codexConfig,
+                            paymentSource: "subscription",
+                          },
+                        });
+                        return;
+                      }
                       update({
                         codexConfig: {
                           ...newThreadSetup.codexConfig,
-                          paymentSource: value,
+                          paymentSource: value as CodexPaymentSourcePreference,
                         },
-                      })
-                    }
+                      });
+                    }}
                   />
                   {siteFundedPolicy ? (
                     <Alert
@@ -2030,11 +2136,10 @@ export function ChatRoomThreadPanel({
       isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
+  const showCodexConfig = shouldShowCodexConfig && !codexConfigInComposer;
   const showTopControls =
     !hideTopControls &&
-    (shouldShowCodexConfig ||
-      allowSidebarToggle ||
-      topRightControlsPrefix != null);
+    (showCodexConfig || allowSidebarToggle || topRightControlsPrefix != null);
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
@@ -2057,10 +2162,11 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
-  const runningStatusTop = !mobile && showTopControls ? 52 : 8;
+  const reserveToolbarSpace =
+    !embeddingOptions.agentWorkspace && !mobile && showTopControls;
+  const runningStatusTop = reserveToolbarSpace ? 52 : 8;
   const contentTopInset =
-    (!mobile && showTopControls ? 44 : 0) +
-    (selectedRunningCodexMessage ? 56 : 0);
+    (reserveToolbarSpace ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
   const compactTopRightButtonStyle = compactTopRightControls
     ? { minWidth: 24, height: 22, padding: "0 4px" }
     : undefined;
@@ -2140,6 +2246,11 @@ export function ChatRoomThreadPanel({
           </Button>
         </Tooltip>
       ) : null}
+      <ArtifactBrowserButton
+        actions={actions}
+        threadId={selectedThreadId}
+        compact={compactTopRightControls && !mobile}
+      />
       <Tooltip title="Search thread (Ctrl/Cmd+F)">
         <Button
           size="small"
@@ -2163,12 +2274,13 @@ export function ChatRoomThreadPanel({
       </Tooltip>
     </div>
   );
-  const topRightControls =
-    topRightControlsPortal === undefined
-      ? renderTopRightControls()
-      : topRightControlsPortal != null
-        ? createPortal(renderTopRightControls(), topRightControlsPortal)
-        : null;
+  const topRightControls = (
+    <ThreadPanelToolbar
+      showInline={showTopControls}
+      portal={topRightControlsPortal}
+      render={renderTopRightControls}
+    />
+  );
 
   return (
     <div
@@ -2205,7 +2317,7 @@ export function ChatRoomThreadPanel({
                 />
               </Tooltip>
             ) : null}
-            {shouldShowCodexConfig ? (
+            {showCodexConfig ? (
               <CodexConfigButton
                 threadKey={selectedThreadKey}
                 chatPath={path ?? ""}
@@ -2215,6 +2327,7 @@ export function ChatRoomThreadPanel({
                 paymentSource={codexPaymentSource}
                 paymentSourceLoading={codexPaymentSourceLoading}
                 refreshPaymentSource={refreshCodexPaymentSource}
+                turnRunning={selectedRunningCodexMessage != null}
               />
             ) : null}
           </Space>
@@ -2435,21 +2548,15 @@ export function ChatRoomThreadPanel({
               size="small"
               disabled={!selectedThreadId || !project_id || !path}
               onClick={() => {
-                setArchivedHistoryOpen(true);
-                void loadArchivedHistory(0, false);
+                setThreadSearchOpen(false);
+                if (embeddingOptions.agentWorkspace)
+                  embeddingOptions.onSearchAll?.();
+                else actions.frameTreeActions?.show_search();
               }}
             >
-              History
-            </Button>
-            <Button
-              size="small"
-              disabled={!project_id || !path}
-              onClick={() => {
-                setMaintenanceOpen(true);
-                void loadMaintenanceStats();
-              }}
-            >
-              Maintenance
+              {embeddingOptions.agentWorkspace
+                ? "Search all agents"
+                : "Search all threads"}
             </Button>
           </div>
           <div
@@ -2484,6 +2591,47 @@ export function ChatRoomThreadPanel({
               </span>
             ) : null}
           </div>
+          {selectedThreadId && threadSearchResults.length > 0 ? (
+            <section
+              aria-label="Matching messages"
+              style={{
+                maxHeight: 190,
+                overflowY: "auto",
+                borderTop: `1px solid ${UI_COLORS.border}`,
+                paddingTop: 4,
+              }}
+            >
+              {threadSearchResults.map((result, index) => (
+                <Button
+                  key={result.date}
+                  type="text"
+                  aria-label={`Open matching message ${index + 1}`}
+                  onClick={() => {
+                    setThreadSearchCursor(index);
+                    setThreadSearchJumpToken((n) => n + 1);
+                    actions.setFragment(result.date);
+                  }}
+                  style={{
+                    display: "block",
+                    height: "auto",
+                    minHeight: 30,
+                    padding: "5px 7px",
+                    textAlign: "left",
+                    whiteSpace: "normal",
+                    width: "100%",
+                    background:
+                      index === normalizedCursor
+                        ? UI_COLORS.selected
+                        : undefined,
+                    color: UI_COLORS.text,
+                  }}
+                >
+                  {result.excerpt || "(empty message)"}
+                  <SearchHitTime date={Number(result.date)} />
+                </Button>
+              ))}
+            </section>
+          ) : null}
           {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <div
               style={{
@@ -2506,10 +2654,6 @@ export function ChatRoomThreadPanel({
                 archivedSearchHits
                   .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)
                   .map((hit) => {
-                    const when =
-                      typeof hit.date_ms === "number"
-                        ? new Date(hit.date_ms).toLocaleString()
-                        : "";
                     const text = (hit.snippet ?? hit.excerpt ?? "")
                       .replace(/<[^>]*>/g, " ")
                       .replace(/\s+/g, " ")
@@ -2530,7 +2674,7 @@ export function ChatRoomThreadPanel({
                         }}
                       >
                         <div style={{ fontSize: 11, color: "#888" }}>
-                          {when}
+                          <SearchHitTime date={Number(hit.date_ms)} />
                         </div>
                         <div>{text || "(no preview)"}</div>
                       </div>

@@ -906,6 +906,9 @@ function descriptionTextForPrint({
   if (service === "student-pay") {
     return "Course fee";
   }
+  if (service === "credit-transfer") {
+    return `Account credit ${descriptionAny.direction ?? "transfer"}: ${descriptionAny.transfer_id ?? ""}`;
+  }
   if (service === "membership") {
     const teamLicenseLabel =
       formatTeamLicenseDebitPurchaseDescription(descriptionAny);
@@ -1376,6 +1379,13 @@ function Description({
   }
 
   // <pre>{JSON.stringify(description, undefined, 2)}</pre>
+  if (service === "credit-transfer") {
+    return (
+      <>
+        Account credit {description.direction}: {description.transfer_id}
+      </>
+    );
+  }
   if (service === "student-pay") {
     return <>Course fee</>;
   }

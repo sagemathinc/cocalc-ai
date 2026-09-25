@@ -16,9 +16,11 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
-import getBalance from "@cocalc/server/purchases/get-balance";
+import getSpendableBalance from "./get-spendable-balance";
+import { lockAccountSpending } from "./lock-account-spending";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import createPaymentIntent from "./stripe/create-payment-intent";
+import { uuid } from "@cocalc/util/misc";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { getUser } from "./statements/email-statement";
@@ -65,11 +67,13 @@ export async function purchaseTeamLicenseChange({
   target_seats,
   amount,
   creditId,
+  client: suppliedClient,
 }: {
   account_id: string;
   target_seats: Record<string, number>;
   amount?: MoneyValue;
   creditId?: number;
+  client?: PoolClient;
 }) {
   logger.debug("purchaseTeamLicenseChange", {
     account_id,
@@ -77,15 +81,17 @@ export async function purchaseTeamLicenseChange({
     amount,
   });
   const normalizedTargets = normalizeTargets(target_seats);
-  const quote = await resolveTeamLicenseQuote({
-    owner_account_id: account_id,
-    target_seats: normalizedTargets,
-  });
-  if (quote.total_price <= 0) {
-    throw Error("team license change has no seats to purchase");
-  }
-  const client = await getTransactionClient();
+  const client = suppliedClient ?? (await getTransactionClient());
   try {
+    await lockAccountSpending(client, account_id);
+    const quote = await resolveTeamLicenseQuote({
+      owner_account_id: account_id,
+      target_seats: normalizedTargets,
+      client,
+    });
+    if (quote.total_price <= 0) {
+      throw Error("team license change has no seats to purchase");
+    }
     await assertPurchaseAllowed({
       account_id,
       service: "membership",
@@ -138,14 +144,16 @@ export async function purchaseTeamLicenseChange({
       line_items: quote.line_items,
       client,
     });
-    await client.query("COMMIT");
-    await refreshAccountBalanceAndPublishBestEffort({ account_id });
+    if (!suppliedClient) {
+      await client.query("COMMIT");
+      await refreshAccountBalanceAndPublishBestEffort({ account_id });
+    }
     return overview;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!suppliedClient) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (!suppliedClient) client.release();
   }
 }
 
@@ -170,12 +178,14 @@ export async function createTeamLicenseRenewalPayment({
     throw Error("team license renewal amount must be positive");
   }
   let paymentIntentId = "";
+  const initiationId = uuid();
+  let renewalReserved = false;
   try {
     if (
       (await useBalanceTowardTeamLicenses(owner_account_id)) &&
-      toDecimal(await getBalance({ account_id: owner_account_id })).gte(
-        toDecimal(quote.total_price),
-      )
+      toDecimal(
+        await getSpendableBalance({ account_id: owner_account_id }),
+      ).gte(toDecimal(quote.total_price))
     ) {
       await processTeamLicenseRenewal({
         account_id: owner_account_id,
@@ -184,7 +194,38 @@ export async function createTeamLicenseRenewalPayment({
       });
       return;
     }
+    // Reserve under the same license row lock used by refund cancellation,
+    // before any external payment can exist. A crash leaves a visible active
+    // reservation that must be reconciled, never a silently refundable license.
+    const reserveRenewal = async () => {
+      // Quotes carry JS Dates, so compare at millisecond precision even when
+      // PostgreSQL stored a period boundary with fractional microseconds.
+      const reserved = await getPool().query(
+        `UPDATE team_licenses
+          SET payment=$4::jsonb, last_renewal_attempt_at=NOW(), updated=NOW()
+        WHERE id=$1 AND owner_account_id=$2 AND status != 'canceled'
+          AND date_trunc('milliseconds', current_period_end)=$3::timestamp
+          AND latest_purchase_id IS NOT DISTINCT FROM $5::integer
+          AND COALESCE(payment->>'status','') != 'active'
+        RETURNING id`,
+        [
+          team_license_id,
+          owner_account_id,
+          quote.license.current_period_end,
+          {
+            status: "active",
+            initiation_id: initiationId,
+            created: Date.now(),
+          },
+          quote.license.latest_purchase_id ?? null,
+        ],
+      );
+      if (!reserved.rows.length)
+        throw Error("Team renewal state changed; reload before retrying");
+      renewalReserved = true;
+    };
     const { payment_intent, hosted_invoice_url } = await createPaymentIntent({
+      beforeInvoiceCreate: reserveRenewal,
       account_id: owner_account_id,
       purpose: TEAM_LICENSE_RENEWAL,
       description:
@@ -199,6 +240,7 @@ export async function createTeamLicenseRenewalPayment({
     });
     paymentIntentId = payment_intent;
     const payment = {
+      initiation_id: initiationId,
       payment_intent_id: payment_intent,
       team_license_id,
       amount: toDecimal(quote.total_price).toNumber(),
@@ -207,7 +249,7 @@ export async function createTeamLicenseRenewalPayment({
       new_period_start: quote.next_period_start.toISOString(),
       new_period_end: quote.next_period_end.toISOString(),
     };
-    await getPool().query(
+    const activated = await getPool().query(
       `
         UPDATE team_licenses
            SET payment=$2::jsonb,
@@ -215,9 +257,16 @@ export async function createTeamLicenseRenewalPayment({
                updated=NOW()
          WHERE id=$1
            AND owner_account_id=$3
+           AND status != 'canceled'
+           AND payment->>'initiation_id'=$4
+         RETURNING id
       `,
-      [team_license_id, payment, owner_account_id],
+      [team_license_id, payment, owner_account_id, initiationId],
     );
+    if (!activated.rows.length)
+      throw Error(
+        "Team renewal reservation changed; reconcile payment before retrying",
+      );
     await send({
       to_ids: [owner_account_id],
       subject: "Team License Renewal Started",
@@ -235,14 +284,31 @@ ${await support()}
     });
     return { payment_intent, hosted_invoice_url };
   } catch (err) {
-    await markTeamLicenseRenewalPastDueAndNotify({
-      team_license_id,
-      owner_account_id,
-      payment_intent_id: paymentIntentId || undefined,
-      err,
-    });
+    if (!renewalReserved) throw err;
+    // An external timeout (or even a notification error) does not prove that
+    // no payable invoice exists. Keep admission blocked until reconciliation.
+    await getPool().query(
+      `UPDATE team_licenses SET payment=payment || $2::jsonb, updated=NOW()
+        WHERE id=$1 AND status != 'canceled' AND payment->>'initiation_id'=$3`,
+      [
+        team_license_id,
+        {
+          error: String(err),
+          reconciliation_required: true,
+          ...(paymentIntentId ? { payment_intent_id: paymentIntentId } : {}),
+        },
+        initiationId,
+      ],
+    );
     throw err;
   }
+}
+
+interface TeamLicenseRenewedNotification {
+  account_id: string;
+  team_license_id: string;
+  next_period_end: Date | string;
+  total_price: MoneyValue;
 }
 
 export async function processTeamLicenseRenewal({
@@ -255,7 +321,7 @@ export async function processTeamLicenseRenewal({
   paymentIntent: { id?: string; metadata?: Record<string, string> };
   amount: MoneyValue;
   client?: PoolClient;
-}) {
+}): Promise<TeamLicenseRenewedNotification | undefined> {
   const team_license_id = `${paymentIntent.metadata?.team_license_id ?? ""}`;
   if (!team_license_id) {
     throw Error("team license renewal metadata is missing team_license_id");
@@ -265,6 +331,7 @@ export async function processTeamLicenseRenewal({
   const dbClient = client ?? ownedClient!;
   let committed = false;
   try {
+    await lockAccountSpending(dbClient, account_id);
     const { rows: lockedRows } = await dbClient.query(
       `
         SELECT payment
@@ -280,6 +347,11 @@ export async function processTeamLicenseRenewal({
       throw Error("team license owner mismatch");
     }
     const renewalPayment = lockedRows[0].payment;
+    if (!paymentIntentId && renewalPayment?.status === "active") {
+      throw Error(
+        "Resolve the pending Team renewal payment before using balance",
+      );
+    }
     if (paymentIntentId) {
       if (
         renewalPayment?.payment_intent_id === paymentIntentId &&
@@ -308,6 +380,14 @@ export async function processTeamLicenseRenewal({
     }
     if (toDecimal(amount).add(ALLOWED_SLACK).lt(toDecimal(quote.total_price))) {
       throw Error("team license renewal payment is less than renewal cost");
+    }
+    if (!paymentIntentId) {
+      await assertPurchaseAllowed({
+        account_id,
+        service: "membership",
+        cost: quote.total_price,
+        client: dbClient,
+      });
     }
     const creditId = positiveInteger(paymentIntent.metadata?.credit_id);
     const purchase_id = await createPurchase({
@@ -371,12 +451,17 @@ export async function processTeamLicenseRenewal({
       committed = true;
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
     }
-    await sendTeamLicenseRenewedNotification({
+    const notification = {
       account_id,
       team_license_id,
       next_period_end: quote.next_period_end,
       total_price: quote.total_price,
-    });
+    };
+    if (ownedClient) {
+      await sendTeamLicenseRenewedNotification(notification);
+      return;
+    }
+    return notification;
   } catch (err) {
     if (ownedClient && !committed) {
       await ownedClient.query("ROLLBACK");
@@ -387,7 +472,7 @@ export async function processTeamLicenseRenewal({
   }
 }
 
-async function sendTeamLicenseRenewedNotification({
+export async function sendTeamLicenseRenewedNotification({
   account_id,
   team_license_id,
   next_period_end,
@@ -395,7 +480,7 @@ async function sendTeamLicenseRenewedNotification({
 }: {
   account_id: string;
   team_license_id: string;
-  next_period_end: Date;
+  next_period_end: Date | string;
   total_price: MoneyValue;
 }) {
   try {
@@ -430,7 +515,7 @@ export async function processTeamLicenseRenewalFailure({
   paymentIntent: { id?: string; metadata?: Record<string, string> };
 }) {
   const team_license_id = `${paymentIntent.metadata?.team_license_id ?? ""}`;
-  if (!team_license_id) {
+  if (!team_license_id || !paymentIntent.id) {
     throw Error("team license renewal metadata is missing team_license_id");
   }
   await markTeamLicenseRenewalPastDueAndNotify({
@@ -454,6 +539,7 @@ async function markTeamLicenseRenewalPastDueAndNotify({
 }) {
   const license = await markTeamLicensePastDue({
     team_license_id,
+    expected_payment_intent_id: payment_intent_id,
     payment: {
       payment_intent_id,
       status: "canceled",
@@ -461,6 +547,7 @@ async function markTeamLicenseRenewalPastDueAndNotify({
       updated: Date.now(),
     },
   });
+  if (!license) return; // Ignore old failures and never revive a canceled license.
   const user = await getUser(owner_account_id).catch(() => ({
     name: owner_account_id,
   }));
@@ -499,6 +586,8 @@ Team license renewal failed and was marked past_due.
 export async function getDueTeamLicensesForRenewal(): Promise<
   { id: string; owner_account_id: string }[]
 > {
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   const { rows } = await getPool().query<{
     id: string;
     owner_account_id: string;
@@ -512,7 +601,7 @@ export async function getDueTeamLicensesForRenewal(): Promise<
               OR last_renewal_attempt_at < NOW() - INTERVAL '15 minutes')
          AND COALESCE(payment#>>'{status}', '') != 'active'
          AND NOT EXISTS (
-           SELECT 1 FROM accounts AS account
+           SELECT 1 FROM ${accountTable} AS account
             WHERE account.account_id=team_licenses.owner_account_id
               AND (account.banned IS TRUE OR account.deleted IS TRUE)
          )

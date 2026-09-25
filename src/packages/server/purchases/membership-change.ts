@@ -14,7 +14,11 @@ import { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import { claimMembershipTrial } from "@cocalc/server/membership/trials";
-import { assertBillingReady } from "@cocalc/server/purchases/stripe/billing-readiness";
+import {
+  assertBillingReady,
+  assertBillingReadiness,
+  type BillingReadiness,
+} from "@cocalc/server/purchases/stripe/billing-readiness";
 import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
@@ -48,6 +52,8 @@ interface MembershipChangeOptions {
   creditId?: number;
   client?: PoolClient;
   tierMap?: Record<string, MembershipTierRecord>;
+  // Trusted provider snapshot read before an enclosing financial transaction.
+  billingReadiness?: BillingReadiness;
 }
 
 export async function applyMembershipChange({
@@ -61,6 +67,7 @@ export async function applyMembershipChange({
   creditId,
   client,
   tierMap,
+  billingReadiness,
 }: MembershipChangeOptions): Promise<
   MembershipChangeResult & { subscription_id?: number; purchase_id?: number }
 > {
@@ -149,7 +156,8 @@ export async function applyMembershipChange({
       change.trial_available === true &&
       trialDays > 0;
     if (isTrial) {
-      await assertBillingReady(account_id);
+      if (billingReadiness) assertBillingReadiness(billingReadiness);
+      else await assertBillingReady(account_id);
     }
 
     if (change.existing_promo_grant === true) {
@@ -157,7 +165,8 @@ export async function applyMembershipChange({
         throw Error("legacy migration membership grant was not found");
       }
       if (toDecimal(change.price).gt(0)) {
-        await assertBillingReady(account_id);
+        if (billingReadiness) assertBillingReadiness(billingReadiness);
+        else await assertBillingReady(account_id);
       }
       await configureLegacyMigrationGrantRenewal({
         account_id,

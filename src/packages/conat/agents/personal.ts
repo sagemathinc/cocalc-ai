@@ -1,18 +1,21 @@
-import type { AgentEndpoint, AgentRpcLink } from "./rpc";
+import type { ExternalAgentSource } from "./external";
+import type { AgentEndpoint, AgentRpcSource } from "./rpc";
 
 export type PersonalAgentDenialCode =
   | "approval_required"
-  | "grant_expired"
-  | "grant_paused"
-  | "grant_revoked"
+  | "network_paused"
+  | "network_closed"
+  | "network_stale"
+  | "not_a_member"
   | "principal_mismatch"
   | "account_disabled"
   | "agent_unavailable";
+
 export interface PersonalAgentDenial {
   denied: PersonalAgentDenialCode;
 }
-/** Local exception only. Trusted inter-bay checks return PersonalAgentDenial
- * data instead: RPC error messages are decorated and are not a protocol. */
+
+/** Local exception only. Trusted inter-bay checks return denial data instead. */
 export class PersonalAgentAuthorizationError extends Error {
   constructor(readonly denial: PersonalAgentDenialCode) {
     super(denial);
@@ -31,16 +34,20 @@ export interface NamedAgent {
   available: boolean;
   updated_at: string;
 }
+
 export interface PersonalMessagingControls {
   /** Blocks subsequent authority checks, not already admitted work. */
   paused: boolean;
   generation: number;
 }
+
 export interface NamedAgentDirectory {
   enabled: boolean;
   agents: NamedAgent[];
+  usage?: { active: number; limit: number };
   controls?: PersonalMessagingControls;
 }
+
 export interface NameAgentOptions {
   endpoint: AgentEndpoint;
   name: string;
@@ -48,66 +55,179 @@ export interface NameAgentOptions {
   project_title?: string;
   thread_title?: string;
 }
-export type PersonalConnectionStatus =
-  | "active"
-  | "expired"
-  | "paused"
-  | "revoked";
-export interface PersonalConnection extends AgentRpcLink {
-  principal_account_id: string;
-  direction_group_id: string;
-  approval_request_id: string;
-  generation: number;
-  paused: boolean;
-  status: PersonalConnectionStatus;
+
+export interface RetireNamedAgentOptions {
+  endpoint: AgentEndpoint;
+}
+
+export type AgentNetworkState = "active" | "paused" | "closed";
+export type AgentNetworkDeliveryMode = "queued" | "live";
+
+export interface RegisteredAgentNetworkMember {
+  kind: "registered";
+  member_id: string;
+  endpoint: AgentEndpoint;
+  name?: string;
+  project_title?: string;
+  thread_title?: string;
+  available: boolean;
+  added_at: string;
+  removed_at?: string | null;
+}
+
+export interface ExternalAgentNetworkMember {
+  kind: "external";
+  member_id: string;
+  source: ExternalAgentSource;
+  label: string;
+  available: boolean;
+  added_at: string;
+  removed_at?: string | null;
+}
+
+export type AgentNetworkMember =
+  | RegisteredAgentNetworkMember
+  | ExternalAgentNetworkMember;
+
+export type AgentNetworkMemberLocator =
+  | { kind: "registered"; endpoint: AgentEndpoint }
+  | {
+      kind: "external";
+      agent_id: string;
+      installation_id: string;
+    };
+
+export interface AgentNetwork {
+  agent_network_id: string;
+  account_id: string;
+  title: string;
+  state: AgentNetworkState;
+  delivery_mode: AgentNetworkDeliveryMode;
+  generation: string;
+  created_by: string;
   created_at: string;
-  last_attempt_at?: string | null;
-  last_accepted_at?: string | null;
+  updated_at: string;
+  closed_at?: string | null;
+  members: AgentNetworkMember[];
 }
-export interface PersonalConnectionDirectory {
+
+export interface AgentNetworkDirectory {
   enabled: boolean;
-  connections: PersonalConnection[];
-  controls?: PersonalMessagingControls;
+  networks: AgentNetwork[];
+  usage: {
+    active_networks: number;
+    network_limit: number;
+    member_limit: number;
+  };
+  controls: PersonalMessagingControls;
+  next_cursor?: string;
 }
-export interface GrantPersonalConnectionOptions {
-  source: AgentEndpoint;
-  target: AgentEndpoint;
-  /** Stable UUID for safe inspection/retry of approval, never send replay. */
-  approval_request_id: string;
-  /** Omitted: one day. Null: never expires. Maximum: 30 days. */
-  ttl_seconds?: number | null;
-  both_directions?: boolean;
-  allow_guidance?: boolean;
-  reason: string;
+
+export interface CreateAgentNetworkOptions {
+  request_id: string;
+  title: string;
+  delivery_mode?: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
 }
-export interface SetPersonalConnectionStateOptions {
-  direction_group_id: string;
-  state: "paused" | "active" | "revoked";
-}
+
+export type UpdateAgentNetworkOptions =
+  | {
+      request_id: string;
+      agent_network_id: string;
+      action: "pause" | "resume" | "close";
+    }
+  | {
+      request_id: string;
+      agent_network_id: string;
+      action: "set-delivery";
+      delivery_mode: AgentNetworkDeliveryMode;
+    }
+  | {
+      request_id: string;
+      agent_network_id: string;
+      action: "add-member" | "remove-member";
+      member: AgentNetworkMemberLocator;
+    }
+  | {
+      request_id: string;
+      agent_network_id: string;
+      action: "set-title";
+      title: string;
+    };
+
 export interface SetPersonalMessagingStateOptions {
   action: "pause" | "resume" | "revoke_all";
 }
-export interface PersonalConnectionRequestOptions {
-  request_id: string;
-  target: AgentEndpoint;
-  reason: string;
-  ttl_seconds?: number | null;
-  both_directions?: boolean;
-  allow_guidance?: boolean;
-}
-export type AgentConnectionRequest = PersonalConnectionRequest;
-export interface PersonalConnectionRequest extends PersonalConnectionRequestOptions {
-  /** On inspection of a coalesced submitted ID, identifies its sole authority. */
-  canonical_request_id?: string;
-  generation: number;
-  request_id: string;
+
+export interface AgentNetworkAuthorization {
+  agent_network_id: string;
+  network_title: string;
+  network_generation: string;
+  account_generation: number;
   account_id: string;
-  source: AgentEndpoint;
-  run_id: string;
+  delivery_mode: AgentNetworkDeliveryMode;
+  source: AgentNetworkMember;
+  target: AgentNetworkMember;
+}
+
+export interface AgentNetworkPeer {
+  member: AgentNetworkMember;
+  networks: Array<
+    Pick<
+      AgentNetwork,
+      "agent_network_id" | "title" | "delivery_mode" | "generation"
+    >
+  >;
+}
+
+export interface AgentNetworkDiscovery {
+  peers: AgentNetworkPeer[];
+}
+
+export interface AgentNetworkActivity {
+  attempt_id: string;
+  agent_network_id: string;
+  network_generation: string;
+  source_member_id: string;
+  target_member_id: string;
+  configured_delivery: AgentNetworkDeliveryMode;
+  effective_delivery?:
+    | "idle-wake"
+    | "queued"
+    | "live-guidance"
+    | "queued-fallback"
+    | "external-inbox";
+  outcome?: "accepted" | "rejected" | "unknown";
+  observed_at: string;
+}
+
+export interface AgentNetworkProposal {
+  proposal_id: string;
+  account_id: string;
+  source: AgentRpcSource;
+  title: string;
+  delivery_mode: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
+  reason?: string | null;
+  state: "pending" | "approved" | "rejected" | "expired";
   created_at: string;
   expires_at: string;
-  state: "pending" | "approved" | "denied" | "expired" | "invalidated";
-  direction_group_id?: string;
+  resolved_at?: string | null;
+  agent_network_id?: string | null;
+}
+
+export interface ProposeAgentNetworkOptions {
+  proposal_id: string;
+  title: string;
+  delivery_mode?: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
+  reason?: string;
+}
+
+export interface ResolveAgentNetworkProposalOptions {
+  proposal_id: string;
+  action: "approve" | "reject";
+  request_id: string;
 }
 
 export function normalizeAgentName(value: string): string {

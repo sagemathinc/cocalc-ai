@@ -57,6 +57,7 @@ jest.mock("antd", () => {
       </div>
     ),
     Button,
+    Popconfirm: jest.requireActual("antd").Popconfirm,
     Modal,
     Progress: Div,
     Space: Div,
@@ -234,7 +235,7 @@ describe("StartButton", () => {
     expect(mockStartProject).not.toHaveBeenCalled();
   });
 
-  it("lets a full sponsor stop another sponsored project and retry in one click", async () => {
+  it("requires confirmation before stopping another sponsored project and retrying", async () => {
     startLroRecord = {
       toJS: () => ({
         summary: {
@@ -271,6 +272,10 @@ describe("StartButton", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /^stop$/i }));
+    expect(mockStopProject).not.toHaveBeenCalled();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stop project and continue" }),
+    );
 
     await waitFor(() => {
       expect(mockStopProject).toHaveBeenCalledWith("running-project");

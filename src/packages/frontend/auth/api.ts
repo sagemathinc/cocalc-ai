@@ -33,6 +33,7 @@ export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
 export type FreshAuthDuration = "default" | "extended";
 
 export type AuthBootstrapResponse = {
+  openai_disabled?: boolean;
   signed_in: boolean;
   account_id?: string;
   email_address?: string;

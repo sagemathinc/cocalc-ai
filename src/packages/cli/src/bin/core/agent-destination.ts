@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import {
+  agentRpcSourceKey,
   validateAgentEndpoint,
   type AgentEndpoint,
-  type AgentRpcLink,
+  type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { readIdentityCredential, sendIdentityMessage } from "./agent-message";
 
 export interface AgentNameBinding {
@@ -11,45 +13,101 @@ export interface AgentNameBinding {
   target: AgentEndpoint;
 }
 
+export interface ResolvedAgentDestination {
+  target: AgentRpcTarget;
+  agent_network_id: string;
+  agent_network_title: string;
+}
+
+export function matchesAgentNetwork(
+  network: AgentNetworkDiscovery["peers"][number]["networks"][number],
+  selector?: string,
+): boolean {
+  return (
+    selector === undefined ||
+    network.agent_network_id === selector ||
+    network.title === selector
+  );
+}
+
+export function selectAgentNetwork(
+  networks: AgentNetworkDiscovery["peers"][number]["networks"],
+  selector?: string,
+) {
+  const matches = networks.filter((network) =>
+    matchesAgentNetwork(network, selector),
+  );
+  if (selector !== undefined && matches.length !== 1) return;
+  return [...matches].sort(
+    (a, b) =>
+      Number(b.delivery_mode === "live") - Number(a.delivery_mode === "live") ||
+      a.title.localeCompare(b.title) ||
+      a.agent_network_id.localeCompare(b.agent_network_id),
+  )[0];
+}
+
 export function resolveAgentName(
   input: string,
-  destinations: (AgentRpcLink & { target_name?: string })[],
+  directory: AgentNetworkDiscovery,
   references: AgentNameBinding[] = [],
-): AgentEndpoint {
+  requestedNetwork?: string,
+): ResolvedAgentDestination {
   const name = input.trim().replace(/^@/, "");
   if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
     throw new Error("Use an exact lowercase agent name, such as reviewer");
   // A selected mention remains pinned even if the account directory changes.
   const selected = references.filter((ref) => ref.name === name);
   if (!selected.length) {
-    const renamed = destinations.find((link) =>
-      link.target_retired_names?.includes(name),
-    );
-    if (renamed)
-      throw new Error(
-        `name_renamed: @${name} is now @${renamed.target_name}; no message was sent`,
-      );
+    // Names are resolved from the current account-home network directory.
   }
-  const matches = selected.length
-    ? selected.map((ref) => ref.target)
-    : destinations
-        .filter((link) => link.target_name === name)
-        .map((link) => link.target);
+  const peers = directory.peers.filter(({ member }) =>
+    member.kind === "registered"
+      ? member.name === name
+      : member.label.trim().toLowerCase() === name,
+  );
+  const pinned = selected.map((ref) => ref.target);
+  const matches = pinned.length
+    ? peers.filter(
+        ({ member }) =>
+          member.kind === "registered" &&
+          pinned.some(
+            (target) =>
+              target.agent_id === member.endpoint.agent_id &&
+              target.project_id === member.endpoint.project_id,
+          ),
+      )
+    : peers;
   if (!matches.length)
     throw new Error(
       `No approved destination or current-turn mention named @${name}. Discover destinations or select the agent in the human composer; no message was sent.`,
     );
-  for (const target of matches) validateAgentEndpoint(target);
+  for (const { member } of matches)
+    if (member.kind === "registered") validateAgentEndpoint(member.endpoint);
   const first = matches[0];
+  const target =
+    first.member.kind === "registered"
+      ? first.member.endpoint
+      : first.member.source;
   if (
-    matches.some(
-      (target) =>
-        target.agent_id !== first.agent_id ||
-        target.project_id !== first.project_id,
-    )
+    matches.some(({ member }) => {
+      const candidate =
+        member.kind === "registered" ? member.endpoint : member.source;
+      return agentRpcSourceKey(candidate) !== agentRpcSourceKey(target);
+    })
   )
     throw new Error(`Ambiguous agent reference @${name}; no message was sent`);
-  return first;
+  const network = selectAgentNetwork(first.networks, requestedNetwork);
+  if (!network)
+    throw new Error(
+      requestedNetwork === undefined
+        ? `No active Agent Network includes @${name}; no message was sent`
+        : `@${name} is not in one unambiguous Agent Network named ${JSON.stringify(requestedNetwork)}; no message was sent`,
+    );
+  return {
+    target,
+    agent_network_id: network.agent_network_id,
+    agent_network_title: network.title,
+  };
 }
 
 export async function readTurnAgentReferences(): Promise<AgentNameBinding[]> {
@@ -75,14 +133,12 @@ export async function readTurnAgentReferences(): Promise<AgentNameBinding[]> {
 export async function resolveRuntimeAgentName(
   name: string,
   apiUrl?: string,
-): Promise<AgentEndpoint> {
+  requestedNetwork?: string,
+): Promise<ResolvedAgentDestination> {
   const references = await readTurnAgentReferences();
-  // Pinned references can request renewal without an active discovery result.
-  if (references.some((ref) => ref.name === name.trim().replace(/^@/, "")))
-    return resolveAgentName(name, [], references);
   const destinations = (await sendIdentityMessage(
-    { version: 2, action: "destinations" },
+    { version: 3, action: "destinations" },
     apiUrl,
-  )) as AgentRpcLink[];
-  return resolveAgentName(name, destinations, references);
+  )) as AgentNetworkDiscovery;
+  return resolveAgentName(name, destinations, references, requestedNetwork);
 }

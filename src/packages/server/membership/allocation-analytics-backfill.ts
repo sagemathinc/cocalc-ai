@@ -547,7 +547,14 @@ async function backfillTeamLicensePurchases({
             ) AS has_earlier_purchase,
             p.period_start, p.period_end
        FROM purchases p
-       LEFT JOIN team_licenses tl ON tl.owner_account_id=p.account_id
+       LEFT JOIN LATERAL (
+         SELECT MIN(id::text) AS id
+           FROM team_licenses
+          WHERE owner_account_id=p.account_id
+            AND NULLIF(p.description->>'team_license_id', '') IS NULL
+         -- Canceled licenses also count: the purchase may belong to one.
+         HAVING COUNT(*)=1
+       ) tl ON TRUE
       WHERE p.service='membership'
         AND p.description->>'type' IN
             ('team-license-change', 'team-license-renewal')

@@ -9,6 +9,8 @@ import {
   crossProjectSingleItemDestPath,
 } from "./action-box";
 
+let mockDisableSharing = false;
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: any, key: string) => {
     if (store === "account" && key === "user_type") return "signed_in";
@@ -28,6 +30,15 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
+jest.mock(
+  "@cocalc/frontend/course/configuration/customize-student-project-functionality",
+  () => ({
+    useStudentProjectFunctionality: () => ({
+      disableSharing: mockDisableSharing,
+    }),
+  }),
+);
+
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => null,
   useFreshAuthAction: () => ({
@@ -39,6 +50,22 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span data-testid={`icon-${name}`} />,
   LoginLink: () => <span>Sign in</span>,
+}));
+
+jest.mock("@cocalc/frontend/purchases/api", () => ({
+  listSiteLicenseOverviews: jest.fn(async () => []),
+}));
+
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        publicDirectoryShares: {
+          listProject: jest.fn(async () => ({ shares: [] })),
+        },
+      },
+    },
+  },
 }));
 
 jest.mock("@cocalc/frontend/project_store", () => ({
@@ -56,6 +83,13 @@ jest.mock("@cocalc/frontend/project_store", () => ({
         defaultMessage: "Delete",
       },
       icon: "trash",
+    },
+    publish: {
+      name: {
+        id: "file_actions.publish.name",
+        defaultMessage: "Publish",
+      },
+      icon: "share-square",
     },
   },
 }));
@@ -98,6 +132,35 @@ const actions = {
   close_tab: jest.fn(),
   open_directory: jest.fn(),
 } as any;
+
+describe("ActionBox course publishing restriction", () => {
+  afterEach(() => {
+    mockDisableSharing = false;
+  });
+
+  it("replaces the publish action with an explanatory warning", () => {
+    mockDisableSharing = true;
+
+    render(
+      <IntlProvider locale="en">
+        <ActionBox
+          display="modal"
+          file_action="publish"
+          checked_files={ImmutableSet(["/home/user/homework.ipynb"])}
+          current_path="/home/user"
+          project_id="project-1"
+          actions={actions}
+        />
+      </IntlProvider>,
+    );
+
+    expect(
+      screen.getByText(
+        "Publishing is disabled by this course's student project settings.",
+      ),
+    ).toBeVisible();
+  });
+});
 
 describe("ActionBox delete modal", () => {
   beforeEach(() => {

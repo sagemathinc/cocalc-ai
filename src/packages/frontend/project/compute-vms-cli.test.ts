@@ -3,9 +3,92 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { vmCreateCli, volumeCreateCli } from "./compute-vms-cli";
+import {
+  vmCreateCli,
+  vmCreateCliProblem,
+  volumeCreateCli,
+} from "./compute-vms-cli";
 
 describe("managed compute CLI equivalents", () => {
+  const funding_source = {
+    kind: "course" as const,
+    payer_account_id: "10000000-0000-4000-8000-000000000001",
+    pool_id: "10000000-0000-4000-8000-000000000002",
+    grant_id: "10000000-0000-4000-8000-000000000003",
+  };
+  it("preserves an explicit course source in the CLI equivalent", () => {
+    const command = vmCreateCli({ api: "", values: { funding_source } });
+    expect(command).toContain(
+      `--funding-payer ${funding_source.payer_account_id} --funding-pool ${funding_source.pool_id} --funding-grant ${funding_source.grant_id}`,
+    );
+  });
+  it("requires explicit independent course retention before either command", () => {
+    const values = { funding_source, create_home_volume: true };
+    expect(vmCreateCliProblem(values)).toContain(
+      "independent course retention",
+    );
+    expect(() => vmCreateCli({ api: "", values })).toThrow(
+      "independent course retention",
+    );
+  });
+  it("funds both creations explicitly and resolves the new volume version before attachment", () => {
+    const command = vmCreateCli({
+      api: "",
+      values: {
+        funding_source,
+        create_home_volume: true,
+        accept_course_retention: true,
+        new_home_volume_name: "course-home",
+        new_home_volume_size_gb: 50,
+      },
+    });
+    expect(command.match(/--funding-payer/g)).toHaveLength(2);
+    expect(command).toContain(
+      "--accept-course-retention --wait course-home &&",
+    );
+    expect(command).toContain(
+      'home_volume_funding_version="$(cocalc vm volume funding course-home --version-only)" && cocalc vm create',
+    );
+    expect(command).toContain(
+      '--home-volume-funding-version "$home_volume_funding_version"',
+    );
+  });
+  it("preserves a separately sponsored attachment even when the VM is personal", () => {
+    const command = vmCreateCli({
+      api: "",
+      values: {
+        home_volume: "course-home",
+        expected_home_volume_funding_version: "reviewed-version",
+      },
+    });
+    expect(command).toContain("--home-volume-funding-version reviewed-version");
+    expect(command).not.toContain("--funding-payer");
+  });
+  it("requires retention acknowledgment on standalone sponsored volumes", () => {
+    expect(() =>
+      volumeCreateCli({ api: "", values: { funding_source } }),
+    ).toThrow("independent course retention");
+    expect(
+      volumeCreateCli({
+        api: "",
+        values: { funding_source, accept_course_retention: true },
+      }),
+    ).toContain(`--funding-payer ${funding_source.payer_account_id}`);
+  });
+  it("never silently drops an incomplete course source", () => {
+    expect(() =>
+      vmCreateCli({
+        api: "",
+        values: {
+          funding_source: {
+            kind: "course",
+            pool_id: funding_source.pool_id,
+            grant_id: funding_source.grant_id,
+          },
+        },
+      }),
+    ).toThrow("payer, pool, and grant");
+  });
   it("includes every visible VM resource setting", () => {
     expect(
       vmCreateCli({
@@ -24,7 +107,7 @@ describe("managed compute CLI equivalents", () => {
         },
       }),
     ).toBe(
-      "cocalc vm create --project project-id --provider gcp --os linux --funding-mode account-prepaid --architecture x86_64 --region us-central1 --machine t2d-standard-16 --zone us-central1-a --ttl=8h --boot-disk-gb=40 --spot --allow-standard-fallback --home-volume build-cache --ssh-public-key-value 'ssh-ed25519 AAAATEST user@example.com' --wait build-vm",
+      "cocalc vm create --project project-id --provider gcp --os linux --funding-mode account-prepaid --architecture x86_64 --region us-central1 --machine t2d-standard-16 --zone us-central1-a --ttl=8h --stop-after=6h --boot-disk-gb=40 --spot --allow-standard-fallback --home-volume build-cache --ssh-public-key-value 'ssh-ed25519 AAAATEST user@example.com' --wait build-vm",
     );
   });
 

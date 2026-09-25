@@ -133,6 +133,18 @@ const OPTIONS: Option[] = [
     }),
   },
   {
+    name: "disableSharing",
+    title: defineMessage({
+      id: "course.customize-student-project-functionality.disableSharing.title",
+      defaultMessage: "Disable publishing",
+    }),
+    description: defineMessage({
+      id: "course.customize-student-project-functionality.disableSharing.description",
+      defaultMessage:
+        "Hides publishing actions in the course project to reduce confusion. This is not an access-control restriction.",
+    }),
+  },
+  {
     name: "disableCollaborators",
     title: defineMessage({
       id: "course.customize-student-project-functionality.disableCollaborators.title",

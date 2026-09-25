@@ -39,6 +39,10 @@ export interface CheckoutSessionOptions {
   // what is being purchased
   lineItems: LineItem[];
   return_url?: string;
+  // Stable for the lifetime of one embedded checkout component. A remount must
+  // get a different Stripe session, since a client secret can only back one
+  // Embedded Checkout object in a browser runtime.
+  checkout_instance_id?: string;
   // optional extra metadata: MUST NOT use 'purpose', 'account_id',
   // 'confirm' or 'processed' as key.  as a key.
   metadata?: { [key: string]: string };

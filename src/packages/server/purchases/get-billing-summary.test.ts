@@ -9,6 +9,7 @@ import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import createPurchase from "./create-purchase";
 import getBillingSummary from "./get-billing-summary";
+import { createTestAccount } from "./test-data";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -26,6 +27,7 @@ describe("billing summary", () => {
 
   it("uses live balance and finalized charges from the purchases ledger", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     const creditTime = dayjs().subtract(40, "days");
     const recentChargeTime = dayjs().subtract(20, "days");
     const olderChargeTime = dayjs().subtract(200, "days");

@@ -162,6 +162,7 @@ export type CourseSettingsRecord = TypedMap<{
   student_membership_required_at?: string;
   student_membership_grace_days?: number;
   course_ends_at?: string;
+  compute_budget_enabled?: boolean;
   require_invite_email_match?: boolean;
   shared_project_id: string;
   ssh_to_student_projects?: boolean;

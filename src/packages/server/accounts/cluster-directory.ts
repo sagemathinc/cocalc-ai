@@ -37,6 +37,7 @@ const logger = getLogger("server:accounts:cluster-directory");
 
 const TABLE = "cluster_account_directory";
 const API_KEY_TABLE = "cluster_account_api_key_directory";
+const FINANCIAL_IDENTITY_TABLE = "financial_approval_identities";
 
 function normalizedEmail(value: string): string {
   return `${value ?? ""}`.trim().toLowerCase();
@@ -221,6 +222,8 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
     "email_address_verified",
     "email_address_verified BOOLEAN",
   );
+  // FINANCIAL_IDENTITY_TABLE is initialized by the canonical database schema,
+  // not by directory reads/writes.
   await pool.query(`
     UPDATE ${TABLE}
        SET display_name = LEFT(
@@ -399,11 +402,12 @@ async function getLocalAccountByEmail(
   const { rows } = await getPool().query(
     `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
-       FROM accounts
+      FROM accounts
       WHERE email_address=$1
+        AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $2::TEXT) = $2::TEXT
         AND (deleted IS NULL OR deleted=FALSE)
       LIMIT 1`,
-    [email],
+    [email, getConfiguredBayId()],
   );
   return rows[0] ? canonicalLocalEntry(rows[0]) : null;
 }
@@ -697,6 +701,24 @@ function mergeEntries(
     const current = merged.get(entry.account_id);
     if (!current) {
       merged.set(entry.account_id, entry);
+      continue;
+    }
+    // Directory identity is authoritative once an account has moved away from
+    // this bay. Retained source rows remain useful for migration bookkeeping,
+    // but their old email and profile must never remain authentication aliases.
+    if (normalizedHomeBayId(entry.home_bay_id ?? "") !== getConfiguredBayId()) {
+      merged.set(entry.account_id, {
+        ...current,
+        ...entry,
+        is_admin: current.is_admin ?? entry.is_admin,
+        membership_class: current.membership_class ?? entry.membership_class,
+        membership_label: current.membership_label ?? entry.membership_label,
+        membership_source: current.membership_source ?? entry.membership_source,
+        last_active: latestAccountActivity(
+          current.last_active,
+          entry.last_active,
+        ),
+      });
       continue;
     }
     merged.set(entry.account_id, {
@@ -1094,7 +1116,8 @@ export async function updateClusterAccountEmailAddressDirect({
   }
   await ensureClusterAccountDirectorySchema();
   const { rows } = await getPool().query(
-    `INSERT INTO ${TABLE}
+    `WITH directory_entry AS (
+     INSERT INTO ${TABLE}
        (account_id, email_address, display_name, first_name, last_name, home_bay_id, provisioned)
      VALUES
        ($1, $2, $3, $4, $5, $6, TRUE)
@@ -1103,7 +1126,24 @@ export async function updateClusterAccountEmailAddressDirect({
             email_address_verified=FALSE,
             provisioned=TRUE
      RETURNING account_id, display_name, first_name, last_name, email_address, home_bay_id,
-               created, last_active, banned, email_address_verified`,
+               created, last_active, banned, email_address_verified
+    ), identity_update AS (
+      INSERT INTO ${FINANCIAL_IDENTITY_TABLE} (account_id, email_address)
+      SELECT account_id, email_address FROM directory_entry
+      ON CONFLICT (account_id) DO UPDATE
+        SET generation = CASE
+              WHEN ${FINANCIAL_IDENTITY_TABLE}.email_address IS DISTINCT FROM EXCLUDED.email_address
+              THEN ${FINANCIAL_IDENTITY_TABLE}.generation + 1
+              ELSE ${FINANCIAL_IDENTITY_TABLE}.generation
+            END,
+            email_address = EXCLUDED.email_address,
+            updated_at = CASE
+              WHEN ${FINANCIAL_IDENTITY_TABLE}.email_address IS DISTINCT FROM EXCLUDED.email_address
+              THEN NOW()
+              ELSE ${FINANCIAL_IDENTITY_TABLE}.updated_at
+            END
+    )
+    SELECT * FROM directory_entry`,
     [
       account_id,
       email,
@@ -1121,28 +1161,92 @@ export async function updateClusterAccountEmailAddressDirect({
 
 export async function updateClusterAccountEmailAddressVerifiedDirect({
   account_id,
+  email_address,
   email_address_verified,
 }: {
   account_id: string;
+  email_address: string;
   email_address_verified: boolean;
 }): Promise<AccountDirectoryEntry> {
   if (!isValidUUID(account_id)) {
     throw new Error("account_id must be a valid uuid");
+  }
+  const email = normalizedEmail(email_address);
+  if (!isValidEmailAddress(email)) {
+    throw new Error("email address is not valid");
   }
   await ensureClusterAccountDirectorySchema();
   const { rows } = await getPool().query(
     `UPDATE ${TABLE}
         SET email_address_verified=$2
       WHERE account_id=$1
+        AND email_address=$3
         AND provisioned=TRUE
       RETURNING account_id, display_name, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned, email_address_verified`,
-    [account_id, !!email_address_verified],
+    [account_id, !!email_address_verified, email],
   );
   if (!rows[0]) {
     throw new Error(`account ${account_id} not found`);
   }
   return canonicalDirectoryEntry(rows[0]);
+}
+
+export async function getFinancialApprovalIdentityDirect({
+  account_id,
+  email_address,
+}: {
+  account_id: string;
+  email_address: string;
+}): Promise<{ email_address: string; generation: number }> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const email = normalizedEmail(email_address);
+  if (!isValidEmailAddress(email)) {
+    throw new Error("email address is not valid");
+  }
+  await ensureClusterAccountDirectorySchema();
+  const inserted = await getPool().query<{
+    email_address: string;
+    generation: string | number;
+  }>(
+    `INSERT INTO ${FINANCIAL_IDENTITY_TABLE} (account_id, email_address)
+     SELECT $1, $2
+      WHERE EXISTS (
+        SELECT 1 FROM ${TABLE}
+         WHERE account_id=$1 AND email_address=$2 AND provisioned=TRUE
+        UNION ALL
+        SELECT 1 FROM accounts
+         WHERE account_id=$1 AND email_address=$2 AND deleted IS NOT TRUE
+           AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $3::TEXT)=$3::TEXT
+           AND NOT EXISTS (
+             SELECT 1 FROM ${TABLE}
+              WHERE account_id=$1 AND provisioned=TRUE
+           )
+      )
+     ON CONFLICT (account_id) DO NOTHING
+     RETURNING email_address, generation`,
+    [account_id, email, getConfiguredBayId()],
+  );
+  const row =
+    inserted.rows[0] ??
+    (
+      await getPool().query<{
+        email_address: string;
+        generation: string | number;
+      }>(
+        `SELECT email_address, generation
+           FROM ${FINANCIAL_IDENTITY_TABLE}
+          WHERE account_id=$1 AND email_address=$2`,
+        [account_id, email],
+      )
+    ).rows[0];
+  const generation = Number(row?.generation);
+  if (row?.email_address !== email || !Number.isSafeInteger(generation)) {
+    throw new Error("financial approval identity changed");
+  }
+  return { email_address: email, generation };
 }
 
 export async function updateClusterAccountBannedDirect({

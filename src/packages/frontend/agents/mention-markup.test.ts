@@ -1,6 +1,11 @@
 import MarkdownIt from "markdown-it";
 import { mentionPlugin } from "../markdown/mentions-plugin";
 import { createAgentMention } from "../editors/slate/elements/agent-mention";
+import { createArtifactMention } from "../editors/slate/elements/artifact-mention";
+import {
+  parseArtifactMention,
+  serializeArtifactMention,
+} from "@cocalc/util/artifact-mentions";
 import {
   getMarkdownToSlate,
   getSlateToMarkdown,
@@ -34,6 +39,26 @@ test("Markdown parses a distinct agent token and Slate round trips stable refere
     parseAgentMention(getSlateToMarkdown("agent-mention")({ node } as any)),
   ).toEqual(reference);
   expect(md.render(markup)).toContain(markup);
+});
+test("artifact mention round trips the catalog identity through Markdown and Slate", () => {
+  const artifact = {
+    version: 1 as const,
+    project_id: "22222222-2222-4222-8222-222222222222",
+    entry_id: "a".repeat(64),
+    name: "nb1",
+  };
+  const md = new MarkdownIt({ html: true });
+  md.use(mentionPlugin);
+  const markup = serializeArtifactMention(artifact);
+  const token = md.parse(markup, {})[1].children![0];
+  expect(token.type).toBe("artifact-mention");
+  const node = getMarkdownToSlate("artifact-mention")({ token });
+  expect(node).toEqual(createArtifactMention(artifact));
+  expect(
+    parseArtifactMention(
+      getSlateToMarkdown("artifact-mention")({ node } as any),
+    ),
+  ).toEqual(artifact);
 });
 test("raw resolution is explicit and leaves bound mentions and email addresses alone", () => {
   const bound = serializeAgentMention(reference);

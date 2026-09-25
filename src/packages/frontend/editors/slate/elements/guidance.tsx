@@ -13,6 +13,7 @@ export type GuidanceState = "sending" | "sent" | "queued" | "not-sent";
 export interface Guidance extends SlateElement {
   type: "guidance";
   state?: GuidanceState;
+  agentDirection?: "incoming" | "outgoing";
 }
 
 const GUIDANCE_STATES = new Set<GuidanceState>([
@@ -36,14 +37,45 @@ export function guidanceFromMarkdownFence({
     requestedState != null && GUIDANCE_STATES.has(requestedState)
       ? requestedState
       : "sent";
+  const children = markdown_to_slate(value, true);
+  const agentMessage = children.find(
+    (child) => (child as { type?: string }).type === "agent-message",
+  ) as { direction?: "incoming" | "outgoing" } | undefined;
   return {
     type: "guidance",
     state,
-    children: markdown_to_slate(value, true),
+    ...(agentMessage
+      ? {
+          agentDirection:
+            agentMessage.direction === "outgoing" ? "outgoing" : "incoming",
+        }
+      : {}),
+    children,
   };
 }
 
-function guidanceAppearance(state: GuidanceState | undefined) {
+function guidanceAppearance(
+  state: GuidanceState | undefined,
+  agentDirection?: "incoming" | "outgoing",
+) {
+  if (agentDirection === "incoming") {
+    return {
+      label: "Agent guidance received",
+      borderColor: UI_COLORS.infoBg,
+      background: UI_COLORS.infoBg,
+      pillBackground: UI_COLORS.infoBg,
+      pillColor: UI_COLORS.info,
+    };
+  }
+  if (agentDirection === "outgoing") {
+    return {
+      label: "Agent guidance sent",
+      borderColor: UI_COLORS.successBg,
+      background: UI_COLORS.successBg,
+      pillBackground: UI_COLORS.successBg,
+      pillColor: UI_COLORS.success,
+    };
+  }
   switch (state) {
     case "sending":
       return {
@@ -82,7 +114,10 @@ function guidanceAppearance(state: GuidanceState | undefined) {
 
 const Element = ({ attributes, children, element }) => {
   const guidance = element as Guidance;
-  const appearance = guidanceAppearance(guidance.state);
+  const appearance = guidanceAppearance(
+    guidance.state,
+    guidance.agentDirection,
+  );
   return (
     <section
       {...attributes}

@@ -171,6 +171,12 @@ export function NotificationRow(props: Props) {
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
     try {
+      const { openAgentNotification } =
+        await import("../../agents/open-notification");
+      if (await openAgentNotification(project_id, path, fragmentId?.thread)) {
+        markReadState("read");
+        return;
+      }
       await ensureProjectReduxRuntime();
       await redux.getProjectActions(project_id).open_file({
         path,

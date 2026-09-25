@@ -33,6 +33,8 @@ describe("hub api admission", () => {
     ).toBe(true);
     expect(isLowPriorityHubApiMethod("purchases.getAIUsage")).toBe(true);
     expect(isLowPriorityHubApiMethod("growthAnalytics.recordEvent")).toBe(true);
+    expect(isLowPriorityHubApiMethod("personalLibrary.setPinned")).toBe(true);
+    expect(isLowPriorityHubApiMethod("personalLibrary.movePinned")).toBe(true);
     expect(isLowPriorityHubApiMethod("system.recordUxLatencyEvent")).toBe(true);
     expect(isLowPriorityHubApiMethod("system.listNews")).toBe(true);
     expect(isLowPriorityHubApiMethod("system.upsertBrowserSession")).toBe(true);

@@ -42,6 +42,22 @@ describe("chatActionsStoreName", () => {
 });
 
 describe("hasActiveAcpTurnForComposer", () => {
+  it.each(["queue", "sending", "sent", "running"])(
+    "keeps Queue and Steer available while the thread state is %s",
+    (state) => {
+      expect(
+        hasActiveAcpTurnForComposer({
+          isSelectedThreadAI: true,
+          selectedThreadId: "thread-1",
+          acpState: immutable
+            .Map<string, string>()
+            .set("thread:thread-1", state),
+          selectedThreadMessages: [],
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("ignores stale ACP generating flags when acpState is no longer active", () => {
     expect(
       hasActiveAcpTurnForComposer({

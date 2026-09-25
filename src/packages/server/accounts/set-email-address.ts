@@ -143,6 +143,7 @@ export default async function setEmailAddress({
     if (already_verified) {
       await updateClusterAccountEmailAddressVerified({
         account_id,
+        email_address,
         email_address_verified: true,
       });
     }
@@ -193,6 +194,7 @@ export default async function setEmailAddress({
   if (already_verified) {
     await updateClusterAccountEmailAddressVerified({
       account_id,
+      email_address,
       email_address_verified: true,
     });
   }

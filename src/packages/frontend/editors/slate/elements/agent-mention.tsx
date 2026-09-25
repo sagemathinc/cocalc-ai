@@ -3,6 +3,7 @@ import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { openAgentThread } from "@cocalc/frontend/agents/open-agent";
+import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { register } from "./register";
 import type { RenderElementProps, SlateElement } from "./register";
 
@@ -31,6 +32,7 @@ function AgentMentionElement({
 }: RenderElementProps) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const { postOnly } = useAgentMentionContext();
   if (element.type !== "agent-mention")
     throw new Error("Expected agent mention");
   const reference = element.reference;
@@ -55,7 +57,11 @@ function AgentMentionElement({
           type="button"
           disabled={busy}
           aria-label={`Open agent @${reference.name}`}
-          title={`Named by ${reference.naming_account_id}; agent ${reference.target.agent_id}. Display name is a snapshot.`}
+          title={
+            postOnly
+              ? "This post will not notify or send a message to this agent."
+              : "Reference this agent so the current agent can contact it. Mentioning it does not send a message."
+          }
           onClick={() => void open()}
           style={{
             color: UI_COLORS.link,

@@ -36,6 +36,7 @@ export interface PublicViewerFileContentsProps {
   fontSize?: number;
   lineNumbers?: boolean;
   style?: CSSProperties;
+  showChatArtifacts?: boolean;
 }
 
 export function publicViewerFileNeedsContent(path: string): boolean {
@@ -57,6 +58,7 @@ export default function PublicViewerFileContents({
   fontSize,
   lineNumbers = true,
   style,
+  showChatArtifacts = false,
 }: PublicViewerFileContentsProps): JSX.Element {
   const ext = filename_extension(path).toLowerCase();
   const resolvedFileContext = buildViewerFileContext({
@@ -139,6 +141,7 @@ export default function PublicViewerFileContents({
     return (
       <Suspense fallback={<LoadingRenderer />}>
         <ChatRenderer
+          showArtifacts={showChatArtifacts}
           content={content}
           fileContext={resolvedFileContext}
           style={style}

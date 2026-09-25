@@ -15,9 +15,12 @@ import {
 
 export const ACCOUNT_PROJECT_HOST_HUB_METHODS = new Set([
   "projects.codexDeviceAuthStart",
+  "projects.codexDeviceAuthStartV2",
+  "projects.getCodexCredentialSelectionCapability",
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
   "projects.codexUploadAuthFile",
+  "projects.codexUploadAuthFileV2",
   "projects.getCodexUsageStatus",
   "projects.chatStoreStats",
   "projects.chatStoreRotate",

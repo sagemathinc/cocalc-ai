@@ -1,58 +1,76 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
-import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
+import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type {
   AgentRpcControlApi,
   RpcRoute,
 } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import {
+  agentRpcEnvelopeKey,
+  agentRpcSourceKey,
+  isExternalAgentSource,
   rpcOutcome,
   validateAgentEndpoint,
-  validateAgentRpcRequest,
   validateAgentRpcOutcome,
   validateAgentRpcPreparation,
-  agentRpcEnvelopeKey,
+  validateAgentRpcRequest,
   validateAgentRpcSource,
-  isExternalAgentSource,
-  type AgentRpcSource,
+  validateAgentRpcTarget,
   type AgentEndpoint,
   type AgentRpcEnvelope,
-  type AgentRpcLink,
+  type AgentRpcBroadcast,
+  type AgentRpcBroadcastOutcome,
   type AgentRpcRequest,
+  type AgentRpcSource,
+  type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
 import { validateAttachmentPayload } from "@cocalc/conat/agents/attachments";
 import {
-  requireUuid,
   parseAgentMessagingSubject,
+  requireUuid,
 } from "@cocalc/conat/agents/protocol";
+import type {
+  AgentNetworkActivity,
+  AgentNetworkAuthorization,
+  AgentNetworkDiscovery,
+  AgentNetworkMember,
+  PersonalAgentDenial,
+} from "@cocalc/conat/agents/personal";
+import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
+import {
+  parseExternalAgentSubject,
+  validateExternalAgentSource,
+} from "@cocalc/conat/agents/external";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
-  resolveProjectBay,
   resolveHostBayAcrossCluster,
+  resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
+import { assertActor, assertAgent, assertRun } from "./access";
 import { agentStore } from "./store";
 import {
-  externalControl,
-  checkExternalAgentSend,
   assertExternalAgentLoginEnabled,
+  externalControl,
+  enqueueExternalAgentMessage,
   externalStore,
 } from "./external";
-import { parseExternalAgentSubject } from "@cocalc/conat/agents/external";
-import { assertActor, assertAgent, assertRun } from "./access";
-import { getIdentity } from "./api";
-import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
-import type { PersonalAgentDenial } from "@cocalc/conat/agents/personal";
-import {
-  personalControl,
-  personalMessagingEnabled,
-  withPersonalHome,
-} from "./personal";
+import { personalControl, withPersonalHome } from "./personal";
+
+function networkMemberLabel(member: AgentNetworkMember): string {
+  if (member.kind === "external") {
+    return (
+      member.label.trim() || `External agent ${member.member_id.slice(0, 8)}`
+    );
+  }
+  return member.name
+    ? `@${member.name}`
+    : member.thread_title?.trim() || `Agent ${member.member_id.slice(0, 8)}`;
+}
 import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
@@ -63,9 +81,98 @@ import {
 
 const logger = getLogger("agents:rpc");
 
-function enabled() {
-  if (process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED !== "1")
-    throw new Error("agent RPC messaging is not enabled on this bay");
+function broadcastChildId(
+  broadcast_id: string,
+  target: AgentRpcTarget,
+  index: number,
+) {
+  const bytes = createHash("sha256")
+    .update(`${broadcast_id}\0${index}\0${agentRpcSourceKey(target)}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function submitBroadcast(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: AgentRpcBroadcast,
+  dispatch: (
+    child: Extract<AgentRpcRequest, { action: "send" }>,
+    authorization: AgentNetworkAuthorization,
+  ) => Promise<unknown>,
+): Promise<AgentRpcBroadcastOutcome> {
+  const claim = (await withPersonalHome(account_id, {
+    action: "beginBroadcast",
+    options: { source, ...(run_id ? { run_id } : {}), broadcast: request },
+  })) as {
+    claimed: boolean;
+    binding_hash: string;
+    outcome?: AgentRpcBroadcastOutcome;
+    authorizations?: AgentNetworkAuthorization[];
+  };
+  if (claim.outcome) return claim.outcome;
+  if (!claim.claimed)
+    return {
+      version: 3,
+      broadcast_id: request.broadcast_id,
+      agent_network_id: request.agent_network_id,
+      outcome: "unknown",
+      observed_at: Date.now(),
+      children: [],
+    };
+  if (claim.authorizations?.length !== request.targets.length)
+    throw new Error("broadcast authorization snapshot unavailable");
+  const children: import("@cocalc/conat/agents/rpc").AgentRpcOutcome[] = [];
+  for (const [index, target] of request.targets.entries()) {
+    const child = {
+      version: 3 as const,
+      action: "send" as const,
+      attempt_id: broadcastChildId(request.broadcast_id, target, index),
+      agent_network_id: request.agent_network_id,
+      target,
+      body: request.body,
+    };
+    try {
+      children.push(
+        (await dispatch(
+          child,
+          claim.authorizations[index],
+        )) as import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
+      );
+    } catch {
+      children.push(
+        rpcOutcome(child, "unknown", {
+          reason: "Broadcast child admission could not be confirmed",
+        }),
+      );
+    }
+  }
+  const outcome: AgentRpcBroadcastOutcome = {
+    version: 3,
+    broadcast_id: request.broadcast_id,
+    agent_network_id: request.agent_network_id,
+    outcome: children.every(({ outcome }) => outcome === "accepted")
+      ? "accepted"
+      : children.every(({ outcome }) => outcome === "rejected")
+        ? "rejected"
+        : "unknown",
+    observed_at: Date.now(),
+    children,
+  };
+  await withPersonalHome(account_id, {
+    action: "finishBroadcast",
+    options: {
+      broadcast_id: request.broadcast_id,
+      binding_hash: claim.binding_hash,
+      outcome,
+    },
+  });
+  return outcome;
 }
 
 async function owner(project_id: string) {
@@ -79,7 +186,6 @@ async function routed<T>(
   project_id: string,
   fn: (api: AgentRpcControlApi, route: RpcRoute) => Promise<T>,
 ): Promise<T> {
-  enabled();
   const route = await owner(project_id);
   return fn(
     route.bay_id === getConfiguredBayId()
@@ -90,7 +196,6 @@ async function routed<T>(
 }
 
 async function local(opts: RpcRoute, endpoint: AgentEndpoint) {
-  enabled();
   validateAgentEndpoint(endpoint);
   const route = await owner(endpoint.project_id);
   if (
@@ -102,40 +207,6 @@ async function local(opts: RpcRoute, endpoint: AgentEndpoint) {
     throw new Error("stale agent RPC route");
 }
 
-function fresh(at: number) {
-  if (
-    !Number.isFinite(at) ||
-    Date.now() - at > 30_000 ||
-    at > Date.now() + 5000
-  )
-    throw new Error("fresh human approval attestation expired");
-}
-async function human(opts: AgentHumanAuth) {
-  requireUuid(opts.account_id, "account_id");
-  await requireDangerousSessionAuth({
-    account_id: opts.account_id,
-    session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
-    allow_actor_impersonation: false,
-  });
-  return opts.account_id;
-}
-
-function link(row: any, source: AgentEndpoint): AgentRpcLink {
-  return {
-    link_id: row.link_id,
-    source,
-    target: {
-      project_id: row.target_project_id,
-      agent_id: row.target_agent_id,
-    },
-    approved_by: row.approved_by,
-    reason: row.reason,
-    allow_guidance: row.allow_guidance,
-    expires_at: new Date(row.expires_at).toISOString(),
-    revoked_at: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
-  };
-}
 async function sourceIdentity(source: AgentEndpoint) {
   validateAgentEndpoint(source);
   const identity = await agentStore().get(source.agent_id);
@@ -144,6 +215,7 @@ async function sourceIdentity(source: AgentEndpoint) {
   await assertAgent(identity);
   return identity;
 }
+
 async function sourceRun(source: AgentEndpoint, run_id: string) {
   requireUuid(run_id, "run_id");
   await sourceIdentity(source);
@@ -160,6 +232,7 @@ function preparationKey(e: AgentRpcEnvelope) {
     attachment_reservation: undefined,
   });
 }
+
 async function hostFor(endpoint: AgentEndpoint) {
   const project = (
     await agentStore().query(
@@ -167,8 +240,6 @@ async function hostFor(endpoint: AgentEndpoint) {
       [endpoint.project_id],
     )
   ).rows[0];
-  // The host can serve chat files while the project is stopped. It performs
-  // authorized autostart before admission; the hub must not reject that case.
   if (!project?.host_id)
     throw new Error("recipient project has no assigned host");
   const hostOwner = await resolveHostBayAcrossCluster(project.host_id);
@@ -185,33 +256,84 @@ async function hostFor(endpoint: AgentEndpoint) {
   };
 }
 
-async function submissionProof(
+async function networkProof(
+  account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
-  target: AgentEndpoint,
-  guidance: boolean,
-) {
+  target: AgentRpcTarget,
+  agent_network_id: string,
+): Promise<AgentNetworkAuthorization | PersonalAgentDenial> {
   validateAgentRpcSource(source, run_id);
-  if (isExternalAgentSource(source)) {
-    if (guidance) throw new Error("external agents cannot steer turns");
-    const proof = await checkExternalAgentSend(source, target);
-    return {
-      link: {
-        link_id: proof.destination.link_id,
-        approved_by: source.account_id,
-        principal_account_id: source.account_id,
-      },
-    };
-  }
-  return routed(source.project_id, (api, route) =>
-    api.check({
-      ...route,
+  validateAgentRpcTarget(target);
+  requireUuid(agent_network_id, "agent_network_id");
+  requireUuid(account_id, "account_id");
+  if (isExternalAgentSource(source) && source.account_id !== account_id)
+    throw new PersonalAgentAuthorizationError("principal_mismatch");
+  return (await withPersonalHome(account_id, {
+    action: "checkNetwork",
+    options: {
+      agent_network_id,
       source,
-      run_id: run_id!,
+      ...(run_id ? { run_id } : {}),
       target,
-      guidance,
-    }),
-  );
+    },
+  })) as AgentNetworkAuthorization | PersonalAgentDenial;
+}
+
+function memberSource(member: AgentNetworkMember): AgentRpcSource {
+  return member.kind === "registered" ? member.endpoint : member.source;
+}
+
+function validateSnapshotAuthorization(
+  proof: AgentNetworkAuthorization,
+  account_id: string,
+  source: AgentRpcSource,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  if (
+    proof.account_id !== account_id ||
+    proof.agent_network_id !== request.agent_network_id ||
+    agentRpcSourceKey(memberSource(proof.source)) !==
+      agentRpcSourceKey(source) ||
+    agentRpcSourceKey(memberSource(proof.target)) !==
+      agentRpcSourceKey(request.target)
+  )
+    throw new PersonalAgentAuthorizationError("network_stale");
+  return proof;
+}
+
+async function observeActivity(
+  proof: AgentNetworkAuthorization,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
+  outcome: import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
+  deliveryOverride?: AgentNetworkActivity["effective_delivery"],
+) {
+  const effective_delivery =
+    deliveryOverride ??
+    (outcome.operation?.disposition === "steered"
+      ? "live-guidance"
+      : outcome.operation?.disposition === "queued"
+        ? "queued"
+        : outcome.operation?.disposition === "running"
+          ? "idle-wake"
+          : proof.delivery_mode === "live"
+            ? "queued-fallback"
+            : undefined);
+  const activity: AgentNetworkActivity = {
+    attempt_id: request.attempt_id,
+    agent_network_id: proof.agent_network_id,
+    network_generation: proof.network_generation,
+    source_member_id: proof.source.member_id,
+    target_member_id: proof.target.member_id,
+    configured_delivery: proof.delivery_mode,
+    effective_delivery,
+    outcome: outcome.outcome,
+    observed_at: new Date(outcome.observed_at).toISOString(),
+  };
+  await withPersonalHome(proof.account_id, {
+    action: "observeNetworkActivity",
+    options: activity,
+  });
 }
 
 async function submitAgentRpcOperation(
@@ -232,69 +354,63 @@ async function submitAgentRpcOperation(
     true,
   );
   if (opts.request.snapshot_manifest || phase !== "send") {
-    if (process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1")
-      return rpcOutcome(opts.request, "rejected", {
-        code: "attachment_unavailable",
-        reason: "Binary attachments are not enabled on the recipient bay",
-        chat_effect: "none",
-      });
     if (phase === "send")
       validateAttachmentPayload(
         { kind: "snapshots", files: opts.request.snapshot_manifest! },
         opts.snapshot_payload!,
       );
-  } else if (opts.snapshot_payload !== undefined)
+  } else if (opts.snapshot_payload !== undefined) {
     throw new Error("unexpected attachment bytes");
+  }
+
   let submissionStarted = false;
-  let observation: { account_id: string; link_id: string } | undefined;
-  let accepted = false;
   let permitId: string | undefined;
+  let proof: AgentNetworkAuthorization | undefined;
+  let observedOutcome:
+    | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
+    | undefined;
   try {
-    const proof = await submissionProof(
-      opts.source,
-      opts.run_id,
-      opts.request.target,
-      opts.request.guidance === true,
-    );
+    const checked = opts.authorization
+      ? validateSnapshotAuthorization(
+          opts.authorization,
+          opts.account_id,
+          opts.source,
+          opts.request,
+        )
+      : await networkProof(
+          opts.account_id,
+          opts.source,
+          opts.run_id,
+          opts.request.target,
+          opts.request.agent_network_id,
+        );
+    if ("denied" in checked)
+      return rpcOutcome(opts.request, "rejected", {
+        code: "network_unavailable",
+        reason: checked.denied,
+      });
+    proof = checked;
     if (
       isExternalAgentSource(opts.source) &&
       opts.request.file_references !== undefined
     )
       throw new Error("external agents cannot send project file references");
-    if ("denied" in proof)
-      return rpcOutcome(opts.request, "rejected", { reason: proof.denied });
     const target = await sourceIdentity(opts.request.target);
-    if (
-      personalMessagingEnabled() !==
-      (proof.link.principal_account_id !== undefined)
-    )
-      throw new Error("personal messaging mode mismatch between bays");
-    if (
-      personalMessagingEnabled() &&
-      proof.link.principal_account_id !== proof.link.approved_by
-    )
-      throw new PersonalAgentAuthorizationError("principal_mismatch");
-    if (
-      !personalMessagingEnabled() &&
-      target.created_by !== proof.link.approved_by
-    )
-      throw new Error("target approver changed");
-    await assertActor(proof.link.approved_by, target.project_id);
+    await assertActor(proof.account_id, target.project_id);
     const host = await hostFor(opts.request.target);
-    if (personalMessagingEnabled() && !isExternalAgentSource(opts.source))
-      observation = {
-        account_id: proof.link.approved_by,
-        link_id: proof.link.link_id,
-      };
     const envelope: AgentRpcEnvelope = {
       ...opts.request,
       source: opts.source,
+      source_label: networkMemberLabel(proof.source),
+      target_label: networkMemberLabel(proof.target),
+      network_title: proof.network_title,
       ...(opts.run_id ? { run_id: opts.run_id } : {}),
       permit_id: randomUUID(),
-      link_id: proof.link.link_id,
-      account_id: personalMessagingEnabled()
-        ? proof.link.approved_by
-        : target.created_by,
+      account_id: proof.account_id,
+      network_generation: proof.network_generation,
+      account_generation: proof.account_generation,
+      configured_delivery: proof.delivery_mode,
+      guidance: proof.delivery_mode === "live",
       path: target.path,
       thread_id: target.thread_id,
       deadline: Date.now() + 30_000,
@@ -359,34 +475,37 @@ async function submitAgentRpcOperation(
       });
     }
     submissionStarted = true;
-    // Omit absent positional arguments: MsgPack transports undefined array
-    // elements as null, which is not a valid attachment payload.
     const outcome =
       opts.snapshot_payload === undefined
         ? await host.api.submitAgentRpc(envelope)
         : await host.api.submitAgentRpc(envelope, opts.snapshot_payload);
     validateAgentRpcOutcome(outcome, opts.request);
-    accepted = outcome.outcome === "accepted";
+    observedOutcome = outcome;
     return outcome;
   } catch (error) {
     logger.warn("recipient submission failed", {
       attempt_id: opts.request.attempt_id,
+      agent_network_id: opts.request.agent_network_id,
       target: opts.request.target,
       submissionStarted,
       error: `${error}`,
     });
-    return rpcOutcome(
+    observedOutcome = rpcOutcome(
       opts.request,
       submissionStarted ? "unknown" : "rejected",
       {
+        code:
+          error instanceof PersonalAgentAuthorizationError
+            ? "network_unavailable"
+            : undefined,
         reason: submissionStarted
           ? "Recipient acknowledgment unavailable"
-          : personalMessagingEnabled() &&
-              error instanceof PersonalAgentAuthorizationError
+          : error instanceof PersonalAgentAuthorizationError
             ? error.denial
-            : "Link, execution account or target host unavailable",
+            : "Network, execution account, target, or host unavailable",
       },
     );
+    return observedOutcome;
   } finally {
     if (permitId)
       await deleteAgentRpcAdmissionState({
@@ -398,17 +517,15 @@ async function submitAgentRpcOperation(
           error: `${error}`,
         }),
       );
-    // Observations are not receipts. Unavailable telemetry cannot change an
-    // outcome or cause a send retry, and must not delay the host response.
-    if (submissionStarted && observation)
-      void withPersonalHome(observation.account_id, {
-        action: "observe",
-        options: { link_id: observation.link_id, accepted },
-      }).catch((error) =>
-        logger.warn("personal attempt observation unavailable", {
-          error: `${error}`,
-        }),
+    if (proof && phase === "send" && observedOutcome) {
+      // Observation is bounded best-effort evidence and never changes delivery.
+      void observeActivity(proof, opts.request, observedOutcome).catch(
+        (error) =>
+          logger.warn("network activity observation unavailable", {
+            error: `${error}`,
+          }),
       );
+    }
   }
 }
 
@@ -419,180 +536,7 @@ export const agentRpcControl: AgentRpcControlApi = {
     await local(opts, opts.source);
     return {
       account_id: (await sourceRun(opts.source, opts.run_id)).account_id,
-      personal_messaging: personalMessagingEnabled(),
-    };
-  },
-  grant: async (opts) => {
-    await local(opts, opts.source);
-    fresh(opts.fresh_auth_at);
-    requireUuid(opts.link_id, "link_id");
-    validateAgentEndpoint(opts.target);
-    if (
-      !Number.isInteger(opts.ttl_seconds) ||
-      opts.ttl_seconds < 1 ||
-      opts.ttl_seconds > 30 * 86400
-    )
-      throw new Error("link expiry must be between 1 second and 30 days");
-    if (
-      typeof opts.reason !== "string" ||
-      !opts.reason.trim() ||
-      opts.reason.length > 2000
-    )
-      throw new Error("approval reason required (maximum 2000 characters)");
-    if (
-      opts.allow_guidance !== undefined &&
-      typeof opts.allow_guidance !== "boolean"
-    )
-      throw new Error("invalid guidance permission");
-    await sourceIdentity(opts.source);
-    await assertActor(opts.account_id, opts.source.project_id);
-    const target = await getIdentity({
-      account_id: opts.account_id,
-      ...opts.target,
-    });
-    if (target.disabled_at || target.created_by !== opts.account_id)
-      throw new Error("the target registrant must approve this link");
-    const db = agentStore();
-    const row = await db.transaction(async (sql) => {
-      await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
-        `agent-rpc-links:${opts.source.agent_id}`,
-      ]);
-      const prior = (
-        await sql.query("SELECT * FROM agent_rpc_links WHERE link_id=$1", [
-          opts.link_id,
-        ])
-      ).rows[0];
-      if (prior) return prior;
-      const count = (
-        await sql.query(
-          "SELECT count(*) AS count FROM agent_rpc_links WHERE source_agent_id=$1",
-          [opts.source.agent_id],
-        )
-      ).rows[0];
-      if (+count.count >= 1000) throw new Error("agent_rpc_link_capacity");
-      return (
-        await sql.query(
-          `INSERT INTO agent_rpc_links(link_id,source_agent_id,target_agent_id,target_project_id,approved_by,reason,allow_guidance,expires_at)
-           VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 second') RETURNING *`,
-          [
-            opts.link_id,
-            opts.source.agent_id,
-            opts.target.agent_id,
-            opts.target.project_id,
-            opts.account_id,
-            opts.reason.trim(),
-            opts.allow_guidance === true,
-            opts.ttl_seconds,
-          ],
-        )
-      ).rows[0];
-    });
-    if (
-      row.source_agent_id !== opts.source.agent_id ||
-      row.target_agent_id !== opts.target.agent_id ||
-      row.target_project_id !== opts.target.project_id ||
-      row.approved_by !== opts.account_id ||
-      row.reason !== opts.reason.trim() ||
-      row.allow_guidance !== (opts.allow_guidance === true)
-    )
-      throw new Error("link ID already used for a different approval");
-    return link(row, opts.source);
-  },
-  revoke: async (opts) => {
-    await local(opts, opts.source);
-    fresh(opts.fresh_auth_at);
-    requireUuid(opts.link_id, "link_id");
-    const source = await sourceIdentity(opts.source);
-    await assertActor(opts.account_id, opts.source.project_id);
-    const row = (
-      await agentStore().query(
-        "SELECT * FROM agent_rpc_links WHERE link_id=$1 AND source_agent_id=$2",
-        [opts.link_id, opts.source.agent_id],
-      )
-    ).rows[0];
-    if (
-      !row ||
-      (row.approved_by !== opts.account_id &&
-        source.created_by !== opts.account_id)
-    )
-      throw new Error("not authorized to revoke link");
-    await agentStore().query(
-      "UPDATE agent_rpc_links SET revoked_at=COALESCE(revoked_at,now()) WHERE link_id=$1",
-      [opts.link_id],
-    );
-  },
-  links: async (opts) => {
-    await local(opts, opts.source);
-    const source = await sourceIdentity(opts.source);
-    if (personalMessagingEnabled()) {
-      const account_id = opts.run_id
-        ? (await sourceRun(opts.source, opts.run_id)).account_id
-        : opts.account_id;
-      requireUuid(account_id, "account_id");
-      if (opts.run_id && opts.account_id && opts.account_id !== account_id)
-        throw new Error("principal_mismatch");
-      await assertActor(account_id, opts.source.project_id);
-      return (await withPersonalHome(account_id, {
-        action: "links",
-        options: { source: opts.source },
-      })) as AgentRpcLink[];
-    }
-    if (opts.run_id) await sourceRun(opts.source, opts.run_id);
-    else {
-      requireUuid(opts.account_id, "account_id");
-      await assertActor(opts.account_id, opts.source.project_id);
-    }
-    const rows = (
-      await agentStore().query(
-        `SELECT * FROM agent_rpc_links WHERE source_agent_id=$1
-      AND ($2::uuid IS NULL OR approved_by=$2 OR $3::boolean)
-      AND revoked_at IS NULL AND expires_at>now() ORDER BY expires_at DESC LIMIT 100`,
-        [
-          opts.source.agent_id,
-          opts.run_id ? null : opts.account_id,
-          source.created_by === opts.account_id,
-        ],
-      )
-    ).rows;
-    return rows.map((row) => link(row, opts.source));
-  },
-  check: async (opts) => {
-    await local(opts, opts.source);
-    validateAgentEndpoint(opts.target);
-    const run = await sourceRun(opts.source, opts.run_id);
-    if (personalMessagingEnabled()) {
-      const personalLink = (await withPersonalHome(run.account_id, {
-        action: "check",
-        options: {
-          source: opts.source,
-          target: opts.target,
-          guidance: opts.guidance,
-        },
-      })) as AgentRpcLink | PersonalAgentDenial;
-      if ("denied" in personalLink) return personalLink;
-      if (personalLink.approved_by !== run.account_id)
-        return { denied: "principal_mismatch" };
-      return { source: await sourceIdentity(opts.source), link: personalLink };
-    }
-    const row = (
-      await agentStore().query(
-        `SELECT * FROM agent_rpc_links
-      WHERE source_agent_id=$1 AND target_project_id=$2 AND target_agent_id=$3
-      AND revoked_at IS NULL AND expires_at>now() AND (NOT $4::boolean OR allow_guidance)
-      ORDER BY expires_at DESC LIMIT 1`,
-        [
-          opts.source.agent_id,
-          opts.target.project_id,
-          opts.target.agent_id,
-          opts.guidance,
-        ],
-      )
-    ).rows[0];
-    if (!row) throw new Error("no active send-only link");
-    await assertActor(row.approved_by, opts.source.project_id);
-    return {
-      source: await sourceIdentity(opts.source),
-      link: link(row, opts.source),
+      personal_messaging: true,
     };
   },
   submit: async (opts) =>
@@ -608,107 +552,61 @@ export const agentRpcControl: AgentRpcControlApi = {
   inspect: async (opts) => {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
-    // Source authentication is checked at its owning bay. The host returns only
-    // evidence for this exact source/target/attempt, never receiver content.
-    validateAgentRpcSource(opts.source, opts.run_id);
-    const source = opts.source;
-    const account_id = isExternalAgentSource(source)
-      ? (await checkExternalAgentSend(source, opts.request.target)).source
-          .account_id
-      : await routed(source.project_id, async (api, route) => {
-          const principal = await api.principal({
-            ...route,
-            source,
-            run_id: opts.run_id!,
-          });
-          if (principal.personal_messaging !== personalMessagingEnabled())
-            throw new Error("personal messaging mode mismatch between bays");
-          if (personalMessagingEnabled()) {
-            const proof = await api.check({
-              ...route,
-              source,
-              run_id: opts.run_id!,
-              target: opts.request.target,
-              guidance: false,
-            });
-            if ("denied" in proof)
-              throw new PersonalAgentAuthorizationError(proof.denied);
-            if (proof.link.principal_account_id !== proof.link.approved_by)
-              throw new Error("principal_mismatch");
-            return proof.link.approved_by;
-          } else
-            await api.links({
-              ...route,
-              source,
-              run_id: opts.run_id!,
-            });
-        });
+    const proof = await networkProof(
+      opts.account_id,
+      opts.source,
+      opts.run_id,
+      opts.request.target,
+      opts.request.agent_network_id,
+    );
+    if ("denied" in proof)
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Operational evidence unavailable",
+      });
     try {
       const outcome = await (
         await hostFor(opts.request.target)
       ).api.inspectAgentRpc({
         source: opts.source,
         request: opts.request,
-        ...(account_id ? { account_id } : {}),
+        account_id: proof.account_id,
       });
       validateAgentRpcOutcome(outcome, opts.request);
       return outcome;
     } catch {
       return rpcOutcome(opts.request, "unknown", {
-        reason: "Recipient evidence unavailable",
+        reason: "Operational evidence unavailable",
       });
     }
   },
 };
 
-export const grantRpcLink: AgentApi["grantRpcLink"] = async (opts) => {
-  const account_id = await human(opts);
-  const request = {
-    source: opts.source,
-    target: opts.target,
-    link_id: opts.link_id,
-    ttl_seconds: opts.ttl_seconds,
-    reason: opts.reason,
-    allow_guidance: opts.allow_guidance,
-    account_id,
-    fresh_auth_at: Date.now(),
-  };
-  return routed(opts.source.project_id, (api, route) =>
-    api.grant({ ...request, ...route }),
+async function reauthorizeEnvelope(e: AgentRpcEnvelope) {
+  if (Date.now() >= e.deadline) throw new Error("submission deadline expired");
+  const proof = await networkProof(
+    e.account_id,
+    e.source,
+    e.run_id,
+    e.target,
+    e.agent_network_id,
   );
-};
-export const revokeRpcLink: AgentApi["revokeRpcLink"] = async (opts) => {
-  const account_id = await human(opts);
-  return routed(opts.source.project_id, (api, route) =>
-    api.revoke({
-      ...route,
-      source: opts.source,
-      link_id: opts.link_id,
-      account_id,
-      fresh_auth_at: Date.now(),
-    }),
-  );
-};
-export const listRpcLinks: AgentApi["listRpcLinks"] = async (opts) => {
-  requireUuid(opts.account_id, "account_id");
-  return routed(opts.source.project_id, (api, route) =>
-    api.links({ ...route, source: opts.source, account_id: opts.account_id }),
-  );
-};
+  if ("denied" in proof)
+    throw new PersonalAgentAuthorizationError(proof.denied);
+  if (
+    proof.account_id !== e.account_id ||
+    proof.network_generation !== e.network_generation ||
+    proof.account_generation !== e.account_generation ||
+    proof.delivery_mode !== e.configured_delivery ||
+    e.guidance !== (proof.delivery_mode === "live")
+  )
+    throw new PersonalAgentAuthorizationError("network_stale");
+  return proof;
+}
+
 export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   opts,
 ) => {
-  // The 30-second envelope is not a cached grant: every host admission guard
-  // rechecks the source and account home, including after startup waits. A
-  // pause after that authority snapshot may race with the already authorized
-  // admission; it does not retract saved messages or cancel running work.
-  enabled();
   const e = opts.envelope;
-  if (
-    e.snapshot_manifest &&
-    process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
-  )
-    throw new Error("binary agent attachments disabled on recipient bay");
   const permit = await getAgentRpcAdmissionState({
     token_id: e.permit_id,
     kind: "permit",
@@ -729,42 +627,20 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
     project_id: e.target.project_id,
   });
   const target = await sourceIdentity(e.target);
-  if (
-    (!personalMessagingEnabled() && target.created_by !== e.account_id) ||
-    target.path !== e.path ||
-    target.thread_id !== e.thread_id
-  )
+  if (target.path !== e.path || target.thread_id !== e.thread_id)
     throw new Error("target identity changed");
   if (isExternalAgentSource(e.source) && e.file_references !== undefined)
     throw new Error("external agents cannot send project file references");
-  const proof = await submissionProof(
-    e.source,
-    e.run_id,
-    e.target,
-    e.guidance === true,
-  );
-  if ("denied" in proof)
-    throw new PersonalAgentAuthorizationError(proof.denied);
-  if (
-    proof.link.link_id !== e.link_id ||
-    proof.link.approved_by !== e.account_id ||
-    personalMessagingEnabled() !==
-      (proof.link.principal_account_id !== undefined) ||
-    (personalMessagingEnabled() &&
-      proof.link.principal_account_id !== e.account_id) ||
-    Date.now() >= e.deadline
-  )
-    throw new Error("RPC link authorization changed or expired");
+  await reauthorizeEnvelope(e);
 };
 
 export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
   opts,
 ) => {
-  enabled();
   const host_id = `${opts.host_id ?? ""}`.trim();
   const account_id = `${opts.account_id ?? ""}`.trim();
   const authorization = opts.authorization;
-  if (!host_id || !account_id || authorization?.version !== 2)
+  if (!host_id || !account_id || authorization?.version !== 3)
     throw new Error("invalid RPC execution authorization");
   if (authorization.principal_account_id !== account_id)
     throw new PersonalAgentAuthorizationError("principal_mismatch");
@@ -781,76 +657,213 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
     target.thread_id !== authorization.target_thread_id
   )
     throw new Error("target identity changed");
-  const proof = await submissionProof(
+  const proof = await networkProof(
+    account_id,
     authorization.source,
     authorization.source_run_id,
     authorization.target,
-    authorization.guidance,
+    authorization.agent_network_id,
   );
   if ("denied" in proof)
     throw new PersonalAgentAuthorizationError(proof.denied);
   if (
-    proof.link.link_id !== authorization.link_id ||
-    proof.link.approved_by !== account_id ||
-    personalMessagingEnabled() !==
-      (proof.link.principal_account_id !== undefined) ||
-    (personalMessagingEnabled() &&
-      proof.link.principal_account_id !== account_id)
+    proof.account_id !== account_id ||
+    proof.network_generation !== authorization.network_generation ||
+    proof.account_generation !== authorization.account_generation ||
+    proof.delivery_mode !== authorization.configured_delivery ||
+    authorization.guidance !== (proof.delivery_mode === "live")
   )
-    throw new Error("RPC execution authorization changed or expired");
+    throw new PersonalAgentAuthorizationError("network_stale");
 };
+
+async function submitExternalInbox(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  if (!isExternalAgentSource(request.target))
+    throw new Error("external inbox target required");
+  if (
+    request.file_references !== undefined ||
+    request.snapshot_manifest !== undefined ||
+    request.attachment_reservation !== undefined
+  )
+    return rpcOutcome(request, "rejected", {
+      code: "attachment_unavailable",
+      chat_effect: "none",
+      reason: "External inbox attachments are not available",
+    });
+  const checked = await networkProof(
+    account_id,
+    source,
+    run_id,
+    request.target,
+    request.agent_network_id,
+  );
+  if ("denied" in checked)
+    return rpcOutcome(request, "rejected", {
+      code: "network_unavailable",
+      chat_effect: "none",
+      reason: checked.denied,
+    });
+  if (
+    checked.account_id !== request.target.account_id ||
+    checked.target.kind !== "external" ||
+    checked.target.source.installation_id !== request.target.installation_id
+  )
+    return rpcOutcome(request, "rejected", {
+      code: "principal_mismatch",
+      chat_effect: "none",
+      reason: "External target principal mismatch",
+    });
+  try {
+    await enqueueExternalAgentMessage({
+      account_id: checked.account_id,
+      installation_id: request.target.installation_id,
+      attempt_id: request.attempt_id,
+      agent_network_id: checked.agent_network_id,
+      network_generation: checked.network_generation,
+      source,
+      body: request.body,
+    });
+    const outcome = rpcOutcome(request, "accepted", {
+      chat_effect: "saved",
+      reason: "Accepted by the external agent inbox",
+    });
+    void observeActivity(checked, request, outcome, "external-inbox").catch(
+      (error) =>
+        logger.warn("external inbox activity observation unavailable", {
+          error: `${error}`,
+        }),
+    );
+    return outcome;
+  } catch (error) {
+    return rpcOutcome(request, "unknown", {
+      reason: `External inbox admission could not be confirmed: ${error}`,
+    });
+  }
+}
+
+async function submitAuthorizedBroadcastChild(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+  authorization: AgentNetworkAuthorization,
+) {
+  if (isExternalAgentSource(request.target))
+    return submitExternalInbox(account_id, source, run_id, request);
+  const target = request.target;
+  return routed(target.project_id, (api, route) =>
+    api.submit({
+      ...route,
+      account_id,
+      source,
+      ...(run_id ? { run_id } : {}),
+      request: { ...request, target },
+      authorization,
+    }),
+  );
+}
 
 export async function acceptAgentRpc(
   subject: string,
   request: AgentRpcRequest,
 ) {
-  enabled();
   validateAgentRpcRequest(request);
   const { agent_id, run_id } = parseAgentMessagingSubject(subject);
   const identity = await agentStore().get(agent_id);
   const source = { agent_id, project_id: identity.project_id };
   const run = await sourceRun(source, run_id);
-  if (request.action === "request-connection") {
-    const { action: _action, version: _version, ...options } = request;
+  if (request.action === "destinations")
     return withPersonalHome(run.account_id, {
-      action: "request",
-      options: { ...options, source, run_id },
+      action: "discoverNetworks",
+      options: { source, run_id },
+    });
+  if (request.action === "propose-network") {
+    const { version: _, action: __, ...proposal } = request;
+    return withPersonalHome(run.account_id, {
+      action: "proposeNetwork",
+      options: { source, run_id, proposal },
     });
   }
-  if (request.action === "connection-request")
-    return withPersonalHome(run.account_id, {
-      action: "requestRead",
-      options: { source, run_id, request_id: request.request_id },
-    });
-  if (request.action === "destinations")
-    return routed(source.project_id, (api, route) =>
-      api.links({ ...route, source, run_id }),
+  if (request.action === "broadcast")
+    return submitBroadcast(
+      run.account_id,
+      source,
+      run_id,
+      request,
+      (child, authorization) =>
+        submitAuthorizedBroadcastChild(
+          run.account_id,
+          source,
+          run_id,
+          child,
+          authorization,
+        ),
     );
+  if (request.action === "inbox" || request.action === "ack-inbox")
+    throw new Error("native agents do not have an external inbox");
+  if (isExternalAgentSource(request.target)) {
+    if (request.action !== "send")
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason: "External inbox supports direct send only",
+      });
+    return submitExternalInbox(run.account_id, source, run_id, request);
+  }
+  const target = request.target;
   if (
     request.action === "prepare-attachments" ||
     request.action === "cancel-attachments"
   ) {
     const { action, ...attempt } = request;
-    return routed(request.target.project_id, (api, route) =>
+    const registeredSend = { ...attempt, target };
+    return routed(target.project_id, (api, route) =>
       action === "prepare-attachments"
-        ? api.prepareAttachments({ ...route, source, run_id, request: attempt })
-        : api.cancelAttachments({ ...route, source, run_id, request: attempt }),
+        ? api.prepareAttachments({
+            ...route,
+            account_id: run.account_id,
+            source,
+            run_id,
+            request: registeredSend,
+          })
+        : api.cancelAttachments({
+            ...route,
+            account_id: run.account_id,
+            source,
+            run_id,
+            request: registeredSend,
+          }),
     );
   }
-  const { action, ...rest } = request;
+  if (request.action === "inspect") {
+    const { action: _, ...attempt } = request;
+    return routed(target.project_id, (api, route) =>
+      api.inspect({
+        ...route,
+        account_id: run.account_id,
+        source,
+        run_id,
+        request: { ...attempt, target },
+      }),
+    );
+  }
+  const { action: _, ...rest } = request;
   const { snapshot_payload, ...attempt } = rest as typeof rest & {
     snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
   };
-  return routed(request.target.project_id, (api, route) =>
-    action === "send"
-      ? api.submit({
-          ...route,
-          source,
-          run_id,
-          request: attempt as import("@cocalc/conat/agents/rpc").AgentRpcSend,
-          ...(snapshot_payload ? { snapshot_payload } : {}),
-        })
-      : api.inspect({ ...route, source, run_id, request: attempt }),
+  const registeredAttempt = { ...attempt, target };
+  return routed(target.project_id, (api, route) =>
+    api.submit({
+      ...route,
+      account_id: run.account_id,
+      source,
+      run_id,
+      request: registeredAttempt,
+      ...(snapshot_payload ? { snapshot_payload } : {}),
+    }),
   );
 }
 
@@ -872,64 +885,77 @@ export async function acceptExternalAgentRpc(
     installation_id,
     agent_id: installation.agent_id,
   };
-  if (
-    request.action === "request-connection" ||
-    request.action === "connection-request"
-  )
-    throw new Error(
-      "External destination changes require a new browser-approved installation",
-    );
-  if (request.action === "destinations") {
-    const destinations: Array<{
-      link_id: string;
-      target: AgentEndpoint;
-      target_name?: string;
-      expires_at: string;
-    }> = [];
-    // Read-only checks; disappearing access does not wake any target.
-    const names = await withPersonalHome(account_id, {
-      action: "listNamedAgents",
-      options: {},
+  validateExternalAgentSource(source);
+  if (request.action === "destinations")
+    return (await withPersonalHome(account_id, {
+      action: "discoverNetworks",
+      options: { source },
+    })) as AgentNetworkDiscovery;
+  if (request.action === "propose-network") {
+    const { version: _, action: __, ...proposal } = request;
+    return withPersonalHome(account_id, {
+      action: "proposeNetwork",
+      options: { source, proposal },
     });
-    for (const destination of installation.destinations) {
-      try {
-        await externalStore().check(
-          account_id,
-          installation_id,
-          destination.target,
-        );
-        const name =
-          names && "agents" in names
-            ? names.agents.find(
-                (n) =>
-                  n.endpoint.project_id === destination.target.project_id &&
-                  n.endpoint.agent_id === destination.target.agent_id,
-              )
-            : undefined;
-        destinations.push({
-          ...destination,
-          target_name:
-            name && "name" in name ? (name.name as string) : undefined,
-          expires_at: installation.expires_at,
-        });
-      } catch {
-        /* Do not disclose targets whose approval/access is no longer valid. */
-      }
-    }
-    await externalStore().activeInstallation(account_id, installation_id);
-    return destinations;
   }
-  await externalStore().check(account_id, installation_id, request.target);
+  if (request.action === "broadcast")
+    return submitBroadcast(
+      account_id,
+      source,
+      undefined,
+      request,
+      (child, authorization) =>
+        submitAuthorizedBroadcastChild(
+          account_id,
+          source,
+          undefined,
+          child,
+          authorization,
+        ),
+    );
+  if (request.action === "inbox")
+    return externalStore().inbox(account_id, installation_id, request.limit);
+  if (request.action === "ack-inbox")
+    return externalStore().acknowledge(
+      account_id,
+      installation_id,
+      request.message_id,
+    );
+  if (isExternalAgentSource(request.target)) {
+    if (request.action !== "send")
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason: "External inbox supports direct send only",
+      });
+    return submitExternalInbox(account_id, source, undefined, request);
+  }
+  const target = request.target;
+  if (request.action === "inspect") {
+    const { action: _, ...attempt } = request;
+    return routed(target.project_id, (api, route) =>
+      api.inspect({
+        ...route,
+        account_id,
+        source,
+        request: { ...attempt, target },
+      }),
+    );
+  }
   const { action, ...rest } = request;
   const { snapshot_payload, ...attempt } = rest as typeof rest & {
     snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
   };
-  return routed(request.target.project_id, (api, route) => {
-    const opts = { ...route, source, request: attempt };
-    if (action === "inspect") return api.inspect(opts);
+  const registeredAttempt = { ...attempt, target };
+  return routed(target.project_id, (api, route) => {
+    const opts = {
+      ...route,
+      account_id,
+      source,
+      request: registeredAttempt,
+    };
     const sendOpts = {
       ...opts,
-      request: attempt as import("@cocalc/conat/agents/rpc").AgentRpcSend,
+      request: registeredAttempt,
     };
     if (action === "prepare-attachments")
       return api.prepareAttachments(sendOpts);

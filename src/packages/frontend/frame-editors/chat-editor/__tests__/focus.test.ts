@@ -56,6 +56,45 @@ describe("chat editor focus", () => {
     expect(focusChatFrameInput("missing")).toBe(false);
   });
 
+  it("waits for the composer instead of focusing read-only Slate messages", async () => {
+    document.body.innerHTML = `<div id="frame-lazy"><div data-slate-editor="true" contenteditable="false">Message</div></div>`;
+    const frame = document.getElementById("frame-lazy")!;
+    expect(focusChatFrameInput("lazy", { waitForInput: true })).toBe(true);
+    expect(document.activeElement).toBe(frame);
+    const editor = document.createElement("textarea");
+    editor.setAttribute("aria-label", "Ask Codex");
+    frame.appendChild(editor);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("does not steal focus when the user leaves before the composer mounts", async () => {
+    document.body.innerHTML = `<div id="frame-lazy"></div><button>Elsewhere</button>`;
+    focusChatFrameInput("lazy", { waitForInput: true });
+    const button = document.querySelector("button")!;
+    button.focus();
+    document
+      .getElementById("frame-lazy")!
+      .appendChild(document.createElement("textarea"));
+    await Promise.resolve();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("stops waiting after the bounded mount window", async () => {
+    jest.useFakeTimers();
+    try {
+      document.body.innerHTML = `<div id="frame-lazy"></div>`;
+      focusChatFrameInput("lazy", { waitForInput: true });
+      jest.advanceTimersByTime(2000);
+      const frame = document.getElementById("frame-lazy")!;
+      frame.appendChild(document.createElement("textarea"));
+      await Promise.resolve();
+      expect(document.activeElement).toBe(frame);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("does not throw if chat actions are requested after close", () => {
     const fakeActions = Object.assign(Object.create(Actions.prototype), {
       chatActions: {},

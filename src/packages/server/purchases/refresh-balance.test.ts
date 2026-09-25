@@ -8,9 +8,15 @@ let publishAccountRowFeedEventsBestEffortMock: jest.Mock;
 let dbMock: { publishAccountRowFeedEventsBestEffort?: jest.Mock };
 let warnMock: jest.Mock;
 
-jest.mock("@cocalc/backend/logger", () => () => ({
-  warn: (...args: any[]) => warnMock(...args),
-}));
+jest.mock("@cocalc/backend/logger", () => {
+  const logger = () => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: (...args: any[]) => warnMock(...args),
+    error: jest.fn(),
+  });
+  return { __esModule: true, default: logger, getLogger: logger };
+});
 
 jest.mock("@cocalc/database", () => ({
   db: () => dbMock,

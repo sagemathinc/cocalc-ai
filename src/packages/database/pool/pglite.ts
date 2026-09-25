@@ -480,8 +480,16 @@ export class PglitePool {
     text: string,
   ): Promise<void> {
     if (control === "begin") {
-      await this.waitForNoOtherTransaction(sessionId);
-      this.transactionOwner ??= sessionId;
+      // Claim the single physical connection before yielding to another BEGIN.
+      while (
+        this.transactionOwner != null &&
+        this.transactionOwner !== sessionId
+      ) {
+        await new Promise<void>((resolve) => {
+          this.transactionWaiters.push(resolve);
+        });
+      }
+      this.transactionOwner = sessionId;
       return;
     }
     if (

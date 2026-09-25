@@ -925,9 +925,13 @@ export function buildSubmitDraft(
           : canonicalDraft.name,
       disk: formDisk ?? canonicalDraft.disk,
       disk_gb: formDiskGb ?? canonicalDraft.disk_gb,
-      shared_disk_gb: formSharedDiskGb ?? canonicalDraft.shared_disk_gb,
-      shared_disk_type:
-        formValues.shared_disk_type ?? canonicalDraft.shared_disk_type,
+      // Conditional shared-scratch controls must be registered and validated
+      // before they can create billable storage. Never restore a hidden value
+      // from the create-similar draft when the form says scratch is disabled.
+      shared_disk_gb: formSharedDiskGb,
+      shared_disk_type: formSharedDiskGb
+        ? formValues.shared_disk_type
+        : undefined,
     },
     context,
   ).draft;

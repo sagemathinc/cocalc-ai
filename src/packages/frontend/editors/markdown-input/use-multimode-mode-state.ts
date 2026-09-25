@@ -1,5 +1,5 @@
 import LRU from "lru-cache";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import type { Mode } from "./types";
 
@@ -82,19 +82,36 @@ export function useMultimodeModeState({
     }
   }
 
+  const selectionCacheKey =
+    cacheId == null ? undefined : `${projectId}${path}:${cacheId}`;
+  // Selection restoration is a mount/mode transition, not a text-update effect.
+  // Stable callbacks prevent mounted views of the same draft from replaying
+  // cached selections into each other on every keystroke.
+  const getCachedSelection = useCallback(
+    () =>
+      selectionCacheKey == null
+        ? undefined
+        : multimodeStateCache.get(selectionCacheKey)?.[mode],
+    [selectionCacheKey, mode],
+  );
+  const saveCachedSelection = useCallback(
+    (selection: any) => {
+      if (selectionCacheKey == null) {
+        return;
+      }
+      multimodeStateCache.set(selectionCacheKey, {
+        ...multimodeStateCache.get(selectionCacheKey),
+        [mode]: selection,
+      });
+    },
+    [selectionCacheKey, mode],
+  );
+
   return {
     activeModeRef,
     mode,
     setMode,
-    getCachedSelection: () => getCache()?.[mode],
-    saveCachedSelection: (selection: any) => {
-      if (cacheId == null) {
-        return;
-      }
-      multimodeStateCache.set(getKey(), {
-        ...getCache(),
-        [mode]: selection,
-      });
-    },
+    getCachedSelection,
+    saveCachedSelection,
   };
 }

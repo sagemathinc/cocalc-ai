@@ -3,20 +3,59 @@ import {
   DEFAULT_CODEX_MODELS,
   DEFAULT_CODEX_MODEL_INFO,
   isCodexModelName,
+  resolveCurrentCodexModel,
   resolveCodexServiceTier,
 } from "./codex";
 
 describe("DEFAULT_CODEX_MODELS", () => {
-  it("includes Astra while preserving the existing default model", () => {
+  it.each(DEFAULT_CODEX_MODELS.map(({ name }) => name))(
+    "accepts current launch model %s",
+    (name) => expect(resolveCurrentCodexModel(name)).toBe(name),
+  );
+
+  it("canonicalizes current aliases for launch", () => {
+    expect(resolveCurrentCodexModel(" GPT-5.6 ")).toBe("gpt-5.6-sol");
+  });
+
+  it.each([undefined, "", "codex-agent", "gpt-5-codex", "gpt-4o"])(
+    "does not launch non-catalog model %s",
+    (name) => expect(resolveCurrentCodexModel(name)).toBeUndefined(),
+  );
+
+  it.each(["gpt-6-sol", "gpt-6-luna"])(
+    "recognizes %s with max reasoning and medium default",
+    (name) => {
+      expect(isCodexModelName(name)).toBe(true);
+      expect(
+        DEFAULT_CODEX_MODELS.find((model) => model.name === name),
+      ).toMatchObject({
+        reasoning: expect.arrayContaining([
+          expect.objectContaining({ id: "medium", default: true }),
+          expect.objectContaining({ id: "max" }),
+        ]),
+      });
+    },
+  );
+
+  it.each(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])(
+    "recognizes historical %s threads without offering it",
+    (name) => {
+      expect(isCodexModelName(name)).toBe(true);
+      expect(resolveCurrentCodexModel(name)).toBeUndefined();
+      expect(DEFAULT_CODEX_MODELS.some((model) => model.name === name)).toBe(
+        false,
+      );
+    },
+  );
+
+  it("offers exactly the current six Codex models", () => {
     expect(DEFAULT_CODEX_MODELS.map((model) => model.name)).toEqual([
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5.2",
     ]);
   });
 
@@ -35,7 +74,7 @@ describe("DEFAULT_CODEX_MODELS", () => {
     ]);
     expect(
       astra?.reasoning?.filter(({ default: selected }) => selected),
-    ).toEqual([expect.objectContaining({ id: "medium" })]);
+    ).toEqual([expect.objectContaining({ id: "low" })]);
     expect(
       resolveCodexServiceTier({ model: "gpt-6-astra", serviceTier: "fast" }),
     ).toBe("fast");
@@ -49,9 +88,9 @@ describe("DEFAULT_CODEX_MODELS", () => {
     expect(isCodexModelName("gpt-5.5")).toBe(true);
   });
 
-  it("defaults gpt-5.6-sol to low reasoning", () => {
+  it("defaults new chats to Astra with upstream low reasoning", () => {
     expect(DEFAULT_CODEX_MODEL_INFO).toMatchObject({
-      name: "gpt-5.6-sol",
+      name: "gpt-6-astra",
       reasoning: expect.arrayContaining([
         expect.objectContaining({ id: "low", default: true }),
         expect.objectContaining({ id: "max" }),
@@ -113,8 +152,8 @@ describe("DEFAULT_CODEX_MODELS", () => {
     ).toBe("fast");
     expect(
       resolveCodexServiceTier({
-        model: "gpt-5.4-mini",
-        serviceTier: "fast",
+        model: "gpt-6-luna",
+        serviceTier: "standard",
       }),
     ).toBe("standard");
     expect(

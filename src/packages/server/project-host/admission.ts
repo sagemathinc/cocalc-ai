@@ -4,11 +4,13 @@
  */
 
 import type {
+  AccountLocalDedicatedHostAdmissionSnapshot,
   AccountLocalDedicatedHostPolicySnapshot,
   AccountLocalGetDedicatedHostPolicySnapshotRequest,
 } from "@cocalc/conat/inter-bay/api";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { normalizeProviderId } from "@cocalc/cloud";
+import type { PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
@@ -17,7 +19,10 @@ import { getActiveAccountEntitlementOverride } from "@cocalc/server/membership/e
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import { getAccountFundingHolds } from "@cocalc/server/purchases/get-spendable-balance";
 import { hasUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
@@ -78,7 +83,9 @@ export function selectDedicatedHostFundingLane(
   }
   const limits = snapshot.effective_limits ?? {};
   if (snapshot.funding_mode === "account-prepaid") {
-    const balance = toDecimal(snapshot.balance ?? 0);
+    const balance = toDecimal(
+      snapshot.prepaid_spendable_balance ?? snapshot.balance ?? 0,
+    );
     const prepaidEnabled =
       hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
       hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
@@ -181,7 +188,11 @@ export function evaluateDedicatedHostAdmission({
   }
 
   if (effectiveSnapshot.funding_mode === "account-prepaid") {
-    const balance = toDecimal(effectiveSnapshot.balance ?? 0);
+    const balance = toDecimal(
+      effectiveSnapshot.prepaid_spendable_balance ??
+        effectiveSnapshot.balance ??
+        0,
+    );
     const prepaidEnabled =
       hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
       hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
@@ -252,38 +263,146 @@ export function getDedicatedHostFundingModeFromSettings(
   }
 }
 
+export async function getDedicatedHostAdmissionSnapshotLocal(
+  account_id: string,
+): Promise<AccountLocalDedicatedHostAdmissionSnapshot> {
+  const [membership, settings, admin_override, has_active_second_factor] =
+    await Promise.all([
+      resolveMembershipForAccount(account_id),
+      getServerSettings(),
+      getActiveAccountEntitlementOverride(account_id),
+      hasActiveSecondFactor(account_id),
+    ]);
+  return {
+    account_id,
+    membership_class: membership.class,
+    can_create_hosts: membership.entitlements?.features?.create_hosts === true,
+    funding_mode:
+      admin_override?.dedicated_hosts?.funding_mode?.value ??
+      getDedicatedHostFundingModeFromSettings(settings),
+    effective_limits: getEffectiveMembershipUsageLimits(membership),
+    has_active_second_factor,
+    admin_override,
+  };
+}
+
+export async function getDedicatedHostAdmissionSnapshotForAccount(
+  account_id: string,
+): Promise<AccountLocalDedicatedHostAdmissionSnapshot> {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  const home_bay_id =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (home_bay_id === getConfiguredBayId()) {
+    return await getDedicatedHostAdmissionSnapshotLocal(account_id);
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).getDedicatedHostAdmissionSnapshot({ account_id });
+}
+
+interface DedicatedHostFinancialSnapshot {
+  has_payment_method: boolean;
+  has_usage_subscription: boolean;
+  balance: string;
+  prepaid_spendable_balance: string;
+  postpaid_committed_usd: string;
+  postpaid_unbilled_exposure_usd: string;
+  dedicated_host_window_usage: AccountLocalDedicatedHostPolicySnapshot["dedicated_host_window_usage"];
+}
+
+export interface DedicatedHostProviderReadiness {
+  has_payment_method: boolean;
+}
+
+/** Stripe-backed readiness is deliberately fetched before account financial
+ * locks are acquired. Database-backed subscription and exposure state is still
+ * read under the transaction that makes the admission decision. */
+export async function getDedicatedHostProviderReadinessLocal(
+  account_id: string,
+): Promise<DedicatedHostProviderReadiness> {
+  return { has_payment_method: await hasPaymentMethod(account_id) };
+}
+
+export async function getDedicatedHostFinancialSnapshotLocal(
+  account_id: string,
+  {
+    needs_postpaid_snapshot,
+    client,
+    has_payment_method_override,
+  }: {
+    needs_postpaid_snapshot: boolean;
+    client?: PoolClient;
+    has_payment_method_override?: boolean;
+  },
+): Promise<DedicatedHostFinancialSnapshot> {
+  const [
+    balance,
+    dedicated_host_window_usage,
+    postpaid_unbilled_exposure_usd,
+    holds,
+  ] = await Promise.all([
+    getBalance({ account_id, client, noSave: true }),
+    getDedicatedHostWindowUsageLocal(account_id, { client }),
+    getDedicatedHostPostpaidUnbilledExposureLocal(account_id, { client }),
+    getAccountFundingHolds({ account_id, client }),
+  ]);
+  const [has_payment_method, has_usage_subscription] = needs_postpaid_snapshot
+    ? await Promise.all([
+        has_payment_method_override ?? hasPaymentMethod(account_id),
+        hasUsageSubscription(account_id, client),
+      ])
+    : [false, false];
+  return {
+    has_payment_method,
+    has_usage_subscription,
+    balance: moneyToDbString(balance),
+    prepaid_spendable_balance: moneyToDbString(
+      toDecimal(balance).minus(holds.prepaid_held_usd),
+    ),
+    postpaid_committed_usd: holds.postpaid_committed_usd,
+    postpaid_unbilled_exposure_usd: moneyToDbString(
+      postpaid_unbilled_exposure_usd,
+    ),
+    dedicated_host_window_usage,
+  };
+}
+
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
   {
     funding_mode_override,
-  }: { funding_mode_override?: DedicatedHostFundingMode } = {},
+    client,
+    admission_snapshot,
+    has_payment_method_override,
+  }: {
+    funding_mode_override?: DedicatedHostFundingMode;
+    client?: PoolClient;
+    admission_snapshot?: AccountLocalDedicatedHostAdmissionSnapshot;
+    has_payment_method_override?: boolean;
+  } = {},
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
-  const [membership, settings, admin_override] = await Promise.all([
-    resolveMembershipForAccount(account_id),
-    getServerSettings(),
-    getActiveAccountEntitlementOverride(account_id),
-  ]);
-  const effective_limits = getEffectiveMembershipUsageLimits(membership);
-  const funding_mode =
-    admin_override?.dedicated_hosts?.funding_mode?.value ??
-    getDedicatedHostFundingModeFromSettings(settings);
-  const has_active_second_factor = await hasActiveSecondFactor(account_id);
+  const admission =
+    admission_snapshot ??
+    (await getDedicatedHostAdmissionSnapshotLocal(account_id));
+  if (admission.account_id !== account_id) {
+    throw new Error("Dedicated-host admission snapshot account mismatch.");
+  }
+  const { funding_mode } = admission;
   const needs_account_billing_snapshot =
     funding_mode !== "site-funded" ||
     (funding_mode_override != null && funding_mode_override !== "site-funded");
 
   if (!needs_account_billing_snapshot) {
     return {
-      account_id,
-      membership_class: membership.class,
-      can_create_hosts:
-        membership.entitlements?.features?.create_hosts === true,
-      funding_mode,
-      effective_limits,
-      has_active_second_factor,
+      ...admission,
       has_payment_method: false,
       has_usage_subscription: false,
       balance: moneyToDbString(0),
+      prepaid_spendable_balance: moneyToDbString(0),
       postpaid_unbilled_exposure_usd: moneyToDbString(0),
       dedicated_host_window_usage: {
         prepaid_5h_usd: moneyToDbString(0),
@@ -291,39 +410,32 @@ export async function getDedicatedHostPolicySnapshotLocal(
         credit_5h_usd: moneyToDbString(0),
         credit_7d_usd: moneyToDbString(0),
       },
-      admin_override,
     };
   }
 
-  const [balance, dedicated_host_window_usage, postpaid_unbilled_exposure_usd] =
-    await Promise.all([
-      getBalance({ account_id, noSave: true }),
-      getDedicatedHostWindowUsageLocal(account_id),
-      getDedicatedHostPostpaidUnbilledExposureLocal(account_id),
-    ]);
   const needs_postpaid_snapshot =
     funding_mode === "account-postpaid" ||
     funding_mode_override === "account-postpaid";
-  const [has_payment_method, has_usage_subscription] = needs_postpaid_snapshot
-    ? await Promise.all([
-        hasPaymentMethod(account_id),
-        hasUsageSubscription(account_id),
-      ])
-    : [false, false];
+  const financial =
+    isBillingAuthorityEnabled() && !client
+      ? await executeBillingAuthorityCommand<DedicatedHostFinancialSnapshot>(
+          {
+            kind: "account-local",
+            operation: "get-dedicated-host-financial-snapshot",
+            input: { account_id, needs_postpaid_snapshot },
+            actor_account_id: account_id,
+          },
+          { read: true },
+        )
+      : await getDedicatedHostFinancialSnapshotLocal(account_id, {
+          needs_postpaid_snapshot,
+          client,
+          has_payment_method_override,
+        });
 
   return {
-    account_id,
-    membership_class: membership.class,
-    can_create_hosts: membership.entitlements?.features?.create_hosts === true,
-    funding_mode,
-    effective_limits,
-    has_active_second_factor,
-    has_payment_method,
-    has_usage_subscription,
-    balance,
-    postpaid_unbilled_exposure_usd,
-    dedicated_host_window_usage,
-    admin_override,
+    ...admission,
+    ...financial,
   };
 }
 

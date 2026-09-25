@@ -38,10 +38,12 @@ import {
   bootstrapProvisionedProjectInventory,
   initFileServer,
   initFsServer,
+  artifactCatalogFilesystem,
   verifyProvisionedProjectInventoryBatch,
   PROJECT_HOST_FILE_UPLOAD_WRITE_SERVICE,
 } from "./file-server";
 import { handleProjectHostUpload } from "./upload";
+import { startArtifactCatalog } from "./artifact-catalog";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -84,6 +86,7 @@ import {
   init as initAcp,
   rehydrateAcpAutomationsForProject,
   setAcpAdmissionLimitsProvider,
+  setCodexCredentialAdmissionResolver,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
@@ -538,6 +541,10 @@ export async function main(
       await getProjectOwnerEffectiveLimits(id),
     );
   });
+  setCodexCredentialAdmissionResolver(async (opts) => ({
+    ...(await hubApi.system.getCodexPaymentSource(opts)),
+    credentialPinRequired: true,
+  }));
   configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   // Local persist must exist before ACP startup so automation indexes can
@@ -1364,6 +1371,7 @@ export async function main(
   logger.info(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",
   );
+  const artifactCatalog = startArtifactCatalog(artifactCatalogFilesystem);
   const fsServer = await initFsServer({ client: conatClient });
   const editJournalService = await initProjectEditJournalService(conatClient);
 
@@ -1540,6 +1548,9 @@ export async function main(
     closed = true;
     persistServer?.close?.();
     fsServer?.close?.();
+    // Keep the catalog's exclusive lease until process exit: filesystem calls
+    // already in flight may still complete after the service stops accepting.
+    artifactCatalog.stop();
     editJournalService?.close?.();
     stopProvisionedInventoryReporter();
     projectTouchService?.close?.();

@@ -182,11 +182,13 @@ function applyRefreshResponse({
 
 export async function refreshCodexSubscriptionAuth({
   ownerAccountId,
+  credentialId,
   previousAccessTokenHash,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }: {
   ownerAccountId: string;
+  credentialId?: string;
   previousAccessTokenHash: string;
   fetchImpl?: Fetch;
   timeoutMs?: number;
@@ -204,6 +206,7 @@ export async function refreshCodexSubscriptionAuth({
       ...CODEX_SUBSCRIPTION_SELECTOR,
       owner_account_id: owner,
     },
+    id: credentialId,
     update: async (current) => {
       const { parsed, accessToken, refreshToken } = parseAuthJson(
         current.payload,

@@ -9,7 +9,7 @@ import type {
   ChatThreadRecord,
   ChatThreadRuntimeState,
   ChatThreadStateRecord,
-} from "@cocalc/chat";
+} from "@cocalc/chat/core";
 
 import type { ProjectedChatMessage, ProjectedChatThread } from "./types";
 

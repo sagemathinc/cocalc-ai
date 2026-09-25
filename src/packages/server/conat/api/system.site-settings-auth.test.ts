@@ -758,6 +758,41 @@ describe("site settings dangerous-session auth", () => {
     expect(bayStateWrites).toHaveLength(2);
   });
 
+  it("keeps Stripe secrets on the seed while mirroring public billing config", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    listClusterBayRegistryMock = jest.fn(async () => [
+      { bay_id: "seed" },
+      { bay_id: "attached-a" },
+    ]);
+    const setServerSetting = jest.fn(async () => undefined);
+    bayOpsMock = jest.fn(() => ({ setServerSetting }));
+    const { setSiteSettings } = await import("./system");
+
+    const result = await setSiteSettings({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      settings: [
+        { name: "stripe_publishable_key", value: "pk_test_public" },
+        { name: "stripe_secret_key", value: "sk_test_private" },
+        { name: "stripe_webhook_secret", value: "whsec_private" },
+      ],
+    });
+
+    expect(result.bays).toContainEqual(
+      expect.objectContaining({
+        bay_id: "attached-a",
+        status: "applied",
+        count: 1,
+      }),
+    );
+    expect(setServerSetting).toHaveBeenCalledTimes(1);
+    expect(setServerSetting).toHaveBeenCalledWith({
+      name: "stripe_publishable_key",
+      value: "pk_test_public",
+    });
+    expect(dbMock.set_server_setting).toHaveBeenCalledTimes(3);
+  });
+
   it("forwards attached-bay site settings writes to seed after fresh auth", async () => {
     requireDangerousSessionAuthMock = jest.fn(async () => undefined);
     getConfiguredBayIdMock = jest.fn(() => "attached-a");

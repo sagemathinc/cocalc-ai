@@ -418,6 +418,32 @@ describe("handleSyncDBChange", () => {
     expect(store.state.acpState?.get("message:msg-queued-user")).toBe("queue");
   });
 
+  it.each(["sending", "sent"])(
+    "restores %s chat-row acp_state during an editor handoff",
+    (acpState) => {
+      const store = new MockStore();
+      const date = new Date("2024-01-02T03:04:05.500Z");
+      const chatRecord = {
+        event: "chat",
+        sender_id: "user-1",
+        date,
+        message_id: `msg-${acpState}-user`,
+        thread_id: "thread-submitting-user",
+        acp_state: acpState,
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      };
+
+      initFromSyncDB({ syncdb: new MockSyncDB([chatRecord]), store });
+
+      expect(store.state.acpState?.get(`message:msg-${acpState}-user`)).toBe(
+        acpState,
+      );
+    },
+  );
+
   it("maps not-sent chat-row acp_state into acpState", () => {
     const store = new MockStore();
     const date = new Date("2024-01-02T03:04:06.000Z");
@@ -445,64 +471,74 @@ describe("handleSyncDBChange", () => {
     );
   });
 
-  it("clears stale queued state when an assistant reply arrives incrementally", () => {
-    const store = new MockStore();
-    store.state.activityReady = true;
-    store.state.acpState = iMap().set("message:msg-user-queued", "queue");
-    const userDate = "2024-01-02T03:04:05.000Z";
-    const assistantDate = "2024-01-02T03:04:06.000Z";
-    const syncdb = new MockSyncDB([
-      {
-        event: "chat",
-        sender_id: "user-1",
-        date: userDate,
-        message_id: "msg-user-queued",
-        thread_id: "thread-complete",
-        acp_state: "queued",
-        history: [],
-        editing: {},
-        feedback: {},
-        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
-      },
-      {
-        event: "chat",
-        sender_id: "assistant-1",
-        date: assistantDate,
-        message_id: "msg-assistant-complete",
-        thread_id: "thread-complete",
-        parent_message_id: "msg-user-queued",
-        acp_account_id: "codex-account",
-        history: [
-          {
-            content: "hi",
-            author_id: "assistant-1",
-            date: assistantDate,
-          },
-        ],
-        editing: {},
-        feedback: {},
-        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
-      },
-    ]);
-
-    handleSyncDBChange({
-      syncdb,
-      store,
-      changes: [
+  it.each([
+    ["queued", "queue"],
+    ["sending", "sending"],
+    ["sent", "sent"],
+  ])(
+    "clears stale %s state when an assistant reply arrives incrementally",
+    (persistedState, renderedState) => {
+      const store = new MockStore();
+      store.state.activityReady = true;
+      store.state.acpState = iMap().set(
+        "message:msg-user-pending",
+        renderedState,
+      );
+      const userDate = "2024-01-02T03:04:05.000Z";
+      const assistantDate = "2024-01-02T03:04:06.000Z";
+      const syncdb = new MockSyncDB([
+        {
+          event: "chat",
+          sender_id: "user-1",
+          date: userDate,
+          message_id: "msg-user-pending",
+          thread_id: "thread-complete",
+          acp_state: persistedState,
+          history: [],
+          editing: {},
+          feedback: {},
+          schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+        },
         {
           event: "chat",
           sender_id: "assistant-1",
           date: assistantDate,
           message_id: "msg-assistant-complete",
           thread_id: "thread-complete",
+          parent_message_id: "msg-user-pending",
+          acp_account_id: "codex-account",
+          history: [
+            {
+              content: "hi",
+              author_id: "assistant-1",
+              date: assistantDate,
+            },
+          ],
+          editing: {},
+          feedback: {},
+          schema_version: CURRENT_CHAT_MESSAGE_VERSION,
         },
-      ],
-    });
+      ]);
 
-    expect(
-      store.state.acpState?.get("message:msg-user-queued"),
-    ).toBeUndefined();
-  });
+      handleSyncDBChange({
+        syncdb,
+        store,
+        changes: [
+          {
+            event: "chat",
+            sender_id: "assistant-1",
+            date: assistantDate,
+            message_id: "msg-assistant-complete",
+            thread_id: "thread-complete",
+          },
+        ],
+      });
+
+      expect(
+        store.state.acpState?.get("message:msg-user-pending"),
+      ).toBeUndefined();
+    },
+  );
 });
 
 describe("initFromSyncDB", () => {

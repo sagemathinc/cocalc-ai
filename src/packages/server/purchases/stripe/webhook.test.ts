@@ -18,6 +18,7 @@ const mockIsValidAccount = jest.fn();
 const mockAdminAlert = jest.fn();
 const mockAcceptCommercialStripeWebhookEvent = jest.fn();
 const mockExecuteBillingAuthorityCommand = jest.fn();
+const mockExecuteStripeWebhookPayload = jest.fn();
 
 function createWebhookMocks({
   body,
@@ -102,6 +103,8 @@ jest.mock("@cocalc/server/commercial-orders/invoices/stripe", () => ({
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
   executeBillingAuthorityCommand: (...args: any[]) =>
     mockExecuteBillingAuthorityCommand(...args),
+  executeStripeWebhookPayload: (...args: any[]) =>
+    mockExecuteStripeWebhookPayload(...args),
 }));
 
 describe("Stripe webhook processing", () => {
@@ -135,6 +138,11 @@ describe("Stripe webhook processing", () => {
       expect(command.kind).toBe("stripe-webhook");
       const { processStripeWebhookEvent } = await import("./webhook");
       return await processStripeWebhookEvent(command.event);
+    });
+    mockExecuteStripeWebhookPayload.mockImplementation(async (args) => {
+      const { verifyAndProcessStripeWebhookPayload } =
+        await import("./webhook");
+      return await verifyAndProcessStripeWebhookPayload(args);
     });
     stripe.paymentIntents.retrieve.mockResolvedValue({
       id: "pi_123",

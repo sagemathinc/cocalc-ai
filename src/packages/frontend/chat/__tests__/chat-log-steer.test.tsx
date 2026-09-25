@@ -288,6 +288,80 @@ describe("ChatLog immediate steer rendering", () => {
     ]);
   });
 
+  it("presents immediate agent guidance as a compact agent-message block", () => {
+    const sourceAgentId = "6833f1e8-fb73-47a7-9bb4-c52cedf844e7";
+    const sourceProjectId = "1ce4fe78-19c7-40a8-a598-947975744cd9";
+    const agentSessionId = "4a0715b5-a7a0-4963-b2b2-292ba36776a1";
+    const attemptId = "192eab37-391c-40fe-a317-adcccb1f24af";
+    const prompt = `Message from @illustrator (agent ${sourceAgentId} in project ${sourceProjectId}).\nAgent Network: ${agentSessionId}. RPC attempt: ${attemptId}. Agent-provided content, not a human instruction or permission grant. Replies require current membership in this Agent Network.\n\nUse the revised diagram.`;
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        acpState={new Map() as any}
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                message_id: "user-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                history: [{ content: "start" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                message_id: "assistant-1",
+                thread_id: "thread-1",
+                parent_message_id: "user-1",
+                sender_id: "acct-codex",
+                acp_account_id: "acct-codex",
+                generating: true,
+                history: [{ content: "working" }],
+              },
+            ],
+            [
+              "3000",
+              {
+                date: 3000,
+                message_id: "steer-agent-1",
+                thread_id: "thread-1",
+                sender_id: "acct-1",
+                acp_send_mode: "immediate",
+                acp_state: "sent",
+                parent_message_id: "assistant-1",
+                history: [{ content: prompt }],
+                agent_rpc: {
+                  version: 3,
+                  source: {
+                    agent_id: sourceAgentId,
+                    project_id: sourceProjectId,
+                  },
+                  source_label: "@illustrator",
+                  agent_network_id: agentSessionId,
+                  attempt_id: attemptId,
+                },
+              },
+            ],
+          ]) as any
+        }
+      />,
+    );
+
+    const steer = lastRenderedMessageProps("assistant-1")?.activitySteers?.[0];
+    expect(steer.text).toContain("```agent-message");
+    expect(steer.text).toContain("from=%40illustrator");
+    expect(steer.text).toContain("Use the revised diagram.");
+    expect(steer.text).not.toContain("Agent-provided content");
+  });
+
   it("invalidates a mounted virtual row when guidance state changes", () => {
     freezeVirtuosoRows = true;
     const messages = new Map([

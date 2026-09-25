@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type { Command } from "commander";
+import type {
+  AgentNetworkDiscovery,
+  AgentNetworkMemberLocator,
+} from "@cocalc/conat/agents/personal";
+import type { AgentRpcTarget } from "@cocalc/conat/agents/rpc";
 import type { ProjectCommandDeps } from "../project";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { sendExternalAgentMessage } from "../../core/external-agent-message";
-import { randomUUID } from "node:crypto";
-import { resolveRuntimeAgentName } from "../../core/agent-destination";
-import { validateAgentEndpoint } from "@cocalc/conat/agents/rpc";
 
 export function registerChatAgentCommands(
   chat: Command,
@@ -18,176 +21,182 @@ export function registerChatAgentCommands(
   } = deps;
   const agent = chat
     .command("agent")
-    .description(
-      "experimental registered agent identities and directional send-only links",
-    );
+    .description("registered agent identities and two-way Agent Networks");
   const rpc = agent
     .command("rpc")
-    .description("V2 single-attempt messaging; separate from legacy delivery");
+    .description("network-authorized agent messaging protocol v3");
+
+  const stdin = async () => {
+    let value = "";
+    for await (const chunk of process.stdin) value += chunk;
+    return value;
+  };
+
+  const destinations = async (
+    opts,
+    cmd,
+    label: string,
+    includeInternalIds = false,
+  ) => {
+    const globals = globalsFrom(cmd);
+    const result = (
+      opts.externalAgent
+        ? await sendExternalAgentMessage(opts.externalAgent, {
+            version: 3,
+            action: "destinations",
+          })
+        : await sendIdentityMessage(
+            { version: 3, action: "destinations" },
+            globals.api,
+          )
+    ) as AgentNetworkDiscovery;
+    emitSuccess(
+      { globals },
+      label,
+      includeInternalIds ? result : friendlyAgentDestinations(result),
+    );
+  };
+
   agent
     .command("destinations")
-    .option(
-      "--external-agent <profile>",
-      "use an external send-only installation",
-    )
-    .description(
-      "discover destinations approved for this turn's human principal",
-    )
-    .action(async (opts, cmd) => {
-      const globals = globalsFrom(cmd);
-      emitSuccess(
-        { globals },
-        "project chat agent destinations",
-        opts.externalAgent
-          ? await sendExternalAgentMessage(opts.externalAgent, {
-              version: 2,
-              action: "destinations",
-            })
-          : await sendIdentityMessage(
-              { version: 2, action: "destinations" },
-              globals.api,
-            ),
-      );
-    });
-  agent
-    .command("request-connection")
-    .description(
-      "request typed human approval; does not grant permission or send a message",
-    )
-    .option("--to <name>", "exact approved name or selected @mention")
-    .option(
-      "--to-agent <uuid>",
-      "previously resolved target identity, requires --target-project",
-    )
-    .option("--target-project <uuid>", "previously resolved target project")
-    .requiredOption("--reason <reason>", "why this connection is needed")
-    .option(
-      "--request-id <uuid>",
-      "stable request id for subsequent inspection",
-    )
-    .option(
-      "--ttl-seconds <seconds>",
-      "duration, default one day, maximum 30 days",
-    )
-    .option("--never-expires", "request no expiry")
-    .option("--both-directions", "request communication in both directions")
-    .option(
-      "--wait-seconds <seconds>",
-      "wait for the human decision using read-only inspection; 0 returns immediately, maximum 900",
-      "120",
-    )
-    .action(async (opts, cmd) => {
-      if (opts.neverExpires && opts.ttlSeconds !== undefined)
-        throw new Error("Choose --never-expires or --ttl-seconds, not both");
-      const waitSeconds = Number(opts.waitSeconds);
-      if (
-        !Number.isInteger(waitSeconds) ||
-        waitSeconds < 0 ||
-        waitSeconds > 900
-      )
-        throw new Error("--wait-seconds must be an integer from 0 to 900");
-      const globals = globalsFrom(cmd);
-      if (
-        (opts.to && (opts.toAgent || opts.targetProject)) ||
-        (!opts.to && (!opts.toAgent || !opts.targetProject))
-      )
-        throw new Error(
-          "Choose --to NAME or both --to-agent and --target-project",
-        );
-      const target = opts.to
-        ? await resolveRuntimeAgentName(opts.to, globals.api)
-        : { agent_id: opts.toAgent, project_id: opts.targetProject };
-      validateAgentEndpoint(target);
-      const request_id = opts.requestId ?? randomUUID();
-      process.stderr.write(
-        `Connection approval request ${request_id}; no message is sent.\n`,
-      );
-      let result = await sendIdentityMessage(
-        {
-          version: 2,
-          action: "request-connection",
-          request_id,
-          target,
-          reason: opts.reason,
-          ttl_seconds: opts.neverExpires
-            ? null
-            : Number(opts.ttlSeconds ?? 86400),
-          both_directions: opts.bothDirections === true,
-        },
-        globals.api,
-      );
-      const deadline = Date.now() + waitSeconds * 1000;
-      while (result.state === "pending" && Date.now() < deadline) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.min(2000, deadline - Date.now())),
-        );
-        if (Date.now() >= deadline) break;
-        result = await sendIdentityMessage(
-          {
-            version: 2,
-            action: "connection-request",
-            request_id: result.request_id,
-          },
-          globals.api,
-        );
-      }
-      emitSuccess({ globals }, "project chat agent request-connection", result);
-    });
-  agent
-    .command("connection-request <request-id>")
-    .description(
-      "inspect a typed approval request; never starts work or replays a message",
-    )
-    .action(async (request_id, _opts, cmd) => {
-      const globals = globalsFrom(cmd);
-      emitSuccess(
-        { globals },
-        "project chat agent connection-request",
-        await sendIdentityMessage(
-          { version: 2, action: "connection-request", request_id },
-          globals.api,
-        ),
-      );
-    });
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .description("discover peers and Agent Networks available to this runtime")
+    .action((opts, cmd) =>
+      destinations(opts, cmd, "project chat agent destinations"),
+    );
   rpc
     .command("destinations")
-    .option(
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .description("discover peers and exact network identifiers")
+    .action((opts, cmd) =>
+      destinations(opts, cmd, "project chat agent rpc destinations", true),
+    );
+  agent
+    .command("inbox")
+    .requiredOption(
       "--external-agent <profile>",
-      "use an external send-only installation",
+      "enrolled external-agent profile",
     )
+    .option("--limit <count>", "maximum messages to return", "50")
+    .description("list pending messages for an external network member")
     .action(async (opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      const limit = Number(opts.limit);
+      emitSuccess(
+        { globals },
+        "project chat agent inbox",
+        await sendExternalAgentMessage(opts.externalAgent, {
+          version: 3,
+          action: "inbox",
+          limit,
+        }),
+      );
+    });
+  agent
+    .command("ack-inbox <message-id>")
+    .requiredOption(
+      "--external-agent <profile>",
+      "enrolled external-agent profile",
+    )
+    .description("acknowledge one external-agent inbox message")
+    .action(async (message_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
       emitSuccess(
         { globals },
-        "project chat agent rpc destinations",
+        "project chat agent ack-inbox",
+        await sendExternalAgentMessage(opts.externalAgent, {
+          version: 3,
+          action: "ack-inbox",
+          message_id,
+        }),
+      );
+    });
+  agent
+    .command("propose-network")
+    .requiredOption(
+      "--members <json>",
+      "JSON array of explicit registered/external member locators",
+    )
+    .option("--proposal-id <uuid>", "stable retry id")
+    .option("--title <title>", "proposed title")
+    .option("--delivery <mode>", "queued or live", "queued")
+    .option("--reason <text>", "short human-facing reason")
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .description("propose a network for explicit human approval")
+    .action(async (opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      let members: AgentNetworkMemberLocator[];
+      try {
+        members = JSON.parse(opts.members);
+      } catch {
+        throw new Error("--members must be a JSON array");
+      }
+      const request = {
+        version: 3 as const,
+        action: "propose-network" as const,
+        proposal_id: opts.proposalId ?? randomUUID(),
+        title: opts.title,
+        delivery_mode: opts.delivery,
+        members,
+        reason: opts.reason,
+      };
+      emitSuccess(
+        { globals },
+        "project chat agent propose-network",
         opts.externalAgent
-          ? await sendExternalAgentMessage(opts.externalAgent, {
-              version: 2,
-              action: "destinations",
-            })
-          : await sendIdentityMessage(
-              { version: 2, action: "destinations" },
-              globals.api,
-            ),
+          ? await sendExternalAgentMessage(opts.externalAgent, request)
+          : await sendIdentityMessage(request, globals.api),
+      );
+    });
+  agent
+    .command("broadcast [message...]")
+    .requiredOption("--agent-network <uuid>", "exact Agent Network")
+    .requiredOption("--targets <json>", "JSON array of explicit targets")
+    .option("--broadcast-id <uuid>", "stable parent retry id")
+    .option("--stdin", "read the message from standard input")
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .description("send one bounded message to several network members")
+    .action(async (message: string[], opts, cmd) => {
+      if (opts.stdin && message.length)
+        throw new Error("use either message arguments or --stdin, not both");
+      const body = opts.stdin ? await stdin() : message.join(" ");
+      let targets: AgentRpcTarget[];
+      try {
+        targets = JSON.parse(opts.targets);
+      } catch {
+        throw new Error("--targets must be a JSON array");
+      }
+      const request = {
+        version: 3 as const,
+        action: "broadcast" as const,
+        broadcast_id: opts.broadcastId ?? randomUUID(),
+        agent_network_id: opts.agentNetwork,
+        targets,
+        body,
+      };
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        "project chat agent broadcast",
+        opts.externalAgent
+          ? await sendExternalAgentMessage(opts.externalAgent, request)
+          : await sendIdentityMessage(request, globals.api),
       );
     });
   rpc
     .command("inspect <attempt-id>")
-    .option(
-      "--external-agent <profile>",
-      "use an external send-only installation",
-    )
-    .requiredOption("--to-agent <id>", "target from the original receipt")
-    .requiredOption(
-      "--target-project <id>",
-      "target project from the original receipt; no bay routing needed",
-    )
+    .option("--external-agent <profile>", "use an enrolled external agent")
+    .requiredOption("--agent-network <uuid>", "exact Agent Network")
+    .requiredOption("--to-agent <uuid>", "target from the original outcome")
+    .requiredOption("--target-project <uuid>", "target project")
+    .description("inspect an exact attempt without retrying or starting work")
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
       const request = {
-        version: 2 as const,
+        version: 3 as const,
         action: "inspect" as const,
         attempt_id,
+        agent_network_id: opts.agentNetwork,
         target: { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       emitSuccess(
@@ -195,59 +204,12 @@ export function registerChatAgentCommands(
         "project chat agent rpc inspect",
         opts.externalAgent
           ? await sendExternalAgentMessage(opts.externalAgent, request)
-          : await sendIdentityMessage(
-              {
-                version: 2,
-                action: "inspect",
-                attempt_id,
-                target: {
-                  project_id: opts.targetProject,
-                  agent_id: opts.toAgent,
-                },
-              },
-              globals.api,
-            ),
+          : await sendIdentityMessage(request, globals.api),
       );
     });
-  rpc
-    .command("link <source-agent-id> <target-agent-id>")
-    .requiredOption("--source-project <id>", "source project")
-    .requiredOption("--target-project <id>", "target project")
-    .requiredOption("--reason <reason>", "human approval reason")
-    .option("--ttl-seconds <seconds>", "expiry, maximum 30 days", "86400")
-    .option("--allow-guidance", "permit explicit guidance")
-    .action(async (source, target, opts, cmd) =>
-      withContext(cmd, "project chat agent rpc link", (ctx) =>
-        ctx.hub.agent.grantRpcLink({
-          source: { project_id: opts.sourceProject, agent_id: source },
-          target: { project_id: opts.targetProject, agent_id: target },
-          link_id: randomUUID(),
-          ttl_seconds: Number(opts.ttlSeconds),
-          reason: opts.reason,
-          allow_guidance: opts.allowGuidance === true,
-        }),
-      ),
-    );
-  rpc
-    .command("revoke <link-id>")
-    .requiredOption("--source-agent <id>", "source agent")
-    .requiredOption("--source-project <id>", "source project")
-    .action(async (link_id, opts, cmd) =>
-      withContext(cmd, "project chat agent rpc revoke", (ctx) =>
-        ctx.hub.agent.revokeRpcLink({
-          link_id,
-          source: {
-            project_id: opts.sourceProject,
-            agent_id: opts.sourceAgent,
-          },
-        }),
-      ),
-    );
   agent
     .command("whoami")
-    .description(
-      "inspect your runtime identity without account/project credential fallback",
-    )
+    .description("inspect this runtime identity without credential fallback")
     .action(async (_opts, cmd) => {
       const globals = globalsFrom(cmd);
       emitSuccess(
@@ -256,52 +218,6 @@ export function registerChatAgentCommands(
         await sendIdentityMessage({ action: "whoami" }, globals.api),
       );
     });
-  agent
-    .command("links <agent-id>")
-    .description("inspect retired V1 links only; new links use agent rpc link")
-    .option(
-      "-w, --project <project>",
-      "endpoint project id or name for owning-bay routing (otherwise local bay)",
-    )
-    .option("--limit <count>", "page size, 1 to 100", "20")
-    .option("--cursor <uuid>", "continuation cursor from the previous page")
-    .action(async (agent_id, opts, cmd) =>
-      withContext(cmd, "project chat agent links", async (ctx) => {
-        const project =
-          opts.project === undefined
-            ? undefined
-            : await resolveProjectFromArgOrContext(ctx, opts.project);
-        return ctx.hub.agent.listGrants({
-          agent_id,
-          project_id: project?.project_id,
-          limit: Number(opts.limit),
-          cursor: opts.cursor,
-        });
-      }),
-    );
-  agent
-    .command("receipts <agent-id>")
-    .description("inspect retired V1 receipts without resuming delivery")
-    .option(
-      "-w, --project <project>",
-      "endpoint project id or name for owning-bay routing (otherwise local bay)",
-    )
-    .option("--limit <count>", "page size, 1 to 100", "20")
-    .option("--cursor <uuid>", "continuation cursor from the previous page")
-    .action(async (agent_id, opts, cmd) =>
-      withContext(cmd, "project chat agent receipts", async (ctx) => {
-        const project =
-          opts.project === undefined
-            ? undefined
-            : await resolveProjectFromArgOrContext(ctx, opts.project);
-        return ctx.hub.agent.listMessageReceipts({
-          agent_id,
-          project_id: project?.project_id,
-          limit: Number(opts.limit),
-          cursor: opts.cursor,
-        });
-      }),
-    );
   agent
     .command("register")
     .requiredOption("--path <path>", "chat path")
@@ -333,15 +249,21 @@ export function registerChatAgentCommands(
         ctx.hub.agent.disableIdentity({ agent_id }),
       ),
     );
-  agent
-    .command("receipt <request-id>")
-    .description("read only the delivery state of your own message")
-    .action(async (request_id, _opts, cmd) => {
-      const globals = globalsFrom(cmd);
-      const result = await sendIdentityMessage(
-        { action: "receipt", request_id },
-        globals.api,
-      );
-      emitSuccess({ globals }, "project chat agent receipt", result);
-    });
+}
+
+export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+  return {
+    peers: directory.peers.map(({ member, networks }) => ({
+      kind: member.kind,
+      name: member.kind === "registered" ? member.name : member.label,
+      ...(member.kind === "registered" && member.project_title
+        ? { project: member.project_title }
+        : {}),
+      available: member.available,
+      networks: networks.map(({ title, delivery_mode }) => ({
+        title,
+        delivery_mode,
+      })),
+    })),
+  };
 }

@@ -655,11 +655,13 @@ export async function markTeamLicensePastDue({
   team_license_id,
   payment,
   client,
+  expected_payment_intent_id,
 }: {
   team_license_id: string;
   payment?: Record<string, unknown> | null;
   client?: PoolClient;
-}): Promise<TeamLicenseRecord> {
+  expected_payment_intent_id?: string;
+}): Promise<TeamLicenseRecord | undefined> {
   const { rows } = await getQueryClient(client).query<TeamLicenseRow>(
     `
       UPDATE team_licenses
@@ -668,16 +670,16 @@ export async function markTeamLicensePastDue({
              last_renewal_notice_at=NOW(),
              updated=NOW()
        WHERE id=$1
+         AND status != 'canceled'
+         AND ($3::text IS NULL OR
+           (payment->>'payment_intent_id'=$3 AND payment->>'status'='active'))
        RETURNING id, owner_account_id, status, current_period_start,
                  current_period_end, latest_purchase_id, payment,
                  last_renewal_attempt_at, last_renewal_notice_at,
                  metadata, created, updated
     `,
-    [team_license_id, payment ?? null],
+    [team_license_id, payment ?? null, expected_payment_intent_id ?? null],
   );
   const license = normalizeTeamLicenseRow(rows[0]);
-  if (!license) {
-    throw Error("team license not found");
-  }
   return license;
 }

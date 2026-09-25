@@ -23,7 +23,7 @@ import { disconnect_from_project } from "@cocalc/frontend/project/websocket/conn
 import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
-import { PageState } from "./store";
+import type { PageState } from "./store";
 import { lite, project_id } from "@cocalc/frontend/lite";
 import {
   getAdminTargetPath,
@@ -179,6 +179,14 @@ export class PageActions extends Actions<PageState> {
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {
+    if (
+      key === "agents" &&
+      redux.getStore("account")?.getIn(["other_settings", "openai_disabled"])
+    ) {
+      key = "projects";
+      // Direct URLs must be corrected even when routing suppresses history updates.
+      change_history = true;
+    }
     const customize = redux.getStore("customize");
     if (customize?.get("exam_mode")) {
       const examProjectId = customize.get("project_id");
@@ -199,6 +207,12 @@ export class PageActions extends Actions<PageState> {
       }
     }
 
+    if (key === "notifications" && change_history) {
+      const { setNotificationsOpen } =
+        await import("../notifications/drawer-state");
+      setNotificationsOpen(true);
+      return;
+    }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);
@@ -234,6 +248,25 @@ export class PageActions extends Actions<PageState> {
     const projectLabel = intl.formatMessage(labels.project);
 
     switch (key) {
+      case "agents": {
+        const page = this.redux.getStore("page");
+        const agent_id = page.get("active_agent_id");
+        const agent_name = page.get("active_agent_name");
+        if (change_history) {
+          set_url(
+            getPageUrlPath({
+              page: "agents",
+              agent_id: agent_name ?? agent_id,
+              library: page.get("library_open"),
+              artifact_project_id: page.get("library_project_id"),
+              artifact_entry_id: page.get("library_entry_id"),
+            }),
+            page.get("library_open") ? "" : undefined,
+          );
+        }
+        set_window_title(page.get("library_open") ? "Library" : "Agents");
+        return;
+      }
       case "projects":
         if (change_history) {
           set_url(getPageUrlPath({ page: "projects" }));

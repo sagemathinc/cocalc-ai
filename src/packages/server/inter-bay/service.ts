@@ -1,3 +1,4 @@
+import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -5,6 +6,10 @@
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
+import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
+import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
+import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
@@ -71,6 +76,7 @@ import type { ConatService } from "@cocalc/conat/service/typed";
 import type { SiteLicenseAffiliationReverificationSeat } from "@cocalc/conat/hub/api/purchases";
 import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
+import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
@@ -80,6 +86,7 @@ import {
   validateRegistrationTokenDirect,
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
+import { financialApprovalAuthOnHome } from "@cocalc/server/compute/funding/approval-auth-home";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
 import {
   createResetLocal as createPasswordResetLocal,
@@ -98,6 +105,7 @@ import {
   startEmailAuthChallengeDirect,
 } from "@cocalc/server/auth/email/challenge-store";
 import { getArchiveLifecycleAccountStatusesLocal } from "@cocalc/server/accounts/archive-lifecycle-status";
+import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-directory";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import sendEmailVerificationLocal from "@cocalc/server/accounts/send-email-verification";
 import {
@@ -109,9 +117,15 @@ import {
   revokeAdminRole as revokeAdminRoleLocal,
 } from "@cocalc/server/accounts/admin-role";
 import { setAutoBalance as setAutoBalanceLocal } from "@cocalc/server/accounts/auto-balance";
+import {
+  USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+  USE_BALANCE_TOWARD_TEAM_LICENSES,
+} from "@cocalc/util/db-schema/accounts";
 import { searchRelatedClusterAccounts } from "@cocalc/server/accounts/search-policy";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import isAdminLocal from "@cocalc/server/accounts/is-admin";
 import {
   getCodexFreshAuthActionStatus,
   startCodexFreshAuthChallengeLocal,
@@ -216,6 +230,7 @@ import {
 import {
   assertSiteFundedCodexReservationHost,
   finishSiteFundedCodexTurn,
+  getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
   heartbeatSiteFundedCodexTurn,
   recordSiteFundedCodexUsageEvent,
@@ -311,15 +326,23 @@ import {
   setAdminAssignedMembershipLocal,
 } from "@cocalc/server/membership/admin-assigned";
 import {
+  createExternalCredential,
+  ensureDefaultExternalCredential,
   getExternalCredential,
+  getExternalCredentialById,
   hasExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
   touchExternalCredential,
+  updateExternalCredentialById,
+  updateExternalCredentialLabelById,
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import { refreshCodexSubscriptionAuth } from "@cocalc/server/external-credentials/codex-subscription-refresh";
-import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
+import {
+  getDedicatedHostAdmissionSnapshotLocal,
+  getDedicatedHostPolicySnapshotLocal,
+} from "@cocalc/server/project-host/admission";
 import {
   closeDedicatedHostPurchaseSessionLocal,
   recordDedicatedHostMeteredUsageLocal,
@@ -348,6 +371,8 @@ import {
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { createBillingAuthorityInterBayService } from "@cocalc/server/purchases/billing-authority/inter-bay";
+import { handleBillingAuthorityTransportRequest } from "@cocalc/server/purchases/billing-authority/service";
 import { applyRemoteNotificationTargetOnHomeBay } from "@cocalc/server/notifications/remote-feed";
 import {
   handleProjectControlAddress,
@@ -486,6 +511,35 @@ import {
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import * as computeFunding from "@cocalc/server/conat/api/compute-funding";
+import { checkFundingApprovalRecipientsOnHome } from "@cocalc/server/compute/funding/approval-recipients";
+import {
+  getCourseVmRecommendationsOnOwningBay,
+  setCourseVmRecommendationsOnOwningBay,
+  getPublishedCourseVmRecommendationsOnOwningBay,
+} from "@cocalc/server/compute/funding/course-vm-recommendations";
+import {
+  reserveComputeVmFundingLocal,
+  lookupComputeVmFundingLocal,
+  getComputeVmFallbackDecisionLocal,
+  checkComputeVmFundingLocal,
+  settleComputeVmFundingLocal,
+} from "@cocalc/server/compute/funding/vm-funding";
+import {
+  previewCreditTransfer,
+  proposeCreditTransfer,
+  getCreditTransferStatus,
+  listCreditTransfers,
+  creditTransferRecipient,
+  creditTransferVerifyRoot,
+  creditTransferOutgoing,
+  creditTransferDeliver,
+} from "@cocalc/server/purchases/credit-transfers/api";
+import {
+  getMonthlyCollection,
+  proposeMonthlyCollection,
+} from "@cocalc/server/purchases/monthly-collection";
+import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/sources";
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
@@ -524,6 +578,7 @@ import {
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
   getSiteSettingsOnSeed,
+  isSeedOnlySiteSetting,
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
@@ -551,7 +606,7 @@ function isLegacyProjectIdUnavailableError(err: unknown): boolean {
   const message = `${(err as any)?.message ?? err}`;
   return (
     message.includes("project_id already exists") ||
-    message.includes("project_id belongs to a permanently deleted workspace") ||
+    message.includes("project_id belongs to a permanently deleted project") ||
     message.includes("if project_id is given, it must be a valid uuid")
   );
 }
@@ -592,6 +647,7 @@ export async function initInterBayServices(): Promise<void> {
     await startDirectoryService();
     await startAuthTokenService();
     await startBayRegistryService();
+    startBillingAuthorityInterBayService();
     await startBayOpsService();
     await startAccountDirectoryService();
     await startAccountLocalService();
@@ -611,6 +667,18 @@ export async function initInterBayServices(): Promise<void> {
         parallel: true,
         impl: agentIdentityControl,
       }),
+      createInterBayArtifactCatalogHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: catalogOwnerControl,
+      }),
+      createInterBayPersonalLibraryHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: personalLibraryHomeControl,
+      }),
     );
     await startProjectSecretsService();
     await startExternalCredentialsService();
@@ -626,6 +694,13 @@ export async function initInterBayServices(): Promise<void> {
     serviceStarted = false;
     throw err;
   }
+}
+
+function startBillingAuthorityInterBayService(): void {
+  const service = createBillingAuthorityInterBayService({
+    handle: handleBillingAuthorityTransportRequest,
+  });
+  if (service) services.push(service);
 }
 
 async function startBayRegistryService(): Promise<void> {
@@ -750,6 +825,12 @@ async function startBayOpsService(): Promise<void> {
     setWebappCrashResolution: async (opts) =>
       await setWebappCrashResolutionLocal(opts),
     setServerSetting: async (opts) => {
+      if (
+        bay_id !== getConfiguredClusterSeedBayId() &&
+        isSeedOnlySiteSetting(opts.name)
+      ) {
+        throw Error(`setting '${opts.name}' is seed-only`);
+      }
       await callback2(db().set_server_setting, opts);
     },
     checkCloudflareBlobEnvironment: async () => {
@@ -804,11 +885,14 @@ async function startBayOpsService(): Promise<void> {
         outcome,
       });
     },
-    getSiteFundedCodexStatus: async ({ reconcile }) => {
+    getSiteFundedCodexStatus: async ({ reconcile, accountId }) => {
       assertSiteFundedCodexSeedAuthority();
       const pools = await getSiteFundedCodexPoolStatus();
       return {
         pools,
+        accountReservations: accountId
+          ? await getSiteFundedCodexAccountReservationStatus({ accountId })
+          : undefined,
         reconciliation: reconcile
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
@@ -1057,15 +1141,27 @@ async function startAccountDirectoryService(): Promise<void> {
     recentPasswordResetAttempts: async ({ email_address, ip_address }) => ({
       count: await recentPasswordResetAttemptsLocal(email_address, ip_address),
     }),
-    createPasswordReset: async ({ email_address, ip_address, ttl_s }) => ({
-      id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
+    createPasswordReset: async ({
+      email_address,
+      ip_address,
+      ttl_s,
+      expected_account_id,
+    }) => ({
+      id: await createPasswordResetLocal(
+        email_address,
+        ip_address,
+        ttl_s,
+        expected_account_id,
+      ),
     }),
     redeemPasswordReset: async ({ password_reset_id }) => {
-      const { email_address } =
+      const { email_address, account_id } =
         await redeemPasswordResetLocal(password_reset_id);
-      const account = await getClusterAccountByEmail(email_address);
-      const account_id = account?.account_id;
-      if (!account_id) {
+      const account = await getClusterAccountByIdDirect(account_id);
+      if (
+        !account?.account_id ||
+        `${account.email_address ?? ""}`.trim().toLowerCase() !== email_address
+      ) {
         throw Error("Password reset no longer valid.");
       }
       return {
@@ -1095,11 +1191,95 @@ async function startAccountDirectoryService(): Promise<void> {
 async function startAccountLocalService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayAccountLocalApi = {
+    reserveComputeVmFunding: reserveComputeVmFundingLocal,
+    lookupComputeVmFunding: lookupComputeVmFundingLocal,
+    getComputeVmFallbackDecision: getComputeVmFallbackDecisionLocal,
+    checkComputeVmFunding: checkComputeVmFundingLocal,
+    settleComputeVmFunding: settleComputeVmFundingLocal,
+    previewCreditTransfer,
+    proposeCreditTransfer,
+    getMonthlyCollection,
+    proposeMonthlyCollection,
+    getCreditTransferStatus,
+    listCreditTransfers,
+    creditTransferRecipient,
+    creditTransferVerifyRoot,
+    creditTransferOutgoing,
+    creditTransferDeliver,
+    computeFundingGetCourseSummary: computeFunding.getCourseSummary,
+    computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    computeOwnerResources: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-routing")
+      ).computeOwnerResourcesOnBay(opts),
+    computeProjectResources: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-routing")
+      ).computeProjectResourcesOnBay(opts),
+    computeProjectAuthorizeSsh: async (opts) =>
+      (
+        await import("@cocalc/server/conat/api/compute")
+      ).authorizeProjectSshKeyOnBay(opts),
+    computeCreateVmWithVolume: async (opts) =>
+      (
+        await import("@cocalc/server/compute/volume-placement")
+      ).createVmWithVolumeOnBay(opts),
+    computeOwnerMutate: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).computeOwnerMutationOnBay(opts),
+    computeOwnerCheckAgentGrant: async (opts) =>
+      (
+        await import("@cocalc/server/compute/turn-grants")
+      ).checkAgentComputeGrantOnHome(opts),
+    computeOwnerCheckFreshAuth: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).checkComputeOwnerFreshAuthOnHome(opts),
+    computeFundingReviewPersonalResource: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/resource-review")
+      ).reviewPersonalResourceOnBay(opts),
+    computeFundingApplyPersonalVolumeHandoff: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/volume-personal-remote")
+      ).applyRemotePersonalVolumeHandoff(opts),
+    computeFundingPersonalVmHandoff: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/vm-personal-remote-resource")
+      ).processPersonalVmHandoffOnBay(opts),
+    computeFundingReceiveResourceNotice: async (opts) =>
+      await (
+        await import("@cocalc/server/notifications/compute-resource")
+      ).receiveComputeResourceNotice(opts),
+    computeFundingGetCourseVmRecommendations:
+      getCourseVmRecommendationsOnOwningBay,
+    computeFundingSetCourseVmRecommendations:
+      setCourseVmRecommendationsOnOwningBay,
+    computeFundingGetPublishedCourseVmRecommendations:
+      getPublishedCourseVmRecommendationsOnOwningBay,
+    computeFundingPreviewPoolChange: computeFunding.previewPoolChange,
+    computeFundingProposePoolChange: computeFunding.proposePoolChange,
+    computeFundingGetRolloutCapabilities: async () =>
+      await (
+        await import("@cocalc/server/compute/funding/rollout")
+      ).getLocalFundingRolloutCapabilities(),
+    computeFundingListSourcesOnBay: listCourseFundingSourcesOnBay,
+    computeFundingCheckApprovalRecipients: (opts) =>
+      checkFundingApprovalRecipientsOnHome(opts),
+    computeFundingListSources: computeFunding.listSources,
+    computeFundingPreviewAllocation: computeFunding.previewAllocation,
+    computeFundingProposeAllocation: computeFunding.proposeAllocation,
+    computeFundingGetAllocationStatus: computeFunding.getAllocationStatus,
     create: async (opts) => await provisionLocalClusterAccount(opts),
     delete: async (opts) => await deleteLocalClusterAccount(opts),
     rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
     acceptRehome: async (opts) => await acceptAccountRehome(opts),
     copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    activateFinancialRehome: async (opts) =>
+      await (
+        await import("@cocalc/server/accounts/financial-rehome")
+      ).activateAccountFinancialState(opts),
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
@@ -1145,6 +1325,8 @@ async function startAccountLocalService(): Promise<void> {
         code,
       }),
     }),
+    financialApprovalAuth: async (opts) =>
+      await financialApprovalAuthOnHome(opts),
     getAccountIdFromRememberMe: async ({ hash }) => ({
       account_id: await getLocalAccountIdFromRememberMe(hash),
     }),
@@ -1192,6 +1374,7 @@ async function startAccountLocalService(): Promise<void> {
         project_id,
         challenge_id,
       }),
+    liveVoice: async (opts) => await liveVoiceLocal(opts),
     getChatSpeechCapabilities: async (opts) =>
       await getChatSpeechCapabilitiesLocal(opts),
     transcribeChatAudio: async (opts) => await transcribeChatAudioLocal(opts),
@@ -1202,8 +1385,8 @@ async function startAccountLocalService(): Promise<void> {
     },
     sendEmailVerification: async ({ account_id, only_verify }) =>
       await sendEmailVerificationLocal(account_id, only_verify),
-    adminVerifyEmailAddress: async ({ account_id }) =>
-      await adminVerifyEmailAddressLocal({ account_id }),
+    adminVerifyEmailAddress: async ({ account_id, email_address }) =>
+      await adminVerifyEmailAddressLocal({ account_id, email_address }),
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
     adminGrantAdminRole: async (opts) => await grantAdminRoleLocal(opts),
@@ -1214,11 +1397,68 @@ async function startAccountLocalService(): Promise<void> {
     setAutoBalance: async (opts) => await setAutoBalanceLocal(opts),
     searchRelatedAccounts: async (opts) =>
       await searchRelatedClusterAccounts(opts),
-    setPasswordFromReset: async ({ account_id, password }) => {
-      await setPasswordFromResetLocal({ account_id, password });
+    setPasswordFromReset: async ({ account_id, email_address, password }) => {
+      await setPasswordFromResetLocal({ account_id, email_address, password });
     },
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
+    },
+    requireFreshAuth: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor,
+      allow_actor_impersonation,
+    }) => {
+      await requireDangerousSessionAuth({
+        account_id,
+        browser_id,
+        session_hash,
+        require_second_factor,
+        allow_actor_impersonation,
+      });
+    },
+    isAdmin: async ({ account_id }) => await isAdminLocal(account_id),
+    getBillingPreferences: async ({ account_id }) => {
+      const { rows } = await getPool().query(
+        `SELECT email_daily_statements,
+                other_settings->>$2 AS use_balance_toward_subscriptions,
+                other_settings->>$3 AS use_balance_toward_team_licenses
+           FROM accounts
+          WHERE account_id=$1 AND deleted IS NOT TRUE`,
+        [
+          account_id,
+          USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+          USE_BALANCE_TOWARD_TEAM_LICENSES,
+        ],
+      );
+      if (!rows[0]) throw Error("account not found");
+      const optionalBoolean = (value: unknown): boolean | undefined =>
+        value === "true" ? true : value === "false" ? false : undefined;
+      return {
+        email_daily_statements: rows[0].email_daily_statements === true,
+        use_balance_toward_subscriptions: optionalBoolean(
+          rows[0].use_balance_toward_subscriptions,
+        ),
+        use_balance_toward_team_licenses: optionalBoolean(
+          rows[0].use_balance_toward_team_licenses,
+        ),
+      };
+    },
+    setBillingProjection: async ({ account_id, balance, balance_alert }) => {
+      if (typeof balance !== "number" && typeof balance_alert !== "boolean")
+        return;
+      await getPool().query(
+        `UPDATE accounts
+            SET balance=COALESCE($2,balance),
+                balance_alert=COALESCE($3,balance_alert)
+          WHERE account_id=$1`,
+        [
+          account_id,
+          typeof balance === "number" ? balance : null,
+          typeof balance_alert === "boolean" ? balance_alert : null,
+        ],
+      );
     },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);
@@ -1262,8 +1502,14 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
-    getAccountUsageOverview: async ({ account_id }) =>
-      await getAccountUsageOverviewForAccount({ account_id }),
+    getAccountUsageOverview: async ({
+      account_id,
+      include_site_funded_codex_credits,
+    }) =>
+      await getAccountUsageOverviewForAccount({
+        account_id,
+        include_site_funded_codex_credits,
+      }),
     recordSiteFundedCodexUsage: async (opts) =>
       await recordSiteFundedCodexAccountUsage(opts),
     getVerifiedEmailAddresses: async ({ account_id }) => ({
@@ -1364,6 +1610,8 @@ async function startAccountLocalService(): Promise<void> {
       await getDedicatedHostPolicySnapshotLocal(account_id, {
         funding_mode_override,
       }),
+    getDedicatedHostAdmissionSnapshot: async ({ account_id }) =>
+      await getDedicatedHostAdmissionSnapshotLocal(account_id),
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
@@ -2277,13 +2525,52 @@ async function startExternalCredentialsService(): Promise<void> {
   const impl: InterBayExternalCredentialsApi = {
     upsert: async ({ selector, payload, metadata }) =>
       await upsertExternalCredential({ selector, payload, metadata }),
+    create: async ({
+      selector,
+      payload,
+      metadata,
+      max_active,
+      deduplicate_metadata,
+      default_metadata_key,
+    }) =>
+      await createExternalCredential({
+        selector,
+        payload,
+        metadata,
+        maxActive: max_active,
+        deduplicateMetadata: deduplicate_metadata,
+        defaultMetadataKey: default_metadata_key,
+      }),
+    updateById: async ({ id, selector, payload, metadata, revive }) =>
+      await updateExternalCredentialById({
+        id,
+        selector,
+        payload,
+        metadata: metadata ?? {},
+        revive,
+      }),
+    updateLabelById: async ({ id, selector, label }) =>
+      await updateExternalCredentialLabelById({ id, selector, label }),
     get: async ({ selector, touch_last_used }) =>
       await getExternalCredential({
         selector,
         touchLastUsed: touch_last_used,
       }),
+    getById: async ({ id, selector, touch_last_used }) =>
+      await getExternalCredentialById({
+        id,
+        selector,
+        touchLastUsed: touch_last_used,
+      }),
+    ensureDefault: async ({ selector, metadata_key }) =>
+      await ensureDefaultExternalCredential({
+        selector,
+        metadataKey: metadata_key,
+      }),
     has: async ({ selector }) => await hasExternalCredential({ selector }),
     touch: async ({ selector }) => await touchExternalCredential({ selector }),
+    touchById: async ({ id, selector }) =>
+      await touchExternalCredential({ selector, id }),
     list: async ({
       owner_account_id,
       include_revoked,
@@ -2302,10 +2589,12 @@ async function startExternalCredentialsService(): Promise<void> {
       await revokeExternalCredential({ id, owner_account_id }),
     refreshCodexSubscription: async ({
       owner_account_id,
+      credential_id,
       previous_access_token_hash,
     }) =>
       await refreshCodexSubscriptionAuth({
         ownerAccountId: owner_account_id,
+        credentialId: credential_id,
         previousAccessTokenHash: previous_access_token_hash,
       }),
   };

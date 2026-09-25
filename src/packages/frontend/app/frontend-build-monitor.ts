@@ -11,6 +11,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const POLL_INTERVAL_MS = 5 * 60_000;
 const MIN_CHECK_INTERVAL_MS = 15_000;
+const REFRESH_QUERY_PARAM = "_cocalc_refresh";
 
 export type FrontendBuildManifest = {
   schema: 1;
@@ -56,10 +57,19 @@ export function isLikelyStaleChunkError(value: unknown): boolean {
 export function reloadForFrontendBuild(manifest?: FrontendBuildManifest): void {
   const url = new URL(window.location.href);
   url.searchParams.set(
-    "_cocalc_refresh",
+    REFRESH_QUERY_PARAM,
     `${manifest?.build_timestamp ?? Date.now()}`,
   );
   window.location.replace(url.toString());
+}
+
+export function urlWithoutFrontendRefreshToken(
+  href: string,
+): string | undefined {
+  const url = new URL(href);
+  if (!url.searchParams.has(REFRESH_QUERY_PARAM)) return;
+  url.searchParams.delete(REFRESH_QUERY_PARAM);
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 export function useFrontendBuildMonitor(): FrontendBuildStatus {
@@ -70,6 +80,11 @@ export function useFrontendBuildMonitor(): FrontendBuildStatus {
   const chunkErrorSeen = useRef(false);
 
   useEffect(() => {
+    const cleanUrl = urlWithoutFrontendRefreshToken(window.location.href);
+    if (cleanUrl != null) {
+      window.history.replaceState(window.history.state, "", cleanUrl);
+    }
+
     let closed = false;
     let inFlight: Promise<void> | undefined;
     const check = async (force = false) => {

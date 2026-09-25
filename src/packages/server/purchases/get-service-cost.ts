@@ -17,6 +17,7 @@ export default async function getServiceCost(service: Service) {
     case "membership":
     case "dedicated-host":
     case "refund":
+    case "credit-transfer":
     case "student-pay":
       throw new Error("No cost for these services");
 

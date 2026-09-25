@@ -9,6 +9,7 @@ import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-
 import { AccountStorageWarning } from "@cocalc/frontend/purchases/account-storage-warning";
 import { AccountCpuWarning } from "@cocalc/frontend/purchases/account-cpu-warning";
 import MembershipBadge from "@cocalc/frontend/account/membership-badge";
+import { RunningGpuIndicator } from "./running-gpu-indicator";
 
 import { Notification } from "./notifications";
 import type { PageStyle } from "./top-nav-consts";
@@ -25,6 +26,9 @@ export function PostSurfaceRightNav({
   return (
     <>
       {isLoggedIn && !pageStyle.isNarrow ? <MembershipBadge /> : undefined}
+      {isLoggedIn ? (
+        <RunningGpuIndicator narrow={pageStyle.isNarrow} />
+      ) : undefined}
       <BalanceButton minimal topBar />
       <AIUsageWarning pageStyle={pageStyle} />
       <AccountCpuWarning pageStyle={pageStyle} />

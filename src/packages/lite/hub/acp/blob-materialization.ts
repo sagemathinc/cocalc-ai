@@ -1,5 +1,7 @@
 import path from "node:path";
 
+const CHAT_BLOB_TEMP_RELATIVE_PATH = ".local/share/cocalc/tmp";
+
 export type BlobReference = {
   url: string;
   uuid: string;
@@ -10,6 +12,19 @@ export type MaterializedBlobAttachment = {
   ref: BlobReference;
   path: string;
 };
+
+export function projectBlobMaterializationRoots({
+  hostProjectRoot,
+  runtimeProjectRoot,
+}: {
+  hostProjectRoot: string;
+  runtimeProjectRoot: string;
+}): { host: string; runtime: string } {
+  return {
+    host: path.join(hostProjectRoot, CHAT_BLOB_TEMP_RELATIVE_PATH),
+    runtime: path.posix.join(runtimeProjectRoot, CHAT_BLOB_TEMP_RELATIVE_PATH),
+  };
+}
 
 const BLOB_MARKDOWN_RE = /!\[[^\]]*\]\(((?:[^)]+)?\/blobs\/[^)]+)\)/gi;
 const BLOB_HTML_RE =

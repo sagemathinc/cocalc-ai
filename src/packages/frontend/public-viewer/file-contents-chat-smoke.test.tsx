@@ -12,11 +12,13 @@ jest.mock("@cocalc/frontend/chat/viewer", () => ({
     readOnly,
     virtualized,
     showThreadList,
+    showArtifacts,
   }: {
     doc: () => any;
     readOnly?: boolean;
     virtualized?: boolean;
     showThreadList?: boolean;
+    showArtifacts?: boolean;
   }) => {
     const rows = doc()?.get?.() ?? [];
     return (
@@ -25,6 +27,7 @@ jest.mock("@cocalc/frontend/chat/viewer", () => ({
         data-readonly={`${readOnly === true}`}
         data-virtualized={`${virtualized !== false}`}
         data-show-thread-list={`${showThreadList === true}`}
+        data-show-artifacts={`${showArtifacts === true}`}
       >
         {JSON.stringify(rows)}
       </div>
@@ -66,6 +69,7 @@ test("renders chat content with the real chat viewer adapter", async () => {
   expect(viewer.dataset.readonly).toBe("true");
   expect(viewer.dataset.virtualized).toBe("false");
   expect(viewer.dataset.showThreadList).toBe("true");
+  expect(viewer.dataset.showArtifacts).toBe("false");
   expect(viewer.parentElement).toHaveStyle({
     display: "flex",
     flexDirection: "column",
@@ -75,6 +79,17 @@ test("renders chat content with the real chat viewer adapter", async () => {
   expect(viewer.textContent).toContain("Demo Thread");
   expect(viewer.textContent).toContain("alice");
   expect(viewer.textContent).toContain("Hello from chat");
+});
+
+test("artifact rendering requires explicit viewer opt-in", () => {
+  render(
+    <PublicViewerChatRenderer
+      content=""
+      fileContext={{ noSanitize: false }}
+      showArtifacts
+    />,
+  );
+  expect(screen.getByTestId("chat-viewer").dataset.showArtifacts).toBe("true");
 });
 
 test("adapts native chat files stored as immer syncdb content", () => {

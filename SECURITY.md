@@ -19,6 +19,23 @@ available. We do not offer a bug bounty program.
 
 ## Maintainer Workflow
 
+### Unreleased Pull Requests
+
+Findings introduced solely by an unmerged, unreleased pull request should be
+fixed and reviewed in that pull request using the normal development workflow.
+Do not create a private security advisory or temporary private fork for these
+findings. This includes agents reviewing their own in-progress changes.
+
+Before applying this exception, confirm that the vulnerable code is not already
+present in a released version or a deployment serving users. Running the PR in
+the developer's own isolated test environment does not make it released. An
+unmerged PR alone does not establish the scope: the same issue may exist in
+released code, or the PR may already be serving customers. If released or
+deployed users are affected, or that is uncertain, use the private workflow
+below and coordinate with maintainers.
+
+### Released or Deployed Code
+
 Maintainers must handle non-public security fixes through a draft repository
 security advisory:
 

@@ -1,6 +1,8 @@
 import type { HubApi } from "@cocalc/conat/hub/api";
+import type { LroScopeType } from "@cocalc/conat/hub/api/lro";
 
 export type LroStatusSummaryLike = {
+  op_id?: string;
   status?: string;
   error?: string | null;
 };
@@ -43,6 +45,7 @@ export async function waitForLro({
   pollMs,
   terminalStatuses,
   onUpdate,
+  scope,
 }: {
   hub: Pick<HubApi, "lro">;
   opId: string;
@@ -50,6 +53,7 @@ export async function waitForLro({
   pollMs: number;
   terminalStatuses: Set<string>;
   onUpdate?: (update: LroWaitUpdate) => void | Promise<void>;
+  scope?: { type: LroScopeType; id: string };
 }): Promise<LroStatus> {
   const started = Date.now();
   let lastStatus = "unknown";
@@ -60,9 +64,17 @@ export async function waitForLro({
   while (Date.now() - started <= timeoutMs) {
     let summary: LroStatusSummaryLike | undefined;
     try {
-      summary = (await hub.lro.get({ op_id: opId })) as
-        | LroStatusSummaryLike
-        | undefined;
+      summary = scope
+        ? (
+            (await hub.lro.list({
+              scope_type: scope.type,
+              scope_id: scope.id,
+              include_completed: true,
+            })) as LroStatusSummaryLike[]
+          ).find((entry) => entry.op_id === opId)
+        : ((await hub.lro.get({ op_id: opId })) as
+            | LroStatusSummaryLike
+            | undefined);
       transientPollFailures = 0;
     } catch (err) {
       if (!isTransientLroPollError(err)) {

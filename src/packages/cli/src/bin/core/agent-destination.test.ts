@@ -1,93 +1,86 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { randomUUID } from "node:crypto";
+import test from "node:test";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { resolveAgentName } from "./agent-destination";
-import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 
-const a = { project_id: randomUUID(), agent_id: randomUUID() };
-const b = { project_id: randomUUID(), agent_id: randomUUID() };
-const destination = (target: AgentEndpoint = a, name = "reviewer") => ({
-  link_id: randomUUID(),
-  source: b,
-  target,
-  target_name: name,
-  approved_by: randomUUID(),
-  reason: "test",
-  expires_at: "2099-01-01",
-  allow_guidance: false,
+const source = { project_id: randomUUID(), agent_id: randomUUID() };
+const target = { project_id: randomUUID(), agent_id: randomUUID() };
+const network = randomUUID();
+
+function directory(
+  networks = [network],
+  endpoint = target,
+): AgentNetworkDiscovery {
+  return {
+    peers: [
+      {
+        member: {
+          kind: "registered",
+          member_id: endpoint.agent_id,
+          endpoint,
+          name: "reviewer",
+          available: true,
+          added_at: new Date().toISOString(),
+        },
+        networks: networks.map((agent_network_id) => ({
+          agent_network_id,
+          title: "Review",
+          delivery_mode: "queued",
+          generation: randomUUID(),
+        })),
+      },
+    ],
+  };
+}
+
+test("name resolution returns the exact peer and authorizing network", () => {
+  assert.deepEqual(resolveAgentName("@reviewer", directory()), {
+    target,
+    agent_network_id: network,
+    agent_network_title: "Review",
+  });
+  assert.throws(() => resolveAgentName("Reviewer", directory()), /lowercase/);
+  assert.throws(() => resolveAgentName("auditor", directory()), /No approved/);
 });
 
-test("named send matches exactly and permits optional at-sign", () => {
-  assert.deepEqual(resolveAgentName("@reviewer", [destination()]), a);
-  assert.throws(
-    () => resolveAgentName("review", [destination()]),
-    /No approved/,
-  );
-  assert.throws(
-    () => resolveAgentName("Reviewer", [destination()]),
-    /lowercase/,
-  );
+test("overlapping networks prefer live delivery without caller disambiguation", () => {
+  const other = randomUUID();
+  const value = directory([network, other]);
+  value.peers[0].networks[1].delivery_mode = "live";
+  assert.deepEqual(resolveAgentName("reviewer", value), {
+    target,
+    agent_network_id: other,
+    agent_network_title: "Review",
+  });
+  assert.deepEqual(resolveAgentName("reviewer", value, [], other), {
+    target,
+    agent_network_id: other,
+    agent_network_title: "Review",
+  });
 });
 
-test("turn-bound mention wins over a later directory mapping", () => {
+test("network titles disambiguate without exposing an id", () => {
+  const other = randomUUID();
+  const value = directory([network, other]);
+  value.peers[0].networks[1].title = "Support";
+  assert.deepEqual(resolveAgentName("reviewer", value, [], "Support"), {
+    target,
+    agent_network_id: other,
+    agent_network_title: "Support",
+  });
+});
+
+test("turn references pin identity but never create authority", () => {
   assert.deepEqual(
-    resolveAgentName(
-      "reviewer",
-      [destination(b)],
-      [{ name: "reviewer", target: a }],
-    ),
-    a,
-  );
-  assert.deepEqual(
-    resolveAgentName("reviewer", [], [{ name: "reviewer", target: a }]),
-    a,
-  );
-});
-
-test("conflicting bindings fail, duplicate links to the same endpoint do not", () => {
-  assert.throws(
-    () => resolveAgentName("reviewer", [destination(a), destination(b)]),
-    /Ambiguous/,
+    resolveAgentName("reviewer", directory(), [{ name: "reviewer", target }]),
+    { target, agent_network_id: network, agent_network_title: "Review" },
   );
   assert.throws(
     () =>
-      resolveAgentName(
-        "reviewer",
-        [],
-        [
-          { name: "reviewer", target: a },
-          { name: "reviewer", target: b },
-        ],
-      ),
-    /Ambiguous/,
-  );
-  assert.deepEqual(
-    resolveAgentName("reviewer", [destination(), destination()]),
-    a,
-  );
-});
-
-test("invalid endpoint and unrelated names never select a fallback", () => {
-  assert.throws(() =>
-    resolveAgentName("reviewer", [destination({ ...a, agent_id: "invalid" })]),
-  );
-  assert.throws(
-    () => resolveAgentName("reviewer", [destination(a, "other")]),
+      resolveAgentName("reviewer", directory(), [
+        { name: "reviewer", target: source },
+      ]),
     /No approved/,
-  );
-});
-
-test("retired textual name explains rename but already selected reference stays pinned", () => {
-  const renamed = {
-    ...destination(a, "auditor"),
-    target_retired_names: ["reviewer"],
-  };
-  assert.throws(
-    () => resolveAgentName("reviewer", [renamed]),
-    /name_renamed.*auditor/,
-  );
-  assert.deepEqual(
-    resolveAgentName("reviewer", [renamed], [{ name: "reviewer", target: a }]),
-    a,
   );
 });

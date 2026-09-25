@@ -192,4 +192,31 @@ describe("MembershipBadge", () => {
     expect(api).not.toHaveBeenCalled();
     expect(screen.queryByRole("button")).toBeNull();
   });
+
+  it("always shows Free in compact navigation despite the general hide setting", async () => {
+    hideNavbarMembership = true;
+    api
+      .mockResolvedValueOnce({ class: "free", source: "free" })
+      .mockResolvedValueOnce({ tiers: [{ id: "free", label: "Free" }] });
+
+    render(<MembershipBadge alwaysShowFree />);
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Current membership: Free. View details and change plans.",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("still honors the hide setting for paid tiers in compact navigation", async () => {
+    hideNavbarMembership = true;
+    api
+      .mockResolvedValueOnce({ class: "pro", source: "subscription" })
+      .mockResolvedValueOnce({ tiers: [{ id: "pro", label: "Pro" }] });
+
+    render(<MembershipBadge alwaysShowFree />);
+
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button")).toBeNull();
+  });
 });

@@ -103,11 +103,11 @@ test.each(["", " ", "name\nlogin", "x".repeat(81)])(
   },
 );
 
-test("approval is bounded send-only; target endpoints are native and precise", () => {
+test("approval binds one finite installation to one two-way Agent Network", () => {
   const request = {
     installation_id,
+    agent_network_id: randomUUID(),
     ttl_seconds: 3600,
-    targets: [{ agent_id: randomUUID(), project_id: randomUUID() }],
   };
   expect(() => validateExternalAgentApproval(request)).not.toThrow();
   for (const extra of [
@@ -124,13 +124,7 @@ test("approval is bounded send-only; target endpoints are native and precise", (
   expect(() =>
     validateExternalAgentApproval({
       ...request,
-      targets: [...request.targets, ...request.targets],
-    }),
-  ).toThrow("duplicate");
-  expect(() =>
-    validateExternalAgentApproval({
-      ...request,
-      targets: [{ agent_id: randomUUID() } as any],
+      agent_network_id: "not-a-network",
     }),
   ).toThrow();
 });

@@ -112,7 +112,7 @@ describe("PublicFeaturesApp", () => {
     ).toBeNull();
   });
 
-  it("shows Projects and Settings in the shared nav when authenticated", () => {
+  it("shows Projects and Agents in the shared nav when authenticated", () => {
     render(
       <PublicFeaturesApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -121,7 +121,7 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
   });
 
   it("renders a detail page", () => {

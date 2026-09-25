@@ -26,8 +26,9 @@ import {
 } from "@cocalc/frontend/chat/codex-defaults";
 import { CodexFullAccessNotice } from "@cocalc/frontend/chat/codex-full-access";
 import { lite } from "@cocalc/frontend/lite";
+import { Panel } from "@cocalc/frontend/antd-bootstrap";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Text } = Typography;
 
 interface Props {
   other_settings: AccountState["other_settings"];
@@ -63,10 +64,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
   }, [draft.model]);
 
   return (
-    <div style={{ marginTop: 16, marginBottom: 16 }}>
-      <Title level={2} style={{ marginBottom: 8, fontSize: 18 }}>
-        {CODEX_DEFAULTS_LABELS.title}
-      </Title>
+    <Panel header={CODEX_DEFAULTS_LABELS.title}>
       <Paragraph type="secondary" style={{ marginBottom: 12 }}>
         Configure the model and execution settings used when you create a new
         Codex chat.
@@ -171,6 +169,6 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
           Reset to built-in defaults
         </Button>
       </Space>
-    </div>
+    </Panel>
   );
 }

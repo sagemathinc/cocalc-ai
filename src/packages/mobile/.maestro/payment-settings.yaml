@@ -1,0 +1,23 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- openLink: "cocalc:///project/preview-project/chat?profile=local-ui-preview&chatPath=preview.chat&thread=preview-thread&title=Research"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Payment: Preview.*"
+    timeout: 15000
+- tapOn: "Payment: Preview.*"
+- assertVisible: "Payment"
+- takeScreenshot: payment-settings
+- scrollUntilVisible:
+    element: "high"
+    direction: DOWN
+    centerElement: true
+- tapOn: "high"
+- scrollUntilVisible:
+    element: "Save agent settings"
+    direction: DOWN
+- tapOn: "Save agent settings"
+- assertVisible: "Payment: Preview.*"
+- takeScreenshot: visible-payment

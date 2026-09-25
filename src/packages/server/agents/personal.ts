@@ -17,20 +17,35 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
-import { AgentStore, agentStore, agentMessagingEnabled } from "./store";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { AgentStore, agentStore } from "./store";
 import { isRestrictiveAgentManagement } from "./management";
 import { getIdentity } from "./api";
 import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 
-export const personalMessagingEnabled = () =>
-  process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED === "1";
+const DEFAULT_MAX_NAMED_AGENTS = 5;
+const DEFAULT_MAX_NETWORK_MEMBERS = 3;
+const MAX_NETWORKS = 100;
+
+export async function personalAgentLimits(account_id: string) {
+  const membership = await resolveMembershipForAccount(account_id);
+  return {
+    named:
+      membership.effective_limits?.max_named_agents ?? DEFAULT_MAX_NAMED_AGENTS,
+    members:
+      membership.effective_limits?.max_agent_network_members ??
+      DEFAULT_MAX_NETWORK_MEMBERS,
+  };
+}
+
+export const personalMessagingEnabled = () => true;
+
 function enabled(request: PersonalControlRequest) {
   if (isRestrictiveAgentManagement(request)) return;
-  if (!personalMessagingEnabled() || !agentMessagingEnabled())
-    throw new Error("personal agent messaging is not enabled on this bay");
 }
+
 function fresh(at?: number) {
   if (
     at === undefined ||
@@ -40,20 +55,7 @@ function fresh(at?: number) {
   )
     throw new Error("fresh human approval attestation expired");
 }
-function requiresFresh(request: PersonalControlRequest): boolean {
-  switch (request.action) {
-    case "grantPersonalConnection":
-      return true;
-    case "setPersonalConnectionState":
-      return request.options.state === "active";
-    case "setPersonalMessagingState":
-      return request.options.action === "resume";
-    case "resolvePersonalConnectionRequest":
-      return request.options.decision === "approve";
-    default:
-      return false;
-  }
-}
+
 async function principal(source: AgentEndpoint, run_id: string) {
   const route = await resolveProjectBay(source.project_id);
   if (!route) throw new Error("source owner unavailable");
@@ -71,6 +73,7 @@ async function principal(source: AgentEndpoint, run_id: string) {
     throw new Error("personal source mode changed");
   return proof.account_id;
 }
+
 export function personalStore(db = agentStore()) {
   return new PersonalAgentStore(
     db,
@@ -106,151 +109,229 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
     throw new Error("stale personal account home route");
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(opts.account_id))
-    if (opts.request.action === "check") return { denied: "account_disabled" };
+    if (opts.request.action === "checkNetwork")
+      return { denied: "account_disabled" };
     else throw new PersonalAgentAuthorizationError("account_disabled");
+
   const request = opts.request;
-  if (requiresFresh(request)) fresh(opts.fresh_auth_at);
   const store = personalStore(
-      isRestrictiveAgentManagement(request) ? new AgentStore() : agentStore(),
-    ),
-    account = opts.account_id;
-  // Reads reject stale routing too; writes/checks recheck under their own
-  // transaction fence after any remote endpoint validation has completed.
+    isRestrictiveAgentManagement(request) ? new AgentStore() : agentStore(),
+  );
+  const account = opts.account_id;
   await store.assertHome(account);
   switch (request.action) {
-    case "listNamedAgents":
+    case "listNamedAgents": {
+      const agents = await store.names(account);
       return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
-        agents: await store.names(account),
+        enabled: true,
+        agents,
+        usage: {
+          active: agents.length,
+          limit: (await personalAgentLimits(account)).named,
+        },
         controls: await store.controls(account),
       };
+    }
     case "nameAgent":
-      return store.name(account, request.options);
-    case "listPersonalConnections":
+      return store.name(
+        account,
+        request.options,
+        (await personalAgentLimits(account)).named,
+      );
+    case "retireNamedAgent":
+      return store.retire(account, request.options);
+    case "listAgentNetworks": {
+      const result = await store.networks(
+        account,
+        request.options.limit,
+        request.options.cursor,
+      );
       return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
-        connections: await store.connections(account),
+        enabled: true,
+        ...result,
+        usage: {
+          active_networks: result.active_count,
+          network_limit: MAX_NETWORKS,
+          member_limit: (await personalAgentLimits(account)).members,
+        },
         controls: await store.controls(account),
       };
-    case "grantPersonalConnection":
-      return store.grant(account, request.options);
-    case "setPersonalConnectionState":
-      return store.setConnection(account, request.options);
+    }
+    case "createAgentNetwork":
+      return store.createNetwork(
+        account,
+        request.options,
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+    case "updateAgentNetwork":
+      return store.updateNetwork(
+        account,
+        request.options as import("@cocalc/conat/agents/personal").UpdateAgentNetworkOptions,
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+    case "listAgentNetworkActivity":
+      return store.activity(
+        account,
+        request.options.agent_network_id,
+        request.options.limit,
+      );
+    case "inspectAgentNetworkAttempt":
+      return store.inspectActivity(
+        account,
+        request.options.agent_network_id,
+        request.options.attempt_id,
+      );
+    case "listAgentNetworkProposals":
+      return store.proposals(account, request.options.limit);
+    case "resolveAgentNetworkProposal": {
+      const proposal = await store.getProposal(
+        account,
+        request.options.proposal_id,
+      );
+      if (request.options.action === "reject")
+        return store.finishProposal(account, proposal.proposal_id, "rejected");
+      const network = await store.createNetwork(
+        account,
+        {
+          request_id: request.options.request_id,
+          title: proposal.title,
+          delivery_mode: proposal.delivery_mode,
+          members: proposal.members,
+        },
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+      return store.finishProposal(
+        account,
+        proposal.proposal_id,
+        "approved",
+        network.agent_network_id,
+      );
+    }
     case "setPersonalMessagingState":
+      if (request.options.action === "resume") fresh(opts.fresh_auth_at);
       return store.setControls(account, request.options);
-    case "links":
-      return store.links(account, request.options.source);
-    case "check":
+    case "checkNetwork":
       try {
-        return await store.check(
+        return await store.checkNetwork(
           account,
+          request.options.agent_network_id,
           request.options.source,
+          request.options.run_id,
           request.options.target,
-          request.options.guidance,
         );
       } catch (error) {
         if (error instanceof PersonalAgentAuthorizationError)
           return { denied: error.denial };
         throw error;
       }
-    case "request":
-      return store.request(account, request.options);
-    case "requestRead":
-      return store.readRequest(
+    case "discoverNetworks":
+      return store.discover(
         account,
-        request.options.request_id,
-        request.options,
+        request.options.source,
+        request.options.run_id,
       );
-    case "observe":
-      return store.observe(
+    case "proposeNetwork":
+      return store.proposeNetwork(
         account,
-        request.options.link_id,
-        request.options.accepted,
+        request.options.source,
+        request.options.run_id,
+        request.options.proposal,
+        (await personalAgentLimits(account)).members,
       );
-    case "listPersonalConnectionRequests":
-      return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
-        requests: await store.requests(account),
-      };
-    case "resolvePersonalConnectionRequest":
-      return store.resolveRequest(
+    case "beginBroadcast":
+      return store.beginBroadcast(
         account,
-        request.options.request_id,
-        request.options.decision,
+        request.options.source,
+        request.options.run_id,
+        request.options.broadcast,
       );
+    case "finishBroadcast":
+      return store.finishBroadcast(
+        account,
+        request.options.broadcast_id,
+        request.options.binding_hash,
+        request.options.outcome,
+      );
+    case "observeNetworkActivity":
+      return store.observeActivity(account, request.options);
     default:
       throw new Error("unsupported personal agent operation");
   }
 };
+
+async function freshHuman(account_id: string, session_hash: string) {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  return Date.now();
+}
 
 async function human<K extends PersonalHumanMethod>(
   action: K,
   opts: Parameters<AgentApi[K]>[0],
 ): Promise<Awaited<ReturnType<AgentApi[K]>>> {
   requireUuid(opts.account_id, "account_id");
-  const { account_id, session_hash } = opts as AgentHumanAuth;
-  const fields: Record<PersonalHumanMethod, string[]> = {
-    listNamedAgents: [],
-    listPersonalConnections: [],
-    listPersonalConnectionRequests: [],
-    nameAgent: [
-      "endpoint",
-      "name",
-      "description",
-      "project_title",
-      "thread_title",
-    ],
-    grantPersonalConnection: [
-      "source",
-      "target",
-      "approval_request_id",
-      "ttl_seconds",
-      "both_directions",
-      "allow_guidance",
-      "reason",
-    ],
-    setPersonalConnectionState: ["direction_group_id", "state"],
-    setPersonalMessagingState: ["action"],
-    resolvePersonalConnectionRequest: ["request_id", "decision"],
-  };
-  const options = Object.fromEntries(
-    fields[action]
-      .filter((key) => opts[key] !== undefined)
-      .map((key) => [key, opts[key]]),
-  );
+  const { account_id, session_hash, ...options } = opts as AgentHumanAuth &
+    Record<string, unknown>;
   const request = { action, options } as PersonalControlRequest;
   enabled(request);
   let fresh_auth_at: number | undefined;
-  if (requiresFresh(request)) {
-    await requireDangerousSessionAuth({
-      account_id,
-      session_hash,
-      require_second_factor: "if_enabled",
-      allow_actor_impersonation: false,
-    });
-    fresh_auth_at = Date.now();
+  if (
+    action === "setPersonalMessagingState" &&
+    (options as any).action === "resume"
+  )
+    fresh_auth_at = await freshHuman(account_id!, session_hash!);
+  try {
+    return (await withPersonalHome(
+      account_id!,
+      request,
+      fresh_auth_at,
+    )) as Awaited<ReturnType<AgentApi[K]>>;
+  } catch (error) {
+    if (
+      ![
+        "createAgentNetwork",
+        "updateAgentNetwork",
+        "resolveAgentNetworkProposal",
+      ].includes(action) ||
+      !`${error}`.includes("fresh_auth_required")
+    )
+      throw error;
+    fresh_auth_at = await freshHuman(account_id!, session_hash!);
+    return (await withPersonalHome(
+      account_id!,
+      request,
+      fresh_auth_at,
+    )) as Awaited<ReturnType<AgentApi[K]>>;
   }
-  return (await withPersonalHome(
-    account_id!,
-    request,
-    fresh_auth_at,
-  )) as Awaited<ReturnType<AgentApi[K]>>;
 }
+
 export const listNamedAgents: AgentApi["listNamedAgents"] = (opts) =>
   human("listNamedAgents", opts);
 export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
-export const listPersonalConnections: AgentApi["listPersonalConnections"] = (
+export const retireNamedAgent: AgentApi["retireNamedAgent"] = (opts) =>
+  human("retireNamedAgent", opts);
+export const listAgentNetworks: AgentApi["listAgentNetworks"] = (opts) =>
+  human("listAgentNetworks", opts);
+export const createAgentNetwork: AgentApi["createAgentNetwork"] = (opts) =>
+  human("createAgentNetwork", opts);
+export const updateAgentNetwork: AgentApi["updateAgentNetwork"] = (opts) =>
+  human("updateAgentNetwork", opts);
+export const listAgentNetworkActivity: AgentApi["listAgentNetworkActivity"] = (
   opts,
-) => human("listPersonalConnections", opts);
-export const grantPersonalConnection: AgentApi["grantPersonalConnection"] = (
-  opts,
-) => human("grantPersonalConnection", opts);
-export const setPersonalConnectionState: AgentApi["setPersonalConnectionState"] =
-  (opts) => human("setPersonalConnectionState", opts);
+) => human("listAgentNetworkActivity", opts);
+export const inspectAgentNetworkAttempt: AgentApi["inspectAgentNetworkAttempt"] =
+  (opts) => human("inspectAgentNetworkAttempt", opts);
+export const listAgentNetworkProposals: AgentApi["listAgentNetworkProposals"] =
+  (opts) => human("listAgentNetworkProposals", opts);
+export const resolveAgentNetworkProposal: AgentApi["resolveAgentNetworkProposal"] =
+  (opts) => human("resolveAgentNetworkProposal", opts);
 export const setPersonalMessagingState: AgentApi["setPersonalMessagingState"] =
   (opts) => human("setPersonalMessagingState", opts);
-export const listPersonalConnectionRequests: AgentApi["listPersonalConnectionRequests"] =
-  (opts) => human("listPersonalConnectionRequests", opts);
-export const resolvePersonalConnectionRequest: AgentApi["resolvePersonalConnectionRequest"] =
-  (opts) => human("resolvePersonalConnectionRequest", opts);

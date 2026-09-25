@@ -8,10 +8,13 @@ See https://stripe.com/docs/api/checkout/sessions
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import type { Checkout } from "stripe";
-import getEmailAddress from "@cocalc/server/accounts/get-email-address";
+import {
+  billingAccountsTable,
+  ensureBillingAccount,
+  getBillingAccountProfile,
+} from "@cocalc/server/purchases/billing-account";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
@@ -74,9 +77,7 @@ export const createStripeCheckoutSession = async (
   if (line_items.some((item) => !item.description?.trim())) {
     throw Error("all line item descriptions must be nontrivial");
   }
-  if (!(await isValidAccount(account_id))) {
-    throw Error("account must be valid");
-  }
+  await ensureBillingAccount(account_id);
   if (!success_url) {
     throw Error("success_url must be nontrivial");
   }
@@ -108,7 +109,9 @@ export const createStripeCheckoutSession = async (
     metadata,
     customer,
     customer_email:
-      customer == null ? await getEmailAddress(account_id) : undefined,
+      customer == null
+        ? (await getBillingAccountProfile(account_id)).email_address
+        : undefined,
     payment_intent_data: {
       metadata,
     },
@@ -134,8 +137,9 @@ export const createStripeCheckoutSession = async (
 
 export const setStripeCheckoutSession = async ({ account_id, session }) => {
   const db = getPool();
+  const table = billingAccountsTable();
   await db.query(
-    "UPDATE accounts SET stripe_checkout_session=$2 WHERE account_id=$1",
+    `UPDATE ${table} SET stripe_checkout_session=$2 WHERE account_id=$1`,
     [account_id, { id: session.id, url: session.url }],
   );
 };
@@ -155,9 +159,11 @@ const getSessionStatus = async (
 export const getCurrentSession = async (
   account_id: string,
 ): Promise<{ id: string; url: string } | undefined> => {
+  await ensureBillingAccount(account_id);
+  const table = billingAccountsTable();
   const db = getPool();
   const { rows } = await db.query(
-    "SELECT stripe_checkout_session FROM accounts WHERE account_id=$1",
+    `SELECT stripe_checkout_session FROM ${table} WHERE account_id=$1`,
     [account_id],
   );
   if (rows.length == 0) {
@@ -170,7 +176,7 @@ export const getCurrentSession = async (
     // We use {} instead of NULL due to shortcomings in changefeeds, since we want
     // changing this to update the frontend state.
     await db.query(
-      "UPDATE accounts SET stripe_checkout_session='{}' WHERE account_id=$1",
+      `UPDATE ${table} SET stripe_checkout_session='{}' WHERE account_id=$1`,
       [account_id],
     );
     return undefined;

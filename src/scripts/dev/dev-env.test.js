@@ -5,12 +5,25 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  clearHubScopedAuth,
   parseHubStatusInfo,
   resolveHubBrowserBaseUrl,
   resolveHubPassword,
   resolveHubPostgresConnection,
   resolveHubTarget,
 } = require("./dev-env.js");
+
+test("hub env clears inherited inline and token-file agent auth", () => {
+  const exportsMap = {};
+  clearHubScopedAuth(exportsMap);
+  assert.deepEqual(exportsMap, {
+    COCALC_AGENT_TOKEN: "",
+    COCALC_AGENT_TOKEN_FILE: "",
+    COCALC_BEARER_TOKEN_FILE: "",
+    COCALC_CLI_AGENT_MODE: "",
+    COCALC_PROJECT_INFO_SCOPE: "",
+  });
+});
 
 test("resolveHubBrowserBaseUrl reads launchpad cloudflare hostname", async () => {
   const root = await fs.promises.mkdtemp(
