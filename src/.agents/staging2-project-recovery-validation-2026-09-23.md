@@ -2113,3 +2113,26 @@ was healthy with zero oldest snapshot and backup delay, zero paying critical
 debt, unknown status, or unaccounted due work, and 4/4 active backup shards
 covered by recent passing remote-only restore drills. Overall site health
 remained warning for separate checks. Production is unchanged.
+
+## 2026-09-25 unclassified storage funding in maintenance reports
+
+Commit `7e572331ef` preserves `unclassified` when a project has no resolvable
+storage payer. The host schedule previously labeled such work `free`, which
+misattributed its durable attempt history even though operator health
+reclassified overdue unknown funding. The schedule and report types now carry
+the explicit class. Dispatch still gives it bounded non-paying progress.
+
+The focused host schedule suites passed 10/10, the priority suite passed
+3/3, and Conat, server, and project-host TypeScript builds passed. Staging2
+hub artifact
+`20260925T002258Z-7e572331-20260925T0022Z-7e572331-unclassified-funding-dirty`
+deployed as release `20260925002432-hub`. Migration, worker health, and all
+seven hub smoke checks passed. At 00:25:19 UTC, the live recovery check was
+warning because one free snapshot was due by less than a minute; it showed
+zero oldest rounded snapshot or backup delay, zero paying critical or
+unclassified debt, zero unknown/unaccounted status, and 4/4 active backup
+shards with recent passing remote-only drills. By 00:25:59 UTC, the recovery
+check was healthy with zero current snapshot and backup delay. Overall site
+health remained warning for separate checks. No deliberate unclassified
+staging canary was created for this change; the PGlite test covers that
+branch. Production is unchanged.
