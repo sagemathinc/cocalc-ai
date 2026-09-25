@@ -250,7 +250,7 @@ export async function listHostProjectMaintenanceSchedules({
     const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
       storage_account_id: storage_account_id || null,
-      storage_service_class: service?.service_class ?? "free",
+      storage_service_class: service?.service_class ?? "unclassified",
       storage_priority: service?.priority ?? 0,
       last_edited:
         row.last_edited == null

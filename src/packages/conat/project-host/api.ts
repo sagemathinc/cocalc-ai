@@ -1041,7 +1041,7 @@ export interface HostRegisterOnPremTunnelResponse {
 export interface HostProjectMaintenanceSchedule {
   project_id: string;
   storage_account_id?: string | null;
-  storage_service_class?: "paying" | "free";
+  storage_service_class?: "paying" | "free" | "unclassified";
   storage_priority?: number;
   last_edited: string | null;
   last_changed?: string | null;
@@ -1090,7 +1090,7 @@ export interface ProjectMaintenanceReport {
   host_id: string;
   project_id: string;
   kind: "snapshot" | "backup";
-  storage_service_class?: "paying" | "free";
+  storage_service_class?: "paying" | "free" | "unclassified";
   observed_at: string;
   outcome: "succeeded" | "deferred" | "failed" | "skipped";
   reason?: string;

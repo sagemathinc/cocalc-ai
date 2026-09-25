@@ -55,6 +55,9 @@ describe("host recovery schedule ownership", () => {
     expect(rows.map(({ project_id }) => project_id).sort()).toEqual(
       [local_project_id, legacy_project_id].sort(),
     );
+    expect(
+      rows.map(({ storage_service_class }) => storage_service_class),
+    ).toEqual(["unclassified", "unclassified"]);
     await expect(
       listHostProjectMaintenanceSchedules({ host_id: foreign_host_id }),
     ).rejects.toThrow("host not found");
