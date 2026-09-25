@@ -221,7 +221,14 @@ export class ChatSendPipeline {
     return operation;
   }
 
-  async interrupt(threadIdValue: string): Promise<void> {
+  async interrupt(
+    threadIdValue: string,
+    expected?: {
+      message_id: string;
+      message_date: string;
+      session_id?: string;
+    },
+  ): Promise<boolean> {
     const threadId = threadIdValue.trim();
     if (!threadId) throw new Error("thread_id is required");
     const allRows = rows(this.options.db);
@@ -235,10 +242,20 @@ export class ChatSendPipeline {
       .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
       .at(-1) as MutableChatMessage | undefined;
     const sessionId = inferSessionId(allRows, threadId) ?? threadId;
+    if (
+      expected &&
+      (!target ||
+        target.message_id !== expected.message_id ||
+        new Date(target.date).toISOString() !== expected.message_date ||
+        (expected.session_id && expected.session_id !== sessionId))
+    )
+      return false;
     const result = await this.transport.interrupt({
       project_id: this.options.project_id,
       account_id: this.options.account_id,
       threadId: sessionId,
+      expected_message_id: expected?.message_id,
+      expected_session_id: expected?.session_id,
       chat: target
         ? buildAcpChatContext({
             project_id: this.options.project_id,
@@ -250,6 +267,7 @@ export class ChatSendPipeline {
           })
         : undefined,
     });
+    if (result.state === "stale") return false;
     if (!result.ok && result.state !== "missing") {
       throw new Error(`Codex interrupt was not accepted (${result.state}).`);
     }
@@ -282,6 +300,7 @@ export class ChatSendPipeline {
       this.commitOrThrow();
       await this.options.db.save();
     }
+    return true;
   }
 
   private async sendOnce({

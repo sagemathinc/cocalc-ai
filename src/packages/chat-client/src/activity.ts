@@ -3,13 +3,28 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 
-import { getMountedIntermediateResponseMarkdown } from "@cocalc/chat/core";
+import {
+  getLiveResponseBlocks,
+  getMountedIntermediateResponseMarkdown,
+} from "@cocalc/chat/core";
 import type {
   AcpStreamEvent,
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 
 const MAX_TERMINAL_OUTPUT = 24_000;
+
+/** Interleave compact agent preview text and delivered guidance by time. */
+export function projectAcpActivityGuidanceBlocks(
+  events: AcpStreamMessage[],
+  guidance: Array<{
+    date: number;
+    text: string;
+    state?: "sending" | "sent" | "queued" | "not-sent";
+  }>,
+) {
+  return getLiveResponseBlocks(events, guidance);
+}
 
 type TerminalActivity = {
   terminalId: string;

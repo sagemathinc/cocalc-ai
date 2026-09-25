@@ -13,6 +13,8 @@ export interface AcpInterruptRow {
   thread_id: string;
   candidate_ids_json: string;
   chat_json: string;
+  expected_message_id?: string | null;
+  expected_session_id?: string | null;
   state: AcpInterruptState;
   error?: string | null;
   created_at: number;
@@ -30,6 +32,8 @@ function init(): void {
       thread_id TEXT NOT NULL,
       candidate_ids_json TEXT NOT NULL,
       chat_json TEXT NOT NULL,
+      expected_message_id TEXT,
+      expected_session_id TEXT,
       state TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -37,6 +41,20 @@ function init(): void {
       handled_at INTEGER
     )
   `);
+  if (
+    !(
+      db.prepare(`PRAGMA table_info(${TABLE})`).all() as { name: string }[]
+    ).some(({ name }) => name === "expected_message_id")
+  ) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN expected_message_id TEXT`);
+  }
+  if (
+    !(
+      db.prepare(`PRAGMA table_info(${TABLE})`).all() as { name: string }[]
+    ).some(({ name }) => name === "expected_session_id")
+  ) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN expected_session_id TEXT`);
+  }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_interrupts_state_created_idx ON ${TABLE}(state, created_at)`,
   );
@@ -61,12 +79,16 @@ export function enqueueAcpInterrupt({
   thread_id,
   candidate_ids,
   chat,
+  expected_message_id,
+  expected_session_id,
 }: {
   project_id: string;
   path: string;
   thread_id: string;
   candidate_ids?: string[];
   chat?: AcpChatContext;
+  expected_message_id?: string;
+  expected_session_id?: string;
 }): AcpInterruptRow {
   ensureInit();
   const db = getAcpDatabase();
@@ -84,11 +106,19 @@ export function enqueueAcpInterrupt({
        WHERE project_id = ?
          AND path = ?
          AND thread_id = ?
+         AND COALESCE(expected_message_id, '') = ?
+         AND COALESCE(expected_session_id, '') = ?
          AND state = 'pending'
        ORDER BY created_at ASC
        LIMIT 1`,
     )
-    .get(project_id, path, thread_id) as AcpInterruptRow | undefined;
+    .get(
+      project_id,
+      path,
+      thread_id,
+      expected_message_id ?? "",
+      expected_session_id ?? "",
+    ) as AcpInterruptRow | undefined;
   if (existing) {
     const mergedCandidateIds = [
       ...new Set([
@@ -115,8 +145,8 @@ export function enqueueAcpInterrupt({
   const id = randomUUID();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (id, project_id, path, thread_id, candidate_ids_json, chat_json, state, error, created_at, updated_at, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
+      (id, project_id, path, thread_id, candidate_ids_json, chat_json, expected_message_id, expected_session_id, state, error, created_at, updated_at, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
   ).run(
     id,
     project_id,
@@ -124,6 +154,8 @@ export function enqueueAcpInterrupt({
     thread_id,
     JSON.stringify(normalizedCandidateIds),
     JSON.stringify(chat ?? {}),
+    expected_message_id ?? null,
+    expected_session_id ?? null,
     now,
     now,
   );
@@ -183,6 +215,38 @@ export function markAcpInterruptsHandledForThread({
         AND thread_id = ?
         AND state = 'pending'`,
   ).run(now, now, project_id, path, thread_id);
+}
+
+export function markAcpInterruptsHandledForTurn({
+  project_id,
+  path,
+  thread_id,
+  expected_message_id,
+  expected_session_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  expected_message_id: string;
+  expected_session_id?: string;
+}): void {
+  ensureInit();
+  const now = Date.now();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET state = 'handled', updated_at = ?, handled_at = ?, error = NULL
+       WHERE project_id = ? AND path = ? AND thread_id = ?
+         AND expected_message_id = ? AND COALESCE(expected_session_id, '') = ? AND state = 'pending'`,
+    )
+    .run(
+      now,
+      now,
+      project_id,
+      path,
+      thread_id,
+      expected_message_id,
+      expected_session_id ?? "",
+    );
 }
 
 export function markAcpInterruptError({

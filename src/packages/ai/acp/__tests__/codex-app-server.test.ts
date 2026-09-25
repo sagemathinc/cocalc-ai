@@ -4890,6 +4890,24 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it("rejects a delayed stop for a replaced turn before touching the runtime", async () => {
+    const agent = new CodexAppServerAgent();
+    const stop = jest.fn(async () => {});
+    (agent as any).running.set("session-1", {
+      chatMessageId: "turn-b",
+      interrupted: false,
+      stop,
+    });
+    await expect(
+      agent.interruptOutstanding("session-1", "turn-a"),
+    ).resolves.toBe(false);
+    expect(stop).not.toHaveBeenCalled();
+    await expect(
+      agent.interruptOutstanding("session-1", "turn-b"),
+    ).resolves.toBe(true);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
   it("treats an intentional interrupt as a normal completion", async () => {
     let interrupted = false;
     const proc = new FakeCodexAppServerProc((fake, message) => {

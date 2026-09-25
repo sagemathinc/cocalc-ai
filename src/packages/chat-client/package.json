@@ -10,6 +10,7 @@
       "named-agents": ["dist/named-agents.d.ts"],
       "speech-text": ["dist/speech-text.d.ts"],
       "live-delegation": ["dist/live-delegation.d.ts"],
+      "live-progress": ["dist/live-progress.d.ts"],
       "live-voice-policy": ["dist/live-voice-policy.d.ts"]
     }
   },

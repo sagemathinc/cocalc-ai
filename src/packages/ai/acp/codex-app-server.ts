@@ -598,6 +598,7 @@ type SessionStoreEntry = {
 };
 
 type RunningTurn = {
+  chatMessageId?: string;
   executionAccountId: string;
   paymentSource: CodexSessionConfig["paymentSource"];
   credentialId?: string;
@@ -3019,6 +3020,7 @@ export class CodexAppServerAgent implements AcpAgent {
         cleanupMentionFile = file.cleanup;
       }
       runningEntry = {
+        chatMessageId: request.chat?.message_id,
         executionAccountId: request.account_id,
         paymentSource: request.config?.paymentSource,
         credentialId: request.config?.credentialId,
@@ -4285,17 +4287,35 @@ export class CodexAppServerAgent implements AcpAgent {
     return "completed";
   }
 
-  async interrupt(threadId: string): Promise<boolean> {
+  async interrupt(
+    threadId: string,
+    expectedMessageId?: string,
+  ): Promise<boolean> {
     const running = this.running.get(threadId);
-    if (!running) return false;
+    if (
+      !running ||
+      (expectedMessageId && running.chatMessageId !== expectedMessageId)
+    )
+      return false;
     running.interrupted = true;
     await running.stop();
     return true;
   }
 
-  async interruptOutstanding(threadId: string): Promise<boolean> {
+  async interruptOutstanding(
+    threadId: string,
+    expectedMessageId?: string,
+  ): Promise<boolean> {
+    if (
+      expectedMessageId &&
+      this.running.get(threadId)?.chatMessageId !== expectedMessageId
+    )
+      return false;
     const runtime = this.runtimesByAlias.get(threadId);
-    let handled = await this.interrupt(threadId);
+    let handled = await this.interrupt(threadId, expectedMessageId);
+    // The voice request targets one parent turn. Descendant/background cleanup
+    // below is runtime-scoped and could otherwise reach a replacement turn.
+    if (expectedMessageId) return handled;
     if (!runtime || runtime.disposed || !runtime.threadId) return handled;
 
     let descendants: any[] = [];

@@ -9,7 +9,8 @@ jest.mock("../cocalc/session-registry", () => ({
 it("requires explicit start without exposing prices and names mute/end controls", async () => {
   const start = jest.fn(),
     end = jest.fn(),
-    toggleMute = jest.fn();
+    toggleMute = jest.fn(),
+    toggleAnnouncements = jest.fn();
   const live: any = {
     capabilities: {
       enabled: true,
@@ -21,6 +22,7 @@ it("requires explicit start without exposing prices and names mute/end controls"
     start,
     end,
     toggleMute,
+    toggleAnnouncements,
     seconds: 0,
   };
   let screen: any;
@@ -45,6 +47,17 @@ it("requires explicit start without exposing prices and names mute/end controls"
     ),
   );
   await act(async () => button("Mute microphone").props.onPress());
+  await act(async () => button("Announce progress milestones").props.onPress());
+  expect(toggleAnnouncements).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    screen.update(
+      <LiveVoiceControls
+        live={{ ...live, phase: "live", proactive: true }}
+        disabled={false}
+      />,
+    ),
+  );
+  expect(button("Use on-demand progress updates")).toBeDefined();
   await act(async () => button("End live call").props.onPress());
   expect(toggleMute).toHaveBeenCalledTimes(1);
   expect(end).toHaveBeenCalledTimes(1);

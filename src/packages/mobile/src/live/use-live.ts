@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useFocusEffect } from "expo-router";
 import type { ChatSnapshot } from "@cocalc/chat-client";
+import { LiveProgressContext } from "@cocalc/chat-client/live-progress";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,
@@ -38,11 +39,13 @@ export function useLiveVoice(
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string>();
   const [muted, setMuted] = useState(false);
+  const [proactive, setProactive] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const active = useRef<
     | {
         abort: AbortController;
         bridge: LiveDelegation;
+        progress: LiveProgressContext;
         connection?: LiveConnection;
       }
     | undefined
@@ -68,6 +71,7 @@ export function useLiveVoice(
     const call = active.current;
     active.current = undefined;
     call?.bridge.close();
+    call?.progress.close();
     call?.abort.abort();
     if (call?.connection)
       void call.connection
@@ -115,8 +119,18 @@ export function useLiveVoice(
     };
   }, [end]);
   useEffect(() => {
+    if (
+      active.current &&
+      snapshot.selected_thread_id &&
+      snapshot.selected_thread_id !== thread
+    ) {
+      end();
+      return;
+    }
     active.current?.bridge.observe(snapshot.messages);
-  }, [snapshot]);
+    if (active.current?.connection)
+      active.current.progress.observe(snapshot, thread);
+  }, [snapshot, thread, end]);
   useEffect(() => {
     if (phase !== "live") return;
     const started = Date.now();
@@ -137,13 +151,24 @@ export function useLiveVoice(
     setStatus("");
     setSeconds(0);
     setPhase("connecting");
+    const progress = new LiveProgressContext(
+      (type, content, id) => {
+        call.connection?.send({ type, content, delegation_id: id });
+      },
+      proactive,
+      true,
+    );
     const bridge = new LiveDelegation(
       async (text) => {
         if (
           current.current.client !== clientAtStart ||
-          current.current.snapshot.connection !== "connected"
+          current.current.snapshot.connection !== "connected" ||
+          (current.current.snapshot.selected_thread_id != null &&
+            current.current.snapshot.selected_thread_id !== thread)
         )
-          throw new Error("Chat disconnected.");
+          throw new Error(
+            "The chat or selected agent changed. Start a new voice call.",
+          );
         if (!isPreviewProfile(profile)) {
           const config = current.current.snapshot.threads.find(
             (t) => t.thread_id === thread,
@@ -163,19 +188,72 @@ export function useLiveVoice(
                 "Codex payment is not configured. Select a payment source in agent settings.",
             );
         }
-        return await clientAtStart.sendToExistingCodexThread({
-          thread_id: thread,
-          text,
-        });
+        const running =
+          current.current.snapshot.threads.find(
+            (item) => item.thread_id === thread,
+          )?.state === "running";
+        const accepted = await (running
+          ? clientAtStart.sendGuidanceToCodexThread({ thread_id: thread, text })
+          : clientAtStart.sendToExistingCodexThread({
+              thread_id: thread,
+              text,
+            }));
+        return {
+          ...accepted,
+          kind: running ? ("guidance" as const) : ("work" as const),
+        };
       },
       (type, content, delegation_id) => {
         call.connection?.send({ type, content, delegation_id });
       },
       setStatus,
+      (text) => progress.answer(text),
+      async (target) => {
+        if (
+          active.current !== call ||
+          call.abort.signal.aborted ||
+          current.current.client !== clientAtStart ||
+          current.current.snapshot.connection !== "connected" ||
+          (current.current.snapshot.selected_thread_id != null &&
+            current.current.snapshot.selected_thread_id !== thread)
+        )
+          throw new Error("The voice call is no longer bound to this agent.");
+        const activeThread = current.current.snapshot.threads.find(
+          (item) => item.thread_id === thread,
+        );
+        if (
+          activeThread?.state !== "running" ||
+          activeThread.active_message_id !== target.message_id
+        )
+          return false;
+        return await clientAtStart.interrupt(thread, target);
+      },
+      () => {
+        const snap = current.current.snapshot;
+        if (snap.connection !== "connected") return undefined;
+        const activeThread = snap.threads.find(
+          (item) => item.thread_id === thread,
+        );
+        if (
+          activeThread?.state !== "running" ||
+          !activeThread.active_message_id
+        )
+          return undefined;
+        const message = snap.messages.find(
+          (item) => item.message_id === activeThread.active_message_id,
+        );
+        if (!message?.date) return undefined;
+        return {
+          message_id: message.message_id,
+          message_date: message.date,
+          session_id: activeThread.acp_config?.sessionId,
+        };
+      },
     );
     const call = {
       abort: new AbortController(),
       bridge,
+      progress,
       connection: undefined as LiveConnection | undefined,
     };
     active.current = call;
@@ -205,6 +283,7 @@ export function useLiveVoice(
         .event(event)
         .then(() => {
           bridge.observe(current.current.snapshot.messages);
+          progress.observe(current.current.snapshot, thread);
         })
         .catch(() => {
           setError("Could not process a voice request.");
@@ -241,6 +320,7 @@ export function useLiveVoice(
         return;
       }
       call.connection = connection;
+      progress.observe(current.current.snapshot, thread);
       setPhase("live");
       setStatus(
         isPreviewProfile(profile)
@@ -269,6 +349,7 @@ export function useLiveVoice(
     status,
     error,
     muted,
+    proactive,
     seconds,
     start,
     end,
@@ -276,6 +357,11 @@ export function useLiveVoice(
       const next = !muted;
       active.current?.connection?.mute(next);
       setMuted(next);
+    },
+    toggleAnnouncements: () => {
+      const next = !proactive;
+      setProactive(next);
+      active.current?.progress.setProactive(next);
     },
   };
 }

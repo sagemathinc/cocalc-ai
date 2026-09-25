@@ -289,6 +289,35 @@ describe("ChatSendPipeline", () => {
     );
   });
 
+  it("does not interrupt a replacement turn when the spoken target is stale", async () => {
+    const db = fakeDb([]);
+    db.rows.push({
+      event: "chat",
+      sender_id: "openai-codex-agent",
+      date: "2026-01-01T00:00:03.000Z",
+      message_id: "turn-b",
+      thread_id: "thread-1",
+      generating: true,
+      history: [],
+    });
+    const transport: ChatSendTransport = {
+      stream: async function* () {},
+      interrupt: jest.fn(async () => ({ ok: true, state: "interrupted" })),
+      steer: jest.fn(),
+    };
+    const client = pipeline({ db, transport });
+    await expect(
+      client.interrupt("thread-1", {
+        message_id: "turn-a",
+        message_date: "2026-01-01T00:00:02.000Z",
+      }),
+    ).resolves.toBe(false);
+    expect(transport.interrupt).not.toHaveBeenCalled();
+    expect(db.rows.find((row) => row.message_id === "turn-b")?.generating).toBe(
+      true,
+    );
+  });
+
   it("persists guidance before steering the active Codex turn", async () => {
     const events: string[] = [];
     const db = fakeDb(events);
