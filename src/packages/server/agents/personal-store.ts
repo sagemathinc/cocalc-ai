@@ -66,6 +66,9 @@ export class PersonalAgentStore {
       db: Query,
       account_id: string,
     ) => Promise<void> = assertPersonalAccountAuthority,
+    private readonly projectWasDeleted: (
+      project_id: string,
+    ) => Promise<boolean> = async () => false,
   ) {}
 
   async assertHome(account_id: string) {
@@ -138,6 +141,7 @@ export class PersonalAgentStore {
       )
     ).rows;
     const result: NamedAgent[] = [];
+    const deletedProjects = new Map<string, Promise<boolean>>();
     for (const row of rows) {
       const named = this.named(row);
       try {
@@ -145,6 +149,16 @@ export class PersonalAgentStore {
         named.path = identity.path;
         named.thread_id = identity.thread_id;
       } catch {
+        const projectId = named.endpoint.project_id;
+        if (!deletedProjects.has(projectId))
+          deletedProjects.set(
+            projectId,
+            this.projectWasDeleted(projectId).catch(() => false),
+          );
+        if (await deletedProjects.get(projectId)) {
+          await this.retire(account, { endpoint: named.endpoint });
+          continue;
+        }
         named.available = false;
       }
       result.push(named);

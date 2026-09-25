@@ -60,7 +60,14 @@ describeDb("account-home Agent Networks", () => {
     }) as AgentIdentity;
   const identity = jest.fn(identityResult);
   const principal = jest.fn(async () => account);
-  const store = new PersonalAgentStore(db, identity, principal, async () => {});
+  const projectWasDeleted = jest.fn(async (_project: string) => false);
+  const store = new PersonalAgentStore(
+    db,
+    identity,
+    principal,
+    async () => {},
+    projectWasDeleted,
+  );
   const tables = [
     "agent_personal_controls",
     "agent_personal_names",
@@ -93,6 +100,45 @@ describeDb("account-home Agent Networks", () => {
       [remote, "remote"],
     ] as const)
       await store.name(account, { endpoint, name });
+  });
+
+  test("repairs names of confirmed deleted projects and frees their slots", async () => {
+    projectWasDeleted.mockImplementation(async (id) => id === project);
+    identity.mockImplementation(async (owner, endpoint) => {
+      if (endpoint.project_id === project) throw new Error("missing identity");
+      return identityResult(owner, endpoint);
+    });
+    try {
+      expect((await store.names(account)).map(({ name }) => name)).toEqual([
+        "remote",
+      ]);
+      expect(
+        projectWasDeleted.mock.calls.filter(([id]) => id === project),
+      ).toHaveLength(1);
+      identity.mockImplementation(identityResult);
+      // Retirement is durable, not just a filtered directory response.
+      expect((await store.names(account)).map(({ name }) => name)).toEqual([
+        "remote",
+      ]);
+      await expect(
+        store.name(account, { endpoint: source, name: "replacement" }, 2),
+      ).resolves.toMatchObject({ name: "replacement" });
+    } finally {
+      projectWasDeleted.mockReset().mockResolvedValue(false);
+      identity.mockImplementation(identityResult);
+    }
+  });
+
+  test("keeps names when deletion is unconfirmed or the evidence service fails", async () => {
+    identity.mockRejectedValue(new Error("owner temporarily unavailable"));
+    try {
+      expect(await store.names(account)).toHaveLength(4);
+      projectWasDeleted.mockRejectedValue(new Error("timeout"));
+      expect(await store.names(account)).toHaveLength(4);
+    } finally {
+      projectWasDeleted.mockReset().mockResolvedValue(false);
+      identity.mockImplementation(identityResult);
+    }
   });
 
   test("a network can be created empty, populated, and emptied again", async () => {

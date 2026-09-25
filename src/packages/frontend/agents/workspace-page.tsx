@@ -42,6 +42,7 @@ import {
   writePreparedFirstAgent,
 } from "./retryable-preparation";
 import { PreparationStatus } from "./preparation-status";
+import { AvailableConversation } from "./available-conversation";
 import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
@@ -2724,39 +2725,46 @@ function AgentWorkspace({
           }
         />
       )}
-      {active && <AgentHostRecovery projectId={agent.endpoint.project_id} />}
+      {active && agent.available && (
+        <AgentHostRecovery projectId={agent.endpoint.project_id} />
+      )}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
-        <AgentProjectContext
-          showEditorControls={showEditorControls}
-          agent={agent}
-          workspaceAgents={workspaceAgents}
-          active={active}
-          accountId={accountId}
-          onSelectedThread={handleSelectedThread}
-          onAgentActivity={onAgentActivity}
-          onChatActions={setChatActions}
-          onClose={onClose}
-          onOpenDocs={openDocs}
-          onThreadAppearance={(threadId, value) => {
-            if (threadId === selectedThread) {
-              setHeaderAppearance((current) =>
-                current?.threadId === threadId &&
-                sameAgentHeaderAppearance(current.value, value)
-                  ? current
-                  : { threadId, value },
+        <AvailableConversation
+          available={agent.available}
+          retry={refreshNamedAgents}
+        >
+          <AgentProjectContext
+            showEditorControls={showEditorControls}
+            agent={agent}
+            workspaceAgents={workspaceAgents}
+            active={active}
+            accountId={accountId}
+            onSelectedThread={handleSelectedThread}
+            onAgentActivity={onAgentActivity}
+            onChatActions={setChatActions}
+            onClose={onClose}
+            onOpenDocs={openDocs}
+            onThreadAppearance={(threadId, value) => {
+              if (threadId === selectedThread) {
+                setHeaderAppearance((current) =>
+                  current?.threadId === threadId &&
+                  sameAgentHeaderAppearance(current.value, value)
+                    ? current
+                    : { threadId, value },
+                );
+              }
+              const registered = findWorkspaceAgentForThread(
+                workspaceAgents,
+                agent.endpoint.project_id,
+                agent.path,
+                threadId,
               );
-            }
-            const registered = findWorkspaceAgentForThread(
-              workspaceAgents,
-              agent.endpoint.project_id,
-              agent.path,
-              threadId,
-            );
-            if (registered) {
-              onAgentAppearance(registered.endpoint.agent_id, value);
-            }
-          }}
-        />
+              if (registered) {
+                onAgentAppearance(registered.endpoint.agent_id, value);
+              }
+            }}
+          />
+        </AvailableConversation>
       </div>
       <Drawer
         destroyOnHidden={false}
