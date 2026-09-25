@@ -38,6 +38,9 @@ jest.mock("antd", () => {
   );
   const Empty = ({ description }: any) => <div>{description}</div>;
   Empty.PRESENTED_IMAGE_SIMPLE = "simple";
+  const Grid = {
+    useBreakpoint: () => ({ md: true }),
+  };
   const Modal = ({ children, open }: any) =>
     open ? <div>{children}</div> : null;
   const Popconfirm = ({ children }: any) => <>{children}</>;
@@ -53,6 +56,7 @@ jest.mock("antd", () => {
     Card,
     Collapse,
     Empty,
+    Grid,
     InputNumber,
     message: {
       error: jest.fn(),
