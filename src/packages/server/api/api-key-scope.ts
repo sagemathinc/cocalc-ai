@@ -39,6 +39,7 @@ export interface ApiKeyPrincipal {
   allowed_project_ids: string[];
   scope?: ApiKeyScope;
   scope_revision?: number;
+  expire_ms?: number;
 }
 
 export function effectiveApiKeyScope({

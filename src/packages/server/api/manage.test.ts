@@ -251,6 +251,10 @@ describe("manageApiKeys local bay access", () => {
       scope: { version: 1, account: ["account:read"], projects: [] },
       scope_revision: 1,
     });
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
+      key_id: "key-id-123",
+    });
+    expect(upsertClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
     await flushAuditEvents();
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "api_key_used",

@@ -272,7 +272,8 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
       scope JSONB,
       scope_revision INTEGER NOT NULL DEFAULT 1,
       expire TIMESTAMPTZ,
-      last_active TIMESTAMPTZ
+      last_active TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ
     )
   `);
   await pool.query(
@@ -286,6 +287,9 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
   );
   await pool.query(
     `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_account_idx ON ${API_KEY_TABLE} (account_id)`,
@@ -477,6 +481,7 @@ export async function getClusterAccountApiKeyByKeyIdDirect(
     `SELECT key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, scope, scope_revision, expire, last_active
        FROM ${API_KEY_TABLE}
       WHERE key_id=$1
+        AND revoked_at IS NULL
       LIMIT 1`,
     [normalized],
   );
@@ -1368,7 +1373,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
        scope_revision=EXCLUDED.scope_revision,
        expire=EXCLUDED.expire,
        last_active=EXCLUDED.last_active
-     WHERE ${API_KEY_TABLE}.scope_revision <= EXCLUDED.scope_revision`,
+     WHERE ${API_KEY_TABLE}.revoked_at IS NULL
+       AND ${API_KEY_TABLE}.scope_revision <= EXCLUDED.scope_revision`,
     [
       normalizedKeyId,
       account_id,
@@ -1392,9 +1398,14 @@ export async function deleteClusterAccountApiKeyDirectoryEntryDirect(
     return;
   }
   await ensureClusterAccountApiKeyDirectorySchema();
-  await getPool().query(`DELETE FROM ${API_KEY_TABLE} WHERE key_id=$1`, [
-    normalized,
-  ]);
+  await getPool().query(
+    `UPDATE ${API_KEY_TABLE}
+        SET revoked_at=NOW(), hash='', capabilities='{}'::TEXT[],
+            allowed_project_ids='{}'::UUID[], scope=NULL,
+            scope_revision=scope_revision+1
+      WHERE key_id=$1 AND revoked_at IS NULL`,
+    [normalized],
+  );
 }
 
 export async function updateClusterAccountApiKeysHomeBayDirect({

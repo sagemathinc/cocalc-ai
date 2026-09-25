@@ -600,17 +600,7 @@ async function checkApiKeyRows({
       [rows[0].id],
     );
     if (rows[0].account_id) {
-      await syncAccountApiKeyDirectory({
-        key_id: rows[0].key_id ?? parseApiKeyV2(secret)?.key_id ?? null,
-        account_id: rows[0].account_id,
-        hash: rows[0].hash,
-        capabilities: rows[0].capabilities ?? [],
-        allowed_project_ids: rows[0].allowed_project_ids ?? [],
-        scope: rows[0].scope,
-        scope_revision: rows[0].scope_revision,
-        expire: rows[0].expire ?? null,
-        last_active: new Date(),
-      });
+      await touchClusterAccountApiKeyDirectoryEntry({ key_id });
       recordApiKeyAuditEventSoon({
         event: "api_key_used",
         value: {
@@ -629,6 +619,7 @@ async function checkApiKeyRows({
         allowed_project_ids: rows[0].allowed_project_ids ?? [],
         scope,
         scope_revision: scopeRevision,
+        ...(expire == null ? {} : { expire_ms: expire.valueOf() }),
       };
     }
   }
@@ -752,5 +743,6 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     allowed_project_ids: entry.allowed_project_ids ?? [],
     scope,
     scope_revision: scopeRevision,
+    ...(entry.expire == null ? {} : { expire_ms: entry.expire }),
   };
 }

@@ -114,6 +114,33 @@ describe("accounts.cluster-directory", () => {
     });
   });
 
+  it("keeps revoked API keys as tombstones so stale writes cannot restore them", async () => {
+    const {
+      deleteClusterAccountApiKeyDirectoryEntryDirect,
+      getClusterAccountApiKeyByKeyIdDirect,
+      upsertClusterAccountApiKeyDirectoryEntryDirect,
+    } = await import("./cluster-directory");
+    await deleteClusterAccountApiKeyDirectoryEntryDirect("key-1");
+    await upsertClusterAccountApiKeyDirectoryEntryDirect({
+      key_id: "key-1",
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-0",
+      hash: "hash",
+      scope_revision: 1,
+    });
+    await getClusterAccountApiKeyByKeyIdDirect("key-1");
+    const statements = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(
+      statements.find((sql) => sql.includes("SET revoked_at=NOW()")),
+    ).toContain("scope_revision=scope_revision+1");
+    expect(
+      statements.find((sql) => sql.includes("ON CONFLICT (key_id)")),
+    ).toContain("revoked_at IS NULL");
+    expect(
+      statements.find((sql) => sql.includes("SELECT key_id, account_id")),
+    ).toContain("revoked_at IS NULL");
+  });
+
   it("uses directory identity fields after an account moves to another bay", async () => {
     const { getClusterAccountByIdDirect } = await import("./cluster-directory");
     const account = await getClusterAccountByIdDirect(
