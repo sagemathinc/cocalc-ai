@@ -1498,6 +1498,7 @@ export function PublicSignInForm({
     setError("");
     setSigningIn(true);
     void prefetchSignedInShell();
+    let passwordAcceptedOnOtherBay = false;
     try {
       let method: SignInMethod | undefined;
       try {
@@ -1517,6 +1518,7 @@ export function PublicSignInForm({
         body: { email, password },
       });
       if (isWrongBayAuthResponse(result)) {
+        passwordAcceptedOnOtherBay = true;
         result = await retryAuthOnHomeBay({
           endpoint: "auth/sign-in",
           wrongBay: result,
@@ -1550,7 +1552,11 @@ export function PublicSignInForm({
         createAccountFromSignIn(true);
         return;
       }
-      setError(`${err}`);
+      setError(
+        passwordAcceptedOnOtherBay
+          ? "Your password was accepted, but sign-in on your home bay failed. Please try again or contact support."
+          : `${err}`,
+      );
     } finally {
       setSigningIn(false);
     }
@@ -2292,6 +2298,7 @@ export function PublicSignUpForm({
     setError("");
     setSigningUp(true);
     void prefetchSignedInShell();
+    let accountCreatedOnOtherBay = false;
     try {
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
@@ -2306,6 +2313,7 @@ export function PublicSignUpForm({
         },
       });
       if (isWrongBayAuthResponse(result)) {
+        accountCreatedOnOtherBay = true;
         result = await retryAuthOnHomeBay({
           endpoint: "auth/sign-in",
           wrongBay: result,
@@ -2337,7 +2345,11 @@ export function PublicSignUpForm({
       }
       window.location.href = resolveAuthRedirectPath(redirectToPath);
     } catch (err) {
-      setError(`${err}`);
+      setError(
+        accountCreatedOnOtherBay
+          ? "Your account was created, but automatic sign-in on your home bay failed. Please sign in again or contact support."
+          : `${err}`,
+      );
     } finally {
       setSigningUp(false);
     }

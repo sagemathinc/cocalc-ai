@@ -340,6 +340,14 @@ export async function signUp(req, res) {
       : await selectSignupHomeBay({ req });
 
   try {
+    const preissuedRetryToken =
+      !owner_id && selected_home_bay_id !== getConfiguredBayId()
+        ? issueHomeBayRetryToken({
+            email,
+            home_bay_id: selected_home_bay_id,
+            purpose: "sign-in",
+          }).token
+        : undefined;
     const created = await createClusterAccount({
       account_id: v4(),
       email_address: email,
@@ -471,11 +479,14 @@ export async function signUp(req, res) {
           wrong_bay: true,
           home_bay_id,
           home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
-          retry_token: issueHomeBayRetryToken({
-            email,
-            home_bay_id,
-            purpose: "sign-in",
-          }).token,
+          retry_token:
+            home_bay_id === selected_home_bay_id && preissuedRetryToken
+              ? preissuedRetryToken
+              : issueHomeBayRetryToken({
+                  email,
+                  home_bay_id,
+                  purpose: "sign-in",
+                }).token,
         });
         return;
       }
