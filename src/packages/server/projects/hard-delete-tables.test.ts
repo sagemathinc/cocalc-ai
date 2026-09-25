@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { POSTGRES_TABLE_OWNERSHIP } from "@cocalc/util/db-schema";
+import { POSTGRES_TABLE_OWNERSHIP, SCHEMA } from "@cocalc/util/db-schema";
 import {
   PROJECT_HARD_DELETE_PROJECT_ID_TABLES,
   PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES,
@@ -17,6 +17,24 @@ import {
 const PORTABLE_TABLES = new Set(PROJECT_REHOME_PORTABLE_SQL_TABLES);
 
 describe("project hard-delete table ownership audit", () => {
+  it("covers agent foreign-key dependents of projects and identities", () => {
+    const missing = Object.entries(SCHEMA)
+      .filter(
+        ([table, schema]) =>
+          table.startsWith("agent_") &&
+          schema.pg_constraints?.some(
+            (constraint) =>
+              constraint.type === "foreign-key" &&
+              ["projects", "agent_identities"].includes(
+                constraint.references.table,
+              ),
+          ) &&
+          !PROJECT_HARD_DELETE_SIDE_TABLES.includes(table as any),
+      )
+      .map(([table]) => table);
+    expect(missing).toEqual([]);
+  });
+
   it("classifies every SQL side table that project hard-delete cleans up", () => {
     const missing = PROJECT_HARD_DELETE_SIDE_TABLES.filter(
       (table) => POSTGRES_TABLE_OWNERSHIP[table] == null,

@@ -4,6 +4,7 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { uuid } from "@cocalc/util/misc";
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const stopProjectOnHostMock = jest.fn();
@@ -357,6 +358,10 @@ describe("hard delete project cleanup", () => {
     jest.clearAllMocks();
     await getPool().query(
       `TRUNCATE
+        agent_identity_runs,
+        agent_identities,
+        agent_message_project_fences,
+        agent_rpc_admission_state,
         account_notification_index,
         account_project_index,
         blobs,
@@ -468,6 +473,78 @@ describe("hard delete project cleanup", () => {
         [OTHER_PROJECT_ID],
       ),
     ).resolves.toMatchObject({ rows: [{ count: 1 }] });
+  });
+
+  it("deletes active and disabled agents and their dependencies without touching another project", async () => {
+    await seedProject(PROJECT_ID);
+    await seedProject(OTHER_PROJECT_ID);
+    for (const projectId of [PROJECT_ID, OTHER_PROJECT_ID]) {
+      for (const disabled of [false, true]) {
+        const agentId = uuid();
+        await getPool().query(
+          `INSERT INTO agent_identities
+             (agent_id, project_id, path, thread_id, name, created_by, disabled_at)
+           VALUES ($1::uuid, $2, '/home/user/test.chat', $1::uuid::text, 'agent', $3,
+                   CASE WHEN $4 THEN now() ELSE NULL END)`,
+          [agentId, projectId, ACCOUNT_ID, disabled],
+        );
+        await getPool().query(
+          `INSERT INTO agent_identity_runs
+             (agent_id, run_id, account_id, token_hash, expires_at)
+           VALUES ($1::uuid, $2, $3, $1::uuid::text, now() + interval '1 hour')`,
+          [agentId, uuid(), ACCOUNT_ID],
+        );
+      }
+      await getPool().query(
+        `INSERT INTO agent_message_project_fences (project_id, host_id, generation)
+         VALUES ($1, $2, $3)`,
+        [projectId, uuid(), uuid()],
+      );
+      for (const kind of ["permit", "preparation"]) {
+        await getPool().query(
+          `INSERT INTO agent_rpc_admission_state
+             (token_id, kind, binding_hash, host_id, project_id, account_id, expires_at)
+           VALUES ($1, $2, 'test-binding', $3, $4, $5, now() + interval '1 minute')`,
+          [uuid(), kind, uuid(), projectId, ACCOUNT_ID],
+        );
+      }
+    }
+    const { hardDeleteProject } = await import("./hard-delete");
+    const result = await hardDeleteProject({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+    });
+    expect(result.purged_tables).toEqual(
+      expect.arrayContaining([
+        "agent_identity_runs",
+        "agent_identities",
+        "agent_message_project_fences",
+        "agent_rpc_admission_state",
+        "projects",
+      ]),
+    );
+    for (const table of [
+      "projects",
+      "agent_identities",
+      "agent_message_project_fences",
+      "agent_rpc_admission_state",
+    ]) {
+      await expect(countRows(table, "project_id=$1")).resolves.toBe(0);
+      const { rows } = await getPool().query(
+        `SELECT DISTINCT project_id FROM ${table}`,
+      );
+      expect(rows).toEqual([{ project_id: OTHER_PROJECT_ID }]);
+    }
+    const { rows } = await getPool().query(
+      `SELECT a.project_id FROM agent_identity_runs r JOIN agent_identities a USING (agent_id)`,
+    );
+    expect(rows).toEqual([
+      { project_id: OTHER_PROJECT_ID },
+      { project_id: OTHER_PROJECT_ID },
+    ]);
+    await expect(
+      hardDeleteProject({ project_id: PROJECT_ID, account_id: ACCOUNT_ID }),
+    ).resolves.toBeDefined();
   });
 
   it("backs off a failed purge so later work can proceed", async () => {

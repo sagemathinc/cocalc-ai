@@ -4,6 +4,9 @@
  */
 
 export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
+  "agent_identities",
+  "agent_message_project_fences",
+  "agent_rpc_admission_state",
   "artifact_catalog",
   "artifact_catalog_project_budget",
   "artifact_catalog_sources",
@@ -45,6 +48,7 @@ export const PROJECT_HARD_DELETE_SEED_GLOBAL_TABLES = [
 ] as const;
 
 export const PROJECT_HARD_DELETE_CUSTOM_TABLES = [
+  "agent_identity_runs",
   "project_copies",
   "long_running_operations",
   "notification_events",

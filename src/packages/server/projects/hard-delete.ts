@@ -474,18 +474,21 @@ async function runDeleteMaybeMissingTable({
   client,
   table,
   query,
+  lockQuery,
   params,
   purged,
 }: {
   client: any;
   table: string;
   query: string;
+  lockQuery?: string;
   params: any[];
   purged: string[];
 }): Promise<void> {
   const savepoint = `hd_${table.replace(/[^a-zA-Z0-9_]/g, "_")}`;
   await client.query(`SAVEPOINT ${savepoint}`);
   try {
+    if (lockQuery) await client.query(lockQuery, params);
     const result = await client.query(query, params);
     await client.query(`RELEASE SAVEPOINT ${savepoint}`);
     if ((result.rowCount ?? 0) > 0) {
@@ -523,6 +526,12 @@ async function purgeProjectRows({
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
+
+    // Prevent new project references while dependency rows are being removed.
+    await client.query(
+      "SELECT project_id FROM projects WHERE project_id=$1 FOR UPDATE",
+      [project.project_id],
+    );
 
     const owner_account_id = ownerAccountIdFromUsers(project.users);
     const metadata = {
@@ -580,6 +589,20 @@ async function purgeProjectRows({
         JSON.stringify(metadata),
       ],
     );
+
+    // Runs reference identities, not projects. Lock identities against concurrent
+    // run issuance and remove their credentials before deleting the identities.
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "agent_identity_runs",
+      lockQuery:
+        "SELECT agent_id FROM agent_identities WHERE project_id=$1 FOR UPDATE",
+      query: `DELETE FROM agent_identity_runs WHERE agent_id IN (
+        SELECT agent_id FROM agent_identities WHERE project_id=$1
+      )`,
+      params: [project.project_id],
+      purged,
+    });
 
     for (const table of PROJECT_HARD_DELETE_PROJECT_ID_TABLES) {
       await runDeleteMaybeMissingTable({
