@@ -2979,6 +2979,7 @@ export type AccountLocalMethod =
   | "get-blob"
   | "create-cli-login-session"
   | "validate-host-action-auth"
+  | "get-api-key-authorization-state"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
   | "live-voice"
@@ -4699,6 +4700,14 @@ export interface InterBayAccountLocalApi
     account_id: string;
     session_hash: string;
   }) => Promise<{ allow_second_factor_override: boolean }>;
+  getApiKeyAuthorizationState: (opts: {
+    account_id: string;
+    key_id: string;
+  }) => Promise<{
+    scope: import("@cocalc/util/db-schema/api-keys").ApiKeyScope;
+    scope_revision: number;
+    expire_ms?: number;
+  } | null>;
   startCodexFreshAuth: (
     opts: AccountLocalStartCodexFreshAuthRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
@@ -7339,6 +7348,15 @@ export function createInterBayAccountLocalClient({
       method: "validate-host-action-auth",
     }),
   });
+  const getApiKeyAuthorizationStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getApiKeyAuthorizationState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-api-key-authorization-state",
+    }),
+  });
   const startCodexFreshAuthClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "startCodexFreshAuth">
   >({
@@ -8698,6 +8716,8 @@ export function createInterBayAccountLocalClient({
       await createCliLoginSessionClient.createCliLoginSession(opts),
     validateHostActionAuth: async (opts) =>
       await validateHostActionAuthClient.validateHostActionAuth(opts),
+    getApiKeyAuthorizationState: async (opts) =>
+      await getApiKeyAuthorizationStateClient.getApiKeyAuthorizationState(opts),
     startCodexFreshAuth: async (opts) =>
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
@@ -9392,6 +9412,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         validateHostActionAuth: async (opts) =>
           await impl.validateHostActionAuth(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getApiKeyAuthorizationState">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-api-key-authorization-state",
+      }),
+      impl: {
+        getApiKeyAuthorizationState: async (opts) =>
+          await impl.getApiKeyAuthorizationState(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "startCodexFreshAuth">>({

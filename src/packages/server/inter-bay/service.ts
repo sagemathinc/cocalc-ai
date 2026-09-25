@@ -312,6 +312,7 @@ import {
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
+import { getApiKeyAuthorizationStateLocal } from "@cocalc/server/api/key-authorization-state";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import { recordSiteFundedCodexAccountUsage } from "@cocalc/server/ai/save-response";
@@ -1494,6 +1495,7 @@ async function startAccountLocalService(): Promise<void> {
       });
     },
     validateHostActionAuth: validateHostActionAuthLocal,
+    getApiKeyAuthorizationState: getApiKeyAuthorizationStateLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>

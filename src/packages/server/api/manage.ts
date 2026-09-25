@@ -57,7 +57,7 @@ const API_KEY_SECRET_BYTES = 32;
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
 
-async function ensureApiKeysV2Schema(): Promise<void> {
+export async function ensureApiKeysV2Schema(): Promise<void> {
   apiKeysV2SchemaReady ??= (async () => {
     const pool = getPool();
     await pool.query(
