@@ -26,7 +26,7 @@ import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 import { agentProjectWasDeleted } from "./deleted-project";
 
-const DEFAULT_MAX_NAMED_AGENTS = 5;
+const DEFAULT_MAX_NAMED_AGENTS = 100;
 const DEFAULT_MAX_NETWORK_MEMBERS = 3;
 const MAX_NETWORKS = 100;
 
