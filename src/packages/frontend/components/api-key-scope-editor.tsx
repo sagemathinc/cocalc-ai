@@ -18,22 +18,13 @@ import type {
   ApiKeyProjectGrant,
   ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
+import {
+  FULL_PROJECT_API_KEY_CAPABILITIES,
+  VIEWER_PROJECT_API_KEY_CAPABILITIES,
+} from "@cocalc/util/api-key-scope";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 
 const { Text } = Typography;
-
-export const FULL_PROJECT_API_KEY_CAPABILITIES: ApiKeyCapability[] = [
-  "file:read",
-  "file:write",
-  "project:exec",
-  "project:read",
-  "project:write",
-];
-
-const VIEWER_PROJECT_API_KEY_CAPABILITIES: ApiKeyCapability[] = [
-  "file:read",
-  "project:read",
-];
 
 export const EMPTY_API_KEY_SCOPE: ApiKeyScope = {
   version: 1,
@@ -52,7 +43,7 @@ const ACCOUNT_OPTIONS: Array<{
 
 function sameCapabilities(
   actual: ApiKeyCapability[],
-  expected: ApiKeyCapability[],
+  expected: readonly ApiKeyCapability[],
 ): boolean {
   return (
     actual.length === expected.length &&

@@ -69,7 +69,7 @@ test("scope editor keeps account and project grants independent", async () => {
     projects: [
       {
         project_id: "22222222-2222-4222-8222-222222222222",
-        capabilities: ["file:read", "project:read"],
+        capabilities: ["file:read"],
         viewer_read_roots: ["docs", "notes"],
       },
     ],

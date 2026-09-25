@@ -12,6 +12,17 @@ import {
   type ProjectViewerReadPolicy,
 } from "./project-access";
 
+export const FULL_PROJECT_API_KEY_CAPABILITIES: readonly ApiKeyCapability[] = [
+  "file:read",
+  "file:write",
+  "project:exec",
+  "project:read",
+  "project:write",
+];
+
+export const VIEWER_PROJECT_API_KEY_CAPABILITIES: readonly ApiKeyCapability[] =
+  ["file:read"];
+
 const ACCOUNT_CAPABILITIES = new Set<ApiKeyCapability>([
   "account:read",
   "project:create",
