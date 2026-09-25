@@ -20,7 +20,7 @@ import { parseHeader } from "./header";
 
 import { Token } from "./types";
 import MarkdownIt from "markdown-it";
-import { OPTIONS } from "./index";
+import { OPTIONS } from "@cocalc/util/markdown/parser";
 
 const markdown_it = new MarkdownIt(OPTIONS);
 
