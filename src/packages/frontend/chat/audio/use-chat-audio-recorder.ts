@@ -65,6 +65,7 @@ export function useChatAudioRecorder<T>({
   const [capabilities, setCapabilities] = useState<ChatSpeechCapabilities>();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string>();
+  const [backgroundError, setBackgroundError] = useState(false);
   const ownerRef = useRef(Symbol("chat-audio-recorder"));
   const cancelCurrentRef = useRef<() => void>(() => undefined);
   const mountedRef = useRef(true);
@@ -105,6 +106,8 @@ export function useChatAudioRecorder<T>({
     let timer: ReturnType<typeof setTimeout> | undefined;
     setCapabilities(undefined);
     setStatus("loading");
+    setError(undefined);
+    setBackgroundError(false);
     const load = async () => {
       if (canceled || pending) return;
       clearTimeout(timer);
@@ -129,6 +132,7 @@ export function useChatAudioRecorder<T>({
           timer = setTimeout(() => void load(), retryDelay);
           retryDelay = Math.min(60_000, retryDelay * 2);
         } else {
+          setBackgroundError(true);
           setError(chatSpeechErrorMessage(err));
           setStatus("error");
         }
@@ -237,6 +241,7 @@ export function useChatAudioRecorder<T>({
     async (context: T) => {
       if (status === "recording") return;
       setError(undefined);
+      setBackgroundError(false);
       canceledRef.current = false;
       contextRef.current = context;
       if (!capabilities?.input.enabled) {
@@ -403,6 +408,7 @@ export function useChatAudioRecorder<T>({
     capabilities,
     elapsedMs,
     error,
+    backgroundError,
     start,
     stop: finishRecording,
     cancel,

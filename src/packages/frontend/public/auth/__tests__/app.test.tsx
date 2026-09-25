@@ -893,6 +893,59 @@ describe("PublicAuthApp", () => {
     );
   });
 
+  it("shows email verification after cross-bay password sign-up when required", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+    mockedPostAuthApi.mockResolvedValueOnce({ wrong_bay: true });
+    mockedIsWrongBayAuthResponse.mockImplementation(
+      (value: unknown): value is any =>
+        !!value && typeof value === "object" && (value as any).wrong_bay,
+    );
+    mockedRetryAuthOnHomeBay.mockResolvedValueOnce({
+      account_id: "account-new",
+      home_bay_id: "bay-1",
+      home_bay_url: "https://bay-1.example.test",
+    });
+    mockedGetControlPlaneAuthBootstrap
+      .mockRejectedValueOnce(new Error("initial bootstrap unavailable"))
+      .mockResolvedValue({
+        account_id: "account-new",
+        email_address: "new-user@example.edu",
+        email_address_verified: false,
+        signed_in: true,
+      });
+
+    render(
+      <PublicAuthApp
+        config={config({
+          email_authentication_mode: "password_required",
+          verify_emails: true,
+          policy_pages: "none",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Enter the same password again"),
+      { target: { value: "correct horse battery staple 12345!" } },
+    );
+    fireEvent.change(screen.getByPlaceholderText("Your name"), {
+      target: { value: "New User" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByText("Check your email")).not.toBeNull();
+    expect(
+      screen.getByText(/This page will continue automatically/),
+    ).not.toBeNull();
+    expect(mockedRetryAuthOnHomeBay).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps verify-after-signup users in a dedicated verification step", async () => {
     mockedApi.mockResolvedValueOnce(false);
     mockedPostAuthApi

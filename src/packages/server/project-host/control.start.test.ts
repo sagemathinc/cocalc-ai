@@ -376,23 +376,27 @@ describe("startProjectOnHost placement", () => {
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: { features: { project_host_tier: 0 } },
     }));
-    interBayHostListMock = jest.fn(async () => [
-      {
-        id: "remote-pool-host",
-        bay_id: "bay-9",
-        name: "Remote Pool Host",
-        owner: "host-owner",
-        region: "us-west1",
-        size: "standard",
-        gpu: false,
-        status: "running",
-        tier: 0,
-        scope: "pool",
-        access_role: "pool",
-        can_place: true,
-        pressure: { zone: "normal" },
-      },
-    ]);
+    interBayHostListMock = jest.fn(async ({ catalog }) =>
+      catalog
+        ? [
+            {
+              id: "remote-pool-host",
+              bay_id: "bay-9",
+              name: "Remote Pool Host",
+              owner: "host-owner",
+              region: "us-west1",
+              size: "standard",
+              gpu: false,
+              status: "running",
+              tier: 0,
+              scope: "pool",
+              access_role: "pool",
+              can_place: true,
+              pressure: { zone: "normal" },
+            },
+          ]
+        : [],
+    );
     let placementQuery = 0;
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
@@ -443,7 +447,7 @@ describe("startProjectOnHost placement", () => {
     expect(placementQuery).toBe(2);
     expect(interBayHostListMock).toHaveBeenCalledWith({
       account_id: "account-1",
-      catalog: false,
+      catalog: true,
     });
   });
 

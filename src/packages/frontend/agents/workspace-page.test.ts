@@ -5,6 +5,7 @@
 
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
+  createDefaultAgentProject,
   freshAgentExecutionConfig,
   suggestedAgentName,
   suggestedAgentProjectTitle,
@@ -50,6 +51,23 @@ describe("new agent defaults", () => {
     ).toBe("Build a weather dashboard");
     expect(suggestedAgentProjectTitle("  ")).toBe("My first project");
     expect(suggestedAgentProjectTitle("A".repeat(100))).toHaveLength(80);
+  });
+
+  it("creates a default project from the first agent task without opening it", async () => {
+    const createProject = jest.fn(async () => "project-new");
+    await expect(
+      createDefaultAgentProject({
+        request: "Build a weather dashboard.\nUse maps",
+        createProject,
+      }),
+    ).resolves.toEqual({
+      projectId: "project-new",
+      title: "Build a weather dashboard",
+    });
+    expect(createProject).toHaveBeenCalledWith({
+      title: "Build a weather dashboard",
+      start: false,
+    });
   });
 
   it("does not carry Codex runtime identity into a fresh agent", () => {

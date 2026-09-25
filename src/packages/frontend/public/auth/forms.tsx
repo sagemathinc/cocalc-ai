@@ -2185,6 +2185,7 @@ export function PublicSignUpForm({
   const displayNameInputRef = useRef<HTMLInputElement | null>(null);
   const publicConfig = usePublicConfig();
   const requiresContinuousVerification =
+    publicConfig?.verify_emails === true ||
     normalizeEmailAuthenticationMode(
       publicConfig?.email_authentication_mode,
     ) !== "password_required";

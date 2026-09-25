@@ -15,6 +15,18 @@ export function suggestedAgentProjectTitle(request: string): string {
   return title.length <= 80 ? title : `${title.slice(0, 77).trimEnd()}...`;
 }
 
+export async function createDefaultAgentProject({
+  request,
+  createProject,
+}: {
+  request: string;
+  createProject: (opts: { title: string; start: false }) => Promise<string>;
+}): Promise<{ projectId: string; title: string }> {
+  const title = suggestedAgentProjectTitle(request);
+  const projectId = await createProject({ title, start: false });
+  return { projectId, title };
+}
+
 function agentNameCounterKey(accountId?: string): string {
   return `${AGENT_NAME_COUNTER_PREFIX}:${accountId ?? "anonymous"}`;
 }

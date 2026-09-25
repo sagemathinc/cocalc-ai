@@ -106,10 +106,14 @@ function EnabledDictateButton({
   });
 
   useEffect(() => {
-    if (recorder.status === "error" && recorder.error) {
+    if (
+      recorder.status === "error" &&
+      recorder.error &&
+      !recorder.backgroundError
+    ) {
       antdMessage.error(recorder.error);
     }
-  }, [recorder.error, recorder.status]);
+  }, [recorder.backgroundError, recorder.error, recorder.status]);
 
   const begin = useCallback(() => {
     void recorder.start({

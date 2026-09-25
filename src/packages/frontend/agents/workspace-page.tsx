@@ -190,6 +190,7 @@ import {
 } from "@cocalc/frontend/chat/codex-model-discovery";
 import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
 import {
+  createDefaultAgentProject,
   freshAgentExecutionConfig,
   rememberAgentName,
   suggestedAgentName,
@@ -662,9 +663,10 @@ function NewAgentPanel({
     paymentSource?.siteFundedCodex,
   ]);
 
-  async function prepare(): Promise<PendingAgent> {
+  async function prepare(
+    targetProjectId: string | undefined = projectId,
+  ): Promise<PendingAgent> {
     if (pending) return pending;
-    const targetProjectId = projectId;
     if (!targetProjectId) throw new Error("Create or select a project first.");
     await ensureProjectReduxRuntime();
     const projectActions = redux.getProjectActions(targetProjectId);
@@ -723,19 +725,34 @@ function NewAgentPanel({
     ).trim();
     if (busy || uploading || problem || atLimit || (!request && !withoutTask))
       return;
-    if (!projectId) {
-      openProjectCreator();
-      return;
-    }
     createWithoutTaskRef.current = withoutTask;
     setBusy(true);
     setError("");
     setMissingDirectory(undefined);
     try {
       boundAccount.assertCurrent();
+      let targetProjectId = projectId;
+      let createdProjectTitle: string | undefined;
+      if (!targetProjectId) {
+        if (emailVerificationRequired) return;
+        if (!projectMap) {
+          throw new Error("Your projects are still loading. Please try again.");
+        }
+        const createdProject = await createDefaultAgentProject({
+          request,
+          createProject: (opts) =>
+            redux.getActions("projects").create_project(opts),
+        });
+        createdProjectTitle = createdProject.title;
+        targetProjectId = createdProject.projectId;
+        const home = getProjectHomeDirectory(targetProjectId);
+        setProjectId(targetProjectId);
+        setDirectory(home);
+        setDirectoryProjectId(targetProjectId);
+      }
       if (!withoutTask) {
         const source = await fetchCodexPaymentSourceForSubmit({
-          projectId,
+          projectId: targetProjectId,
           preference: paymentPreference,
           credentialId:
             paymentPreference === "subscription"
@@ -744,16 +761,19 @@ function NewAgentPanel({
         });
         assertCodexFundingModelReady({ config, paymentSource: source });
         if (
-          projectId &&
           !(await preflightNewAgentProjectStart({
-            projectId,
+            projectId: targetProjectId,
             onOpenMembershipDetails: () => setMembershipDetailsOpen(true),
           }))
         ) {
           return;
         }
       }
-      await submitNewAgentRequest(withoutTask ? undefined : request);
+      await submitNewAgentRequest(
+        withoutTask ? undefined : request,
+        targetProjectId,
+        createdProjectTitle,
+      );
     } catch (err) {
       handleCreateError(err);
       if (isNamedAgentLimitError(err)) refreshNamedAgents();
@@ -762,8 +782,12 @@ function NewAgentPanel({
     }
   }
 
-  async function submitNewAgentRequest(request?: string): Promise<void> {
-    const created = await prepare();
+  async function submitNewAgentRequest(
+    request?: string,
+    targetProjectId?: string,
+    projectTitleOverride?: string,
+  ): Promise<void> {
+    const created = await prepare(targetProjectId);
     boundAccount.assertCurrent();
     const api = personalAgentApi();
     const locator = {
@@ -785,9 +809,9 @@ function NewAgentPanel({
       name: normalizeAgentName(name),
       description,
       ...cachedAgentNameContext(locator),
-      project_title: projectMap?.getIn([created.projectId, "title"]) as
-        | string
-        | undefined,
+      project_title:
+        projectTitleOverride ??
+        (projectMap?.getIn([created.projectId, "title"]) as string | undefined),
       thread_title: name.trim(),
     });
     if (request) {
@@ -1018,22 +1042,15 @@ function NewAgentPanel({
             {emailVerificationRequired ? (
               <VerifyEmailRequiredPanel
                 title="Verify your email to create a project"
-                description="Your agent needs a project. Verify your email, then create a project here to start your agent."
+                description="Your agent needs a project. Verify your email, then start your agent; we will create a project for it automatically."
                 compact
               />
             ) : (
               <Alert
                 type="info"
                 showIcon
-                title="Your agent needs a project"
-                description={
-                  <Space wrap>
-                    <span>
-                      Create one now; your task will stay in the composer.
-                    </span>
-                    <Button onClick={openProjectCreator}>Create project</Button>
-                  </Space>
-                }
+                title="Your first project will be created automatically"
+                description="Describe a task and start your agent. You can also choose or create a project from the project selector."
               />
             )}
           </div>
