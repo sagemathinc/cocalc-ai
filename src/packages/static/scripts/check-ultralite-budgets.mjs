@@ -309,8 +309,9 @@ const surfaces = [
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    // Course-sponsored compute adds a substantial safety and operations guide.
-    max: 305 * KiB,
+    // The course-sponsored compute and exam scratchpad guides add substantial
+    // operational instructions to the non-admin documentation bundle.
+    max: 310 * KiB,
   },
   {
     label: "minimal project settings",
