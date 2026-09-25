@@ -52,6 +52,10 @@ export function projectLiveVoiceMessages(
       date: date?.toISOString() ?? latest?.date ?? "",
       generating: state === "running",
       state,
+      acp_live_preview_stream: field<string>(
+        message,
+        "acp_live_preview_stream",
+      ),
     };
   });
 }

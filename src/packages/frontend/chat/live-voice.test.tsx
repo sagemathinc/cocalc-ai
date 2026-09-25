@@ -35,6 +35,7 @@ jest.mock("@cocalc/chat-client", () => ({
 const props = {
   projectId: "project-1",
   threadId: "agent-thread-1",
+  threadRunning: false,
   messages: [],
   onDelegate: jest.fn(),
   visible: true,
@@ -425,6 +426,15 @@ describe("call-scoped cancellation", () => {
     const user = userEvent.setup();
     const view = render(<ChatLiveVoice {...props} onDelegate={onDelegate} />);
     const peer = await startCall(user);
+    const announce = screen.getByRole("button", {
+      name: "Announce milestones",
+    });
+    announce.focus();
+    expect(announce).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("button", { name: "On-demand updates" }),
+    ).toBeInTheDocument();
     act(() => {
       peer.channel.onmessage({
         data: JSON.stringify({
@@ -442,7 +452,11 @@ describe("call-scoped cancellation", () => {
       });
     });
     await waitFor(() => expect(onDelegate).toHaveBeenCalledTimes(1));
-    expect(peer.channel.send).not.toHaveBeenCalled();
+    expect(
+      peer.channel.send.mock.calls.some(
+        ([payload]: [string]) => JSON.parse(payload).delegation_id === "d1",
+      ),
+    ).toBe(false);
     view.rerender(
       <ChatLiveVoice
         {...props}

@@ -8,6 +8,7 @@ import { posix } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import {
   createHeadlessChatClient,
+  projectAcpActivityMarkdown,
   PROJECT_CHAT_SESSION_NOT_FOUND,
   PROJECT_CHAT_SESSION_SERVICE,
   type ChatSnapshot,
@@ -22,6 +23,7 @@ import type { Client } from "@cocalc/conat/core/client";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import { isValidUUID } from "@cocalc/util/misc";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
 const logger = getLogger("project-host:project-chat-session");
 
@@ -122,14 +124,48 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${value.slice(0, end)}\n\n[content omitted by CoCalc chat session]`;
 }
 
+/** Convert cumulative live-preview snapshots to a bounded text-only timeline. */
+export function boundedAgentPreviewEvents(
+  events: readonly AcpStreamMessage[],
+): AcpStreamMessage[] {
+  const preview: AcpStreamMessage[] = [];
+  let previous = "";
+  for (const item of events) {
+    if (item.type !== "event" || item.event.type !== "message") continue;
+    const current = item.event.delta
+      ? previous + item.event.text
+      : item.event.text;
+    if (!current || current === previous) continue;
+    const appended = current.startsWith(previous);
+    const text = appended ? current.slice(previous.length) : current;
+    preview.push({
+      ...item,
+      event: { ...item.event, text, delta: appended },
+    });
+    previous = current;
+  }
+  let bytes = 0;
+  let start = preview.length;
+  while (start > 0) {
+    const next = Buffer.byteLength(JSON.stringify(preview[start - 1]));
+    if (bytes + next > MAX_MESSAGE_TEXT_BYTES) break;
+    bytes += next;
+    start--;
+  }
+  return preview.slice(start);
+}
+
 function boundedMessage(message: ProjectedChatMessage): ProjectedChatMessage {
+  const previewEvents = message.activity
+    ? boundedAgentPreviewEvents(message.activity.events)
+    : [];
   const activity = message.activity
     ? {
         ...message.activity,
-        events: [],
-        markdown: message.activity.markdown
-          ? truncateUtf8(message.activity.markdown, MAX_MESSAGE_TEXT_BYTES)
-          : undefined,
+        // Live turns use the compact preview. Guided completed turns recover
+        // their persisted log on the host, then expose only agent messages.
+        events: previewEvents,
+        markdown: projectAcpActivityMarkdown(previewEvents),
       }
     : undefined;
   return {
@@ -371,7 +407,7 @@ export async function initProjectChatSessionService(client: Client) {
         path,
         projectHostClient: client,
         selected_thread_id,
-        activityLoadPolicy: "live-preview-only",
+        activityLoadPolicy: "live-preview-and-guidance-history",
       });
       await backend.open();
       let stream: DStream<ProjectChatSessionStreamEvent> | undefined;

@@ -2194,7 +2194,7 @@ function ChatPanelContent({
     text: string,
     isCurrentThread: () => boolean,
     signal: AbortSignal,
-  ): Promise<{ message_id: string }> {
+  ): Promise<{ message_id: string; kind: "guidance" | "work" }> {
     if (
       readOnly ||
       !selectedThreadId ||
@@ -2214,7 +2214,8 @@ function ChatPanelContent({
     await ensureProjectRunningForCodex({ project_id, redux });
     if (!isCurrentThread())
       throw new Error("The selected agent changed. Start a new voice call.");
-    const { parent_message_id } = resolveReplyTarget();
+    const guidance = hasRunningAcpTurn;
+    const { parent_message_id } = resolveReplyTarget(guidance);
     const chatIdentity = actions.reserveChatSendIdentity({
       reply_thread_id: selectedThreadId,
     });
@@ -2222,13 +2223,17 @@ function ChatPanelContent({
       reply_thread_id: selectedThreadId,
       parent_message_id,
       input: text,
+      send_mode: guidance ? "immediate" : undefined,
       acpConfigOverride: selectedThreadMetadata.acp_config ?? undefined,
       chatIdentity,
       skipDraftDelete: true,
     });
     if (!sent) throw new Error("The agent did not accept the spoken task.");
     await waitForCommentAcceptance(actions, chatIdentity.message_id, signal);
-    return { message_id: chatIdentity.message_id };
+    return {
+      message_id: chatIdentity.message_id,
+      kind: guidance ? ("guidance" as const) : ("work" as const),
+    };
   }
 
   async function sendMessage(
@@ -3141,6 +3146,7 @@ function ChatPanelContent({
           projectId={project_id}
           threadId={selectedThreadId ?? ""}
           messages={liveVoiceMessages}
+          threadRunning={hasRunningAcpTurn}
           onDelegate={sendVoiceTask}
           visible={isVisible && tabIsVisible && isChatForeground}
           panelOpen={voiceOptionsOpen && selectedThreadResolved == null}

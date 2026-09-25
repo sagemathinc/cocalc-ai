@@ -60,7 +60,10 @@ export interface CreateHeadlessChatClientOptions {
   ackMaxAttempts?: number;
   ackBackoffMs?: number;
   codexCompletionNotificationDefault?: boolean;
-  activityLoadPolicy?: "recent" | "live-preview-only";
+  activityLoadPolicy?:
+    | "recent"
+    | "live-preview-only"
+    | "live-preview-and-guidance-history";
 }
 
 export class CoCalcHeadlessChatClient implements HeadlessChatClient {
@@ -373,17 +376,46 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
   }
 
   private reconcileActivity(messages: ProjectedChatMessage[]): void {
-    const candidates =
-      this.options.activityLoadPolicy === "live-preview-only"
-        ? messages.filter(
-            ({ generating, acp_live_preview_stream }) =>
-              generating && !!acp_live_preview_stream,
+    const previewPolicy =
+      this.options.activityLoadPolicy === "live-preview-only" ||
+      this.options.activityLoadPolicy === "live-preview-and-guidance-history";
+    const guidedAgentIds = new Set<string>();
+    if (
+      this.options.activityLoadPolicy === "live-preview-and-guidance-history"
+    ) {
+      const byId = new Map(
+        messages.map((message) => [message.message_id, message]),
+      );
+      for (const guidance of messages.filter((message) => message.guidance)) {
+        let parentId = guidance.parent_message_id;
+        const visited = new Set<string>();
+        while (parentId && !visited.has(parentId)) {
+          visited.add(parentId);
+          const parent = byId.get(parentId);
+          if (!parent) break;
+          if (parent.role === "agent") {
+            guidedAgentIds.add(parent.message_id);
+            break;
+          }
+          parentId = parent.parent_message_id;
+        }
+      }
+    }
+    const candidates = previewPolicy
+      ? messages
+          .filter((message) =>
+            message.generating
+              ? !!message.acp_live_preview_stream
+              : guidedAgentIds.has(message.message_id) &&
+                !!message.acp_log_store &&
+                !!message.acp_log_key,
           )
-        : messages
-            .filter(
-              ({ acp_log_store, acp_log_key }) => acp_log_store && acp_log_key,
-            )
-            .slice(-MAX_RECENT_ACTIVITY_LOGS);
+          .slice(-MAX_RECENT_ACTIVITY_LOGS)
+      : messages
+          .filter(
+            ({ acp_log_store, acp_log_key }) => acp_log_store && acp_log_key,
+          )
+          .slice(-MAX_RECENT_ACTIVITY_LOGS);
     const activeMessageIds = new Set(
       candidates.map(({ message_id }) => message_id),
     );
@@ -394,8 +426,7 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     }
 
     for (const message of candidates) {
-      const previewOnly =
-        this.options.activityLoadPolicy === "live-preview-only";
+      const previewOnly = previewPolicy && message.generating;
       if (
         previewOnly
           ? !message.acp_live_preview_stream
@@ -447,6 +478,9 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
         ...message,
         activity: {
           state: record.state,
+          source: record.signature.startsWith("preview:")
+            ? "live-preview"
+            : "recovered",
           events: record.events,
           markdown: projectAcpActivityMarkdown(record.events),
           error: record.error,
@@ -507,10 +541,9 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     message: ProjectedChatMessage,
     record: ActivityRecord,
   ): Promise<void> {
-    const streamName =
-      this.options.activityLoadPolicy === "live-preview-only"
-        ? message.acp_live_preview_stream
-        : message.acp_live_log_stream;
+    const streamName = record.signature.startsWith("preview:")
+      ? message.acp_live_preview_stream
+      : message.acp_live_log_stream;
     if (!streamName || record.streamName === streamName) return;
     this.closeActivityStream(record);
     record.streamName = streamName;

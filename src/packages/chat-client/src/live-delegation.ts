@@ -29,13 +29,16 @@ export class LiveDelegation {
   private pendingSubmission: Promise<void> | undefined;
 
   constructor(
-    private send: (text: string) => Promise<{ message_id: string }>,
+    private send: (
+      text: string,
+    ) => Promise<{ message_id: string; kind?: "guidance" | "work" }>,
     private append: (
       type: "session.thinking.append" | "session.commentary.append",
       content: string,
       id: string,
     ) => void,
     private report: (message: string) => void,
+    private answerStatusQuestion?: (text: string) => string | undefined,
   ) {}
 
   async event(event: LiveEvent) {
@@ -81,6 +84,12 @@ export class LiveDelegation {
       );
       return;
     }
+    const status = this.answerStatusQuestion?.(text);
+    if (status) {
+      this.append("session.commentary.append", status, id);
+      this.report("Progress update shared without starting agent work.");
+      return;
+    }
     const submit = async () => {
       if (this.closed) return;
       try {
@@ -88,6 +97,15 @@ export class LiveDelegation {
         // for the previous acknowledgment so every spoken task gets its own ID.
         const accepted = await this.send(text);
         if (this.closed) return; // Accepted work remains in the durable chat.
+        if (accepted.kind === "guidance") {
+          this.append(
+            "session.thinking.append",
+            "Guidance was sent to the currently running agent turn. It has not finished yet.",
+            id,
+          );
+          this.report("Guidance sent to the running agent.");
+          return;
+        }
         this.tasks.set(accepted.message_id, id);
         this.append(
           "session.thinking.append",

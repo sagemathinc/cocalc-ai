@@ -49,6 +49,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Markdown, ProjectFileLinkContext } from "../../../chat/markdown";
 import {
+  activityGuidanceSections,
   inlineGuidance,
   type ConversationMessage,
 } from "../../../chat/guidance";
@@ -186,6 +187,7 @@ function Message({
     item.state === "error" || item.state === "interrupted"
       ? item.state
       : undefined;
+  const activitySections = activityGuidanceSections(item, guidance);
 
   if (item.guidance) return <GuidanceCard item={item} />;
 
@@ -210,15 +212,28 @@ function Message({
           ) : null}
         </View>
       ) : null}
-      {item.activity?.markdown ? (
-        <View accessibilityLabel="Codex activity" style={styles.activity}>
-          <Markdown value={item.activity.markdown} />
-        </View>
-      ) : item.activity?.state === "loading" && item.generating ? (
+      {activitySections.map((section) =>
+        section.kind === "guidance" ? (
+          <GuidanceCard key={section.key} item={section.item} />
+        ) : (
+          <View
+            key={section.key}
+            accessibilityLabel="Codex activity"
+            style={styles.activity}
+          >
+            <Markdown value={section.markdown} />
+          </View>
+        ),
+      )}
+      {!activitySections.length &&
+      item.activity?.state === "loading" &&
+      item.generating ? (
         <Text accessibilityLiveRegion="polite" style={styles.activityStatus}>
           Loading Codex activity…
         </Text>
-      ) : item.activity?.state === "error" && item.generating ? (
+      ) : !activitySections.length &&
+        item.activity?.state === "error" &&
+        item.generating ? (
         <Text accessibilityRole="alert" style={styles.activityError}>
           Codex activity could not be recovered: {item.activity.error}
         </Text>
@@ -226,9 +241,6 @@ function Message({
       {thinkingPlaceholder || (item.generating && !item.content) ? null : (
         <Markdown value={item.content} />
       )}
-      {guidance.map((item) => (
-        <GuidanceCard key={item.message_id} item={item} />
-      ))}
       {item.generating ? (
         <View
           accessibilityLabel="Codex running"

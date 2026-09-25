@@ -60,3 +60,71 @@ it.each([
     expect(send).toHaveBeenCalledTimes(1);
   },
 );
+
+it("answers a progress question without submitting work", async () => {
+  const send = jest.fn(async () => ({ message_id: "work" }));
+  const append = jest.fn();
+  const bridge = new LiveDelegation(
+    send,
+    append,
+    jest.fn(),
+    () => "The agent is checking tests.",
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "What happened recently?",
+    end_ms: 1,
+  });
+  await bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 2,
+    delegation: { id: "status", target: "client" },
+  });
+  expect(send).not.toHaveBeenCalled();
+  expect(append).toHaveBeenCalledWith(
+    "session.commentary.append",
+    "The agent is checking tests.",
+    "status",
+  );
+});
+
+it("acknowledges guidance without tracking it as a new task", async () => {
+  const append = jest.fn();
+  const bridge = new LiveDelegation(
+    async () => ({ message_id: "guidance", kind: "guidance" }),
+    append,
+    jest.fn(),
+  );
+  await bridge.event({
+    type: "session.input_transcript.delta",
+    delta: "Please check the tests too.",
+    end_ms: 1,
+  });
+  await bridge.event({
+    type: "session.delegation.created",
+    offset_ms: 2,
+    delegation: { id: "guidance", target: "client" },
+  });
+  bridge.observe([
+    {
+      message_id: "guidance",
+      thread_id: "thread",
+      sender_id: "human",
+      role: "human",
+      content: "Please check the tests too.",
+      date: "2026-09-25T00:00:00.000Z",
+      generating: false,
+      state: "complete",
+    },
+  ]);
+  expect(
+    append.mock.calls.some(([, content]) =>
+      String(content).includes("result is ready"),
+    ),
+  ).toBe(false);
+  expect(
+    append.mock.calls.some(([, content]) =>
+      String(content).includes("Guidance was sent"),
+    ),
+  ).toBe(true);
+});

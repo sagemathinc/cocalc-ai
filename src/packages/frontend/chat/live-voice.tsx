@@ -4,12 +4,13 @@
  */
 import { Button, Modal, Progress } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ProjectedChatMessage } from "@cocalc/chat-client";
+import type { ChatSnapshot, ProjectedChatMessage } from "@cocalc/chat-client";
 import {
   LiveDelegation,
   type LiveEvent,
 } from "@cocalc/chat-client/live-delegation";
 import { LIVE_VOICE_POLICY } from "@cocalc/chat-client/live-voice-policy";
+import { LiveProgressContext } from "@cocalc/chat-client/live-progress";
 import type {
   LiveVoiceRequest,
   LiveVoiceResult,
@@ -17,6 +18,7 @@ import type {
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useCodexLog } from "./use-codex-log";
 import "./live-voice.css";
 
 interface Call {
@@ -24,6 +26,7 @@ interface Call {
   channel: RTCDataChannel;
   audio: HTMLAudioElement;
   bridge: LiveDelegation;
+  progress: LiveProgressContext;
   abort: AbortController;
   stream?: MediaStream;
   sessionId?: string;
@@ -105,6 +108,7 @@ export function ChatLiveVoice({
   projectId,
   threadId,
   messages,
+  threadRunning,
   onDelegate,
   visible,
   panelOpen = true,
@@ -115,11 +119,12 @@ export function ChatLiveVoice({
   projectId: string;
   threadId: string;
   messages: ProjectedChatMessage[];
+  threadRunning: boolean;
   onDelegate: (
     text: string,
     isCurrentThread: () => boolean,
     signal: AbortSignal,
-  ) => Promise<{ message_id: string }>;
+  ) => Promise<{ message_id: string; kind?: "guidance" | "work" }>;
   visible: boolean;
   panelOpen?: boolean;
   onClose?: () => void;
@@ -133,6 +138,7 @@ export function ChatLiveVoice({
   const [confirming, setConfirming] = useState(false);
   const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
   const [muted, setMuted] = useState(false);
+  const [proactive, setProactive] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState("");
@@ -144,6 +150,54 @@ export function ChatLiveVoice({
   const generationRef = useRef(0);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const delegateRef = useRef({ threadId, onDelegate });
+  delegateRef.current = { threadId, onDelegate };
+  const runningAgent = [...messages]
+    .reverse()
+    .find((message) => message.role === "agent" && message.generating);
+  const activity = useCodexLog({
+    projectId,
+    liveLogStream: runningAgent?.acp_live_preview_stream,
+    liveStreamIsProjection: true,
+    generating: !!runningAgent,
+    enabled:
+      visible && phase !== "idle" && !!runningAgent?.acp_live_preview_stream,
+  });
+  const progressSnapshot: ChatSnapshot = {
+    revision: 0,
+    connection: visible ? "connected" : "disconnected",
+    ready: true,
+    project_id: projectId,
+    path: "",
+    selected_thread_id: threadId,
+    threads: [
+      {
+        thread_id: threadId,
+        state: threadRunning
+          ? "running"
+          : messages.at(-1)?.state === "error"
+            ? "error"
+            : messages.at(-1)?.state === "interrupted"
+              ? "interrupted"
+              : "complete",
+        active_message_id: runningAgent?.message_id,
+      },
+    ],
+    messages: messages.map((message) =>
+      message.message_id === runningAgent?.message_id && activity.events
+        ? {
+            ...message,
+            activity: {
+              state: activity.loadState === "error" ? "error" : "ready",
+              source: "live-preview",
+              events: activity.events,
+            },
+          }
+        : message,
+    ),
+  };
+  const progressSnapshotRef = useRef(progressSnapshot);
+  progressSnapshotRef.current = progressSnapshot;
   const threadRef = useRef(threadId);
   threadRef.current = threadId;
   const rpc = useCallback(
@@ -173,6 +227,11 @@ export function ChatLiveVoice({
     callRef.current?.bridge.observe(messages);
   }, [messages]);
   useEffect(() => {
+    const call = callRef.current;
+    if (call && phase === "live")
+      call.progress.observe(progressSnapshot, threadId);
+  }, [progressSnapshot, threadId, phase]);
+  useEffect(() => {
     if (phase !== "live") return;
     const started = Date.now();
     const timer = setInterval(
@@ -191,6 +250,7 @@ export function ChatLiveVoice({
       call.abort.abort();
       call.rejectStartup?.(new Error("Live call cancelled."));
       call.bridge.close();
+      call.progress.close();
       clearInterval(call.heartbeat);
       clearTimeout(call.deadline);
       call.stream?.getTracks().forEach((track) => track.stop());
@@ -239,7 +299,6 @@ export function ChatLiveVoice({
     if (!capabilities?.enabled || callRef.current || !threadId) return;
     ++generationRef.current;
     const boundThreadId = threadId;
-    const boundDelegate = onDelegate;
     setConfirming(false);
     setError("");
     setCaption("");
@@ -260,9 +319,21 @@ export function ChatLiveVoice({
       threadRef.current === boundThreadId;
     audio.autoplay = true;
     audio.setAttribute("playsinline", "true");
+    const progress = new LiveProgressContext((type, content, id) => {
+      if (isCurrentCall() && channel.readyState === "open")
+        channel.send(JSON.stringify({ type, content, delegation_id: id }));
+    }, proactive);
     const bridge = new LiveDelegation(
       async (text) => {
-        const accepted = await boundDelegate(text, isCurrentCall, abort.signal);
+        if (!isCurrentCall() || delegateRef.current.threadId !== boundThreadId)
+          throw new Error(
+            "The selected agent changed. Start a new voice call.",
+          );
+        const accepted = await delegateRef.current.onDelegate(
+          text,
+          isCurrentCall,
+          abort.signal,
+        );
         // Acceptance may arrive after the final chat update was observed.
         setTimeout(() => {
           if (isCurrentCall()) bridge.observe(messagesRef.current);
@@ -276,12 +347,14 @@ export function ChatLiveVoice({
       (value) => {
         if (isCurrentCall()) setStatus(value);
       },
+      (text) => progress.answer(text),
     );
     const call: Call = {
       peer,
       channel,
       audio,
       bridge,
+      progress,
       abort,
       stopped: false,
     };
@@ -407,6 +480,7 @@ export function ChatLiveVoice({
       if (call.stopped) return;
       call.stream.getTracks().forEach((track) => (track.enabled = true));
       setPhase("live");
+      progress.observe(progressSnapshotRef.current, boundThreadId);
       setStatus("Listening. Spoken tasks are sent to this agent.");
       call.heartbeat = setInterval(() => {
         void rpc({ action: "heartbeat", session_id: call.sessionId })
@@ -652,6 +726,17 @@ export function ChatLiveVoice({
                 }}
               >
                 {muted ? "Unmute microphone" : "Mute microphone"}
+              </Button>
+            )}
+            {phase === "live" && (
+              <Button
+                onClick={() => {
+                  const next = !proactive;
+                  setProactive(next);
+                  callRef.current?.progress.setProactive(next);
+                }}
+              >
+                {proactive ? "On-demand updates" : "Announce milestones"}
               </Button>
             )}
             <Button danger onClick={() => void stop()}>
