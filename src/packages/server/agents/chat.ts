@@ -6,6 +6,9 @@ import {
   type ImmerDB,
 } from "@cocalc/chat/server";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+import { getTrustedProjectHostClient } from "@cocalc/server/conat/file-server-client";
+import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
+import { assertActor } from "./access";
 import type { Client } from "@cocalc/conat/core/client";
 
 export async function withAgentChat<T>(
@@ -20,9 +23,13 @@ export async function withAgentChat<T>(
     client: Client,
   ) => Promise<T>,
 ): Promise<T> {
-  const client = conatWithProjectRoutingForAccount({
-    account_id: agent.created_by,
-  });
+  await assertActor(agent.created_by, agent.project_id);
+  const client = isWorkspaceProjectRuntime()
+    ? conatWithProjectRoutingForAccount({ account_id: agent.created_by })
+    : await getTrustedProjectHostClient({
+        project_id: agent.project_id,
+        account_id: agent.created_by,
+      });
   const db = await acquireChatSyncDB({
     client,
     project_id: agent.project_id,
