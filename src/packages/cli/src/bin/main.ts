@@ -2190,7 +2190,13 @@ async function getOrCreateRoutedProjectHostClient(
   }
 
   const existing = ctx.routedProjectHostClients[cacheKey];
-  if (existing && existing.address === address && existing.client) {
+  if (
+    existing &&
+    existing.address === address &&
+    existing.client &&
+    (!ctx.apiKey ||
+      (existing.expiresAt != null && Date.now() < existing.expiresAt - 1_000))
+  ) {
     return existing;
   }
   if (existing) {
