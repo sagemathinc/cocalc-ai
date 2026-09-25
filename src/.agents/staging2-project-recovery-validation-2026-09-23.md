@@ -2341,7 +2341,9 @@ retried without operator intervention and completed the backup. Both backup
 IDs were listed from their remote repositories and matched the owning bay's
 `latest_scheduled_backup_id` records. Each marker was restored to a separate
 file and compared byte-for-byte with its source. Each local Btrfs snapshot's
-marker also matched the source file.
+marker also matched the source file. An audited read-only bay query confirmed
+that both projects' snapshot and backup status rows were classified as
+`paying`, the internal name for non-free funding.
 
 On the shared test project, a home-only restore of the older local snapshot
 returned a deliberately changed marker to its original value. The automatic
@@ -2352,6 +2354,8 @@ At 16:40 UTC, project-recovery health was healthy: zero overdue delay, zero
 unknown statuses, zero unaccounted due obligations, no host at the memory
 safety gate, and 4/4 active backup shards covered by recent passing
 remote-only restore drills.
+Both disposable projects were then stopped to free staging runtime capacity;
+their recovery histories remain available for review.
 
 The live functional checks do not complete the longer observation windows in
 the plan. The natural at-limit backup replacement, controlled repository
