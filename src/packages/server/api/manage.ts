@@ -12,6 +12,7 @@ they have no password, then the provided one is ignored.
 
 import getPool from "@cocalc/database/pool";
 import { randomBytes } from "node:crypto";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -523,6 +524,7 @@ Record that access happened by updating last_active.
 */
 export async function getAccountWithApiKey(
   secret: string,
+  { recordActivity = true }: { recordActivity?: boolean } = {},
 ): Promise<ApiKeyPrincipal | undefined> {
   log.debug("getAccountWithApiKey");
   const pool = getPool("medium");
@@ -545,11 +547,20 @@ export async function getAccountWithApiKey(
     [v2.key_id],
   );
   if (rows.length > 0) {
-    return await checkApiKeyRows({ rows, secret, key_id: v2.key_id });
+    const owner = await getClusterAccountById(rows[0].account_id);
+    if (owner?.home_bay_id === getConfiguredBayId()) {
+      return await checkApiKeyRows({
+        rows,
+        secret,
+        key_id: v2.key_id,
+        recordActivity,
+      });
+    }
   }
   return await checkClusterAccountApiKeyDirectoryEntry({
     secret,
     key_id: v2.key_id,
+    recordActivity,
   });
 }
 
@@ -557,10 +568,12 @@ async function checkApiKeyRows({
   rows,
   secret,
   key_id,
+  recordActivity,
 }: {
   rows: any[];
   secret: string;
   key_id: string;
+  recordActivity: boolean;
 }): Promise<ApiKeyPrincipal | undefined> {
   if (rows.length == 0) return undefined;
   await ensureAccountSecurityStateReady();
@@ -624,21 +637,25 @@ async function checkApiKeyRows({
     }
 
     // Yes, caller definitely has a valid key.
-    await getPool("medium").query(
-      "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
-      [rows[0].id],
-    );
+    if (recordActivity) {
+      await getPool("medium").query(
+        "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
+        [rows[0].id],
+      );
+    }
     if (rows[0].account_id) {
-      await touchClusterAccountApiKeyDirectoryEntry({ key_id });
-      recordApiKeyAuditEventSoon({
-        event: "api_key_used",
-        value: {
-          account_id: rows[0].account_id,
-          api_key_id: rows[0].id,
-          key_id: rows[0].key_id ?? key_id,
-          source: "api-key-auth-local",
-        },
-      });
+      if (recordActivity) {
+        await touchClusterAccountApiKeyDirectoryEntry({ key_id });
+        recordApiKeyAuditEventSoon({
+          event: "api_key_used",
+          value: {
+            account_id: rows[0].account_id,
+            api_key_id: rows[0].id,
+            key_id: rows[0].key_id ?? key_id,
+            source: "api-key-auth-local",
+          },
+        });
+      }
       return {
         account_id: rows[0].account_id,
         api_key_id: rows[0].id,
@@ -669,9 +686,11 @@ async function checkApiKeyRows({
 async function checkClusterAccountApiKeyDirectoryEntry({
   secret,
   key_id,
+  recordActivity,
 }: {
   secret: string;
   key_id: string;
+  recordActivity: boolean;
 }): Promise<ApiKeyPrincipal | undefined> {
   const v2 = parseApiKeyV2(secret);
   if (!v2) return undefined;
@@ -734,6 +753,22 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     });
     return undefined;
   }
+  // A replicated directory entry is a locator, never the authorization source.
+  // The home row may already have been deleted or narrowed while propagation failed.
+  const { getApiKeyAuthorizationState } =
+    await import("./key-authorization-state");
+  const authoritative = await getApiKeyAuthorizationState({
+    account_id: entry.account_id,
+    key_id: v2.key_id,
+  });
+  if (
+    !authoritative ||
+    authoritative.hash !== entry.hash ||
+    authoritative.scope_revision !== Number(entry.scope_revision ?? 1) ||
+    (authoritative.expire_ms ?? null) !== (entry.expire ?? null)
+  ) {
+    return undefined;
+  }
   let scope: ApiKeyScope;
   const scopeRevision = Number(entry.scope_revision ?? 1);
   try {
@@ -745,6 +780,9 @@ async function checkClusterAccountApiKeyDirectoryEntry({
       capabilities: (entry.capabilities ?? []) as ApiKeyCapability[],
       allowed_project_ids: entry.allowed_project_ids ?? [],
     });
+    if (JSON.stringify(scope) !== JSON.stringify(authoritative.scope)) {
+      return undefined;
+    }
   } catch {
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
@@ -757,16 +795,18 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     });
     return undefined;
   }
-  await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
-  recordApiKeyAuditEventSoon({
-    event: "api_key_used",
-    value: {
-      account_id: entry.account_id,
-      api_key_id: -1,
-      key_id: entry.key_id,
-      source: "api-key-auth-directory",
-    },
-  });
+  if (recordActivity) {
+    await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+    recordApiKeyAuditEventSoon({
+      event: "api_key_used",
+      value: {
+        account_id: entry.account_id,
+        api_key_id: -1,
+        key_id: entry.key_id,
+        source: "api-key-auth-directory",
+      },
+    });
+  }
   return {
     account_id: entry.account_id,
     api_key_id: -1,

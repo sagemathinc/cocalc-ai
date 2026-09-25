@@ -18,6 +18,7 @@ import { effectiveApiKeyScope } from "./api-key-scope";
 import { ensureApiKeysV2Schema } from "./manage";
 
 export interface ApiKeyAuthorizationState {
+  hash: string;
   scope: ApiKeyScope;
   scope_revision: number;
   expire_ms?: number;
@@ -39,7 +40,7 @@ export async function getApiKeyAuthorizationStateLocal({
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) return null;
   const { rows } = await getPool().query(
-    `SELECT scope, scope_revision, capabilities, allowed_project_ids, expire
+    `SELECT hash, scope, scope_revision, capabilities, allowed_project_ids, expire
        FROM api_keys WHERE account_id=$1 AND key_id=$2 LIMIT 1`,
     [account_id, key_id],
   );
@@ -49,6 +50,8 @@ export async function getApiKeyAuthorizationStateLocal({
     row.expire == null ? undefined : new Date(row.expire).getTime();
   const scope_revision = Number(row.scope_revision);
   if (
+    typeof row.hash !== "string" ||
+    !row.hash ||
     (expire_ms != null &&
       (!Number.isFinite(expire_ms) || expire_ms <= Date.now())) ||
     !Number.isSafeInteger(scope_revision) ||
@@ -58,6 +61,7 @@ export async function getApiKeyAuthorizationStateLocal({
   }
   try {
     return {
+      hash: row.hash,
       scope: effectiveApiKeyScope({
         scope: row.scope,
         capabilities: row.capabilities ?? [],

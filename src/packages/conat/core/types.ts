@@ -14,6 +14,7 @@ interface User {
   auth_token_fingerprint?: string;
   auth_iat_s?: number;
   auth_exp_s?: number;
+  auth_api_key_reply_prefix?: string;
   error?: string;
 }
 

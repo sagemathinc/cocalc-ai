@@ -38,6 +38,11 @@ const isAccountBannedCachedMock = jest.fn();
 const getAccountRevokedBeforeCachedMock = jest.fn();
 const authenticateBayCredentialMock = jest.fn();
 const isBayCredentialUserActiveMock = jest.fn();
+const getAccountWithApiKeyMock = jest.fn();
+
+jest.mock("@cocalc/server/api/manage", () => ({
+  getAccountWithApiKey: (...args: any[]) => getAccountWithApiKeyMock(...args),
+}));
 
 jest.mock("@cocalc/backend/data", () => ({
   ...jest.requireActual("@cocalc/backend/data"),
@@ -130,6 +135,7 @@ import {
   resolveProjectAccessAllowRemote,
 } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
+import { API_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import {
   getRememberMeCookieValuesFromHeader,
@@ -180,6 +186,7 @@ beforeEach(() => {
   getAccountRevokedBeforeCachedMock.mockReset().mockReturnValue(undefined);
   authenticateBayCredentialMock.mockReset();
   isBayCredentialUserActiveMock.mockReset().mockResolvedValue(true);
+  getAccountWithApiKeyMock.mockReset();
   (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
   (resolveProjectAccessAllowRemote as jest.Mock).mockReset();
 });
@@ -192,6 +199,50 @@ function projectHostBearerToken(nonce?: string) {
     nonce,
   })}.signature`;
 }
+
+it("issues a distinct reply inbox for each API-key socket", async () => {
+  getAccountWithApiKeyMock.mockResolvedValue({
+    account_id,
+    auth_method: "api_key",
+    key_id: "key-1",
+    scope_revision: 1,
+  });
+  const socket = {
+    handshake: {
+      auth: {},
+      headers: { cookie: `${API_COOKIE_NAME}=test-key` },
+    },
+  };
+  const first = await getUser(socket);
+  const second = await getUser(socket);
+  const firstPrefix = (first as { auth_api_key_reply_prefix?: string })
+    .auth_api_key_reply_prefix;
+  expect(firstPrefix).toMatch(/^_INBOX\.api-key-[0-9a-f-]{36}$/);
+  const secondPrefix = (second as { auth_api_key_reply_prefix?: string })
+    .auth_api_key_reply_prefix;
+  expect(secondPrefix).not.toBe(firstPrefix);
+  expect(getAccountWithApiKeyMock).toHaveBeenCalledWith("test-key", {
+    recordActivity: true,
+  });
+  await getUser(socket, undefined, { revalidation: true });
+  expect(getAccountWithApiKeyMock).toHaveBeenLastCalledWith("test-key", {
+    recordActivity: false,
+  });
+  expect(
+    await isAllowed({
+      user: first,
+      subject: `${firstPrefix}.reply`,
+      type: "sub",
+    }),
+  ).toBe(true);
+  expect(
+    await isAllowed({
+      user: first,
+      subject: `${secondPrefix}.reply`,
+      type: "sub",
+    }),
+  ).toBe(false);
+});
 
 describe("external session transport", () => {
   it("authenticates installation without using human or native credentials and rechecks every subject", async () => {

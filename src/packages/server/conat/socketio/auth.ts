@@ -57,7 +57,7 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -277,6 +277,7 @@ async function accountSecurityStateAllowsAccount({
 export async function getUser(
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
+  options?: { revalidation?: boolean },
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
@@ -389,12 +390,17 @@ export async function getUser(
 
   if (cookies[API_COOKIE_NAME]) {
     // account API key
-    const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!);
+    const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!, {
+      recordActivity: !options?.revalidation,
+    });
     if (!user) {
       throw Error("api key no longer valid");
     }
     assertHubInteractiveEgressAllowed(socket, user);
-    return user;
+    return {
+      ...user,
+      auth_api_key_reply_prefix: `_INBOX.api-key-${randomUUID()}`,
+    };
   }
   if (cookies[PROJECT_SECRET_COOKIE_NAME]) {
     const project_id = cookies[PROJECT_ID_COOKIE_NAME];

@@ -20,6 +20,8 @@ export type CoCalcUser =
       auth_token_fingerprint?: string;
       auth_exp_s?: number;
       auth_lease_exp_s?: number;
+      auth_api_key_reply_prefix?: string;
+      auth_method?: "api_key";
       auth_api_key?: import("./project-host-token").ProjectHostApiKeyBinding;
     }
   | {
@@ -164,7 +166,20 @@ export function checkCommonPermissions({
   }
 
   // Only allow subscribing to this identity's inbox.
-  if (type === "sub" && subject.startsWith(inboxPrefix(user))) {
+  if (
+    type === "sub" &&
+    subject.startsWith("_INBOX.") &&
+    "auth_method" in user &&
+    user.auth_method === "api_key" &&
+    !user.auth_api_key_reply_prefix
+  ) {
+    return false;
+  }
+  const replyPrefix = inboxPrefix(user);
+  if (
+    type === "sub" &&
+    (subject === replyPrefix || subject.startsWith(`${replyPrefix}.`))
+  ) {
     return true;
   }
   if (type === "sub" && subject.startsWith("_INBOX.")) {

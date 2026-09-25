@@ -4717,6 +4717,7 @@ export interface InterBayAccountLocalApi
     account_id: string;
     key_id: string;
   }) => Promise<{
+    hash: string;
     scope: import("@cocalc/util/db-schema/api-keys").ApiKeyScope;
     scope_revision: number;
     expire_ms?: number;

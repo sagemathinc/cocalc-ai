@@ -48,6 +48,7 @@ describe("account-home API key authorization state", () => {
             ],
           },
           scope_revision: 4,
+          hash: "stored-hash",
           expire: new Date(Date.now() + 60_000),
         },
       ],
@@ -59,7 +60,7 @@ describe("account-home API key authorization state", () => {
     isAccountBannedCachedMock.mockReturnValue(false);
   });
 
-  it("reads live key scope from the home row without returning a secret", async () => {
+  it("reads live key scope and verifier from the home row without returning a secret", async () => {
     const { getApiKeyAuthorizationStateLocal } =
       await import("./key-authorization-state");
     const state = await getApiKeyAuthorizationStateLocal({
@@ -68,9 +69,9 @@ describe("account-home API key authorization state", () => {
     });
     expect(state).toMatchObject({
       scope_revision: 4,
+      hash: "stored-hash",
       scope: { version: 1 },
     });
-    expect(state).not.toHaveProperty("hash");
     expect(queryMock.mock.calls[0][0]).toContain(
       "FROM api_keys WHERE account_id=$1 AND key_id=$2",
     );

@@ -1317,6 +1317,7 @@ async function connectRemote({
           project_id?: string;
           hub_id?: string;
           host_id?: string;
+          auth_api_key_reply_prefix?: string;
         }
       | undefined;
     if (!user) return undefined;
@@ -1325,6 +1326,7 @@ async function connectRemote({
       project_id: user.project_id,
       hub_id: user.hub_id,
       host_id: user.host_id,
+      auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
     });
   };
 
@@ -2277,6 +2279,7 @@ async function getOrCreateRoutedProjectHostClient(
           project_id?: string;
           hub_id?: string;
           host_id?: string;
+          auth_api_key_reply_prefix?: string;
         }
       | undefined;
     if (!user) return undefined;
@@ -2285,6 +2288,7 @@ async function getOrCreateRoutedProjectHostClient(
       project_id: user.project_id,
       hub_id: user.hub_id,
       host_id: user.host_id,
+      auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
     });
   };
   routed.conn.on("connect_error", (err: unknown) => {

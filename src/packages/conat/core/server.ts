@@ -270,6 +270,7 @@ export function init(opts: Options) {
 export type UserFunction = (
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
+  options?: { revalidation?: boolean },
 ) => Promise<any>;
 
 export type AllowFunction = (opts: {
@@ -512,7 +513,7 @@ export class ConatServer extends EventEmitter {
         : "legacy",
     });
     this.cluster = !!id && !!clusterName;
-    this.getUser = async (socket) => {
+    this.getUser = async (socket, _, options) => {
       if (getUser == null) {
         // no auth at all
         return null;
@@ -535,7 +536,7 @@ export class ConatServer extends EventEmitter {
             user: { hub_id: "cluster-link" },
           };
         }
-        return await getUser(socket, systemAccounts);
+        return await getUser(socket, systemAccounts, options);
       }
     };
     this.isAllowed = isAllowed ?? (async () => true);
@@ -1809,12 +1810,55 @@ export class ConatServer extends EventEmitter {
           )
         : undefined;
     leaseTimer?.unref?.();
+    // API-key sockets can carry subscriptions for a long time. Reauthenticate
+    // the original credential so revocation also closes existing interests.
+    let apiKeyRefreshInFlight = false;
+    const apiKeyRefreshTimer =
+      !user?.error && user?.auth_method === "api_key"
+        ? setInterval(async () => {
+            if (!socket.connected) return;
+            if (apiKeyRefreshInFlight) {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+              return;
+            }
+            apiKeyRefreshInFlight = true;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const current = await Promise.race([
+                this.getUser(socket, undefined, { revalidation: true }),
+                new Promise<never>((_, reject) => {
+                  timeout = setTimeout(
+                    () => reject(new Error("API key revalidation timed out")),
+                    10_000,
+                  );
+                }),
+              ]);
+              if (
+                current?.auth_method !== "api_key" ||
+                current.account_id !== user.account_id ||
+                current.key_id !== user.key_id ||
+                current.scope_revision !== user.scope_revision
+              ) {
+                throw new Error("API key authorization changed");
+              }
+            } catch {
+              socket.disconnect(true);
+              socket.conn?.close?.();
+            } finally {
+              if (timeout) clearTimeout(timeout);
+              apiKeyRefreshInFlight = false;
+            }
+          }, 15_000)
+        : undefined;
+    apiKeyRefreshTimer?.unref?.();
     this.log("new connection", { id, user });
     if (this.subscriptions[id] == null) {
       this.subscriptions[id] = new Set<string>();
     }
     socket.on("disconnecting", async () => {
       if (leaseTimer) clearTimeout(leaseTimer);
+      if (apiKeyRefreshTimer) clearInterval(apiKeyRefreshTimer);
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);
       socket.conn?.off?.("packetCreate", onServerPacketCreate);

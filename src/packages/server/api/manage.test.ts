@@ -12,6 +12,15 @@ let upsertClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let deleteClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let centralLogMock: jest.Mock;
 let resolveProjectReferenceMock: jest.Mock;
+let getApiKeyAuthorizationStateMock: jest.Mock;
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "bay-0",
+}));
+jest.mock("./key-authorization-state", () => ({
+  getApiKeyAuthorizationState: (...args: any[]) =>
+    getApiKeyAuthorizationStateMock(...args),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -109,6 +118,7 @@ describe("manageApiKeys local bay access", () => {
       home_bay_id: "bay-0",
     }));
     getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => null);
+    getApiKeyAuthorizationStateMock = jest.fn(async () => null);
     touchClusterAccountApiKeyDirectoryEntryMock = jest.fn(
       async () => undefined,
     );
@@ -352,6 +362,42 @@ describe("manageApiKeys local bay access", () => {
     ]);
   });
 
+  it("revalidates a local key without updating activity or writing a use audit", async () => {
+    queryMock = jest.fn(async (sql) =>
+      `${sql}`.includes("WHERE key_id=$1")
+        ? {
+            rows: [
+              {
+                id: 9,
+                key_id: "key-id-123",
+                account_id: ACCOUNT_ID,
+                hash: "hash",
+                scope_revision: 1,
+                capabilities: ["account:read"],
+                allowed_project_ids: [],
+              },
+            ],
+          }
+        : { rows: [] },
+    );
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(
+      getAccountWithApiKey("sk-cocalc-v2.key-id-123.secret-part", {
+        recordActivity: false,
+      }),
+    ).resolves.toMatchObject({ account_id: ACCOUNT_ID, key_id: "key-id-123" });
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("UPDATE api_keys SET last_active="),
+      ),
+    ).toBe(false);
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+    await flushAuditEvents();
+    expect(centralLogMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: "api_key_used" }),
+    );
+  });
+
   it("keeps mixed per-project grants separate when authenticating a versioned key", async () => {
     const b = "22222222-2222-4222-8222-222222222222";
     const c = "33333333-3333-4333-8333-333333333333";
@@ -438,6 +484,19 @@ describe("manageApiKeys local bay access", () => {
       expire: null,
       last_active: null,
     }));
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+    }));
+    getApiKeyAuthorizationStateMock = jest.fn(async () => ({
+      hash: "hash",
+      scope_revision: 1,
+      scope: {
+        version: 1,
+        account: [],
+        projects: [{ project_id: PROJECT_ID, capabilities: ["project:exec"] }],
+      },
+    }));
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toEqual({
       account_id: ACCOUNT_ID,
@@ -464,6 +523,10 @@ describe("manageApiKeys local bay access", () => {
     expect(touchClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
       key_id: "key-id-remote",
     });
+    expect(getApiKeyAuthorizationStateMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      key_id: "key-id-remote",
+    });
     await flushAuditEvents();
     expect(centralLogMock).toHaveBeenCalledWith({
       event: "api_key_used",
@@ -474,6 +537,94 @@ describe("manageApiKeys local bay access", () => {
         source: "api-key-auth-directory",
       },
     });
+  });
+
+  it.each([
+    ["deleted", null],
+    ["narrowed", { hash: "hash", scope_revision: 2 }],
+    ["replaced", { hash: "new-hash", scope_revision: 1 }],
+  ])(
+    "rejects a stale directory entry after the home key is %s",
+    async (_reason, state) => {
+      getClusterAccountByIdMock = jest.fn(async () => ({
+        account_id: ACCOUNT_ID,
+        home_bay_id: "bay-1",
+      }));
+      getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => ({
+        key_id: "key-id-remote",
+        account_id: ACCOUNT_ID,
+        home_bay_id: "bay-1",
+        hash: "hash",
+        capabilities: ["project:exec"],
+        allowed_project_ids: [PROJECT_ID],
+        expire: null,
+      }));
+      getApiKeyAuthorizationStateMock.mockResolvedValue(state);
+      const { getAccountWithApiKey } = await import("./manage");
+      await expect(
+        getAccountWithApiKey("sk-cocalc-v2.key-id-remote.secret-part"),
+      ).resolves.toBeUndefined();
+      expect(
+        touchClusterAccountApiKeyDirectoryEntryMock,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed when the account home is unavailable", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+    }));
+    getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => ({
+      key_id: "key-id-remote",
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      hash: "hash",
+      capabilities: ["project:exec"],
+      allowed_project_ids: [PROJECT_ID],
+      expire: null,
+    }));
+    getApiKeyAuthorizationStateMock.mockRejectedValue(
+      new Error("home unavailable"),
+    );
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(
+      getAccountWithApiKey("sk-cocalc-v2.key-id-remote.secret-part"),
+    ).rejects.toThrow("home unavailable");
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not trust a stale local row after account-home migration", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+    }));
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
+        return {
+          rows: [
+            {
+              id: 9,
+              key_id: "key-id-remote",
+              account_id: ACCOUNT_ID,
+              hash: "old-hash",
+              scope_revision: 1,
+              capabilities: ["project:exec"],
+              allowed_project_ids: [PROJECT_ID],
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(
+      getAccountWithApiKey("sk-cocalc-v2.key-id-remote.secret-part"),
+    ).resolves.toBeUndefined();
+    expect(getClusterAccountApiKeyByKeyIdMock).toHaveBeenCalledWith(
+      "key-id-remote",
+    );
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
   });
 
   it("rejects local api keys for accounts banned in the replicated security cache", async () => {

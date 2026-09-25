@@ -52,6 +52,31 @@ describe("authenticated Conat caller metadata", () => {
     await server.close();
   });
 
+  it("keeps a valid API-key socket open, then closes its interests after revocation", async () => {
+    let valid = true;
+    const getUser = jest.fn(async () => {
+      if (!valid) throw new Error("API key revoked");
+      return {
+        account_id: "00000000-0000-4000-8000-000000000001",
+        auth_method: "api_key",
+        key_id: "key-1",
+        scope_revision: 1,
+      };
+    });
+    const server = init({ port: 0, getUser, isAllowed: async () => true });
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    await client.subscribe("test.api-key.subscription", () => undefined);
+    await delay(16_000);
+    expect(client.conn.connected).toBe(true);
+    expect(getUser).toHaveBeenCalledTimes(2);
+    valid = false;
+    await delay(16_000);
+    expect(client.conn.connected).toBe(false);
+    client.close();
+    await server.close();
+  }, 40_000);
+
   it("requires a distinct link credential for authenticated clusters", () => {
     expect(() =>
       init({
