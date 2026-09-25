@@ -8,14 +8,17 @@ import {
   claudeSubscriptionContainerArgs,
   cleanupClaudeSubscriptionController,
 } from "./claude-subscription-controller";
+import { mountArg } from "@cocalc/backend/podman";
 
 test("controller uses the same normalized image cache key as project startup", () => {
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
 });
 
 jest.mock("@cocalc/backend/podman", () => ({
-  mountArg: ({ source, target, readOnly }) =>
-    `mount:${source}:${target}:${readOnly === true}`,
+  mountArg: jest.fn(
+    ({ source, target, readOnly }) =>
+      `mount:${source}:${target}:${readOnly === true}`,
+  ),
 }));
 jest.mock("../codex/codex-project", () => ({
   ensureProjectContainerRunning: jest.fn(),
@@ -35,6 +38,8 @@ test("subscription controller has no project filesystem, secret or network mount
     gid: 1000,
   });
   expect(args).toContain("--read-only");
+  expect(args).toContain("--cap-drop=all");
+  expect(args).toContain("--security-opt=no-new-privileges");
   expect(args).toContain("/workspace:mode=1777");
   expect(args).toContain("/tmp:mode=1777");
   expect(args).toContain("cocalc.runtime=acp");
@@ -46,6 +51,12 @@ test("subscription controller has no project filesystem, secret or network mount
   expect(args).toContain("mount:/private-auth-home:/home/claude:false");
   expect(args).toContain("mount:/managed-harnesses:/opt/cocalc/harnesses:true");
   expect(args).toContain("mount:/managed-node:/opt/cocalc/bin:true");
+  expect(mountArg).toHaveBeenCalledWith({
+    source: "/managed-node",
+    target: "/opt/cocalc/bin",
+    readOnly: true,
+    options: "nosuid",
+  });
   expect(args).toContain(
     "mount:/private-tool-bridge:/run/cocalc/agent-tools:true",
   );

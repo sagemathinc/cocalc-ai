@@ -139,7 +139,9 @@ export function claudeSubscriptionContainerArgs(options: {
         ]
       : []),
     ...Object.entries(nodeMounts).map(([source, target]) =>
-      mountArg({ source, target, readOnly: true }),
+      // Host bootstrap gives Node a file capability for HTTPS. Ignore that
+      // capability here so exec succeeds with the controller's empty cap set.
+      mountArg({ source, target, readOnly: true, options: "nosuid" }),
     ),
     "--env",
     `HOME=${CONTROLLER_HOME}`,
