@@ -14,6 +14,7 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
+import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
 import {
   DEFAULT_PROJECT_RUNTIME_GID,
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -29,6 +30,7 @@ export interface SandboxExecOptions {
   env?: Record<string, string>;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  signal?: AbortSignal;
   /**
    * When true, start a fresh one-off container instead of exec'ing into the
    * existing project container. This is useful when the main container is not
@@ -80,7 +82,9 @@ export async function sandboxExec({
   maxOutputBytes,
   useEphemeral,
   noNetwork,
+  signal,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
+  signal?.throwIfAborted();
   logger.debug("sandboxExec", {
     project_id,
     useEphemeral,
@@ -112,7 +116,10 @@ export async function sandboxExec({
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
   ): Promise<SandboxExecResult> => {
     return await new Promise((resolve) => {
-      execFile(
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const stop = () => child.stdin?.end();
+      const child = execFile(
         launcher?.command ?? "podman",
         launcher ? [...launcher.argsPrefix, ...args] : args,
         {
@@ -120,13 +127,16 @@ export async function sandboxExec({
           // inherit a deployment or project directory that may have been
           // replaced, unmounted, or made inaccessible while the host stays up.
           cwd: "/",
-          timeout: timeoutMs,
+          timeout: signal ? (timeoutMs ?? 120_000) + 10_000 : timeoutMs,
           maxBuffer: Math.max(1024, maxOutputBytes ?? 10 * 1024 * 1024),
           killSignal: "SIGKILL",
           env: podmanEnv(),
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (error: any, stdout?: string, stderr?: string) => {
+          clearInterval(heartbeat);
+          clearTimeout(deadline);
+          signal?.removeEventListener("abort", stop);
           if (error) {
             resolve({
               stdout: stdout ?? "",
@@ -139,6 +149,16 @@ export async function sandboxExec({
           }
         },
       );
+      if (signal) {
+        child.stdin?.on("error", () => {});
+        heartbeat = setInterval(() => {
+          if (!child.stdin?.destroyed && !child.stdin?.writableEnded)
+            child.stdin?.write(".\n");
+        }, 1000);
+        deadline = setTimeout(stop, timeoutMs ?? 120_000);
+        signal.addEventListener("abort", stop, { once: true });
+        if (signal.aborted) stop();
+      }
     });
   };
 
@@ -203,7 +223,17 @@ export async function sandboxExec({
 
       rootfs = await mountRootFs({ project_id, home, config: { image } });
       args.push("--rootfs", rootfs);
-      args.push("/bin/bash", "-lc", script);
+      args.push(
+        ...(signal
+          ? [
+              "/opt/cocalc/bin/node",
+              "-e",
+              SANDBOX_COMMAND_SUPERVISOR,
+              "--",
+              script,
+            ]
+          : ["/bin/bash", "-lc", script]),
+      );
     } else {
       args.push(
         "exec",
@@ -226,9 +256,15 @@ export async function sandboxExec({
         "--workdir",
         getWorkdir(),
         `project-${project_id}`,
-        "/bin/bash",
-        "-lc",
-        script,
+        ...(signal
+          ? [
+              "/opt/cocalc/bin/node",
+              "-e",
+              SANDBOX_COMMAND_SUPERVISOR,
+              "--",
+              script,
+            ]
+          : ["/bin/bash", "-lc", script]),
       );
     }
 

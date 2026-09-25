@@ -74,6 +74,7 @@ test("resolves one exact account credential and creates a bounded relay", async 
     allowedPathPrefix: "/v1/",
     allowedMethods: ["GET", "POST"],
     credential: { header: "x-api-key", value: "sk-ant-account-secret" },
+    authorize: expect.any(Function),
   });
 });
 

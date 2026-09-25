@@ -7,9 +7,75 @@ import { spawn } from "node:child_process";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { readFile } from "node:fs/promises";
 import { createClaudeProjectToolBridge } from "./claude-project-tool-bridge";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
+
+async function sendTool(directory: string) {
+  const token = await readFile(join(directory, "token"), "utf8");
+  const socket = connect(join(directory, "tool.sock"));
+  socket.on("error", () => {});
+  socket.on("data", () => {});
+  socket.on("connect", () =>
+    socket.write(
+      JSON.stringify({ token, args: { script: "sleep 60" } }) + "\n",
+    ),
+  );
+  return socket;
+}
+
+test("closing during authorization cannot start a command", async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const execute = jest.fn();
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    execute,
+    async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  );
+  const socket = await sendTool(bridge.directory);
+  await waiting;
+  const closed = bridge.close();
+  release();
+  await closed;
+  expect(execute).not.toHaveBeenCalled();
+  socket.destroy();
+});
+
+test("cancel aborts an executing command and close is idempotent", async () => {
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let commandSignal: AbortSignal | undefined;
+  const bridge = await createClaudeProjectToolBridge(
+    PROJECT_ID,
+    async (_script, _cwd, signal) => {
+      commandSignal = signal;
+      entered();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return { code: 130, stdout: "", stderr: "canceled" };
+    },
+  );
+  const socket = await sendTool(bridge.directory);
+  await waiting;
+  await bridge.cancel();
+  expect(commandSignal?.aborted).toBe(true);
+  await bridge.close();
+  await bridge.close();
+  socket.destroy();
+});
 
 test("trusted MCP helper executes only through the scoped project socket", async () => {
   const execute = jest.fn(async (script: string, cwd?: string) => ({
@@ -63,7 +129,11 @@ test("trusted MCP helper executes only through the scoped project socket", async
     expect(JSON.parse(called.result.content[0].text).stdout).toBe(
       "ran pwd in /home/user",
     );
-    expect(execute).toHaveBeenCalledWith("pwd", "/home/user");
+    expect(execute).toHaveBeenCalledWith(
+      "pwd",
+      "/home/user",
+      expect.any(AbortSignal),
+    );
     authorized = false;
     const revoked = await request(4, "tools/call", {
       name: "project_exec",

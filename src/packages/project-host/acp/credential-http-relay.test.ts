@@ -98,6 +98,41 @@ test("injects the account credential only for the fixed provider origin", async 
   }
 });
 
+test("retained relay revalidates rotation and revocation before provider requests", async () => {
+  const keys: unknown[] = [];
+  const provider = createServer((request, response) => {
+    keys.push(request.headers["x-api-key"]);
+    request.resume();
+    response.end("ok");
+  });
+  await new Promise<void>((resolve) =>
+    provider.listen(0, "127.0.0.1", resolve),
+  );
+  const address = provider.address() as { port: number };
+  const directory = await mkdtemp(join(tmpdir(), "cocalc-relay-test-"));
+  let current: string | undefined = "rotated-fixture";
+  const relay = await createCredentialHttpRelay({
+    socketPath: join(directory, "provider.sock"),
+    upstream: `http://127.0.0.1:${address.port}`,
+    allowedPathPrefix: "/v1/",
+    credential: { header: "x-api-key", value: "old-fixture" },
+    authorize: async () => {
+      if (!current) throw Error("revoked");
+      return current;
+    },
+    allowHttpForTests: true,
+  });
+  try {
+    expect((await callRelay(relay)).status).toBe(200);
+    current = undefined;
+    expect((await callRelay(relay)).status).toBe(403);
+    expect(keys).toEqual(["rotated-fixture"]);
+  } finally {
+    await relay.close();
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+  }
+});
+
 test("rejects invalid capabilities and off-policy request targets", async () => {
   const provider = createServer((_request, response) => response.end("bad"));
   await new Promise<void>((resolve) =>

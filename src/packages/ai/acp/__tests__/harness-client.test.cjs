@@ -1139,6 +1139,7 @@ async function start(
   nodeArgs = [],
   onExit,
   beforeStop,
+  toolHooks = {},
 ) {
   let child;
   const client = await AcpHarnessClient.start(
@@ -1164,6 +1165,7 @@ async function start(
         await closed;
       });
       return {
+        ...toolHooks,
         stdout: child.stdout,
         stdin: child.stdin,
         stderr: child.stderr,
@@ -1181,6 +1183,29 @@ async function start(
   t.after(() => client.dispose());
   return client;
 }
+test("cancellation fences mediated tools and the next prompt resumes them", async (t) => {
+  const calls = [];
+  const client = await start(t, [], undefined, [], undefined, undefined, {
+    cancelTools: async () => {
+      calls.push("cancel");
+    },
+    resumeTools: () => {
+      calls.push("resume");
+    },
+  });
+  await client.open();
+  let ready;
+  const entered = new Promise((resolve) => {
+    ready = resolve;
+  });
+  const run = client.prompt("hang", async () => ready());
+  await entered;
+  await client.cancel();
+  await run;
+  assert.deepEqual(calls, ["resume", "cancel"]);
+  await client.prompt("hello", async () => {});
+  assert.deepEqual(calls, ["resume", "cancel", "resume"]);
+});
 test("failed process cleanup can be retried without reusing the disposed client", async (t) => {
   let attempts = 0;
   const client = await start(t, [], undefined, [], undefined, async () => {

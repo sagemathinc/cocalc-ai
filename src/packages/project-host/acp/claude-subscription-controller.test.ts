@@ -150,7 +150,7 @@ test("credential home remains when container removal is uncertain", async () => 
       launched: true,
     }),
   ).rejects.toThrow("container may be running");
-  expect(closeBridge).not.toHaveBeenCalled();
+  expect(closeBridge).toHaveBeenCalledTimes(1);
   expect(refreshCredential).not.toHaveBeenCalled();
   expect(removeHome).not.toHaveBeenCalled();
 });
@@ -167,4 +167,27 @@ test("failed startup does not overwrite the stored credential", async () => {
   });
   expect(refreshCredential).not.toHaveBeenCalled();
   expect(removeHome).toHaveBeenCalledTimes(1);
+});
+
+test("command authority is revoked before stopping the controller and cleanup survives a bridge error", async () => {
+  const order: string[] = [];
+  await expect(
+    cleanupClaudeSubscriptionController({
+      closeBridge: async () => {
+        order.push("bridge");
+        throw Error("bridge cleanup failed");
+      },
+      stopContainer: async () => {
+        order.push("stop");
+      },
+      refreshCredential: async () => {
+        order.push("refresh");
+      },
+      removeHome: async () => {
+        order.push("home");
+      },
+      launched: true,
+    }),
+  ).rejects.toThrow("bridge cleanup failed");
+  expect(order).toEqual(["bridge", "stop", "refresh", "home"]);
 });

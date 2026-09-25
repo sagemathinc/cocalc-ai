@@ -5,11 +5,17 @@
 
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { isValidUUID } from "@cocalc/util/misc";
+import { harnessOwner } from "./harness-reaper";
+import {
+  CLAUDE_LOGIN_PREFIX,
+  CLAUDE_LOGIN_OWNER,
+  killClaudeLoginProcesses,
+} from "./claude-login-cleanup";
 
 const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -33,6 +39,7 @@ type LoginSession = ClaudeSubscriptionLoginStatus & {
   timer: ReturnType<typeof setTimeout>;
   output: string;
   codeSubmitted: boolean;
+  completion?: Promise<void>;
 };
 
 function loginEnvironment(home: string): NodeJS.ProcessEnv {
@@ -93,6 +100,26 @@ export function verifiedClaudeSubscriptionStatus(output: string): {
 /** Auth is staged on the host, never in a project mount or model process. */
 export class ClaudeSubscriptionLoginService {
   private sessions = new Map<string, LoginSession>();
+  private closed = false;
+  private starting = new Set<Promise<unknown>>();
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.allSettled([...this.starting]);
+    const results = await Promise.allSettled(
+      [...this.sessions.values()].map(async (session) => {
+        clearTimeout(session.timer);
+        if (session.state === "pending") session.state = "canceled";
+        // Let an already-admitted publication finish before deleting its input.
+        await session.completion;
+        await killClaudeLoginProcesses(session.home);
+        await rm(session.home, { recursive: true, force: true });
+      }),
+    );
+    this.sessions.clear();
+    if (results.some((result) => result.status === "rejected"))
+      throw Error("Claude sign-in cleanup failed");
+  }
 
   constructor(
     private readonly options: {
@@ -108,7 +135,19 @@ export class ClaudeSubscriptionLoginService {
     },
   ) {}
 
-  async start(
+  start(
+    projectId: string,
+    accountId: string,
+  ): Promise<ClaudeSubscriptionLoginStatus> {
+    if (this.closed)
+      return Promise.reject(Error("Claude sign-in service is closed"));
+    const started = this.startSession(projectId, accountId);
+    this.starting.add(started);
+    void started.finally(() => this.starting.delete(started)).catch(() => {});
+    return started;
+  }
+
+  private async startSession(
     projectId: string,
     accountId: string,
   ): Promise<ClaudeSubscriptionLoginStatus> {
@@ -122,10 +161,14 @@ export class ClaudeSubscriptionLoginService {
       )
     )
       throw Error("Claude sign-in is already in progress for this account");
-    const home = await mkdtemp(join(tmpdir(), "cocalc-claude-login-"));
+    const home = await mkdtemp(join(tmpdir(), CLAUDE_LOGIN_PREFIX));
     const id = randomUUID();
     let child: ChildProcess;
     try {
+      await writeFile(join(home, CLAUDE_LOGIN_OWNER), await harnessOwner(), {
+        mode: 0o600,
+      });
+      if (this.closed) throw Error("Claude sign-in service is closed");
       child = spawn(
         this.options.cliPath,
         [...(this.options.argsPrefix ?? []), "auth", "login", "--claudeai"],
@@ -140,10 +183,9 @@ export class ClaudeSubscriptionLoginService {
       await rm(home, { recursive: true, force: true });
       throw error;
     }
-    const timer = setTimeout(
-      () => this.cancel(id, projectId, accountId),
-      LOGIN_TIMEOUT_MS,
-    );
+    const timer = setTimeout(() => {
+      if (session.state === "pending") this.cancel(id, projectId, accountId);
+    }, LOGIN_TIMEOUT_MS);
     timer.unref();
     const session: LoginSession = {
       id,
@@ -169,7 +211,12 @@ export class ClaudeSubscriptionLoginService {
     child.once("error", () =>
       this.fail(session, "Claude sign-in could not start"),
     );
-    child.once("close", (code) => void this.complete(session, code));
+    child.once("close", (code) => {
+      session.completion = this.complete(session, code);
+      void session.completion.catch(() =>
+        this.fail(session, "Claude sign-in cleanup failed"),
+      );
+    });
     return this.snapshot(session);
   }
 
@@ -239,6 +286,7 @@ export class ClaudeSubscriptionLoginService {
         },
       );
       const { plan, identity } = verifiedClaudeSubscriptionStatus(stdout);
+      if (this.closed) throw Error("Claude sign-in service is closed");
       const credentialId = await this.options.publish({
         projectId: session.projectId,
         accountId: session.accountId,

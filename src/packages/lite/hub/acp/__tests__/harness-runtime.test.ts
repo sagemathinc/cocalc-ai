@@ -155,7 +155,7 @@ test("Claude admission pins the exact private credential choice through SQLite",
   );
 });
 
-test("account credentials cannot be injected without a qualified human turn", () => {
+test("account API keys remain unavailable to agent-authored turns", () => {
   const source = claudeRequest();
   source.harness_credential = {
     version: 1,
@@ -170,6 +170,23 @@ test("account credentials cannot be injected without a qualified human turn", ()
   expect(() => prepareHarnessRequest(native)).toThrow(
     /requires an ACP harness/,
   );
+});
+
+test("admitted Agent Network RPC work preserves the selected subscription", () => {
+  const source = claudeRequest();
+  source.harness_credential = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-subscription",
+    credentialId: randomUUID(),
+  };
+  source.chat!.agent_message = true;
+  source.chat!.agent_rpc_execution = { guidance: false } as any;
+  const admitted = prepareHarnessRequest(source);
+  expect(admitted.harness_credential).toEqual(source.harness_credential);
+  expect(admitted.account_id).toBe(source.account_id);
+  delete source.chat!.agent_rpc_execution;
+  expect(() => prepareHarnessRequest(source)).toThrow("Unsupported ACP");
 });
 
 test("unconfigured or disabled hosts reject instead of choosing native Codex", () => {

@@ -33,6 +33,8 @@ export interface CredentialHttpRelayOptions {
   upstream: string;
   allowedPathPrefix: string;
   credential: { header: string; value: string };
+  /** Revalidate the exact credential for each request, including retained sessions. */
+  authorize?: () => Promise<string>;
   allowedMethods?: readonly string[];
   /** Tests only. Production provider relays must use HTTPS. */
   allowHttpForTests?: boolean;
@@ -122,7 +124,15 @@ export async function createCredentialHttpRelay(
   await unlink(options.socketPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
+  let closing = false;
+  const requests = new Set<ClientRequest>();
   const server = createServer((request, response) => {
+    void forward(request, response).catch(() => {
+      request.resume();
+      fail(response, 403, "Credential is unavailable or revoked");
+    });
+  });
+  async function forward(request: IncomingMessage, response: ServerResponse) {
     if (request.headers[RELAY_HEADER] !== token) {
       request.resume();
       fail(response, 401, "Credential relay authorization failed");
@@ -151,7 +161,10 @@ export async function createCredentialHttpRelay(
     }
     const headers = safeHeaders(request.headers, options.credential.header);
     headers.host = upstream.host;
-    headers[options.credential.header] = options.credential.value;
+    headers[options.credential.header] = options.authorize
+      ? await options.authorize()
+      : options.credential.value;
+    if (closing || request.destroyed) throw Error("Relay is closed");
     const send = upstream.protocol === "https:" ? httpsRequest : httpRequest;
     let sent = 0;
     let providerRequest: ClientRequest;
@@ -169,6 +182,8 @@ export async function createCredentialHttpRelay(
     providerRequest.setTimeout(10 * 60_000, () =>
       providerRequest.destroy(Error("provider timeout")),
     );
+    requests.add(providerRequest);
+    providerRequest.once("close", () => requests.delete(providerRequest));
     request.on("data", (chunk: Buffer) => {
       sent += chunk.length;
       if (sent > MAX_REQUEST_BYTES) {
@@ -185,7 +200,7 @@ export async function createCredentialHttpRelay(
       ),
     );
     request.pipe(providerRequest);
-  });
+  }
   server.on("connect", (_request, socket) => socket.destroy());
   server.on("upgrade", (_request, socket) => socket.destroy());
   await new Promise<void>((resolve, reject) => {
@@ -202,7 +217,10 @@ export async function createCredentialHttpRelay(
     token,
     close: () =>
       (closed ??= new Promise<void>((resolve, reject) => {
+        closing = true;
+        for (const request of requests) request.destroy();
         server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
       }).finally(() =>
         unlink(options.socketPath).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;

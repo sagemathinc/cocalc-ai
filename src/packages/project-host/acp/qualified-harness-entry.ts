@@ -3,7 +3,8 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
@@ -22,6 +23,7 @@ export async function qualifiedHarnessLaunch(
   executable: string;
   args: string[];
   env: NodeJS.ProcessEnv;
+  providerBaseUrl?: string;
   close(): Promise<void>;
 }> {
   const candidate = getQualifiedHarnessCandidate(id);
@@ -62,10 +64,88 @@ export async function qualifiedHarnessLaunch(
     executable: candidate.launch.executable,
     args: [...candidate.launch.requiredArgs],
     env,
+    providerBaseUrl: bridge?.baseUrl,
     close: async () => {
       await bridge?.close();
     },
   };
+}
+
+/** Pin the adapter's programmatic settings tier before accepting any session. */
+export async function pinClaudeProvider(
+  child: ChildProcessWithoutNullStreams,
+  baseUrl: string,
+  output: NodeJS.WritableStream,
+): Promise<void> {
+  const lines = createInterface({ input: child.stdout });
+  const pending = new Map<
+    string,
+    { resolve: (value: any) => void; reject: (error: Error) => void }
+  >();
+  const fail = () => {
+    for (const request of pending.values())
+      request.reject(Error("Claude provider setup failed"));
+    pending.clear();
+  };
+  lines.on("line", (line) => {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      fail();
+      return;
+    }
+    const request = pending.get(message.id);
+    if (!request) {
+      output.write(line + "\n");
+      return;
+    }
+    pending.delete(message.id);
+    if (message.error) request.reject(Error("Claude provider setup rejected"));
+    else request.resolve(message.result);
+  });
+  lines.on("close", fail);
+  child.on("error", fail);
+  const request = (id: string, method: string, params: unknown) =>
+    new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(Error("Claude provider setup timed out"));
+      }, 30_000);
+      pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      child.stdin.write(
+        JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n",
+      );
+    });
+  // Gateway auth also suppresses ambient CLI login probes. A provider override
+  // alone still probes project-controlled login/settings before session setup.
+  await request("cocalc-provider-auth", "authenticate", {
+    methodId: "gateway",
+    _meta: { gateway: { baseUrl, headers: {} } },
+  });
+  await request("cocalc-provider-set", "providers/set", {
+    providerId: "main",
+    apiType: "anthropic",
+    baseUrl,
+    headers: {},
+  });
+  const result = await request("cocalc-provider-check", "providers/list", {});
+  if (
+    result?.providers?.length !== 1 ||
+    result.providers[0].providerId !== "main" ||
+    result.providers[0].current?.apiType !== "anthropic" ||
+    result.providers[0].current?.baseUrl !== baseUrl
+  )
+    throw Error("Claude provider route could not be verified");
 }
 
 async function main(): Promise<void> {
@@ -82,21 +162,25 @@ async function main(): Promise<void> {
   const launch = await qualifiedHarnessLaunch(id, revision, credentialMode);
   const child = spawn(launch.executable, launch.args, {
     env: launch.env,
-    stdio: "inherit",
+    stdio: "pipe",
   });
+  child.stderr.pipe(process.stderr);
+  const exited = new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve(signal ? 128 : (code ?? 1)));
+  });
+  void exited.catch(() => {});
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => child.kill(signal));
   }
   try {
-    const code = await new Promise<number>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, signal) => {
-        if (signal) return resolve(128);
-        resolve(code ?? 1);
-      });
-    });
-    process.exitCode = code;
+    if (launch.providerBaseUrl)
+      await pinClaudeProvider(child, launch.providerBaseUrl, process.stdout);
+    else child.stdout.pipe(process.stdout);
+    process.stdin.pipe(child.stdin);
+    process.exitCode = await exited;
   } finally {
+    child.kill("SIGKILL");
     await launch.close();
   }
 }

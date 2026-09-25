@@ -155,3 +155,19 @@ test("verification cannot report cancellation after publication starts", async (
     credentialId,
   );
 });
+
+test("shutdown cancels pending sign-in and rejects new login attempts", async () => {
+  const publish = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+  });
+  const started = await service.start(projectId, accountId);
+  await service.close();
+  expect(publish).not.toHaveBeenCalled();
+  expect(() => service.status(started.id, projectId, accountId)).toThrow(
+    "Unknown",
+  );
+  await expect(service.start(projectId, accountId)).rejects.toThrow("closed");
+});

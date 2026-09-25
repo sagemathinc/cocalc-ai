@@ -73,7 +73,7 @@ test("Claude project-key warning is shown only in its focused dialog", async () 
   expect(screen.getByLabelText("ANTHROPIC_API_KEY")).toBeTruthy();
 });
 
-test("Claude account-key selection says its value is not copied into the project", () => {
+test("Claude account-key selection links to the shared security model by keyboard", async () => {
   const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
     get: () => "account-a",
   } as any);
@@ -89,10 +89,15 @@ test("Claude account-key selection says its value is not copied into the project
         threadKey="thread-a"
       />,
     );
-    expect(
-      screen.getByText(/does not expose the account-stored key value/),
-    ).toBeTruthy();
-    expect(screen.getByText(/project code can use the key/)).toBeTruthy();
+    const link = screen.getByRole("link", {
+      name: "Claude Code preview: setup, security model, and billing",
+    });
+    expect(link.getAttribute("href")).toMatch(/\/docs\/ai\/claude-code$/);
+    link.focus();
+    expect(document.activeElement).toBe(link);
+    await userEvent.setup().tab({ shift: true });
+    await userEvent.setup().tab();
+    expect(document.activeElement).toBe(link);
   } finally {
     getStore.mockRestore();
     localStorage.clear();
@@ -119,9 +124,9 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
       screen.getByRole("button", { name: "Disconnect Claude subscription" }),
     ).toBeTruthy();
     expect(
-      screen.getByText(
-        /Credential isolation and subscription billing still require live qualification/,
-      ),
+      screen.getByRole("link", {
+        name: /Claude Code preview: setup, security model, and billing/,
+      }),
     ).toBeTruthy();
   } finally {
     getStore.mockRestore();

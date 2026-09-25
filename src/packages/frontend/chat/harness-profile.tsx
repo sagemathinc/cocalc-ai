@@ -38,6 +38,7 @@ import {
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -279,15 +280,13 @@ function ClaudeCredentialControl({
             choose another credential.
           </div>
         )}
-      {value !== "project-secret" && (
-        <Typography.Text type="warning">
-          {claudeCredentialTrustWarning(
-            value.startsWith("account-subscription:")
-              ? "account-subscription"
-              : "account-api-key",
-          )}
-        </Typography.Text>
-      )}
+      <Typography.Link
+        href={`${appBasePath.replace(/\/$/, "")}/docs/ai/claude-code`}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Claude Code preview: setup, security model, and billing
+      </Typography.Link>
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>
       )}

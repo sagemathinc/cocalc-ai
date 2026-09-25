@@ -113,6 +113,8 @@ export async function createAnthropicAccountCredentialRelay({
     allowedPathPrefix: "/v1/",
     allowedMethods: ["GET", "POST"],
     credential: { header: "x-api-key", value: payload },
+    authorize: () =>
+      getAnthropicAccountCredential({ projectId, accountId, credentialId }),
   });
   try {
     const touched = await callHub({

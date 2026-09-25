@@ -99,6 +99,10 @@ import { validateHarnessAuthority } from "./acp/harness-authority";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { startHarnessReaper } from "./acp/harness-reaper";
+import {
+  startClaudeLoginReaper,
+  closeClaudeSubscriptionLoginService,
+} from "./acp/claude-subscription-service";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import {
@@ -557,6 +561,7 @@ export async function main(
   configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   const stopHarnessReaper = startHarnessReaper();
+  const stopClaudeLoginReaper = startClaudeLoginReaper();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
@@ -1587,6 +1592,7 @@ export async function main(
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
     stopHarnessReaper();
+    stopClaudeLoginReaper();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
     stopHttpProxyRevocationKickLoop?.();
@@ -1611,7 +1617,11 @@ export async function main(
         });
       }
     } finally {
-      close();
+      try {
+        await closeClaudeSubscriptionLoginService();
+      } finally {
+        close();
+      }
     }
   };
   process.once("exit", close);

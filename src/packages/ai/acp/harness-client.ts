@@ -49,6 +49,8 @@ export interface HarnessProcess {
   stderr: Readable;
   /** Must resolve on process exit, including startup errors. */
   closed: Promise<void>;
+  cancelTools?(): Promise<void>;
+  resumeTools?(): void;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
 }
@@ -80,6 +82,18 @@ export type HarnessEvent =
 export type HarnessSessionPolicy = "default" | "claude-subscription-controller";
 
 const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
+
+export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
+  return {
+    claudeCode: {
+      options: {
+        // The pinned adapter resets Bedrock/Vertex when pinning a provider,
+        // but does not yet reset Foundry. Settings env overrides process env.
+        settings: { env: { CLAUDE_CODE_USE_FOUNDRY: "0" } },
+      },
+    },
+  };
+}
 
 export function claudeSubscriptionSessionMeta(
   systemPromptAppend?: string,
@@ -446,7 +460,9 @@ export class AcpHarnessClient {
                 this.process.systemPromptAppend,
               ),
             }
-          : {}),
+          : this.binding.credential.mode === "account-api-key"
+            ? { _meta: claudeAccountApiKeySessionMeta() }
+            : {}),
       };
       if (sessionId) {
         if (!this.info.agentCapabilities?.loadSession)
@@ -517,6 +533,7 @@ export class AcpHarnessClient {
       )
     )
       throw Error("Invalid ACP image attachment");
+    this.process.resumeTools?.();
     this.active = true;
     this.canceled = false;
     this.listener = listener;
@@ -707,9 +724,12 @@ export class AcpHarnessClient {
       () => this.fail(Error("ACP cancellation was not confirmed")),
       this.timeoutMs,
     );
-    await this.request(
-      this.connection.cancel({ sessionId: this.session.sessionId }),
-    );
+    await Promise.all([
+      this.process.cancelTools?.(),
+      this.request(
+        this.connection.cancel({ sessionId: this.session.sessionId }),
+      ),
+    ]);
   }
 
   dispose(): Promise<void> {

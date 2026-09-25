@@ -3,6 +3,7 @@ export {
   AcpHarnessClient,
   HarnessError,
   disposeFailedHarness,
+  claudeAccountApiKeySessionMeta,
 } from "./harness-client";
 export { HarnessAgent } from "./harness-agent";
 export type {

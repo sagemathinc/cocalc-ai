@@ -96,13 +96,20 @@ export async function cleanupClaudeSubscriptionController(options: {
   removeHome: () => Promise<void>;
   launched: boolean;
 }): Promise<void> {
-  await options.stopContainer();
+  // Revoke command authority even when Podman cannot confirm removal.
+  let bridgeError: unknown;
   try {
     await options.closeBridge();
+  } catch (error) {
+    bridgeError = error;
+  }
+  await options.stopContainer();
+  try {
     if (options.launched) await options.refreshCredential();
   } finally {
     await options.removeHome();
   }
+  if (bridgeError) throw bridgeError;
 }
 
 export function claudeSubscriptionContainerArgs(options: {
@@ -245,6 +252,8 @@ ${skill}
   let toolBridge: ClaudeProjectToolBridge | undefined;
   let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   let stopped: Promise<void> | undefined;
+  let cleanupRetries = 0;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   const command = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       execFile(
@@ -286,11 +295,12 @@ ${skill}
         }
       },
       closeBridge: async () => {
-        try {
-          await toolBridge?.close();
-        } finally {
-          await cliLease?.close();
-        }
+        const results = await Promise.allSettled([
+          toolBridge?.close(),
+          cliLease?.close(),
+        ]);
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
       },
       refreshCredential: async () => {
         await publishClaudeSubscriptionCredential({
@@ -305,11 +315,23 @@ ${skill}
       },
       removeHome: async () => rm(home, { recursive: true, force: true }),
       launched,
-    }).catch((error) => {
-      stopped = undefined;
-      logger.warn("Claude controller cleanup failed", error);
-      throw error;
-    }));
+    })
+      .then(() => {
+        clearTimeout(cleanupTimer);
+      })
+      .catch((error) => {
+        stopped = undefined;
+        logger.warn("Claude controller cleanup failed", error);
+        if (!cleanupTimer && cleanupRetries < 5) {
+          cleanupRetries++;
+          cleanupTimer = setTimeout(() => {
+            cleanupTimer = undefined;
+            void cleanup().catch(() => {});
+          }, 5000);
+          cleanupTimer.unref();
+        }
+        throw error;
+      }));
   try {
     await restoreClaudeSubscriptionHome(home, registered.payload);
     const projectPaths = await localPath({ project_id: projectId });
@@ -344,12 +366,13 @@ ${skill}
     applyProjectRuntimeCliEnv(cliEnv, accountId);
     toolBridge = await createClaudeProjectToolBridge(
       projectId,
-      (script, cwd) =>
+      (script, cwd, signal) =>
         sandboxExec({
           project_id: projectId,
           script,
           cwd,
           env: cliEnv,
+          signal,
           timeoutMs: 120_000,
           maxOutputBytes: 512 * 1024,
         }),
@@ -398,6 +421,8 @@ ${skill}
       );
     return {
       systemPromptAppend,
+      cancelTools: () => toolBridge!.cancel(),
+      resumeTools: () => toolBridge!.resume(),
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

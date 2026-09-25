@@ -91,19 +91,23 @@ input.on("line", (line) => {
 
 export interface ClaudeProjectToolBridge {
   directory: string;
+  cancel(): Promise<void>;
+  resume(): void;
   close(): Promise<void>;
 }
 
 export async function createClaudeProjectToolBridge(
   projectId: string,
-  execute: (script: string, cwd?: string) => Promise<SandboxExecResult> = (
-    script,
-    cwd,
-  ) =>
+  execute: (
+    script: string,
+    cwd: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<SandboxExecResult> = (script, cwd, signal) =>
     sandboxExec({
       project_id: projectId,
       script,
       cwd,
+      signal,
       timeoutMs: 120_000,
       maxOutputBytes: MAX_OUTPUT_BYTES,
     }),
@@ -114,12 +118,18 @@ export async function createClaudeProjectToolBridge(
   const socketPath = join(directory, "tool.sock");
   const sockets = new Set<Socket>();
   let active = 0;
+  let closed: Promise<void> | undefined;
+  let fenced = false;
+  let paused = false;
+  let generation = new AbortController();
+  const running = new Set<Promise<void>>();
   const server = createServer((socket) => {
     if (sockets.size >= MAX_OPEN_CONNECTIONS) {
       socket.destroy();
       return;
     }
     sockets.add(socket);
+    socket.on("error", () => socket.destroy());
     let input = "";
     socket.setTimeout(150_000, () => socket.destroy());
     socket.on("close", () => sockets.delete(socket));
@@ -134,7 +144,8 @@ export async function createClaudeProjectToolBridge(
         return;
       }
       active++;
-      void (async () => {
+      const signal = generation.signal;
+      const task = (async () => {
         try {
           const request = JSON.parse(input.slice(0, newline));
           const script = request?.args?.script;
@@ -149,7 +160,9 @@ export async function createClaudeProjectToolBridge(
           )
             throw Error("Invalid project tool request");
           await authorize();
-          const result = await execute(script, cwd);
+          signal.throwIfAborted();
+          if (fenced || paused) throw Error("Project tool is closed");
+          const result = await execute(script, cwd, signal);
           socket.end(JSON.stringify(result) + "\n");
         } catch (error) {
           socket.end(
@@ -164,6 +177,8 @@ export async function createClaudeProjectToolBridge(
           active--;
         }
       })();
+      running.add(task);
+      void task.finally(() => running.delete(task));
     });
   });
   try {
@@ -180,11 +195,25 @@ export async function createClaudeProjectToolBridge(
     });
     return {
       directory,
-      close: async () => {
-        for (const socket of sockets) socket.destroy();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-        await rm(directory, { recursive: true, force: true });
+      resume: () => {
+        if (!fenced) paused = false;
       },
+      cancel: async () => {
+        paused = true;
+        const previous = [...running];
+        generation.abort();
+        generation = new AbortController();
+        await Promise.allSettled(previous);
+      },
+      close: () =>
+        (closed ??= (async () => {
+          fenced = true;
+          generation.abort();
+          for (const socket of sockets) socket.destroy();
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+          await Promise.allSettled([...running]);
+          await rm(directory, { recursive: true, force: true });
+        })()),
     };
   } catch (error) {
     if (server.listening) server.close();
