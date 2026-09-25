@@ -77,6 +77,24 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
     ).toBe(false);
   });
 
+  test("recovers the remaining runtime stack after delayed project-host convergence", () => {
+    expect(
+      __test__.delayedProjectHostConvergenceRolloutComponents({
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        alignRuntimeStack: true,
+      }),
+    ).toEqual(["conat-router", "conat-persist", "acp-worker"]);
+  });
+
+  test("does not add a recovery rollout to ordinary project-host upgrades", () => {
+    expect(
+      __test__.delayedProjectHostConvergenceRolloutComponents({
+        targets: [{ artifact: "project-host", channel: "latest" }],
+        alignRuntimeStack: false,
+      }),
+    ).toEqual([]);
+  });
+
   test("recovers an explicit project-host target from the upgrade request", () => {
     expect(
       __test__.requestedProjectHostUpgradeVersion([
