@@ -4,6 +4,7 @@
  */
 
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import { hasApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
 import { issueProjectHostApiKeyToken } from "@cocalc/server/api/project-host-api-key";
 import { resolveProjectReferenceForMemberAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { resolveHostConnection } from "@cocalc/server/conat/api/hosts";
@@ -19,6 +20,16 @@ export default async function handle(req, res) {
     const { project_id } = getParams(req);
     if (!isValidUUID(project_id)) {
       throw new Error("project_id must be a valid UUID");
+    }
+    if (
+      !(["project:exec", "file:read", "file:write"] as const).some(
+        (capability) =>
+          hasApiKeyProjectCapability(principal, capability, project_id),
+      )
+    ) {
+      throw new Error(
+        "API key does not grant project-host access to this project",
+      );
     }
     const reference = await resolveProjectReferenceForMemberAllowRemote({
       account_id: principal.account_id,
