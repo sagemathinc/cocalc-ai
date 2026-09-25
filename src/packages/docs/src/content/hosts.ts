@@ -222,6 +222,8 @@ Do this once per host. CoCalc keeps these settings for every later exam.
     stays the same for every later exam on this host until you change the
     token.
 
+![Host configuration with the title, per-student limits, capacity guidance, and terminal setting](/public/docs/exam-scratchpad-04-host-configuration-c7207bab.webp)
+
 Below the settings, the **Exams** tab compares your host with the recommended
 size. This is advice only; it never stops you.
 
@@ -267,6 +269,10 @@ of them are erased. Prepare a new run for every exam and every rehearsal,
      0 followed by your maximum, **Terminal** shows your terminal choice, and
      **Network** shows **outbound disabled**.
 
+![Choose a software image from the catalog before preparing an exam run](/public/docs/exam-scratchpad-08-choose-image-5ee34733.webp)
+
+![Set the project deletion time and choose whether the host shuts down afterward](/public/docs/exam-scratchpad-09-deletion-time-7e65b9d3.webp)
+
 If the status is **error** or any tag is red, do not open admission. See
 **Troubleshooting** below.
 
@@ -305,6 +311,10 @@ urllib.request.urlopen("https://example.com", timeout=5)
 11. End the rehearsal as in Part 5, and check that the status becomes
     **stopped**.
 
+![The student admission page with the access token obscured and Open scratchpad available](/public/docs/exam-scratchpad-14-student-admission-open-5abe2fc9.webp)
+
+![A student notebook evaluates 2 plus 2 and attempts the outbound-network check](/public/docs/exam-scratchpad-17a-notebook-2plus2-686e06c9.webp)
+
 ## Part 4: Run the exam
 
 1. Prepare a new run as in Part 2, and check that it is **ready** with every
@@ -329,9 +339,9 @@ urllib.request.urlopen("https://example.com", timeout=5)
 Tell students before they begin:
 
 - Work in one browser for the whole exam. Reopening the link in the same
-  browser returns to the same project. A different browser, or a browser whose
-  data was cleared, starts a new, empty project, and the earlier work cannot
-  be recovered.
+  browser returns to the same project. A different browser starts a new, empty
+  project; return to the original browser to continue the earlier work. If its
+  browser data was cleared, that session cannot be recovered through the link.
 - Copy answers onto paper or into the assessment system before the deletion
   time. Nothing is kept afterward.
 - The orange **Temporary** button at the top right of the page shows when the
@@ -365,14 +375,14 @@ After cleanup:
 | **Exam mode is not enabled for this account** | Your account does not have the exam-mode entitlement. | Ask a site administrator to set your **Exam scratchpad hosts** entitlement to **Allow**. |
 | **Start the project host to prepare an exam** | The host is not running. | Start the host and wait until it is running. |
 | **Complete these steps before preparing the run** | A required setting is missing. | Do each step that the message lists. |
-| The status is **error**, or a check tag is red | Preparation failed. The error message explains why. | Fix the cause and prepare again. A red \`project_smoke\` tag often means the image lacks Jupyter with a \`python3\` kernel. |
+| The status is **error**, or a check tag is red | Preparation failed. The error message explains why. | Select **End exam and erase now** and wait for **stopped**. Restart the host if it shut down, fix the cause, then prepare a new run. A red \`project_smoke\` tag often means the image lacks Jupyter with a \`python3\` kernel. |
 | A student sees "This temporary scratchpad has been prepared, but access is not open yet." | Admission is closed. | Select **Open admission**. The student then refreshes the page. |
 | A student sees **invalid access token** | The token was mistyped. | Give the student the admission link, which fills in the token. |
 | A student sees **exam project capacity has been reached** | The run is full. | Raise **Maximum students for this run** and select **Increase capacity**. |
 | A student sees **too many unsuccessful exam join attempts; try later** | 12 wrong tokens came from the same network address within 10 minutes. All students behind one Internet address, such as a classroom network, share this limit, and while it applies even a correct token is refused. | Wait up to 10 minutes. To prevent it, give students the admission link instead of asking them to type the token. |
 | A student sees **exam admission requires a same-origin request** | The browser did not send the standard \`Origin\` header when submitting the token. | Change the lockdown browser's settings, or use another browser. |
 | A student sees **scratchpad access is closed** | The deletion time has passed, or the run ended. | Prepare a new run if students need more time. |
-| A student's earlier work is missing | The student opened the link in a different browser, which created a new project. | The earlier project cannot be reopened. It is erased at cleanup. |
+| A student's earlier work is missing | The student opened the link in a different browser, which created a new project. | Return to the original browser or profile and reopen the link there. If that browser's data was cleared, or the run has ended and cleanup erased the project, the work cannot be recovered. |
 | The status stays **error** after the deletion time | Cleanup could not finish. CoCalc keeps retrying. | If host shutdown was selected, the host powers off anyway after **Cleanup grace (minutes)**. If the problem persists, contact support. |
 
 ## Choose the host size
@@ -542,8 +552,9 @@ When helping with an exam scratchpad host:
    includes Jupyter with a \`python3\` kernel.
 4. For student join errors, use the troubleshooting table. The wrong-token
    limit counts attempts per network address, not per student.
-5. A student's project is tied to their browser. It cannot be reopened from
-   another browser, and nothing can be recovered after cleanup.
+5. A student's project is tied to their browser. Opening the link in another
+   browser starts a separate project; the original browser can still reopen
+   the original project until cleanup. Nothing can be recovered after cleanup.
 6. Rotating the token and changing the deletion time are refused once cleanup
    has started. The configuration cannot change while a run is active.
 `;
