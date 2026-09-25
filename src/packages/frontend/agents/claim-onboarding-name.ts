@@ -1,5 +1,13 @@
 import { uuid } from "@cocalc/util/misc";
 
+function randomAgentName(): string {
+  // The first 40 UUID bits are random; base 36 fits them in eight characters.
+  const suffix = Number.parseInt(uuid().replace(/-/g, "").slice(0, 10), 16)
+    .toString(36)
+    .padStart(8, "0");
+  return `agent-${suffix}`;
+}
+
 /** Claim, rather than preflight, so concurrent tabs cannot race availability. */
 export async function claimOnboardingName<T>(
   preferred: string,
@@ -14,10 +22,7 @@ export async function claimOnboardingName<T>(
       // mean the original claim succeeded; leave reconciliation to retry.
       if (!/\bname_reserved\b/.test(String(error)) || attempt >= 10)
         throw error;
-      name =
-        attempt === 0
-          ? "agent-1"
-          : `agent-${uuid().replace(/-/g, "").slice(0, 24)}`;
+      name = attempt === 0 ? "agent-1" : randomAgentName();
     }
   }
 }

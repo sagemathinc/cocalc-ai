@@ -1,5 +1,8 @@
 import { claimOnboardingName } from "./claim-onboarding-name";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
+import * as misc from "@cocalc/util/misc";
+
+afterEach(() => jest.restoreAllMocks());
 
 test("claims a fallback after definite server reservation conflicts", async () => {
   const claim = jest
@@ -12,9 +15,31 @@ test("claims a fallback after definite server reservation conflicts", async () =
   const result = await claimOnboardingName("agent", claim);
   expect(claim.mock.calls[0]).toEqual(["agent"]);
   expect(claim.mock.calls[1]).toEqual(["agent-1"]);
-  expect(result.name).toMatch(/^agent-[0-9a-f]{24}$/);
+  expect(result.name).toMatch(/^agent-[0-9a-z]{8}$/);
   expect(normalizeAgentName(result.name)).toBe(result.name);
   expect(result.result).toEqual({ agent_id: "same-identity" });
+});
+
+test("pads short suffixes and retries a collision with a fresh compact name", async () => {
+  jest
+    .spyOn(misc, "uuid")
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000000")
+    .mockReturnValueOnce("ffffffff-ffff-4fff-8fff-ffffffffffff");
+  const claim = jest
+    .fn()
+    .mockRejectedValueOnce(new Error("name_reserved"))
+    .mockRejectedValueOnce(new Error("name_reserved"))
+    .mockRejectedValueOnce(new Error("name_reserved"))
+    .mockResolvedValue("ok");
+  const result = await claimOnboardingName("agent", claim);
+  expect(claim.mock.calls.map(([name]) => name)).toEqual([
+    "agent",
+    "agent-1",
+    "agent-00000000",
+    "agent-e13wu1of",
+  ]);
+  expect(result.name).toBe("agent-e13wu1of");
+  expect(normalizeAgentName(result.name)).toBe(result.name);
 });
 
 test.each(["timeout", "permission denied", "named_agent_limit_reached"])(
