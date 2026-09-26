@@ -16,6 +16,7 @@ import {
   API_RELAY_PROJECT_HEADER,
   API_RELAY_SECRET_HEADER,
   type ProjectApiRelayTarget,
+  normalizeApiRelayHubUrl,
 } from "@cocalc/conat/project-host/api-relay";
 import {
   createApiRelay,
@@ -23,7 +24,6 @@ import {
 } from "@cocalc/project-proxy/api-relay";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
-import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 
 const logger = getLogger("project-host:api-relay");
 
@@ -77,6 +77,37 @@ export function authenticateApiRelay(req: IncomingMessage): ApiRelayAdmission {
   return { projectId, stillAuthorized };
 }
 
+export async function resolveApiRelayHubUrl(
+  requestedUrl: string | undefined,
+  {
+    siteUrl,
+    hostId,
+    masterClient,
+  }: {
+    siteUrl?: string;
+    hostId: string;
+    masterClient?: Client;
+  },
+): Promise<string> {
+  if (!siteUrl) throw Error("API relay site URL is not configured");
+  const site = normalizeApiRelayHubUrl(siteUrl);
+  const requested = normalizeApiRelayHubUrl(requestedUrl ?? site);
+  if (requested !== site) {
+    if (!masterClient) throw Error("master Conat connection is unavailable");
+    const target = await callHub({
+      client: masterClient,
+      host_id: hostId,
+      name: "hosts.resolveProjectApiRelayHub",
+      args: [{ url: requested }],
+      timeout: 10_000,
+    });
+    if (target?.url !== requested)
+      throw Error("API relay hub routing identity mismatch");
+  }
+  assertSecureUrlOrLocal({ url: requested, urlName: "API relay hub" });
+  return requested;
+}
+
 export function attachProjectApiRelay({
   app,
   httpServer,
@@ -91,10 +122,17 @@ export function attachProjectApiRelay({
   const routes = new TTL<string, string>({ max: 1024, ttl: 30_000 });
   const relay = createApiRelay({
     authenticate: authenticateApiRelay,
-    hubUrl: () => {
-      const url = resolveProjectHostPreferredMasterConatServer();
-      if (!url) throw Error("master Conat endpoint is not configured");
-      assertSecureUrlOrLocal({ url, urlName: "API relay hub" });
+    hubUrl: async (requestedUrl) => {
+      const key = `hub:${requestedUrl ?? "site"}`;
+      const cached = routes.get(key);
+      if (cached) return cached;
+      // The host's master may be a different bay from the caller's home bay.
+      const url = await resolveApiRelayHubUrl(requestedUrl, {
+        siteUrl: process.env.COCALC_SITE_URL,
+        hostId,
+        masterClient,
+      });
+      routes.set(key, url);
       return url;
     },
     hostUrl: async (host_id, project_id) => {

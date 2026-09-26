@@ -4,9 +4,16 @@
  */
 
 import getPool from "@cocalc/database/pool";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import basePath from "@cocalc/backend/base-path";
-import type { ProjectApiRelayTarget } from "@cocalc/conat/project-host/api-relay";
+import {
+  normalizeApiRelayHubUrl,
+  type ProjectApiRelayTarget,
+} from "@cocalc/conat/project-host/api-relay";
+import {
+  getClusterBayPublicOrigins,
+  getSitePublicOrigin,
+  getBayPublicOrigin,
+} from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   resolveHostBay,
@@ -19,6 +26,35 @@ export type RelayTargetRequest = {
   target_host_id: string;
   target_project_id: string;
 };
+
+export async function resolveProjectApiRelayHub({
+  host_id,
+  url,
+}: {
+  host_id?: string;
+  url: string;
+}): Promise<{ url: string }> {
+  if (!isValidUUID(host_id))
+    throw Error("project-host authentication required");
+  const requested = normalizeApiRelayHubUrl(url);
+  const origins = Object.values(await getClusterBayPublicOrigins());
+  const site = await getSitePublicOrigin();
+  if (site) origins.push(site);
+  const suffix = basePath ? `/${basePath.replace(/^\/+|\/+$/g, "")}` : "";
+  if (
+    !origins.some(
+      (origin) =>
+        normalizeApiRelayHubUrl(`${origin.replace(/\/$/, "")}${suffix}`) ===
+        requested,
+    )
+  ) {
+    throw Object.assign(
+      Error("API relay hub is not a configured cluster endpoint"),
+      { statusCode: 403 },
+    );
+  }
+  return { url: requested };
+}
 
 function validateTarget(opts: RelayTargetRequest): void {
   if (
@@ -100,9 +136,8 @@ export async function resolveLocalApiRelayHostUrl(
     if (!metadata.self_host?.http_tunnel_port) {
       throw Error("API relay target host tunnel is unavailable");
     }
-    const { dns } = await getServerSettings();
-    if (!dns) throw Error("public site URL is not configured");
-    const site = /^https?:\/\//i.test(dns) ? dns : `https://${dns}`;
+    const site = await getBayPublicOrigin(getConfiguredBayId());
+    if (!site) throw Error("owning bay public URL is not configured");
     url = `${site.replace(/\/+$/, "")}/${basePath ?? ""}/${target.target_project_id}`;
     const parsed = new URL(url);
     parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");

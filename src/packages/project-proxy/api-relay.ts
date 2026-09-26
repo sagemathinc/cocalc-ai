@@ -12,6 +12,7 @@ import {
   API_RELAY_PATH,
   API_RELAY_PROJECT_HEADER,
   API_RELAY_SECRET_HEADER,
+  API_RELAY_HUB_HEADER,
 } from "@cocalc/conat/project-host/api-relay";
 
 export interface ApiRelayAdmission {
@@ -105,6 +106,7 @@ function stripRelayHeaders(req: IncomingMessage): void {
     if (
       name === API_RELAY_PROJECT_HEADER ||
       name === API_RELAY_SECRET_HEADER ||
+      name === API_RELAY_HUB_HEADER ||
       name === "forwarded" ||
       name.startsWith("x-forwarded-") ||
       name.startsWith("cf-") ||
@@ -127,7 +129,7 @@ export function createApiRelay({
   authenticate: (
     req: IncomingMessage,
   ) => ApiRelayAdmission | Promise<ApiRelayAdmission>;
-  hubUrl: () => string | Promise<string>;
+  hubUrl: (requestedUrl?: string) => string | Promise<string>;
   hostUrl: (hostId: string, projectId: string) => Promise<string>;
   limits?: Partial<ApiRelayLimits>;
   onError?: (error: Error) => void;
@@ -272,10 +274,13 @@ export function createApiRelay({
       }
       project = state;
       project.active++;
+      const requestedHub = req.headers[API_RELAY_HUB_HEADER];
+      if (requestedHub != null && typeof requestedHub !== "string")
+        fail(400, "invalid API relay hub header");
       const target = new URL(
         route.hostId
           ? await hostUrl(route.hostId, route.projectId!)
-          : await hubUrl(),
+          : await hubUrl(requestedHub),
       );
       if (finished) return;
       if (!admission.stillAuthorized())

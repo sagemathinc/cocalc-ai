@@ -1758,6 +1758,7 @@ export const hosts = {
   backupHostProjects: authFirstRequireAccount,
   resolveHostConnection: authFirstRequireAccount,
   resolveProjectApiRelayTarget: authFirstRequireHost,
+  resolveProjectApiRelayHub: authFirstRequireHost,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -1951,6 +1952,10 @@ export interface Hosts {
     target_host_id: string;
     target_project_id: string;
   }) => Promise<ProjectApiRelayTarget>;
+  resolveProjectApiRelayHub: (opts: {
+    host_id?: string;
+    url: string;
+  }) => Promise<{ url: string }>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;

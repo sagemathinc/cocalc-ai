@@ -10149,4 +10149,7 @@ export async function deleteHostInternal({
     },
   });
 }
-export { resolveProjectApiRelayTarget } from "./project-api-relay";
+export {
+  resolveProjectApiRelayTarget,
+  resolveProjectApiRelayHub,
+} from "./project-api-relay";

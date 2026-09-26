@@ -9,6 +9,7 @@ import {
   API_RELAY_PATH,
   API_RELAY_PROJECT_HEADER,
   API_RELAY_SECRET_HEADER,
+  API_RELAY_HUB_HEADER,
 } from "@cocalc/conat/project-host/api-relay";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -20,14 +21,7 @@ const env: NodeJS.ProcessEnv = {
   CONAT_SERVER: "http://10.206.0.1:9102/",
 };
 
-test("relay transport changes only the configured site's address", () => {
-  assert.equal(
-    projectApiRelayTransport({
-      env,
-      apiBaseUrl: "https://another-site.example",
-    }),
-    undefined,
-  );
+test("relay transport preserves the requested API endpoint for host-side allowlist validation", () => {
   assert.equal(
     projectApiRelayTransport({
       env: {},
@@ -45,8 +39,16 @@ test("relay transport changes only the configured site's address", () => {
       extraHeaders: {
         [API_RELAY_PROJECT_HEADER]: projectId,
         [API_RELAY_SECRET_HEADER]: "local-secret",
+        [API_RELAY_HUB_HEADER]: "https://site.example/site",
       },
     },
+  );
+  assert.equal(
+    projectApiRelayTransport({
+      env,
+      apiBaseUrl: "https://home-bay.example/site",
+    })?.extraHeaders[API_RELAY_HUB_HEADER],
+    "https://home-bay.example/site",
   );
 });
 
@@ -79,13 +81,18 @@ test("a configured relay fails explicitly without its local project credential",
 
 test("HTTP transport retains canonical paths and original credentials and rejects redirects", async () => {
   const saved = { ...process.env };
-  const seen: Array<{ url?: string; authorization?: string; secret?: string }> =
-    [];
+  const seen: Array<{
+    url?: string;
+    authorization?: string;
+    secret?: string;
+    hub?: string;
+  }> = [];
   const server = createServer((req, res) => {
     seen.push({
       url: req.url,
       authorization: req.headers.authorization,
       secret: req.headers[API_RELAY_SECRET_HEADER] as string,
+      hub: req.headers[API_RELAY_HUB_HEADER] as string,
     });
     if (req.url?.endsWith("redirect")) {
       res.writeHead(302, { Location: "https://forbidden.invalid/" }).end();
@@ -105,12 +112,19 @@ test("HTTP transport retains canonical paths and original credentials and reject
       url: `${API_RELAY_PATH}/hub/api/v2/auth/status?check=1`,
       authorization: "Bearer caller",
       secret: "local-secret",
+      hub: "https://site.example/site",
     });
     await assert.rejects(
       fetchWithProjectApiRelay("https://site.example/site/api/v2/redirect"),
       /refused an HTTP redirect/,
     );
     assert.equal(seen.length, 2);
+    const bayResponse = await fetchWithProjectApiRelay(
+      "https://home-bay.example/site/api/v2/auth/status",
+    );
+    assert.equal(await bayResponse.text(), "ok");
+    assert.equal(seen[2].hub, "https://home-bay.example/site");
+    assert.equal(seen[2].url, `${API_RELAY_PATH}/hub/api/v2/auth/status`);
   } finally {
     for (const name of Object.keys(process.env))
       if (!(name in saved)) delete process.env[name];

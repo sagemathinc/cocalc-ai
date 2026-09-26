@@ -2,6 +2,8 @@ import {
   API_RELAY_PATH,
   API_RELAY_PROJECT_HEADER,
   API_RELAY_SECRET_HEADER,
+  API_RELAY_HUB_HEADER,
+  normalizeApiRelayHubUrl,
 } from "@cocalc/conat/project-host/api-relay";
 import { resolveProjectScopedAuth } from "./auth-cookies";
 import { normalizeUrl } from "./utils";
@@ -16,8 +18,7 @@ export function projectApiRelayTransport({
   env?: NodeJS.ProcessEnv;
 }): { address: string; extraHeaders: Record<string, string> } | undefined {
   if (env.COCALC_API_RELAY !== "1") return;
-  const site = env.COCALC_API_RELAY_HUB_URL || env.COCALC_SITE_URL;
-  if (!site || normalizeUrl(site) !== normalizeUrl(apiBaseUrl)) return;
+  const hub = normalizeApiRelayHubUrl(apiBaseUrl);
   const auth = resolveProjectScopedAuth(env);
   if (!auth || !env.CONAT_SERVER) {
     throw Error(
@@ -42,6 +43,7 @@ export function projectApiRelayTransport({
     extraHeaders: {
       [API_RELAY_PROJECT_HEADER]: auth.project_id,
       [API_RELAY_SECRET_HEADER]: auth.project_secret,
+      ...(!host ? { [API_RELAY_HUB_HEADER]: hub } : {}),
     },
   };
 }
@@ -55,19 +57,13 @@ export async function fetchWithProjectApiRelay(
   hostTarget?: { apiBaseUrl: string; host_id: string; project_id: string },
 ): Promise<Response> {
   const url = new URL(input);
-  const site =
-    process.env.COCALC_API_RELAY_HUB_URL || process.env.COCALC_SITE_URL;
-  if (process.env.COCALC_API_RELAY !== "1" || !site)
-    return await fetch(input, init);
-  const base = new URL(site);
-  const prefix = `${base.pathname.replace(/\/$/, "")}/api/v2/`;
-  if (
-    !hostTarget &&
-    (url.origin !== base.origin || !url.pathname.startsWith(prefix))
-  )
-    return await fetch(input, init);
+  if (process.env.COCALC_API_RELAY !== "1") return await fetch(input, init);
+  const apiOffset = url.pathname.indexOf("/api/v2/");
+  if (!hostTarget && apiOffset < 0) return await fetch(input, init);
   const relay = projectApiRelayTransport({
-    apiBaseUrl: hostTarget?.apiBaseUrl ?? site,
+    apiBaseUrl:
+      hostTarget?.apiBaseUrl ??
+      `${url.origin}${url.pathname.slice(0, apiOffset)}`,
     host: hostTarget,
   });
   if (!relay) return await fetch(input, init);
@@ -75,7 +71,7 @@ export async function fetchWithProjectApiRelay(
   for (const [name, value] of Object.entries(relay.extraHeaders))
     headers.set(name, value);
   const response = await fetch(
-    `${relay.address}${hostTarget ? url.pathname : url.pathname.slice(base.pathname.replace(/\/$/, "").length)}${url.search}`,
+    `${relay.address}${hostTarget ? url.pathname : url.pathname.slice(apiOffset)}${url.search}`,
     { ...init, headers, redirect: "manual" },
   );
   if (response.status >= 300 && response.status < 400) {

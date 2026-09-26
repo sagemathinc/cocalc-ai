@@ -21,6 +21,13 @@ jest.mock("@cocalc/backend/base-path", () => ({
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-a",
 }));
+jest.mock("@cocalc/server/bay-public-origin", () => ({
+  getSitePublicOrigin: async () => "https://example.test",
+  getBayPublicOrigin: async (bay) => `https://${bay}.example.test`,
+  getClusterBayPublicOrigins: async () => ({
+    "bay-b": "https://home-bay.example.test",
+  }),
+}));
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBay: (...args) => mockResolveHostBay(...args),
   resolveProjectBay: (...args) => mockResolveProjectBay(...args),
@@ -33,6 +40,7 @@ import {
   resolveLocalProjectApiRelayTarget,
   resolveLocalApiRelayHostUrl,
   resolveProjectApiRelayTarget,
+  resolveProjectApiRelayHub,
 } from "./project-api-relay";
 
 const target = {
@@ -47,6 +55,37 @@ beforeEach(() => {
   mockQuery.mockResolvedValue({
     rows: [{ public_url: "https://host.example.test" }],
   });
+});
+
+it.each(["https://example.test/site", "https://home-bay.example.test/site"])(
+  "admits configured site/bay API base %s",
+  async (url) => {
+    await expect(
+      resolveProjectApiRelayHub({ host_id: sourceHost, url }),
+    ).resolves.toEqual({ url });
+    expect(mockQuery).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "https://evil-example.test/site",
+  "https://unknown-bay.example.test/site",
+  "https://home-bay.example.test/arbitrary-path",
+  "http://home-bay.example.test/site",
+  "https://home-bay.example.test:8443/site",
+  "https://example.test/site?target=evil",
+  "https://user:secret@example.test/site",
+  "file:///etc/passwd",
+])("rejects unconfigured API base %s", async (url) => {
+  await expect(
+    resolveProjectApiRelayHub({ host_id: sourceHost, url }),
+  ).rejects.toThrow();
+});
+
+it("does not provide relay hub lookup to account/project credentials", async () => {
+  await expect(
+    resolveProjectApiRelayHub({ url: "https://example.test/site" }),
+  ).rejects.toThrow("authentication required");
 });
 
 it("resolves only an assigned, nondeleted project and host in the authoritative bay", async () => {
@@ -147,7 +186,7 @@ it("retains the existing owning-hub tunnel for local/on-prem hosts", async () =>
   await expect(
     resolveLocalProjectApiRelayTarget(target),
   ).resolves.toMatchObject({
-    url: `https://example.test/site/${target.target_project_id}`,
+    url: `https://bay-a.example.test/site/${target.target_project_id}`,
   });
 });
 

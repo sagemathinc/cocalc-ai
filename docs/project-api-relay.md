@@ -11,17 +11,25 @@ The relay is attached only to the existing host-local router listener. Projects
 already reach that listener through their container network gateway. No firewall
 or public ingress exception is added.
 
-- `/_cocalc/api-relay/hub/conat/` connects to the configured master Conat service.
+- `/_cocalc/api-relay/hub/conat/` connects to the canonical site or the account's
+  configured home-bay API endpoint, not the source host's master bay.
 - `/_cocalc/api-relay/hub/api/v2/...` supports ordinary HTTP API operations,
   including CLI login and approval polling.
 - `/_cocalc/api-relay/host/<host-id>/<project-id>/conat/` connects to the target
   project host. The HTTP browser-session bootstrap endpoint is also supported.
 
-The caller supplies identifiers, never an upstream URL. For cross-host routes,
+For hub routes, a requested API base URL is only an allowlist lookup key. The
+source host accepts its operator-configured site URL directly; other URLs must
+exactly match cluster bay configuration returned by
+`hosts.resolveProjectApiRelayHub`. There is no hostname-suffix wildcard,
+caller-selected port/path, or arbitrary URL forwarding.
+
+For cross-host routes, the caller supplies identifiers, never an upstream URL;
 the source host asks `hosts.resolveProjectApiRelayTarget` using its existing
-host-authenticated master connection. This metadata-only method resolves the
-host's authoritative bay and confirms the project is assigned there. Other
-bays are queried through the inter-bay host-connection service. Steady-state
+host-authenticated master connection. This metadata-only method checks placement
+at the project's authoritative bay, then gets the endpoint from the host's
+authoritative bay. Those bays can differ. Other bays are queried through the
+inter-bay host-connection service. Steady-state
 traffic then goes directly from source host to destination host. Local/on-prem
 hosts retain their existing owning-hub reverse-tunnel path as the exception.
 
@@ -38,10 +46,12 @@ secret rotation. Upstream TLS certificate verification remains enabled.
 
 Updated project environments advertise `COCALC_API_RELAY=1` and
 `COCALC_API_RELAY_HUB_URL`. The CLI derives the local relay address from
-`CONAT_SERVER`, preserving the existing container gateway configuration. Only
-the configured site's API transport changes. Profile URLs, cookie naming and
-human approval links retain the canonical site URL; unrelated explicit profiles
-are not redirected.
+`CONAT_SERVER`, preserving the existing container gateway configuration. Profile
+URLs, cookie naming and human approval links retain the original site/home-bay
+URL. The host validates API destinations even when an explicit CLI profile selects
+a different URL; unregistered destinations fail closed. Setting
+`COCALC_API_RELAY=0` opts out of relay transport but does not change the project's
+network policy.
 
 Local artifacts, notebooks, files, terminals, document builds and backend scripts
 connect to the current project's local service without signing in to the hub
@@ -83,8 +93,20 @@ source lifecycle revocation, path and quota rejection, and authoritative
 cross-bay lookup. Real CLI subprocesses exercise local data commands while the
 hub is unreachable.
 
-Before release, also exercise a network-disabled project on a real host: local
-artifact and notebook operations, hub authentication/account APIs, a second
-project on another host/bay, denial with insufficient destination credentials,
-and failure of unrelated outbound HTTPS/DNS. Unit tests alone do not establish
-container firewall behavior.
+Live validation on lite1b used a disposable free account, a network-disabled
+project with a CoCalc rootfs, and a second project on another host/bay:
+
+- Live Jupyter execution returned `5050` and saved the notebook.
+- A site-funded `gpt-6-luna` first turn generated `sin(x^2)` and published a PNG
+  card. A separate artifact read verified persistence, without a context timeout.
+- Account sign-in checks, project listing and free-membership APIs succeeded
+  with the QA account's original credential.
+- Cross-host file upload/download produced matching SHA-256 checksums, and
+  remote Jupyter status worked. Removing collaborator access denied file access.
+- Unrelated HTTPS failed both by DNS name and with a fixed destination IP;
+  non-API proxy paths and invalid upstream credentials were rejected.
+
+These tests exercise container firewall behavior, not just mocked transports.
+Repeat the suite when changing routing or auth boundaries. The relay does not
+remove authorization requirements or make unrelated Internet-dependent commands
+work in a network-disabled project.

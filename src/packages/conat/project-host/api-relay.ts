@@ -8,6 +8,25 @@
 export const API_RELAY_PATH = "/_cocalc/api-relay";
 export const API_RELAY_PROJECT_HEADER = "x-cocalc-relay-project";
 export const API_RELAY_SECRET_HEADER = "x-cocalc-relay-secret";
+export const API_RELAY_HUB_HEADER = "x-cocalc-relay-hub";
+
+// A requested hub is only a lookup key; the host must match it against trusted
+// site/bay configuration before opening any connection.
+export function normalizeApiRelayHubUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    value.length > 2048 ||
+    !/^https?:$/.test(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]*$/.test(url.pathname)
+  ) {
+    throw Error("invalid API relay hub URL");
+  }
+  return url.toString().replace(/\/$/, "");
+}
 
 export interface ProjectApiRelayTarget {
   host_id: string;

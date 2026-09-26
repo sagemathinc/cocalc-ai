@@ -8,6 +8,7 @@ import {
   API_RELAY_PATH,
   API_RELAY_PROJECT_HEADER,
   API_RELAY_SECRET_HEADER,
+  API_RELAY_HUB_HEADER,
 } from "@cocalc/conat/project-host/api-relay";
 import {
   createApiRelay,
@@ -135,11 +136,13 @@ describe("project API relay", () => {
           ...sourceHeaders,
           Authorization: "Bearer caller-token",
           Cookie: "caller=cookie",
+          [API_RELAY_HUB_HEADER]: "https://home-bay.test/base",
           "x-forwarded-for": "1.2.3.4",
           "cf-connecting-ip": "1.2.3.4",
         },
       });
       expect(response.status).toBe(200);
+      expect(f.hubUrl).toHaveBeenCalledWith("https://home-bay.test/base");
       const data: any = await response.json();
       expect(data).toMatchObject({
         url: "/base/api/v2/auth?query=ok",
@@ -153,6 +156,7 @@ describe("project API relay", () => {
       for (const name of [
         API_RELAY_SECRET_HEADER,
         API_RELAY_PROJECT_HEADER,
+        API_RELAY_HUB_HEADER,
         "x-forwarded-for",
         "cf-connecting-ip",
       ]) {
