@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
+import { cleanupCocalcConnectorCredentials } from "./cocalc-connector-retention";
 
 const logger = getLogger("agents:maintenance");
 const BATCH = 5000;
@@ -29,7 +30,10 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
       )
     ).rows[0]?.locked;
     if (!locked) return {};
-    const result: CleanupResult = {};
+    const result: CleanupResult = await cleanupCocalcConnectorCredentials(
+      db,
+      BATCH,
+    );
     await remove(
       db,
       "admission",
