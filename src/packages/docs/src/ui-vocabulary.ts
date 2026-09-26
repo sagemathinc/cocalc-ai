@@ -74,6 +74,9 @@ const JUPYTER_EDITOR = "frontend/frame-editors/jupyter-editor/editor.ts";
 const STUDIO_CONTROLS = "frontend/jupyter/studio/studio-controls.tsx";
 const STUDIO_TOGGLE = "frontend/jupyter/studio/frame-type-toggle.tsx";
 const LOG = "frontend/project/history/log.tsx";
+const RECOVERY_STATUS = "frontend/project/recovery-status.tsx";
+const RESTORE_SNAPSHOT = "frontend/project/snapshots/restore.tsx";
+const FILES_TOOLBAR = "frontend/project/explorer/misc-side-buttons.tsx";
 const AUTH_APP = "frontend/public/auth/app.tsx";
 const CLI_AUTH = "frontend/public/auth/cli-auth-views.tsx";
 const APP_PAGE = "frontend/app/page.tsx";
@@ -800,6 +803,86 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("jupyter", "Target language")],
   },
 
+  // Project recovery
+  ...(
+    [
+      ["snapshots", "Local snapshots"],
+      ["backups", "Off-host backups"],
+    ] as const
+  ).map(
+    ([key, label]): UiVocabularyEntry => ({
+      id: `recovery.status.${key}`,
+      label,
+      anchors: [
+        def(RECOVERY_STATUS, `"${label}"`),
+        ren(RECOVERY_STATUS, ": latest confirmed "),
+      ],
+      usedIn: [bold("research-specialist", label)],
+    }),
+  ),
+  {
+    id: "recovery.restore-snapshot",
+    label: "Restore Snapshot",
+    anchors: [
+      def(RESTORE_SNAPSHOT, "> Restore Snapshot <"),
+      ren(
+        "frontend/project/settings/recovery-panel.tsx",
+        "<RestoreSnapshot />",
+      ),
+    ],
+    usedIn: [bold("research-specialist", "Restore Snapshot")],
+  },
+  ...(
+    [
+      ["snapshot-to-restore", "Snapshot to restore", "> Snapshot to restore <"],
+      ["restore-mode", "Restore mode", "> Restore mode <"],
+      [
+        "mode-both",
+        "Restore both HOME and rootfs",
+        '"Restore both HOME and rootfs"',
+      ],
+      ["mode-home", "Restore HOME only", '"Restore HOME only"'],
+      ["mode-rootfs", "Restore rootfs only", '"Restore rootfs only"'],
+      [
+        "safety-snapshot-name",
+        "Safety snapshot name",
+        "> Safety snapshot name <",
+      ],
+    ] as const
+  ).map(
+    ([key, label, text]): UiVocabularyEntry => ({
+      id: `recovery.restore-snapshot.${key}`,
+      label,
+      anchors: [def(RESTORE_SNAPSHOT, text)],
+      usedIn: [bold("research-specialist", label)],
+    }),
+  ),
+  {
+    id: "recovery.restore-original-path",
+    label: "Restore to original path (overwrite)",
+    anchors: [
+      def(
+        "frontend/project/find/restore-modal.tsx",
+        "> Restore to original path (overwrite) <",
+      ),
+    ],
+    usedIn: [
+      bold("research-specialist", "Restore to original path (overwrite)"),
+    ],
+  },
+  {
+    id: "files.recovery",
+    label: "Recovery",
+    anchors: [def(FILES_TOOLBAR, ">Recovery<")],
+    usedIn: [bold("research-specialist", "Recovery")],
+  },
+  {
+    id: "files.recovery.tooltip",
+    label: "Snapshots and backups",
+    anchors: [def(FILES_TOOLBAR, 'title="Snapshots and backups"')],
+    usedIn: [bold("research-specialist", "Snapshots and backups")],
+  },
+
   // Virtual machines
   ...(
     [
@@ -968,6 +1051,14 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     before: "] as const;",
     text: '"users"',
     reason: USERS_RETIRED,
+  },
+  {
+    id: "recovery.restore-deletes-other-snapshots",
+    file: "project-host/file-server.ts",
+    kind: "present",
+    text: "await deleteSubvolumeTree(oldHomePath);",
+    reason:
+      'A HOME or combined snapshot restore deletes the replaced HOME with every local snapshot in it, keeping only the new safety snapshot, and the recover-work guide (docs/src/content/research-specialist.ts) warns about this. If the deletion only moved, point this fact at its new line. If restore no longer deletes the other snapshots, update that guide: the "Restore HOME only" and "Restore both HOME and rootfs" rows of the recovery table; the introduction and steps 2 and 6 of "Restore an environment or an entire HOME"; and the troubleshooting items on the Local snapshots date, missing history and cleanup. Then remove this fact.',
   },
 ];
 

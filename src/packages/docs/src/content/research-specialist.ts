@@ -14,9 +14,9 @@ exercise uses disposable data; do it before you need to recover important work.
 | --- | --- | --- |
 | A notebook or text file contains an unwanted edit. | Open the file's **TimeTravel**, inspect an earlier version, then **Restore This Version**. | Changes this document and records the restoration as a new version. Other project files are not restored. |
 | A file was deleted, or the version you need is in a filesystem checkpoint. | **Files -> Recovery -> Open Snapshots** or **Open Backups**. Browse to the file and restore a temporary copy first. | Recover the selected file, then compare it with current work. |
-| Many files in HOME need to return to a known checkpoint. | **Settings -> Recovery -> Restore Snapshot**, then **Restore HOME only**. | Rewinds HOME while retaining the current root filesystem. This also rewinds HOME-based environments and documents in the restored paths. |
+| Many files in HOME need to return to a known checkpoint. | **Settings -> Recovery -> Restore Snapshot**, then **Restore HOME only**. | Rewinds HOME while retaining the current root filesystem. This also rewinds HOME-based environments and documents in the restored paths. Currently, it deletes every local snapshot except the safety snapshot the restore takes of the current state. |
 | A systemwide software change broke the project, but current research files must stay. | **Restore Snapshot**, then **Restore rootfs only**. | Restores the root filesystem image and preserves HOME. It does not repair a virtual environment installed inside HOME. |
-| Research files and the system environment must return together. | **Restore Snapshot**, then **Restore both HOME and rootfs**. | Rewinds both areas, including affected notebooks and chat documents. |
+| Research files and the system environment must return together. | **Restore Snapshot**, then **Restore both HOME and rootfs**. | Rewinds both areas, including affected notebooks and chat documents. Currently, it deletes every local snapshot except the safety snapshot the restore takes of the current state. |
 | You want a separate workspace before experimenting. | **Settings -> Recovery -> Clone**, then **Create Clone**. | Copies the current HOME, root filesystem customizations, TimeTravel history, and project secrets. Snapshots and collaborators are not copied. |
 
 A clone is a copy of the current state, not a selection of an older checkpoint.
@@ -24,6 +24,8 @@ Snapshots are host-local checkpoints. Backups are host-independent archives
 that can include project files, rootfs state, and TimeTravel history; their
 file-search interface searches HOME. Availability, retention, and the newest
 recoverable time depend on the project's runtime and configured schedules.
+In a narrow window, **Files** shows **Recovery** as an icon whose tooltip is
+**Snapshots and backups**.
 
 ## Prepare a disposable example
 
@@ -72,9 +74,11 @@ limit before claiming a checkpoint exists.
    and select \`recovery-demo/measurements.csv\`.
 2. In **Snapshot selection**, check **Selected path** and **Preview**. The
    preview should contain 8, not 80.
-3. Choose **Restore to /tmp/<path>**. For this example the destination is
-   \`/tmp/recovery-demo/measurements.csv\`. If you have used that temporary
-   path before, preserve or remove your earlier comparison copy first.
+3. Choose **Restore to /tmp/<path>**, not the highlighted
+   **Restore to original path (overwrite)**. For this example the
+   destination is \`/tmp/recovery-demo/measurements.csv\`. If you have used
+   that temporary path before, preserve or remove your earlier comparison
+   copy first.
 4. After **Restore completed**, run the comparison below in a terminal.
 
 ~~~sh
@@ -142,25 +146,31 @@ separately.
 
 ## Restore an environment or an entire HOME
 
-Use this procedure when a file copy is insufficient. First record the failing
-command, its error, the desired checkpoint, and the software location. For a
-Python environment, \`python3 -c 'import sys; print(sys.executable)'\` helps
-distinguish a HOME virtual environment from system software.
+Use this only when recovering single files is not enough. Currently, a HOME or
+combined restore deletes every local snapshot except the new safety snapshot.
+Record the failing command, its error, the desired checkpoint, and the software
+location. For a Python environment,
+\`python3 -c 'import sys; print(sys.executable)'\` helps distinguish a HOME
+virtual environment from system software.
 
 1. Save current work and coordinate with project collaborators. Whole-project
    snapshot restoration stops and restarts the project; running processes do
    not continue from their previous memory state.
-2. Open **Settings -> Recovery -> Restore Snapshot**.
-3. Under **Snapshot to restore**, choose the checkpoint you inspected.
-4. Under **Restore mode**, explicitly choose the HOME, rootfs, or combined
+2. Before a HOME or combined restore, copy anything you still need out of
+   other snapshots. Download it, or copy it into HOME. After the restore,
+   files copied into HOME exist only in the safety snapshot.
+3. Open **Settings -> Recovery -> Restore Snapshot**.
+4. Under **Snapshot to restore**, choose the checkpoint you inspected.
+5. Under **Restore mode**, explicitly choose the HOME, rootfs, or combined
    option from the table above. The dialog initially selects both.
-5. Record **Safety snapshot name** outside the project before proceeding.
-   Keep its unique suggested value or provide another unique name. The
-   workflow creates this snapshot of the current state before restoring.
-6. Choose **Restore Snapshot** and complete any sign-in verification the
+6. Under **Safety snapshot name**, keep the suggested name or enter another
+   unique one, and record it outside the project. The workflow first
+   snapshots the current state under this name. Currently, after a HOME or
+   combined restore, it is the only local snapshot left.
+7. Choose **Restore Snapshot** and complete any sign-in verification the
    interface requests. Wait for the restore operation to finish and the
    project to be available again.
-7. Reopen the research files, restart the notebook kernel, rerun the original
+8. Reopen the research files, restart the notebook kernel, rerun the original
    failing command, and record the new result. A completed restore alone does
    not prove the scientific result or environment is correct.
 
@@ -174,11 +184,21 @@ after preserving newer research work.
 ## Troubleshooting and cleanup
 
 - Missing recovery controls can indicate that the runtime does not support
-  snapshots or backups. Check **Settings -> Recovery** and the project's
-  placement before assuming a recovery point exists.
+  snapshots or backups. Check the project's placement. In
+  **Settings -> Recovery**, a missing card means this runtime does not
+  provide that recovery type.
+- A healthy **Local snapshots** or **Off-host backups** line says "latest
+  confirmed" and a date and shows no warning. If it says overdue, unknown,
+  unavailable, disabled, or no confirmed recovery point, do not assume a
+  current recovery point exists. The **Local snapshots** date covers only
+  scheduled snapshots and comes from the last scheduled check, so after a
+  restore it can show a snapshot that no longer exists. To see which
+  snapshots exist now, use **Files -> Recovery -> Open Snapshots**; a
+  snapshot folder that opens empty has nothing to recover.
 - No matching history may mean the file was created after the selected
-  checkpoint, retained history expired, or the project moved hosts. Check
-  backup dates and the exact path; host-local snapshots do not follow a move.
+  checkpoint, retained history expired, the project moved hosts, or a HOME
+  or combined restore deleted the local snapshots. Check backup dates and the
+  exact path; host-local snapshots do not follow a move.
 - Storage usage includes retained history as well as live files. Deleting a
   live file may not immediately reduce usage retained by snapshots. Inspect
   storage and recovery points before cleanup; deleting a snapshot removes that
@@ -188,8 +208,10 @@ after preserving newer research work.
   restored filesystem. Keep the incident note and checkpoint identifiers
   outside that filesystem while restoring it.
 - Copy useful recovered data out of \`/tmp\`; it is a temporary inspection
-  location. Retain the named checkpoint until you have verified recovery, then
-  remove only the disposable files and checkpoints you deliberately created.
+  location. Currently, a HOME or combined restore deletes the named checkpoint,
+  so copy what you need from it first. Keep the safety snapshot until you have
+  verified recovery and copied anything you need out of it. Then remove only
+  the disposable files and checkpoints you deliberately created.
 
 For a real incident, leave the recovered file, checkpoint date, comparison,
 and next action in a handoff note. Follow

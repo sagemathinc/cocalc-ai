@@ -97,7 +97,7 @@ export const RESEARCH_ENTRIES: DocsEntry[] = [
     audiences: ["agents", "researchers", "teams"],
     category: "Research workflows",
     id: "research.recover-work",
-    lastReviewed: "2026-09-11",
+    lastReviewed: "2026-09-26",
     noActionReason:
       "This multi-step guide uses example files and a project selected by the reader.",
     searchKeywords:
