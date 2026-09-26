@@ -414,6 +414,7 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
     const connection = await (ctx as any).hub.hosts.resolveHostConnection({
       host_id: project.host_id,
+      project_id: project.project_id,
     });
     if (!connection.ssh_server) {
       throw new Error("host has no ssh server endpoint");

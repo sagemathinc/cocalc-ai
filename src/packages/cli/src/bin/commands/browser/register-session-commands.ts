@@ -196,7 +196,10 @@ async function resolveProjectHostBrowserSessionCookies({
   if (!host_id) {
     return [];
   }
-  const connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+  const connection = await ctx.hub.hosts.resolveHostConnection({
+    host_id,
+    project_id,
+  });
   const address = `${connection.connect_url ?? ""}`.trim();
   if (!address) {
     return [];

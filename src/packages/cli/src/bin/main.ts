@@ -2182,7 +2182,10 @@ async function getOrCreateRoutedProjectHostClient(
     });
   }
   if (!connection) {
-    connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+    connection = await ctx.hub.hosts.resolveHostConnection({
+      host_id,
+      project_id: project.project_id,
+    });
     ctx.hostConnectionCache.set(host_id, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
@@ -2872,6 +2875,7 @@ async function resolveProxyUrl({
 
   const connection = await ctx.hub.hosts.resolveHostConnection({
     host_id: host.id,
+    project_id: project.project_id,
   });
 
   let base = connection.connect_url ? normalizeUrl(connection.connect_url) : "";

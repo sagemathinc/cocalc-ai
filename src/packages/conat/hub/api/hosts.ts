@@ -1943,6 +1943,8 @@ export interface Hosts {
   resolveHostConnection: (opts: {
     account_id?: string;
     host_id: string;
+    project_id?: string;
+    public_directory_share_id?: string;
   }) => Promise<HostConnectionInfo>;
   resolveProjectApiRelayTarget: (opts: {
     host_id?: string;
