@@ -109,23 +109,32 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
 
 export function startAgentMessagingMaintenance(): () => void {
   let stopped = false;
-  const run = () => {
+  let timer: ReturnType<typeof setTimeout>;
+  const schedule = (delay: number) => {
     if (stopped) return;
-    void cleanupAgentMessagingHistory().then(
-      (removed) => {
-        if (Object.values(removed).some(Boolean))
-          logger.info("removed retained agent messaging history", removed);
-      },
-      (error) => logger.warn("agent messaging maintenance failed", { error }),
-    );
+    timer = setTimeout(run, delay);
+    timer.unref();
   };
-  const initial = setTimeout(run, 60_000);
-  initial.unref();
-  const interval = setInterval(run, INTERVAL_MS);
-  interval.unref();
+  const run = async () => {
+    if (stopped) return;
+    let delay = INTERVAL_MS;
+    try {
+      const removed = await cleanupAgentMessagingHistory();
+      if (Object.values(removed).some(Boolean))
+        logger.info("removed retained agent messaging history", removed);
+      // A full batch signals possible backlog. Yield between bounded transactions
+      // instead of limiting cleanup throughput to one batch every six hours.
+      if (Object.values(removed).some((count) => count >= BATCH)) delay = 1_000;
+    } catch (error) {
+      logger.warn("agent messaging maintenance failed", { error });
+      delay = 60_000;
+    } finally {
+      schedule(delay);
+    }
+  };
+  schedule(60_000);
   return () => {
     stopped = true;
-    clearTimeout(initial);
-    clearInterval(interval);
+    clearTimeout(timer);
   };
 }
