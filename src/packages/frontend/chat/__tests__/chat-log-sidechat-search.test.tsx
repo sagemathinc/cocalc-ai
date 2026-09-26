@@ -25,6 +25,7 @@ let activeTopTab = "project-2";
 let activeProjectTab = "editor-some-other.chat";
 let latestVirtuosoProps: any;
 let visibleVirtuosoIndexes: number[] | undefined;
+let mockOverlayOpen = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (arg1: any, arg2?: string) => {
@@ -79,7 +80,7 @@ jest.mock("@cocalc/frontend/jupyter/div-temp-height", () => ({
 
 jest.mock("../drawer-overlay-state", () => ({
   setChatOverlayOpen: jest.fn(),
-  useAnyChatOverlayOpen: () => false,
+  useAnyChatOverlayOpen: () => mockOverlayOpen,
 }));
 
 jest.mock("../message", () => ({
@@ -762,63 +763,77 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
   });
 
-  it("keeps following after a send overrides an Agents reading position", async () => {
-    const cacheId = JSON.stringify(["agents-send", "thread-1"]);
-    saveChatViewportAnchor(cacheId, {
-      atBottom: false,
-      date: "1000",
-      offsetPx: 0,
-      savedAt: Date.now(),
-    });
-    const scrollToBottomRef = { current: undefined as any };
-    const messages = new Map([
-      [
-        "1000",
-        {
-          date: 1000,
-          sender_id: "acct-1",
-          history: [{ content: "old message" }],
-        },
-      ],
-    ]);
-    const view = (rows: typeof messages) => (
-      <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
-        <ChatLog
-          project_id="project-1"
-          path="thread.chat"
-          messages={rows as any}
-          mode="standalone"
-          actions={{ clearScrollRequest: jest.fn() } as any}
-          selectedThread="thread-1"
-          scrollCacheId="agents-send"
-          scrollToBottomRef={scrollToBottomRef}
-        />
-      </ChatEmbeddingOptionsProvider>
-    );
-    const { rerender } = render(view(messages));
-    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
-    act(() => scrollToBottomRef.current(true));
-    const next = new Map(messages);
-    next.set("2000", {
-      date: 2000,
-      sender_id: "acct-1",
-      history: [{ content: "new prompt" }],
-    });
-    rerender(view(next));
-    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
-    expect(loadChatViewportAnchor(cacheId)?.atBottom).toBe(true);
-    expect(
-      screen.queryByRole("button", { name: /newest messages/i }),
-    ).toBeNull();
-    // A later deliberate scroll must still let the user read older output.
-    act(() => {
-      fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
-        deltaY: -100,
+  it.each([false, true])(
+    "keeps following after a send overrides an Agents reading position (overlay=%s)",
+    async (overlay) => {
+      const cacheId = JSON.stringify(["agents-send", "thread-1"]);
+      saveChatViewportAnchor(cacheId, {
+        atBottom: false,
+        date: "1000",
+        offsetPx: 0,
+        savedAt: Date.now(),
       });
-      latestVirtuosoProps?.atBottomStateChange?.(false);
-    });
-    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
-  });
+      const scrollToBottomRef = { current: undefined as any };
+      const messages = new Map([
+        [
+          "1000",
+          {
+            date: 1000,
+            sender_id: "acct-1",
+            history: [{ content: "old message" }],
+          },
+        ],
+      ]);
+      const view = (rows: typeof messages) => (
+        <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+          <ChatLog
+            project_id="project-1"
+            path="thread.chat"
+            messages={rows as any}
+            mode="standalone"
+            actions={{ clearScrollRequest: jest.fn() } as any}
+            selectedThread="thread-1"
+            scrollCacheId="agents-send"
+            scrollToBottomRef={scrollToBottomRef}
+          />
+        </ChatEmbeddingOptionsProvider>
+      );
+      const { rerender } = render(view(messages));
+      await waitFor(() =>
+        expect(latestVirtuosoProps?.followOutput).toBe(false),
+      );
+      mockOverlayOpen = overlay;
+      rerender(view(messages));
+      act(() => scrollToBottomRef.current(true));
+      expect(loadChatViewportAnchor(cacheId)?.atBottom).toBe(true);
+      mockOverlayOpen = false;
+      const next = new Map(messages);
+      next.set("2000", {
+        date: 2000,
+        sender_id: "acct-1",
+        history: [{ content: "new prompt" }],
+      });
+      rerender(view(next));
+      await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(true));
+      expect(loadChatViewportAnchor(cacheId)?.atBottom).toBe(true);
+      expect(
+        screen.queryByRole("button", { name: /newest messages/i }),
+      ).toBeNull();
+      // A later deliberate scroll must still let the user read older output.
+      act(() => {
+        fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
+          deltaY: -100,
+        });
+        latestVirtuosoProps?.atBottomStateChange?.(false);
+      });
+      await waitFor(() =>
+        expect(latestVirtuosoProps?.followOutput).toBe(false),
+      );
+      // A layout follow-up from the send is not a new request to resume.
+      act(() => scrollToBottomRef.current(false));
+      expect(latestVirtuosoProps?.followOutput).toBe(false);
+    },
+  );
 
   it("shows a newest messages button when the thread is not at the bottom", async () => {
     activeTopTab = "project-1";

@@ -671,6 +671,7 @@ export function ChatLog({
   const manualScrollRef = useRef<boolean>(false);
   const [manualScroll, setManualScroll] = useState(false);
   const bottomScrollTokenRef = useRef(0);
+  const pendingBottomScrollRef = useRef(false);
   const bottomScrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
@@ -686,9 +687,15 @@ export function ChatLog({
   useEffect(() => {
     if (scrollToBottomRef == null) return;
     scrollToBottomRef.current = (force?: boolean) => {
+      // Sending changes follow intent even while an overlay temporarily blocks
+      // physical scrolling. Do not lose that intent with the overlay's closure.
+      if (force) {
+        resumeBottomFollowingRef.current?.();
+        pendingBottomScrollRef.current = true;
+      }
       if (!canAutoScrollRef.current) return;
       if (manualScrollRef.current && !force) return;
-      if (force) resumeBottomFollowingRef.current?.();
+      pendingBottomScrollRef.current = false;
       manualScrollRef.current = false;
       setManualScroll(false);
       keepBottomAnchoredRef.current = true;
@@ -720,6 +727,14 @@ export function ChatLog({
       );
     };
   }, [scrollToBottomRef, setManualScroll]);
+
+  useEffect(() => {
+    if (!canAutoScroll || !pendingBottomScrollRef.current) return;
+    pendingBottomScrollRef.current = false;
+    if (keepBottomAnchoredRef.current && !manualScrollRef.current) {
+      scrollToBottomRef?.current?.();
+    }
+  }, [canAutoScroll, scrollToBottomRef]);
 
   return (
     <div style={CHAT_LOG_CONTAINER_STYLE}>
