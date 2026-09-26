@@ -1,6 +1,8 @@
 # API-first live validation, 2026-09-26
 
-Implementation tested: `8856762c4c7327c2318e019013f23f4e3142bec7`.
+Initial implementation tested: `8856762c4c7327c2318e019013f23f4e3142bec7`.
+The approval retention follow-up below tests
+`eab240252f2d2f8a15e3291733e49995115f3fb5`.
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
@@ -108,6 +110,32 @@ tested. The first harness invocation failed to resolve its `pg` dependency
 before creating any resources; it was corrected to resolve from the database
 workspace.
 
+### Approval rate and scheduled retention
+
+Built the changed backend with `pnpm exec tsc --build` in `packages/server`,
+then restarted all three dev hubs at `eab240252f`. No additional host or tools
+upgrade was required for these backend-only changes.
+
+A disposable requester and target key created three approvals through the
+ordinary HTTP request path entering bay-1, with authoritative storage on bay-0.
+The fixture then seeded 60 recent rejected records belonging to its requester
+to exercise the admission boundary without generating review notifications:
+
+- A new request was denied with the creation-rate error.
+- A retry of an existing request returned the identical stored review.
+- The seeded records were removed before testing retention.
+
+The fixture aged one of its real approvals to 31 days past expiry and another
+to one day past expiry, leaving the third unexpired. Without making further
+approval requests while polling, it observed the old record removed after
+33,041 ms, while the recent and unexpired records remained. Its own records and
+keys were removed on exit. No existing user approvals were modified.
+
+This exercises live scheduled cleanup and a seeded account-wide rate boundary,
+not sustained-load throughput, multi-worker contention, or concurrent account
+rehome during deletion. PGlite tests separately cover the 10,000-record ceiling,
+500-record cleanup batch, and non-home cleanup denial.
+
 ## Still unverified or incomplete
 
 - Managed source-turn invalidation, membership loss during established project
@@ -118,7 +146,8 @@ workspace.
 - Full-runtime CLI command parity, long-running sync/Jupyter/terminal sessions,
   cancellation/crash races, and the entire manual/managed acceptance matrix.
 - Historical database upgrades beyond this dev stack's successful startup.
-- Shared editor theme/mobile/keyboard checks and approval resource budgets.
+- Shared editor theme/mobile/keyboard checks and resource-limit behavior under
+  sustained load or concurrent migration.
 
 Existing unrelated billing maintenance logged a missing billing account during
 startup. No billing records were changed to address that message.
