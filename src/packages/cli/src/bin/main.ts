@@ -94,6 +94,7 @@ import {
 } from "./core/managed-connector-auth";
 import {
   effectiveDaemonGlobals,
+  prepareDaemonAuthGlobals,
   shouldUseFileOpsDaemon,
 } from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
@@ -293,6 +294,8 @@ console.log = (...args: any[]) => {
 };
 
 type GlobalOptions = GlobalAuthOptions & {
+  managedConnector?: ManagedConnectorCredential;
+  authProjectId?: string;
   apiKeyFile?: string;
   json?: boolean;
   output?: "table" | "json" | "yaml";
@@ -487,6 +490,8 @@ function daemonContextKey(globals: GlobalOptions): string {
     account_id: getExplicitAccountId(globals) ?? null,
     api_key: globals.apiKey ?? null,
     api_key_file: globals.apiKeyFile ?? null,
+    managed_connector: globals.managedConnector ?? null,
+    auth_project_id: globals.authProjectId ?? null,
     cookie: globals.cookie ?? null,
     bearer: globals.bearer ?? null,
     hub_password: globals.hubPassword ?? null,
@@ -1282,7 +1287,8 @@ async function connectRemote({
     !hasDirectAuth && !effectiveBearer && allowEnvAuthDefaults
       ? resolveProjectScopedAuth(process.env)
       : undefined;
-  const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const agentProjectId =
+    `${globals.authProjectId ?? globals.managedConnector?.sourceProjectId ?? (!globals.disableEnvAuthDefaults ? process.env.COCALC_PROJECT_ID : undefined) ?? ""}`.trim();
   const client = connectConat({
     address: conatAddress,
     noCache: true,
@@ -1589,9 +1595,11 @@ async function contextForGlobals(
     );
   }
 
-  const managedConnector = !effectiveGlobals.disableEnvAuthDefaults
-    ? managedConnectorCredentialFromEnv()
-    : undefined;
+  const managedConnector =
+    effectiveGlobals.managedConnector ??
+    (!effectiveGlobals.disableEnvAuthDefaults
+      ? managedConnectorCredentialFromEnv()
+      : undefined);
   const ctx = {
     globals: effectiveGlobals,
     accountId,
@@ -2927,26 +2935,23 @@ async function resolveProxyUrl({
 const { serveDaemon, runDaemonRequestFromCommand } =
   createDaemonServerOps<CommandContext>({
     daemonContextKey,
-    prepareDaemonContextGlobals: (globals) =>
-      globals.apiKeyFile
-        ? resolveApiKeyFileGlobals(
-            applyAuthProfile(globals, loadAuthConfig()).globals,
-          )
-        : globals,
+    prepareDaemonContextGlobals: prepareDaemonAuthGlobals,
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
     daemonRequestGlobals: (globals) => {
       const applied = applyAuthProfile(globals, loadAuthConfig());
-      return effectiveDaemonGlobals(
+      const resolved = effectiveDaemonGlobals(
         {
           ...globals,
+          ...applied.globals,
           profile: applied.profile,
           disableEnvAuthDefaults:
             globals.disableEnvAuthDefaults || applied.fromProfile,
         },
         { defaultApiBaseUrl },
       );
+      return { ...resolved, profile: "_env", disableEnvAuthDefaults: true };
     },
     daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,

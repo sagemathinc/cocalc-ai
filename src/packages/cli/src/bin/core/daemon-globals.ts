@@ -1,5 +1,13 @@
 import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 import { resolve } from "node:path";
+import { ENV_AUTH_PROFILE } from "../../core/auth-config";
+import { buildCookieHeader } from "../../core/auth-cookies";
+import {
+  managedConnectorCredentialFromEnv,
+  prepareManagedConnectorDaemonGlobals,
+  type ManagedConnectorCredential,
+} from "./managed-connector-auth";
+import { resolveApiKeyFileGlobals } from "./api-key-file";
 
 export type DaemonGlobalAuthOptions = {
   profile?: string;
@@ -13,13 +21,24 @@ export type DaemonGlobalAuthOptions = {
   hubPassword?: string;
   noDaemon?: boolean;
   disableEnvAuthDefaults?: boolean;
+  managedConnector?: ManagedConnectorCredential;
+  authProjectId?: string;
 };
+
+export function prepareDaemonAuthGlobals<T extends DaemonGlobalAuthOptions>(
+  globals: T,
+): T & DaemonGlobalAuthOptions {
+  return {
+    ...prepareManagedConnectorDaemonGlobals(resolveApiKeyFileGlobals(globals)),
+    profile: ENV_AUTH_PROFILE,
+    disableEnvAuthDefaults: true,
+  };
+}
 
 export function shouldUseFileOpsDaemon(
   globals: DaemonGlobalAuthOptions & { daemon?: boolean },
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (env.COCALC_CONNECTOR_API_KEY_FILE) return false;
   if (env.COCALC_CLI_DAEMON_MODE === "1") return false;
   if (globals.daemon === false) return false;
   return globals.noDaemon !== true;
@@ -56,6 +75,16 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
     return next;
   }
 
+  const managedConnector = managedConnectorCredentialFromEnv(env);
+  if (managedConnector) {
+    next.managedConnector = {
+      ...managedConnector,
+      keyFile: resolve(managedConnector.keyFile),
+    };
+    next.profile = ENV_AUTH_PROFILE;
+    next.disableEnvAuthDefaults = true;
+  }
+
   if (!next.accountId && !next.account_id) {
     const accountId = `${env.COCALC_ACCOUNT_ID ?? ""}`.trim();
     if (accountId) {
@@ -63,7 +92,7 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
     }
   }
 
-  if (!next.apiKey) {
+  if (!next.apiKey && !managedConnector) {
     const apiKey = `${env.COCALC_API_KEY ?? ""}`.trim();
     if (apiKey) {
       next.apiKey = apiKey;
@@ -73,13 +102,24 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   if (!next.bearer) {
     next.bearer = resolveAgentTokenFromEnv(env);
   }
+  next.authProjectId = `${env.COCALC_PROJECT_ID ?? ""}`.trim() || undefined;
 
-  if (!next.hubPassword) {
+  if (!next.hubPassword && !managedConnector) {
     const hubPassword = `${env.COCALC_HUB_PASSWORD ?? ""}`.trim();
     if (hubPassword) {
       next.hubPassword = hubPassword;
     }
   }
 
+  if (
+    !next.apiKey &&
+    !next.bearer &&
+    !next.hubPassword &&
+    !next.cookie &&
+    next.api
+  ) {
+    next.cookie = buildCookieHeader(next.api, next, {}, env) || undefined;
+  }
+  next.disableEnvAuthDefaults = true;
   return next;
 }

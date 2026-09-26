@@ -75,7 +75,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     state: DaemonServerState<Ctx>,
     globals: any,
   ): Promise<Ctx> {
-    const fileSlot = globals.apiKeyFile ? daemonContextKey(globals) : undefined;
+    const fileSlot =
+      globals.apiKeyFile || globals.managedConnector?.keyFile
+        ? daemonContextKey(globals)
+        : undefined;
     const discardFileContext = () => {
       if (!fileSlot) return;
       const oldKey = state.credentialFileContexts?.get(fileSlot);

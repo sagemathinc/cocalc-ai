@@ -315,8 +315,8 @@ An initial daemon run failed with the long nested runtime path; a short private
 `/tmp` runtime directory succeeded. Earlier revocation runs rejected the API's
 actual denial wording in a harness assertion; the corrected final run passed.
 These tests exercise sequential file commands through a persistent daemon, not
-terminal, Jupyter, sync, preview, or proxy streams. Managed connector credentials
-still bypass the daemon until source-project routing is propagated explicitly.
+terminal, Jupyter, sync, preview, or proxy streams. In that deployed build,
+managed connector credentials still bypass the daemon.
 
 ## Still unverified or incomplete
 
@@ -325,7 +325,19 @@ managed keys now share the same bounded, no-follow, nonblocking file reader.
 The CLI build and 32 focused tests passed, including managed FIFO rejection in
 a timeout-protected subprocess and a simulated post-stat file-growth test that
 verifies no more than 4,097 bytes are read before rejecting an oversized key.
-This does not enable managed daemon routing or prove a managed turn end to end.
+That reader change alone does not prove a managed turn end to end.
+
+A further, also undeployed follow-up enables managed file-daemon routing by
+forwarding the requesting CLI's source-project identity and provider path.
+Daemon admission rereads the provider, ignoring any supplied key snapshot;
+rotation or removal invalidates the old cached context. An unavailable provider
+denies connector operations while preserving independent source-project access.
+Requests carry resolved authentication and cannot inherit the daemon's startup
+environment or saved profile. The CLI build and 45 focused tests passed,
+covering auth isolation, provider snapshots, rotation/removal, source routing,
+and daemon context invalidation. This still needs live validation with an actual
+turn-issued managed credential; the manual-key evidence above is not a
+substitute.
 
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.

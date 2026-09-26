@@ -20,6 +20,7 @@ import {
   defaultApiKey,
   managedConnectorCredentialFromEnv,
   readManagedConnectorKey,
+  prepareManagedConnectorDaemonGlobals,
 } from "./managed-connector-auth";
 
 const SOURCE = "00000000-0000-4000-8000-000000000001";
@@ -79,6 +80,42 @@ test("managed credential provider rejects exposed files and symlinks", () => {
     assert.throws(() => readManagedConnectorKey(link));
     chmodSync(keyFile, 0o644);
     assert.throws(() => readManagedConnectorKey(keyFile), /file is invalid/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("daemon snapshots rotate target authority without removing source access", () => {
+  const dir = mkdtempSync(join(tmpdir(), "connector-snapshot-"));
+  const keyFile = join(dir, "key");
+  const request = {
+    managedConnector: {
+      keyFile,
+      sourceProjectId: SOURCE,
+      keySnapshot: "must-not-be-trusted",
+    },
+  };
+  try {
+    writeFileSync(keyFile, "first", { mode: 0o600 });
+    const first = prepareManagedConnectorDaemonGlobals(request);
+    assert.equal(apiKeyForProject(first, TARGET), "first");
+    assert.equal(apiKeyForProject(first, SOURCE), undefined);
+    writeFileSync(keyFile, "second");
+    const second = prepareManagedConnectorDaemonGlobals(request);
+    assert.equal(apiKeyForProject(second, TARGET), "second");
+    assert.equal(apiKeyForProject(first, TARGET), "first");
+    rmSync(keyFile);
+    const absent = prepareManagedConnectorDaemonGlobals(request);
+    assert.equal(apiKeyForProject(absent, SOURCE), undefined);
+    assert.throws(() => apiKeyForProject(absent, TARGET), /unavailable/);
+    assert.throws(() => apiKeyForProject(absent), /unavailable/);
+    assert.throws(
+      () =>
+        prepareManagedConnectorDaemonGlobals({
+          managedConnector: { keyFile, sourceProjectId: "invalid" },
+        }),
+      /valid source project/,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

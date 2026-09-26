@@ -4,7 +4,7 @@ import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDaemonServerOps, type DaemonServerState } from "./daemon-server";
-import { resolveApiKeyFileGlobals } from "./api-key-file";
+import { prepareDaemonAuthGlobals } from "./daemon-globals";
 
 type Context = { secret: string; closed: boolean };
 function fixture(create?: (globals: any) => Promise<Context>) {
@@ -23,7 +23,7 @@ function fixture(create?: (globals: any) => Promise<Context>) {
   };
   const ops = createDaemonServerOps<Context>({
     daemonContextKey: JSON.stringify,
-    prepareDaemonContextGlobals: resolveApiKeyFileGlobals,
+    prepareDaemonContextGlobals: prepareDaemonAuthGlobals,
     contextForGlobals: async (globals) => {
       const ctx = create
         ? await create(globals)
@@ -54,6 +54,17 @@ function fixture(create?: (globals: any) => Promise<Context>) {
         action: "project.file.list",
         globals: { apiKeyFile: path },
       }),
+    managedRequest: (keyFile: string) =>
+      ops.handleDaemonAction(state, {
+        id: "managed",
+        action: "project.file.list",
+        globals: {
+          managedConnector: {
+            keyFile,
+            sourceProjectId: "00000000-0000-4000-8000-000000000001",
+          },
+        },
+      }),
   };
 }
 
@@ -77,6 +88,31 @@ test("daemon reuses an unchanged key but invalidates on rotation and removal", a
     assert.match(removed.error!, /unavailable/);
     assert.equal(f.created[1].closed, true);
     assert.equal(f.state.contexts.size, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("managed daemon providers invalidate cached contexts across rotation and loss", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "daemon-managed-")),
+    path = join(dir, "key");
+  const f = fixture(async (globals) => ({
+    secret: globals.managedConnector.keySnapshot ?? "source-only",
+    closed: false,
+  }));
+  try {
+    writeFileSync(path, "first", { mode: 0o600 });
+    assert.equal((await f.managedRequest(path)).data, "first");
+    assert.equal((await f.managedRequest(path)).data, "first");
+    assert.equal(f.created.length, 1);
+    writeFileSync(path + ".next", "second", { mode: 0o600 });
+    renameSync(path + ".next", path);
+    assert.equal((await f.managedRequest(path)).data, "second");
+    assert.equal(f.created[0].closed, true);
+    rmSync(path);
+    assert.equal((await f.managedRequest(path)).data, "source-only");
+    assert.equal(f.created[1].closed, true);
+    assert.equal(f.state.contexts.size, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
