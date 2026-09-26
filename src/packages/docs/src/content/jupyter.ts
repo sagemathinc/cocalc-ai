@@ -119,7 +119,8 @@ the code keeps running. Discarded output cannot be fetched later. To change the
 limit:
 
 1. Open **Run → Output limit**.
-2. Choose **1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**.
+2. Choose **1 MiB (default)**, **4 MiB**, **16 MiB**, or **64 MiB**. The
+   current choice is marked (selected).
 3. Rerun the cell.
 
 The limit is saved in the notebook and applies to everyone who runs it. It

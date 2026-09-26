@@ -818,6 +818,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       def("jupyter/execute/output-budget.ts", "[1, 4, 16, 64]"),
       ren("frontend/jupyter/output-limit-menu.ts", "${mib} MiB"),
       ren("frontend/jupyter/output-limit-menu.ts", '" (default)"'),
+      ren("frontend/jupyter/output-limit-menu.ts", '" (selected)"'),
     ],
     usedIn: [
       {
