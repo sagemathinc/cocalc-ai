@@ -282,6 +282,8 @@ export type AllowFunction = (opts: {
 export interface Options {
   id?: string;
   httpServer?;
+  // The embedding HTTP server owns and rejects non-Conat upgrade requests.
+  allowOtherUpgradeHandlers?: boolean;
   port?: number;
   path?: string;
   getUser?: UserFunction;
@@ -553,6 +555,7 @@ export class ConatServer extends EventEmitter {
 
     const socketIoCompression = socketIoCompressionEnabled();
     const socketioOptions = {
+      destroyUpgrade: !options.allowOtherUpgradeHandlers,
       maxHttpBufferSize: MAX_PAYLOAD,
       path,
       adapter,

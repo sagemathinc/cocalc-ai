@@ -13,6 +13,7 @@ import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-li
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
+import { resolveLocalProjectApiRelayTarget } from "@cocalc/server/conat/api/project-api-relay";
 
 import {
   createInterBayAuthTokenHandlers,
@@ -2767,6 +2768,7 @@ async function startProjectCollabInviteService(): Promise<void> {
 async function startHostConnectionService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayHostConnectionApi = {
+    getApiRelayTarget: resolveLocalProjectApiRelayTarget,
     listHostOperations: async ({ account_id, host_id, include_completed }) =>
       await listOperations({
         account_id,

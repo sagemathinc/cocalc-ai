@@ -6,11 +6,38 @@
 import {
   createInterBayBayOpsClient,
   createInterBayHostControlClient,
+  createInterBayHostConnectionClient,
   createInterBayProjectControlClient,
 } from "./api";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
+  it("resolves API relay destinations in the owning bay without forwarding caller credentials", async () => {
+    const target = {
+      host_id: "host-b",
+      project_id: "project-b",
+      url: "https://host-b.test",
+    };
+    const fastRpcRequest = jest.fn(async () => ({
+      raw: encode({ encoding: DataEncoding.MsgPack, mesg: target }),
+    }));
+    const client = createInterBayHostConnectionClient({
+      client: { fastRpcRequest } as any,
+      dest_bay: "bay-b",
+      timeout: 10_000,
+    });
+    await expect(
+      client.getApiRelayTarget({
+        target_host_id: "host-b",
+        target_project_id: "project-b",
+      }),
+    ).resolves.toEqual(target);
+    expect(fastRpcRequest).toHaveBeenCalledWith(
+      "bay.bay-b.rpc.host-connection.get-api-relay-target",
+      { raw: expect.any(Uint8Array) },
+      { timeout: 10_000 },
+    );
+  });
   it("routes environment preflight to the remote bay with a bounded timeout", async () => {
     const fastRpcRequest = jest.fn(async () => ({
       raw: encode({ encoding: DataEncoding.MsgPack, mesg: { ok: false } }),

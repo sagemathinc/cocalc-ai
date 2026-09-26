@@ -284,6 +284,8 @@ function applyProjectRuntimeCliEnv(
   env.COCALC_CLI_CMD = getProjectRuntimeCliCommand();
   env.COCALC_CLI_AGENT_MODE = "1";
   env.COCALC_PROFILE = "_env";
+  env.COCALC_API_RELAY = "1";
+  env.COCALC_API_RELAY_HUB_URL = resolveProjectRuntimeApiUrl();
   if (accountId?.trim()) {
     env.COCALC_ACCOUNT_ID = accountId.trim();
   }
@@ -317,6 +319,9 @@ function resolveProjectRuntimeApiUrl(explicit?: string): string {
   const hostConfigured =
     `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
   return (
+    normalizeApiUrl(process.env.COCALC_SITE_URL ?? "", {
+      rewriteLoopbackHost: true,
+    }) ??
     normalizeApiUrl(masterConat, { rewriteLoopbackHost: true }) ??
     normalizeApiUrl(hostConfigured, { rewriteLoopbackHost: true }) ??
     normalizeApiUrl(explicit ?? "", { rewriteLoopbackHost: true }) ??

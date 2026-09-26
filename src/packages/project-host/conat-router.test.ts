@@ -47,6 +47,13 @@ async function requestJson({
 }
 
 describe("project-host conat router helpers", () => {
+  it("never rewrites the internal API relay into public Conat ingress", () => {
+    expect(
+      rewriteProjectHostConatProxyUrl(
+        "/_cocalc/api-relay/hub/conat/?EIO=4&transport=websocket",
+      ),
+    ).toBeUndefined();
+  });
   const originalEnv = { ...process.env };
 
   afterEach(() => {
