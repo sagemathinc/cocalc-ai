@@ -19,7 +19,10 @@ import {
   batchRow,
   deliveryRow,
   loadOutreachConfiguration,
+  loadOutreachRecipientEligibility,
   outreachFollowupIneligibilityReason,
+  outreachInitialSendIneligibility,
+  type OutreachInitialSendIneligibility,
 } from "./store";
 import {
   recordOutreachEngagement,
@@ -43,6 +46,7 @@ const LEASE_MS = 2 * 60_000;
 const RECONCILIATION_ABSENCE_GRACE_MS = 5 * 60_000;
 const RECONCILIATION_ABSENCE_RETRY_MS = 60_000;
 const RECONCILIATION_ABSENCE_MIN_OBSERVATIONS = 3;
+const MAX_INELIGIBLE_INITIAL_SENDS_PER_CLAIM = 25;
 const WORKER_KEY = "zendesk";
 const WORKER_OWNER = `${process.pid}:${randomUUID()}`;
 let timer: NodeJS.Timeout | undefined;
@@ -232,6 +236,84 @@ export async function cancelIneligibleQueuedFollowups(
   return result.rowCount ?? 0;
 }
 
+export async function failIneligibleInitialSend(
+  client: PoolClient,
+  delivery: CrmOutreachDelivery,
+  stage: "claim" | "before_provider",
+  reasons: OutreachInitialSendIneligibility[],
+): Promise<void> {
+  const lastError = `${stage === "claim" ? "INELIGIBLE_AT_CLAIM" : "INELIGIBLE_BEFORE_PROVIDER"}:${reasons.join(",")}`;
+  await client.query(
+    `UPDATE crm_outreach_deliveries SET state='failed',last_error=$1,
+      provider_submitted_at=NULL,updated_at=NOW(),version=version+1
+     WHERE id=$2`,
+    [lastError, delivery.id],
+  );
+  await addActivity(client, {
+    organization_id: delivery.organization_id,
+    person_id: delivery.person_id,
+    opportunity_id: delivery.opportunity_id,
+    task_id: delivery.task_id,
+    zendesk_ticket_id: delivery.zendesk_ticket_id,
+    source_id: `ineligible-initial-send:${stage}:${delivery.id}:${delivery.version}`,
+    summary:
+      "Outreach was not sent because the recipient is no longer eligible",
+    details: lastError,
+    metadata: { delivery_id: delivery.id, stage, reasons },
+  });
+}
+
+async function selectEligibleQueuedDelivery(
+  client: PoolClient,
+  config: { send_per_domain_per_day: number; contact_cooldown_days: number },
+): Promise<any | undefined> {
+  for (
+    let ineligible = 0;
+    ineligible < MAX_INELIGIBLE_INITIAL_SENDS_PER_CLAIM;
+    ineligible += 1
+  ) {
+    const deliveryResult = await client.query(
+      `SELECT to_jsonb(d) AS delivery,to_jsonb(b) AS batch,o.customer_number,
+        (SELECT count(*)::int FROM crm_outreach_provider_operations used
+          JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
+         WHERE used.operation IN ('create_ticket','add_comment')
+           AND used.started_at>=NOW()-INTERVAL '24 hours'
+           AND used.state IN ('started','succeeded','indeterminate')
+           AND used_delivery.recipient_domain=d.recipient_domain) AS domain_usage
+         FROM crm_outreach_deliveries d
+         JOIN crm_outreach_batches b ON b.id=d.batch_id
+         JOIN crm_organizations o ON o.id=d.organization_id
+        WHERE d.state='queued' AND d.next_attempt_at<=NOW() AND b.state IN ('queued','sending')
+          AND NOT EXISTS(
+            SELECT 1 FROM crm_outreach_provider_operations prior
+             WHERE prior.delivery_id=d.id AND prior.operation='create_ticket'
+               AND prior.state IN ('queued','started','indeterminate','succeeded'))
+          AND (SELECT count(*) FROM crm_outreach_provider_operations used
+            JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
+           WHERE used.operation IN ('create_ticket','add_comment')
+             AND used.started_at>=NOW()-INTERVAL '24 hours'
+             AND used.state IN ('started','succeeded','indeterminate')
+             AND used_delivery.recipient_domain=d.recipient_domain)<$1
+        ORDER BY d.next_attempt_at,d.id FOR UPDATE OF d SKIP LOCKED LIMIT 1`,
+      [config.send_per_domain_per_day],
+    );
+    const selected = deliveryResult.rows[0];
+    if (!selected) return;
+    const delivery = deliveryRow(selected.delivery);
+    const reasons = outreachInitialSendIneligibility(
+      await loadOutreachRecipientEligibility(
+        client,
+        delivery,
+        config.contact_cooldown_days,
+      ),
+      delivery.override_reason,
+    );
+    if (!reasons.length) return selected;
+    await failIneligibleInitialSend(client, delivery, "claim", reasons);
+  }
+  return;
+}
+
 async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
   assertSeed();
   return await transaction(async (client) => {
@@ -308,42 +390,7 @@ async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
     );
     let operation = existingOperation.rows[0];
     if (!operation) {
-      const deliveryResult = await client.query(
-        `SELECT to_jsonb(d) AS delivery,to_jsonb(b) AS batch,o.customer_number,
-          (SELECT count(*)::int FROM crm_outreach_provider_operations used
-            JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
-           WHERE used.operation IN ('create_ticket','add_comment')
-             AND used.started_at>=NOW()-INTERVAL '24 hours'
-             AND used.state IN ('started','succeeded','indeterminate')
-             AND used_delivery.recipient_domain=d.recipient_domain) AS domain_usage
-           FROM crm_outreach_deliveries d
-           JOIN crm_outreach_batches b ON b.id=d.batch_id
-           JOIN crm_organizations o ON o.id=d.organization_id
-           JOIN crm_people p ON p.id=d.person_id AND p.status='active'
-           JOIN crm_person_emails e ON e.id=d.person_email_id AND e.person_id=d.person_id AND e.verified
-           JOIN crm_organization_people op ON op.organization_id=d.organization_id AND op.person_id=d.person_id AND op.state='active'
-          WHERE d.state='queued' AND d.next_attempt_at<=NOW() AND b.state IN ('queued','sending')
-            AND NOT EXISTS(
-              SELECT 1 FROM crm_outreach_provider_operations prior
-               WHERE prior.delivery_id=d.id AND prior.operation='create_ticket'
-                 AND prior.state IN ('queued','started','indeterminate','succeeded'))
-            AND NOT EXISTS(
-              SELECT 1 FROM crm_contact_suppressions s WHERE s.active AND (
-                (s.scope='email' AND s.normalized_scope_value=d.normalized_email) OR
-                (s.scope='domain' AND s.normalized_scope_value=d.recipient_domain) OR
-                (s.scope='person' AND s.person_id=d.person_id) OR
-                (s.scope='organization' AND s.organization_id=d.organization_id) OR
-                s.person_email_id=d.person_email_id))
-            AND (SELECT count(*) FROM crm_outreach_provider_operations used
-              JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
-             WHERE used.operation IN ('create_ticket','add_comment')
-               AND used.started_at>=NOW()-INTERVAL '24 hours'
-               AND used.state IN ('started','succeeded','indeterminate')
-               AND used_delivery.recipient_domain=d.recipient_domain)<$1
-          ORDER BY d.next_attempt_at,d.id FOR UPDATE OF d SKIP LOCKED LIMIT 1`,
-        [config.send_per_domain_per_day],
-      );
-      const selected = deliveryResult.rows[0];
+      const selected = await selectEligibleQueuedDelivery(client, config);
       if (!selected) return;
       const delivery = deliveryRow(selected.delivery);
       const operationId = randomUUID();
@@ -572,6 +619,83 @@ async function revalidateStartedFollowupClaim(
         error_text=$1,lease_owner=NULL,lease_expires_at=NULL,finished_at=NOW(),updated_at=NOW()
        WHERE id=$2 AND state='started'`,
       [ineligible, claim.operation_id],
+    );
+    return false;
+  });
+}
+
+async function revalidateStartedCreateTicketClaim(
+  claim: ClaimedOperation,
+): Promise<boolean> {
+  const config = await loadOutreachConfiguration();
+  return await transaction(async (client) => {
+    const current = await client.query(
+      `SELECT p.state AS operation_state,p.lease_owner,to_jsonb(d) AS delivery,b.state AS batch_state
+         FROM crm_outreach_provider_operations p
+         JOIN crm_outreach_deliveries d ON d.id=p.delivery_id
+         JOIN crm_outreach_batches b ON b.id=d.batch_id
+        WHERE p.id=$1 FOR UPDATE OF p,d,b`,
+      [claim.operation_id],
+    );
+    if (
+      !current.rows[0] ||
+      current.rows[0].operation_state !== "started" ||
+      current.rows[0].lease_owner !== WORKER_OWNER
+    ) {
+      return false;
+    }
+    const delivery = deliveryRow(current.rows[0].delivery);
+    const batchState = `${current.rows[0].batch_state ?? ""}`;
+    if (
+      !config.enabled ||
+      !config.delivery_enabled ||
+      !["queued", "sending"].includes(batchState)
+    ) {
+      const cancelled = batchState === "cancelled";
+      await client.query(
+        `UPDATE crm_outreach_provider_operations SET state='cancelled',
+          provider_status=$1,lease_owner=NULL,lease_expires_at=NULL,
+          finished_at=NOW(),updated_at=NOW()
+         WHERE id=$2 AND state='started'`,
+        [
+          cancelled || batchState === "paused"
+            ? `batch_${batchState}`
+            : "delivery_disabled",
+          claim.operation_id,
+        ],
+      );
+      await client.query(
+        `UPDATE crm_outreach_deliveries SET state=$1,provider_submitted_at=NULL,
+          next_attempt_at=CASE WHEN $1='queued' THEN NOW() ELSE next_attempt_at END,
+          cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,
+          updated_at=NOW(),version=version+1
+         WHERE id=$2 AND state='creating_ticket'`,
+        [cancelled ? "cancelled" : "queued", delivery.id],
+      );
+      return false;
+    }
+    const reasons = outreachInitialSendIneligibility(
+      await loadOutreachRecipientEligibility(
+        client,
+        delivery,
+        config.contact_cooldown_days,
+      ),
+      delivery.override_reason,
+    );
+    if (!reasons.length) return true;
+    await client.query(
+      `UPDATE crm_outreach_provider_operations SET state='cancelled',
+        provider_status='cancelled_preflight',error_category='ineligible_initial_send',
+        error_text=$1,lease_owner=NULL,lease_expires_at=NULL,
+        finished_at=NOW(),updated_at=NOW()
+       WHERE id=$2 AND state='started'`,
+      [reasons.join(","), claim.operation_id],
+    );
+    await failIneligibleInitialSend(
+      client,
+      delivery,
+      "before_provider",
+      reasons,
     );
     return false;
   });
@@ -1145,6 +1269,14 @@ async function processClaim(claim: ClaimedOperation): Promise<void> {
   try {
     let ticket: OutreachZendeskTicket;
     if (claim.operation === "create_ticket") {
+      if (!(await revalidateStartedCreateTicketClaim(claim))) {
+        recordOutreachProviderOperation(
+          claim.operation,
+          "preflight_not_sent",
+          Date.now() - startedAt,
+        );
+        return;
+      }
       ticket =
         (await findOutreachTicketByExternalId(
           claim.delivery.provider_external_id,
@@ -1469,3 +1601,10 @@ export function stopCrmOutreachWorkerForTests(): void {
   timer = undefined;
   running = false;
 }
+
+export const __test__ = {
+  claimOneEffectful,
+  processClaim,
+  revalidateStartedCreateTicketClaim,
+  workerOwner: WORKER_OWNER,
+};
