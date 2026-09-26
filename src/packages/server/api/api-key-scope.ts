@@ -2,6 +2,7 @@ import type {
   ApiKeyCapability,
   ApiKeyScope,
 } from "@cocalc/util/db-schema/api-keys";
+import { API_KEY_CAPABILITIES } from "@cocalc/util/db-schema/api-keys";
 import {
   apiKeyScopeAllows,
   legacyApiKeyScope,
@@ -9,17 +10,7 @@ import {
 } from "@cocalc/util/api-key-scope";
 import { isValidUUID } from "@cocalc/util/misc";
 
-const CAPABILITY_SET = new Set<string>([
-  "account:read",
-  "project:create",
-  "project:list",
-  "project:read",
-  "project:write",
-  "file:read",
-  "file:write",
-  "project:exec",
-  "codex:run",
-]);
+const CAPABILITY_SET = new Set<string>(API_KEY_CAPABILITIES);
 
 const PROJECT_ALLOWLIST_REQUIRED = new Set<ApiKeyCapability>([
   "project:read",

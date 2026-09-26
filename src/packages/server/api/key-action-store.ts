@@ -5,6 +5,10 @@
 
 import type { Pool, PoolClient } from "@cocalc/database/pool";
 import {
+  assertAccountNotRehoming,
+  assertAccountWriteOnHomeBay,
+} from "@cocalc/database/postgres/account-rehome-fence";
+import {
   API_KEY_ACTION_TTL_MS,
   MAX_PENDING_API_KEY_ACTIONS,
   normalizeApiKeyActionBinding,
@@ -42,6 +46,16 @@ export class ApiKeyActionStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await assertAccountNotRehoming({
+        db: client,
+        account_id: accountId,
+        action: "manage API key actions",
+      });
+      await assertAccountWriteOnHomeBay({
+        db: client,
+        account_id: accountId,
+        action: "manage API key actions",
+      });
       // Serialize per-account admission so concurrent requests cannot race the cap.
       const locked = await client.query(
         "SELECT account_id FROM accounts WHERE account_id=$1::UUID FOR UPDATE",

@@ -9,6 +9,25 @@ import { viewerReadPolicyAllowsPath } from "./project-access";
 const B = "11111111-1111-4111-8111-111111111111";
 const C = "22222222-2222-4222-8222-222222222222";
 
+test("management request scope is separate from data access and project grants", () => {
+  const scope = normalizeApiKeyScopeV1({
+    version: 1,
+    account: ["api-key:revoke:request"],
+    projects: [],
+  });
+  expect(apiKeyScopeAllows(scope, "api-key:revoke:request")).toBe(true);
+  expect(apiKeyScopeAllows(scope, "account:read")).toBe(false);
+  expect(apiKeyScopeAllows(scope, "project:list")).toBe(false);
+  expect(apiKeyScopeAllows(scope, "project:exec", B)).toBe(false);
+  expect(() =>
+    normalizeApiKeyScopeV1({
+      version: 1,
+      account: [],
+      projects: [{ project_id: B, capabilities: ["api-key:revoke:request"] }],
+    }),
+  ).toThrow(/not valid for project/);
+});
+
 test("empty drafts require explicit opt-in and cannot become active key scopes", () => {
   const empty = { version: 1, account: [], projects: [] };
   const draft = normalizeApiKeyScopeV1(empty, { allowEmpty: true });

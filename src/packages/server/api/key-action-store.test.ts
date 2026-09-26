@@ -37,7 +37,7 @@ describeDb("API key action transactional storage", () => {
 
   beforeAll(async () => {
     await pool.query(
-      "CREATE TABLE IF NOT EXISTS accounts(account_id UUID PRIMARY KEY)",
+      "CREATE TABLE IF NOT EXISTS accounts(account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
     );
     await pool.query("INSERT INTO accounts(account_id) VALUES($1)", [
       account_id,
