@@ -36,7 +36,10 @@ import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
 import Message from "./message";
-import type { InlineCodexActivityBlock } from "./message-state";
+import {
+  hasAcpGuidanceReceipt,
+  type InlineCodexActivityBlock,
+} from "./message-state";
 import type {
   ChatMessageTyped,
   ChatMessages,
@@ -386,14 +389,19 @@ function collectSteers({
         resolvedMessageAcpState({ message: assistant, acpState }) ===
           "running") &&
       assistantDate.valueOf() < messageDate.valueOf();
-    // Use only model-authored history: a later human edit of the final answer
-    // must not extend this turn and swallow subsequent prompts on reload.
+    // ACP writes history under the assistant sender's raw model name, not
+    // necessarily an openai-* service. Later human edits must not extend the
+    // turn and swallow subsequent prompts on reload.
     const finishedAt = Math.max(
       0,
       ...historyArray(assistant).map((entry) => {
         const author =
           (entry as any)?.author_id ?? (entry as any)?.get?.("author_id");
-        if (typeof author !== "string" || !isLanguageModelService(author))
+        if (
+          typeof author !== "string" ||
+          (author !== field(assistant, "sender_id") &&
+            !isLanguageModelService(author))
+        )
           return 0;
         const raw = (entry as any)?.date ?? (entry as any)?.get?.("date");
         const time = new Date(raw).valueOf();
@@ -986,6 +994,10 @@ function resolvedMessageAcpState({
   acpState?: { get?: (key: string) => unknown };
   hasAcpReply?: boolean;
 }): string | undefined {
+  // Runtime receipt is stronger evidence than an optimistic browser send state.
+  if (hasAcpGuidanceReceipt(field(message, "acp_guidance_delivered_at_ms"))) {
+    return "sent";
+  }
   const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
   if (messageId && acpState != null) {
     const storedState = normalizeMessageAcpState(

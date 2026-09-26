@@ -2,7 +2,8 @@
 
 import { act, render, screen } from "@testing-library/react";
 import { ChatLog } from "../chat-log";
-import { getLiveResponseBlocks } from "@cocalc/chat";
+import { buildChatMessage, getLiveResponseBlocks } from "@cocalc/chat";
+import { codexEventsToMarkdown } from "../codex-activity";
 import { fromJS } from "immutable";
 
 let renderedMessages: any[] = [];
@@ -388,81 +389,114 @@ describe("ChatLog immediate steer rendering", () => {
     ).toBeUndefined();
   });
 
-  it("keeps a completed mixed timeline together across hide, reopen, and reload", () => {
-    const messages = midturnMessages();
-    messages.set("3500", {
-      date: 3500,
-      message_id: "guidance-1",
-      thread_id: "thread-1",
-      parent_message_id: "network-1",
-      sender_id: "acct-1",
-      acp_send_mode: "immediate",
-      acp_state: "sent",
-      history: [{ content: "Human guidance" }],
-    });
-    const actions = { store: {}, clearScrollRequest: jest.fn() } as any;
-    const view = render(midturnChat(messages, { actions }));
-    messages.set("2000", {
-      ...messages.get("2000"),
-      generating: false,
-      history: [
-        {
-          content: "Final answer",
-          date: new Date(6000),
-          author_id: "openai-codex-agent",
+  it.each(["openai-codex-agent", "gpt-5.6-luna", "future-agent-model"])(
+    "keeps a completed %s timeline together across hide, reopen, and reload",
+    (model) => {
+      const messages = midturnMessages();
+      const assistant = (generating: boolean) =>
+        buildChatMessage({
+          sender_id: model,
+          date: new Date(2000),
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          parent_message_id: "user-1",
+          acp_account_id: "acct-1",
+          acp_started_at_ms: 2000,
+          generating,
+          prevHistory: [],
+          content: generating ? "Working" : "Final answer",
+          historyEntryDate: new Date(generating ? 2000 : 6000).toISOString(),
+        });
+      messages.set("2000", assistant(true));
+      messages.set("4000", {
+        ...messages.get("4000"),
+        post_only: true,
+        acp_attention_response: {
+          attention_id: "question-1",
+          response_id: "response-1",
+          assistant_message_id: "assistant-1",
+          submitted_at: 4000,
         },
-      ],
-    });
-    view.rerender(midturnChat(new Map(messages), { actions }));
-    const ids = ["network-1", "guidance-1", "answer-1", "network-2"];
-    expect(
-      lastRenderedMessageProps("assistant-1").activitySteers.map(
-        ({ messageId }) => messageId,
-      ),
-    ).toEqual(ids);
-    act(() =>
-      lastRenderedMessageProps("assistant-1").onExpandedCodexActivityChange(
-        false,
-      ),
-    );
-    expect(lastRenderedMessageProps("assistant-1").expandedCodexActivity).toBe(
-      false,
-    );
-    expect(
-      lastRenderedMessageProps("assistant-1").attachedSteers,
-    ).toBeUndefined();
-    expect(
-      lastRenderedMessageProps("assistant-1").message.history[0].content,
-    ).toBe("Final answer");
-    for (const id of ids)
-      expect(screen.queryByText(id)).not.toBeInTheDocument();
-    act(() =>
-      lastRenderedMessageProps("assistant-1").onExpandedCodexActivityChange(
-        true,
-      ),
-    );
-    expect(lastRenderedMessageProps("assistant-1").expandedCodexActivity).toBe(
-      true,
-    );
-    expect(
-      lastRenderedMessageProps("assistant-1").activitySteers.map(
-        ({ messageId }) => messageId,
-      ),
-    ).toEqual(ids);
-    view.unmount();
-    render(
-      midturnChat(new Map([...messages].reverse()), {
-        actions: { store: {}, clearScrollRequest: jest.fn() },
-      }),
-    );
-    expect(
-      lastRenderedMessageProps("assistant-1").activitySteers.map(
-        ({ messageId }) => messageId,
-      ),
-    ).toEqual(ids);
-    for (const id of ids)
-      expect(screen.queryByText(id)).not.toBeInTheDocument();
-  });
+        acp_guidance_delivered_at_ms: 4100,
+      });
+      messages.set("3500", {
+        date: 3500,
+        message_id: "guidance-1",
+        thread_id: "thread-1",
+        parent_message_id: "network-1",
+        sender_id: "acct-1",
+        acp_send_mode: "immediate",
+        acp_state: "sent",
+        acp_guidance_delivered_at_ms: 3600,
+        history: [{ content: "Human guidance" }],
+      });
+      const actions = { store: {}, clearScrollRequest: jest.fn() } as any;
+      // A receipt must supersede stale optimistic browser state, including after
+      // completion. It must not resurrect queue/retry controls for consumed input.
+      const acpState = new Map([
+        ["message:guidance-1", "queue"],
+        ["message:answer-1", "sending"],
+      ]);
+      const view = render(midturnChat(messages, { actions, acpState }));
+      messages.set("2000", assistant(false));
+      view.rerender(midturnChat(new Map(messages), { actions, acpState }));
+      const ids = ["network-1", "guidance-1", "answer-1", "network-2"];
+      expect(
+        lastRenderedMessageProps("assistant-1").activitySteers.map(
+          ({ messageId }) => messageId,
+        ),
+      ).toEqual(ids);
+      const exported = codexEventsToMarkdown(
+        [],
+        lastRenderedMessageProps("assistant-1").activitySteers,
+      );
+      expect(exported).toContain("Human guidance");
+      expect(exported).toContain("Answer to the earlier Codex question");
+      expect(exported).toContain("Review ready");
+      act(() =>
+        lastRenderedMessageProps("assistant-1").onExpandedCodexActivityChange(
+          false,
+        ),
+      );
+      expect(
+        lastRenderedMessageProps("assistant-1").expandedCodexActivity,
+      ).toBe(false);
+      expect(
+        lastRenderedMessageProps("assistant-1").attachedSteers,
+      ).toBeUndefined();
+      expect(
+        lastRenderedMessageProps("assistant-1").message.history[0].content,
+      ).toBe("Final answer");
+      for (const id of ids)
+        expect(screen.queryByText(id)).not.toBeInTheDocument();
+      act(() =>
+        lastRenderedMessageProps("assistant-1").onExpandedCodexActivityChange(
+          true,
+        ),
+      );
+      expect(
+        lastRenderedMessageProps("assistant-1").expandedCodexActivity,
+      ).toBe(true);
+      expect(
+        lastRenderedMessageProps("assistant-1").activitySteers.map(
+          ({ messageId }) => messageId,
+        ),
+      ).toEqual(ids);
+      view.unmount();
+      render(
+        midturnChat(new Map([...messages].reverse()), {
+          actions: { store: {}, clearScrollRequest: jest.fn() },
+        }),
+      );
+      expect(
+        lastRenderedMessageProps("assistant-1").activitySteers.map(
+          ({ messageId }) => messageId,
+        ),
+      ).toEqual(ids);
+      for (const id of ids)
+        expect(screen.queryByText(id)).not.toBeInTheDocument();
+    },
+  );
 
   it("keeps post-completion messages out of the previous activity and preserves failed recovery", () => {
     const messages = midturnMessages();
@@ -513,49 +547,53 @@ describe("ChatLog immediate steer rendering", () => {
     expect(screen.queryByText("network-1")).not.toBeInTheDocument();
   });
 
-  it("does not fold a post-turn prompt after a later manual edit to the final answer", () => {
-    const messages = midturnMessages();
-    messages.set("2000", {
-      ...messages.get("2000"),
-      generating: false,
-      history: [
-        { content: "Manual correction", author_id: "acct-1", date: 9000 },
-        {
-          content: "Original final answer",
-          author_id: "openai-codex-agent",
-          date: 6000,
-        },
-      ],
-    });
-    messages.set("7000", {
-      date: 7000,
-      message_id: "later-prompt",
-      thread_id: "thread-1",
-      parent_message_id: "network-2",
-      sender_id: "acct-1",
-      history: [{ content: "After the turn" }],
-    });
-    const view = render(midturnChat(messages));
-    expect(screen.getByText("later-prompt")).toBeInTheDocument();
-    expect(
-      lastRenderedMessageProps("assistant-1").activitySteers.map(
-        ({ messageId }) => messageId,
-      ),
-    ).toEqual(["network-1", "answer-1", "network-2"]);
-    messages.set("2000", {
-      ...messages.get("2000"),
-      history: [
-        {
-          content: "Only a manual edit remains",
-          author_id: "acct-1",
-          date: 9000,
-        },
-      ],
-    });
-    view.rerender(midturnChat(new Map(messages)));
-    expect(screen.getByText("later-prompt")).toBeInTheDocument();
-    expect(screen.getByText("answer-1")).toBeInTheDocument();
-  });
+  it.each(["openai-codex-agent", "gpt-5.6-luna"])(
+    "does not fold a post-turn prompt after a later manual edit to the %s final answer",
+    (model) => {
+      const messages = midturnMessages();
+      messages.set("2000", {
+        ...messages.get("2000"),
+        sender_id: model,
+        generating: false,
+        history: [
+          { content: "Manual correction", author_id: "acct-1", date: 9000 },
+          {
+            content: "Original final answer",
+            author_id: model,
+            date: 6000,
+          },
+        ],
+      });
+      messages.set("7000", {
+        date: 7000,
+        message_id: "later-prompt",
+        thread_id: "thread-1",
+        parent_message_id: "network-2",
+        sender_id: "acct-1",
+        history: [{ content: "After the turn" }],
+      });
+      const view = render(midturnChat(messages));
+      expect(screen.getByText("later-prompt")).toBeInTheDocument();
+      expect(
+        lastRenderedMessageProps("assistant-1").activitySteers.map(
+          ({ messageId }) => messageId,
+        ),
+      ).toEqual(["network-1", "answer-1", "network-2"]);
+      messages.set("2000", {
+        ...messages.get("2000"),
+        history: [
+          {
+            content: "Only a manual edit remains",
+            author_id: "acct-1",
+            date: 9000,
+          },
+        ],
+      });
+      view.rerender(midturnChat(new Map(messages)));
+      expect(screen.getByText("later-prompt")).toBeInTheDocument();
+      expect(screen.getByText("answer-1")).toBeInTheDocument();
+    },
+  );
 
   it.each(["sending", "sent", "queue", "not-sent"])(
     "keeps a post-completion immediate %s message outside old activity",

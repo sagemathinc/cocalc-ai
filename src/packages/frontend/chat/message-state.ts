@@ -12,6 +12,32 @@ const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
 export const ACP_THINKING_PLACEHOLDER = ":robot: Thinking...";
 
+export function hasAcpGuidanceReceipt(deliveredAtMs: unknown): boolean {
+  const time = Number(deliveredAtMs);
+  return Number.isFinite(time) && time > 0;
+}
+
+export function getAcpMessageDeliveryLabel({
+  postOnly,
+  attentionResponse,
+  deliveredAtMs,
+}: {
+  postOnly?: boolean;
+  attentionResponse?: unknown;
+  deliveredAtMs?: unknown;
+}): string | undefined {
+  // Sync answers are post-only to prevent a second turn, not because the
+  // answer wasn't delivered through the pending question's response channel.
+  if (hasAcpGuidanceReceipt(deliveredAtMs)) {
+    return attentionResponse ? "Answer received by agent" : "Received by agent";
+  }
+  if (postOnly) {
+    return attentionResponse
+      ? "Answer saved · Receipt unconfirmed"
+      : "Posted · Not sent to agent";
+  }
+}
+
 export type InlineCodexActivityBlock = {
   kind: "agent" | "guidance";
   text: string;

@@ -4,12 +4,49 @@ import { getLiveResponseBlocks } from "@cocalc/chat";
 import {
   codexActivityBlocksToSelectableMarkdown,
   computeAcpStateToRender,
+  getAcpMessageDeliveryLabel,
   limitCodexActivityBlocks,
   shouldShowAcpResubmitToAgentButton,
 } from "../message-state";
 import "../../editors/slate/elements/types";
 import { markdown_to_slate } from "../../editors/slate/markdown-to-slate";
 import { slate_to_markdown } from "../../editors/slate/slate-to-markdown";
+
+describe("getAcpMessageDeliveryLabel", () => {
+  it("distinguishes a received sync answer from an ordinary posted comment", () => {
+    expect(
+      getAcpMessageDeliveryLabel({
+        postOnly: true,
+        attentionResponse: { response_id: "answer-1" },
+        deliveredAtMs: 4100,
+      }),
+    ).toBe("Answer received by agent");
+    expect(getAcpMessageDeliveryLabel({ postOnly: true })).toBe(
+      "Posted · Not sent to agent",
+    );
+  });
+
+  it.each([undefined, null, 0, -1, NaN, Infinity, "invalid"])(
+    "does not claim receipt from an invalid timestamp %s",
+    (deliveredAtMs) => {
+      expect(
+        getAcpMessageDeliveryLabel({
+          postOnly: true,
+          attentionResponse: { response_id: "answer-1" },
+          deliveredAtMs,
+        }),
+      ).toBe("Answer saved · Receipt unconfirmed");
+      expect(getAcpMessageDeliveryLabel({ deliveredAtMs })).toBeUndefined();
+    },
+  );
+
+  it("shows a received guidance receipt instead of an indefinite waiting spinner", () => {
+    expect(getAcpMessageDeliveryLabel({ deliveredAtMs: 5000 })).toBe(
+      "Received by agent",
+    );
+    expect(getAcpMessageDeliveryLabel({})).toBeUndefined();
+  });
+});
 
 describe("codexActivityBlocksToSelectableMarkdown", () => {
   it("keeps the latest suffix from cumulative live projection events", () => {

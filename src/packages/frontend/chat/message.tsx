@@ -135,6 +135,7 @@ import {
   codexActivityBlocksToSelectableMarkdown,
   computeAcpStateToRender,
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
+  getAcpMessageDeliveryLabel,
   getQueuedMessageEditHelpText,
   limitCodexActivityBlocks,
   resolveCodexOverflowMenuLocation,
@@ -3165,8 +3166,12 @@ export default function Message({
   );
 
   const renderAcpState = () => {
-    if (field<boolean>(message, "post_only"))
-      return <Tag>Posted · Not sent to agent</Tag>;
+    const receiptLabel = getAcpMessageDeliveryLabel({
+      postOnly: field<boolean>(message, "post_only"),
+      attentionResponse: field(message, "acp_attention_response"),
+      deliveredAtMs: field(message, "acp_guidance_delivered_at_ms"),
+    });
+    if (receiptLabel) return <Tag>{receiptLabel}</Tag>;
     if (!acpStateToRender) return null;
     if (acpStateToRender === "queue") {
       return (
