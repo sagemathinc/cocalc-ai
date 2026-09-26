@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
+import { ApiKeyActionStore } from "@cocalc/server/api/key-action-store";
 import type {
   AccountMembershipPortableState,
   AccountRehomeAcceptRequest,
@@ -76,6 +77,7 @@ const PORTABLE_STATE_TABLES = [
   "account_impersonation_grants",
   "account_impersonation_sessions",
   "api_keys",
+  "api_key_action_requests",
   "admin_assigned_memberships",
   "account_entitlement_overrides",
   "account_entitlement_override_events",
@@ -236,6 +238,7 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
     await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
     );
+    await new ApiKeyActionStore(getPool()).ensureSchema();
   })();
   accountRehomeApiKeysSchemaReady.set(bay, pending);
   try {
@@ -368,9 +371,11 @@ async function replacePortableRows({
               ? ["session_hash"]
               : table === "api_keys"
                 ? ["key_id"]
-                : table === "account_entitlement_overrides"
-                  ? ["account_id"]
-                  : ["id"];
+                : table === "api_key_action_requests"
+                  ? ["account_id", "request_id"]
+                  : table === "account_entitlement_overrides"
+                    ? ["account_id"]
+                    : ["id"];
   if (table === "api_keys") {
     await db.query(
       `
@@ -779,6 +784,7 @@ async function loadPortableRows(
 async function loadPortableState(
   account_id: string,
 ): Promise<AccountRehomeStateCopyRequest> {
+  await ensureAccountRehomeApiKeysSchema();
   const [
     account_project_index,
     account_collaborator_index,
@@ -791,6 +797,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    api_key_action_requests,
     admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -808,6 +815,7 @@ async function loadPortableState(
     loadPortableRows("account_impersonation_grants", account_id),
     loadPortableRows("account_impersonation_sessions", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    loadPortableRows("api_key_action_requests", account_id),
     loadPortableRows("admin_assigned_memberships", account_id),
     loadPortableRows("account_entitlement_overrides", account_id),
     loadPortableRows("account_entitlement_override_events", account_id),
@@ -829,6 +837,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    api_key_action_requests,
     admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -1427,6 +1436,7 @@ async function copyLegacyAccountRehomeState({
   account_impersonation_grants,
   account_impersonation_sessions,
   api_keys,
+  api_key_action_requests,
   admin_assigned_memberships,
   account_entitlement_overrides,
   account_entitlement_override_events,
@@ -1506,6 +1516,11 @@ async function copyLegacyAccountRehomeState({
     table: "api_keys",
     account_id: accountId,
     rows: api_keys ?? [],
+  });
+  await replacePortableRows({
+    table: "api_key_action_requests",
+    account_id: accountId,
+    rows: api_key_action_requests ?? [],
   });
   await replacePortableRows({
     table: "admin_assigned_memberships",

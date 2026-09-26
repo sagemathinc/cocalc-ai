@@ -795,6 +795,15 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...adHocEntries(["api_key_action_requests"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    source: "API key action approval store",
+    migrate_to_schema: true,
+    notes:
+      "Immutable API-key action reviews and terminal decisions follow the account during rehome. Request IDs, exact authority bindings, expiry, and status are copied unchanged; requests and decisions share the account-rehome fence. No human session or approval credential is stored in these rows.",
+  }),
   ...adHocEntries(["live_voice_sessions"], {
     ownership: "account-home",
     authority: "account_id",

@@ -130,6 +130,23 @@ describe("account rehome", () => {
   const OP_ID = "11111111-1111-4111-8111-111111111111";
   const TARGET_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
   const REQUESTED_BY = "33333333-3333-4333-8333-333333333333";
+  const actionRows = ["pending", "executed", "rejected"].map((status, i) => ({
+    account_id: TARGET_ACCOUNT_ID,
+    request_id: `44444444-4444-4444-8444-44444444444${i}`,
+    review: {
+      request_id: `44444444-4444-4444-8444-44444444444${i}`,
+      status: "pending",
+      binding: {
+        account_id: TARGET_ACCOUNT_ID,
+        requesting_key_id: "requester",
+        target_key_id: "target",
+        requesting_scope_revision: 2,
+        target_scope_revision: 3,
+      },
+    },
+    expires_at: 1780000000000,
+    status,
+  }));
   let operationRow: any;
 
   beforeEach(() => {
@@ -156,6 +173,11 @@ describe("account rehome", () => {
       finished_at: null,
     };
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (
+        sql.includes("api_key_action_requests") ||
+        sql.includes("api_key_action_pending_idx")
+      )
+        return { rows: [] };
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
@@ -487,6 +509,16 @@ describe("account rehome", () => {
     ]);
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
+        sql.includes('FROM "api_key_action_requests"') &&
+        sql.includes("jsonb_agg")
+      )
+        return { rows: [{ rows: actionRows }] };
+      if (
+        sql.includes("api_key_action_requests") ||
+        sql.includes("api_key_action_pending_idx")
+      )
+        return { rows: [] };
+      if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
@@ -805,6 +837,7 @@ describe("account rehome", () => {
 
     expect(copyRehomeStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        api_key_action_requests: actionRows,
         target_account_id: TARGET_ACCOUNT_ID,
         source_bay_id: "bay-1",
         dest_bay_id: "bay-2",
@@ -859,6 +892,12 @@ describe("account rehome", () => {
           }),
         ],
       }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "api_key_action_requests" WHERE account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
     );
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -1178,5 +1217,31 @@ describe("account rehome", () => {
         }),
       ],
     });
+  });
+
+  it("imports pending and terminal API action records without changing their identity or expiry", async () => {
+    queryMock = jest.fn(async (sql: string) => ({
+      rows: sql.includes("information_schema.columns")
+        ? Object.keys(actionRows[0]).map((column_name) => ({ column_name }))
+        : [],
+      rowCount: 0,
+    }));
+    const { copyAccountRehomeState } = await import("./rehome");
+    await copyAccountRehomeState({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      api_key_action_requests: actionRows,
+    });
+    const inserts = queryMock.mock.calls.filter(([sql]) =>
+      sql.includes('INSERT INTO "api_key_action_requests"'),
+    );
+    expect(inserts).toHaveLength(3);
+    for (let i = 0; i < inserts.length; i++) {
+      expect(inserts[i][0]).toContain(
+        'ON CONFLICT ("account_id", "request_id")',
+      );
+      expect(inserts[i][1]).toEqual([actionRows[i]]);
+    }
   });
 });

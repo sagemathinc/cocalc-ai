@@ -1019,6 +1019,7 @@ export interface AccountRehomeStateCopyRequest {
   account_impersonation_grants?: Record<string, unknown>[];
   account_impersonation_sessions?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
+  api_key_action_requests?: Record<string, unknown>[];
   admin_assigned_memberships?: Record<string, unknown>[];
   account_entitlement_overrides?: Record<string, unknown>[];
   account_entitlement_override_events?: Record<string, unknown>[];

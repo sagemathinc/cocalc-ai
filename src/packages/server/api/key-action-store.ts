@@ -21,8 +21,8 @@ type Authorize = (
   review: ApiKeyActionReview,
 ) => Promise<void>;
 
-// Internal persistence only: callers must resolve account home and supply real
-// authorization checks. No endpoint or capability exposes this store yet.
+// Callers must resolve account home and supply authorization checks. Rehome copies
+// this durable state under the same account fence used by request/decision writes.
 export class ApiKeyActionStore {
   constructor(private readonly pool: Pool) {}
 
