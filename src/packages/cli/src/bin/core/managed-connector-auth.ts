@@ -3,14 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-} from "node:fs";
 import { isValidUUID } from "@cocalc/util/misc";
+import { readApiKeyFile } from "./api-key-file";
 
 export interface ManagedConnectorCredential {
   keyFile: string;
@@ -30,29 +24,12 @@ export function managedConnectorCredentialFromEnv(
 }
 
 export function readManagedConnectorKey(keyFile: string): string {
-  let fd: number;
   try {
-    fd = openSync(keyFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+    return readApiKeyFile(keyFile);
   } catch {
-    throw new Error("managed CoCalc connector credential is unavailable");
-  }
-  try {
-    const stat = fstatSync(fd);
-    if (
-      !stat.isFile() ||
-      stat.size < 1 ||
-      stat.size > 4096 ||
-      (stat.mode & 0o077) !== 0
-    ) {
-      throw new Error("managed CoCalc connector credential file is invalid");
-    }
-    const secret = readFileSync(fd, "utf8").trim();
-    if (!secret || secret.length > 4096 || /\s/.test(secret)) {
-      throw new Error("managed CoCalc connector credential is invalid");
-    }
-    return secret;
-  } finally {
-    closeSync(fd);
+    throw new Error(
+      "managed CoCalc connector credential is unavailable or file is invalid",
+    );
   }
 }
 

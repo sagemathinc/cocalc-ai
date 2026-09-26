@@ -320,6 +320,13 @@ still bypass the daemon until source-project routing is propagated explicitly.
 
 ## Still unverified or incomplete
 
+The subsequent credential-provider follow-up is not deployed: manual and
+managed keys now share the same bounded, no-follow, nonblocking file reader.
+The CLI build and 32 focused tests passed, including managed FIFO rejection in
+a timeout-protected subprocess and a simulated post-stat file-growth test that
+verifies no more than 4,097 bytes are read before rejecting an oversized key.
+This does not enable managed daemon routing or prove a managed turn end to end.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

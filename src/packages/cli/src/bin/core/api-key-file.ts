@@ -18,10 +18,24 @@ export function resolveApiKeyFileGlobals<T extends GlobalAuthOptions>(
   if (globals.apiKey?.trim()) {
     throw new Error("use either --api-key or --api-key-file, not both");
   }
+  const apiKey = readApiKeyFile(globals.apiKeyFile);
+  return {
+    ...globals,
+    apiKeyFile: undefined,
+    apiKey,
+    cookie: undefined,
+    bearer: undefined,
+    hubPassword: undefined,
+    disableEnvAuthDefaults: true,
+    profile: ENV_AUTH_PROFILE,
+  };
+}
+
+export function readApiKeyFile(path: string): string {
   let fd: number;
   try {
     fd = openSync(
-      globals.apiKeyFile,
+      path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
   } catch {
@@ -55,14 +69,5 @@ export function resolveApiKeyFileGlobals<T extends GlobalAuthOptions>(
   } finally {
     closeSync(fd);
   }
-  return {
-    ...globals,
-    apiKeyFile: undefined,
-    apiKey,
-    cookie: undefined,
-    bearer: undefined,
-    hubPassword: undefined,
-    disableEnvAuthDefaults: true,
-    profile: ENV_AUTH_PROFILE,
-  };
+  return apiKey;
 }

@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveApiKeyFileGlobals } from "./api-key-file";
+import { readApiKeyFile, resolveApiKeyFileGlobals } from "./api-key-file";
 import { applyAuthProfile } from "../../core/auth-config";
 
 test("key-file snapshots isolate profile credentials and follow atomic rotation", () => {
@@ -86,6 +86,42 @@ test("key-file snapshots reject ambiguous, public, malformed, and indirect provi
       );
     }
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("credential bytes remain bounded when the file grows after inspection", (t) => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "api-key-growing-"));
+  const path = join(dir, "key");
+  try {
+    writeFileSync(path, "x".repeat(8192), { mode: 0o600 });
+    const originalStat = fs.fstatSync;
+    t.mock.method(fs, "fstatSync", (fd: number) =>
+      Object.assign(Object.create(originalStat(fd)), { size: 1 }),
+    );
+    const originalRead = fs.readSync;
+    let total = 0;
+    t.mock.method(
+      fs,
+      "readSync",
+      (
+        fd: number,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => {
+        assert.ok(buffer.length <= 4097);
+        const count = originalRead(fd, buffer, offset, length, position);
+        total += count;
+        return count;
+      },
+    );
+    assert.throws(() => readApiKeyFile(path), /exceeds 4 KiB/);
+    assert.equal(total, 4097);
+  } finally {
+    t.mock.restoreAll();
     rmSync(dir, { recursive: true, force: true });
   }
 });

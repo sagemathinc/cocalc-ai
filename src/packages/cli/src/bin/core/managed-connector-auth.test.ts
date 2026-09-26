@@ -4,6 +4,7 @@
  */
 
 import { strict as assert } from "node:assert";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdtempSync,
   chmodSync,
@@ -82,3 +83,31 @@ test("managed credential provider rejects exposed files and symlinks", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test(
+  "managed credential FIFO rejection cannot block command admission",
+  { skip: process.platform === "win32" },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "cocalc-connector-fifo-"));
+    const path = join(dir, "key");
+    try {
+      execFileSync("mkfifo", ["-m", "600", path]);
+      const child = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+      const {readManagedConnectorKey}=require(${JSON.stringify(require.resolve("./managed-connector-auth"))});
+      try {readManagedConnectorKey(${JSON.stringify(path)});process.exit(1);}
+      catch(error) {if(!/credential is unavailable or file is invalid/.test(error.message))process.exit(2);}
+    `,
+        ],
+        { timeout: 3000, encoding: "utf8" },
+      );
+      assert.equal(child.error, undefined);
+      assert.equal(child.status, 0, child.stderr);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
