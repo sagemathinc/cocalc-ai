@@ -382,15 +382,27 @@ ${skill}
       applyProjectRuntimeCliEnv(cliEnv, accountId);
       toolBridge = await createClaudeProjectToolBridge(
         projectId,
-        (script, cwd, signal, options) =>
-          sandboxExec({
-            project_id: projectId,
-            script,
-            cwd,
-            env: cliEnv,
-            signal,
-            ...options,
-          }),
+        async (script, cwd, signal, options) => {
+          let result;
+          try {
+            result = await sandboxExec({
+              project_id: projectId,
+              script,
+              cwd,
+              env: cliEnv,
+              signal,
+              ...options,
+            });
+          } catch (error) {
+            await cliLease?.close();
+            throw error;
+          }
+          if (result.cleanupConfirmed !== true) {
+            // Fence CLI authority independently of process/container cleanup.
+            await cliLease?.close();
+          }
+          return result;
+        },
         async () => {
           await getClaudeSubscriptionCredential({
             projectId,

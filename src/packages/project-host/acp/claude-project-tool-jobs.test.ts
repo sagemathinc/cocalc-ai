@@ -11,6 +11,19 @@ import { createClaudeProjectToolBridge } from "./claude-project-tool-bridge";
 import { runStreamingSandboxCommand } from "@cocalc/project-runner/run/sandbox-command-stream";
 import { SANDBOX_COMMAND_SUPERVISOR } from "@cocalc/project-runner/run/sandbox-command-supervisor";
 
+// This fixture tests MCP streaming, not kernel containment. Production uses
+// the root-owned cgroup helper; its adversarial tests live with bootstrap.
+async function streamingFixture(script, _cwd, signal, options) {
+  const result = await runStreamingSandboxCommand({
+    command: process.execPath,
+    args: ["-e", SANDBOX_COMMAND_SUPERVISOR, "--", script],
+    env: { PATH: process.env.PATH },
+    signal,
+    ...options,
+  });
+  return { ...result, cleanupConfirmed: true };
+}
+
 function helper(directory: string) {
   const child = spawn(process.execPath, [join(directory, "bridge.cjs")], {
     env: { COCALC_PROJECT_TOOL_DIR: directory },
@@ -60,14 +73,7 @@ test("MCP starts, lists, replays and cancels real supervised jobs across tool co
   const authorize = jest.fn(async () => {});
   const bridge = await createClaudeProjectToolBridge(
     "fixture",
-    (script, _cwd, signal, options) =>
-      runStreamingSandboxCommand({
-        command: process.execPath,
-        args: ["-e", SANDBOX_COMMAND_SUPERVISOR, "--", script],
-        env: { PATH: process.env.PATH },
-        signal,
-        ...options,
-      }),
+    streamingFixture,
     authorize,
   );
   const mcp = helper(bridge.directory);
@@ -168,7 +174,7 @@ test("revocation cancels jobs even without further tool calls", async () => {
       await new Promise<void>((resolve) =>
         s.addEventListener("abort", () => resolve(), { once: true }),
       );
-      return { code: 130, stdout: "", stderr: "" };
+      return { code: 130, stdout: "", stderr: "", cleanupConfirmed: true };
     },
     authorize,
   );
@@ -198,14 +204,7 @@ test("revocation cancels jobs even without further tool calls", async () => {
   async () => {
     const bridge = await createClaudeProjectToolBridge(
       "fixture",
-      (script, _cwd, signal, options) =>
-        runStreamingSandboxCommand({
-          command: process.execPath,
-          args: ["-e", SANDBOX_COMMAND_SUPERVISOR, "--", script],
-          env: { PATH: process.env.PATH },
-          signal,
-          ...options,
-        }),
+      streamingFixture,
     );
     const mcp = helper(bridge.directory);
     try {

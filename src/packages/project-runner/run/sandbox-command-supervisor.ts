@@ -38,3 +38,17 @@ child.once("exit", (code) => {
   process.exit(stopped ? 130 : code ?? 1);
 });
 `;
+
+// Verify the *exec process*, not merely its host launcher, before project code
+// can fork. An OCI runtime that moves exec into the main container cgroup must
+// fail closed rather than quietly lose per-job containment.
+export const MANAGED_SANDBOX_COMMAND_SUPERVISOR =
+  String.raw`
+const scope = process.env.COCALC_MANAGED_JOB_SCOPE;
+const cgroup = require("node:fs").readFileSync("/proc/self/cgroup", "utf8");
+if (!/^job-\d+-\d+-\d+-\d+-[0-9a-f-]{36}$/.test(scope ?? "") ||
+    !cgroup.split("\n").some(line => line.startsWith("0::") && line.endsWith("/" + scope))) {
+  process.stderr.write("Managed project command containment unavailable\n");
+  process.exit(125);
+}
+` + SANDBOX_COMMAND_SUPERVISOR;

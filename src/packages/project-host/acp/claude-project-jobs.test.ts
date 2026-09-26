@@ -13,10 +13,20 @@ function fixture() {
   const execute: ProjectJobExecutor = jest.fn(
     async (_script, _cwd, signal, { onOutput }) =>
       new Promise((resolve) => {
-        runs.push({ signal, output: onOutput, finish: resolve });
+        runs.push({
+          signal,
+          output: onOutput,
+          finish: (result) => resolve({ cleanupConfirmed: true, ...result }),
+        });
         signal.addEventListener(
           "abort",
-          () => resolve({ code: 130, stdout: "", stderr: "" }),
+          () =>
+            resolve({
+              code: 130,
+              stdout: "",
+              stderr: "",
+              cleanupConfirmed: true,
+            }),
           { once: true },
         );
       }),
@@ -187,7 +197,12 @@ test("waiting is awakened by completion with no output", async () => {
 });
 
 test("evicted output never turns a retry ID into a duplicate execution", async () => {
-  const execute = jest.fn(async () => ({ code: 0, stdout: "", stderr: "" }));
+  const execute = jest.fn(async () => ({
+    code: 0,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: true,
+  }));
   const jobs = new ClaudeProjectJobs(execute);
   try {
     await jobs.start({ script: "first", request_id: "once" });
@@ -199,4 +214,48 @@ test("evicted output never turns a retry ID into a duplicate execution", async (
   } finally {
     await jobs.close();
   }
+});
+
+test("unconfirmed cleanup stays pending, blocks admission and survives resume", async () => {
+  const { jobs, runs } = fixture();
+  const first = await jobs.start({ script: "unconfirmed", yield_time_ms: 0 });
+  const other = await jobs.start({ script: "other", yield_time_ms: 0 });
+  runs[0].finish({
+    code: null,
+    stdout: "",
+    stderr: "cleanup failed",
+    cleanupConfirmed: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(runs[1].signal.aborted).toBe(true);
+  expect(await jobs.cancel({ job_id: first.job_id })).toMatchObject({
+    status: "failed",
+    cleanup_pending: true,
+    cleanup_error: "Runtime could not verify job cleanup",
+    finished_at: undefined,
+  });
+  expect(
+    jobs.list().jobs.find((job) => job.job_id === first.job_id),
+  ).toMatchObject({ cleanup_pending: true });
+  expect(
+    await jobs.wait({ job_id: other.job_id, yield_time_ms: 0 }),
+  ).toMatchObject({ status: "canceled" });
+  jobs.resume();
+  await expect(jobs.start({ script: "must not run" })).rejects.toThrow(
+    "cleanup is unconfirmed",
+  );
+  await jobs.close();
+});
+
+test("an executor rejection is not evidence that its processes were cleaned up", async () => {
+  const jobs = new ClaudeProjectJobs(async () => {
+    throw Error("lost transport");
+  });
+  const job = await jobs.start({ script: "start" });
+  expect(job.cleanup_pending).toBe(true);
+  expect(job.status).toBe("failed");
+  await expect(jobs.start({ script: "again" })).rejects.toThrow(
+    "cleanup is unconfirmed",
+  );
+  await jobs.close();
 });

@@ -14,8 +14,11 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
-import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
-import { runStreamingSandboxCommand } from "./sandbox-command-stream";
+import {
+  MANAGED_SANDBOX_COMMAND_SUPERVISOR,
+  SANDBOX_COMMAND_SUPERVISOR,
+} from "./sandbox-command-supervisor";
+import { runContainedSandboxCommand } from "./sandbox-command-containment";
 import {
   DEFAULT_PROJECT_RUNTIME_GID,
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -53,6 +56,8 @@ export interface SandboxExecResult {
   stderr: string;
   code: number | null;
   signal?: string;
+  /** False means the trusted runtime could not confirm an empty job scope. */
+  cleanupConfirmed?: boolean;
 }
 
 const logger = getLogger("project-runner:sandbox-exec");
@@ -90,6 +95,12 @@ export async function sandboxExec({
 }: SandboxExecOptions): Promise<SandboxExecResult> {
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
+  if (onOutput && useEphemeral)
+    throw Error("Managed commands require the existing project container");
+  if (extraEnv?.COCALC_MANAGED_JOB_SCOPE !== undefined)
+    throw Error("Managed job scope is reserved for the trusted runtime");
+  if (onOutput && signal?.aborted)
+    return { stdout: "", stderr: "", code: 130, cleanupConfirmed: true };
   signal?.throwIfAborted();
   logger.debug("sandboxExec", {
     project_id,
@@ -122,10 +133,9 @@ export async function sandboxExec({
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
   ): Promise<SandboxExecResult> => {
     if (onOutput && signal) {
-      return runStreamingSandboxCommand({
-        command: launcher?.command ?? "podman",
-        args: launcher ? [...launcher.argsPrefix, ...args] : args,
-        env: podmanEnv(),
+      return runContainedSandboxCommand({
+        project_id,
+        args,
         signal,
         timeoutMs: timeoutMs ?? 3_600_000,
         onOutput,
@@ -276,7 +286,9 @@ export async function sandboxExec({
           ? [
               "/opt/cocalc/bin/node",
               "-e",
-              SANDBOX_COMMAND_SUPERVISOR,
+              onOutput
+                ? MANAGED_SANDBOX_COMMAND_SUPERVISOR
+                : SANDBOX_COMMAND_SUPERVISOR,
               "--",
               script,
             ]

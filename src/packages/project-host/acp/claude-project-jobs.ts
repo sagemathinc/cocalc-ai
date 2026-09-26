@@ -25,6 +25,7 @@ interface Job {
   code: number | null;
   started: number;
   finished?: number;
+  cleanupUnconfirmed?: boolean;
   deadline: number;
   output: {
     seq: number;
@@ -61,10 +62,17 @@ export class ClaudeProjectJobs {
   private requests = new Map<string, { fingerprint: string; jobId: string }>();
   private paused = false;
   private closed = false;
+  private cleanupBlocked = false;
   constructor(private execute: ProjectJobExecutor) {}
 
   private wake(job: Job) {
     for (const resolve of [...job.changed]) resolve();
+  }
+  private blockCleanup(job: Job) {
+    job.cleanupUnconfirmed = true;
+    this.cleanupBlocked = true;
+    if (job.status === "running") job.status = "failed";
+    for (const other of this.jobs.values()) this.stop(other, "canceled");
   }
   private prune() {
     for (const [id, job] of this.jobs)
@@ -96,6 +104,10 @@ export class ClaudeProjectJobs {
     this.wake(job);
   }
   async start(args: Record<string, unknown>) {
+    if (this.cleanupBlocked)
+      throw Error(
+        "Project job cleanup is unconfirmed; runtime recovery required",
+      );
     if (this.closed || this.paused) throw Error("Project tool is closed");
     const { script, cwd, request_id: requestId } = args;
     if (
@@ -172,10 +184,12 @@ export class ClaudeProjectJobs {
     if (job.requestId)
       this.requests.set(job.requestId, { fingerprint, jobId: job.id });
     activeJobs++;
+    let executionStarted = false;
     const timer = setTimeout(() => this.stop(job, "timed_out"), timeoutMs);
     job.done = Promise.resolve()
       .then(() => {
         job.abort.signal.throwIfAborted();
+        executionStarted = true;
         return this.execute(
           script,
           cwd as string | undefined,
@@ -187,6 +201,11 @@ export class ClaudeProjectJobs {
         );
       })
       .then((result) => {
+        if (result.cleanupConfirmed !== true) {
+          // Stop the other jobs too; never grant more work after losing the
+          // ability to account for execution authority in this controller.
+          this.blockCleanup(job);
+        }
         if (result.stdout) this.append(job, "stdout", result.stdout);
         if (result.stderr) this.append(job, "stderr", result.stderr);
         job.code = result.code;
@@ -194,6 +213,14 @@ export class ClaudeProjectJobs {
           job.status = result.code === 0 ? "completed" : "failed";
       })
       .catch(() => {
+        if (executionStarted) {
+          this.blockCleanup(job);
+          this.append(
+            job,
+            "stderr",
+            "Project job cleanup is unconfirmed; runtime recovery required",
+          );
+        }
         if (job.status === "running") {
           job.status = "failed";
           this.append(job, "stderr", "Project command failed to execute");
@@ -201,8 +228,10 @@ export class ClaudeProjectJobs {
       })
       .finally(() => {
         clearTimeout(timer);
-        activeJobs--;
-        job.finished = Date.now();
+        if (!job.cleanupUnconfirmed) {
+          activeJobs--;
+          job.finished = Date.now();
+        }
         this.wake(job);
       });
     // Let quick commands finish in one tool call; output alone is not a reason
@@ -261,6 +290,9 @@ export class ClaudeProjectJobs {
       deadline: job.deadline,
       finished_at: job.finished,
       cleanup_pending: job.status !== "running" && job.finished === undefined,
+      cleanup_error: job.cleanupUnconfirmed
+        ? "Runtime could not verify job cleanup"
+        : undefined,
     };
   }
   private stop(job: Job, status: "canceled" | "timed_out") {
@@ -286,6 +318,10 @@ export class ClaudeProjectJobs {
         started_at: job.started,
         deadline: job.deadline,
         finished_at: job.finished,
+        cleanup_pending: job.status !== "running" && job.finished === undefined,
+        cleanup_error: job.cleanupUnconfirmed
+          ? "Runtime could not verify job cleanup"
+          : undefined,
       })),
     };
   }

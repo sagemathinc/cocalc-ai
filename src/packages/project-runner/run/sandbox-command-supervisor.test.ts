@@ -1,7 +1,32 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
-import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
+import {
+  MANAGED_SANDBOX_COMMAND_SUPERVISOR,
+  SANDBOX_COMMAND_SUPERVISOR,
+} from "./sandbox-command-supervisor";
+
+test.each([undefined, "job-1-1-2-2-00000000-0000-4000-8000-000000000001"])(
+  "managed prelude refuses an absent or mismatched cgroup (%s)",
+  async (scope) => {
+    const child = spawn(
+      process.execPath,
+      ["-e", MANAGED_SANDBOX_COMMAND_SUPERVISOR, "--", "printf must-not-run"],
+      {
+        env: { ...process.env, COCALC_MANAGED_JOB_SCOPE: scope },
+        stdio: "pipe",
+      },
+    );
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.resume();
+    const [code] = await once(child, "close");
+    expect(code).toBe(125);
+    expect(output).toBe("");
+  },
+);
 
 test.each(["closed", "expired"])(
   "a %s command lease kills the shell and its sleeping child",

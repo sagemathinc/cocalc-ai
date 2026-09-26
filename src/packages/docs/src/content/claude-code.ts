@@ -177,6 +177,21 @@ supervisor's lease. Jobs are not automatically replayed after a project/host
 restart. Do not end a turn while its required foreground work is still running
 or promise an automatic follow-up notification.
 
+Managed jobs require the current project-host runtime helper and a kernel with
+cgroup v2 atomic kill support. Each command runs inside the existing project
+container but in a separate root-owned job cgroup. Detached descendants are
+terminated too, including on normal command completion. There is no fallback
+to process-group-only cancellation when containment is unavailable.
+
+If \`cleanup_pending\` remains true with a \`cleanup_error\`, the runtime has
+not confirmed that the job scope is empty. Do not treat this as successful
+cancellation or start a replacement command. The controller blocks new jobs
+and revokes its scoped CLI credential; an independent host sweep retries
+orphan cleanup. Operators must resolve the runtime failure before retrying.
+Updating the worker alone is not sufficient for this feature: update the
+host bootstrap runtime helper as well, then validate managed execution and
+cancellation on that host before enabling it for users.
+
 For intentionally persistent services or interactive input, use CoCalc's
 existing project terminal facilities: inspect \`project terminal --help\`
 through the installed CLI. These are project-owned terminals, with a separate

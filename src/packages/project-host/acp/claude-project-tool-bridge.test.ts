@@ -65,7 +65,12 @@ test("cancel aborts an executing command and close is idempotent", async () => {
       await new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
-      return { code: 130, stdout: "", stderr: "canceled" };
+      return {
+        code: 130,
+        stdout: "",
+        stderr: "canceled",
+        cleanupConfirmed: true,
+      };
     },
   );
   const socket = await sendTool(bridge.directory);
@@ -80,6 +85,7 @@ test("cancel aborts an executing command and close is idempotent", async () => {
 test("trusted MCP helper executes only through the scoped project socket", async () => {
   const execute = jest.fn(async (script: string, cwd?: string) => ({
     code: 0,
+    cleanupConfirmed: true,
     stdout: `ran ${script} in ${cwd}`,
     stderr: "",
   }));

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import getLogger from "@cocalc/backend/logger";
+import { reapManagedSandboxCommands } from "@cocalc/project-runner/run/sandbox-command-containment";
 import {
   CLAUDE_CONTROLLER_HOME_LABEL,
   isManagedClaudeControllerHome,
@@ -113,6 +114,13 @@ export function startHarnessReaper(): () => void {
   const sweep = async () => {
     if (running) return;
     running = true;
+    try {
+      // Independent of Podman metadata and sidecar removal: a dead worker's
+      // project jobs retain their root-owned identity until the scope is empty.
+      await reapManagedSandboxCommands();
+    } catch {
+      logger.warn("Managed project job reconciliation failed");
+    }
     try {
       await reapAbandonedHarnesses();
     } catch {

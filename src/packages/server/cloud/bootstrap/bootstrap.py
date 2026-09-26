@@ -830,7 +830,7 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-RUNTIME_WRAPPER_VERSION = "20260825-v16"
+RUNTIME_WRAPPER_VERSION = "20260926-v17"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4504,6 +4504,280 @@ def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
         run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
+MANAGED_PROJECT_JOB_HELPER = r'''#!/usr/bin/python3
+# Trusted lifecycle supervisor. Never execute project code with host privileges.
+import base64
+import errno
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import selectors
+import signal
+import sys
+import time
+
+POOL = Path("__PROJECT_POOL_CGROUP__")
+RUNTIME_USER = "__RUNTIME_USER__"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
+
+def identity(pid):
+    text = Path(f"/proc/{pid}/stat").read_text()
+    fields = text[text.rindex(")") + 2:].split()
+    if fields[0] in ("Z", "X"):
+        raise ProcessLookupError("process is dead")
+    return fields[19]
+
+def alive(pid, start):
+    try:
+        return identity(int(pid)) == start
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+def kill_scope(scope, timeout=10):
+    # cgroup.kill covers fork/setsid/reparenting races, unlike PID enumeration.
+    try:
+        (scope / "cgroup.kill").write_text("1\n")
+    except FileNotFoundError:
+        if not scope.exists():
+            return
+        raise
+    until = time.monotonic() + timeout
+    while True:
+        try:
+            if "populated 0" in (scope / "cgroup.events").read_text().splitlines():
+                scope.rmdir()
+                return
+        except FileNotFoundError:
+            if not scope.exists():
+                return
+            raise
+        except OSError as error:
+            if error.errno != errno.EBUSY:
+                raise
+        if time.monotonic() >= until:
+            raise RuntimeError("job containment cleanup not confirmed")
+        time.sleep(0.05)
+
+def reap():
+    failed = False
+    until = time.monotonic() + 10
+    for project in POOL.glob("project-*"):
+        if not re.fullmatch("project-" + UUID, project.name):
+            continue
+        for scope in project.glob("job-*"):
+            match = JOB.fullmatch(scope.name)
+            if not match:
+                continue
+            owner, owner_start, guard, guard_start, _ = match.groups()
+            try:
+                if not alive(owner, owner_start) or not alive(guard, guard_start):
+                    # Bound the whole sweep, but still deliver cgroup.kill to
+                    # every orphan even if an earlier scope cannot be reaped.
+                    kill_scope(scope, max(0, until - time.monotonic()))
+            except Exception:
+                failed = True
+    if failed:
+        raise RuntimeError("abandoned job cleanup not confirmed")
+
+def config_from_stdin():
+    # Bound startup waiting and input before creating any execution authority.
+    sel = selectors.DefaultSelector()
+    sel.register(0, selectors.EVENT_READ)
+    data = bytearray()
+    until = time.monotonic() + 5
+    try:
+        while b"\n" not in data:
+            if time.monotonic() >= until:
+                raise RuntimeError("missing job configuration")
+            if not sel.select(0.1):
+                continue
+            chunk = os.read(0, 4096)
+            if not chunk:
+                raise RuntimeError("job owner disconnected")
+            data.extend(chunk)
+            if len(data) > 128 * 1024:
+                raise ValueError("job configuration too large")
+        return json.loads(data.split(b"\n", 1)[0])
+    finally:
+        sel.close()
+
+def supervise(project, job, owner, timeout_ms):
+    admitted = time.monotonic()
+    if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
+        raise ValueError("invalid job identity")
+    if not 0 < timeout_ms <= 86400000:
+        raise ValueError("invalid deadline")
+    account = pwd.getpwnam(RUNTIME_USER)
+    if account.pw_uid == 0 or account.pw_gid == 0:
+        raise ValueError("managed jobs require an unprivileged runtime account")
+    if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
+        raise ValueError("job owner is not the runtime user")
+    owner_start = identity(owner)
+    config = config_from_stdin()
+    args, env = config["args"], config["env"]
+    if (not isinstance(args, list) or not args or args[0] != "exec" or
+        not all(isinstance(x, str) and "\0" not in x for x in args) or
+        not isinstance(env, dict) or
+        not all(isinstance(k, str) and isinstance(v, str) and
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
+                for k, v in env.items())):
+        raise ValueError("invalid launcher configuration")
+    reap()
+    # Reconciliation may have taken time. Drain queued lease bytes and observe
+    # EOF before forking, so cancellation during startup never launches work.
+    probe = selectors.DefaultSelector()
+    probe.register(0, selectors.EVENT_READ)
+    disconnected = False
+    try:
+        while probe.select(0):
+            if not os.read(0, 4096):
+                disconnected = True
+                break
+    finally:
+        probe.close()
+    if disconnected or not alive(owner, owner_start) or time.monotonic() >= admitted + timeout_ms / 1000:
+        print(json.dumps({"type": "exit", "code": 130, "cleanup": True}), flush=True)
+        return
+    parent = POOL / ("project-" + project)
+    if not parent.is_dir() or parent.stat().st_uid != 0:
+        raise RuntimeError("project containment unavailable")
+    scope = parent / f"job-{owner}-{owner_start}-{os.getpid()}-{identity(os.getpid())}-{job}"
+    scope.mkdir(mode=0o755)
+    child = None
+    pipes = []
+    sel = selectors.DefaultSelector()
+    pending = bytearray()
+    stopped = False
+    result = 1
+    def stop(*_):
+        nonlocal stopped
+        stopped = True
+    def emit(value):
+        pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+        if len(pending) > 256 * 1024:
+            raise RuntimeError("job output transport stalled")
+    def flush():
+        if pending:
+            try:
+                del pending[:os.write(1, pending)]
+            except BlockingIOError:
+                pass
+    os.set_blocking(1, False)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        if not (scope / "cgroup.kill").exists():
+            raise RuntimeError("atomic job cancellation unavailable")
+        for _ in range(3):
+            pipes.append(os.pipe())
+        child = os.fork()
+        if child == 0:
+            try:
+                os.setsid()
+                (scope / "cgroup.procs").write_text(str(os.getpid()))
+                os.dup2(pipes[0][0], 0)
+                os.dup2(pipes[1][1], 1)
+                os.dup2(pipes[2][1], 2)
+                os.closerange(3, 65536)
+                os.initgroups(account.pw_name, account.pw_gid)
+                os.setresgid(account.pw_gid, account.pw_gid, account.pw_gid)
+                os.setresuid(account.pw_uid, account.pw_uid, account.pw_uid)
+                os.chdir("/")
+                args = ["exec", "-e", "COCALC_MANAGED_JOB_SCOPE=" + scope.name, *args[1:]]
+                os.execvpe("podman", ["podman", *args], env)
+            except BaseException:
+                os._exit(125)
+        os.close(pipes[0][0])
+        os.close(pipes[1][1])
+        os.close(pipes[2][1])
+        heartbeat = pipes[0][1]
+        os.set_blocking(heartbeat, False)
+        sel.register(0, selectors.EVENT_READ, "lease")
+        for fd, stream in [(pipes[1][0], "stdout"), (pipes[2][0], "stderr")]:
+            os.set_blocking(fd, False)
+            sel.register(fd, selectors.EVENT_READ, stream)
+        last_lease = last_beat = time.monotonic()
+        deadline = admitted + timeout_ms / 1000
+        while not stopped:
+            now = time.monotonic()
+            if now >= deadline or now - last_lease >= 5 or not alive(owner, owner_start):
+                stopped = True
+                break
+            # The in-project supervisor is defense in depth, not the boundary.
+            if now - last_beat >= 1:
+                try:
+                    os.write(heartbeat, b".\n")
+                except (BrokenPipeError, BlockingIOError):
+                    pass
+                last_beat = now
+            for key, _ in sel.select(0.05):
+                chunk = os.read(key.fd, 4096)
+                if key.data == "lease":
+                    if not chunk:
+                        stopped = True
+                    last_lease = time.monotonic()
+                elif chunk:
+                    emit({"type": "output", "stream": key.data,
+                          "data": base64.b64encode(chunk).decode("ascii")})
+                else:
+                    sel.unregister(key.fd)
+            flush()
+            pid, status = os.waitpid(child, os.WNOHANG)
+            if pid:
+                child = None
+                result = os.waitstatus_to_exitcode(status)
+                break
+        if stopped:
+            result = 130
+    finally:
+        # Even success kills detached leftovers. Do not report success until
+        # populated=0 AND rmdir confirm that there is no remaining authority.
+        try:
+            kill_scope(scope)
+            if child is not None:
+                os.waitpid(child, 0)
+            # Drain output after all writers have exited, without a lifetime buffer.
+            for pair in pipes[1:]:
+                fd = pair[0]
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    emit({"type": "output", "stream": "stdout" if pair is pipes[1] else "stderr",
+                          "data": base64.b64encode(chunk).decode("ascii")})
+                    flush()
+            emit({"type": "exit", "code": result, "cleanup": True})
+        except Exception:
+            # Leave the cgroup for the independent orphan sweep; no clean exit frame.
+            raise RuntimeError("job containment cleanup not confirmed") from None
+        finally:
+            sel.close()
+            until = time.monotonic() + 1
+            while pending and time.monotonic() < until:
+                try:
+                    flush()
+                except BrokenPipeError:
+                    break
+                time.sleep(0.01)
+
+if __name__ == "__main__":
+    try:
+        if os.geteuid() != 0:
+            raise RuntimeError("requires trusted runtime helper")
+        if sys.argv[1:] == ["reap"]:
+            reap()
+        elif len(sys.argv) == 6 and sys.argv[1] == "run":
+            supervise(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]))
+        else:
+            raise ValueError("invalid helper operation")
+    except Exception:
+        print("Managed job containment unavailable or cleanup unconfirmed", file=sys.stderr)
+        sys.exit(1)
+'''
+
 RUNTIME_STORAGE_PATH_HELPER = r'''#!/usr/bin/python3
 """Root-owned, openat2-anchored path mutations for cocalc-runtime-storage.
 
@@ -6651,6 +6925,7 @@ verify_project_pid_in_pool() {
 attach_project_launcher() {
   local project_id="$1" pid="$2" target
   require_runtime_owned_pid "$pid"
+  pid_in_managed_project_job "$pid" && return 0
   target="$(project_cgroup "$project_id")"
   [ -d "$target" ] || target="$(project_legacy_cgroup)"
   [ -d "$target" ] || target="$PROJECT_POOL_CGROUP_DEFAULT"
@@ -6747,11 +7022,23 @@ configure_bees_cgroup() {
   fi
 }
 
+pid_in_managed_project_job() {
+  local actual
+  actual="$(awk -F: '$1 == "0" {print $3}' "/proc/$1/cgroup" 2>/dev/null)" || return 0
+  case "$actual" in
+    "$(project_pool_relative_path)"/project-*/job-*) return 0 ;;
+  esac
+  return 1
+}
+
 attach_pid_to_project_pool_storage() {
   local pid="$1" pool="$2"
   if [ -z "$pid" ] || ! echo "$pid" | grep -Eq '^[0-9]+$' || ! kill -0 "$pid" 2>/dev/null; then
     return 0
   fi
+  # Reconciliation must not flatten a managed job into the project leaf:
+  # doing so would remove it from that job's atomic cancellation scope.
+  pid_in_managed_project_job "$pid" && return 0
   printf '%s\n' "$pid" > "$pool/cgroup.procs"
 }
 
@@ -7787,6 +8074,21 @@ case "$cmd" in
     attach_project_launcher "$1" "$2"
     release_project_lock
     ;;
+  supervise-project-job)
+    if [ "$#" -ne 4 ] || ! is_project_uuid "$1" || ! is_project_uuid "$2"; then
+      echo "usage: cocalc-runtime-storage supervise-project-job <project-id> <job-id> <owner-pid> <timeout-ms>" >&2
+      exit 2
+    fi
+    require_runtime_owned_pid "$3"
+    exec /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job run "$@"
+    ;;
+  reap-project-jobs)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage reap-project-jobs" >&2
+      exit 2
+    fi
+    exec /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job reap
+    ;;
   verify-project-pool)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
       echo "usage: cocalc-runtime-storage verify-project-pool <project-id> <pid>" >&2
@@ -8209,6 +8511,11 @@ PY
         printf '1\n' > "$pool/cgroup.kill" 2>/dev/null || true
       fi
       for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        # Job leaves are root-owned and cannot contain subgroups. The parent
+        # kill covers them atomically; remove empty leaves before the parent.
+        for job_scope in "$pool"/job-*; do
+          [ ! -d "$job_scope" ] || rmdir "$job_scope" 2>/dev/null || true
+        done
         rmdir "$pool" 2>/dev/null && break
         sleep 0.1
       done
@@ -9594,6 +9901,9 @@ esac
         "1" if cfg.allow_loopback_rustic_rest else "0",
     )
     wrappers = {
+        "/usr/local/libexec/cocalc-managed-project-job": MANAGED_PROJECT_JOB_HELPER.replace(
+            "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
+        ).replace("__RUNTIME_USER__", cfg.ssh_user),
         "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
@@ -11496,6 +11806,11 @@ attach_pid_to_project_pool() {
   if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
     return 0
   fi
+  local actual
+  actual="$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup" 2>/dev/null)" || return 0
+  case "${actual}" in
+    "$(project_pool_cgroup | sed 's#^/sys/fs/cgroup##')"/project-*/job-*) return 0 ;;
+  esac
   if [ -z "${target}" ]; then
     target="$(project_pool_cgroup)/legacy"
   fi

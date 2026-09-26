@@ -4,11 +4,11 @@
  */
 
 import { sandboxExec } from "./sandbox-exec";
-import { runStreamingSandboxCommand } from "./sandbox-command-stream";
-import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
+import { runContainedSandboxCommand } from "./sandbox-command-containment";
+import { MANAGED_SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
 
-jest.mock("./sandbox-command-stream", () => ({
-  runStreamingSandboxCommand: jest.fn(async () => ({
+jest.mock("./sandbox-command-containment", () => ({
+  runContainedSandboxCommand: jest.fn(async () => ({
     code: 0,
     stdout: "",
     stderr: "",
@@ -116,15 +116,15 @@ describe("sandboxExec", () => {
       timeoutMs: 3600000,
     });
     expect(execFileMock).not.toHaveBeenCalled();
-    expect(runStreamingSandboxCommand).toHaveBeenCalledWith(
+    expect(runContainedSandboxCommand).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: "bash",
+        project_id: "00000000-0000-4000-8000-000000000001",
         signal,
         onOutput,
         timeoutMs: 3600000,
         args: expect.arrayContaining([
           "project-00000000-0000-4000-8000-000000000001",
-          SANDBOX_COMMAND_SUPERVISOR,
+          MANAGED_SANDBOX_COMMAND_SUPERVISOR,
           "long-build",
           "COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token",
         ]),
