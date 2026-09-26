@@ -146,10 +146,14 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
+      "agent.beginCocalcConnectorTurn",
+      "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",
       "agent.issueIdentity",
+      "agent.renewCocalcConnectorTurn",
       "aiSessions.upsertProjectHostSession",
+      "apiKeys.getViewerReadPolicy",
       "hosts.checkCodexSiteUsageAllowance",
       "hosts.getAccountEffectiveLimits",
       "hosts.issueProjectHostAgentAuthToken",
@@ -170,7 +174,14 @@ describe("hub API argument transforms", () => {
     ]);
   });
 
-  it.each(["agent.issueIdentity", "agent.endIdentityRun"])(
+  it.each([
+    "agent.issueIdentity",
+    "agent.endIdentityRun",
+    "agent.beginCocalcConnectorTurn",
+    "agent.renewCocalcConnectorTurn",
+    "agent.endCocalcConnectorTurn",
+    "apiKeys.getViewerReadPolicy",
+  ])(
     "binds %s to the trusted host while preserving the execution account target",
     async (name) => {
       expect(
@@ -184,6 +195,7 @@ describe("hub API argument transforms", () => {
         { account_id: "account" },
         { project_id: "project" },
         { account_id: "account", auth_actor: "agent" as const },
+        { host_id: "host", auth_actor: "agent" as const },
       ]) {
         await expect(
           transformArgs({ name, args: [{}], ...actor }),
