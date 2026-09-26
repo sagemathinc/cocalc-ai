@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { AcpStreamEvent } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { readablePeerMessage } from "./readable-peer-message";
+import { PeerAgentLink } from "@cocalc/frontend/agents/peer-agent-link";
 
 const { Text } = Typography;
 export type PeerMessageEvent = Extract<AcpStreamEvent, { type: "peerMessage" }>;
@@ -38,7 +39,13 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
       }}
     >
       <Tag color="green" style={{ flex: "0 0 auto", margin: 0 }}>
-        To {label}
+        {event.target?.project_id && event.target?.agent_id ? (
+          <PeerAgentLink target={event.target} label={label}>
+            To {label}
+          </PeerAgentLink>
+        ) : (
+          <>To {label}</>
+        )}
       </Tag>
       <Text ellipsis style={{ flex: 1, minWidth: 0, color: UI_COLORS.text }}>
         {body.text}
