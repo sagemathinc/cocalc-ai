@@ -38,6 +38,7 @@ interface Props {
   on_paste?: (e) => void;
   height?: string;
   autoGrowMinHeight?: number;
+  autoGrow?: boolean;
   autoGrowMaxHeight?: number;
   unboundedAutoGrow?: boolean;
   clampAutoGrowToHost?: boolean;
@@ -63,6 +64,7 @@ interface Props {
   onUploadEnd?: () => void;
   enableMentions?: boolean;
   toolbarRightContent?: ReactNode;
+  toolbarMenuContent?: (close: () => void) => ReactNode;
   compactModeSwitch?: boolean;
   softFocus?: boolean;
 }
@@ -153,6 +155,7 @@ export default function ChatInput({
   fontSize,
   height,
   autoGrowMinHeight,
+  autoGrow = true,
   input: propsInput,
   on_send,
   on_queue,
@@ -179,6 +182,7 @@ export default function ChatInput({
   onUploadEnd,
   enableMentions = true,
   toolbarRightContent,
+  toolbarMenuContent,
   compactModeSwitch,
   softFocus,
 }: Props) {
@@ -527,6 +531,7 @@ export default function ChatInput({
       modeSwitchPlacement="toolbar"
       reserveModeSwitchSpace
       compactModeSwitch={compactModeSwitch}
+      modeSwitchMenuContent={toolbarMenuContent}
       softFocus={softFocus}
       disableModeSwitchShortcuts
       modeSwitchRightContent={
@@ -558,7 +563,7 @@ export default function ChatInput({
         </>
       }
       onModeChange={setMode}
-      autoGrow
+      autoGrow={autoGrow}
     />
   );
 }

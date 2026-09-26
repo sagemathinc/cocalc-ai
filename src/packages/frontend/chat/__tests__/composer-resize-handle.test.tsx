@@ -32,6 +32,7 @@ jest.mock("../input", () => ({
           focus-probe
         </button>
         {props.toolbarRightContent}
+        {props.toolbarMenuContent?.(() => {})}
       </>
     );
   },
@@ -110,11 +111,12 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
-  it("uses the compact idle composer in .chat files", () => {
+  it("uses a manually sized composer in .chat files", () => {
     renderComposer();
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
-    expect(lastChatInputProps.height).toBe("40px");
+    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.autoGrow).toBe(false);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
     expect(screen.getByTestId("chat-composer-actions").style.borderTop).toBe(
@@ -122,19 +124,17 @@ describe("ChatRoomComposer resize handle", () => {
     );
   });
 
-  it("keeps growing a draft with a saved manual minimum height", () => {
+  it("keeps a draft at its saved manual height", () => {
     mockStoredHeight = "180";
     renderComposer(
       { hasInput: true, input: "A multiline draft" },
       { agentWorkspace: true },
     );
-    expect(lastChatInputProps.height).toBe("auto");
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(180);
-    expect(lastChatInputProps.autoGrowMaxHeight).toBeGreaterThan(180);
-    expect(lastChatInputProps.clampAutoGrowToHost).toBe(false);
+    expect(lastChatInputProps.height).toBe("180px");
+    expect(lastChatInputProps.autoGrow).toBe(false);
   });
 
-  it("centers a compact auto-growing Agents composer", () => {
+  it("centers a manually sized Agents composer", () => {
     renderComposer(
       { hasInput: true, input: "draft" },
       { agentWorkspace: true },
@@ -142,8 +142,8 @@ describe("ChatRoomComposer resize handle", () => {
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
     expect(composer.style.margin).toBe("0px auto 8px");
-    expect(lastChatInputProps.height).toBe("auto");
-    expect(lastChatInputProps.autoGrowMinHeight).toBe(32);
+    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.autoGrow).toBe(false);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
   });
@@ -474,15 +474,19 @@ describe("ChatRoomComposer resize handle", () => {
     expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
   });
 
-  it("does not show the resize handle when the composer is empty but focused", () => {
-    const { container } = renderComposer();
-    expect(container.querySelector('[style*="row-resize"]')).toBeNull();
-
-    act(() => {
-      fireEvent.focus(screen.getByTestId("chat-input-focus-probe"));
-    });
-
-    expect(container.querySelector('[style*="row-resize"]')).toBeNull();
+  it("allows keyboard resizing even when the composer is empty", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const handle = screen.getByRole("separator", { name: "Resize composer" });
+    handle.focus();
+    await user.keyboard("{ArrowUp}");
+    expect(lastChatInputProps.height).toBe("140px");
+    expect(handle).toHaveAttribute("aria-valuenow", "140");
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(lastChatInputProps.height).toBe("100px");
+    await user.keyboard("{Home}");
+    expect(lastChatInputProps.height).toBe("120px");
+    expect(handle).toHaveFocus();
   });
 
   it("keeps dictation in the composer control rail", () => {
@@ -755,7 +759,7 @@ describe("ChatRoomComposer resize handle", () => {
     ).toBeNull();
   });
 
-  it("uses Send as the idle primary action and puts Zen in the toolbar", () => {
+  it("uses Send as the idle primary action and puts fullscreen in the menu", () => {
     const onSend = jest.fn();
     const onSendImmediately = jest.fn();
     renderComposer({
@@ -768,8 +772,8 @@ describe("ChatRoomComposer resize handle", () => {
 
     expect(screen.getByRole("button", { name: "Send" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Zen" })).not.toBeNull();
-    expect(screen.queryByText("Zen")).toBeNull();
+    expect(screen.getByRole("button", { name: "Fullscreen" })).not.toBeNull();
+    expect(lastChatInputProps.toolbarRightContent).toBeUndefined();
 
     act(() => {
       lastChatInputProps.on_send("hello");
@@ -851,12 +855,12 @@ describe("ChatRoomComposer resize handle", () => {
         screen.getByTestId("chat-composer-input").parentElement?.style.width,
       ).toBe("100%");
       await userEvent.click(
-        screen.getByRole("button", { name: "Zen", exact: true }),
+        screen.getByRole("button", { name: "Fullscreen", exact: true }),
       );
       expect(requestFullscreen).not.toHaveBeenCalled();
       expect(screen.getByTestId("chat-composer").style.position).toBe("fixed");
       await userEvent.click(
-        screen.getByRole("button", { name: "Exit Zen", exact: true }),
+        screen.getByRole("button", { name: "Exit fullscreen", exact: true }),
       );
       expect(screen.getByTestId("chat-composer").style.position).toBe("");
     } finally {

@@ -79,3 +79,42 @@ it("keeps mode choices in the compact formatting menu", async () => {
   await user.keyboard(" ");
   expect(onSelectMode).toHaveBeenCalledWith("markdown");
 });
+
+it("offers fullscreen through the compact menu without a floating editor button", async () => {
+  const user = userEvent.setup();
+  const fullscreen = jest.fn();
+  render(
+    <MarkdownInputModeSwitch
+      mode="editor"
+      compactModeSwitch
+      isFocusedFrame
+      isVisible
+      editBarContentRef={{ current: <button>Bold</button> }}
+      onSelectMode={() => {}}
+      onInteractionStart={() => {}}
+      onInteractionEnd={() => {}}
+      menuContent={(close) => (
+        <button
+          onClick={() => {
+            close();
+            fullscreen();
+          }}
+        >
+          Fullscreen
+        </button>
+      )}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Fullscreen" })).toBeNull();
+  const trigger = screen.getByRole("button", {
+    name: "Editor mode and formatting",
+  });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const button = await screen.findByRole("button", { name: "Fullscreen" });
+  button.focus();
+  await user.keyboard("{Enter}");
+  expect(fullscreen).toHaveBeenCalledTimes(1);
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveFocus();
+});

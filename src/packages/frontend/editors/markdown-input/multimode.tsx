@@ -51,6 +51,7 @@ export default function MultiMarkdownInput({
   modeSwitchPlacement = "float",
   reserveModeSwitchSpace = false,
   compactModeSwitch = false,
+  modeSwitchMenuContent,
   softFocus = false,
   modeSwitchRightContent,
   modeSwitchStyle,
@@ -332,6 +333,7 @@ export default function MultiMarkdownInput({
               hidden={!showToolbarModeSwitch}
               overflowEllipsis={overflowEllipsis}
               compactModeSwitch={compactModeSwitch}
+              menuContent={modeSwitchMenuContent}
               style={modeSwitchStyle}
               editBarContentRef={editBar2}
               onSelectMode={(nextMode) => {
@@ -360,6 +362,7 @@ export default function MultiMarkdownInput({
           hidden={!!fixedMode || !!hideModeSwitch}
           overflowEllipsis={overflowEllipsis}
           compactModeSwitch={compactModeSwitch}
+          menuContent={modeSwitchMenuContent}
           style={modeSwitchStyle}
           editBarContentRef={editBar2}
           onSelectMode={(nextMode) => {
