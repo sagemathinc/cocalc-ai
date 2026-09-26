@@ -18,6 +18,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { ChatSourceContent } from "./source-file-context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   parseLineFromHashFragment,
@@ -396,6 +397,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     const target = e.target as HTMLElement | null;
     const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
     if (!anchor) return;
+    if (anchor.closest(".cocalc-steer-guidance-card")) return;
     const href = anchor.getAttribute("href")?.trim() ?? "";
     const file = projectFileTargetFromHref({
       href,
@@ -749,7 +751,10 @@ function ActivityRow({
     case "steer":
       const status = renderSteerStatus(entry.state, entry.text);
       return (
-        <div data-codex-activity-entry-index={rowIndex}>
+        <div
+          data-codex-activity-entry-index={rowIndex}
+          className="cocalc-steer-guidance-card"
+        >
           <div
             style={{
               display: "flex",
@@ -797,17 +802,19 @@ function ActivityRow({
                 minWidth: 0,
               }}
             >
-              <StaticMarkdown
-                value={entry.text}
-                style={{
-                  fontSize: 12,
-                  color: UI_COLORS.secondary,
-                  overflowWrap: "anywhere",
-                }}
-                editorTheme={editorTheme}
-                inlineCodeLinks={inlineCodeLinks}
-                inlineCodeProjectRoot={basePath}
-              />
+              <ChatSourceContent>
+                <StaticMarkdown
+                  value={entry.text}
+                  style={{
+                    fontSize: 12,
+                    color: UI_COLORS.secondary,
+                    overflowWrap: "anywhere",
+                  }}
+                  editorTheme={editorTheme}
+                  inlineCodeLinks={inlineCodeLinks}
+                  inlineCodeProjectRoot={basePath}
+                />
+              </ChatSourceContent>
             </div>
           </div>
         </div>

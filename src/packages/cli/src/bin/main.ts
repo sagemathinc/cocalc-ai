@@ -81,6 +81,8 @@ import {
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
 import { effectiveDaemonGlobals } from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
+import { openProjectOnlyContextConnection } from "./core/project-only-context";
+import type { CommandContextOptions } from "./core/project-only-context";
 import {
   listHosts as listHostsCore,
   normalizeUserSearchName as normalizeUserSearchNameCore,
@@ -301,6 +303,7 @@ type CommandContext = {
   pollMs: number;
   apiBaseUrl: string;
   remote: RemoteConnection;
+  currentProjectId?: string;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
   projectCache: Map<string, { expiresAt: number; project: ProjectRow }>;
@@ -1501,6 +1504,7 @@ async function maybeReconnectAsRequestedAccount({
 
 async function contextForGlobals(
   globals: GlobalOptions,
+  options: CommandContextOptions = {},
 ): Promise<CommandContext> {
   const config = loadAuthConfig();
   const applied = applyAuthProfile(globals, config);
@@ -1523,12 +1527,32 @@ async function contextForGlobals(
     globals: effectiveGlobals,
     apiBaseUrl,
   });
-  let remote = await connectRemote({
-    globals: effectiveGlobals,
+  const currentProject = await openProjectOnlyContextConnection({
+    ...options,
     apiBaseUrl,
-    timeoutMs,
-    preferApiTransport,
+    timeoutMs: Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
+    agentMode: isCliAgentModeEnabled(),
+    explicitTransport: preferApiTransport,
+    explicitAuth: !!(
+      globals.cookie ||
+      globals.bearer ||
+      globals.apiKey ||
+      globals.hubPassword ||
+      globals.accountId
+    ),
+    disableEnvAuthDefaults: effectiveGlobals.disableEnvAuthDefaults,
   });
+  let remote: RemoteConnection = currentProject
+    ? {
+        client: currentProject.client,
+        user: { ...currentProject.client.info?.user },
+      }
+    : await connectRemote({
+        globals: effectiveGlobals,
+        apiBaseUrl,
+        timeoutMs,
+        preferApiTransport,
+      });
   const bootstrapped = await maybeReconnectAsRequestedAccount({
     globals: effectiveGlobals,
     remote,
@@ -1572,6 +1596,7 @@ async function contextForGlobals(
     pollMs,
     apiBaseUrl,
     remote,
+    currentProjectId: currentProject?.projectId,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
     projectCache: new Map(),
@@ -1709,13 +1734,14 @@ async function withContext(
   command: unknown,
   commandName: string,
   fn: (ctx: CommandContext) => Promise<unknown>,
+  options: CommandContextOptions = {},
 ): Promise<void> {
   let globals: GlobalOptions = {};
   let ctx: CommandContext | undefined;
   try {
     globals = globalsFrom(command);
     try {
-      ctx = await contextForGlobals(globals);
+      ctx = await contextForGlobals(globals, options);
     } catch (error) {
       if (
         canOfferInteractiveAuthLogin({
@@ -1746,7 +1772,7 @@ async function withContext(
             `interactive CoCalc CLI login failed with exit code ${login.status ?? "unknown"}`,
           );
         }
-        ctx = await contextForGlobals(globals);
+        ctx = await contextForGlobals(globals, options);
       } else {
         if (isMissingCookieAuthError(error) && isCoCalcProjectEnvironment()) {
           process.stderr.write(
@@ -1777,7 +1803,7 @@ async function withContext(
           closeCommandContext(ctx);
           ctx = undefined;
           runInteractiveFreshAuth(globals, apiBaseUrl);
-          ctx = await contextForGlobals(globals);
+          ctx = await contextForGlobals(globals, options);
         }
         data = await fn(ctx);
       } else if (isAgentGrantRequiredError(error)) {
@@ -2322,6 +2348,19 @@ async function resolveProjectConatClient(
 ): Promise<{ project: ProjectRow; client: ConatClient }> {
   const explicitIdentifier = `${projectIdentifier ?? ""}`.trim();
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (
+    ctx.currentProjectId &&
+    (!explicitIdentifier || explicitIdentifier === ctx.currentProjectId)
+  ) {
+    return {
+      project: {
+        project_id: ctx.currentProjectId,
+        title: ctx.currentProjectId,
+        host_id: null,
+      },
+      client: ctx.remote.client,
+    };
+  }
   if (
     isCliAgentModeEnabled() &&
     isValidUUID(envProjectId) &&

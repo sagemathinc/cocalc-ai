@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Button, Input, Select, Space } from "antd";
+import { Alert, Button, ConfigProvider, Input, Select, Space } from "antd";
 import type {
   ActionDecision,
   ArtifactFeedback,
@@ -37,17 +37,29 @@ function restoreDrafts(key?: string): Record<string, ReviewDraft> {
     return {};
   }
 }
-export function ActionListArtifact({
-  artifact,
-  onReview,
-  historical,
-  storageKey,
-}: {
+interface ActionListArtifactProps {
   artifact: ArtifactRecord;
   onReview?: (feedback: ArtifactFeedback) => Promise<void>;
   historical: boolean;
   storageKey?: string;
-}) {
+  fontSize?: number;
+}
+
+export function ActionListArtifact(props: ActionListArtifactProps) {
+  return (
+    <ConfigProvider theme={{ token: { fontSize: props.fontSize } }}>
+      <ActionListReview {...props} />
+    </ConfigProvider>
+  );
+}
+
+function ActionListReview({
+  artifact,
+  onReview,
+  historical,
+  storageKey,
+  fontSize,
+}: ActionListArtifactProps) {
   const [drafts, setDrafts] = useState<Record<string, ReviewDraft>>(() =>
     restoreDrafts(historical ? undefined : storageKey),
   );
@@ -96,6 +108,7 @@ export function ActionListArtifact({
       style={{
         minHeight: 0,
         padding: 12,
+        fontSize,
         color: UI_COLORS.text,
         background: UI_COLORS.surface,
       }}
@@ -189,6 +202,7 @@ export function ActionListArtifact({
                 Target
                 <Input
                   aria-label={`Target for ${proposal.title}`}
+                  style={{ fontSize }}
                   value={draft.proposal.target}
                   disabled={disabled}
                   onChange={(e) =>
@@ -203,6 +217,7 @@ export function ActionListArtifact({
                 Draft
                 <Input.TextArea
                   aria-label={`Draft for ${proposal.title}`}
+                  style={{ fontSize }}
                   value={draft.proposal.draft}
                   disabled={disabled}
                   autoSize={{ minRows: 3, maxRows: 14 }}
@@ -219,7 +234,7 @@ export function ActionListArtifact({
                   aria-label={`Decision for ${proposal.title}`}
                   value={draft.decision}
                   disabled={disabled}
-                  style={{ width: 170 }}
+                  style={{ width: "12em" }}
                   options={[
                     { value: "undecided", label: "Not reviewed" },
                     { value: "approve", label: "Approve exact draft" },
@@ -243,7 +258,7 @@ export function ActionListArtifact({
                 disabled={disabled}
                 onChange={(e) => patch(proposal, { comment: e.target.value })}
                 autoSize={{ minRows: 1, maxRows: 4 }}
-                style={{ marginTop: 8 }}
+                style={{ marginTop: 8, fontSize }}
               />
             </section>
           );

@@ -14,10 +14,12 @@ export default function NotebookArtifact({
   projectId,
   path,
   historical = false,
+  fontSize,
 }: {
   projectId: string;
   path: string;
   historical?: boolean;
+  fontSize?: number;
 }) {
   const { actions } = useProjectContext();
   const fileContext = useFileContext();
@@ -146,6 +148,7 @@ export default function NotebookArtifact({
             path={path}
             doc={doc}
             scrollPosition={scrollPosition}
+            font_size={fontSize}
           />
         </FileContext.Provider>
       )}

@@ -7,6 +7,7 @@ import {
   ACP_STEER_CLAIM_LEASE_MS,
   claimAcpSteer,
   decodeAcpSteerCandidateIds,
+  decodeAcpSteerFallbackRequest,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
@@ -17,6 +18,7 @@ import {
   ownsAcpSteerClaim,
   releaseAcpSteerClaim,
 } from "../../sqlite/acp-steers";
+import type { AcpSteerRow } from "../../sqlite/acp-steers";
 
 function makeRequest() {
   return {
@@ -36,10 +38,34 @@ function makeRequest() {
   };
 }
 
+let migratedLegacySteer: AcpSteerRow;
+
 beforeAll(() => {
   closeAcpDatabase();
   initAcpDatabase({ filename: ":memory:" });
-  listPendingAcpSteers();
+  const db = getAcpDatabase();
+  db.exec(`CREATE TABLE acp_steers (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, path TEXT NOT NULL,
+    thread_id TEXT NOT NULL, user_message_id TEXT NOT NULL,
+    candidate_ids_json TEXT NOT NULL, request_json TEXT NOT NULL,
+    state TEXT NOT NULL, claim_token TEXT, error TEXT,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, handled_at INTEGER,
+    UNIQUE(project_id, path, user_message_id)
+  )`);
+  const request = makeRequest();
+  db.prepare(
+    `INSERT INTO acp_steers
+    (id, project_id, path, thread_id, user_message_id, candidate_ids_json,
+     request_json, state, created_at, updated_at)
+    VALUES ('legacy', ?, ?, ?, ?, '[]', ?, 'pending', 1, 1)`,
+  ).run(
+    request.project_id,
+    request.chat.path,
+    request.chat.thread_id,
+    request.chat.parent_message_id,
+    JSON.stringify(request),
+  );
+  migratedLegacySteer = listPendingAcpSteers()[0];
 });
 
 beforeEach(() => {
@@ -51,6 +77,20 @@ afterAll(() => {
 });
 
 describe("acp steer queue", () => {
+  it("migrates legacy pending steers without changing their fallback", () => {
+    expect(migratedLegacySteer.id).toBe("legacy");
+    expect(migratedLegacySteer.fallback_config_json).toBeNull();
+    expect(decodeAcpSteerFallbackRequest(migratedLegacySteer)).toEqual(
+      makeRequest(),
+    );
+    expect(
+      getAcpDatabase().prepare("PRAGMA table_info(acp_steers)").all(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "fallback_config_json" }),
+      ]),
+    );
+  });
   it("stores and decodes a pending steer request", () => {
     const row = enqueueAcpSteer({
       request: makeRequest(),
@@ -59,6 +99,33 @@ describe("acp steer queue", () => {
     expect(listPendingAcpSteers()).toHaveLength(1);
     expect(decodeAcpSteerCandidateIds(row)).toEqual(["thr-live-1", "thread-1"]);
     expect(decodeAcpSteerRequest(row).prompt).toBe("please keep going");
+    expect(decodeAcpSteerFallbackRequest(row)).toEqual(
+      decodeAcpSteerRequest(row),
+    );
+  });
+
+  it("retains separate fallback funding through owner handoff and retry", () => {
+    const request = {
+      ...makeRequest(),
+      config: {
+        paymentSource: "subscription-credential" as const,
+        credentialId: "live-pin",
+      },
+    };
+    const first = enqueueAcpSteer({
+      request,
+      fallback_config: { paymentSource: "auto" },
+    });
+    const claim = claimAcpSteer({ id: first.id })!;
+    const handedOff = enqueueAcpSteer({ request, candidate_ids: ["session"] });
+    expect(decodeAcpSteerFallbackRequest(handedOff).config).toEqual({
+      paymentSource: "auto",
+    });
+    expect(decodeAcpSteerRequest(handedOff).config).toEqual(request.config);
+    markAcpSteerError({ id: first.id, claim_token: claim, error: "retry" });
+    const retried = enqueueAcpSteer({ request, fallback_config: {} });
+    expect(retried.state).toBe("pending");
+    expect(decodeAcpSteerFallbackRequest(retried).config).toEqual({});
   });
 
   it("deduplicates repeated pending inserts for the same user message", () => {

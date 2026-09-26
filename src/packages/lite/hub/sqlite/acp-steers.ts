@@ -18,6 +18,7 @@ export interface AcpSteerRow {
   user_message_id: string;
   candidate_ids_json: string;
   request_json: string;
+  fallback_config_json?: string | null;
   state: AcpSteerState;
   claim_token?: string | null;
   error?: string | null;
@@ -37,6 +38,7 @@ function init(): void {
       user_message_id TEXT NOT NULL,
       candidate_ids_json TEXT NOT NULL,
       request_json TEXT NOT NULL,
+      fallback_config_json TEXT,
       state TEXT NOT NULL,
       claim_token TEXT,
       error TEXT,
@@ -51,6 +53,9 @@ function init(): void {
   }>;
   if (!columns.some(({ name }) => name === "claim_token")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN claim_token TEXT`);
+  }
+  if (!columns.some(({ name }) => name === "fallback_config_json")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN fallback_config_json TEXT`);
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_steers_state_created_idx ON ${TABLE}(state, created_at)`,
@@ -74,9 +79,12 @@ function ensureInit(): void {
 export function enqueueAcpSteer({
   request,
   candidate_ids,
+  fallback_config,
 }: {
   request: AcpSteerRequest;
   candidate_ids?: string[];
+  // Q&A guidance can inherit live funding without changing a new-turn fallback.
+  fallback_config?: AcpSteerRequest["config"];
 }): AcpSteerRow {
   ensureInit();
   const db = getAcpDatabase();
@@ -116,6 +124,7 @@ export function enqueueAcpSteer({
       `UPDATE ${TABLE}
           SET candidate_ids_json = ?,
               request_json = ?,
+              fallback_config_json = COALESCE(?, fallback_config_json),
               state = CASE WHEN state = 'error' THEN 'pending' ELSE state END,
               claim_token = CASE WHEN state = 'error' THEN NULL ELSE claim_token END,
               error = CASE WHEN state = 'error' THEN NULL ELSE error END,
@@ -125,6 +134,7 @@ export function enqueueAcpSteer({
     ).run(
       JSON.stringify(mergedCandidateIds),
       JSON.stringify(request),
+      fallback_config == null ? null : JSON.stringify(fallback_config),
       now,
       existing.id,
     );
@@ -135,8 +145,8 @@ export function enqueueAcpSteer({
   const id = randomUUID();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (id, project_id, path, thread_id, user_message_id, candidate_ids_json, request_json, state, claim_token, error, created_at, updated_at, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL)`,
+      (id, project_id, path, thread_id, user_message_id, candidate_ids_json, request_json, fallback_config_json, state, claim_token, error, created_at, updated_at, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL)`,
   ).run(
     id,
     project_id,
@@ -145,6 +155,7 @@ export function enqueueAcpSteer({
     user_message_id,
     JSON.stringify(normalizedCandidateIds),
     JSON.stringify(request),
+    fallback_config == null ? null : JSON.stringify(fallback_config),
     now,
     now,
   );
@@ -319,4 +330,13 @@ export function decodeAcpSteerCandidateIds(row: AcpSteerRow): string[] {
 
 export function decodeAcpSteerRequest(row: AcpSteerRow): AcpSteerRequest {
   return JSON.parse(row.request_json ?? "{}") as AcpSteerRequest;
+}
+
+export function decodeAcpSteerFallbackRequest(
+  row: AcpSteerRow,
+): AcpSteerRequest {
+  const request = decodeAcpSteerRequest(row);
+  return row.fallback_config_json == null
+    ? request
+    : { ...request, config: JSON.parse(row.fallback_config_json) };
 }

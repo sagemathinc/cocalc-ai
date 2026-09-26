@@ -33,6 +33,7 @@ import {
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
+import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useChatVisualViewport } from "./use-chat-viewport";
@@ -613,6 +614,9 @@ export function ChatRoomComposer({
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
+  const membershipAvailable = getCodexPaymentSourceOptions(
+    codexPaymentSource,
+  ).some((option) => option.value === "site-api-key" && !option.disabled);
   const handlePrimarySend = hasRunningCodexTurn
     ? handleSendImmediately
     : handleSend;
@@ -792,13 +796,17 @@ export function ChatRoomComposer({
                     size="small"
                     type="primary"
                   >
-                    Connect AI
+                    {membershipAvailable ? "Payment settings" : "Connect AI"}
                   </Button>
                 ) : undefined
               }
               showIcon
               style={{ marginBottom: 8 }}
-              title="To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key."
+              title={
+                membershipAvailable
+                  ? "To continue using this model, connect a ChatGPT plan or OpenAI API key. CoCalc Membership is available for new conversations with its included model."
+                  : "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key."
+              }
               type="info"
             />
           )}

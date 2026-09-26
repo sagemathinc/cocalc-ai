@@ -671,6 +671,58 @@ describe("ChatRoomComposer resize handle", () => {
     ).toBeNull();
   });
 
+  it("distinguishes the current model from membership without changing the conversation", async () => {
+    const user = userEvent.setup();
+    const onOpenCodexPaymentConfig = jest.fn();
+    renderComposer({
+      codexPaymentSource: {
+        source: "none",
+        hasSiteApiKey: true,
+        siteAiUsageLimitPositive: true,
+        siteFundedCodex: { enabled: true },
+      } as any,
+      isSelectedThreadAI: true,
+      onOpenCodexPaymentConfig,
+    });
+    expect(
+      screen.queryByText(
+        "To use AI in CoCalc, connect a ChatGPT plan or OpenAI API key.",
+      ),
+    ).toBeNull();
+    expect(
+      screen.getByText(
+        /To continue using this model.*CoCalc Membership is available for new conversations with its included model/,
+      ),
+    ).toBeVisible();
+    const paymentSettings = screen.getByRole("button", {
+      name: "Payment settings",
+    });
+    paymentSettings.focus();
+    expect(paymentSettings).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onOpenCodexPaymentConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { hasSiteApiKey: false },
+    { siteAiUsageLimitPositive: false },
+    { siteFundedCodex: { enabled: false } },
+  ])("does not advertise unavailable membership: %j", (unavailable) => {
+    renderComposer({
+      codexPaymentSource: {
+        source: "none",
+        hasSiteApiKey: true,
+        siteAiUsageLimitPositive: true,
+        siteFundedCodex: { enabled: true },
+        ...unavailable,
+      } as any,
+      isSelectedThreadAI: true,
+      onOpenCodexPaymentConfig: jest.fn(),
+    });
+    expect(screen.queryByText(/CoCalc Membership is available/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect AI" })).toBeVisible();
+  });
+
   it("shows the Codex setup banner for site-billed AI sources", () => {
     renderComposer({
       codexPaymentSource: {

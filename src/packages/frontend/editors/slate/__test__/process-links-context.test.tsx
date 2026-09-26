@@ -6,6 +6,10 @@
 import { render, waitFor } from "@testing-library/react";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useProcessLinks } from "../elements/hooks";
+import {
+  FrameContext,
+  defaultFrameContext,
+} from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 
 const mockProcessLinks = jest.fn();
 const mockProjectActions = {};
@@ -28,6 +32,31 @@ function HookHarness() {
 describe("Slate process_smc_links context", () => {
   beforeEach(() => {
     mockProcessLinks.mockReset();
+  });
+
+  it("uses the agent turn's explicit link directory without changing the editor's frame path", async () => {
+    render(
+      <FrameContext.Provider
+        value={{
+          ...defaultFrameContext,
+          project_id: "project-1",
+          path: "/home/user/.local/share/cocalc/agents/agent.chat",
+        }}
+      >
+        <FileContext.Provider value={{ relativeLinkBasePath: "/home/user" }}>
+          <HookHarness />
+        </FileContext.Provider>
+      </FrameContext.Provider>,
+    );
+    await waitFor(() =>
+      expect(mockProcessLinks).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          projectId: "project-1",
+          filePath: "/home/user",
+        }),
+      ),
+    );
   });
 
   it("uses FileContext when rendered outside a frame", async () => {
