@@ -25,6 +25,7 @@ import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
 import { ArtifactCards } from "./artifacts";
 import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
+import { AgentLaunchStatus } from "./agent-launch-status";
 import {
   DropdownMenu,
   Gap,
@@ -2231,7 +2232,7 @@ export default function Message({
       kind: "agent" | "guidance";
       text: string;
       time?: number;
-      state?: "sending" | "sent" | "queued" | "not-sent";
+      state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
     }>;
     message_class?: string;
     openCommitFromMessage: (e: any) => void;
@@ -3210,6 +3211,24 @@ export default function Message({
     <Row ref={messageRowRef} tabIndex={-1} style={getStyle()}>
       {renderCols()}
       {withMessageFileContext(renderZenMessageDrawer())}
+      {rpcAttribution && (
+        <div style={{ width: "100%" }}>
+          <AgentLaunchStatus
+            receipt={field(message, "agent_rpc_launch")}
+            acpState={acpState}
+            onResubmit={
+              actions && !read_only && sender_is_viewer(account_id, message)
+                ? () =>
+                    resendCanceledAcpTurn({
+                      actions,
+                      message,
+                      useCurrentPayment: true,
+                    })
+                : undefined
+            }
+          />
+        </div>
+      )}
       <AcpPromptModal
         open={showAcpPromptModal}
         title="Full agent prompt for this message"
