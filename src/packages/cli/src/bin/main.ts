@@ -23,6 +23,7 @@ import { URL } from "node:url";
 import { Command } from "commander";
 
 import pkg from "../../package.json";
+import { projectApiRelayTransport } from "../core/api-relay";
 
 import {
   connect as connectConat,
@@ -304,6 +305,8 @@ type CommandContext = {
   apiBaseUrl: string;
   remote: RemoteConnection;
   currentProjectId?: string;
+  currentProjectClient?: ConatClient;
+  connectHub?: () => Promise<void>;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
   projectCache: Map<string, { expiresAt: number; project: ProjectRow }>;
@@ -476,7 +479,12 @@ function daemonContextKey(globals: GlobalOptions): string {
 }
 
 function defaultApiBaseUrl(): string {
-  const fromEnv = process.env.COCALC_API_URL ?? process.env.BASE_URL;
+  const fromEnv =
+    process.env.COCALC_API_URL ??
+    process.env.BASE_URL ??
+    (process.env.COCALC_API_RELAY === "1"
+      ? process.env.COCALC_API_RELAY_HUB_URL
+      : undefined);
   if (fromEnv?.trim()) {
     return normalizeUrl(fromEnv);
   }
@@ -501,7 +509,8 @@ function defaultConatAddress(
     apiBaseUrl,
     conatServer: process.env.CONAT_SERVER,
     devEnvMode: process.env.COCALC_DEV_ENV_MODE,
-    preferApiTransport,
+    preferApiTransport:
+      preferApiTransport || process.env.COCALC_API_RELAY === "1",
     // Agent-mode CLI commands first need an account/hub context. Project-host
     // connections are opened later only for project-scoped services.
     preferHubForAgentMode: shouldPreferHubConatAddressForAgentMode(),
@@ -1246,7 +1255,8 @@ async function connectRemote({
     preferApiTransport ??
       (globals.disableEnvAuthDefaults === true || !!globals.api?.trim()),
   );
-  const extraHeaders: Record<string, string> = {};
+  const relay = projectApiRelayTransport({ apiBaseUrl: conatAddress });
+  const extraHeaders: Record<string, string> = { ...relay?.extraHeaders };
   const cookie = buildCookieHeader(apiBaseUrl, globals);
   if (cookie) {
     extraHeaders.Cookie = cookie;
@@ -1266,7 +1276,7 @@ async function connectRemote({
       : undefined;
   const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   const client = connectConat({
-    address: conatAddress,
+    address: relay?.address ?? conatAddress,
     noCache: true,
     ...(projectScopedAuth?.project_id
       ? {
@@ -1531,7 +1541,7 @@ async function contextForGlobals(
     ...options,
     apiBaseUrl,
     timeoutMs: Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
-    agentMode: isCliAgentModeEnabled(),
+    agentMode: isCliAgentModeEnabled() || process.env.COCALC_API_RELAY === "1",
     explicitTransport: preferApiTransport,
     explicitAuth: !!(
       globals.cookie ||
@@ -1588,7 +1598,7 @@ async function contextForGlobals(
     );
   }
 
-  const ctx = {
+  const ctx: CommandContext = {
     globals: effectiveGlobals,
     accountId,
     timeoutMs,
@@ -1597,11 +1607,34 @@ async function contextForGlobals(
     apiBaseUrl,
     remote,
     currentProjectId: currentProject?.projectId,
+    currentProjectClient: currentProject?.client,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
     projectCache: new Map(),
     hostConnectionCache: new Map(),
   };
+  if (currentProject) {
+    let pending: Promise<void> | undefined;
+    ctx.connectHub = () => {
+      if (!pending) {
+        pending = (async () => {
+          const hubRemote = await connectRemote({
+            globals: effectiveGlobals,
+            apiBaseUrl,
+            timeoutMs,
+            preferApiTransport: true,
+          });
+          ctx.remote = hubRemote;
+          ctx.accountId =
+            getExplicitAccountId(effectiveGlobals) ??
+            resolveAccountIdFromRemote(hubRemote) ??
+            ctx.accountId;
+          ctx.connectHub = undefined;
+        })();
+      }
+      return pending;
+    };
+  }
   ctx.hub = createHubApiForContext(ctx);
   return ctx;
 }
@@ -1706,10 +1739,12 @@ function closeCommandContext(ctx: CommandContext | undefined): void {
   for (const host_id of Object.keys(ctx.routedProjectHostClients)) {
     closeRoutedProjectHostClient(ctx, host_id);
   }
-  try {
-    ctx.remote.client.close();
-  } catch {
-    // ignore
+  for (const client of new Set([ctx.remote.client, ctx.currentProjectClient])) {
+    try {
+      client?.close();
+    } catch {
+      // A failed close must not prevent closing the other transport.
+    }
   }
 }
 
@@ -1835,6 +1870,7 @@ async function hubCallByName<T>(
   args: any[] = [],
   timeout?: number,
 ): Promise<T> {
+  await ctx.connectHub?.();
   return await hubCallByNameCore<T>({
     ctx,
     name,
@@ -1931,6 +1967,16 @@ async function resolveProjectFromArgOrContext(
   identifier?: string,
   cwd = process.cwd(),
 ): Promise<ProjectRow> {
+  if (
+    ctx.currentProjectId &&
+    (!identifier?.trim() || identifier.trim() === ctx.currentProjectId)
+  ) {
+    return {
+      project_id: ctx.currentProjectId,
+      title: ctx.currentProjectId,
+      host_id: null,
+    };
+  }
   return await resolveProjectFromArgOrContextCore<ProjectRow>({
     ctx,
     identifier,
@@ -2136,7 +2182,10 @@ async function getOrCreateRoutedProjectHostClient(
     });
   }
   if (!connection) {
-    connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+    connection = await ctx.hub.hosts.resolveHostConnection({
+      host_id,
+      project_id: project.project_id,
+    });
     ctx.hostConnectionCache.set(host_id, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
@@ -2170,11 +2219,18 @@ async function getOrCreateRoutedProjectHostClient(
         includeHubPassword: false,
       })
     : undefined;
+  const relay = projectApiRelayTransport({
+    apiBaseUrl: ctx.apiBaseUrl,
+    host: { host_id, project_id: project.project_id },
+  });
   const routed = connectConat({
-    address,
+    address: relay?.address ?? address,
     noCache: true,
     reconnection: false,
-    ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
+    extraHeaders: {
+      ...relay?.extraHeaders,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     auth: async (cb) => {
       try {
         const token = await issueProjectHostAuthToken(
@@ -2249,6 +2305,20 @@ async function resolveProjectFilesystem(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; fs: FilesystemClient; readOnly?: boolean }> {
+  if (
+    ctx.currentProjectClient &&
+    (!projectIdentifier || projectIdentifier === ctx.currentProjectId)
+  ) {
+    const project_id = ctx.currentProjectId!;
+    return {
+      project: { project_id, title: project_id, host_id: null },
+      fs: fsClient({
+        client: ctx.currentProjectClient,
+        subject: fsSubject({ project_id }),
+        timeout: ctx.timeoutMs,
+      }),
+    };
+  }
   const project = await resolveProjectFromArgOrContext(
     ctx,
     projectIdentifier,
@@ -2358,7 +2428,7 @@ async function resolveProjectConatClient(
         title: ctx.currentProjectId,
         host_id: null,
       },
-      client: ctx.remote.client,
+      client: ctx.currentProjectClient!,
     };
   }
   if (
@@ -2805,6 +2875,7 @@ async function resolveProxyUrl({
 
   const connection = await ctx.hub.hosts.resolveHostConnection({
     host_id: host.id,
+    project_id: project.project_id,
   });
 
   let base = connection.connect_url ? normalizeUrl(connection.connect_url) : "";
@@ -2833,7 +2904,8 @@ async function resolveProxyUrl({
 const { serveDaemon, runDaemonRequestFromCommand } =
   createDaemonServerOps<CommandContext>({
     daemonContextKey,
-    contextForGlobals,
+    contextForGlobals: (globals) =>
+      contextForGlobals(globals, { projectOnly: {} }),
     closeCommandContext,
     globalsFrom,
     daemonRequestGlobals: (globals) => {

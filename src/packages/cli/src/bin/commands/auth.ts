@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { fetchWithProjectApiRelay } from "../../core/api-relay";
 import { createHash, randomBytes } from "node:crypto";
 import {
   EXTERNAL_AGENT_TOKEN_PREFIX,
@@ -139,11 +140,14 @@ export function registerAuthCommand(
     if (cookieHeader?.trim()) {
       headers.Cookie = cookieHeader.trim();
     }
-    const response = await fetch(apiUrl(apiBaseUrl, endpoint), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
+    const response = await fetchWithProjectApiRelay(
+      apiUrl(apiBaseUrl, endpoint),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+    );
     const json = await response.json();
     if (json?.error) {
       const err: any = new Error(`${json.error}`);

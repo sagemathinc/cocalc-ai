@@ -13,6 +13,12 @@ import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-li
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
+import {
+  resolveLocalApiRelayHostUrl,
+  resolveLocalProjectApiRelayTarget,
+  updateLocalProjectApiRelayUsage,
+  updateLocalApiRelayAccountUsage,
+} from "@cocalc/server/conat/api/project-api-relay";
 
 import {
   createInterBayAuthTokenHandlers,
@@ -2767,6 +2773,10 @@ async function startProjectCollabInviteService(): Promise<void> {
 async function startHostConnectionService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayHostConnectionApi = {
+    getApiRelayTarget: resolveLocalProjectApiRelayTarget,
+    getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
+    updateApiRelayUsage: updateLocalProjectApiRelayUsage,
+    updateApiRelayAccountUsage: updateLocalApiRelayAccountUsage,
     listHostOperations: async ({ account_id, host_id, include_completed }) =>
       await listOperations({
         account_id,
@@ -2774,11 +2784,8 @@ async function startHostConnectionService(): Promise<void> {
         scope_id: host_id,
         include_completed,
       }),
-    get: async ({ account_id, host_id }) => {
-      const connection = await resolveHostConnectionLocal({
-        account_id,
-        host_id,
-      });
+    get: async (opts) => {
+      const connection = await resolveHostConnectionLocal(opts);
       if (!connection) {
         throw new Error("host not found");
       }

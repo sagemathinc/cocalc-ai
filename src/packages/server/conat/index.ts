@@ -63,6 +63,7 @@ import startPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance"
 import { startBillingAuthorityService } from "@cocalc/server/purchases/billing-authority/service";
 import { startLroExpirationMaintenance } from "@cocalc/server/lro/expiration-maintenance";
 import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-retention-maintenance";
+import { startApiRelayQuotaMaintenance } from "@cocalc/server/membership/api-relay-maintenance";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
 import { startGrowthAnalyticsMaintenance } from "@cocalc/server/growth-analytics/maintenance";
 import { startFrontendAssetHealthMaintenance } from "@cocalc/server/monitoring/frontend-assets";
@@ -154,6 +155,7 @@ export function startConatApiBackgroundWorkers(): void {
     startComputeVmWorker();
     startLroExpirationMaintenance();
     startUsageRetentionMaintenance();
+    startApiRelayQuotaMaintenance();
     startActiveUserMapHistoryMaintenance();
     startGrowthAnalyticsMaintenance();
     startHostRuntimeFleetRolloutWorker();

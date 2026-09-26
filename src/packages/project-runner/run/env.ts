@@ -169,6 +169,8 @@ export async function getEnvironment({
     // We use host.containers.internal (not a hardcoded IP), and networking mode
     // is selected in run/podman.ts.
     CONAT_SERVER: normalizeProjectContainerConatServer(conatServer),
+    COCALC_API_RELAY: "1",
+    ...(siteUrl ? { COCALC_API_RELAY_HUB_URL: siteUrl } : {}),
     COCALC_SECRET_TOKEN: secretTokenPath(HOME),
     ...(siteUrl ? { COCALC_SITE_URL: siteUrl } : {}),
     [PROJECT_SECRETS_ENV]: PROJECT_SECRETS_MOUNT_PATH,

@@ -84,9 +84,11 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
     conatServer,
     ingressHttpServer,
     directHttpsServer,
+    closeApiRelay,
   } = await startStandaloneProjectHostConatRouter({
     hostId,
     systemAccountPassword,
+    masterClient,
   });
   const localSystemClient = conatServer.client({
     systemAccountPassword,
@@ -110,6 +112,7 @@ export async function main(): Promise<ProjectHostConatRouterDaemonContext> {
   const close = async () => {
     if (closed) return;
     closed = true;
+    closeApiRelay();
     try {
       await conatServer.close();
     } finally {

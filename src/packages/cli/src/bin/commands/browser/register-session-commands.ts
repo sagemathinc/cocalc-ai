@@ -3,6 +3,7 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
+import { fetchWithProjectApiRelay } from "../../../core/api-relay";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { URL } from "node:url";
@@ -195,7 +196,10 @@ async function resolveProjectHostBrowserSessionCookies({
   if (!host_id) {
     return [];
   }
-  const connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
+  const connection = await ctx.hub.hosts.resolveHostConnection({
+    host_id,
+    project_id,
+  });
   const address = `${connection.connect_url ?? ""}`.trim();
   if (!address) {
     return [];
@@ -208,7 +212,7 @@ async function resolveProjectHostBrowserSessionCookies({
   if (!token) {
     throw new Error("project-host auth token issuance returned no token");
   }
-  const response = await fetch(
+  const response = await fetchWithProjectApiRelay(
     new URL(PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH, address).toString(),
     {
       method: "POST",
@@ -216,6 +220,7 @@ async function resolveProjectHostBrowserSessionCookies({
         Authorization: `Bearer ${token}`,
       },
     },
+    { apiBaseUrl: ctx.apiBaseUrl, host_id, project_id },
   );
   if (!response.ok) {
     throw new Error(

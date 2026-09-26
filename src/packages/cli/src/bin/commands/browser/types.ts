@@ -269,7 +269,10 @@ export type BrowserCommandContext = {
       }>;
     };
     hosts?: {
-      resolveHostConnection: (opts: { host_id: string }) => Promise<{
+      resolveHostConnection: (opts: {
+        host_id: string;
+        project_id?: string;
+      }) => Promise<{
         connect_url?: string | null;
         local_proxy?: boolean | null;
       }>;

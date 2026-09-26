@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { fetchWithProjectApiRelay } from "../../core/api-relay";
 
 import { Command } from "commander";
 
@@ -311,9 +312,12 @@ async function resolveDocsSpawnTargetUrl({
   const cookie = buildCookieHeader(apiUrl, globals);
   if (!cookie) return undefined;
   try {
-    const response = await fetch(`${apiUrl}/api/v2/auth/bootstrap`, {
-      headers: { Cookie: cookie },
-    });
+    const response = await fetchWithProjectApiRelay(
+      `${apiUrl}/api/v2/auth/bootstrap`,
+      {
+        headers: { Cookie: cookie },
+      },
+    );
     if (!response.ok) return undefined;
     const bootstrap = (await response.json()) as {
       signed_in?: boolean;
