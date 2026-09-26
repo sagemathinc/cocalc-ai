@@ -269,9 +269,7 @@ not sustained-load throughput, multi-worker contention, or concurrent account
 rehome during deletion. PGlite tests separately cover the 10,000-record ceiling,
 500-record cleanup batch, and non-home cleanup denial.
 
-## Still unverified or incomplete
-
-### Manual-key daemon follow-up (not deployed)
+### Manual-key daemon follow-up
 
 The CLI now permits manual `--api-key-file` file commands to use its daemon.
 Each daemon command rereads the provider before looking up a cached context;
@@ -284,10 +282,43 @@ and bounds the actual read even if the file grows after inspection.
 
 The CLI TypeScript build and 30 focused tests passed for provider handling,
 daemon context reuse/invalidation/races, auth profiles, daemon transport, and
-existing managed-key selection. This code has not been deployed or exercised
-through the installed CLI daemon. Managed connector credentials still bypass
-the daemon until source-project routing can be propagated explicitly; this is
-not completion of the persistent-client requirement.
+existing managed-key selection.
+
+Built the amd64 and arm64 tools bundles at
+`1b781bcb0ea4b9457a10372b64527d1222e27c04`. A tools-only upgrade of My host
+succeeded as operation `a649e626-f82b-4157-9341-e6183f5f1722`, without restarting
+the hub or managed host components. The previously running test project retained
+its old tools mount. Instead of disturbing its sessions, the fixture created
+project `e0dfed24-012c-45b4-a239-454f5b2c2926` on the upgraded host. Its installed
+`/opt/cocalc/bin2/cocalc-cli.js` matched the rebuilt bundle SHA-256 exactly:
+`3e7ed422ba08d7af62eef784b3dde6866b8797bd2a7d125f2d9964dc4a44c00b`.
+
+With no ambient credentials and a dedicated private daemon runtime directory,
+the installed CLI passed file reads, writes, upload/read-back/delete, absent
+project denial, and viewer write/exec denial. The daemon was initially absent,
+started on the first file command, and retained the same PID throughout. Atomic
+replacement of the full-runtime key file by a viewer key allowed reads but
+denied writes. Removing that provider then denied reads with `API key file is
+unavailable`, while the daemon remained running.
+
+A separate run repeatedly read a synthetic file through the daemon. After its
+first successful read signaled readiness, the human management API deleted the
+key. An explicit authentication denial arrived 14,596 ms after the delete request
+started, with the same daemon PID still running. This is a wall-clock development
+measurement including request processing, not a commit-time bound under load.
+The harness does not count transport timeouts as authorization denials.
+
+All probe keys and files were removed and each isolated daemon was stopped.
+Disposable-project hard deletion succeeded as operation
+`f4293140-1af3-4580-b0ef-cea581390d2b`.
+An initial daemon run failed with the long nested runtime path; a short private
+`/tmp` runtime directory succeeded. Earlier revocation runs rejected the API's
+actual denial wording in a harness assertion; the corrected final run passed.
+These tests exercise sequential file commands through a persistent daemon, not
+terminal, Jupyter, sync, preview, or proxy streams. Managed connector credentials
+still bypass the daemon until source-project routing is propagated explicitly.
+
+## Still unverified or incomplete
 
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
