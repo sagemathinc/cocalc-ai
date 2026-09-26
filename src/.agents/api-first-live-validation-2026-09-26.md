@@ -21,6 +21,60 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Verified live
 
+### Follow-up build and installed CLI probe
+
+Ran `./scripts/dev/upgrade-all.sh` at
+`d9d5a6805ce914efffec4784b67630928f8b3056`. The full workspace build, production
+frontend, project-host/project bundles, and amd64/arm64 tools bundles passed.
+All three dev hubs restarted. The host-upgrade waiter subsequently timed out;
+this rollout is **not verified complete**.
+
+The existing operation IDs are:
+
+- My host: `73549159-b317-40cf-9f1b-d57b837fe3db`.
+- host-2: `41fd06d9-7c5d-4a07-9e51-f2abfc3f3416`.
+- host3: `4fc6e82b-267e-47a5-9eb0-1917b68e3e35`.
+
+My host's bootstrap status reported the project-host bundle
+`20260926T221155Z-d9d5a6805ce9`, project bundle `1790460749814`, and tools bundle
+`1790460811099` installed and aligned. Deployment status also reported the new
+current version for its managed components. These observations do not replace
+the missing terminal operation results or prove every running project adopted
+the new bundles.
+
+At 22:25:43 UTC the primary hub fail-stopped after a billing-authority lease
+query timed out. Its endpoint refused connections; the two attached bays stayed
+running. `pnpm -s dev:hub:start` recovered the primary without restarting those
+bays. Subsequent operation queries still returned the first two operations as
+running at component verification and the third as queued. No replacement
+upgrade or operation cancellation was submitted. The cause of the lease-query
+timeout and final rollout state remain to be investigated.
+
+Before that hub shutdown, an isolated probe ran the installed CLI at
+`/opt/cocalc/bin/node /opt/cocalc/bin2/cocalc-cli.js` inside the test project.
+Ordinary temporary manual keys were supplied using `--api-key-file`, an unused
+profile, `--disable-env-auth-defaults`, and an environment without CoCalc
+credentials. Daemon use was disabled. The final probe exited zero and verified:
+
+- Project listing, exact-project directory listing, and file reading.
+- Upload/read-back/delete of a temporary file with a full-runtime key.
+- Project execution of a harmless marker command.
+- File-access denial for a project absent from the key's grant.
+- Reading with a file-read-only key that lacked account-wide list permission.
+- Read-only upload rejection and backend permission denial for execution.
+
+The fixture used a uniquely named private directory, private credential files,
+and synthetic text. It removed its files and deleted both keys. Earlier probe
+attempts failed harness assertions while interpreting error output: JSON errors
+were on stderr, and write/exec denials used different messages. Those attempts
+also cleaned up their resources; they are not additional implementation failures.
+
+This establishes the listed installed-CLI workflows, not the entire ordinary
+CLI command matrix, daemon isolation, exact installed bundle revision, managed
+turn issuance, directory-root restrictions, or long-lived interactive sessions.
+The probe ran while rollout verification was pending, so it is not a clean
+post-rollout acceptance run.
+
 ### Established Hub sockets
 
 A disposable, three-minute manual key with `account:read` authenticated directly
