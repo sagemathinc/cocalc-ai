@@ -5,6 +5,8 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import { assertAccountNotRehoming } from "@cocalc/database/postgres/account-rehome-fence";
+import { allocateApiKeyIssuanceSequence } from "@cocalc/server/api/issuance-sequence";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -257,6 +259,11 @@ export async function beginManagedCocalcConnectorTurn({
     | undefined;
   try {
     await client.query("BEGIN");
+    await assertAccountNotRehoming({
+      db: client,
+      account_id: owner,
+      action: "issue connector key",
+    });
     // Serialize all managed issuance for this account, including across agents.
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [owner]);
     const { rows: configs } = await client.query<SavedConfig>(
@@ -337,11 +344,15 @@ export async function beginManagedCocalcConnectorTurn({
       ) {
         throw Error("managed CoCalc connector key limit reached");
       }
+      const issuance_sequence = await allocateApiKeyIssuanceSequence(
+        client,
+        owner,
+      );
       const { rows: keys } = await client.query<KeyRow>(
         `INSERT INTO api_keys
           (account_id,created,expire,name,key_id,hash,trunc,
-           capabilities,allowed_project_ids,scope)
-         VALUES($1,now(),$2,$3,$4,$5,$6,'{}'::TEXT[],'{}'::UUID[],$7::JSONB)
+           capabilities,allowed_project_ids,scope,issuance_sequence)
+         VALUES($1,now(),$2,$3,$4,$5,$6,'{}'::TEXT[],'{}'::UUID[],$7::JSONB,$8::BIGINT)
          RETURNING id,key_id,hash,scope,scope_revision,expire`,
         [
           owner,
@@ -351,6 +362,7 @@ export async function beginManagedCocalcConnectorTurn({
           hash,
           `${secret.slice(0, 5)}...${secret.slice(-8)}`,
           JSON.stringify(scope),
+          issuance_sequence,
         ],
       );
       const { rows: created } = await client.query<ManagedTurnRow>(

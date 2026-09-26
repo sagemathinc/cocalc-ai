@@ -26,6 +26,7 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import { assertScopeProjectsCollaborator } from "./scope-project-access";
+import { withApiKeyIssuance } from "./issuance-sequence";
 import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
@@ -62,6 +63,12 @@ let apiKeysV2SchemaReady: Promise<void> | undefined;
 export async function ensureApiKeysV2Schema(): Promise<void> {
   apiKeysV2SchemaReady ??= (async () => {
     const pool = getPool();
+    await pool.query(
+      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
+    );
     await pool.query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );
@@ -328,30 +335,39 @@ async function createApiKey({
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
     );
   }
-  const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids,scope,scope_revision) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7::JSONB,1) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,scope,scope_revision,last_active",
-    [
-      account_id,
-      expire,
-      name,
-      randomBase64Url(API_KEY_ID_BYTES),
-      scope.capabilities,
-      scope.allowed_project_ids,
-      canonicalScope == null ? null : JSON.stringify(canonicalScope),
-    ],
+  const { key, secret, trunc, hash } = await withApiKeyIssuance(
+    pool,
+    account_id,
+    async (client, issuance_sequence) => {
+      const { rows } = await client.query(
+        "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids,scope,scope_revision,issuance_sequence) VALUES($1,NOW(),$2,$3,$4,$5,$6,$7::JSONB,1,$8::BIGINT) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,scope,scope_revision,last_active",
+        [
+          account_id,
+          expire,
+          name,
+          randomBase64Url(API_KEY_ID_BYTES),
+          scope.capabilities,
+          scope.allowed_project_ids,
+          canonicalScope == null ? null : JSON.stringify(canonicalScope),
+          issuance_sequence,
+        ],
+      );
+      const { id, key_id } = rows[0];
+      // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
+      // Thus we have to do this little trick.
+      // v2 keys use a random key_id for lookup, not the local integer id.
+      const secret = createApiKeySecret({ key_id });
+      const trunc = truncApiKey(secret);
+      const hash = passwordHash(secret);
+      await client.query("UPDATE api_keys SET trunc=$1,hash=$2 WHERE id=$3", [
+        trunc,
+        hash,
+        id,
+      ]);
+      return { key: rows[0], secret, trunc, hash };
+    },
   );
-  const { id, key_id } = rows[0];
-  // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
-  // Thus we have to do this little trick.
-  // v2 keys use a random key_id for lookup, not the local integer id.
-  const secret = createApiKeySecret({ key_id });
-  const trunc = truncApiKey(secret);
-  const hash = passwordHash(secret);
-  await pool.query("UPDATE api_keys SET trunc=$1,hash=$2 WHERE id=$3", [
-    trunc,
-    hash,
-    id,
-  ]);
+  const { id, key_id } = key;
   await syncAccountApiKeyDirectory({
     key_id,
     account_id,
@@ -372,7 +388,7 @@ async function createApiKey({
       source: "account-api-key-management",
     },
   });
-  return { ...rows[0], trunc, secret };
+  return { ...key, trunc, secret };
 }
 
 async function updateApiKey({ apiKey, account_id }) {

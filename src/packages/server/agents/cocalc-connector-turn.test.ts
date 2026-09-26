@@ -33,6 +33,14 @@ const deleteDirectory = jest.fn();
 const clusterAccount = jest.fn();
 const hostLease = jest.fn();
 const identity = jest.fn();
+const allocateSequence = jest.fn();
+
+jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
+  assertAccountNotRehoming: jest.fn(async () => undefined),
+}));
+jest.mock("@cocalc/server/api/issuance-sequence", () => ({
+  allocateApiKeyIssuanceSequence: (...args) => allocateSequence(...args),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -114,6 +122,7 @@ let lockedConfig: any;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  allocateSequence.mockResolvedValue("9007199254740993");
   savedTurn = undefined;
   savedKey = undefined;
   lockedConfig = config;
@@ -251,6 +260,12 @@ test("idempotent retry returns the same key without allocating another", async (
   const first = await beginManagedCocalcConnectorTurn(request);
   const second = await beginManagedCocalcConnectorTurn(request);
   expect(second).toEqual(first);
+  expect(allocateSequence).toHaveBeenCalledTimes(1);
+  expect(
+    clientQuery.mock.calls.find(([sql]) =>
+      `${sql}`.includes("INSERT INTO api_keys"),
+    )?.[1][7],
+  ).toBe("9007199254740993");
   expect(
     clientQuery.mock.calls.filter(([sql]) =>
       `${sql}`.includes("INSERT INTO api_keys"),
@@ -356,6 +371,7 @@ test("renewal extends the existing key without exposing a new secret", async () 
     turn_id: issued!.turn_id,
   });
   expect(expiry).toBeGreaterThanOrEqual(issued!.expires_at);
+  expect(allocateSequence).toHaveBeenCalledTimes(1);
   expect(directory).toHaveBeenCalledWith(
     expect.objectContaining({
       key_id: issued!.key_id,

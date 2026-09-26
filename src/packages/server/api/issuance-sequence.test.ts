@@ -3,6 +3,7 @@ import getPool from "@cocalc/database/pool";
 import {
   allocateApiKeyIssuanceSequence,
   normalizeApiKeyIssuanceSequence,
+  withApiKeyIssuance,
 } from "./issuance-sequence";
 
 describe("API key sequence representation", () => {
@@ -83,6 +84,32 @@ describeDb("account-home issuance ordering", () => {
       [owner],
     );
     expect(await issue()).toBe("9007199254740993");
+  });
+  it("rolls back both the counter and key mutation on callback failure", async () => {
+    await expect(
+      withApiKeyIssuance(pool, owner, async (client, sequence) => {
+        await client.query("INSERT INTO sequence_test_keys VALUES($1,$2)", [
+          "failed",
+          sequence,
+        ]);
+        throw Error("hash write failed");
+      }),
+    ).rejects.toThrow("hash write failed");
+    expect((await pool.query("SELECT * FROM sequence_test_keys")).rows).toEqual(
+      [],
+    );
+    await expect(
+      withApiKeyIssuance(pool, owner, async (client, sequence) => {
+        await client.query("INSERT INTO sequence_test_keys VALUES($1,$2)", [
+          "success",
+          sequence,
+        ]);
+        return sequence;
+      }),
+    ).resolves.toBe("1");
+    expect(
+      (await pool.query("SELECT key_id FROM sequence_test_keys")).rows,
+    ).toEqual([{ key_id: "success" }]);
   });
   it("fails closed at exhaustion or an invalid stored counter", async () => {
     for (const value of ["9223372036854775807", "-1"]) {

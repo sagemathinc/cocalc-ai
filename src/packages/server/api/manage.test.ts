@@ -14,6 +14,11 @@ let centralLogMock: jest.Mock;
 let resolveProjectReferenceMock: jest.Mock;
 let getApiKeyAuthorizationStateMock: jest.Mock;
 
+jest.mock("./issuance-sequence", () => ({
+  withApiKeyIssuance: async (_pool, _account, mutate) =>
+    mutate({ query: (...args) => queryMock(...args) }, "9007199254740993"),
+}));
+
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
@@ -96,6 +101,7 @@ describe("manageApiKeys local bay access", () => {
     return queryMock.mock.calls.filter(([sql]) => {
       const text = `${sql}`;
       return (
+        !text.includes("ALTER TABLE accounts ADD COLUMN") &&
         !text.includes("ALTER TABLE api_keys ADD COLUMN") &&
         !text.includes("ALTER TABLE api_keys ALTER COLUMN") &&
         !text.includes("UPDATE api_keys SET scope_revision=1") &&
@@ -190,7 +196,7 @@ describe("manageApiKeys local bay access", () => {
     ).toBe(true);
     expect(
       queryMock.mock.calls.some(([sql]) =>
-        `${sql}`.includes("scope,scope_revision) VALUES"),
+        `${sql}`.includes("scope,scope_revision,issuance_sequence) VALUES"),
       ),
     ).toBe(true);
     expect(centralLogMock).toHaveBeenCalledWith({
@@ -206,6 +212,10 @@ describe("manageApiKeys local bay access", () => {
       `${sql}`.includes("UPDATE api_keys SET trunc=$1,hash=$2"),
     );
     expect(update).toBeTruthy();
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("INSERT INTO api_keys"),
+    );
+    expect(insert?.[1][7]).toBe("9007199254740993");
   });
 
   it("requires full collaborator membership for a versioned viewer grant", async () => {

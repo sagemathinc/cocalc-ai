@@ -181,6 +181,9 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
+        sql.includes(
+          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
+        ) ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
@@ -461,7 +464,7 @@ describe("account rehome", () => {
       .mocked(listClusterBayRegistry)
       .mockResolvedValueOnce([{ bay_id: "bay-2" }] as any);
     queryMock.mockImplementation(async (sql) => {
-      if (sql.includes("SELECT to_jsonb(accounts) AS account"))
+      if (sql.includes("SELECT to_jsonb(accounts)"))
         return {
           rows: [
             {
@@ -469,7 +472,13 @@ describe("account rehome", () => {
             },
           ],
         };
-      if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX"))
+      if (
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes(
+          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
+        )
+      )
         return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -495,6 +504,13 @@ describe("account rehome", () => {
   });
 
   it("copies membership portability state during source-flipped account rehome", async () => {
+    const keyRows = [
+      {
+        account_id: TARGET_ACCOUNT_ID,
+        key_id: "portable-key",
+        issuance_sequence: "9007199254740993",
+      },
+    ];
     operationRow = {
       ...operationRow,
       stage: "source_flipped",
@@ -521,6 +537,9 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
+        sql.includes(
+          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
+        ) ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
@@ -565,7 +584,8 @@ describe("account rehome", () => {
         return { rows: [{ rows: [] }] };
       }
       if (sql.includes("FROM api_keys") && sql.includes("jsonb_agg")) {
-        return { rows: [{ rows: [] }] };
+        expect(sql).toContain("t.issuance_sequence::text");
+        return { rows: [{ rows: keyRows }] };
       }
       if (sql.includes('FROM "admin_assigned_memberships"')) {
         return {
@@ -837,6 +857,7 @@ describe("account rehome", () => {
 
     expect(copyRehomeStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        api_keys: keyRows,
         api_key_action_requests: actionRows,
         target_account_id: TARGET_ACCOUNT_ID,
         source_bay_id: "bay-1",
@@ -1243,5 +1264,55 @@ describe("account rehome", () => {
       );
       expect(inserts[i][1]).toEqual([actionRows[i]]);
     }
+  });
+  it("imports the account issuance counter without converting it to a number", async () => {
+    const account = {
+      account_id: TARGET_ACCOUNT_ID,
+      api_key_issuance_sequence: "9007199254740993",
+      home_bay_id: "bay-1",
+    };
+    queryMock = jest.fn(async (sql: string) => ({
+      rows: sql.includes("information_schema.columns")
+        ? Object.keys(account).map((column_name) => ({ column_name }))
+        : [],
+      rowCount: 0,
+    }));
+    const { acceptAccountRehome } = await import("./rehome");
+    await acceptAccountRehome({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      account,
+    });
+    expect(
+      queryMock.mock.calls.find(([sql]) =>
+        sql.includes('INSERT INTO "accounts"'),
+      )?.[1],
+    ).toEqual([account]);
+  });
+  it("imports key issuance sequences without converting them to numbers", async () => {
+    const key = {
+      account_id: TARGET_ACCOUNT_ID,
+      key_id: "portable-key",
+      issuance_sequence: "9007199254740993",
+    };
+    queryMock = jest.fn(async (sql: string) => ({
+      rows: sql.includes("information_schema.columns")
+        ? Object.keys(key).map((column_name) => ({ column_name }))
+        : [],
+      rowCount: 0,
+    }));
+    const { copyAccountRehomeState } = await import("./rehome");
+    await copyAccountRehomeState({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      api_keys: [key],
+    });
+    expect(
+      queryMock.mock.calls.find(([sql]) =>
+        sql.includes('INSERT INTO "api_keys"'),
+      )?.[1],
+    ).toEqual([key]);
   });
 });

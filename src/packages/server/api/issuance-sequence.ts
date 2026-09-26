@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import type { PoolClient } from "@cocalc/database/pool";
+import type { Pool, PoolClient } from "@cocalc/database/pool";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
@@ -11,6 +11,26 @@ import {
 import { isValidUUID } from "@cocalc/util/misc";
 
 const MAX_SEQUENCE = BigInt("9223372036854775807");
+
+export async function withApiKeyIssuance<T>(
+  pool: Pool,
+  account_id: string,
+  mutate: (client: PoolClient, sequence: string) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sequence = await allocateApiKeyIssuanceSequence(client, account_id);
+    const result = await mutate(client, sequence);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 // Preserve PostgreSQL BIGINT precision across JSON and inter-bay transports.
 export function normalizeApiKeyIssuanceSequence(value: unknown): string {

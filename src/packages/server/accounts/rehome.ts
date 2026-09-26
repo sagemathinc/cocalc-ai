@@ -173,6 +173,9 @@ async function ensureAccountRehomeSchema(): Promise<void> {
   if (accountRehomeSchemaReady.has(bay))
     return accountRehomeSchemaReady.get(bay);
   const pending = (async () => {
+    await getPool().query(
+      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
+    );
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
         op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -220,6 +223,9 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
   if (accountRehomeApiKeysSchemaReady.has(bay))
     return accountRehomeApiKeysSchemaReady.get(bay);
   const pending = (async () => {
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
+    );
     await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );
@@ -597,7 +603,8 @@ async function loadAccountWidePortableApiKeyRows(
     rows: Record<string, unknown>[] | null;
   }>(
     `
-      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+      SELECT COALESCE(jsonb_agg(to_jsonb(t) ||
+        jsonb_build_object('issuance_sequence',t.issuance_sequence::text)), '[]'::jsonb) AS rows
         FROM (
           SELECT *
             FROM api_keys
@@ -739,9 +746,11 @@ async function loadAccountRowForRehome(
   account_id: string,
   db: Queryable = getPool(),
 ): Promise<Record<string, unknown>> {
+  await ensureAccountRehomeSchema();
   const { rows } = await db.query(
     `
-      SELECT to_jsonb(accounts) AS account
+      SELECT to_jsonb(accounts) || jsonb_build_object(
+        'api_key_issuance_sequence',api_key_issuance_sequence::text) AS account
         FROM accounts
        WHERE account_id=$1
          AND deleted IS NOT TRUE
@@ -1261,6 +1270,7 @@ export async function acceptAccountRehome({
       `account rehome accept for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
+  await ensureAccountRehomeSchema();
   const accept = async (db: Queryable = getPool()) =>
     await upsertJsonRow({
       table: "accounts",
