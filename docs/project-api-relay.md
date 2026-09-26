@@ -105,8 +105,11 @@ counters transactionally, serialized per account, before the host forwards
 bytes. Metered HTTP and upgraded-socket streams consume credit chunk by chunk,
 pause with backpressure to renew, and stop both peers on quota exhaustion or
 renewal failure. Credit expires after at most a minute or at a usage-window
-boundary. Five-second updates report usage and re-evaluate active sessions;
-the separate source-authorization timer is not used to count bytes.
+boundary. Idle sessions renew only at credit expiry (normally once a minute).
+Active streams renew when their credit is exhausted. A single one-shot timer
+is rearmed after renewal completes; slow RPCs cannot accumulate timer work.
+The separate five-second local source-authorization check is unchanged and
+is not used to count bytes. Account policy changes are rechecked on renewal.
 
 Normal completion returns unused credit. Cumulative usage and monotonically
 sequenced updates make exact retries idempotent. An unknown renewal is not
@@ -114,6 +117,30 @@ replaced by a different update at the same sequence. If a router crashes or
 settlement is unavailable, its last unreported reservation remains conservatively
 charged until the original quota windows expire (at most 4 MiB per connection),
 rather than refunding bytes that might already have crossed the network.
+
+Settled lease records survive for five minutes for exact-retry deduplication;
+open/uncertain records survive until ten minutes after their credit expires.
+An initial zero-credit denial creates no lease record and needs no settlement.
+Host-issued session start timestamps reject initial requests older than two
+minutes (with up to one minute of forward clock skew), preventing a delayed
+initial retry from recreating a collected lease. Renewals preserve the original
+timestamp and do not have that age limit. Expired retry records fail closed.
+Deleting an uncertain record never refunds its reserved bytes; usage counters
+outlive the lease record independently.
+
+On the account home bay, all source hosts share transactional token buckets:
+120 session starts and 1,200 renewals per minute, each with a one-minute burst.
+There are at most 128 unexpired sessions and 2,048 retained lease rows per
+account, even if maintenance is down. Close/settlement and exact retries of a
+retained committed update do not consume these budgets. Rate/slot exhaustion
+fails closed; it does not queue retries or bypass the traffic quota. These are
+abuse-control defaults, not additional file-size limits.
+
+The primary bay worker runs non-overlapping cleanup every 30 seconds without
+requiring any relay traffic. Each pass deletes at most 1,000 expired lease rows
+and 1,000 admission-budget rows idle for a day, using indexed deadlines and
+skip-locked batches. A database advisory lock prevents concurrent sweeps across
+workers. Exact retries never extend the five-minute settled-record TTL.
 
 Actual forwarded bytes appear in the existing traffic history/admin rollups
 under `http-proxy` or `ws-proxy`, marked `source: api-relay`. Metadata identifies
@@ -152,9 +179,11 @@ hub is unreachable.
 Quota regressions include a streamed 600 MiB response, fast HTTP and upgraded
 socket bursts in both directions before the first timer tick, pre-authentication
 rate limiting, database reservation concurrency across hosts, idempotent retries,
-unused-credit refunds and usage-window rollover. The live validation below
-predates the quota follow-up; repeat it with the updated hub and router before
-release.
+unused-credit refunds and usage-window rollover. Further regressions cover
+idle/slow-renewal scheduling, zero-byte and exhausted-quota churn, account-wide
+session/renewal/retention limits, background cleanup and stale initial retries.
+The live validation below predates the quota follow-up; repeat it with the
+updated hub and router before release.
 
 Live validation on lite1b used a disposable free account, a network-disabled
 project with a CoCalc rootfs, and a second project on another host/bay:

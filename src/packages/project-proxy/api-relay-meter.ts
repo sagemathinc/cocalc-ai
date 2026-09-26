@@ -18,12 +18,10 @@ export async function createApiRelayMeter({
   request,
   update,
   onError,
-  intervalMs = 5_000,
 }: {
   request: Omit<ApiRelayUsageRequest, "sequence" | "sent" | "received">;
   update: (request: ApiRelayUsageRequest) => Promise<ApiRelayAllowance>;
   onError: (error: Error) => void;
-  intervalMs?: number;
 }): Promise<ApiRelayMeter> {
   let sent = 0,
     received = 0,
@@ -34,7 +32,7 @@ export async function createApiRelayMeter({
   let failure: Error | undefined;
   let uncertain = false;
   let queue = Promise.resolve();
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let closePromise: Promise<void> | undefined;
 
   const serialize = <T>(f: () => Promise<T>): Promise<T> => {
@@ -46,6 +44,7 @@ export async function createApiRelayMeter({
     return result;
   };
   const refresh = async (close = false, reason?: string) => {
+    clearTimeout(timer);
     uncertain = true;
     const value = await update({
       ...request,
@@ -67,31 +66,42 @@ export async function createApiRelayMeter({
     allowance = value.allowance;
     expires = value.expires_at;
     uncertain = false;
+    if (!close) scheduleRenewal();
+  };
+  const quotaError = () =>
+    Object.assign(Error("account traffic quota exhausted"), {
+      statusCode: 429,
+    });
+  const scheduleRenewal = () => {
+    clearTimeout(timer);
+    if (closing || failure || sent + received >= allowance) return;
+    // Idle credit needs no periodic reporting. A one-shot timer is rearmed
+    // only after a successful renewal, so slow RPCs cannot build a backlog.
+    timer = setTimeout(
+      () => {
+        void serialize(async () => {
+          if (closing || failure || Date.now() < expires) return;
+          await refresh();
+          if (sent + received >= allowance || Date.now() >= expires) {
+            throw quotaError();
+          }
+        }).catch((err) => {
+          failure = err as Error;
+          clearTimeout(timer);
+          onError(failure);
+        });
+      },
+      Math.max(1, expires - Date.now()),
+    );
+    timer.unref();
   };
   await refresh();
   if (allowance <= 0 || expires <= Date.now()) {
-    await refresh(true, "account traffic quota exhausted");
-    throw Object.assign(Error("account traffic quota exhausted"), {
-      statusCode: 429,
-    });
+    clearTimeout(timer);
+    // A zero initial grant has no durable reservation to settle.
+    if (allowance > 0) await refresh(true, "admission expired");
+    throw quotaError();
   }
-  timer = setInterval(() => {
-    void serialize(async () => {
-      if (closing || failure) return;
-      try {
-        await refresh();
-        if (sent + received >= allowance || Date.now() >= expires) {
-          throw Object.assign(Error("account traffic quota exhausted"), {
-            statusCode: 429,
-          });
-        }
-      } catch (err) {
-        failure = err as Error;
-        onError(failure);
-      }
-    });
-  }, intervalMs);
-  timer.unref();
 
   return {
     take: (bytes, direction) =>
@@ -118,7 +128,7 @@ export async function createApiRelayMeter({
     close: (reason) => {
       if (closePromise) return closePromise;
       closing = true;
-      clearInterval(timer);
+      clearTimeout(timer);
       closePromise = serialize(async () => {
         // An uncertain renewal must not be overwritten with a different request
         // using the same sequence. Its reservation stays conservatively charged.

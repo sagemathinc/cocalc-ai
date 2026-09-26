@@ -83,6 +83,7 @@ const usage = {
   host_id: sourceHost,
   project_id: target.target_project_id,
   session_id: target.target_host_id,
+  started_at: Date.now(),
   sequence: 0,
   sent: 0,
   received: 0,

@@ -340,6 +340,7 @@ function quota(bytes: number) {
       request: {
         project_id: projectId,
         session_id: randomUUID(),
+        started_at: Date.now(),
         transport: "http",
         target: "test",
       },

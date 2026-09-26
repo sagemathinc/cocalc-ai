@@ -33,6 +33,7 @@ describe("inter-bay typed service transport", () => {
         account_id: "a",
         project_id: "p",
         session_id: "s",
+        started_at: Date.now(),
         sequence: 0,
         sent: 0,
         received: 0,

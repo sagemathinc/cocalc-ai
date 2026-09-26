@@ -4,6 +4,7 @@ import { once } from "node:events";
 const request = {
   project_id: "p",
   session_id: "s",
+  started_at: Date.now(),
   transport: "http" as const,
   target: "hub",
 };
@@ -44,11 +45,7 @@ it("rejects exhausted quota before opening upstream", async () => {
   await expect(
     createApiRelayMeter({ request, update, onError: jest.fn() }),
   ).rejects.toThrow("quota exhausted");
-  expect(update.mock.calls.at(-1)?.[0]).toMatchObject({
-    close: true,
-    sent: 0,
-    received: 0,
-  });
+  expect(update).toHaveBeenCalledTimes(1);
 });
 
 it("does not replace an uncertain renewal with a different update at the same sequence", async () => {
@@ -93,7 +90,7 @@ it("pauses a stream until renewal and never forwards unreserved bytes", async ()
   await meter.close("completed");
 });
 
-it("terminates idle sessions when a periodic renewal exhausts quota", async () => {
+it("terminates idle sessions when expiry renewal exhausts quota", async () => {
   jest.useFakeTimers();
   const update = updater(1024);
   const onError = jest.fn();
@@ -101,7 +98,6 @@ it("terminates idle sessions when a periodic renewal exhausts quota", async () =
     request,
     update,
     onError,
-    intervalMs: 100,
   });
   try {
     await meter.take(10, "sent");
@@ -110,7 +106,7 @@ it("terminates idle sessions when a periodic renewal exhausts quota", async () =
       allowance: 10,
       expires_at: Date.now() + 60_000,
     });
-    await jest.advanceTimersByTimeAsync(100);
+    await jest.advanceTimersByTimeAsync(60_000);
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ statusCode: 429 }),
     );
@@ -128,7 +124,6 @@ it("does not spend expired credit while a renewal is unavailable", async () => {
     request,
     update,
     onError: jest.fn(),
-    intervalMs: 120_000,
   });
   try {
     expect(await meter.take(10, "sent")).toBe(10);
@@ -144,6 +139,94 @@ it("does not spend expired credit while a renewal is unavailable", async () => {
     });
   } finally {
     await meter.close("test");
+    jest.useRealTimers();
+  }
+});
+
+it("renews idle connections only at expiry, not every five seconds", async () => {
+  jest.useFakeTimers();
+  const update = updater();
+  const meter = await createApiRelayMeter({
+    request,
+    update,
+    onError: jest.fn(),
+  });
+  try {
+    await jest.advanceTimersByTimeAsync(59_999);
+    expect(update).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(update).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(5 * 60_000);
+    expect(update).toHaveBeenCalledTimes(7);
+  } finally {
+    await meter.close("test");
+    jest.useRealTimers();
+  }
+});
+
+it("never queues a timer backlog while an expiry renewal is slow", async () => {
+  jest.useFakeTimers();
+  const update = updater();
+  const onError = jest.fn();
+  const meter = await createApiRelayMeter({ request, update, onError });
+  let renew!: (value: Awaited<ReturnType<typeof update>>) => void;
+  update.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        renew = resolve;
+      }),
+  );
+  try {
+    await jest.advanceTimersByTimeAsync(60_000);
+    const data = meter.take(1, "received");
+    await jest.advanceTimersByTimeAsync(10 * 60_000);
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(0);
+    renew({
+      account_id: "a",
+      allowance: 1024,
+      expires_at: Date.now() + 60_000,
+    });
+    expect(await data).toBe(1);
+    await jest.advanceTimersByTimeAsync(59_999);
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(1);
+    expect(onError).not.toHaveBeenCalled();
+  } finally {
+    await meter.close("test");
+    expect(jest.getTimerCount()).toBe(0);
+    jest.useRealTimers();
+  }
+});
+
+it("does not rearm a timer when closed during renewal", async () => {
+  jest.useFakeTimers();
+  const update = updater();
+  const meter = await createApiRelayMeter({
+    request,
+    update,
+    onError: jest.fn(),
+  });
+  let renew!: (value: Awaited<ReturnType<typeof update>>) => void;
+  update.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        renew = resolve;
+      }),
+  );
+  try {
+    await jest.advanceTimersByTimeAsync(60_000);
+    const closed = meter.close("downstream closed");
+    renew({
+      account_id: "a",
+      allowance: 1024,
+      expires_at: Date.now() + 60_000,
+    });
+    await closed;
+    await jest.advanceTimersByTimeAsync(10 * 60_000);
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
     jest.useRealTimers();
   }
 });

@@ -129,6 +129,7 @@ export function attachProjectApiRelay({
         request: {
           project_id: projectId,
           session_id: randomUUID(),
+          started_at: Date.now(),
           transport: websocket ? "websocket" : "http",
           target,
         },

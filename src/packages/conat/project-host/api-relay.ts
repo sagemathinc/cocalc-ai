@@ -40,6 +40,7 @@ export interface ProjectApiRelayTarget {
 export interface ApiRelayUsageRequest {
   project_id: string;
   session_id: string;
+  started_at: number; // Host timestamp fences initial retries after lease GC.
   sequence: number;
   sent: number;
   received: number;
