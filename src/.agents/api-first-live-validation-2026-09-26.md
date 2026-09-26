@@ -87,6 +87,40 @@ upgrade operations succeeded and the second primary-hub recovery completed.
 Both temporary keys and the fixture directory were cleaned up. This is a
 post-upgrade pass for the enumerated commands, not full deployment acceptance.
 
+### Directory-restricted viewer through installed CLI and direct API
+
+At source head `92454b7a242503ff3306d1f9fa91f32a13a67cc2`, the deployed
+`d9d5a6805ce9` development stack passed a separate directory-policy probe.
+A human-authenticated ordinary key-management request created a disposable
+five-minute key with only `file:read` for one exact project and one literal
+directory root. A separate temporary full-runtime fixture key prepared synthetic
+files in a uniquely named private directory; no existing user files were read.
+
+The installed CLI in the target project ran without ambient CoCalc credentials,
+with a private key file, an unused profile, and daemon use disabled. The same
+key then exchanged a fresh host token for direct viewer filesystem RPC calls
+from the test harness, independently of the CLI command handlers.
+
+Both paths verified:
+
+- A regular file inside the allowed root was readable with the expected content.
+- A sibling directory sharing the root's name prefix was denied by viewer policy.
+- A `..` path into that sibling and a symlink escaping into it were denied.
+- Opening a FIFO was rejected with `regular file required`, without blocking.
+- Reading an 8 MiB plus one byte file was rejected with `file exceeds read limit`.
+
+The direct viewer service also rejected `writeFile` as an undefined method.
+The complete final harness exited zero and removed both keys and its fixture
+directory. Earlier harness attempts stopped on this workspace's older CLI
+lacking `--scope-file`, an invalid synthetic profile name, or a mismatched
+write-denial assertion; they cleaned up and are not authorization failures.
+Key creation therefore used the ordinary management API, not that older CLI's
+scope-file option; file-operation tests used the target project's installed CLI.
+
+This is not evidence for overlapping roots, rename races, device/socket nodes,
+archive/download/history/search/preview paths, managed-key parity, or persistent
+CLI daemon sessions. Those remain separate acceptance cases.
+
 ### Established Hub sockets
 
 A disposable, three-minute manual key with `account:read` authenticated directly
