@@ -320,7 +320,7 @@ managed connector credentials still bypass the daemon.
 
 ## Still unverified or incomplete
 
-The subsequent credential-provider follow-up is not deployed: manual and
+The subsequent credential-provider follow-up was initially undeployed: manual and
 managed keys now share the same bounded, no-follow, nonblocking file reader.
 The CLI build and 32 focused tests passed, including managed FIFO rejection in
 a timeout-protected subprocess and a simulated post-stat file-growth test that
@@ -363,6 +363,44 @@ environment failure is unresolved and must not be counted as connector
 revocation evidence.
 
 ## Remaining validation
+
+### Managed daemon probe admission
+
+Disposable source project `504cd6a5-c830-44d3-bc2f-91380266d590` ran the exact
+CLI hash recorded above. Registered agent
+`3d91d5a4-444a-4927-927a-66e4ced0a459`, thread
+`028bc1e9-556f-4c08-ab1b-ba78ab565083`, had connector configuration
+`ba5ea529-57bd-4e9a-ac60-f7405c00804d` with project listing and a read-only target
+grant rooted at `.`. The initial missing-root draft was correctly rejected;
+the corrected configuration saved as revision 1.
+
+The attempted turn send was rejected before admission with
+`Scoped agent sends require --rpc and --to-agent; legacy delivery is retired`.
+Registered runtime destination discovery did not include this disposable agent.
+No account-credential fallback or alternative delivery bypass was attempted.
+Consequently this probe provides no managed-turn or daemon-runtime result.
+Configuration revision 2 disabled the connector, the registered identity was
+disabled, and hard project deletion succeeded as operation
+`a240e6c5-b824-4645-9371-9b4e9e34e210`.
+
+### Full-runtime terminal failure
+
+An ordinary manual key with `file:read`, `file:write`, and `project:exec` for
+`6ef7fc05-39fe-479b-989c-b2c8ceb0a766` successfully exchanged host access and
+created a private probe directory. Its installed CLI, running with isolated
+environment/profile and `--api-key-file`, failed `project terminal spawn` with
+`disconnected`. The intended shell was bounded by `timeout 60`; the key and
+probe files were removed afterward. No terminal write/history assertion ran.
+
+Code inspection identifies a likely incompatibility to fix and retest:
+`conat/socket/client.ts` subscribes to `${subject}.client.${id}`, whereas
+`conat/auth/project-host-api-key-policy.ts` permits subscriptions only below
+the token's private reply prefix. The terminal protocol must support confined
+return traffic without granting arbitrary subscriptions to project-wide service
+subjects. This is a failed phase-2 full-runtime parity check, not a completed
+terminal feature or a revocation result. Reproduce with the current bundle and
+explicit transport-denial evidence before attributing the entire runtime failure
+to that mismatch.
 
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
