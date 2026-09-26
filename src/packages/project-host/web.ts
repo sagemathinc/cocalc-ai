@@ -1,6 +1,7 @@
 import express from "express";
 import getLogger from "@cocalc/backend/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
+import type { HostExamRunStatus } from "@cocalc/conat/hub/api/hosts";
 import compression from "compression";
 import { path as STATIC_PATH } from "@cocalc/static";
 import { path as ASSET_PATH } from "@cocalc/assets";
@@ -50,46 +51,97 @@ const DEFAULT_CONFIGURATION = {
 // link into a tab already showing this page changes only the fragment, which
 // does not reload the page, so the script also listens for hashchange.
 export const EXAM_ADMISSION_SCRIPT = `(() => {
+  // Keep this script to the syntax of the original admission script (no
+  // optional chaining, nullish coalescing or optional catch bindings): some
+  // lockdown browsers ship older engines, and a syntax error would disable it.
   const STORAGE_KEY = "cocalc-exam-admission-token";
   const storage = () => {
     try {
-      return window.sessionStorage;
-    } catch {
+      return window.sessionStorage || null;
+    } catch (err) {
       return null;
     }
   };
+  const readStored = () => {
+    try {
+      const store = storage();
+      return store ? store.getItem(STORAGE_KEY) : null;
+    } catch (err) {
+      return null;
+    }
+  };
+  const writeStored = (value) => {
+    try {
+      const store = storage();
+      if (!store) return false;
+      store.setItem(STORAGE_KEY, value);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  };
+  const clearStored = () => {
+    try {
+      const store = storage();
+      if (store) store.removeItem(STORAGE_KEY);
+    } catch (err) {}
+  };
+  const input = document.querySelector('input[name="token"]');
+  // The value this script put in the field, so a newer link can replace it
+  // without ever replacing what the student typed.
+  let autofilled = null;
   const fillToken = () => {
     const fromLink = new URLSearchParams(window.location.hash.slice(1)).get("token");
-    if (fromLink) {
-      try {
-        storage()?.setItem(STORAGE_KEY, fromLink);
-      } catch {}
+    // Remove the token from the address bar only once this tab keeps it, so a
+    // reload can still find it when storage is unavailable.
+    if (fromLink && writeStored(fromLink)) {
       window.history.replaceState(
         null,
         document.title,
         window.location.pathname + window.location.search,
       );
     }
-    let token = fromLink;
-    if (!token) {
-      try {
-        token = storage()?.getItem(STORAGE_KEY) ?? null;
-      } catch {}
-    }
-    const input = document.querySelector('input[name="token"]');
-    if (token && input instanceof HTMLInputElement && !input.value) {
+    const token = fromLink || readStored();
+    if (
+      token &&
+      input instanceof HTMLInputElement &&
+      (input.value === "" || input.value === autofilled)
+    ) {
       input.value = token;
+      autofilled = token;
     }
   };
   fillToken();
   window.addEventListener("hashchange", fillToken);
-  // While admission is closed, check again about every 30 seconds. The jitter
-  // keeps a whole class from reloading at the same moment.
+  // A submitted token is not kept: if the server rejects it, for example after
+  // Rotate token, the next page must not fill it in again, or every click
+  // would count toward the wrong-token limit for the whole classroom.
+  if (input instanceof HTMLInputElement && input.form) {
+    input.form.addEventListener("submit", clearStored);
+  }
+  // While admission is closed, check again about every 30 seconds. Checking
+  // with fetch never resubmits a form. A failed check just tries again, and so
+  // does a Not Found answer: no run is using this address right now, for
+  // example after an instructor ended a run to prepare it again. The jitter
+  // keeps a whole class from checking at the same moment.
   if (document.querySelector("[data-exam-waiting]")) {
-    window.setTimeout(
-      () => window.location.reload(),
-      30000 + Math.floor(Math.random() * 10000),
-    );
+    const check = () => {
+      window
+        .fetch("/", { cache: "no-store", credentials: "same-origin" })
+        .then((response) => (response.ok ? response.text() : null))
+        .then((html) => {
+          if (html !== null && html.indexOf("data-exam-waiting") === -1) {
+            window.location.replace("/");
+          } else {
+            schedule();
+          }
+        })
+        .catch(() => schedule());
+    };
+    const schedule = () => {
+      window.setTimeout(check, 30000 + Math.floor(Math.random() * 10000));
+    };
+    schedule();
   }
   const deadline = document.querySelector('time[data-deadline-ms]');
   if (!(deadline instanceof HTMLTimeElement)) return;
@@ -306,7 +358,7 @@ export function getExamJoinPage({
 }: {
   error?: string;
   admission_open: boolean;
-  run_status?: string;
+  run_status?: HostExamRunStatus;
   title?: string;
   scheduled_stop_at?: string;
   cleanup_mode?: "scheduled" | "manual";
@@ -383,7 +435,7 @@ export function getExamJoinPage({
         : run_status === "error"
           ? `<p>This scratchpad is not available right now. Ask your instructor.</p>`
           : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
-  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.</div>`
+  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button. You can also refresh this page.</div>`
   }
   ${escaped ? `<div class="error" role="alert">${escaped}</div>` : ""}
 </main></body></html>`;
@@ -492,16 +544,18 @@ export async function initHttp({
         source: req.ip,
         err: `${err}`,
       });
+      // Joining can take a while; show the run as it is now, not as it was.
+      const current = examRuntimeForRequest(req) ?? runtime;
       res
         .status(400)
         .type("html")
         .send(
           getExamJoinPage({
-            admission_open: runtime.admission_open,
-            run_status: runtime.status,
-            title: runtime.title,
-            scheduled_stop_at: runtime.scheduled_stop_at,
-            cleanup_mode: runtime.cleanup_mode,
+            admission_open: current.admission_open,
+            run_status: current.status,
+            title: current.title,
+            scheduled_stop_at: current.scheduled_stop_at,
+            cleanup_mode: current.cleanup_mode,
             error: `${(err as Error)?.message ?? err}`,
           }),
         );

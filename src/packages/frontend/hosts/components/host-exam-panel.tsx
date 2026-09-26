@@ -24,7 +24,7 @@ import {
 } from "antd";
 import { BookOutlined, LoadingOutlined } from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
-import { type CSSProperties, useRef } from "react";
+import { type CSSProperties, useId, useRef } from "react";
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import type {
   Host,
@@ -107,34 +107,60 @@ const FIELD_LABEL_STYLE: CSSProperties = {
   gap: 8,
 };
 
-// What each readiness check means, from readinessForRow and applyExamRunLocal
-// in project-host/exam/controller.ts. Only host_running and watchdog describe
-// the host now; the others turn green once preparation, which performed the
-// underlying test, has succeeded.
-// What each readiness check means. Keep in step with readinessForRow in
-// project-host/exam/controller.ts: only host_running and watchdog are live
-// there; the others follow the run's status, so they report what preparation
-// verified. If that changes, change these texts and the "What these checks
-// mean" note below.
+// What each readiness check means. Keep in step with readinessForRow and
+// applyExamRunLocal in project-host/exam/controller.ts: only host_running and
+// watchdog are live there; the others follow the run's status and are true
+// only while the run is ready or open. If that changes, change these texts,
+// READINESS_FROM_RUN_STATUS and the "What these checks mean" note below.
 export const EXAM_READINESS_DESCRIPTIONS: Record<string, string> = {
-  host_running: "The project host answered this status request.",
+  host_running: "Checks that the project host answers status requests.",
   public_route:
-    "Preparation confirmed that the student web address reaches this host.",
-  rootfs: "Preparation pinned the software image to the exact version shown.",
+    "Preparation checks that the student web address reaches this host.",
+  rootfs: "Preparation pins the software image to the exact version shown.",
   local_snapshot:
-    "Preparation created its test project in this host's local storage.",
+    "Preparation creates its test project in this host's local storage.",
   network_policy:
-    "Preparation confirmed that a test project could not look up or connect to Internet addresses.",
+    "Preparation checks that a test project cannot look up or connect to Internet addresses.",
   project_smoke:
-    "Preparation created a test project, wrote a file, ran a Python 3 notebook in it, and erased it.",
+    "Preparation creates a test project, writes a file, runs a Python 3 notebook in it, and erases it.",
   watchdog:
-    "The host's deadline check is running; it erases the projects when the deletion time passes.",
+    "Checks that the host's deadline watchdog is running. It erases the projects when a deletion time passes.",
 };
 
+const READINESS_FROM_RUN_STATUS = new Set([
+  "public_route",
+  "rootfs",
+  "local_snapshot",
+  "network_policy",
+  "project_smoke",
+]);
+
+// The result of one readiness check in words, so that a red tag is never read
+// as a failed test while the run is preparing, ending, or in error.
+export function readinessResult(
+  check: { name: string; ok: boolean },
+  runStatus?: string,
+): string {
+  if (check.ok) return "passed";
+  if (
+    READINESS_FROM_RUN_STATUS.has(check.name) &&
+    runStatus !== "ready" &&
+    runStatus !== "open"
+  ) {
+    return runStatus
+      ? `not reported while the run status is ${runStatus}`
+      : "not reported";
+  }
+  return "failed";
+}
+
 // Confirms that the most recent run ended and its projects are gone. It is not
-// presented as a current run. A run is marked stopped only after every student
-// project was erased; otherwise it ends in "error"
-// (project-host/exam/controller.ts).
+// presented as a current run. The host marks a run stopped only after every
+// student project was erased; otherwise it ends in "error"
+// (project-host/exam/controller.ts). The hub also marks a run stopped, and
+// keeps last_error, when the host rejected it during preparation
+// (createExamRunLocal in server/project-host/exam.ts). Students can join only
+// an open run, so no student project was created for that run.
 function LastExamRun({ run }: { run: HostExamRun }) {
   const ended = run.stopped_at ?? run.cleaned_at ?? run.updated_at;
   return (
@@ -143,8 +169,13 @@ function LastExamRun({ run }: { run: HostExamRun }) {
         <Descriptions.Item label="Ended">
           {dayjs(ended).format("YYYY-MM-DD HH:mm Z")}
         </Descriptions.Item>
+        {run.last_error ? (
+          <Descriptions.Item label="Preparation failed">
+            {run.last_error}
+          </Descriptions.Item>
+        ) : null}
         <Descriptions.Item label="Student projects">
-          all erased
+          {run.last_error ? "none were created" : "all erased"}
         </Descriptions.Item>
       </Descriptions>
     </Card>
@@ -364,6 +395,8 @@ export function HostExamPanel({
   const [rootfsPreset, setRootfsPreset] =
     useState<ProjectCreateMode>("standard");
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] = useState(false);
+  const prepareDeadlineId = useId();
+  const runDeadlineId = useId();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   // Practice mode never shuts the host down, so turning it on clears that
   // choice. Remember the choice so that turning practice mode off restores it.
@@ -438,6 +471,9 @@ export function HostExamPanel({
       if (next.config) {
         setConfig(editableExamConfig(next.config));
       }
+      // The cleanup fields below are reset to the saved values, so a choice
+      // remembered for practice mode no longer applies.
+      shutdownBeforePractice.current = null;
       if (next.run && next.run.status !== "stopped") {
         setRootfsImage(next.run.rootfs_image);
         setDeadline(dayjs(next.run.scheduled_stop_at));
@@ -471,14 +507,19 @@ export function HostExamPanel({
 
   useEffect(() => {
     const status = state?.run?.status;
-    if (loading || status == null || !EXAM_TRANSIENT_STATUSES.has(status)) {
+    if (
+      loading ||
+      pendingAction === "prepare" ||
+      status == null ||
+      !EXAM_TRANSIENT_STATUSES.has(status)
+    ) {
       return;
     }
     const timer = window.setTimeout(() => {
       void refresh();
     }, EXAM_TRANSIENT_POLL_MS);
     return () => window.clearTimeout(timer);
-  }, [host.id, loading, state?.run?.status]);
+  }, [host.id, loading, pendingAction, state?.run?.status]);
 
   useEffect(() => {
     if (rootfsImage || selectableRootfsImages.length === 0) return;
@@ -538,6 +579,11 @@ export function HostExamPanel({
 
   const run = state?.run;
   const runtime = state?.runtime;
+  // Preparation takes minutes and does not dim the tab (see the Spin below),
+  // so it locks the controls itself. A status refresh ends `loading` early, so
+  // the lock must not depend on it alone.
+  const preparing = pendingAction === "prepare";
+  const busy = loading || preparing;
   // The catalog name of the run's image, when the catalog knows it.
   const runRootfsLabel = useMemo(() => {
     const image = run?.rootfs_image;
@@ -596,7 +642,7 @@ export function HostExamPanel({
   return (
     // Preparation can take minutes; its progress is shown inside the "Prepare
     // an exam run" card instead of dimming the whole tab.
-    <Spin spinning={loading && pendingAction !== "prepare"}>
+    <Spin spinning={loading && !preparing}>
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Alert
           type="info"
@@ -651,7 +697,9 @@ export function HostExamPanel({
             <label style={SWITCH_LABEL_STYLE}>
               <Switch
                 checked={config.enabled}
-                disabled={hasActiveRun || state?.eligible === false}
+                disabled={
+                  hasActiveRun || preparing || state?.eligible === false
+                }
                 onChange={(enabled) =>
                   setConfig((value) => ({ ...value, enabled }))
                 }
@@ -664,6 +712,7 @@ export function HostExamPanel({
                 maxLength={100}
                 value={config.title}
                 placeholder="Exam Scratchpad"
+                disabled={preparing}
                 onChange={(event) =>
                   setConfig((value) => ({
                     ...value,
@@ -684,7 +733,7 @@ export function HostExamPanel({
                   value={token}
                   minLength={8}
                   maxLength={200}
-                  disabled={hasActiveRun}
+                  disabled={hasActiveRun || preparing}
                   onChange={(event) => setToken(event.target.value)}
                 />
                 <Button
@@ -723,6 +772,7 @@ export function HostExamPanel({
                   min={1}
                   max={1000}
                   value={config.max_projects}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -738,6 +788,7 @@ export function HostExamPanel({
                   max={128}
                   step={0.5}
                   value={config.project_cpu}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -751,6 +802,7 @@ export function HostExamPanel({
                 <InputNumber
                   min={256}
                   value={config.project_memory_mb}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -764,6 +816,7 @@ export function HostExamPanel({
                 <InputNumber
                   min={1000}
                   value={config.project_disk_mb}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -778,6 +831,7 @@ export function HostExamPanel({
                   min={180}
                   max={2880}
                   value={config.project_ttl_minutes}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -792,6 +846,7 @@ export function HostExamPanel({
                   min={1}
                   max={60}
                   value={config.cleanup_grace_minutes}
+                  disabled={preparing}
                   onChange={(value) =>
                     setConfig((current) => ({
                       ...current,
@@ -808,6 +863,7 @@ export function HostExamPanel({
             <label style={SWITCH_LABEL_STYLE}>
               <Switch
                 checked={config.terminal_enabled}
+                disabled={preparing}
                 onChange={(terminal_enabled) =>
                   setConfig((value) => ({ ...value, terminal_enabled }))
                 }
@@ -819,7 +875,7 @@ export function HostExamPanel({
             <Button
               type="primary"
               disabled={
-                loading ||
+                busy ||
                 hasActiveRun ||
                 state?.eligible === false ||
                 !configDirty
@@ -875,7 +931,7 @@ export function HostExamPanel({
                 loading={
                   rootfsCatalogLoading && pickerRootfsImages.length === 0
                 }
-                disabled={loading || !hostRunning}
+                disabled={busy || !hostRunning}
                 search={rootfsSearch}
                 onSearchChange={setRootfsSearch}
                 searchPlaceholder="Search by name, image, publisher, tag, or version"
@@ -887,7 +943,7 @@ export function HostExamPanel({
                 onChange={(event) =>
                   setShowOlderRootfsVersions(event.target.checked)
                 }
-                disabled={loading}
+                disabled={busy}
               >
                 Show older versions
               </Checkbox>
@@ -900,7 +956,7 @@ export function HostExamPanel({
               <Checkbox
                 checked={cleanupMode === "manual"}
                 onChange={(event) => setPracticeMode(event.target.checked)}
-                disabled={loading}
+                disabled={busy}
               >
                 Practice mode: erase projects manually (no automatic timeout)
               </Checkbox>
@@ -909,38 +965,41 @@ export function HostExamPanel({
                   type="warning"
                   showIcon
                   title="Projects remain until you end and erase the session"
-                  description="Admission and every student project remain available until an instructor selects End and erase. The project host also keeps running and billing normally."
+                  description="Admission and every student project remain available until an instructor selects End exam and erase now. The project host also keeps running and billing normally."
                 />
               ) : (
                 <>
-                  <label style={FIELD_LABEL_STYLE}>
-                    <Typography.Text strong>
-                      Delete all exam projects at
-                    </Typography.Text>
+                  <div style={FIELD_LABEL_STYLE}>
+                    <label htmlFor={prepareDeadlineId}>
+                      <Typography.Text strong>
+                        Delete all exam projects at
+                      </Typography.Text>
+                    </label>
                     <DatePicker
+                      id={prepareDeadlineId}
                       showTime
                       showNow={false}
                       value={deadline}
                       onChange={(value) => value && setDeadline(value)}
                       minDate={dayjs()}
-                      disabled={loading}
+                      disabled={busy}
                       status={
                         deadlineTooSoon || deadlineTooLate ? "error" : undefined
                       }
                     />
-                  </label>
+                  </div>
                   <Checkbox
                     checked={stopHostAtDeadline}
                     onChange={(event) =>
                       setStopHostAtDeadline(event.target.checked)
                     }
-                    disabled={loading}
+                    disabled={busy}
                   >
                     Also shut down the project host to save resources
                   </Checkbox>
                 </>
               )}
-              {pendingAction === "prepare" ? (
+              {preparing ? (
                 <div role="status" aria-live="polite">
                   <Alert
                     type="info"
@@ -968,8 +1027,8 @@ export function HostExamPanel({
               )}
               <Button
                 type="primary"
-                loading={pendingAction === "prepare"}
-                disabled={loading || !canPrepare}
+                loading={preparing}
+                disabled={busy || !canPrepare}
                 onClick={() => {
                   void mutateIdempotently(
                     "create",
@@ -1063,8 +1122,9 @@ export function HostExamPanel({
                         <>
                           <Typography.Paragraph type="secondary">
                             Only host_running and watchdog describe the host
-                            right now. The other checks ran while the run was
-                            prepared and are not repeated.
+                            right now. Preparation runs the other checks once;
+                            the host reports them only while the run status is
+                            ready or open.
                           </Typography.Paragraph>
                           <ul style={{ margin: 0, paddingLeft: 20 }}>
                             {runtime.readiness.map((check) => (
@@ -1072,7 +1132,11 @@ export function HostExamPanel({
                                 <Typography.Text code>
                                   {check.name}
                                 </Typography.Text>{" "}
-                                {check.ok ? "passed" : "failed"}:{" "}
+                                {readinessResult(
+                                  check,
+                                  runtime.status ?? run.status,
+                                )}
+                                :{" "}
                                 {EXAM_READINESS_DESCRIPTIONS[check.name] ??
                                   "A readiness check reported by the host."}
                                 {check.detail ? (
@@ -1117,7 +1181,7 @@ export function HostExamPanel({
                     />
                     <Button
                       disabled={
-                        loading || requestedRunCapacity <= run.max_projects
+                        busy || requestedRunCapacity <= run.max_projects
                       }
                       onClick={() => {
                         void mutateIdempotently("capacity", (idempotency_key) =>
@@ -1179,7 +1243,7 @@ export function HostExamPanel({
                     {run.status === "ready" && (
                       <Button
                         type="primary"
-                        disabled={loading}
+                        disabled={busy}
                         onClick={() => {
                           void mutateIdempotently("open", (idempotency_key) =>
                             api.openHostExamRun({
@@ -1196,7 +1260,7 @@ export function HostExamPanel({
                       </Button>
                     )}
                     <Button
-                      disabled={loading}
+                      disabled={busy}
                       onClick={() => {
                         void mutateIdempotently("rotate", (idempotency_key) =>
                           api.rotateHostExamToken({
@@ -1229,11 +1293,14 @@ export function HostExamPanel({
                   </Checkbox>
                   {cleanupMode === "scheduled" && (
                     <>
-                      <label style={FIELD_LABEL_STYLE}>
-                        <Typography.Text strong>
-                          Delete all exam projects at
-                        </Typography.Text>
+                      <div style={FIELD_LABEL_STYLE}>
+                        <label htmlFor={runDeadlineId}>
+                          <Typography.Text strong>
+                            Delete all exam projects at
+                          </Typography.Text>
+                        </label>
                         <DatePicker
+                          id={runDeadlineId}
                           showTime
                           showNow={false}
                           value={deadline}
@@ -1245,7 +1312,7 @@ export function HostExamPanel({
                               : undefined
                           }
                         />
-                      </label>
+                      </div>
                       <Checkbox
                         checked={stopHostAtDeadline}
                         onChange={(event) =>
@@ -1259,7 +1326,7 @@ export function HostExamPanel({
                   <div>
                     <Button
                       disabled={
-                        loading ||
+                        busy ||
                         !runScheduleDirty ||
                         (cleanupMode === "scheduled" &&
                           (deadlineTooSoon || deadlineTooLate))
@@ -1315,7 +1382,7 @@ export function HostExamPanel({
                       : "This permanently deletes every temporary exam project but leaves the project host running."
                   }
                   okText={stopHostAtDeadline ? "Erase and shut down" : "Erase"}
-                  okButtonProps={{ danger: true, disabled: loading }}
+                  okButtonProps={{ danger: true, disabled: busy }}
                   onConfirm={() =>
                     mutateIdempotently("stop", (idempotency_key) =>
                       api.stopAndEraseHostExamRun({
@@ -1329,7 +1396,7 @@ export function HostExamPanel({
                     )
                   }
                 >
-                  <Button danger disabled={loading}>
+                  <Button danger disabled={busy}>
                     End exam and erase now
                   </Button>
                 </Popconfirm>
@@ -1337,7 +1404,9 @@ export function HostExamPanel({
             </Space>
           </Card>
         )}
-        <Button onClick={() => void refresh()}>Refresh status</Button>
+        <Button disabled={preparing} onClick={() => void refresh()}>
+          Refresh status
+        </Button>
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
     </Spin>

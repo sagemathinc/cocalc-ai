@@ -258,45 +258,75 @@ describe("project-host exam admission page", () => {
 describe("project-host exam admission script", () => {
   const STORAGE_KEY = "cocalc-exam-admission-token";
 
+  type FetchResult = { status: number; body?: string } | Error;
+
   function runAdmissionScript({
     hash = "",
     withInput = false,
     typed = "",
-    stored,
+    store = new Map<string, string>(),
     waiting = false,
+    storageThrows = false,
+    fetchResults = [],
   }: {
     hash?: string;
     withInput?: boolean;
     typed?: string;
-    stored?: string;
+    store?: Map<string, string>;
     waiting?: boolean;
+    storageThrows?: boolean;
+    fetchResults?: FetchResult[];
   }) {
+    const submitListeners: Array<() => void> = [];
     class FakeInput {
       value = typed;
+      form = {
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === "submit") submitListeners.push(listener);
+        },
+      };
     }
     class FakeTime {}
-    const store = new Map<string, string>();
-    if (stored) store.set(STORAGE_KEY, stored);
     const input = withInput ? new FakeInput() : null;
     const listeners: Record<string, Array<() => void>> = {};
-    const timeouts: number[] = [];
-    const location = { hash, pathname: "/", search: "", reload: jest.fn() };
+    const timers: Array<{ ms: number; callback: () => void }> = [];
+    const location = {
+      hash,
+      pathname: "/",
+      search: "",
+      replace: jest.fn(),
+    };
     const replaceState = jest.fn(() => {
       location.hash = "";
     });
+    const fetch = jest.fn(async () => {
+      const next = fetchResults.shift() ?? new Error("no response");
+      if (next instanceof Error) throw next;
+      return {
+        status: next.status,
+        ok: next.status >= 200 && next.status < 300,
+        text: async () => next.body ?? "",
+      };
+    });
+    const sessionStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+      removeItem: (key: string) => store.delete(key),
+    };
     const window = {
       location,
       history: { replaceState },
-      sessionStorage: {
-        getItem: (key: string) => store.get(key) ?? null,
-        setItem: (key: string, value: string) => store.set(key, value),
+      get sessionStorage() {
+        if (storageThrows) throw new Error("storage is disabled");
+        return sessionStorage;
       },
+      fetch,
       addEventListener: (type: string, listener: () => void) => {
         (listeners[type] ??= []).push(listener);
       },
-      setTimeout: (_callback: () => void, ms: number) => {
-        timeouts.push(ms);
-        return timeouts.length;
+      setTimeout: (callback: () => void, ms: number) => {
+        timers.push({ ms, callback });
+        return timers.length;
       },
       setInterval: jest.fn(),
     };
@@ -315,7 +345,25 @@ describe("project-host exam admission script", () => {
       "HTMLTimeElement",
       EXAM_ADMISSION_SCRIPT,
     )(window, document, FakeInput, FakeTime);
-    return { input, store, replaceState, location, listeners, timeouts };
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const runNextCheck = async () => {
+      const timer = timers.shift();
+      if (!timer) throw new Error("no check was scheduled");
+      timer.callback();
+      await flush();
+      await flush();
+    };
+    return {
+      input,
+      store,
+      replaceState,
+      location,
+      listeners,
+      timers,
+      fetch,
+      submit: () => submitListeners.forEach((listener) => listener()),
+      runNextCheck,
+    };
   }
 
   it("keeps the token for this tab while access is not open yet", () => {
@@ -325,8 +373,22 @@ describe("project-host exam admission script", () => {
     expect(page.location.hash).toBe("");
   });
 
+  it("keeps the token in the address bar when this tab cannot store it", () => {
+    const page = runAdmissionScript({
+      hash: "#token=abc123",
+      withInput: true,
+      storageThrows: true,
+    });
+    expect(page.input?.value).toBe("abc123");
+    expect(page.replaceState).not.toHaveBeenCalled();
+    expect(page.location.hash).toBe("#token=abc123");
+  });
+
   it("fills the token after a refresh once access opens", () => {
-    const page = runAdmissionScript({ withInput: true, stored: "abc123" });
+    const page = runAdmissionScript({
+      withInput: true,
+      store: new Map([[STORAGE_KEY, "abc123"]]),
+    });
     expect(page.input?.value).toBe("abc123");
     expect(page.replaceState).not.toHaveBeenCalled();
   });
@@ -341,21 +403,107 @@ describe("project-host exam admission script", () => {
     expect(page.location.hash).toBe("");
   });
 
+  it("replaces a token it filled in when a newer link is opened", () => {
+    const page = runAdmissionScript({
+      withInput: true,
+      store: new Map([[STORAGE_KEY, "old-token"]]),
+    });
+    expect(page.input?.value).toBe("old-token");
+    page.location.hash = "#token=new-token";
+    for (const listener of page.listeners.hashchange ?? []) listener();
+    expect(page.input?.value).toBe("new-token");
+    expect(page.store.get(STORAGE_KEY)).toBe("new-token");
+  });
+
   it("never replaces a token the student typed", () => {
     const page = runAdmissionScript({
       withInput: true,
       typed: "typed-token",
-      stored: "abc123",
+      store: new Map([[STORAGE_KEY, "abc123"]]),
     });
     expect(page.input?.value).toBe("typed-token");
+    page.location.hash = "#token=xyz789";
+    for (const listener of page.listeners.hashchange ?? []) listener();
+    expect(page.input?.value).toBe("typed-token");
+  });
+
+  it("forgets a submitted token, so a rejected token is not filled in again", () => {
+    const store = new Map([[STORAGE_KEY, "rotated-away"]]);
+    const form = runAdmissionScript({ withInput: true, store });
+    expect(form.input?.value).toBe("rotated-away");
+    form.submit();
+    expect(store.has(STORAGE_KEY)).toBe(false);
+    // The error page after a rejected join loads the script again.
+    const errorPage = runAdmissionScript({ withInput: true, store });
+    expect(errorPage.input?.value).toBe("");
+  });
+
+  it("uses only syntax that older browser engines run", () => {
+    // Lockdown browsers can embed old engines. A syntax error would stop the
+    // whole script, including the token fill that worked before.
+    expect(EXAM_ADMISSION_SCRIPT).not.toMatch(/\?\./);
+    expect(EXAM_ADMISSION_SCRIPT).not.toMatch(/\?\?/);
+    expect(EXAM_ADMISSION_SCRIPT).not.toMatch(/catch\s*\{/);
   });
 
   it("checks again about every 30 seconds while access is closed", () => {
     const waiting = runAdmissionScript({ waiting: true });
-    expect(waiting.timeouts).toHaveLength(1);
-    expect(waiting.timeouts[0]).toBeGreaterThanOrEqual(30_000);
-    expect(waiting.timeouts[0]).toBeLessThan(40_000);
+    expect(waiting.timers).toHaveLength(1);
+    expect(waiting.timers[0].ms).toBeGreaterThanOrEqual(30_000);
+    expect(waiting.timers[0].ms).toBeLessThan(40_000);
     const open = runAdmissionScript({ withInput: true });
-    expect(open.timeouts).toHaveLength(0);
+    expect(open.timers).toHaveLength(0);
+    expect(open.fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the page once a check finds that access has opened", async () => {
+    const page = runAdmissionScript({
+      waiting: true,
+      fetchResults: [
+        { status: 200, body: '<form><input name="token"></form>' },
+      ],
+    });
+    await page.runNextCheck();
+    expect(page.fetch).toHaveBeenCalledWith("/", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(page.location.replace).toHaveBeenCalledWith("/");
+  });
+
+  it("keeps waiting while access is closed and after failed checks", async () => {
+    const page = runAdmissionScript({
+      waiting: true,
+      fetchResults: [
+        { status: 200, body: "<div data-exam-waiting>" },
+        { status: 502 },
+        new Error("offline"),
+      ],
+    });
+    await page.runNextCheck();
+    await page.runNextCheck();
+    await page.runNextCheck();
+    expect(page.location.replace).not.toHaveBeenCalled();
+    expect(page.timers).toHaveLength(1);
+  });
+
+  it("keeps waiting while no run uses the address, then opens the next run", async () => {
+    // Between two runs the host answers Not Found. Leaving for that page would
+    // strand the student there when the instructor opens the next run.
+    const page = runAdmissionScript({
+      waiting: true,
+      fetchResults: [
+        { status: 404 },
+        { status: 200, body: "<div data-exam-waiting>" },
+        { status: 200, body: '<form><input name="token"></form>' },
+      ],
+    });
+    await page.runNextCheck();
+    expect(page.location.replace).not.toHaveBeenCalled();
+    expect(page.timers).toHaveLength(1);
+    await page.runNextCheck();
+    expect(page.location.replace).not.toHaveBeenCalled();
+    await page.runNextCheck();
+    expect(page.location.replace).toHaveBeenCalledWith("/");
   });
 });

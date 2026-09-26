@@ -1,5 +1,7 @@
 /** @jest-environment jsdom */
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   act,
   fireEvent,
@@ -7,12 +9,15 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import dayjs from "dayjs";
 
 import { openAppDocs } from "@cocalc/frontend/docs/navigation";
 import {
   assessExamHostCapacity,
+  EXAM_READINESS_DESCRIPTIONS,
   examRootfsCatalogEntries,
   HostExamPanel,
+  readinessResult,
 } from "./host-exam-panel";
 
 const mockGetHostExamState = jest.fn(async () => ({ eligible: true }));
@@ -83,7 +88,10 @@ describe("HostExamPanel", () => {
   };
 
   beforeEach(() => {
-    mockGetHostExamState.mockClear();
+    // Reset, not clear: a queued mockResolvedValueOnce must not leak into the
+    // next test.
+    mockGetHostExamState.mockReset();
+    mockGetHostExamState.mockImplementation(async () => ({ eligible: true }));
     mockSetHostExamConfig.mockReset();
     mockCreateHostExamRun.mockReset();
     mockIncreaseHostExamCapacity.mockReset();
@@ -564,6 +572,19 @@ describe("HostExamPanel", () => {
         name: "Also shut down the project host to save resources",
       }),
     ).toBeDisabled();
+    // So is the host configuration, as when the tab was dimmed.
+    expect(screen.getByLabelText("Public scratchpad title")).toBeDisabled();
+    expect(
+      screen.getByRole("spinbutton", { name: "Maximum projects (students)" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", {
+        name: "Allow terminals (disabled by default)",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeDisabled();
   });
 
   it("does not present a stopped historical run as the current run", async () => {
@@ -628,6 +649,12 @@ describe("HostExamPanel", () => {
     expect(await screen.findByText("Last run")).toBeInTheDocument();
     expect(screen.getByText("all erased")).toBeInTheDocument();
     expect(screen.getByText("Ended")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        dayjs("2026-07-29T18:18:00.000Z").format("YYYY-MM-DD HH:mm Z"),
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Preparation failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Current run")).not.toBeInTheDocument();
   });
 
@@ -655,6 +682,10 @@ describe("HostExamPanel", () => {
     expect(screen.getByLabelText("Delete all exam projects at").tagName).toBe(
       "INPUT",
     );
+    // Only the label names the field; the picker's icons are not part of it.
+    expect(
+      screen.getByRole("textbox", { name: "Delete all exam projects at" }),
+    ).toBeInTheDocument();
   });
 
   it("restores the shutdown choice when practice mode is turned off", async () => {
@@ -673,6 +704,8 @@ describe("HostExamPanel", () => {
     const practice = await screen.findByRole("checkbox", {
       name: /Practice mode/,
     });
+    // The checkbox is locked until the first status request finishes.
+    await waitFor(() => expect(practice).toBeEnabled());
 
     // Default: shut down afterward. Practice mode hides the choice.
     expect(screen.getByRole("checkbox", { name: shutdownLabel })).toBeChecked();
@@ -680,6 +713,9 @@ describe("HostExamPanel", () => {
     expect(
       screen.queryByRole("checkbox", { name: shutdownLabel }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/until an instructor selects End exam and erase now\./),
+    ).toBeInTheDocument();
     fireEvent.click(practice);
     expect(screen.getByRole("checkbox", { name: shutdownLabel })).toBeChecked();
 
@@ -817,13 +853,18 @@ describe("HostExamPanel", () => {
     fireEvent.click(await screen.findByText("What these checks mean"));
     expect(
       await screen.findByText(
-        /could not look up or connect to Internet addresses/,
+        /cannot look up or connect to Internet addresses/,
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/ran while the run was prepared and are not repeated/),
+      screen.getByText(
+        /Preparation runs the other checks once; the host reports them only while the run status is ready or open\./,
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText(/failed:/)).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items[1]).toHaveTextContent(/^network_policy passed: /);
+    // A live check that is false did fail.
+    expect(items[2]).toHaveTextContent(/^watchdog failed: /);
   });
 
   it("shows the recoverable token after refreshing an active run", async () => {
@@ -958,5 +999,489 @@ describe("HostExamPanel", () => {
       }),
     );
     expect(screen.queryByText(/fresh auth is required/)).toBeNull();
+  });
+  it("describes exactly the readiness checks the project host reports", () => {
+    const controller = readFileSync(
+      join(__dirname, "../../../project-host/exam/controller.ts"),
+      "utf8",
+    );
+    const body = controller.slice(
+      controller.indexOf("function readinessForRow("),
+      controller.indexOf("function runtimeStatus("),
+    );
+    const names = [...body.matchAll(/name: "([a-z_]+)"/g)].map(
+      (match) => match[1],
+    );
+    const fromRunStatus = [
+      ...body.matchAll(/name: "([a-z_]+)",\s*ok: ready\b/g),
+    ].map((match) => match[1]);
+    expect(names).toHaveLength(7);
+    expect(fromRunStatus).toHaveLength(5);
+    expect(Object.keys(EXAM_READINESS_DESCRIPTIONS).sort()).toEqual(
+      [...names].sort(),
+    );
+    for (const name of names) {
+      expect(readinessResult({ name, ok: false }, "cleaning")).toBe(
+        fromRunStatus.includes(name)
+          ? "not reported while the run status is cleaning"
+          : "failed",
+      );
+      expect(readinessResult({ name, ok: false }, "ready")).toBe("failed");
+      expect(readinessResult({ name, ok: true }, "cleaning")).toBe("passed");
+    }
+  });
+
+  it("does not call a check failed while the run is ending", async () => {
+    mockGetHostExamState.mockResolvedValue({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "cleaning-run",
+        status: "cleaning",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+      runtime: {
+        status: "cleaning",
+        admission_open: false,
+        active_projects: 3,
+        readiness: [
+          { name: "host_running", ok: true },
+          { name: "public_route", ok: false },
+          {
+            name: "rootfs",
+            ok: false,
+            detail: "cocalc.local/rootfs/exam@sha256:abc",
+          },
+          { name: "watchdog", ok: true },
+          { name: "future_check", ok: false },
+        ],
+      },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("What these checks mean"));
+    await screen.findByText(/student web address reaches this host/);
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((item) => item.textContent?.split(" ")[0])).toEqual([
+      "host_running",
+      "public_route",
+      "rootfs",
+      "watchdog",
+      "future_check",
+    ]);
+    expect(items[0]).toHaveTextContent(/^host_running passed: /);
+    expect(items[1]).toHaveTextContent(
+      /^public_route not reported while the run status is cleaning: Preparation checks/,
+    );
+    expect(items[2]).toHaveTextContent(
+      /^rootfs not reported while the run status is cleaning: .* cocalc\.local\/rootfs\/exam@sha256:abc$/,
+    );
+    expect(items[3]).toHaveTextContent(/^watchdog passed: /);
+    expect(items[4]).toHaveTextContent(
+      "future_check failed: A readiness check reported by the host.",
+    );
+    expect(screen.queryByText(/ failed: Preparation/)).not.toBeInTheDocument();
+  });
+
+  it("keeps preparation locked when the status refreshes before it finishes", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+    });
+    mockCreateHostExamRun.mockImplementation(() => new Promise(() => {}));
+    const rootfsImages = [
+      { image: "cocalc.local/rootfs/exam", digest: "sha256:abc" } as any,
+    ];
+    const { rerender } = render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={rootfsImages}
+      />,
+    );
+    const prepare = screen.getByRole("button", {
+      name: "Prepare and test run",
+    });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    fireEvent.click(prepare);
+    await screen.findByRole("status");
+    expect(
+      screen.getByRole("button", { name: "Refresh status" }),
+    ).toBeDisabled();
+
+    // A change in the host's status still reloads the tab. The hub already
+    // lists the run as preparing, but nothing unlocks until preparation ends.
+    mockGetHostExamState.mockResolvedValue({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "preparing-run",
+        status: "preparing",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+    });
+    rerender(
+      <HostExamPanel
+        host={{ id: "host-1", status: "starting" } as any}
+        rootfsImages={rootfsImages}
+      />,
+    );
+    const end = await screen.findByRole("button", {
+      name: "End exam and erase now",
+    });
+    await waitFor(() => expect(mockGetHostExamState).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(document.querySelector(".ant-spin-spinning")).toBeNull(),
+    );
+    expect(end).toBeDisabled();
+    expect(screen.getByLabelText("Public scratchpad title")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Refresh status" }),
+    ).toBeDisabled();
+  });
+
+  it("says when the last run failed in preparation, before any student joined", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "rejected-run",
+        status: "stopped",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        scheduled_stop_at: "2026-07-30T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        stopped_at: "2026-07-29T18:18:00.000Z",
+        cleaned_at: "2026-07-29T18:18:00.000Z",
+        last_error:
+          "Error: the pinned exam RootFS digest is not cached on this host",
+      },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+
+    expect(await screen.findByText("Last run")).toBeInTheDocument();
+    expect(screen.getByText("Preparation failed")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Error: the pinned exam RootFS digest is not cached on this host",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("none were created")).toBeInTheDocument();
+    expect(screen.queryByText("all erased")).not.toBeInTheDocument();
+  });
+
+  it("dates the last run by its cleanup when no stop time was recorded", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "stopped-run",
+        status: "stopped",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        scheduled_stop_at: "2026-07-30T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        stopped_at: null,
+        cleaned_at: "2026-07-29T17:05:00.000Z",
+        updated_at: "2026-07-29T19:00:00.000Z",
+      },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        dayjs("2026-07-29T17:05:00.000Z").format("YYYY-MM-DD HH:mm Z"),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the last run visible while the host is off", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "off",
+      config: savedConfig,
+      run: {
+        run_id: "stopped-run",
+        status: "stopped",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        scheduled_stop_at: "2026-07-30T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        stopped_at: "2026-07-29T18:18:00.000Z",
+      },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "off" } as any}
+        rootfsImages={[
+          { image: "cocalc.local/rootfs/exam", digest: "sha256:abc" } as any,
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText("Last run")).toBeInTheDocument();
+    expect(screen.getByText("all erased")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start the project host to prepare an exam"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Prepare and test run" }),
+    ).toBeDisabled();
+  });
+
+  it("groups the live-run controls under Admission, Cleanup, and End the exam", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "ready-run",
+        status: "ready",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+      runtime: { status: "ready", admission_open: false, active_projects: 0 },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+
+    await screen.findByText("Current run");
+    const inOrder = [
+      "Admission",
+      "Open admission",
+      "Rotate token",
+      "Cleanup",
+      "Update cleanup time",
+      "End the exam",
+      "End exam and erase now",
+    ].map((text) => screen.getByText(text));
+    for (let i = 1; i < inOrder.length; i += 1) {
+      expect(
+        inOrder[i - 1].compareDocumentPosition(inOrder[i]) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("offers only the way to end a run that is in error", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "failed-run",
+        status: "error",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+        last_error: "exam project readiness failed",
+      },
+      runtime: { status: "error", admission_open: false, active_projects: 0 },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+
+    const end = await screen.findByRole("button", {
+      name: "End exam and erase now",
+    });
+    await waitFor(() => expect(end).toBeEnabled());
+    expect(screen.getByText("End the exam")).toBeInTheDocument();
+    expect(screen.queryByText("Admission")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cleanup")).not.toBeInTheDocument();
+    expect(screen.queryByText("Last run")).not.toBeInTheDocument();
+  });
+
+  it("shows only the image path when the catalog does not name the image", async () => {
+    mockRootfsCatalog = {
+      loading: false,
+      images: [
+        {
+          id: "same",
+          label: "cocalc.local/rootfs/same",
+          image: "cocalc.local/rootfs/same",
+          tags: ["preset:standard"],
+        },
+      ],
+    };
+    const readyRun = (rootfs_image: string) => ({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "ready-run",
+        status: "ready",
+        rootfs_image,
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+      runtime: { status: "ready", admission_open: false, active_projects: 0 },
+    });
+    mockGetHostExamState.mockResolvedValueOnce(
+      readyRun("cocalc.local/rootfs/unlisted"),
+    );
+    const { unmount } = render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+    await screen.findByText("Current run");
+    expect(
+      screen.getByText("cocalc.local/rootfs/unlisted", { selector: "code" })
+        .parentElement,
+    ).toHaveTextContent(/^cocalc\.local\/rootfs\/unlisted$/);
+    unmount();
+
+    // A catalog label that is only the image path is not repeated.
+    mockGetHostExamState.mockResolvedValueOnce(
+      readyRun("cocalc.local/rootfs/same"),
+    );
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+    await screen.findByText("Current run");
+    expect(
+      screen.getByText("cocalc.local/rootfs/same", { selector: "code" })
+        .parentElement,
+    ).toHaveTextContent(/^cocalc\.local\/rootfs\/same$/);
+  });
+
+  it("restores the shutdown choice in the Cleanup group without changing the run", async () => {
+    const deadline = dayjs().add(2, "hour").startOf("minute").toISOString();
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "ready-run",
+        status: "ready",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "scheduled",
+        scheduled_stop_at: deadline,
+        stop_host_at_deadline: true,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+      runtime: { status: "ready", admission_open: false, active_projects: 0 },
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+    const shutdownLabel = "Also shut down the project host to save resources";
+    await screen.findByText("Current run");
+    const practice = screen.getByRole("checkbox", { name: /Practice mode/ });
+    await waitFor(() =>
+      expect(document.querySelector(".ant-spin-spinning")).toBeNull(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Update cleanup time" }),
+    ).toBeDisabled();
+
+    // Query again after each change: the group re-renders its items.
+    const update = () =>
+      screen.getByRole("button", { name: "Update cleanup time" });
+    fireEvent.click(practice);
+    expect(update()).toBeEnabled();
+    fireEvent.click(practice);
+    expect(screen.getByRole("checkbox", { name: shutdownLabel })).toBeChecked();
+    expect(update()).toBeDisabled();
+  });
+
+  it("forgets the remembered shutdown choice when the status is refreshed", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+    });
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[]}
+      />,
+    );
+    const shutdownLabel = "Also shut down the project host to save resources";
+    const practice = await screen.findByRole("checkbox", {
+      name: /Practice mode/,
+    });
+    await waitFor(() => expect(practice).toBeEnabled());
+    fireEvent.click(screen.getByRole("checkbox", { name: shutdownLabel }));
+    fireEvent.click(practice);
+
+    // Another session prepared a practice run meanwhile.
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+      run: {
+        run_id: "practice-run",
+        status: "ready",
+        rootfs_image: "cocalc.local/rootfs/exam",
+        cleanup_mode: "manual",
+        scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+        stop_host_at_deadline: false,
+        max_projects: 100,
+        terminal_enabled: false,
+      },
+      runtime: { status: "ready", admission_open: false, active_projects: 0 },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Current run");
+    const runPractice = screen.getByRole("checkbox", { name: /Practice mode/ });
+    expect(runPractice).toBeChecked();
+
+    // Turning practice mode off selects the default, not the choice made in
+    // this tab before the refresh.
+    fireEvent.click(runPractice);
+    expect(screen.getByRole("checkbox", { name: shutdownLabel })).toBeChecked();
   });
 });

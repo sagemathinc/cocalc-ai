@@ -476,10 +476,12 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["Rotate token", "> Rotate token <"],
       ["End exam and erase now", "> End exam and erase now <"],
       ["Erase and shut down", '"Erase and shut down"'],
-      ["Refresh status", ">Refresh status<"],
+      ["Refresh status", "> Refresh status <"],
       ["Last run", '"Last run"'],
       ["Student projects", '"Student projects"'],
-      ["all erased", "> all erased <"],
+      ["all erased", '"all erased"'],
+      ["Preparation failed", '"Preparation failed"'],
+      ["none were created", '"none were created"'],
       [
         "Exam mode is not enabled for this account",
         '"Exam mode is not enabled for this account"',
@@ -554,6 +556,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "This scratchpad is not available right now. Ask your instructor.",
         "This scratchpad is not available right now. Ask your instructor.",
       ],
+      ["student-not-found", "Not Found", 'error: "Not Found"'],
       [
         "join-same-origin",
         "exam admission requires a same-origin request",
