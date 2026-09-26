@@ -20,7 +20,7 @@ import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile"
 import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
 import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
   newAgentClaudeCredentialOptions,
@@ -146,13 +146,9 @@ export function NewAgentClaudeControls({
           )}
         </p>
       </details>
-      <Typography.Link
-        href={`${appBasePath.replace(/\/$/, "")}/docs/ai/claude-code`}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <DocsLink projectId={projectId} slug="ai/claude-code">
         Claude Code setup, security model, and billing
-      </Typography.Link>
+      </DocsLink>
     </Space>
   );
   return (

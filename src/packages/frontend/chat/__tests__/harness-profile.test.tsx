@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { PROJECT_DOCS_OPEN_EVENT } from "@cocalc/frontend/docs/navigation";
 import { useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -122,6 +123,19 @@ test("Claude account-key selection links to the shared security model by keyboar
     expect(link.getAttribute("href")).toMatch(/\/docs\/ai\/claude-code$/);
     link.focus();
     expect(document.activeElement).toBe(link);
+    const opened = jest.fn((event: Event) => event.preventDefault());
+    window.addEventListener(PROJECT_DOCS_OPEN_EVENT, opened);
+    try {
+      await userEvent.setup().keyboard("{Enter}");
+      expect(opened).toHaveBeenCalledTimes(1);
+      expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        projectId: "project-a",
+        slug: "ai/claude-code",
+      });
+      expect(link.getAttribute("target")).toBeNull();
+    } finally {
+      window.removeEventListener(PROJECT_DOCS_OPEN_EVENT, opened);
+    }
     await userEvent.setup().tab({ shift: true });
     await userEvent.setup().tab();
     expect(document.activeElement).toBe(link);

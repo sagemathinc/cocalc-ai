@@ -40,7 +40,7 @@ import {
   writeHarnessCredentialSelection,
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { DocsLink } from "@cocalc/frontend/docs/link";
 import { ClaudePaymentStatus } from "./claude-payment-status";
 
 const HARNESS_LIMITATIONS =
@@ -287,13 +287,9 @@ function ClaudeCredentialControl({
             choose another credential.
           </div>
         )}
-      <Typography.Link
-        href={`${appBasePath.replace(/\/$/, "")}/docs/ai/claude-code`}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <DocsLink projectId={projectId} slug="ai/claude-code">
         Claude Code preview: setup, security model, and billing
-      </Typography.Link>
+      </DocsLink>
       {error && (
         <div role="alert">Unable to load account credentials: {error}</div>
       )}

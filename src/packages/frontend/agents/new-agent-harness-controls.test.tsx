@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { PROJECT_DOCS_OPEN_EVENT } from "@cocalc/frontend/docs/navigation";
 import { useState } from "react";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { qualifiedHarnessRuntime } from "@cocalc/frontend/chat/harness-profile";
@@ -129,6 +130,21 @@ test("Claude setup opens from the keyboard, contains connection details, and res
   expect(
     screen.getByRole("button", { name: "Connect Claude subscription" }),
   ).toBeTruthy();
+  const opened = jest.fn((event: Event) => event.preventDefault());
+  window.addEventListener(PROJECT_DOCS_OPEN_EVENT, opened);
+  try {
+    const link = screen.getByRole("link", {
+      name: "Claude Code setup, security model, and billing",
+    });
+    await user.click(link);
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      projectId: "project-a",
+      slug: "ai/claude-code",
+    });
+  } finally {
+    window.removeEventListener(PROJECT_DOCS_OPEN_EVENT, opened);
+  }
   expect(
     screen.getByText("Connection and credential details").closest("details")
       ?.open,
