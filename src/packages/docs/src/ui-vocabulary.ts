@@ -481,6 +481,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["Student projects", '"Student projects"'],
       ["all erased", '"all erased"'],
       ["Preparation failed", '"Preparation failed"'],
+      ["Error", '"Error"'],
       ["none were created", '"none were created"'],
       [
         "Exam mode is not enabled for this account",

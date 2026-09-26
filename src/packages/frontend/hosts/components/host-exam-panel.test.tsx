@@ -66,6 +66,16 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   }),
 }));
 
+// The colored tag for one readiness check (its name also appears in the
+// explanation list).
+function readinessTag(name: string): HTMLElement {
+  const tag = [...document.querySelectorAll<HTMLElement>(".ant-tag")].find(
+    (element) => element.textContent === name,
+  );
+  if (!tag) throw new Error(`no readiness tag for ${name}`);
+  return tag;
+}
+
 describe("HostExamPanel", () => {
   const savedConfig = {
     host_id: "host-1",
@@ -582,9 +592,57 @@ describe("HostExamPanel", () => {
         name: "Allow terminals (disabled by default)",
       }),
     ).toBeDisabled();
+    // Save configuration is not checked here: it is disabled anyway while the
+    // configuration is unchanged, which preparing requires.
+  });
+
+  it("unlocks the settings when preparation fails", async () => {
+    mockGetHostExamState.mockResolvedValue({
+      eligible: true,
+      host_status: "running",
+      config: savedConfig,
+    });
+    let failPreparation!: (err: Error) => void;
+    mockCreateHostExamRun.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          failPreparation = reject;
+        }),
+    );
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[
+          { image: "cocalc.local/rootfs/exam", digest: "sha256:abc" } as any,
+        ]}
+      />,
+    );
+    const prepare = screen.getByRole("button", {
+      name: "Prepare and test run",
+    });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    fireEvent.click(prepare);
+    await screen.findByRole("status");
+    expect(screen.getByLabelText("Public scratchpad title")).toBeDisabled();
+
+    await act(async () => {
+      failPreparation(new Error("exam project readiness failed"));
+    });
     expect(
-      screen.getByRole("button", { name: "Save configuration" }),
-    ).toBeDisabled();
+      await screen.findAllByText("exam project readiness failed"),
+    ).not.toHaveLength(0);
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: /Practice mode/ }),
+      ).toBeEnabled(),
+    );
+    expect(screen.getByLabelText("Public scratchpad title")).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Refresh status" }),
+    ).toBeEnabled();
   });
 
   it("does not present a stopped historical run as the current run", async () => {
@@ -865,6 +923,8 @@ describe("HostExamPanel", () => {
     expect(items[1]).toHaveTextContent(/^network_policy passed: /);
     // A live check that is false did fail.
     expect(items[2]).toHaveTextContent(/^watchdog failed: /);
+    expect(readinessTag("network_policy").className).toMatch(/green/);
+    expect(readinessTag("watchdog").className).toMatch(/red/);
   });
 
   it("shows the recoverable token after refreshing an active run", async () => {
@@ -1092,6 +1152,11 @@ describe("HostExamPanel", () => {
       "future_check failed: A readiness check reported by the host.",
     );
     expect(screen.queryByText(/ failed: Preparation/)).not.toBeInTheDocument();
+    expect(readinessTag("host_running").className).toMatch(/green/);
+    for (const name of ["public_route", "rootfs"]) {
+      expect(readinessTag(name).className).not.toMatch(/red|green/);
+    }
+    expect(readinessTag("future_check").className).toMatch(/red/);
   });
 
   it("keeps preparation locked when the status refreshes before it finishes", async () => {
@@ -1280,6 +1345,7 @@ describe("HostExamPanel", () => {
     );
 
     await screen.findByText("Current run");
+    expect(screen.queryByText("Error")).not.toBeInTheDocument();
     const inOrder = [
       "Admission",
       "Open admission",
@@ -1326,6 +1392,11 @@ describe("HostExamPanel", () => {
       name: "End exam and erase now",
     });
     await waitFor(() => expect(end).toBeEnabled());
+    // The reason is in the card, not only in the CLI.
+    expect(screen.getByText("Error")).toBeInTheDocument();
+    expect(
+      screen.getByText("exam project readiness failed"),
+    ).toBeInTheDocument();
     expect(screen.getByText("End the exam")).toBeInTheDocument();
     expect(screen.queryByText("Admission")).not.toBeInTheDocument();
     expect(screen.queryByText("Cleanup")).not.toBeInTheDocument();

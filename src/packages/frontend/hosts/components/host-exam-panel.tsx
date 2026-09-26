@@ -135,8 +135,9 @@ const READINESS_FROM_RUN_STATUS = new Set([
   "project_smoke",
 ]);
 
-// The result of one readiness check in words, so that a red tag is never read
-// as a failed test while the run is preparing, ending, or in error.
+// The result of one readiness check in words. It also sets the tag's colour,
+// so that a check the host does not report while the run is preparing, ending
+// or in error is shown as not reported (grey), not as failed (red).
 export function readinessResult(
   check: { name: string; ok: boolean },
   runStatus?: string,
@@ -1101,15 +1102,48 @@ export function HostExamPanel({
               <Descriptions.Item label="Network">
                 outbound disabled
               </Descriptions.Item>
+              {run.status === "error" &&
+              (run.last_error || runtime?.last_error) ? (
+                <Descriptions.Item label="Error">
+                  {/* Cleanup errors can list every project, so the box
+                      scrolls instead of growing without limit. */}
+                  <div
+                    tabIndex={0}
+                    style={{
+                      maxHeight: "10em",
+                      overflowY: "auto",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {run.last_error || runtime?.last_error}
+                  </div>
+                </Descriptions.Item>
+              ) : null}
             </Descriptions>
             {runtime?.readiness && (
               <Space orientation="vertical" size={4} style={{ width: "100%" }}>
                 <Space wrap>
-                  {runtime.readiness.map((check) => (
-                    <Tag key={check.name} color={check.ok ? "green" : "red"}>
-                      {check.name}
-                    </Tag>
-                  ))}
+                  {runtime.readiness.map((check) => {
+                    const result = readinessResult(
+                      check,
+                      runtime.status ?? run.status,
+                    );
+                    return (
+                      <Tag
+                        key={check.name}
+                        color={
+                          result === "passed"
+                            ? "green"
+                            : result === "failed"
+                              ? "red"
+                              : undefined
+                        }
+                      >
+                        {check.name}
+                      </Tag>
+                    );
+                  })}
                 </Space>
                 <Collapse
                   ghost

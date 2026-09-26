@@ -87,6 +87,13 @@ export const EXAM_ADMISSION_SCRIPT = `(() => {
     } catch (err) {}
   };
   const input = document.querySelector('input[name="token"]');
+  // The host rejected the token that was just submitted, for example after
+  // Rotate token. Forget it so that no page fills it in again: every rejected
+  // attempt counts toward the wrong-token limit that a whole classroom shares.
+  // A token refused for another reason, such as a full run, is kept.
+  if (document.querySelector("[data-exam-token-rejected]")) {
+    clearStored();
+  }
   // The value this script put in the field, so a newer link can replace it
   // without ever replacing what the student typed.
   let autofilled = null;
@@ -113,12 +120,6 @@ export const EXAM_ADMISSION_SCRIPT = `(() => {
   };
   fillToken();
   window.addEventListener("hashchange", fillToken);
-  // A submitted token is not kept: if the server rejects it, for example after
-  // Rotate token, the next page must not fill it in again, or every click
-  // would count toward the wrong-token limit for the whole classroom.
-  if (input instanceof HTMLInputElement && input.form) {
-    input.form.addEventListener("submit", clearStored);
-  }
   // While admission is closed, check again about every 30 seconds. Checking
   // with fetch never resubmits a form. A failed check just tries again, and so
   // does a Not Found answer: no run is using this address right now, for
@@ -126,12 +127,29 @@ export const EXAM_ADMISSION_SCRIPT = `(() => {
   // keeps a whole class from checking at the same moment.
   if (document.querySelector("[data-exam-waiting]")) {
     const check = () => {
-      window
-        .fetch("/", { cache: "no-store", credentials: "same-origin" })
+      let request;
+      try {
+        request = window.fetch("/", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+      } catch (err) {
+        schedule();
+        return;
+      }
+      request
         .then((response) => (response.ok ? response.text() : null))
         .then((html) => {
           if (html !== null && html.indexOf("data-exam-waiting") === -1) {
-            window.location.replace("/");
+            // A token that only the address holds (this tab could not keep
+            // it) must survive: reloading keeps the fragment, and only a page
+            // loaded with GET can have one. Setting location to "/#token=..."
+            // would only change the fragment, without loading the new page.
+            if (new URLSearchParams(window.location.hash.slice(1)).get("token")) {
+              window.location.reload();
+            } else {
+              window.location.replace("/");
+            }
           } else {
             schedule();
           }
@@ -348,6 +366,9 @@ function requestSource(req: express.Request): string {
   return `${first ?? "unknown"}`.trim().slice(0, 128) || "unknown";
 }
 
+// The message joinExamRun throws for a wrong token (exam/controller.ts).
+const INVALID_TOKEN_ERROR = "invalid access token";
+
 export function getExamJoinPage({
   error,
   admission_open,
@@ -355,6 +376,7 @@ export function getExamJoinPage({
   title = "Exam Scratchpad",
   scheduled_stop_at,
   cleanup_mode = "scheduled",
+  submitted = false,
 }: {
   error?: string;
   admission_open: boolean;
@@ -362,6 +384,9 @@ export function getExamJoinPage({
   title?: string;
   scheduled_stop_at?: string;
   cleanup_mode?: "scheduled" | "manual";
+  // The page answers a submitted form, so refreshing it would send the form
+  // again.
+  submitted?: boolean;
 }): string {
   const escapeHtml = (value: unknown) =>
     `${value ?? ""}`
@@ -435,9 +460,9 @@ export function getExamJoinPage({
         : run_status === "error"
           ? `<p>This scratchpad is not available right now. Ask your instructor.</p>`
           : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
-  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button. You can also refresh this page.</div>`
+  <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.${submitted ? "" : " You can also refresh this page."}</div>`
   }
-  ${escaped ? `<div class="error" role="alert">${escaped}</div>` : ""}
+  ${escaped ? `<div class="error" role="alert"${error === INVALID_TOKEN_ERROR ? " data-exam-token-rejected" : ""}>${escaped}</div>` : ""}
 </main></body></html>`;
 }
 
@@ -557,6 +582,7 @@ export async function initHttp({
             scheduled_stop_at: current.scheduled_stop_at,
             cleanup_mode: current.cleanup_mode,
             error: `${(err as Error)?.message ?? err}`,
+            submitted: true,
           }),
         );
     }

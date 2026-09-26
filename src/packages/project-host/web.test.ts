@@ -11,10 +11,13 @@ jest.mock("./exam/controller", () => ({
   joinExamRun: jest.fn(),
 }));
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   EXAM_ADMISSION_SCRIPT,
   getExamJoinPage,
   getProjectHostCustomizePayload,
+  initHttp,
   isExamPostOriginAllowed,
   resolveExamSessionForRequest,
 } from "./web";
@@ -233,6 +236,39 @@ describe("project-host exam admission page", () => {
     }
   });
 
+  it("marks only a token rejected as invalid", () => {
+    const rejected = getExamJoinPage({
+      admission_open: true,
+      error: "invalid access token",
+    });
+    expect(rejected).toContain("data-exam-token-rejected");
+    const full = getExamJoinPage({
+      admission_open: true,
+      error: "exam project capacity has been reached",
+    });
+    expect(full).not.toContain("data-exam-token-rejected");
+    // The marker relies on the host's own message for a wrong token.
+    const controller = readFileSync(
+      join(__dirname, "exam", "controller.ts"),
+      "utf8",
+    );
+    expect(controller).toContain('throw new Error("invalid access token")');
+  });
+
+  it("does not suggest refreshing a page that answers a submitted form", () => {
+    const afterSubmit = getExamJoinPage({
+      admission_open: false,
+      run_status: "ready",
+      error: "scratchpad access is closed",
+      submitted: true,
+    });
+    expect(afterSubmit).toContain("data-exam-waiting");
+    expect(afterSubmit).not.toContain("You can also refresh this page.");
+    expect(
+      getExamJoinPage({ admission_open: false, run_status: "ready" }),
+    ).toContain("You can also refresh this page.");
+  });
+
   it("does not promise access when the run failed", () => {
     const page = getExamJoinPage({
       admission_open: false,
@@ -268,6 +304,8 @@ describe("project-host exam admission script", () => {
     waiting = false,
     storageThrows = false,
     fetchResults = [],
+    rejected = false,
+    noFetch = false,
   }: {
     hash?: string;
     withInput?: boolean;
@@ -276,7 +314,12 @@ describe("project-host exam admission script", () => {
     waiting?: boolean;
     storageThrows?: boolean;
     fetchResults?: FetchResult[];
+    // The page answers a submitted token that the host rejected as invalid.
+    rejected?: boolean;
+    // An engine without fetch.
+    noFetch?: boolean;
   }) {
+    // Submitting runs the form's submit listeners, if the script added any.
     const submitListeners: Array<() => void> = [];
     class FakeInput {
       value = typed;
@@ -295,6 +338,7 @@ describe("project-host exam admission script", () => {
       pathname: "/",
       search: "",
       replace: jest.fn(),
+      reload: jest.fn(),
     };
     const replaceState = jest.fn(() => {
       location.hash = "";
@@ -320,7 +364,7 @@ describe("project-host exam admission script", () => {
         if (storageThrows) throw new Error("storage is disabled");
         return sessionStorage;
       },
-      fetch,
+      fetch: noFetch ? undefined : fetch,
       addEventListener: (type: string, listener: () => void) => {
         (listeners[type] ??= []).push(listener);
       },
@@ -335,6 +379,9 @@ describe("project-host exam admission script", () => {
       querySelector: (selector: string) => {
         if (selector === 'input[name="token"]') return input;
         if (selector === "[data-exam-waiting]") return waiting ? {} : null;
+        if (selector === "[data-exam-token-rejected]") {
+          return rejected ? {} : null;
+        }
         return null;
       },
     };
@@ -427,15 +474,30 @@ describe("project-host exam admission script", () => {
     expect(page.input?.value).toBe("typed-token");
   });
 
-  it("forgets a submitted token, so a rejected token is not filled in again", () => {
+  it("forgets a token the host rejected, so it is not filled in again", () => {
     const store = new Map([[STORAGE_KEY, "rotated-away"]]);
-    const form = runAdmissionScript({ withInput: true, store });
-    expect(form.input?.value).toBe("rotated-away");
-    form.submit();
+    const rejected = runAdmissionScript({
+      withInput: true,
+      store,
+      rejected: true,
+    });
+    expect(rejected.input?.value).toBe("");
     expect(store.has(STORAGE_KEY)).toBe(false);
-    // The error page after a rejected join loads the script again.
-    const errorPage = runAdmissionScript({ withInput: true, store });
-    expect(errorPage.input?.value).toBe("");
+    // A reload of the form stays empty as well.
+    const reloaded = runAdmissionScript({ withInput: true, store });
+    expect(reloaded.input?.value).toBe("");
+  });
+
+  it("keeps a token refused for another reason, such as a full run", () => {
+    const store = new Map([[STORAGE_KEY, "abc123"]]);
+    const form = runAdmissionScript({ withInput: true, store });
+    expect(form.input?.value).toBe("abc123");
+    form.submit();
+    // The page after "exam project capacity has been reached" has no marker,
+    // so the student can try again without the link.
+    const refused = runAdmissionScript({ withInput: true, store });
+    expect(refused.input?.value).toBe("abc123");
+    expect(store.get(STORAGE_KEY)).toBe("abc123");
   });
 
   it("uses only syntax that older browser engines run", () => {
@@ -469,6 +531,31 @@ describe("project-host exam admission script", () => {
       credentials: "same-origin",
     });
     expect(page.location.replace).toHaveBeenCalledWith("/");
+  });
+
+  it("keeps a token that only the address holds when access opens", async () => {
+    const page = runAdmissionScript({
+      hash: "#token=abc123",
+      waiting: true,
+      storageThrows: true,
+      fetchResults: [
+        { status: 200, body: '<form><input name="token"></form>' },
+      ],
+    });
+    expect(page.location.hash).toBe("#token=abc123");
+    await page.runNextCheck();
+    // Reloading keeps "#token=abc123"; replacing the location with "/" would
+    // drop it and open an empty form.
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+    expect(page.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps checking in a browser without fetch", async () => {
+    const page = runAdmissionScript({ waiting: true, noFetch: true });
+    await page.runNextCheck();
+    expect(page.timers).toHaveLength(1);
+    expect(page.location.replace).not.toHaveBeenCalled();
+    expect(page.location.reload).not.toHaveBeenCalled();
   });
 
   it("keeps waiting while access is closed and after failed checks", async () => {
@@ -505,5 +592,99 @@ describe("project-host exam admission script", () => {
     expect(page.location.replace).not.toHaveBeenCalled();
     await page.runNextCheck();
     expect(page.location.replace).toHaveBeenCalledWith("/");
+  });
+});
+
+// The routes, through a stand-in for the express app.
+describe("project-host exam join route", () => {
+  const { joinExamRun: mockJoinExamRun } = jest.requireMock(
+    "./exam/controller",
+  ) as { joinExamRun: jest.Mock };
+  const runtime = (status: string, admission_open: boolean) => ({
+    run_id: "run-1",
+    hostname: "exam.example.test",
+    status,
+    admission_open,
+    title: "Math 101 Final Exam",
+    scheduled_stop_at: "2026-08-01T00:00:00.000Z",
+    cleanup_mode: "scheduled",
+  });
+
+  async function postJoin(token: string) {
+    const posts: Record<string, Function> = {};
+    const app = {
+      use: jest.fn(),
+      get: jest.fn(),
+      post: (path: string, handler: Function) => {
+        posts[path] = handler;
+      },
+    };
+    await initHttp({ app: app as any, conatClient: {} as any });
+    const res: any = {
+      headers: {} as Record<string, unknown>,
+      statusCode: 200,
+      body: "",
+      setHeader(name: string, value: unknown) {
+        this.headers[name.toLowerCase()] = value;
+      },
+      getHeader(name: string) {
+        return this.headers[name.toLowerCase()];
+      },
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      type() {
+        return this;
+      },
+      send(body: string) {
+        this.body = body;
+        return this;
+      },
+      redirect: jest.fn(),
+    };
+    const next = jest.fn();
+    await posts["/exam/join"](
+      {
+        headers: {
+          host: "exam.example.test",
+          origin: "https://exam.example.test",
+        },
+        body: { token },
+        ip: "203.0.113.7",
+      },
+      res,
+      next,
+    );
+    expect(next).not.toHaveBeenCalled();
+    return res;
+  }
+
+  afterEach(() => {
+    mockJoinExamRun.mockReset();
+    mockGetExamRunStatusLocal.mockReset();
+  });
+
+  it("marks the page when the host rejects the token", async () => {
+    mockGetExamRunStatusLocal.mockReturnValue(runtime("open", true));
+    mockJoinExamRun.mockRejectedValue(new Error("invalid access token"));
+    const res = await postJoin("rotated-away");
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain("data-exam-token-rejected");
+    expect(res.body).toContain('name="token"');
+    expect(res.body).not.toContain("rotated-away");
+  });
+
+  it("describes the run as it is after a slow join, not as it was", async () => {
+    mockGetExamRunStatusLocal
+      .mockReturnValueOnce(runtime("open", true))
+      .mockReturnValue(runtime("cleaning", false));
+    mockJoinExamRun.mockRejectedValue(new Error("scratchpad access is closed"));
+    const res = await postJoin("abc123");
+    expect(res.body).toContain(
+      "This exam session has ended. Its temporary projects are being erased.",
+    );
+    expect(res.body).not.toContain("data-exam-waiting");
+    expect(res.body).not.toContain("data-exam-token-rejected");
   });
 });

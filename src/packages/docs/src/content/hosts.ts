@@ -269,7 +269,7 @@ of them are erased. Prepare a new run for every exam and every rehearsal,
      and \`watchdog\`. To see what each one checks, select **What these
      checks mean**. Only \`host_running\` and \`watchdog\` describe the host
      right now. Preparation runs the other five once, and they are green only
-     while the status is **ready** or **open**.
+     while the status is **ready** or **open**, and grey otherwise.
    - **RootFS** shows your image, **Project cleanup** shows the deletion time,
      **Project host afterward** shows your shutdown choice, **Projects** shows
      0 followed by your maximum, **Terminal** shows your terminal choice, and
@@ -398,14 +398,14 @@ After cleanup:
 | **Exam mode is not enabled for this account** | Your account does not have the exam-mode entitlement. | Ask a site administrator to set your **Exam scratchpad hosts** entitlement to **Allow**. |
 | **Start the project host to prepare an exam** | The host is not running. | Start the host and wait until it is running. |
 | **Complete these steps before preparing the run** | A required setting is missing. | Do each step that the message lists. |
-| The status is **error** | Preparation or cleanup failed. The error message shown when it failed explains why; \`cocalc host exam status <host>\` shows it again as \`last_error\`. In this status, five check tags are always red, whatever caused the error. | Select **End exam and erase now** and wait for the **Last run** card. Restart the host if it shut down, fix the cause, then prepare a new run. A message that starts with \`exam project readiness failed\` means the test project could not run its checks; a common cause is an image without Jupyter and a \`python3\` kernel. |
+| The status is **error** | Preparation or cleanup failed. The **Error** line in the **Current run** card says why. In this status, five check tags are grey, because the host does not report them. | Select **End exam and erase now** and wait for the **Last run** card. Restart the host if it shut down, fix the cause, then prepare a new run. A message that starts with \`exam project readiness failed\` means the test project could not run its checks; a common cause is an image without Jupyter and a \`python3\` kernel. |
 | A check tag is red while the status is **ready** or **open** | That check is failing now. | Do not open admission. Select **Refresh status**. If the tag stays red, end the run and prepare a new one. |
 | The **Last run** card shows **Preparation failed** | The host refused the run before starting it, for example because the image was not ready or another run was still active. No student could join, so **Student projects** shows **none were created**. | Fix the cause that the message names, then prepare a new run. |
 | A student sees "This temporary scratchpad has been prepared, but access is not open yet." | Admission is closed. | Select **Open admission**. The student's page says "This page checks again about every 30 seconds." and shows **Open scratchpad** once admission is open; the student can also refresh it. A token from the admission link is kept for that browser tab. |
-| A student sees "This exam session has ended. Its temporary projects are being erased." | The deletion time passed, or you selected **End exam and erase now**, and cleanup is running. | Nothing needs fixing. If students need more time, prepare a new run once cleanup finishes; the earlier projects are erased. |
+| A student sees "This exam session has ended. Its temporary projects are being erased." | The deletion time passed, or you selected **End exam and erase now**, and cleanup is running. | Nothing needs fixing. If students need more time, prepare a new run once cleanup finishes; the earlier projects are erased. This page does not check again by itself, so students then reload it or open the admission link again. |
 | A student sees "This scratchpad is not available right now. Ask your instructor." | The run's status is **error**. | Follow the rows for an **error** status in this table. |
 | A student sees **invalid access token** | The token was mistyped, or it was replaced with **Rotate token**. | Give the student the current admission link, which fills in the token. |
-| A student sees **exam project capacity has been reached** | The run is full. | Raise **Maximum students for this run** and select **Increase capacity**. |
+| A student sees **exam project capacity has been reached** | The run is full. | Raise **Maximum students for this run** and select **Increase capacity**. The student can then select **Open scratchpad** again; the token stays filled in. |
 | A student sees **too many unsuccessful exam join attempts; try later** | 12 wrong tokens came from the same network address within 10 minutes. All students behind one Internet address, such as a classroom network, share this limit, and while it applies even a correct token is refused. | Wait up to 10 minutes. To prevent it, give students the admission link instead of asking them to type the token. |
 | A student sees **exam admission requires a same-origin request** | The browser did not send the standard \`Origin\` header when submitting the token. | Change the lockdown browser's settings, or use another browser. |
 | A student sees **scratchpad access is closed** | The deletion time has passed, or the run ended. | Prepare a new run if students need more time. |
@@ -494,11 +494,12 @@ A host runs one exam at a time.
 The admission link looks like \`https://exam-<name>.<domain>/#token=<token>\`.
 Because the token comes after \`#\`, the browser fills in the token without
 sending it to the server, then removes it from the address bar. The page keeps
-the token for that browser tab until the student submits it, so reloading the
-page, or opening the link again in the same tab, fills it in again. A newer
-link replaces a token the page filled in, but never one the student typed. If
-the browser does not allow the page to keep the token, it stays in the address
-bar instead. The link stays
+the token for that browser tab, so reloading the page, or opening the link
+again in the same tab, fills it in again. It forgets the token if the host
+rejects it as invalid, for example after **Rotate token**. A newer link
+replaces a token the page filled in, but never one the student typed. If the
+browser does not allow the page to keep the token, it stays in the address bar
+instead. The link stays
 the same across host restarts and new runs. It changes only when you change
 **Stable admission token** between runs or select **Rotate token** during a
 run.
