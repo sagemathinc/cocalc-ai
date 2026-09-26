@@ -41,11 +41,11 @@ function launchFailureSummary(error: unknown): string {
   if (/timeout|timed out|deadline/i.test(text)) {
     return "The agent launch acknowledgment timed out.";
   }
-  if (/usage limit|quota|credits|payment|subscription|credential/i.test(text)) {
-    return "Agent launch encountered a payment, subscription, or usage-limit error. Check the recipient agent's AI settings.";
-  }
   if (/unauthoriz|permission|forbidden|revoked|access denied/i.test(text)) {
     return "Agent launch authorization failed. Check the recipient and Agent Network permissions.";
+  }
+  if (/usage limit|quota|credits|payment|subscription|credential/i.test(text)) {
+    return "Agent launch encountered a payment, subscription, or usage-limit error. Check the recipient agent's AI settings.";
   }
   return "The agent did not confirm launch. Check recipient activity before resubmitting.";
 }

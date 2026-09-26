@@ -426,7 +426,7 @@ test("accepted admission is not reclassified if its receipt cannot be saved", as
 test.each([
   ["selected subscription unavailable: private-credential", "AI settings"],
   ["permission revoked: private-credential", "permissions"],
-  ["private-credential", "did not confirm launch"],
+  ["opaque-private-value", "did not confirm launch"],
 ])(
   "launch failure summaries remain actionable without raw backend errors",
   async (error, hint) => {
@@ -438,6 +438,9 @@ test.each([
     expect(result.reason).toContain(hint);
     expect(JSON.stringify([result, db.get()])).not.toContain(
       "private-credential",
+    );
+    expect(JSON.stringify([result, db.get()])).not.toContain(
+      "opaque-private-value",
     );
   },
 );
