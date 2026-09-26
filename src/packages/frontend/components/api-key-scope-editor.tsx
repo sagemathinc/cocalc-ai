@@ -39,6 +39,10 @@ const ACCOUNT_OPTIONS: Array<{
   { capability: "account:read", label: "Read basic account information" },
   { capability: "project:list", label: "List my projects" },
   { capability: "project:create", label: "Create projects" },
+  {
+    capability: "api-key:revoke:request",
+    label: "Request API key revocation (requires your approval)",
+  },
 ];
 
 function sameCapabilities(

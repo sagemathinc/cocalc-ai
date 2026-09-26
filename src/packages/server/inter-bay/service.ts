@@ -319,6 +319,7 @@ import { getApiKeyAuthorizationStateLocal } from "@cocalc/server/api/key-authori
 import {
   requestApiKeyActionLocal,
   decideApiKeyActionLocal,
+  listApiKeyActionsLocal,
 } from "@cocalc/server/api/key-actions";
 import { listProjectSummaries as listProjectSummariesLocal } from "@cocalc/server/projects/list-account-window";
 import { issueProjectHostApiKeyTokenLocal } from "@cocalc/server/api/project-host-api-key";
@@ -1516,6 +1517,7 @@ async function startAccountLocalService(): Promise<void> {
     requestApiKeyAction: ({ principal, request }) =>
       requestApiKeyActionLocal(principal, request),
     decideApiKeyAction: decideApiKeyActionLocal,
+    listApiKeyActions: listApiKeyActionsLocal,
     listProjectSummaries: listProjectSummariesLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),

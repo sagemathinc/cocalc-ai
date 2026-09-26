@@ -4728,6 +4728,10 @@ export interface InterBayAccountLocalApi
     principal: import("@cocalc/util/api-key-management").ApiKeyActionPrincipal;
     request: import("@cocalc/util/api-key-management").ApiKeyActionRequest;
   }) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview>;
+  listApiKeyActions: (opts: {
+    account_id: string;
+    session_hash: string;
+  }) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview[]>;
   decideApiKeyAction: (
     opts: import("@cocalc/util/api-key-management").ApiKeyActionDecision,
   ) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview>;
@@ -7421,7 +7425,10 @@ export function createInterBayAccountLocalClient({
     }),
   });
   const apiKeyActionsClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "requestApiKeyAction" | "decideApiKeyAction">
+    Pick<
+      InterBayAccountLocalApi,
+      "requestApiKeyAction" | "decideApiKeyAction" | "listApiKeyActions"
+    >
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "api-key-actions" }),
@@ -8800,6 +8807,8 @@ export function createInterBayAccountLocalClient({
       await apiKeyActionsClient.requestApiKeyAction(opts),
     decideApiKeyAction: async (opts) =>
       await apiKeyActionsClient.decideApiKeyAction(opts),
+    listApiKeyActions: async (opts) =>
+      await apiKeyActionsClient.listApiKeyActions(opts),
     listProjectSummaries: async (opts) =>
       await listProjectSummariesClient.listProjectSummaries(opts),
     startCodexFreshAuth: async (opts) =>
@@ -9515,7 +9524,7 @@ export function createInterBayAccountLocalHandler({
     createServiceHandler<
       Pick<
         InterBayAccountLocalApi,
-        "requestApiKeyAction" | "decideApiKeyAction"
+        "requestApiKeyAction" | "decideApiKeyAction" | "listApiKeyActions"
       >
     >({
       ...options,
@@ -9528,6 +9537,7 @@ export function createInterBayAccountLocalHandler({
         requestApiKeyAction: async (opts) =>
           await impl.requestApiKeyAction(opts),
         decideApiKeyAction: async (opts) => await impl.decideApiKeyAction(opts),
+        listApiKeyActions: async (opts) => await impl.listApiKeyActions(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "listProjectSummaries">>(

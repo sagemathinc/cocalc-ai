@@ -15,6 +15,7 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import {
   requestApiKeyActionLocal,
   decideApiKeyActionLocal,
+  listApiKeyActionsLocal,
 } from "./key-actions";
 
 async function remote(account_id: string) {
@@ -52,4 +53,12 @@ export async function decideApiKeyAction(opts: ApiKeyActionDecision) {
   return client
     ? client.decideApiKeyAction(opts)
     : decideApiKeyActionLocal(opts);
+}
+
+export async function listApiKeyActions(opts: {
+  account_id: string;
+  session_hash: string;
+}) {
+  const client = await remote(opts.account_id);
+  return client ? client.listApiKeyActions(opts) : listApiKeyActionsLocal(opts);
 }

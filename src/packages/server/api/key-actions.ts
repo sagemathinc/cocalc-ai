@@ -33,6 +33,22 @@ import { ApiKeyActionStore } from "./key-action-store";
 
 const CAPABILITY = "api-key:revoke:request";
 
+export async function listApiKeyActionsLocal(opts: {
+  account_id: string;
+  session_hash: string;
+}): Promise<ApiKeyActionReview[]> {
+  await assertHome(opts.account_id);
+  if (!opts.session_hash) throw new Error("human authentication required");
+  await requireDangerousSessionAuth({
+    ...opts,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  const store = new ApiKeyActionStore(getPool());
+  await store.ensureSchema();
+  return store.listPending(opts.account_id);
+}
+
 async function assertHome(account_id: string): Promise<void> {
   if (!isValidUUID(account_id)) throw new Error("invalid API key action owner");
   const account = await getClusterAccountById(account_id);

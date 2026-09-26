@@ -3,6 +3,7 @@ import getPool from "@cocalc/database/pool";
 import {
   requestApiKeyActionLocal,
   decideApiKeyActionLocal,
+  listApiKeyActionsLocal,
 } from "./key-actions";
 import type { ApiKeyPrincipal } from "./api-key-scope";
 
@@ -126,6 +127,32 @@ describeDb("manual-key revocation action authority", () => {
       key_id: "target-key",
       home_bay_id: "bay-0",
     });
+  });
+
+  it("lists pending unexpired reviews only after human authentication", async () => {
+    const expired = await requestApiKeyActionLocal(principal, input());
+    await pool.query(
+      "UPDATE api_key_action_requests SET expires_at=0 WHERE request_id=$1",
+      [expired.request_id],
+    );
+    const live = await requestApiKeyActionLocal(principal, input());
+    await expect(
+      listApiKeyActionsLocal({ account_id, session_hash: "" }),
+    ).rejects.toThrow("human authentication");
+    const rows = await listApiKeyActionsLocal({
+      account_id,
+      session_hash: "human-session",
+    });
+    expect(rows.some((row) => row.request_id === live.request_id)).toBe(true);
+    expect(rows.some((row) => row.request_id === expired.request_id)).toBe(
+      false,
+    );
+    expect(
+      rows.every(
+        (row) =>
+          row.binding.account_id === account_id && row.status === "pending",
+      ),
+    ).toBe(true);
   });
 
   it("fails closed for wrong home, banned owner, missing scope, and self-target", async () => {

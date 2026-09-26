@@ -46,6 +46,22 @@ function ControlledEditor() {
   );
 }
 
+test("management request scope is separately keyboard selectable", async () => {
+  const user = userEvent.setup();
+  render(<ControlledEditor />);
+  const option = screen.getByRole("checkbox", {
+    name: "Request API key revocation (requires your approval)",
+  });
+  option.focus();
+  await user.keyboard(" ");
+  expect(option).toBeChecked();
+  expect(JSON.parse(screen.getByTestId("scope").textContent ?? "{}")).toEqual({
+    version: 1,
+    account: ["api-key:revoke:request"],
+    projects: [],
+  });
+});
+
 test("scope editor keeps account and project grants independent", async () => {
   render(<ControlledEditor />);
   fireEvent.click(screen.getByRole("checkbox", { name: "List my projects" }));

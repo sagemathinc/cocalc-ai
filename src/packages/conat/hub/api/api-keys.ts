@@ -23,6 +23,10 @@ export interface GetApiKeyViewerReadPolicyOptions {
 }
 
 export interface ApiKeys {
+  listActions: (opts: {
+    account_id?: string;
+    session_hash?: string;
+  }) => Promise<ApiKeyActionReview[]>;
   decideAction: (
     opts: Omit<ApiKeyActionDecision, "account_id" | "session_hash"> & {
       account_id?: string;
@@ -35,6 +39,7 @@ export interface ApiKeys {
 }
 
 export const apiKeys = {
+  listActions: authFirstRequireAccountWithBoundSession,
   decideAction: authFirstRequireAccountWithBoundSession,
   getViewerReadPolicy: authFirstRequireHostWithAccountTarget,
 } as const;

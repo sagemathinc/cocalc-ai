@@ -39,6 +39,17 @@ export class ApiKeyActionStore {
       ON api_key_action_requests(account_id,expires_at) WHERE status='pending'`);
   }
 
+  async listPending(account_id: string): Promise<ApiKeyActionReview[]> {
+    const { rows } = await this.pool.query(
+      `SELECT review,status FROM api_key_action_requests
+       WHERE account_id=$1 AND status='pending'
+       AND expires_at > extract(epoch from clock_timestamp())*1000
+       ORDER BY expires_at,request_id LIMIT $2`,
+      [account_id, MAX_PENDING_API_KEY_ACTIONS],
+    );
+    return rows.map((row) => this.decode(row));
+  }
+
   private async transaction<T>(
     accountId: string,
     fn: (client: PoolClient) => Promise<T>,

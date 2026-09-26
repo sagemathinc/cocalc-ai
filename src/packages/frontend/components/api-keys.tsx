@@ -42,6 +42,7 @@ import {
 import CopyToClipBoard from "./copy-to-clipboard";
 import { Icon } from "./icon";
 import { TimeAgo } from "./time-ago";
+import { ApiKeyActionReviews } from "./api-key-action-reviews";
 
 const { useForm } = Form;
 
@@ -359,6 +360,7 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
         />
       )}
       <div style={isFlyout ? { padding: "5px" } : undefined}>
+        <ApiKeyActionReviews onExecuted={getAllApiKeys} />
         <Space.Compact size={size}>
           <Button onClick={handleAdd} size={size}>
             <Icon name="plus-circle" /> Add API key...

@@ -30,40 +30,42 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
-  it("binds API key action approval to the actual human session", async () => {
-    const name = "apiKeys.decideAction";
-    const opts = {
-      account_id: "forged",
-      session_hash: "forged",
-      decision: "execute",
-    };
-    expect(
-      await transformArgs({
+  it.each(["apiKeys.decideAction", "apiKeys.listActions"])(
+    "binds %s to the actual human session",
+    async (name) => {
+      const opts = {
+        account_id: "forged",
+        session_hash: "forged",
+        decision: "execute",
+      };
+      expect(
+        await transformArgs({
+          name,
+          args: [opts],
+          account_id: "actual",
+          auth_session_hash: "verified",
+        }),
+      ).toEqual([
+        { account_id: "actual", session_hash: "verified", decision: "execute" },
+      ]);
+      const noSession = await transformArgs({
         name,
         args: [opts],
         account_id: "actual",
-        auth_session_hash: "verified",
-      }),
-    ).toEqual([
-      { account_id: "actual", session_hash: "verified", decision: "execute" },
-    ]);
-    const noSession = await transformArgs({
-      name,
-      args: [opts],
-      account_id: "actual",
-    });
-    expect(noSession[0].session_hash).toBeUndefined();
-    for (const actor of [
-      {},
-      { host_id: "host" },
-      { project_id: "project" },
-      { account_id: "agent", auth_actor: "agent" as const },
-    ]) {
-      await expect(
-        transformArgs({ name, args: [opts], ...actor }),
-      ).rejects.toThrow();
-    }
-  });
+      });
+      expect(noSession[0].session_hash).toBeUndefined();
+      for (const actor of [
+        {},
+        { host_id: "host" },
+        { project_id: "project" },
+        { account_id: "agent", auth_actor: "agent" as const },
+      ]) {
+        await expect(
+          transformArgs({ name, args: [opts], ...actor }),
+        ).rejects.toThrow();
+      }
+    },
+  );
   it("binds maintenance list, confirm, and report to the authenticated host", async () => {
     for (const [name, opts] of [
       ["hosts.listProjectMaintenanceSchedules", { host_id: "victim-host" }],

@@ -1,16 +1,23 @@
-import { requestApiKeyAction, decideApiKeyAction } from "./key-action-routing";
+import {
+  requestApiKeyAction,
+  decideApiKeyAction,
+  listApiKeyActions,
+} from "./key-action-routing";
 import {
   requestApiKeyActionLocal,
   decideApiKeyActionLocal,
+  listApiKeyActionsLocal,
 } from "./key-actions";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 
 const remoteRequest = jest.fn();
 const remoteDecision = jest.fn();
+const remoteList = jest.fn();
 jest.mock("./key-actions", () => ({
   requestApiKeyActionLocal: jest.fn(),
   decideApiKeyActionLocal: jest.fn(),
+  listApiKeyActionsLocal: jest.fn(),
 }));
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: jest.fn(),
@@ -25,6 +32,7 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
   createInterBayAccountLocalClient: jest.fn(() => ({
     requestApiKeyAction: (...args) => remoteRequest(...args),
     decideApiKeyAction: (...args) => remoteDecision(...args),
+    listApiKeyActions: (...args) => remoteList(...args),
   })),
 }));
 
@@ -43,6 +51,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   remoteRequest.mockReset();
   remoteDecision.mockReset();
+  remoteList.mockReset();
   jest
     .mocked(getClusterAccountById)
     .mockResolvedValue({ home_bay_id: "bay-0" } as any);
@@ -52,6 +61,21 @@ test("uses local implementation only at the resolved home", async () => {
   await requestApiKeyAction(principal, request);
   expect(requestApiKeyActionLocal).toHaveBeenCalledWith(principal, request);
   expect(createInterBayAccountLocalClient).not.toHaveBeenCalled();
+});
+
+test("pending reviews follow the same home route with bound human session", async () => {
+  const opts = {
+    account_id: principal.account_id,
+    session_hash: "verified-session",
+  };
+  await listApiKeyActions(opts);
+  expect(listApiKeyActionsLocal).toHaveBeenCalledWith(opts);
+  jest
+    .mocked(getClusterAccountById)
+    .mockResolvedValue({ home_bay_id: "bay-2" } as any);
+  await listApiKeyActions(opts);
+  expect(remoteList).toHaveBeenCalledWith(opts);
+  expect(listApiKeyActionsLocal).toHaveBeenCalledTimes(1);
 });
 
 test("remote request carries only authenticated identity and canonical action", async () => {
