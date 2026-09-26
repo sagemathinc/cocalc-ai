@@ -7,6 +7,7 @@ import type {
   CodexLiveLogStatus,
   CodexPersistedLogLoadState,
 } from "./use-codex-log";
+import { trimFinalResponseFromActivity } from "@cocalc/chat";
 import { joinedTextSource, type TextSource } from "./text-source";
 
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
@@ -156,29 +157,8 @@ export function trimCompletedCachedCodexActivityBlocks(
   finalResponse?: string,
 ): InlineCodexActivityBlock[] | undefined {
   if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
-  const normalizedFinal = `${finalResponse ?? ""}`
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  if (!normalizedFinal) return blocks;
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i];
-    if (block.kind !== "agent") continue;
-    const normalizedBlock = `${block.text ?? ""}`
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-    if (
-      !normalizedBlock ||
-      (!normalizedBlock.includes(normalizedFinal) &&
-        !normalizedFinal.includes(normalizedBlock))
-    ) {
-      return blocks;
-    }
-    const next = blocks.filter((_, index) => index !== i);
-    return next.length > 0 ? next : undefined;
-  }
-  return blocks;
+  const next = trimFinalResponseFromActivity(blocks, finalResponse);
+  return next.length > 0 ? next : undefined;
 }
 
 export function resolveEditedMessageForSave(

@@ -2188,6 +2188,7 @@ export default function Message({
         <div
           style={{
             marginBottom: 10,
+            minHeight: 24,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -2219,7 +2220,6 @@ export default function Message({
     blocks,
     message_class,
     openCommitFromMessage,
-    showHeader = false,
     onHideActivity,
     showQuotaHelp = true,
   }: {
@@ -2231,7 +2231,6 @@ export default function Message({
     }>;
     message_class?: string;
     openCommitFromMessage: (e: any) => void;
-    showHeader?: boolean;
     onHideActivity?: () => void;
     showQuotaHelp?: boolean;
   }) {
@@ -2318,9 +2317,8 @@ export default function Message({
         ) : null}
       </div>
     );
-    if (!showHeader) {
-      return body;
-    }
+    // Keep the same wrapper during and after streaming so completion does not
+    // remount Slate, clear a selection, or insert a heading above the reader.
     return renderCodexSectionChrome({
       label: "Agent activity",
       accentColor: UI_COLORS.secondary,
@@ -2528,7 +2526,6 @@ export default function Message({
               blocks: activityBlocksToRender,
               message_class,
               openCommitFromMessage: openResultFromMessage,
-              showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
               onHideActivity:
                 inlineCodexActivityMode === "completed" &&

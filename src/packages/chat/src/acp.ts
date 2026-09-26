@@ -809,39 +809,39 @@ export function getMountedIntermediateResponseBlocks(
   state?: "sending" | "sent" | "queued" | "not-sent";
 }> {
   const blocks = getLiveResponseBlocks(events, guidance);
-  const normalizedSummary = normalizeProgressiveCompareText(
-    getLatestSummaryText(events) ?? "",
-  );
-  if (!normalizedSummary) {
-    return blocks;
-  }
-  let lastAgentIndex = -1;
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i];
-    if (
-      block.kind === "agent" &&
-      shouldDropMountedAgentBlock(block.text, normalizedSummary)
-    ) {
-      lastAgentIndex = i;
-      break;
-    }
-  }
-  if (lastAgentIndex === -1) {
-    return blocks;
-  }
-  return blocks.filter((_, index) => index !== lastAgentIndex);
+  return trimFinalResponseFromActivity(blocks, getLatestSummaryText(events));
 }
 
-function shouldDropMountedAgentBlock(
-  blockText: string,
-  normalizedSummary: string,
-): boolean {
-  const normalizedBlock = normalizeProgressiveCompareText(blockText);
-  if (!normalizedBlock || !normalizedSummary) return false;
-  return (
-    normalizedBlock.includes(normalizedSummary) ||
-    normalizedSummary.includes(normalizedBlock)
-  );
+// Preview projections can combine commentary and the final response into one
+// block. Never discard that whole block just because it contains the summary.
+// Without message/channel boundaries, prefer duplication to hiding activity.
+export function trimFinalResponseFromActivity<
+  T extends { kind: "agent" | "guidance"; text: string },
+>(blocks: T[], finalResponse?: string): T[] {
+  const final = finalResponse?.trim();
+  if (!final) return blocks;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    if (block.kind !== "agent") continue;
+    const text = block.text.trimEnd();
+    let prefix: string;
+    if (
+      compareNormalizedProgressiveText(text, final) === "equal" ||
+      final.endsWith(`\n\n${text.trim()}`)
+    ) {
+      prefix = "";
+    } else if (text.endsWith(`\n\n${final}`)) {
+      prefix = text.slice(0, -final.length).trimEnd();
+    } else {
+      return blocks;
+    }
+    return prefix
+      ? blocks.map((item, index) =>
+          index === i ? { ...item, text: prefix } : item,
+        )
+      : blocks.filter((_, index) => index !== i);
+  }
+  return blocks;
 }
 
 function getInterleavedAgentSegmentText(
@@ -1037,14 +1037,6 @@ export function mergeProgressiveMessageText(
   return undefined;
 }
 
-function normalizeProgressiveCompareText(text: string): string {
-  return text
-    .replace(/`\s+/g, "`")
-    .replace(/\s+`/g, "`")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 // During a running turn the main chat row should be rendered from the live ACP
 // log, not from patchflow-backed chat-row edits. Show all agent message blocks
 // seen so far. If there are no agent blocks yet, fall back to the latest
@@ -1069,29 +1061,19 @@ export function getLiveResponseMarkdown(
 export function getMountedIntermediateResponseMarkdown(
   events: AcpStreamMessage[],
 ): string | undefined {
-  const blocks = getAgentMessageTexts(events);
-  const normalizedSummary = normalizeProgressiveCompareText(
-    getLatestSummaryText(events) ?? "",
+  const blocks = getAgentMessageTexts(events).map((text) => ({
+    kind: "agent" as const,
+    text,
+  }));
+  const trimmedBlocks = trimFinalResponseFromActivity(
+    blocks,
+    getLatestSummaryText(events),
   );
-  const trimmedBlocks =
-    normalizedSummary && blocks.length > 0
-      ? trimTrailingMountedResponseBlock(blocks, normalizedSummary)
-      : blocks;
-  const content = trimmedBlocks.join("\n\n").trim();
+  const content = trimmedBlocks
+    .map(({ text }) => text)
+    .join("\n\n")
+    .trim();
   return content.length > 0 ? content : undefined;
-}
-
-function trimTrailingMountedResponseBlock(
-  blocks: string[],
-  normalizedSummary: string,
-): string[] {
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    if (!shouldDropMountedAgentBlock(blocks[i], normalizedSummary)) {
-      return blocks;
-    }
-    return blocks.filter((_, index) => index !== i);
-  }
-  return blocks;
 }
 
 export function getInterruptedResponseMarkdown(

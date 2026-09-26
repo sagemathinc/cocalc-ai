@@ -35,9 +35,16 @@ that paragraph boundaries were lost in the reported session.
   still available through explicit Copy actions. There is no persisted
   truncation and no automatic replacement of a response with a summary.
 - While generating, follow a bounded tail window. Manually paging back stops
-  following; "Follow latest" resumes it. A completed response starts at its
-  beginning. Terminal input/output is fenced after slicing so each excerpt
-  remains a code block.
+  following; "Follow latest" resumes it. Completion keeps the current excerpt
+  mounted; it does not navigate back to the beginning. A newly opened completed
+  response starts at its beginning. Terminal input/output is fenced after
+  slicing so each excerpt remains a code block.
+- Keep activity in the same labeled container while running and after
+  completion, preserving the reader's Slate selection. Final-response
+  deduplication removes only a matching trailing response, not a combined
+  commentary block that merely contains it. Ambiguous overlaps remain visible
+  rather than risk hiding commentary. The cached and persisted-log paths use
+  the same rule.
 - Render at most 100 inline activity blocks and 100 normalized drawer entries
   at a time, including after live updates or navigation to earlier activity.
   Inline blocks use a lazy concatenated text source: displaying an excerpt
@@ -71,6 +78,13 @@ and keyboard, and check that Unicode pages reconstruct the source exactly.
 Real static and read-only Slate renderers retain formatted selection
 serialization. Other tests cover live growth, activity jumps, lazy copying,
 view eviction, and cache admission.
+
+Completion regressions render the real message and read-only Slate components:
+`hello` remains visible and selected when `done` arrives, including when a
+preview block contains both. Tests also cover a disappearing live-log feed,
+explicit keyboard collapse, retained tail/manual pages, and persisted-log
+deduplication. The original implementation fails the commentary-retention and
+DOM-identity assertions.
 
 The new static-parser regression fails against the original eager initializer:
 a parent rerender parses unchanged text a second time. It passes with lazy

@@ -885,6 +885,39 @@ describe("response text helpers", () => {
     );
   });
 
+  test.each([
+    ["hello\n\ndone", "done", "hello"],
+    ["hello\n\n**done**\n\nVerified.", "**done**\n\nVerified.", "hello"],
+    ["I will say done later.", "done", "I will say done later."],
+    ["hello", "Said hello; done.", "hello"],
+    ["undone", "done", "undone"],
+    ["hello", "HELLO", "hello"],
+  ])(
+    "retains commentary from a completed preview: %s",
+    (text, finalResponse, expected) => {
+      const events: AcpStreamMessage[] = [
+        textEvent("message", text, 1),
+        { type: "summary", finalResponse, seq: 2 } as AcpStreamMessage,
+      ];
+      expect(getMountedIntermediateResponseMarkdown(events)).toBe(expected);
+      expect(getMountedIntermediateResponseBlocks(events)).toEqual([
+        expect.objectContaining({ kind: "agent", text: expected }),
+      ]);
+    },
+  );
+
+  test("only deduplicates the trailing agent block, not earlier commentary", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "done", 1),
+      textEvent("message", "hello", 2),
+      { type: "summary", finalResponse: "done", seq: 3 } as AcpStreamMessage,
+    ];
+    expect(getMountedIntermediateResponseBlocks(events)).toEqual([
+      expect.objectContaining({ text: "done" }),
+      expect.objectContaining({ text: "hello" }),
+    ]);
+  });
+
   test("keeps mounted intermediate blocks when there is no duplicated summary block", () => {
     const events: AcpStreamMessage[] = [
       {

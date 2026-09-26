@@ -40,18 +40,24 @@ export function PagedText({
   followTail?: boolean;
 }) {
   const [chosenPage, setChosenPage] = useState<number>();
+  const [wasFollowingTail, setWasFollowingTail] = useState(followTail);
   const [copied, setCopied] = useState(false);
   useEffect(() => setCopied(false), [value]);
+  useEffect(() => {
+    if (followTail) setWasFollowingTail(true);
+  }, [followTail]);
   const pages = textPageCount(value);
-  const page = Math.min(chosenPage ?? (followTail ? pages - 1 : 0), pages - 1);
-  const following = followTail && chosenPage == null;
+  // Completion is not navigation. Retain the tail excerpt (and its DOM) until
+  // the reader chooses a page; a newly opened completed message starts at 0.
+  const showingTail = (followTail || wasFollowingTail) && chosenPage == null;
+  const page = Math.min(chosenPage ?? (showingTail ? pages - 1 : 0), pages - 1);
   if (value.length <= MAX_RENDERED_TEXT_CHARS)
     return <>{children(value.toString())}</>;
   return (
     <div>
       <Space wrap size="small" style={{ marginBottom: 8 }}>
         <span role="status" style={{ color: UI_COLORS.secondary }}>
-          {following
+          {showingTail
             ? "Long output: showing the latest text"
             : `Long output: part ${page + 1} of ${pages}`}
         </span>
@@ -92,8 +98,8 @@ export function PagedText({
           {copied ? "Copied full text" : "Copy full text"}
         </Button>
       </Space>
-      <div key={following ? "tail" : page}>
-        {children(following ? textTail(value) : textPage(value, page))}
+      <div key={showingTail ? "tail" : page}>
+        {children(showingTail ? textTail(value) : textPage(value, page))}
       </div>
     </div>
   );

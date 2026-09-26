@@ -96,9 +96,33 @@ test("streaming follows the tail, but does not interrupt a reader paging back", 
   expect(screen.getByTestId("page").textContent).toContain("first");
   fireEvent.click(screen.getByRole("button", { name: "Follow latest" }));
   expect(screen.getByTestId("page").textContent).toContain("new tail");
+  const tail = screen.getByTestId("page");
+  const text = tail.textContent;
   rerender(view(false));
+  expect(screen.getByTestId("page")).toBe(tail);
+  expect(tail.textContent).toBe(text);
+  fireEvent.click(screen.getByRole("button", { name: "First part" }));
   expect(screen.getByTestId("page").textContent).toContain("first");
   value = "small replacement";
   rerender(view());
   expect(screen.getByTestId("page").textContent).toBe(value);
+});
+
+test("completion preserves a manually selected page and keyboard focus", () => {
+  const value = "page ".repeat(MAX_RENDERED_TEXT_CHARS);
+  const view = (followTail: boolean) => (
+    <PagedText value={value} followTail={followTail}>
+      {(part) => <pre data-testid="page">{part}</pre>}
+    </PagedText>
+  );
+  const { rerender } = render(view(true));
+  fireEvent.click(screen.getByRole("button", { name: "First part" }));
+  const next = screen.getByRole("button", { name: "Next part" });
+  next.focus();
+  fireEvent.click(next);
+  const page = screen.getByTestId("page");
+  rerender(view(false));
+  expect(screen.getByTestId("page")).toBe(page);
+  expect(page.textContent).toBe(textPage(value, 1));
+  expect(next).toHaveFocus();
 });

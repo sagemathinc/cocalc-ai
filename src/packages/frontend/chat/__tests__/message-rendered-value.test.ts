@@ -361,6 +361,27 @@ describe("resolveInlineCodexActivityMode", () => {
 });
 
 describe("trimCompletedCachedCodexActivityBlocks", () => {
+  it("keeps commentary when the final response shares its streamed block", () => {
+    expect(
+      trimCompletedCachedCodexActivityBlocks(
+        [{ kind: "agent", text: "hello\n\ndone", time: 123 }],
+        "done",
+      ),
+    ).toEqual([{ kind: "agent", text: "hello", time: 123 }]);
+  });
+
+  it("does not remove commentary that merely mentions the final response", () => {
+    const blocks = [{ kind: "agent" as const, text: "I will say done later." }];
+    expect(trimCompletedCachedCodexActivityBlocks(blocks, "done")).toBe(blocks);
+  });
+
+  it("does not remove commentary that is only a substring of the final response", () => {
+    const blocks = [{ kind: "agent" as const, text: "hello" }];
+    expect(
+      trimCompletedCachedCodexActivityBlocks(blocks, "Said hello; done."),
+    ).toBe(blocks);
+  });
+
   it("drops the trailing cached agent block when it duplicates the final response", () => {
     expect(
       trimCompletedCachedCodexActivityBlocks(
