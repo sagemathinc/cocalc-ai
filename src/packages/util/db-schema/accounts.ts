@@ -155,6 +155,11 @@ export function ensureAutoBalanceValid(obj) {
 Table({
   name: "accounts",
   fields: {
+    api_key_issuance_sequence: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home monotonic API delegation issuance counter. Null historical values mean zero; transport as a decimal string to preserve precision.",
+    },
     account_id: {
       type: "uuid",
       desc: "The uuid that determines the user account",

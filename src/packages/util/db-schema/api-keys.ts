@@ -100,6 +100,11 @@ Table({
       type: "integer",
       desc: "Monotonically increasing revision invalidating derived credentials.",
     },
+    issuance_sequence: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home delegation issuance sequence, preserved on renewal and account migration. Historical null values mean zero.",
+    },
     last_active: {
       type: "timestamp",
       desc: "When this api key was last used.",
