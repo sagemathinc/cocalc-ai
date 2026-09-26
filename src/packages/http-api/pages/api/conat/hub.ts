@@ -19,7 +19,7 @@ export default async function handle(req, res) {
       );
     }
     const { name, args, timeout } = getParams(req);
-    assertHttpHubApiKeyAllowed({ principal, name, args });
+    await assertHttpHubApiKeyAllowed({ principal, name, args });
     const resp = await hubBridge({
       account_id: principal.account_id,
       name,

@@ -35,6 +35,7 @@ type LocalProjectReferenceRow = {
   owning_bay_id: string | null;
   usage_account_id: string | null;
   users: Record<string, any> | null;
+  api_key_membership_revocation?: unknown;
   runtime_lifecycle_revision: number | null;
   allow_collaborator_destructive_storage_actions: boolean | null;
 };
@@ -49,6 +50,7 @@ function projectReferenceFromLocalRow(
     owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
     usage_account_id: row.usage_account_id ?? null,
     users: row.users ?? {},
+    api_key_membership_revocation: row.api_key_membership_revocation,
     runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
     allow_collaborator_destructive_storage_actions:
       row.allow_collaborator_destructive_storage_actions,
@@ -73,6 +75,7 @@ async function loadLocalProjectReference({
         COALESCE(owning_bay_id, $3) AS owning_bay_id,
         usage_account_id,
         COALESCE(users, '{}'::jsonb) AS users,
+        api_key_membership_revocations->$2::text AS api_key_membership_revocation,
         runtime_lifecycle_revision,
         allow_collaborator_destructive_storage_actions
       FROM projects
@@ -196,12 +199,16 @@ export async function resolveProjectReferenceForMemberAllowRemote({
   project_id: string;
 }): Promise<ProjectReference | null> {
   const ownership = await resolveProjectBay(project_id);
-  if (ownership && ownership.bay_id !== getConfiguredBayId()) {
-    return await getInterBayBridge()
-      .projectReference(ownership.bay_id)
-      .get({ account_id, project_id });
-  }
-  return await loadLocalProjectReference({ account_id, project_id });
+  if (!ownership?.bay_id) throw Error("project owner is unavailable");
+  const reference =
+    ownership.bay_id !== getConfiguredBayId()
+      ? await getInterBayBridge()
+          .projectReference(ownership.bay_id)
+          .get({ account_id, project_id })
+      : await loadLocalProjectReference({ account_id, project_id });
+  if (reference && reference.owning_bay_id !== ownership.bay_id)
+    throw Error("project owner changed during authorization");
+  return reference;
 }
 
 async function resolveProjectReferenceForProjectUserAllowRemote({

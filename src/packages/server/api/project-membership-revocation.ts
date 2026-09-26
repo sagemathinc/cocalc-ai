@@ -7,8 +7,41 @@ import { withProjectRehomeWriteFence } from "@cocalc/database/postgres/project-r
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
-import { getApiKeyIssuanceWatermark } from "./key-authorization-state";
+import {
+  getApiKeyIssuanceWatermark,
+  getApiKeyAuthorizationState,
+} from "./key-authorization-state";
+import { resolveProjectReferenceForMemberAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { normalizeApiKeyIssuanceSequence } from "./issuance-sequence";
+
+export async function assertApiKeyProjectMembership(
+  principal: { account_id: string; key_id?: string; scope_revision?: number },
+  project_id: string,
+): Promise<void> {
+  if (!principal.key_id) throw Error("API key identity unavailable");
+  const state = await getApiKeyAuthorizationState({
+    account_id: principal.account_id,
+    key_id: principal.key_id,
+  });
+  if (!state || state.scope_revision !== principal.scope_revision)
+    throw Error("API key revoked or scope changed");
+  const reference = await resolveProjectReferenceForMemberAllowRemote({
+    account_id: principal.account_id,
+    project_id,
+  });
+  const member = reference?.users?.[principal.account_id];
+  if (
+    !isProjectCollaboratorRole(
+      typeof member === "string" ? member : member?.group,
+    )
+  )
+    throw Error("account is not a project collaborator");
+  assertApiKeyMembershipGrant(
+    state.issuance_sequence,
+    reference?.api_key_membership_revocation,
+  );
+}
 
 // Generation matching prevents a delayed account-home response from clearing a
 // newer loss. No database lock is held while waiting on the account's home bay.

@@ -77,6 +77,71 @@ describe("authenticated Conat caller metadata", () => {
     await server.close();
   }, 40_000);
 
+  it.each(["subscription", "rpc"])(
+    "closes an API-key %s after project authority changes while the key remains valid",
+    async (kind) => {
+      let allowed = true;
+      let logins = 0;
+      let originalPrefix: string;
+      const server = init({
+        port: 0,
+        getUser: async () => {
+          const prefix = `_INBOX.test-${++logins}`;
+          originalPrefix ??= prefix;
+          return {
+            account_id: "00000000-0000-4000-8000-000000000001",
+            auth_method: "api_key",
+            key_id: "key-1",
+            scope_revision: 1,
+            auth_api_key_reply_prefix: prefix,
+          };
+        },
+        isAllowed: async ({ user, subject }) =>
+          subject.startsWith("_INBOX.")
+            ? user.auth_api_key_reply_prefix === originalPrefix
+            : allowed,
+      });
+      const client = connect({ address: server.address(), noCache: true });
+      let service: ReturnType<typeof createServiceHandler> | undefined;
+      try {
+        await client.waitUntilSignedIn({ timeout: 5_000 });
+        await client.subscribe(`${originalPrefix!}.reply`, () => undefined);
+        if (kind === "subscription")
+          await client.subscribe("test.project.interest", () => undefined);
+        else
+          service = createServiceHandler({
+            client,
+            subject: "test.project.interest",
+            service: "revocation-test",
+            transport: "fast-rpc",
+            impl: { read: async () => "ok" },
+          });
+        await delay(250);
+        await delay(16_000);
+        expect(client.conn.connected).toBe(true);
+        allowed = false;
+        await delay(16_000);
+        expect(logins).toBeGreaterThanOrEqual(2);
+        expect(client.conn.connected).toBe(false);
+        expect(
+          Object.values((server as any).subscriptions).some(
+            (subjects: Set<string>) => subjects.has("test.project.interest"),
+          ),
+        ).toBe(false);
+        expect(
+          Object.values((server as any).rpcServiceSubjects).some(
+            (subjects: Set<string>) => subjects.has("test.project.interest"),
+          ),
+        ).toBe(false);
+      } finally {
+        service?.close();
+        client.close();
+        await server.close();
+      }
+    },
+    40_000,
+  );
+
   it("requires a distinct link credential for authenticated clusters", () => {
     expect(() =>
       init({

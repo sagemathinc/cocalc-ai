@@ -5,6 +5,7 @@ import {
   requireApiKeyProjectCapability,
 } from "./api-key-scope";
 import { recordApiKeyAuditEventSoon } from "./api-key-audit";
+import { assertApiKeyProjectMembership } from "./project-membership-revocation";
 
 const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "system.getNames": "account:read",
@@ -22,7 +23,7 @@ const HUB_PROJECT_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "projects.getProjectRunQuota": "project:read",
 };
 
-export function assertHttpHubApiKeyAllowed({
+export async function assertHttpHubApiKeyAllowed({
   principal,
   name,
   args,
@@ -30,7 +31,7 @@ export function assertHttpHubApiKeyAllowed({
   principal: ApiKeyPrincipal;
   name: string;
   args?: any[];
-}): void {
+}): Promise<void> {
   if (HUB_API_KEY_HELLO_WORLD.has(name)) {
     return;
   }
@@ -55,6 +56,7 @@ export function assertHttpHubApiKeyAllowed({
     }
     try {
       requireApiKeyProjectCapability(principal, projectCapability, project_id);
+      await assertApiKeyProjectMembership(principal, project_id);
     } catch (err) {
       auditHttpApiKeyDenial({
         principal,
@@ -105,15 +107,16 @@ export function assertHttpHubApiKeyAllowed({
   );
 }
 
-export function assertHttpProjectApiKeyAllowed({
+export async function assertHttpProjectApiKeyAllowed({
   principal,
   project_id,
 }: {
   principal: ApiKeyPrincipal;
   project_id: string;
-}): void {
+}): Promise<void> {
   try {
     requireApiKeyProjectCapability(principal, "project:exec", project_id);
+    await assertApiKeyProjectMembership(principal, project_id);
   } catch (err) {
     auditHttpApiKeyDenial({
       principal,

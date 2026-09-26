@@ -1826,7 +1826,23 @@ export class ConatServer extends EventEmitter {
             let timeout: ReturnType<typeof setTimeout> | undefined;
             try {
               const current = await Promise.race([
-                this.getUser(socket, undefined, { revalidation: true }),
+                (async () => {
+                  const current = await this.getUser(socket, undefined, {
+                    revalidation: true,
+                  });
+                  const interests = new Set([
+                    ...(this.subscriptions[id] ?? []),
+                    ...(this.rpcServiceSubjects[id] ?? []),
+                  ]);
+                  for (const subject of interests) {
+                    if (!socket.connected) throw Error("socket disconnected");
+                    // Keep the original connection's reply namespace. A fresh
+                    // login principal may carry a different random namespace.
+                    if (!(await this.isAllowed({ user, subject, type: "sub" })))
+                      throw Error("API key subscription authority changed");
+                  }
+                  return current;
+                })(),
                 new Promise<never>((_, reject) => {
                   timeout = setTimeout(
                     () => reject(new Error("API key revalidation timed out")),

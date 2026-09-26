@@ -2,13 +2,20 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import {
   assertApiKeyMembershipGrant,
+  assertApiKeyProjectMembership,
   resolveProjectApiKeyRevocation,
 } from "./project-membership-revocation";
 
 const watermark = jest.fn();
 const owner = jest.fn();
+const state = jest.fn();
+const reference = jest.fn();
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  resolveProjectReferenceForMemberAllowRemote: (...args) => reference(...args),
+}));
 jest.mock("./key-authorization-state", () => ({
   getApiKeyIssuanceWatermark: (...args) => watermark(...args),
+  getApiKeyAuthorizationState: (...args) => state(...args),
 }));
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay: (...args) => owner(...args),
@@ -40,6 +47,69 @@ describe("API membership grant cutoff", () => {
     { generation: "invalid", pending: false, cutoff: "0" },
   ])("fails closed on pending or malformed state: %j", (barrier) => {
     expect(() => assertApiKeyMembershipGrant("10", barrier)).toThrow();
+  });
+});
+
+describe("shared project admission", () => {
+  const principal = {
+    account_id: randomUUID(),
+    key_id: "key-12345",
+    scope_revision: 1,
+  };
+  const project = randomUUID();
+  beforeEach(() => {
+    state
+      .mockReset()
+      .mockResolvedValue({ scope_revision: 1, issuance_sequence: "3" });
+    reference
+      .mockReset()
+      .mockResolvedValue({
+        users: { [principal.account_id]: { group: "collaborator" } },
+        api_key_membership_revocation: null,
+      });
+  });
+  it("checks current authority and refuses absent or stale key state", async () => {
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).resolves.toBeUndefined();
+    state
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ scope_revision: 2, issuance_sequence: "3" });
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).rejects.toThrow("revoked");
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).rejects.toThrow("scope changed");
+  });
+  it("does not revive an old key after membership is restored", async () => {
+    const users = { [principal.account_id]: { group: "collaborator" } };
+    reference.mockResolvedValueOnce({
+      users: {},
+      api_key_membership_revocation: null,
+    });
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).rejects.toThrow("not a project collaborator");
+    reference.mockResolvedValue({
+      users,
+      api_key_membership_revocation: {
+        generation: randomUUID(),
+        pending: false,
+        cutoff: "3",
+      },
+    });
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).rejects.toThrow("membership loss");
+    state.mockResolvedValue({ scope_revision: 1, issuance_sequence: "4" });
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).resolves.toBeUndefined();
+    reference.mockResolvedValue({ users });
+    await expect(
+      assertApiKeyProjectMembership(principal, project),
+    ).rejects.toThrow("unavailable");
   });
 });
 

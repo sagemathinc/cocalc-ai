@@ -22,6 +22,7 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectReferenceForMemberAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { syncProjectUsersOnHostForBrowserAccess } from "@cocalc/server/conat/api/hosts-connection-auth";
 import { getApiKeyAuthorizationState } from "./key-authorization-state";
+import { assertApiKeyMembershipGrant } from "./project-membership-revocation";
 
 export async function issueProjectHostApiKeyToken(
   request: IssueProjectHostApiKeyAuthTokenRequest,
@@ -80,6 +81,10 @@ export async function issueProjectHostApiKeyTokenLocal({
     throw new Error("not authorized for project-host API key access");
   }
   const placement_revision = Number(reference.runtime_lifecycle_revision);
+  assertApiKeyMembershipGrant(
+    state.issuance_sequence,
+    reference.api_key_membership_revocation,
+  );
   if (!Number.isSafeInteger(placement_revision) || placement_revision < 0) {
     throw new Error("project-host placement revision is unavailable");
   }

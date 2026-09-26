@@ -298,6 +298,7 @@ export interface ProjectReference {
   owning_bay_id: string;
   usage_account_id?: string | null;
   users?: Record<string, any>;
+  api_key_membership_revocation?: unknown;
   runtime_lifecycle_revision?: number;
   allow_collaborator_destructive_storage_actions?: boolean | null;
 }

@@ -53,6 +53,7 @@ describe("scoped API key project-host issuance", () => {
   };
   const state = (capabilities: string[], viewer_read_roots?: string[]) => ({
     scope_revision: 4,
+    issuance_sequence: "1",
     expire_ms: Date.now() + 60_000,
     scope: {
       version: 1,
@@ -81,6 +82,7 @@ describe("scoped API key project-host issuance", () => {
     resolveProjectReferenceMock.mockResolvedValue({
       host_id: hostId,
       runtime_lifecycle_revision: 7,
+      api_key_membership_revocation: null,
       users: { [accountId]: { group: "collaborator" } },
     });
     syncProjectUsersMock.mockResolvedValue(undefined);
@@ -117,6 +119,7 @@ describe("scoped API key project-host issuance", () => {
     resolveProjectReferenceMock.mockResolvedValue({
       host_id: hostId,
       runtime_lifecycle_revision: 0,
+      api_key_membership_revocation: null,
       users: { [accountId]: { group: "collaborator" } },
     });
     const { issueProjectHostApiKeyTokenLocal } =
@@ -134,6 +137,7 @@ describe("scoped API key project-host issuance", () => {
   it("confines all-projects access to current full membership and exact child targets", async () => {
     getApiKeyAuthorizationStateMock.mockResolvedValue({
       scope_revision: 4,
+      issuance_sequence: "1",
       scope: {
         version: 1,
         account: [],
@@ -226,6 +230,49 @@ describe("scoped API key project-host issuance", () => {
     );
     expect(issueTokenMock).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "blocks old delegated access after re-addition (all projects: %s)",
+    async (allProjects) => {
+      const key = state(["project:exec"]);
+      if (allProjects)
+        (key as any).scope = {
+          version: 1,
+          account: [],
+          projects: [],
+          all_projects: { capabilities: ["project:exec"] },
+        };
+      getApiKeyAuthorizationStateMock.mockResolvedValue(key);
+      const reference = {
+        host_id: hostId,
+        runtime_lifecycle_revision: 7,
+        users: { [accountId]: { group: "collaborator" } },
+        api_key_membership_revocation: {
+          generation: "11111111-1111-4111-8111-111111111111",
+          pending: true,
+          cutoff: "1",
+        },
+      };
+      resolveProjectReferenceMock.mockResolvedValue(reference);
+      const { issueProjectHostApiKeyTokenLocal } =
+        await import("./project-host-api-key");
+      await expect(issueProjectHostApiKeyTokenLocal(request)).rejects.toThrow(
+        "pending",
+      );
+      reference.api_key_membership_revocation.pending = false;
+      await expect(issueProjectHostApiKeyTokenLocal(request)).rejects.toThrow(
+        "membership loss",
+      );
+      expect(issueTokenMock).not.toHaveBeenCalled();
+      getApiKeyAuthorizationStateMock.mockResolvedValue({
+        ...key,
+        issuance_sequence: "2",
+      });
+      await expect(
+        issueProjectHostApiKeyTokenLocal(request),
+      ).resolves.toMatchObject({ token: "child" });
+    },
+  );
 
   it("routes signing to the owning host bay", async () => {
     resolveHostBayMock.mockResolvedValue({ bay_id: "bay-2" });

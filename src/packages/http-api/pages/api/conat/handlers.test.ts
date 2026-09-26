@@ -6,6 +6,10 @@ import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import hubBridge from "@cocalc/server/api/hub-bridge";
 import projectBridge from "@cocalc/server/api/project-bridge";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
+jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
+  assertApiKeyProjectMembership: jest.fn(),
+}));
 
 import hubHandler from "./hub";
 import projectHandler from "./project";
@@ -54,6 +58,29 @@ describe("/api/conat/hub", () => {
       error:
         "must be signed in and MUST provide an api key (cookies are not allowed)",
     });
+  });
+  test("waits for membership authorization before dispatching project RPC", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["project:read"],
+      allowed_project_ids: ["proj-1"],
+    } as any);
+    jest
+      .mocked(assertApiKeyProjectMembership)
+      .mockRejectedValueOnce(Error("membership loss"));
+    const { req, res } = createMocks({
+      method: "POST",
+      body: {
+        name: "projects.getProjectState",
+        args: [{ project_id: "proj-1" }],
+      },
+    });
+    await hubHandler(req, res);
+    expect(res._getJSONData()).toEqual({ error: "membership loss" });
+    expect(mockHubBridge).not.toHaveBeenCalled();
   });
 
   test("bridges hub rpc calls for an authenticated account", async () => {

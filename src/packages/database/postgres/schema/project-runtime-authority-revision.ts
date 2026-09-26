@@ -9,9 +9,11 @@ export const PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER =
   "projects_bump_runtime_authority_revision_trigger";
 const PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION =
   "projects_bump_runtime_authority_revision";
+const MEMBERSHIP_CONTRACT = "api-key-membership-contract-v2";
 
 const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()
    RETURNS TRIGGER AS $$
+   -- ${MEMBERSHIP_CONTRACT}
    DECLARE
      member RECORD;
    BEGIN
@@ -19,8 +21,8 @@ const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_RUN
        NEW.runtime_authority_revision :=
          COALESCE(OLD.runtime_authority_revision, 0) + 1;
        FOR member IN SELECT key, value FROM jsonb_each(COALESCE(OLD.users, '{}'::jsonb)) LOOP
-         IF member.value->>'group' IN ('owner', 'collaborator')
-            AND COALESCE(NEW.users->member.key->>'group', '') NOT IN ('owner', 'collaborator') THEN
+         IF COALESCE(member.value->>'group', member.value#>>'{}') IN ('owner', 'collaborator')
+            AND COALESCE(NEW.users->member.key->>'group', (NEW.users->member.key)#>>'{}', '') NOT IN ('owner', 'collaborator') THEN
            NEW.api_key_membership_revocations := jsonb_set(
              COALESCE(NEW.api_key_membership_revocations, '{}'::jsonb),
              ARRAY[member.key],
@@ -89,9 +91,10 @@ export async function projectRuntimeAuthorityRevisionSchemaNeedsSync(
 ): Promise<boolean> {
   if (!(await triggerExists(db))) return true;
   const { rows } = await db.query<{ current: boolean }>(
-    `SELECT position('NEW.api_key_membership_revocations' IN
+    `SELECT position($1 IN
        pg_get_functiondef('projects_bump_runtime_authority_revision()'::regprocedure)) > 0
        AND to_regclass('projects_api_key_membership_pending_idx') IS NOT NULL AS current`,
+    [MEMBERSHIP_CONTRACT],
   );
   return rows[0]?.current !== true;
 }

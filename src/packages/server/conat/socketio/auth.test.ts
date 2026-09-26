@@ -119,6 +119,10 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
   getRememberMeHashFromCookieValue: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
+  assertApiKeyProjectMembership: jest.fn(async () => undefined),
+}));
+
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
   hasProjectCollaboratorAccessAllowRemote: jest.fn(),
@@ -1060,6 +1064,36 @@ describe("test isAllowed for subjects special to accounts (similar to projects)"
 });
 
 describe("test isAllowed for collaboration -- this is the most nontrivial one", () => {
+  it("denies an API key's project subject when delegation was revoked despite current membership", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const { assertApiKeyProjectMembership } = jest.requireMock(
+      "@cocalc/server/api/project-membership-revocation",
+    );
+    assertApiKeyProjectMembership.mockRejectedValueOnce(
+      Error("membership loss"),
+    );
+    const user = {
+      account_id,
+      auth_method: "api_key",
+      key_id: "key-12345",
+      scope_revision: 1,
+      capabilities: ["project:exec"],
+      allowed_project_ids: [project_id],
+    };
+    expect(
+      await isAllowed({
+        user,
+        subject: `project.${project_id}.foo`,
+        type: "pub",
+      }),
+    ).toBe(false);
+    expect(assertApiKeyProjectMembership).toHaveBeenCalledWith(
+      { account_id, key_id: "key-12345", scope_revision: 1 },
+      project_id,
+    );
+  });
   it("verifies an account can access a project it collaborates on", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,

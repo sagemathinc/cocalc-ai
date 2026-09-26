@@ -67,6 +67,7 @@ import {
 } from "@cocalc/server/api/api-key-scope";
 import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
+import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
@@ -951,10 +952,24 @@ async function isApiKeyAllowed({
     });
     return false;
   }
-  const allowed = await hasProjectCollaboratorAccessAllowRemote({
+  let allowed = await hasProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id,
   });
+  if (allowed) {
+    try {
+      await assertApiKeyProjectMembership(
+        {
+          account_id,
+          key_id: user.key_id,
+          scope_revision: user.scope_revision,
+        },
+        project_id,
+      );
+    } catch {
+      allowed = false;
+    }
+  }
   if (!allowed) {
     recordConatApiKeyDenial({
       user,

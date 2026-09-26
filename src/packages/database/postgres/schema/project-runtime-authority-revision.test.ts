@@ -127,6 +127,28 @@ describe("project runtime authority revision", () => {
       await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
     }
   });
+  it("captures losses from legacy string-valued collaborator roles", async () => {
+    const pool = getPool();
+    const projectId = uuid(),
+      memberId = uuid();
+    await pool.query(
+      "INSERT INTO projects(project_id,users) VALUES($1,$2::jsonb)",
+      [projectId, JSON.stringify({ [memberId]: "collaborator" })],
+    );
+    try {
+      await pool.query(
+        "UPDATE projects SET users=$2::jsonb WHERE project_id=$1",
+        [projectId, JSON.stringify({ [memberId]: "viewer" })],
+      );
+      const { rows } = await pool.query(
+        "SELECT api_key_membership_revocations AS barriers FROM projects WHERE project_id=$1",
+        [projectId],
+      );
+      expect(rows[0].barriers[memberId].pending).toBe(true);
+    } finally {
+      await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
+    }
+  });
 
   it("detects and upgrades the older trigger function without removing the trigger", async () => {
     const pool = getPool();
