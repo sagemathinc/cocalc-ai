@@ -1,5 +1,6 @@
 import {
   automationAcp,
+  controlAcp,
   forkAcpSession,
   interruptAcp,
   steerAcp,
@@ -8,6 +9,36 @@ import {
 } from "./client";
 
 describe("acp client explicit routing", () => {
+  it("routes native harness copies through project control with startup time and no retry", async () => {
+    const request = {
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      path: "a.chat",
+      thread_id: "source",
+      user_message_id: "source",
+      action: "fork_harness_v1" as const,
+      expected_session_id: "native-source",
+    };
+    const client = {
+      request: jest
+        .fn()
+        .mockResolvedValue({
+          data: { ok: true, forked_session_id: "native-copy" },
+        }),
+    };
+    expect(await controlAcp(request, client as any)).toEqual({
+      ok: true,
+      forked_session_id: "native-copy",
+    });
+    expect(client.request).toHaveBeenCalledWith(
+      expect.stringMatching(/control$/),
+      request,
+      { timeout: 120_000 },
+    );
+    client.request.mockRejectedValueOnce(Error("timeout"));
+    await expect(controlAcp(request, client as any)).rejects.toThrow("timeout");
+    expect(client.request).toHaveBeenCalledTimes(2);
+  });
   it("routes harness requests to a versioned subject with no native fallback", async () => {
     const request: any = {
       project_id: "00000000-0000-4000-8000-000000000000",

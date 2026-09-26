@@ -312,6 +312,40 @@ export class AcpHarnessClient {
     return harnessSessionControls(this.session ?? {});
   }
 
+  /** Clone persisted native context without loading it or starting inference. */
+  async fork(sessionId: string): Promise<{ sessionId: string }> {
+    if (this.session || this.active || this.opening || this.disposed)
+      throw new HarnessError("unavailable", "ACP fork requires a fresh client");
+    if (!this.info.agentCapabilities?.sessionCapabilities?.fork)
+      throw new HarnessError(
+        "unsupported",
+        "This harness does not support copying session context",
+      );
+    if (!sessionId.trim()) throw Error("Missing source session ID");
+    this.opening = true;
+    try {
+      const result = await this.request(
+        this.connection.unstable_forkSession({
+          sessionId,
+          cwd:
+            this.sessionPolicy === "claude-subscription-controller"
+              ? "/workspace"
+              : this.binding.profile.cwd,
+        }),
+        false,
+        true,
+      );
+      if (!result.sessionId?.trim() || result.sessionId === sessionId)
+        throw new HarnessError(
+          "rejected",
+          "Harness did not return an independent copied session",
+        );
+      return { sessionId: result.sessionId };
+    } finally {
+      this.opening = false;
+    }
+  }
+
   /** Apply the admitted choices while idle; never mutate an in-flight turn. */
   async configure(settings: HarnessSessionSettings): Promise<void> {
     if (
@@ -406,7 +440,11 @@ export class AcpHarnessClient {
     void this.dispose().catch(() => {});
   }
 
-  private async request<T>(operation: Promise<T>, prompt = false): Promise<T> {
+  private async request<T>(
+    operation: Promise<T>,
+    prompt = false,
+    mutation = false,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closed = this.connection.closed.then(() => {
       throw Error("ACP connection closed");
@@ -438,14 +476,16 @@ export class AcpHarnessClient {
       throw new HarnessError(
         protocolRejection
           ? "rejected"
-          : prompt
+          : prompt || mutation
             ? "outcome_unknown"
             : "unavailable",
         protocolRejection
           ? "Harness rejected the ACP request; check its project configuration"
-          : prompt
-            ? "ACP delivery or completion is uncertain; do not automatically resend this turn"
-            : "ACP runtime unavailable or setup timed out",
+          : mutation
+            ? "ACP copy outcome is uncertain; do not automatically retry"
+            : prompt
+              ? "ACP delivery or completion is uncertain; do not automatically resend this turn"
+              : "ACP runtime unavailable or setup timed out",
       );
     } finally {
       if (timer) clearTimeout(timer);

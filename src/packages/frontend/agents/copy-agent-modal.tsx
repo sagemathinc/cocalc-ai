@@ -38,7 +38,7 @@ export function CopyAgentModal({
     >
       <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         <Typography.Text>
-          Copy the Codex context into a new named agent linked to this
+          Copy the agent context into a new named agent linked to this
           conversation. Project, working directory, model, reasoning, and
           payment source are preserved. The description starts blank.
         </Typography.Text>

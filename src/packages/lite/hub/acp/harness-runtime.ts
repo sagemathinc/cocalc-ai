@@ -57,6 +57,65 @@ export function setHarnessAuthorityValidator(
 
 /** A temporary session for controls only; never load or mutate a chat session. */
 export async function discoverHarnessControls(request: AcpRequest) {
+  return await withTemporaryHarness(request, async (client, prepared) => {
+    await client.open();
+    await client.configure(prepared.runtime!.settings ?? {});
+    return { profile: prepared.runtime!.profile, controls: client.controls };
+  });
+}
+
+export async function forkHarnessSession(request: AcpRequest) {
+  if (!request.session_id)
+    throw Error("This agent has no saved context to copy yet");
+  return await withTemporaryHarness(
+    request,
+    async (client, prepared) => {
+      await authorityValidator?.({
+        projectId: prepared.project_id,
+        accountId: prepared.account_id,
+        profile: prepared.runtime!.profile,
+        credential: prepared.harness_credential!,
+      });
+      return await client.fork(request.session_id!);
+    },
+    true,
+  );
+}
+
+/** Bind a copy to the authoritative saved thread, never a caller-selected ID. */
+export function harnessForkSource({
+  runtime,
+  sessionId,
+  expectedRuntime,
+  expectedSessionId,
+}: {
+  runtime: unknown;
+  sessionId: unknown;
+  expectedRuntime?: AcpRequest["runtime"];
+  expectedSessionId?: string;
+}) {
+  if (runtime == null) throw Error("This thread has no ACP harness");
+  assertConfiguredHarnessRuntime({ runtime: expectedRuntime }, runtime);
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId.trim() ||
+    sessionId !== expectedSessionId
+  )
+    throw Error(
+      "The agent context changed or is not saved yet; reload before copying",
+    );
+  return { runtime: parseAcpHarnessRuntime(runtime), sessionId };
+}
+
+/** Share bounded admission and project-stop draining with capability discovery. */
+async function withTemporaryHarness<T>(
+  request: AcpRequest,
+  operation: (
+    client: import("@cocalc/ai/acp/harness").AcpHarnessClient,
+    prepared: AcpRequest,
+  ) => Promise<T>,
+  fork = false,
+): Promise<T> {
   if (discoveryPauses.has(request.project_id))
     throw Error("ACP discovery is unavailable while the project is stopping");
   const prepared = prepareHarnessRequest(request);
@@ -79,25 +138,30 @@ export async function discoverHarnessControls(request: AcpRequest) {
       path: prepared.chat!.path,
       threadId: prepared.chat!.thread_id!,
     };
+    const binding: HarnessBinding = {
+      projectId: prepared.project_id,
+      accountId: prepared.account_id,
+      profile: prepared.runtime.profile,
+      credential: prepared.harness_credential!,
+    };
+    if (fork) await authorityValidator?.(binding);
     const client = await AcpHarnessClient.start(
-      {
-        projectId: prepared.project_id,
-        accountId: prepared.account_id,
-        profile: prepared.runtime.profile,
-        credential: prepared.harness_credential!,
-      },
+      binding,
       (binding) => factory(binding, conversation),
+      30_000,
+      undefined,
+      fork && prepared.harness_credential?.mode === "account-subscription"
+        ? "claude-subscription-controller"
+        : "default",
     );
-    let controls: typeof client.controls;
+    let result: T;
     try {
-      await client.open();
-      await client.configure(prepared.runtime.settings ?? {});
-      controls = client.controls;
+      result = await operation(client, prepared);
     } catch (error) {
       return await disposeFailedHarness(error, () => client.dispose());
     }
     await client.dispose();
-    return { profile: prepared.runtime.profile, controls };
+    return result;
   } finally {
     discovering.delete(key);
     finished();

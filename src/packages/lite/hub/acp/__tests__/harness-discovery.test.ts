@@ -1,8 +1,10 @@
 import {
   discoverHarnessControls,
+  forkHarnessSession,
   drainHarnessDiscovery,
   pauseHarnessDiscovery,
   setHarnessLauncher,
+  setHarnessAuthorityValidator,
 } from "../harness-runtime";
 import { AcpHarnessClient, disposeFailedHarness } from "@cocalc/ai/acp/harness";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
@@ -43,6 +45,7 @@ beforeEach(() => {
   process.env.COCALC_ACP_HARNESSES = "1";
   client = {
     open: jest.fn(),
+    fork: jest.fn().mockResolvedValue({ sessionId: "copy" }),
     configure: jest.fn(),
     dispose: jest.fn(),
     prompt: jest.fn(),
@@ -65,6 +68,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   setHarnessLauncher();
+  setHarnessAuthorityValidator();
   if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
   else process.env.COCALC_ACP_HARNESSES = original;
   jest.clearAllMocks();
@@ -92,6 +96,67 @@ test("discovery opens a temporary session without a prompt or existing session I
   expect(client.configure).toHaveBeenCalledWith({ modeId: "code" });
   expect(client.prompt).not.toHaveBeenCalled();
   expect(client.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("fork clones native context without loading or configuring the source", async () => {
+  expect(await forkHarnessSession(request)).toEqual({ sessionId: "copy" });
+  expect(client.fork).toHaveBeenCalledWith(request.session_id);
+  expect(client.open).not.toHaveBeenCalled();
+  expect(client.configure).not.toHaveBeenCalled();
+  expect(client.prompt).not.toHaveBeenCalled();
+  expect(client.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("fork requires a source and shares project-stop admission fencing", async () => {
+  await expect(
+    forkHarnessSession({ ...request, session_id: undefined }),
+  ).rejects.toThrow("no saved context");
+  const resume = pauseHarnessDiscovery(request.project_id);
+  try {
+    await expect(forkHarnessSession(request)).rejects.toThrow("stopping");
+    expect(launch).not.toHaveBeenCalled();
+  } finally {
+    resume();
+  }
+});
+
+test("failed forks clean up without falling back to an empty session", async () => {
+  client.fork.mockRejectedValueOnce(Error("unsupported"));
+  await expect(forkHarnessSession(request)).rejects.toThrow("unsupported");
+  expect(client.dispose).toHaveBeenCalledTimes(1);
+  expect(client.open).not.toHaveBeenCalled();
+  expect(client.prompt).not.toHaveBeenCalled();
+});
+
+test("revoked fork authority never launches a controller", async () => {
+  setHarnessAuthorityValidator(async () => {
+    throw Error("revoked");
+  });
+  await expect(forkHarnessSession(request)).rejects.toThrow("revoked");
+  expect(launch).not.toHaveBeenCalled();
+  expect(client.fork).not.toHaveBeenCalled();
+});
+
+test("forks stay in the discovery drain until cleanup finishes", async () => {
+  let release!: () => void;
+  client.fork.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve({ sessionId: "copy" });
+      }),
+  );
+  const first = forkHarnessSession(request);
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  let drained = false;
+  const drain = drainHarnessDiscovery(request.project_id).then(() => {
+    drained = true;
+  });
+  expect(drained).toBe(false);
+  await expect(forkHarnessSession(request)).rejects.toThrow("busy");
+  release();
+  await first;
+  await drain;
+  expect(drained).toBe(true);
 });
 
 test.each(["account-api-key", "account-subscription"] as const)(
@@ -126,6 +191,32 @@ test.each(["account-api-key", "account-subscription"] as const)(
     );
     expect(client.prompt).not.toHaveBeenCalled();
     expect(client.dispose).toHaveBeenCalledTimes(1);
+    await forkHarnessSession({
+      ...request,
+      harness_credential: credential,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: CLAUDE_CODE_QUALIFICATION.package.version,
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    });
+    expect(AcpHarnessClient.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({ credential }),
+      expect.any(Function),
+      30_000,
+      undefined,
+      mode === "account-subscription"
+        ? "claude-subscription-controller"
+        : "default",
+    );
   },
 );
 

@@ -324,6 +324,8 @@ import {
   harnessRuntimeKey,
   createHarnessAgent,
   discoverHarnessControls,
+  forkHarnessSession,
+  harnessForkSource,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -12085,6 +12087,45 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "fork_harness_v1") {
+    if (
+      hasRunningAcpJobForThread({ project_id, path, thread_id }) ||
+      listRunningAcpTurnLeases().some(
+        (turn) =>
+          turn.project_id === project_id &&
+          turn.path === path &&
+          turn.thread_id === thread_id,
+      )
+    )
+      throw Error(
+        "Wait for this agent's running turn to finish before copying it",
+      );
+    const source = await withChatSyncDB({
+      client,
+      project_id,
+      path,
+      fn: async (syncdb) => {
+        const row = preferredThreadConfigRow(syncdb, thread_id);
+        const value: any = syncdbField(row, "agent_runtime");
+        return harnessForkSource({
+          runtime: value?.toJS?.() ?? value,
+          sessionId: syncdbField(row, "agent_session_id"),
+          expectedRuntime: request.expected_runtime,
+          expectedSessionId: request.expected_session_id,
+        });
+      },
+    });
+    const result = await forkHarnessSession({
+      project_id,
+      account_id: request.account_id,
+      runtime: source.runtime,
+      session_id: source.sessionId,
+      harness_credential: request.harness_credential,
+      prompt: "",
+      chat: { project_id, path, thread_id },
+    } as AcpRequest);
+    return { ok: true, forked_session_id: result.sessionId };
+  }
   if (request.action === "discover_harness_v1") {
     const runtime = await withChatSyncDB({
       client,

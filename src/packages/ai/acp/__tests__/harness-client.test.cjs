@@ -1878,6 +1878,52 @@ test("qualified Claude negotiates concrete values on new and resumed sessions an
   }
 });
 
+test("native session forks negotiate support, preserve the source and never load or prompt", async (t) => {
+  for (const [flags, policy, code] of [
+    [["--fork"], "default", undefined],
+    [
+      ["--fork", "--claude-adapter"],
+      "claude-subscription-controller",
+      undefined,
+    ],
+    [[], "default", "unsupported"],
+    [["--fork", "--fork-same-id"], "default", "rejected"],
+    [["--fork", "--fork-reject"], "default", "rejected"],
+    [["--fork", "--fork-hang"], "default", "outcome_unknown"],
+  ]) {
+    const child = spawn(process.execPath, [...profile.args, ...flags], {
+      env: {},
+      stdio: "pipe",
+    });
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      { projectId: "project", accountId: "account", profile },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+      1500,
+      undefined,
+      policy,
+    );
+    t.after(() => client.dispose());
+    if (code) await assert.rejects(client.fork("source-session"), { code });
+    else {
+      assert.deepEqual(await client.fork("source-session"), {
+        sessionId: "forked-fixture-session",
+      });
+      assert.equal(client.sessionId, undefined);
+    }
+    await client.dispose();
+  }
+});
+
 test("qualified profiles accept only pinned catalog identity", () => {
   const qualified = {
     version: 2,

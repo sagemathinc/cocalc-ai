@@ -79,24 +79,27 @@ describe("ACP server subject identity binding", () => {
     ).toThrow("account_id does not match subject");
   });
 
-  it("binds harness discovery to the control subject principal and project", () => {
-    const options: any = { action: "discover_harness_v1" };
-    const controlSubject = subject.replace(/api$/, "control");
-    __test__.bindOptionsToSubject(options, controlSubject, "control");
-    expect(options).toMatchObject({ account_id, project_id });
-    for (const override of [
-      { account_id: other_account_id },
-      { project_id: other_project_id },
-    ]) {
-      expect(() =>
-        __test__.bindOptionsToSubject(
-          { ...options, ...override },
-          controlSubject,
-          "control",
-        ),
-      ).toThrow(/does not match subject/);
-    }
-  });
+  it.each(["discover_harness_v1", "fork_harness_v1"])(
+    "binds %s to the control subject principal and project",
+    (action) => {
+      const options: any = { action };
+      const controlSubject = subject.replace(/api$/, "control");
+      __test__.bindOptionsToSubject(options, controlSubject, "control");
+      expect(options).toMatchObject({ account_id, project_id });
+      for (const override of [
+        { account_id: other_account_id },
+        { project_id: other_project_id },
+      ]) {
+        expect(() =>
+          __test__.bindOptionsToSubject(
+            { ...options, ...override },
+            controlSubject,
+            "control",
+          ),
+        ).toThrow(/does not match subject/);
+      }
+    },
+  );
 
   it("rejects payload project mismatches", () => {
     expect(() =>

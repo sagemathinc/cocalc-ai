@@ -102,6 +102,10 @@ import {
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processAI as processAIExternal } from "./actions/ai";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "./harness-credential-selection";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { parseHarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
@@ -3059,6 +3063,8 @@ export class ChatActions extends Actions<ChatState> {
     if (!this.syncdb || !this.store) {
       throw new Error("Chat actions are not initialized");
     }
+    const projectId = this.store.get("project_id");
+    if (!projectId) throw Error("Missing project id for agent copy");
     const sourceThreadId = this.normalizeThreadId(threadKey);
     if (!sourceThreadId) {
       throw new Error("Invalid thread id");
@@ -3066,6 +3072,18 @@ export class ChatActions extends Actions<ChatState> {
     const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
       threadId: sourceThreadId,
     });
+    const sourceRuntime =
+      sourceMetadata.agent_runtime == null
+        ? undefined
+        : parseAcpHarnessRuntime(sourceMetadata.agent_runtime);
+    const harnessCredential =
+      sourceRuntime?.profile.id === "claude-code"
+        ? readHarnessCredentialSelection({
+            accountId: this.redux.getStore("account").get_account_id(),
+            projectId: this.store.get("project_id"),
+            threadKey: sourceThreadId,
+          })
+        : undefined;
     const threadMessages = this.getMessagesInThread(sourceThreadId) ?? [];
     const rootMessage =
       threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
@@ -3081,8 +3099,9 @@ export class ChatActions extends Actions<ChatState> {
       toISOString(latestMessage ? dateValue(latestMessage) : undefined) ??
       toISOString(sourceMetadata.latest_chat_date_ms);
 
-    const sourceConfig =
-      sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
+    const sourceConfig = sourceRuntime
+      ? undefined
+      : (sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId));
     const inferredSourceSessionId = (() => {
       for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
         if (isAcpAutomationMessage(threadMessages[i])) continue;
@@ -3096,7 +3115,31 @@ export class ChatActions extends Actions<ChatState> {
     const shouldForkAcp =
       isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
-    if (shouldForkAcp) {
+    let forkedHarnessSessionId: string | undefined;
+    if (sourceRuntime) {
+      const sessionId =
+        sourceMetadata.agent_session_id ?? inferredSourceSessionId;
+      if (!sessionId)
+        throw Error("This agent has no saved context to copy yet");
+      await this.syncdb.save();
+      const result = await webapp_client.conat_client.controlAcp({
+        project_id: this.store.get("project_id"),
+        path: this.store.get("path"),
+        thread_id: sourceThreadId,
+        user_message_id: sourceThreadId,
+        action: "fork_harness_v1",
+        expected_session_id: sessionId,
+        expected_runtime: sourceRuntime,
+        harness_credential: harnessCredential,
+      });
+      if (
+        !result.ok ||
+        !result.forked_session_id ||
+        result.forked_session_id === sessionId
+      )
+        throw Error("The harness did not return an independent copied session");
+      forkedHarnessSessionId = result.forked_session_id;
+    } else if (shouldForkAcp) {
       const sourceSessionId = normalizeCodexSessionId(sourceConfig?.sessionId);
       const config =
         !sourceSessionId && inferredSourceSessionId
@@ -3117,7 +3160,7 @@ export class ChatActions extends Actions<ChatState> {
         nextConfig = { ...config };
       }
     }
-    if (nextConfig && !nextConfig.model) {
+    if (nextConfig && !sourceRuntime && !nextConfig.model) {
       nextConfig.model = DEFAULT_CODEX_MODEL_NAME;
     }
 
@@ -3178,6 +3221,15 @@ export class ChatActions extends Actions<ChatState> {
           ? "interactive"
           : (sourceMetadata.agent_mode ?? (isAI ? "interactive" : null)),
       acp_config: nextConfig ?? null,
+      ...(sourceRuntime
+        ? {
+            agent_runtime: sourceRuntime,
+            agent_session_id: forkedHarnessSessionId,
+            agent_runtime_controls:
+              sourceMetadata.agent_runtime_controls ?? null,
+            agent_model: sourceMetadata.agent_model ?? null,
+          }
+        : {}),
     };
     if (
       !this.setThreadConfigRecord(newThreadId, configPatch, {
@@ -3190,7 +3242,14 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     void this.saveSyncdb();
 
-    if (shouldForkAcp) {
+    if (sourceRuntime && harnessCredential) {
+      writeHarnessCredentialSelection({
+        accountId: sender_id,
+        projectId,
+        threadKey: newThreadId,
+        credential: harnessCredential,
+      });
+    } else if (!sourceRuntime && shouldForkAcp) {
       const projectId = this.store.get("project_id");
       const credentialId =
         readCodexSubscriptionSelection({

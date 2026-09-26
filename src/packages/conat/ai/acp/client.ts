@@ -239,7 +239,9 @@ export async function controlAcp(
   });
   const cn = requireExplicitConatClient(client);
   const resp = await cn.request(subject, request, {
-    timeout: request.action === "discover_harness_v1" ? 120_000 : 30_000,
+    timeout: ["discover_harness_v1", "fork_harness_v1"].includes(request.action)
+      ? 120_000
+      : 30_000,
   });
   const error = resp?.data?.error;
   if (error) {

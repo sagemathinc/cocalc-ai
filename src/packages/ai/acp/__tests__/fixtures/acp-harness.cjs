@@ -127,11 +127,30 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         },
         agentCapabilities: {
           loadSession: !process.argv.includes("--no-resume"),
+          ...(process.argv.includes("--fork")
+            ? { sessionCapabilities: { fork: {} } }
+            : {}),
         },
         ...(process.argv.includes("--steering")
           ? { _meta: { steering: { supported: true } } }
           : {}),
         authMethods: [],
+      });
+    case "session/fork":
+      if (process.argv.includes("--fork-hang")) return;
+      if (process.argv.includes("--fork-reject"))
+        return send({
+          id: message.id,
+          error: { code: -32602, message: "no source transcript" },
+        });
+      require("node:assert/strict").equal(
+        message.params.cwd,
+        process.argv.includes("--claude-adapter") ? "/workspace" : "/tmp",
+      );
+      return result(message.id, {
+        sessionId: process.argv.includes("--fork-same-id")
+          ? message.params.sessionId
+          : "forked-fixture-session",
       });
     case "session/new":
     case "session/load":

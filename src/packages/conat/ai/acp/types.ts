@@ -247,7 +247,11 @@ export type AcpControlRequest =
         | "resend_with_payment"
         | "resend_with_model"
         | "prepare_fresh_conversation"
-        | "discover_harness_v1";
+        | "discover_harness_v1"
+        | "fork_harness_v1";
+      // Reject a copy if the source context changed since the UI read it.
+      expected_session_id?: string;
+      expected_runtime?: AcpHarnessRuntime;
       // Account-local selection for capability discovery, never shared chat metadata.
       harness_credential?: AcpHarnessCredential;
       // Only for retrying a confirmed ChatGPT model-unavailable rejection.
@@ -261,6 +265,7 @@ export type AcpControlRequest =
 
 export type AcpControlResponse = {
   ok: boolean;
+  forked_session_id?: string;
   harness?: {
     profile: AcpHarnessRuntime["profile"];
     controls: HarnessSessionControls;

@@ -7,6 +7,7 @@ import {
   harnessRuntimeKey,
   harnessProfileKey,
   assertConfiguredHarnessRuntime,
+  harnessForkSource,
 } from "../harness-runtime";
 import {
   pinCodexCredentialAtAdmission,
@@ -70,6 +71,31 @@ function claudeRequest(): AcpRequest {
   return value;
 }
 const original = process.env.COCALC_ACP_HARNESSES;
+
+test("fork source must match the saved native ID and complete runtime snapshot", () => {
+  const runtime = claudeRequest().runtime;
+  const source = {
+    runtime,
+    sessionId: "source",
+    expectedRuntime: runtime,
+    expectedSessionId: "source",
+  };
+  expect(harnessForkSource(source)).toEqual({ runtime, sessionId: "source" });
+  for (const patch of [
+    { runtime: undefined },
+    { sessionId: undefined },
+    { sessionId: "different" },
+    { expectedSessionId: undefined },
+    { expectedRuntime: undefined },
+    {
+      expectedRuntime: {
+        ...runtime!,
+        settings: { configOptions: [{ id: "effort", value: "high" }] },
+      },
+    },
+  ])
+    expect(() => harnessForkSource({ ...source, ...patch })).toThrow();
+});
 // SQLite table modules initialize once per process; share one isolated database.
 beforeAll(() => initAcpDatabase({ filename: ":memory:" }));
 afterAll(() => closeAcpDatabase());
