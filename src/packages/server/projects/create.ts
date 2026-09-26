@@ -25,7 +25,7 @@ import {
   assertCanIncreaseAccountStorage,
   assertCanOwnAdditionalProject,
 } from "@cocalc/server/membership/project-limits";
-import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import { assertClusterAccountTrustedForProductAccess } from "@cocalc/server/inter-bay/accounts";
 import { assertCanSelectProjectRootfsImage } from "@cocalc/server/membership/rootfs-limits";
 import {
   cloneProjectRootfsStates,
@@ -44,6 +44,7 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
 import {
   ensurePlacement,
+  selectActiveHost,
   takeStartProjectPhaseTimings,
 } from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
@@ -251,19 +252,52 @@ function isRemoteHostRunningAndOnline(row: {
 export async function createProjectWithInternalProjectId(
   opts: CreateProjectOptions & { project_id: string },
 ) {
-  return await createProjectImpl(opts, { allowExplicitProjectId: true });
+  return (await createProjectImpl(opts, { allowExplicitProjectId: true }))
+    .project_id;
 }
 
 export default async function createProject(opts: CreateProjectOptions) {
-  return await createProjectImpl(opts, { allowExplicitProjectId: false });
+  return (await createProjectImpl(opts, { allowExplicitProjectId: false }))
+    .project_id;
 }
 
 export async function createProjectWithBootstrap(
   opts: CreateProjectOptions,
 ): Promise<CreatedProjectBootstrap> {
-  const project_id = await createProjectImpl(opts, {
+  const result = await createProjectImpl(opts, {
     allowExplicitProjectId: false,
   });
+  return await createdProjectBootstrap(opts, result);
+}
+
+// Only the authenticated inter-bay service calls this entrypoint. The origin
+// allocates the ID once; the destination must still authorize creation and
+// verify that it owns the selected host, without forwarding again.
+export async function createProjectOnOwningBay(
+  opts: CreateProjectOptions & {
+    project_id: string;
+    host_id: string;
+    account_id: string;
+  },
+): Promise<CreatedProjectBootstrap> {
+  if (!opts.account_id || !opts.host_id || !opts.project_id) {
+    throw Error("account_id, host_id and project_id are required");
+  }
+  const result = await createProjectImpl(opts, {
+    allowExplicitProjectId: true,
+    requireLocalHost: true,
+  });
+  return await createdProjectBootstrap(opts, result);
+}
+
+async function createdProjectBootstrap(
+  opts: CreateProjectOptions,
+  {
+    project_id,
+    remote,
+  }: { project_id: string; remote?: CreatedProjectBootstrap },
+): Promise<CreatedProjectBootstrap> {
+  if (remote) return remote;
   try {
     const payload = await loadProjectOutboxPayload({
       project_id,
@@ -323,10 +357,12 @@ async function createProjectImpl(
   opts: CreateProjectOptions,
   {
     allowExplicitProjectId,
+    requireLocalHost = false,
   }: {
     allowExplicitProjectId: boolean;
+    requireLocalHost?: boolean;
   },
-) {
+): Promise<{ project_id: string; remote?: CreatedProjectBootstrap }> {
   if (opts.account_id != null) {
     if (!isValidUUID(opts.account_id)) {
       throw Error("if account_id given, it must be a valid uuid v4");
@@ -354,7 +390,10 @@ async function createProjectImpl(
   }
   if (account_id) {
     await assertProjectCreationAllowed({ account_id });
-    await assertAccountTrustedForProductAccess(account_id, "create projects");
+    await assertClusterAccountTrustedForProductAccess({
+      account_id,
+      action: "create projects",
+    });
     if (opts.skip_project_count_limit !== true) {
       await assertCanOwnAdditionalProject({ account_id });
     }
@@ -625,21 +664,25 @@ async function createProjectImpl(
     });
   }
 
-  if (src_project_id) {
-    // Create filesystem for new project as a clone after RootFS policy
-    // validation. Route clone to the host that owns the source project.
-    const client = await getProjectFileServerClient({
-      project_id: src_project_id,
-    });
-    await client.clone({ project_id, src_project_id });
-  }
-
   const requestedRegion = parseR2Region(requested_region_raw);
   if (requested_region_raw && !requestedRegion) {
     throw Error("invalid region");
   }
 
   let hostRegion: string | undefined;
+  // Select compute before inserting metadata: a new project's owning bay is
+  // the host's bay, which need not be the caller's account home bay.
+  if (!host_id && account_id && !isWorkspaceProjectRuntime()) {
+    const selected = await selectActiveHost({
+      bay_id: projectOwningBayId,
+      account_id,
+      project_region: requestedRegion ?? undefined,
+      rootfs_image: projectRootfsImage,
+      allow_region_fallback: !requestedRegion,
+    });
+    if (!selected) throw Error("no running project-host available");
+    host_id = selected.id;
+  }
   if (host_id) {
     ({
       host_id,
@@ -652,6 +695,28 @@ async function createProjectImpl(
   const projectRegion = requestedRegion ?? hostRegion ?? DEFAULT_R2_REGION;
   if (requestedRegion && hostRegion && requestedRegion !== hostRegion) {
     throw Error("project region must match host region");
+  }
+  if (host_id && assignedHostBayId !== getConfiguredBayId()) {
+    if (requireLocalHost || src_project_id) {
+      throw Error(
+        "selected host is not in the project's owning bay; rehome the project first",
+      );
+    }
+    const remote = await getInterBayBridge()
+      .projectControl(assignedHostBayId, {
+        timeout_ms: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
+      })
+      .create({
+        source_bay_id: getConfiguredBayId(),
+        options: { ...opts, project_id, host_id, account_id: account_id! },
+      });
+    return { project_id: remote.project_id, remote };
+  }
+  if (src_project_id) {
+    const client = await getProjectFileServerClient({
+      project_id: src_project_id,
+    });
+    await client.clone({ project_id, src_project_id });
   }
   await assertBayAcceptsProjectOwnership(projectOwningBayId);
   const { course, users } = initialCourseConfiguration;
@@ -778,8 +843,7 @@ async function createProjectImpl(
     }
   }
 
-  // If this is a clone with a known host, register the project row on that host
-  // so it is visible in its local sqlite/changefeeds without starting it.
+  // Register on the owning bay's host before starting the project.
   if (host_id) {
     let lastErr: unknown;
     try {
@@ -795,23 +859,11 @@ async function createProjectImpl(
             // restart advances the durable fence and rejects this registration.
             runtime_lifecycle_revision: 0,
           };
-          if (assignedHostBayId !== getConfiguredBayId()) {
-            await getInterBayBridge()
-              .hostControl(assignedHostBayId, {
-                timeout_ms: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
-              })
-              .createProject({
-                account_id: account_id!,
-                host_id,
-                create: createOpts,
-              });
-          } else {
-            const client = await getRoutedHostControlClient({
-              host_id,
-              timeout: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
-            });
-            await client.createProject(createOpts);
-          }
+          const client = await getRoutedHostControlClient({
+            host_id,
+            timeout: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
+          });
+          await client.createProject(createOpts);
           lastErr = undefined;
           break;
         } catch (err) {
@@ -825,7 +877,7 @@ async function createProjectImpl(
         throw lastErr;
       }
     } catch (err) {
-      log.warn("createProject: failed to register clone on host", {
+      log.warn("createProject: failed to register project on host", {
         project_id,
         host_id,
         host_status: hostStatus ?? null,
@@ -880,7 +932,7 @@ async function createProjectImpl(
     startNewProject(project, project_id, account_id);
   }
 
-  return project_id;
+  return { project_id };
 }
 
 async function startNewProject(

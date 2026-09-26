@@ -9,6 +9,8 @@ import type {
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
+import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
+import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type {
   AccountFinancialHandoff,
@@ -2757,6 +2759,7 @@ export type ProjectLeaveOrDeleteProjectsResult = {
 };
 
 export type ProjectControlMethod =
+  | "create"
   | "check-start-admission"
   | "start"
   | "stop"
@@ -3288,6 +3291,14 @@ export interface InterBayDirectoryApi {
 }
 
 export interface InterBayProjectControlApi {
+  create: (opts: {
+    source_bay_id: string;
+    options: CreateProjectOptions & {
+      project_id: string;
+      host_id: string;
+      account_id: string;
+    };
+  }) => Promise<CreatedProjectBootstrap>;
   checkStartAdmission: (
     opts: ProjectControlStartRequest,
   ) => Promise<ProjectControlStartAdmission>;
@@ -6010,6 +6021,14 @@ export function createInterBayProjectControlClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayProjectControlApi {
+  const createClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "create" }),
+    transport: "request",
+    noRetry: true,
+  });
   const startClient = createServiceClient<
     Pick<InterBayProjectControlApi, "start">
   >({
@@ -6157,6 +6176,7 @@ export function createInterBayProjectControlClient({
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
+    create: async (opts) => await createClient.create(opts),
     backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
     getRootfsStates: async (opts) =>
@@ -6186,6 +6206,22 @@ export function createInterBayProjectControlClient({
         opts,
       ),
   };
+}
+
+export function createInterBayProjectControlCreateHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: Pick<InterBayProjectControlApi, "create">;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "create">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "create" }),
+    impl: { create: async (opts) => await impl.create(opts) },
+  });
 }
 
 export function createInterBayProjectControlHandler({

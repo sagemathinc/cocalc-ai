@@ -22,6 +22,8 @@ let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostControlCreateProjectMock: jest.Mock;
 let ensurePlacementMock: jest.Mock;
+let selectActiveHostMock: jest.Mock;
+let remoteCreateMock: jest.Mock;
 let copyProjectSecretsMock: jest.Mock;
 let initializeProjectRootfsStatesMock: jest.Mock;
 let cloneProjectRootfsStatesMock: jest.Mock;
@@ -99,6 +101,10 @@ jest.mock("@cocalc/server/bay-registry", () => ({
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: jest.fn(async () => false),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  assertClusterAccountTrustedForProductAccess: jest.fn(async () => undefined),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -187,6 +193,9 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
+    projectControl: jest.fn(() => ({
+      create: (...args: any[]) => remoteCreateMock(...args),
+    })),
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
     })),
@@ -205,6 +214,7 @@ jest.mock("@cocalc/server/project-backup", () => ({
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
   ensurePlacement: (...args: any[]) => ensurePlacementMock(...args),
+  selectActiveHost: (...args: any[]) => selectActiveHostMock(...args),
   takeStartProjectPhaseTimings: jest.fn(() => undefined),
 }));
 
@@ -270,6 +280,7 @@ describe("projects.createProject clone routing", () => {
     getUserHostTierMock = jest.fn(() => 0);
     getExplicitHostRoutedClientMock = jest.fn(async () => ({
       id: "mock-conat-client",
+      createProject: (...args: any[]) => hostControlCreateProjectMock(...args),
     }));
     appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
     publishProjectAccountFeedEventsBestEffortMock = jest.fn(
@@ -293,6 +304,14 @@ describe("projects.createProject clone routing", () => {
       state: { state: "stopped" },
     }));
     ensurePlacementMock = jest.fn(async () => ({ host_id: HOST_ID }));
+    selectActiveHostMock = jest.fn(async () => ({
+      id: HOST_ID,
+      bay_id: "bay-0",
+    }));
+    remoteCreateMock = jest.fn(async ({ options }) => ({
+      project_id: options.project_id,
+      project: { ...options, owning_bay_id: "bay-7" },
+    }));
     copyProjectSecretsMock = jest.fn(async () => ({
       copied: ["API_KEY"],
       conflicts: [],
@@ -373,7 +392,7 @@ describe("projects.createProject clone routing", () => {
               last_seen: new Date(),
               deleted: null,
               region: "us-west1",
-              bay_id: "bay-7",
+              bay_id: "bay-0",
               tier: 0,
               metadata: {
                 owner: ACCOUNT_ID,
@@ -436,6 +455,120 @@ describe("projects.createProject clone routing", () => {
     }));
   });
 
+  it("creates on the selected host's bay when the account bay has no hosts", async () => {
+    selectActiveHostMock.mockResolvedValue({ id: HOST_ID, bay_id: "bay-7" });
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
+    const { createProjectWithBootstrap } = await import("./create");
+    const result = await createProjectWithBootstrap({
+      account_id: ACCOUNT_ID,
+      title: "Remote onboarding",
+      start: false,
+    });
+
+    expect(selectActiveHostMock).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id: ACCOUNT_ID, bay_id: "bay-0" }),
+    );
+    expect(remoteCreateMock).toHaveBeenCalledTimes(1);
+    expect(remoteCreateMock).toHaveBeenCalledWith({
+      source_bay_id: "bay-0",
+      options: expect.objectContaining({
+        project_id: result.project_id,
+        host_id: HOST_ID,
+        account_id: ACCOUNT_ID,
+        title: "Remote onboarding",
+      }),
+    });
+    expect(result.project?.owning_bay_id).toBe("bay-7");
+    expect(poolConnectMock).not.toHaveBeenCalled();
+    expect(initializeProjectRootfsStatesMock).not.toHaveBeenCalled();
+    expect(hostControlCreateProjectMock).not.toHaveBeenCalled();
+    expect(appendProjectOutboxEventForProjectMock).not.toHaveBeenCalled();
+  });
+
+  it("does not create a local row when remote creation fails", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
+    remoteCreateMock.mockRejectedValue(
+      new Error("remote creation unavailable"),
+    );
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({ account_id: ACCOUNT_ID, start: false }),
+    ).rejects.toThrow("remote creation unavailable");
+    expect(remoteCreateMock).toHaveBeenCalledTimes(1);
+    expect(poolConnectMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects forwarded creation if the selected host belongs to another bay", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
+    const { createProjectOnOwningBay } = await import("./create");
+    await expect(
+      createProjectOnOwningBay({
+        account_id: ACCOUNT_ID,
+        project_id: SOURCE_PROJECT_ID,
+        host_id: HOST_ID,
+        start: false,
+      }),
+    ).rejects.toThrow("rehome the project first");
+    expect(remoteCreateMock).not.toHaveBeenCalled();
+    expect(poolConnectMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a forwarded project locally on the host's owning bay", async () => {
+    const { createProjectOnOwningBay } = await import("./create");
+    const result = await createProjectOnOwningBay({
+      account_id: ACCOUNT_ID,
+      project_id: SOURCE_PROJECT_ID,
+      host_id: HOST_ID,
+      start: false,
+    });
+    expect(result.project_id).toBe(SOURCE_PROJECT_ID);
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      sql.startsWith("INSERT INTO projects "),
+    );
+    expect(insert[1][7]).toBe(HOST_ID);
+    expect(insert[1][9]).toBe("bay-0");
+    expect(remoteCreateMock).not.toHaveBeenCalled();
+    const { assertClusterAccountTrustedForProductAccess } =
+      await import("@cocalc/server/inter-bay/accounts");
+    expect(assertClusterAccountTrustedForProductAccess).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "create projects",
+    });
+    expect(appendProjectOutboxEventForProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: SOURCE_PROJECT_ID,
+        default_bay_id: "bay-0",
+      }),
+    );
+  });
+
+  it("fails before insertion when there is no eligible host", async () => {
+    selectActiveHostMock.mockResolvedValue(undefined);
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({ account_id: ACCOUNT_ID, start: false }),
+    ).rejects.toThrow("no running project-host available");
+    expect(poolConnectMock).not.toHaveBeenCalled();
+    expect(remoteCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not forward creation when the remote host denies placement", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
+    hostConnectionGetMock.mockResolvedValue({
+      host_id: HOST_ID,
+      bay_id: "bay-7",
+      status: "running",
+      online: true,
+      can_place: false,
+    });
+    const createProject = (await import("./create")).default;
+    await expect(
+      createProject({ account_id: ACCOUNT_ID, host_id: HOST_ID }),
+    ).rejects.toThrow("not allowed to place a project on that host");
+    expect(remoteCreateMock).not.toHaveBeenCalled();
+    expect(poolConnectMock).not.toHaveBeenCalled();
+  });
+
   it("resolves a managed rootfs image id to the runtime image during project creation", async () => {
     const createProject = (await import("./create")).default;
 
@@ -456,16 +589,12 @@ describe("projects.createProject clone routing", () => {
       set_by_account_id: ACCOUNT_ID,
     });
     expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      host_id: HOST_ID,
-      create: {
-        project_id,
-        title: "Catalog image test",
-        users: { [ACCOUNT_ID]: { group: "owner" } },
-        image: CATALOG_ROOTFS_IMAGE,
-        start: false,
-        runtime_lifecycle_revision: 0,
-      },
+      project_id,
+      title: "Catalog image test",
+      users: { [ACCOUNT_ID]: { group: "owner" } },
+      image: CATALOG_ROOTFS_IMAGE,
+      start: false,
+      runtime_lifecycle_revision: 0,
     });
   });
 
@@ -510,13 +639,11 @@ describe("projects.createProject clone routing", () => {
     });
     expect(hostControlCreateProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({
-          project_id,
-          users: {
-            [ACCOUNT_ID]: { group: "owner" },
-            [COURSE_MANAGER_ACCOUNT_ID]: { group: "collaborator" },
-          },
-        }),
+        project_id,
+        users: {
+          [ACCOUNT_ID]: { group: "owner" },
+          [COURSE_MANAGER_ACCOUNT_ID]: { group: "collaborator" },
+        },
       }),
     );
   });
@@ -579,12 +706,8 @@ describe("projects.createProject clone routing", () => {
     });
     expect(hostControlCreateProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        account_id: ACCOUNT_ID,
-        host_id: HOST_ID,
-        create: expect.objectContaining({
-          project_id,
-          start: false,
-        }),
+        project_id,
+        start: false,
       }),
     );
   });
@@ -593,7 +716,11 @@ describe("projects.createProject clone routing", () => {
     process.env.COCALC_SETUP_PROFILE = "star";
     let insertedRootfsImage: string | null = null;
     let insertedRootfsImageId: string | null = null;
+    const defaultQuery = queryMock;
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return await defaultQuery(sql, params);
+      }
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
@@ -660,7 +787,9 @@ describe("projects.createProject clone routing", () => {
       image_id: STAR_ROOTFS_IMAGE_ID,
       set_by_account_id: ACCOUNT_ID,
     });
-    expect(ensurePlacementMock).toHaveBeenCalledWith(project_id, ACCOUNT_ID);
+    expect(selectActiveHostMock).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id: ACCOUNT_ID }),
+    );
   });
 
   it("keeps new workspace-runtime projects hostless", async () => {
@@ -1098,18 +1227,20 @@ describe("projects.createProject clone routing", () => {
       expect(typeof project_id).toBe("string");
       expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
       expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
-      expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
-        account_id: ACCOUNT_ID,
-        host_id: HOST_ID,
-        create: {
-          image: "cocalc.local/rootfs/base",
+      expect(remoteCreateMock).toHaveBeenCalledWith({
+        source_bay_id: "bay-0",
+        options: {
+          account_id: ACCOUNT_ID,
+          host_id: HOST_ID,
+          rootfs_image: "cocalc.local/rootfs/base",
           project_id,
           start: false,
-          runtime_lifecycle_revision: 0,
           title: "Remote host placement",
-          users: { [ACCOUNT_ID]: { group: "owner" } },
+          description: "",
         },
       });
+      expect(hostControlCreateProjectMock).not.toHaveBeenCalled();
+      expect(poolConnectMock).not.toHaveBeenCalled();
     },
   );
 });
