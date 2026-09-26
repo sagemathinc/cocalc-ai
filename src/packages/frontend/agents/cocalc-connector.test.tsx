@@ -91,6 +91,38 @@ test("a failed load exposes an alert and does not allow saving", async () => {
   ).toBeDisabled();
 });
 
+test.each([false, true])(
+  "keyboard cancellation restores focus without saving (composer=%s)",
+  async (composer) => {
+    const user = userEvent.setup();
+    render(<CocalcConnector agent={agent} composer={composer} />);
+    const trigger = screen.getByRole("button", {
+      name: composer ? "CoCalc connector" : "CoCalc access",
+    });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "CoCalc access for @builder",
+    });
+    const toggle = await within(dialog).findByRole("switch", {
+      name: "Enable CoCalc access",
+    });
+    toggle.focus();
+    await user.keyboard(" ");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(dialog).not.toBeVisible());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Enable CoCalc access" }),
+      ).toHaveAttribute("aria-checked", "false"),
+    );
+  },
+);
+
 test("composer entry opens the same access settings and user guide", async () => {
   const user = userEvent.setup();
   render(<CocalcConnector agent={agent} composer />);
