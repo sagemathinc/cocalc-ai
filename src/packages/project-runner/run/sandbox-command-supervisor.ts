@@ -36,7 +36,8 @@ child.once("exit", (code) => {
   let background = false;
   if (!stopped) {
     try { process.kill(-child.pid, 0); background = true; }
-    catch (error) { if (error.code !== "ESRCH") throw error; }
+    // This is only a diagnostic probe. Unknown membership must not skip kill().
+    catch {}
   }
   kill();
   if (background) require("node:fs").writeSync(2,

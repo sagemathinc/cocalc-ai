@@ -4666,6 +4666,23 @@ def alive(pid, start):
     except (FileNotFoundError, ProcessLookupError):
         return False
 
+class BackgroundWarningTracker:
+    # The in-project supervisor may already have warned before killing its
+    # process group. Only deduplicate diagnostics; never affect cgroup cleanup.
+    note = (b"Background processes were terminated when the command exited; "
+            b"use cocalc project terminal spawn for persistent services.\n")
+
+    def __init__(self):
+        self.seen = False
+        self.tail = b""
+
+    def observe(self, stream, chunk):
+        if stream != "stderr" or self.seen:
+            return
+        text = self.tail + chunk
+        self.seen = self.note in text
+        self.tail = b"" if self.seen else text[-(len(self.note) - 1):]
+
 def live_scope_processes(scope):
     # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
     try:
@@ -4900,6 +4917,7 @@ def supervise(project, job, owner, timeout_ms):
     pipes = []
     sel = selectors.DefaultSelector()
     pending = bytearray()
+    background_warning = BackgroundWarningTracker()
     stopped = False
     result = 1
     def stop(*_):
@@ -4915,6 +4933,10 @@ def supervise(project, job, owner, timeout_ms):
                 del pending[:os.write(1, pending)]
             except BlockingIOError:
                 pass
+    def emit_output(stream, chunk):
+        background_warning.observe(stream, chunk)
+        emit({"type": "output", "stream": stream,
+              "data": base64.b64encode(chunk).decode("ascii")})
     os.set_blocking(1, False)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
@@ -4962,8 +4984,7 @@ def supervise(project, job, owner, timeout_ms):
                         stopped = True
                     last_lease = time.monotonic()
                 elif chunk:
-                    emit({"type": "output", "stream": key.data,
-                          "data": base64.b64encode(chunk).decode("ascii")})
+                    emit_output(key.data, chunk)
                 else:
                     sel.unregister(key.fd)
             flush()
@@ -4996,10 +5017,9 @@ def supervise(project, job, owner, timeout_ms):
                     chunk = os.read(fd, 4096)
                     if not chunk:
                         break
-                    emit({"type": "output", "stream": "stdout" if pair is pipes[1] else "stderr",
-                          "data": base64.b64encode(chunk).decode("ascii")})
+                    emit_output("stdout" if pair is pipes[1] else "stderr", chunk)
                     flush()
-            if leftovers:
+            if leftovers and not background_warning.seen:
                 note = ("Remaining job processes were terminated when the command exited; "
                         "use cocalc project terminal spawn for persistent services.\n")
                 emit({"type": "output", "stream": "stderr",

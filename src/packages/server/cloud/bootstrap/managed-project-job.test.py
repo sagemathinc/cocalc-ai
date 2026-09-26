@@ -3,7 +3,7 @@
 import os
 import json
 import base64
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import inspect
 import re
 from pathlib import Path
@@ -27,6 +27,89 @@ def helper():
 
 
 class ManagedJobTests(unittest.TestCase):
+    def test_cleanup_warns_once_even_when_supervisor_note_arrives_during_final_drain(self):
+        for warned in (False, True):
+            for cleanup_fails in (False, True):
+                with self.subTest(warned=warned, cleanup_fails=cleanup_fails), ExitStack() as stack:
+                    m = helper()
+                    # Exercise the real output/cleanup ordering with fake kernel
+                    # operations, including a warning split across the exit drain.
+                    note = m.BackgroundWarningTracker.note if warned else b"ordinary stderr\n"
+                    reads = {14: iter([note[:20], note[20:], b""]), 12: iter([b""])}
+                    frames = bytearray()
+                    def write(fd, chunk):
+                        if fd == 1:
+                            frames.extend(chunk)
+                        return len(chunk)
+                    def patch(obj, name, **kwargs):
+                        return stack.enter_context(mock.patch.object(obj, name, **kwargs))
+                    account = types.SimpleNamespace(pw_uid=1000, pw_gid=1000)
+                    patch(m.pwd, "getpwnam", return_value=account)
+                    path = patch(m, "Path")
+                    path.return_value.stat.return_value.st_uid = 1000
+                    patch(m, "POOL", new=mock.MagicMock())
+                    patch(m, "identity", return_value="1")
+                    patch(m, "alive", return_value=True)
+                    patch(m, "lifecycle_lock", side_effect=nullcontext)
+                    patch(m, "active_state", return_value={"generation": "g"})
+                    patch(m, "config_from_stdin", return_value={"args": ["exec"], "env": {}})
+                    patch(m, "reap_project_locked")
+                    patch(m, "lease_connected", return_value=True)
+                    patch(m, "launch_locked", return_value=123)
+                    patch(m, "live_scope_processes", return_value=1)
+                    kill = patch(m, "kill_scope", side_effect=RuntimeError("fixture") if cleanup_fails else None)
+                    patch(m.signal, "signal")
+                    patch(m.os, "pipe", side_effect=[(10, 11), (12, 13), (14, 15)])
+                    patch(m.os, "set_blocking")
+                    patch(m.os, "close")
+                    patch(m.os, "waitpid", return_value=(123, 0))
+                    patch(m.os, "read", side_effect=lambda fd, _: next(reads[fd]))
+                    patch(m.os, "write", side_effect=write)
+                    sel = patch(m.selectors, "DefaultSelector").return_value
+                    sel.select.return_value = [(types.SimpleNamespace(fd=14, data="stderr"), 1)]
+                    if cleanup_fails:
+                        with self.assertRaisesRegex(RuntimeError, "cleanup not confirmed"):
+                            m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 10000)
+                    else:
+                        m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 10000)
+                    kill.assert_called_once()
+                    events = [json.loads(line) for line in frames.splitlines()]
+                    if cleanup_fails:
+                        self.assertFalse(any(event["type"] == "exit" for event in events))
+                    else:
+                        stderr = b"".join(base64.b64decode(event["data"]) for event in events
+                                          if event["type"] == "output" and event["stream"] == "stderr")
+                        self.assertEqual(stderr.count(b"use cocalc project terminal spawn"), 1)
+                        self.assertEqual(events[-1], {"type": "exit", "code": 0, "cleanup": True})
+
+    def test_background_warning_tracker_handles_every_chunk_boundary(self):
+        m = helper()
+        note = m.BackgroundWarningTracker.note
+        supervisor = Path(__file__).resolve().parents[3] / "project-runner/run/sandbox-command-supervisor.ts"
+        self.assertIn(note.decode().replace("\n", r"\n"), supervisor.read_text())
+        for split in range(1, len(note)):
+            with self.subTest(split=split):
+                tracker = m.BackgroundWarningTracker()
+                tracker.observe("stderr", b"other output\n" + note[:split])
+                self.assertFalse(tracker.seen)
+                tracker.observe("stdout", b"interleaved output")
+                tracker.observe("stderr", note[split:] + b"more output")
+                self.assertTrue(tracker.seen)
+                self.assertEqual(tracker.tail, b"")
+
+    def test_background_warning_tracker_is_bounded_and_stderr_only(self):
+        m = helper()
+        tracker = m.BackgroundWarningTracker()
+        tracker.observe("stdout", tracker.note)
+        self.assertFalse(tracker.seen)
+        tracker.observe("stderr", b"x" * 1000000)
+        self.assertLess(len(tracker.tail), len(tracker.note))
+        self.assertFalse(tracker.seen)
+        tracker.observe("stderr", tracker.note)
+        tracker.observe("stderr", b"x" * 1000000)
+        self.assertTrue(tracker.seen)
+        self.assertEqual(tracker.tail, b"")
+
     def test_leftover_diagnostic_ignores_dead_processes_and_unreadable_scopes(self):
         m = helper()
         with tempfile.TemporaryDirectory() as directory:

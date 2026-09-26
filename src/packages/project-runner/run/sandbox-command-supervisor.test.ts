@@ -1,10 +1,47 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import {
   MANAGED_SANDBOX_COMMAND_SUPERVISOR,
   SANDBOX_COMMAND_SUPERVISOR,
 } from "./sandbox-command-supervisor";
+
+test.each(["EPERM", "ESRCH", "EIO"])(
+  "a failed diagnostic probe (%s) never skips cleanup",
+  (code) => {
+    const child = Object.assign(new EventEmitter(), { pid: 123 });
+    const kill = jest.fn((_pid, signal) => {
+      if (signal === 0) throw Object.assign(Error("probe failed"), { code });
+    });
+    const exit = jest.fn();
+    const writeSync = jest.fn();
+    const clearTimer = jest.fn();
+    runInNewContext(SANDBOX_COMMAND_SUPERVISOR, {
+      require: (name) => {
+        if (name === "node:child_process") return { spawn: () => child };
+        if (name === "node:fs") return { writeSync };
+        throw Error(`Unexpected module: ${name}`);
+      },
+      process: Object.assign(new EventEmitter(), {
+        stdin: new EventEmitter(),
+        argv: ["node", "command"],
+        kill,
+        exit,
+      }),
+      setInterval: () => 1,
+      clearInterval: clearTimer,
+    });
+    expect(() => child.emit("exit", 0)).not.toThrow();
+    expect(kill.mock.calls).toEqual([
+      [-123, 0],
+      [-123, "SIGKILL"],
+    ]);
+    expect(writeSync).not.toHaveBeenCalled();
+    expect(clearTimer).toHaveBeenCalledWith(1);
+    expect(exit).toHaveBeenCalledWith(0);
+  },
+);
 
 test.each([undefined, "job-1-1-2-2-00000000-0000-4000-8000-000000000001"])(
   "managed prelude refuses an absent or mismatched cgroup (%s)",

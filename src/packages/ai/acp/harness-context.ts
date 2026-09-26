@@ -20,7 +20,7 @@ export function harnessPrompt(
     return request.prompt;
   const projectGuidance =
     request.harness_credential?.mode === "account-subscription"
-      ? "The canonical CoCalc skill is preloaded in your session instructions. Project files and CLI commands are accessible only through the cocalc_project project_exec tool. Read applicable project CLAUDE.md instructions through that tool before editing. Do not assume the controller has project files or credentials."
+      ? "The canonical CoCalc skill is preloaded in your session instructions. Project files and CLI commands are accessible only through the project_exec tool on the currently advertised cocalc_project_* server. Read applicable project CLAUDE.md instructions through that tool before editing. Do not assume the controller has project files or credentials."
       : "Read applicable project CLAUDE.md instructions before editing. The CoCalc skill is at /home/user/.claude/skills/cocalc/SKILL.md; use it for CoCalc-native workflows. The scoped CoCalc CLI token is available in the project runtime.";
   return `[CoCalc project context]
 This turn runs inside a CoCalc project. The installed CoCalc CLI is:

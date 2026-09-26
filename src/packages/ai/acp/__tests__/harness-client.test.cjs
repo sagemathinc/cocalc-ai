@@ -1265,6 +1265,12 @@ test("harness context preserves user input and does not invent missing attributi
   ]) {
     assert.ok(subscriptionPrompt.includes(text), text);
   }
+  assert.ok(!subscriptionPrompt.includes("cocalc_project project_exec"));
+  assert.ok(
+    subscriptionPrompt.includes(
+      "project_exec tool on the currently advertised cocalc_project_* server",
+    ),
+  );
   assert.ok(!prompt.includes("Project commands are managed jobs"));
   assert.ok(
     !harnessPrompt({
