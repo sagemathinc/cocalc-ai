@@ -32,11 +32,13 @@ describe("chat helpers", () => {
       generating: false,
       acp_thread_id: "thread-123",
       acp_automation_id: "automation-123",
+      acp_runtime_kind: "acp",
     });
     expect(msg.sender_id).toBe("agent");
     expect(msg.history[0].content).toBe("Response");
     expect(msg.acp_thread_id).toBe("thread-123");
     expect(msg.acp_automation_id).toBe("automation-123");
+    expect(msg.acp_runtime_kind).toBe("acp");
     expect(msg.generating).toBe(false);
   });
 

@@ -89,6 +89,7 @@ import {
   resolveWorkspaceRoot,
 } from "./workspace-root";
 import {
+  acpImageAttachment,
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
@@ -317,6 +318,19 @@ import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
 import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+import {
+  prepareHarnessRequest,
+  harnessProfileKey,
+  harnessRuntimeKey,
+  createHarnessAgent,
+  discoverHarnessControls,
+  assertConfiguredHarnessRuntime,
+  queuedAgentSession,
+} from "./harness-runtime";
+export {
+  setHarnessAuthorityValidator,
+  setHarnessLauncher,
+} from "./harness-runtime";
 
 export {
   pinCodexCredentialAtAdmission,
@@ -415,7 +429,9 @@ export function setGeneratedImageBlobWriter(
 }
 
 const agents = new Map<string, AcpAgent>();
+const harnessConversationProfiles = new Map<string, string>();
 const agentProjectIds = new WeakMap<AcpAgent, string>();
+const harnessAgents = new WeakSet<AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
@@ -1128,7 +1144,16 @@ function attentionResponderStillLive(
     path: record.path,
     message_date: messageDate,
   });
-  return lease != null && turnStillLikelyOwnedByLiveWorker(lease);
+  return lease?.state === "running" && turnStillLikelyOwnedByLiveWorker(lease);
+}
+
+function reconcileOrphanedAcpSyncAttention(client: ConatClient): void {
+  for (const record of markAllPendingAcpSyncAttentionStale(
+    "The agent attention responder was lost when its ACP runtime stopped",
+    { preserve: attentionResponderStillLive },
+  )) {
+    void publishStoredAttentionNoticeBestEffort({ client, record });
+  }
 }
 
 function jobStillLikelyOwnedByLiveWorker({
@@ -2064,6 +2089,7 @@ export class ChatStreamWriter {
   private finishedBy?: "summary" | "error" | "interrupt";
   private completionNoticePublished = false;
   private approverAccountId: string;
+  private runtimeKind: "codex" | "acp";
   private interruptedMessage?: string;
   private contentBeforeInterrupt?: string;
   private interruptNotified = false;
@@ -2463,7 +2489,7 @@ export class ChatStreamWriter {
     this.noteProjectStorageFailure(err, phase);
     this.finished = true;
     this.finishedBy = "error";
-    this.lastErrorText = projectStorageFailureMessage(err);
+    this.lastErrorText = projectStorageFailureMessage(err, this.runtimeKind);
     await this.finalizeFinishedTurn();
   }
 
@@ -2550,7 +2576,7 @@ export class ChatStreamWriter {
       state,
       payment_source_kind: "unknown",
       model: undefined,
-      agent_kind: "codex",
+      agent_kind: this.runtimeKind,
       run_kind: this.metadata.automation_id ? "automation" : "interactive",
       title: this.metadata.thread_title || this.metadata.automation_title,
       prompt_snippet: this.metadata.user_message_content,
@@ -2675,8 +2701,10 @@ export class ChatStreamWriter {
     logStoreFactory,
     liveLogStreamFactory,
     livePreviewStreamFactory,
+    runtimeKind = "codex",
   }: {
     metadata: AcpChatContext;
+    runtimeKind?: "codex" | "acp";
     client: ConatClient;
     approverAccountId: string;
     sessionKey?: string;
@@ -2697,6 +2725,7 @@ export class ChatStreamWriter {
       throw new Error("acp chat metadata is missing required thread_id");
     }
     this.metadata = metadata;
+    this.runtimeKind = runtimeKind;
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
@@ -2839,6 +2868,7 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         acp_account_id: this.approverAccountId,
+        acp_runtime_kind: this.runtimeKind,
         acp_started_at_ms:
           Number(this.metadata.started_at_ms) > 0
             ? Number(this.metadata.started_at_ms)
@@ -2921,6 +2951,16 @@ export class ChatStreamWriter {
     if (payload == null) {
       this.dispose();
       return;
+    }
+    if (
+      this.runtimeKind === "acp" &&
+      payload.type === "event" &&
+      payload.event.type === "harness" &&
+      payload.event.kind === "controls"
+    ) {
+      await this.patchThreadConfig({
+        agent_runtime_controls: payload.event.data,
+      });
     }
     if (
       payload.type === "event" &&
@@ -3035,6 +3075,19 @@ export class ChatStreamWriter {
     this.publishLivePreview(payload);
     if (payload.type === "event") {
       const { event } = payload;
+      if (
+        this.runtimeKind === "acp" &&
+        event.type === "harness" &&
+        event.kind === "stop" &&
+        event.data.stopReason === "cancelled"
+      ) {
+        this.notifyInterrupted(INTERRUPT_STATUS_TEXT);
+        this.finished = true;
+        this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+          this.timeTravel?.finalizeTurn(this.metadata.message_date),
+        );
+        return;
+      }
       if (event.type === "config") {
         const paymentSource = paymentSourceFromAuthSource({
           authSource: event.authSource,
@@ -3249,6 +3302,7 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_runtime_kind: this.runtimeKind,
       acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
       acp_recovery_reason: (this.metadata as any).recovery_reason,
       acp_recovery_count:
@@ -3300,6 +3354,7 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_runtime_kind: this.runtimeKind,
       acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
       acp_recovery_reason: (this.metadata as any).recovery_reason,
       acp_recovery_count:
@@ -3967,6 +4022,12 @@ export class ChatStreamWriter {
       });
   }
 
+  notifyInterruptRequested(text: string): void {
+    // ACP session/cancel is a notification, not a confirmation. Wait for the
+    // cancelled stop reason; a timeout/process loss must retain its uncertainty.
+    if (this.runtimeKind !== "acp") this.notifyInterrupted(text);
+  }
+
   notifyInterrupted(text: string): void {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
@@ -4565,6 +4626,11 @@ export class ChatStreamWriter {
     const threadId = this.resolvedThreadId();
     if (!threadId) return;
     const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
+    if (this.runtimeKind === "acp") {
+      if (this.recordField(currentRow, "agent_session_id") !== sessionId)
+        await this.patchThreadConfig({ agent_session_id: sessionId });
+      return;
+    }
     const currentConfig = this.recordField<any>(currentRow, "acp_config");
     const currentConfigObj =
       currentConfig && typeof currentConfig.toJS === "function"
@@ -5058,10 +5124,12 @@ export function finalizeInterruptedAcpBackendState({
   turn,
   recoveryReason = INTERRUPT_STATUS_TEXT,
   exactMessageId = false,
+  outcomeUnknown = false,
 }: {
   turn: InterruptedAcpTurnTarget;
   recoveryReason?: string;
   exactMessageId?: boolean;
+  outcomeUnknown?: boolean;
 }): boolean {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5094,7 +5162,7 @@ export function finalizeInterruptedAcpBackendState({
       if (matches(row)) {
         setAcpJobState({
           op_id: row.op_id,
-          state: "interrupted",
+          state: outcomeUnknown ? "error" : "interrupted",
           error: recoveryReason,
           worker_id: row.worker_id ?? turn.owner_instance_id ?? undefined,
         });
@@ -5119,7 +5187,7 @@ export function finalizeInterruptedAcpBackendState({
             path: row.path,
             message_date: row.message_date,
           },
-          state: "aborted",
+          state: outcomeUnknown ? "error" : "aborted",
           reason: recoveryReason,
           owner_instance_id:
             turn.owner_instance_id ?? row.owner_instance_id ?? undefined,
@@ -5570,6 +5638,7 @@ type RepairInterruptedAcpTurnOptions = {
   interruptedReasonId?: string;
   recoveryReason?: string;
   exactMessageId?: boolean;
+  outcomeUnknown?: boolean;
 };
 
 type InterruptedAcpRepairResult = {
@@ -5584,6 +5653,7 @@ async function repairInterruptedAcpTurnOnce({
   interruptedReasonId = "interrupt",
   recoveryReason = INTERRUPT_STATUS_TEXT,
   exactMessageId = false,
+  outcomeUnknown = false,
 }: RepairInterruptedAcpTurnOptions): Promise<InterruptedAcpRepairResult> {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5668,7 +5738,11 @@ async function repairInterruptedAcpTurnOnce({
                     typeof first?.content === "string"
                       ? first.content
                       : `${(first as any)?.content ?? ""}`;
-                  if (/conversation interrupted/i.test(content)) {
+                  if (
+                    content.includes(interruptedNotice) ||
+                    (!outcomeUnknown &&
+                      /conversation interrupted/i.test(content))
+                  ) {
                     return currentHistory;
                   }
                   const sep = content.trim().length > 0 ? "\n\n" : "";
@@ -5691,7 +5765,7 @@ async function repairInterruptedAcpTurnOnce({
             date: rowDate,
             sender_id: rowSender,
             generating: false,
-            acp_interrupted: true,
+            acp_interrupted: !outcomeUnknown,
             acp_interrupted_reason: interruptedReasonId,
             acp_interrupted_text: interruptedNotice,
           };
@@ -5745,6 +5819,14 @@ async function repairInterruptedAcpTurnOnce({
             ];
           } else if (patchedHistory.length > 0) {
             update.history = patchedHistory;
+          } else if (outcomeUnknown) {
+            update.history = [
+              {
+                author_id: rowSender,
+                content: interruptedNotice,
+                date: rowDate,
+              },
+            ];
           }
           syncdb.set(update);
           touched = true;
@@ -5766,7 +5848,7 @@ async function repairInterruptedAcpTurnOnce({
             currentThreadId,
             buildThreadStateRecord({
               thread_id: currentThreadId,
-              state: "interrupted",
+              state: outcomeUnknown ? "error" : "interrupted",
               active_message_id: currentMessageId,
               updated_at: new Date().toISOString(),
               schema_version: THREAD_STATE_SCHEMA_VERSION,
@@ -5807,6 +5889,7 @@ async function repairInterruptedAcpTurnOnce({
     },
     recoveryReason,
     exactMessageId,
+    outcomeUnknown,
   });
 
   const durable = queuedPersistence.durable && chatDurable;
@@ -6038,6 +6121,15 @@ export async function recoverOrphanedAcpTurns(
         thread_id: turn.thread_id ?? undefined,
       }),
     );
+    const request = recoverySourceJob
+      ? decodeAcpJobRequest(recoverySourceJob)
+      : undefined;
+    const outcomeUnknown =
+      request?.request_kind !== "command" && request?.runtime?.kind === "acp";
+    const turnNotice = outcomeUnknown
+      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
+      : interruptedNotice;
+    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     const autoResumeDecision =
       autoResume && recoverySourceJob
         ? shouldAutoResumeRecoveredTurn({
@@ -6064,9 +6156,10 @@ export async function recoverOrphanedAcpTurns(
             account_id:
               recoverySourceJob?.account_id ?? (turn as any).account_id,
           },
-          interruptedNotice,
+          interruptedNotice: turnNotice,
           interruptedReasonId,
-          recoveryReason,
+          recoveryReason: turnReason,
+          outcomeUnknown,
         })
       ) {
         if (shouldAutoResume && recoverySourceJob) {
@@ -6123,7 +6216,7 @@ export async function recoverOrphanedAcpTurns(
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
           const patchedHistory =
-            interruptedNotice === RESTART_INTERRUPTED_NOTICE
+            turnNotice === RESTART_INTERRUPTED_NOTICE
               ? history
               : (() => {
                   const currentHistory = historyToArray(
@@ -6137,14 +6230,18 @@ export async function recoverOrphanedAcpTurns(
                     typeof first?.content === "string"
                       ? first.content
                       : `${(first as any)?.content ?? ""}`;
-                  if (/conversation interrupted/i.test(content)) {
+                  if (
+                    content.includes(turnNotice) ||
+                    (!outcomeUnknown &&
+                      /conversation interrupted/i.test(content))
+                  ) {
                     return currentHistory;
                   }
                   const sep = content.trim().length > 0 ? "\n\n" : "";
                   return [
                     {
                       ...first,
-                      content: `${content}${sep}${interruptedNotice}`,
+                      content: `${content}${sep}${turnNotice}`,
                     },
                     ...currentHistory.slice(1),
                   ];
@@ -6160,9 +6257,9 @@ export async function recoverOrphanedAcpTurns(
             date: rowDate,
             sender_id: rowSender,
             generating: false,
-            acp_interrupted: true,
+            acp_interrupted: !outcomeUnknown,
             acp_interrupted_reason: interruptedReasonId,
-            acp_interrupted_text: interruptedNotice,
+            acp_interrupted_text: turnNotice,
           };
           if (turn.message_id) {
             update.message_id = turn.message_id;
@@ -6175,6 +6272,10 @@ export async function recoverOrphanedAcpTurns(
           }
           if (patchedHistory.length > 0) {
             update.history = patchedHistory;
+          } else if (outcomeUnknown) {
+            update.history = [
+              { author_id: rowSender, content: turnNotice, date: rowDate },
+            ];
           }
           syncdb.set(update);
           const threadId =
@@ -6186,7 +6287,7 @@ export async function recoverOrphanedAcpTurns(
               threadId,
               buildThreadStateRecord({
                 thread_id: threadId,
-                state: "interrupted",
+                state: outcomeUnknown ? "error" : "interrupted",
                 active_message_id: syncdbField<string>(current, "message_id"),
                 updated_at: new Date().toISOString(),
                 schema_version: THREAD_STATE_SCHEMA_VERSION,
@@ -6208,9 +6309,9 @@ export async function recoverOrphanedAcpTurns(
     try {
       if (turn.message_id) {
         setAcpJobState({
-          op_id: turn.message_id,
-          state: "interrupted",
-          error: recoveryReason,
+          op_id: recoverySourceJob?.op_id ?? turn.message_id,
+          state: outcomeUnknown ? "error" : "interrupted",
+          error: turnReason,
           worker_id: turn.owner_instance_id,
         });
       }
@@ -6244,8 +6345,8 @@ export async function recoverOrphanedAcpTurns(
           path: turn.path,
           message_date: turn.message_date,
         },
-        state: "aborted",
-        reason: recoveryReason,
+        state: outcomeUnknown ? "error" : "aborted",
+        reason: turnReason,
         owner_instance_id: ACP_INSTANCE_ID,
       });
       recovered += 1;
@@ -6355,6 +6456,23 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
       startedAt > 0 &&
       now - startedAt < graceMs
     ) {
+      continue;
+    }
+    const orphanedRequest = decodeAcpJobRequest(job);
+    if (
+      orphanedRequest.request_kind !== "command" &&
+      orphanedRequest.runtime !== undefined
+    ) {
+      setAcpJobState({
+        op_id: job.op_id,
+        state: "error",
+        error:
+          "ACP harness completion is unknown after worker loss; explicit continuation is required",
+        worker_id: job.worker_id ?? undefined,
+      });
+      noteDetachedWorkerQueueProgress();
+      recovered += 1;
+      terminalized += 1;
       continue;
     }
     requeueRunningAcpJob({
@@ -6728,8 +6846,22 @@ function acpStorageFailureCode(err: unknown): string | undefined {
   return undefined;
 }
 
-function projectStorageFailureMessage(err: unknown): string {
+function projectStorageFailureMessage(
+  err: unknown,
+  runtimeKind: "codex" | "acp",
+): string {
   const code = acpStorageFailureCode(err);
+  if (runtimeKind === "acp") {
+    const cause =
+      code === "ENOSPC" || code === "SQLITE_FULL"
+        ? "This project ran out of storage"
+        : code === "SQLITE_READONLY"
+          ? "Project storage became read-only"
+          : code === "SQLITE_CORRUPT" || code === "SQLITE_NOTADB"
+            ? "The project's synchronization database is damaged"
+            : "Project storage was temporarily unavailable";
+    return `${cause} while saving this ACP harness turn. Execution may already have changed files or performed external actions. Restore storage availability and inspect the workspace and saved activity before starting another turn. This error does not automatically resubmit the turn.`;
+  }
   if (code === "ENOSPC" || code === "SQLITE_FULL") {
     return "This project ran out of storage while saving the Codex turn. Free project disk space and retry.";
   }
@@ -6877,6 +7009,7 @@ export async function recoverDetachedWorkerStartupState(
     recoveryReason,
   });
   await recoverPendingFailureRecoveryIntents({ client });
+  reconcileOrphanedAcpSyncAttention(client);
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
@@ -7240,6 +7373,7 @@ export async function runDetachedAcpQueueWorker(
               : "ACP worker stopped before turn startup",
         });
         await recoverPendingFailureRecoveryIntents({ client });
+        reconcileOrphanedAcpSyncAttention(client);
       }
       const runtimeStatus = getAcpAgentRuntimeStatus();
       const hasWork =
@@ -7672,11 +7806,15 @@ async function executeAcpRequest({
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<AcpExecutionResult> {
   const reqId = randomUUID();
+  request = prepareHarnessRequest(request);
+  const harness = request.runtime?.kind === "acp";
   const startedAt = Date.now();
   const { config } = request;
   const projectId = request.chat?.project_id ?? request.project_id;
   const sessionMode = resolveCodexSessionMode(config);
-  const workspaceRoot = resolveWorkspaceRoot(config);
+  const workspaceRoot = harness
+    ? request.runtime!.profile.cwd
+    : resolveWorkspaceRoot(config);
   logger.debug("evaluate: start", {
     reqId,
     session_id: request.session_id,
@@ -7690,10 +7828,9 @@ async function executeAcpRequest({
     throw Error("project_id must be set");
   }
   await authorizeAgentDeliveryExecution(request, hubApi.agent);
-  const mentionReferences = await resolveHumanTurnMentions(
-    request,
-    hubApi.agent,
-  );
+  const mentionReferences = harness
+    ? []
+    : await resolveHumanTurnMentions(request, hubApi.agent);
   const artifactReferences = await resolveHumanTurnArtifactMentions(
     request,
     hubApi.artifactCatalog,
@@ -7710,12 +7847,14 @@ async function executeAcpRequest({
     workingDirectory: workspaceRoot,
   };
   const useContainer = preferContainerExecutor();
-  const runtimeEnv = await buildCodexRuntimeEnv({
-    request,
-    projectId,
-    includeCliBin: !useContainer,
-    useContainer,
-  });
+  const runtimeEnv = harness
+    ? undefined
+    : await buildCodexRuntimeEnv({
+        request,
+        projectId,
+        includeCliBin: !useContainer,
+        useContainer,
+      });
   const hostRoot =
     useContainer && executor instanceof ContainerExecutor
       ? executor.getMountPoint()
@@ -7738,21 +7877,53 @@ async function executeAcpRequest({
     throw Error("conat client must be initialized");
   }
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
-  const currentAgent = await ensureAgent(
-    projectId,
-    useNativeTerminal,
-    bindings,
-  );
-  const { prompt, local_images, cleanup } = await materializeBlobs(
-    request.prompt ?? "",
-    projectId,
-    useContainer && hostProjectRoot
-      ? projectBlobMaterializationRoots({
-          hostProjectRoot,
-          runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
-        })
-      : undefined,
-  );
+  const harnessKey = harness ? harnessRuntimeKey(request) : undefined;
+  if (harnessKey) {
+    const conversationKey = JSON.stringify([
+      projectId,
+      request.account_id,
+      request.chat!.path,
+      request.chat!.thread_id,
+    ]);
+    const previousKey = harnessConversationProfiles.get(conversationKey);
+    if (previousKey && previousKey !== harnessKey && agents.has(previousKey)) {
+      if (JSON.parse(previousKey)[0] !== harnessProfileKey(request)) {
+        throw Error(
+          "Start a fresh conversation to change a retained ACP harness profile",
+        );
+      }
+      const previousAgent = agents.get(previousKey)!;
+      if (!previousAgent.dispose)
+        throw Error("Cannot retire the previous ACP harness runtime");
+      await previousAgent.dispose();
+      if (agents.get(previousKey) === previousAgent) agents.delete(previousKey);
+      agentProjectIds.delete(previousAgent);
+    }
+    harnessConversationProfiles.set(conversationKey, harnessKey);
+  }
+  let currentAgent = harnessKey ? agents.get(harnessKey) : undefined;
+  if (harnessKey && !currentAgent) {
+    currentAgent = await createHarnessAgent(
+      request,
+      createCodexAttentionHandler(conatClient!, "ACP"),
+    );
+    agents.set(harnessKey, currentAgent);
+    agentProjectIds.set(currentAgent, projectId);
+    harnessAgents.add(currentAgent);
+  }
+  currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
+  const { prompt, local_images, image_attachments, cleanup } =
+    await materializeBlobs(
+      request.prompt ?? "",
+      projectId,
+      useContainer && hostProjectRoot
+        ? projectBlobMaterializationRoots({
+            hostProjectRoot,
+            runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+          })
+        : undefined,
+      !!harness,
+    );
   if (!conatClient) {
     throw Error("conat client must be initialized");
   }
@@ -7768,6 +7939,7 @@ async function executeAcpRequest({
   const chatWriter = chatContext
     ? new ChatStreamWriter({
         metadata: chatContext,
+        runtimeKind: harness ? "acp" : "codex",
         client: conatClient,
         approverAccountId: request.account_id,
         sessionKey: request.session_id,
@@ -7780,6 +7952,7 @@ async function executeAcpRequest({
   let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
   let recoveryDetail: string | undefined;
   const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+    if (harness) return;
     if (payload?.type !== "error") return;
     const directive = failureRecoveryDirective(payload.code, payload.error);
     if (!directive || recoveryCode) return;
@@ -7800,6 +7973,7 @@ async function executeAcpRequest({
       try {
         await chatWriter.handle(payload);
       } catch (err) {
+        if (harness) throw err;
         if (payload?.type === "event" && payload.event.type === "goal")
           throw err;
         logger.warn("chat writer handle failed", err);
@@ -7827,26 +8001,36 @@ async function executeAcpRequest({
       await currentAgent.evaluate({
         ...request,
         mentionReferences,
-        readPendingGoal: chatWriter?.readPendingGoal,
+        readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
         prompt: artifactReferences.length
           ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
           : augmentPromptWithAgentMentions(prompt, mentionReferences),
-        local_images,
+        local_images: harness ? undefined : local_images,
+        image_attachments: harness ? image_attachments : undefined,
         runtime_env: runtimeEnv,
-        config: effectiveConfig,
+        config: harness ? undefined : effectiveConfig,
         stream: wrappedStream,
       });
       logger.debug("evaluate: done", { reqId });
     } catch (err) {
       logger.warn("evaluate: agent failed", { reqId, err });
-      terminalFallbackError = `codex agent failed: ${(err as Error)?.message ?? err}`;
-      try {
-        await wrappedStream({
-          type: "error",
-          error: terminalFallbackError,
-        });
-      } catch (streamErr) {
-        logger.warn("evaluate: failed to stream error", streamErr);
+      if (harnessKey) {
+        await currentAgent.dispose?.();
+        if (agents.get(harnessKey) === currentAgent) agents.delete(harnessKey);
+        agentProjectIds.delete(currentAgent);
+      }
+      // A persisted, provider-confirmed cancellation is terminal, not a
+      // failure. The adapter still throws so its retained process is disposed.
+      if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
+        terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
+        try {
+          await wrappedStream({
+            type: "error",
+            error: terminalFallbackError,
+          });
+        } catch (streamErr) {
+          logger.warn("evaluate: failed to stream error", streamErr);
+        }
       }
     }
     if (chatWriter != null) {
@@ -8315,6 +8499,7 @@ async function enqueueAutomationRun(
           chat,
         };
 
+  await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
 
   throwIfAcpAdmissionDenied(
@@ -9451,8 +9636,9 @@ async function prepareQueuedUserMessageForExecution({
           prompt: request.prompt,
           guidance: request.chat.send_mode === "immediate",
         }).request;
-        currentAgentConfig = current.config;
-        currentAgentSessionId = current.session_id;
+        const queued = queuedAgentSession(request, current);
+        currentAgentConfig = queued.config;
+        currentAgentSessionId = queued.session_id;
       }
       if (current != null) {
         latestContent = getLatestQueuedUserMessageContent(
@@ -9589,7 +9775,7 @@ async function enqueueRecoveryContinuationForJob({
   const sourceJob = current ?? job;
   if (sourceJob.error === ACP_PROJECT_RESTART_FENCE_REASON) return undefined;
   const request = decodeAcpJobRequest(sourceJob);
-  if (request.request_kind === "command") {
+  if (request.request_kind === "command" || request.runtime !== undefined) {
     return undefined;
   }
   const session_id =
@@ -9878,6 +10064,7 @@ async function writeQueuedJobFailureToChat({
     });
     const writer = new ChatStreamWriter({
       metadata: request.chat,
+      runtimeKind: request.runtime?.kind === "acp" ? "acp" : "codex",
       client: conatClient,
       approverAccountId: request.account_id,
       sessionKey: request.session_id,
@@ -10683,7 +10870,7 @@ async function tryInterruptCandidateIds({
   candidateIds?: string[];
   notifyText?: string;
   expectedMessageId?: string;
-}): Promise<boolean> {
+}): Promise<false | "requested" | "interrupted"> {
   const writer = findChatWriter({ threadId, chat });
   const ids = new Set<string>();
   for (const id of candidateIds ?? []) {
@@ -10700,9 +10887,14 @@ async function tryInterruptCandidateIds({
     });
 
   for (const id of ids) {
-    if (await interruptCodexSession(id, projectId, expectedMessageId)) {
-      if (!expectedMessageId) writer?.notifyInterrupted(notifyText);
-      return true;
+    const result = await interruptCodexSession(
+      id,
+      projectId,
+      expectedMessageId,
+    );
+    if (result) {
+      if (!expectedMessageId) writer?.notifyInterruptRequested(notifyText);
+      return result;
     }
   }
   return false;
@@ -10819,7 +11011,10 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
         ],
         expectedMessageId,
       });
-      if (handled) {
+      if (handled === "requested") {
+        // The worker retains the running job/lease until the prompt settles.
+        markAcpInterruptHandled({ id: row.id });
+      } else if (handled) {
         finalizeInterruptedAcpBackendState({
           turn: {
             project_id: row.project_id,
@@ -10957,6 +11152,26 @@ function startAcpSteerPoller(): void {
   });
 }
 
+async function assertThreadRuntimeAtAdmission(
+  request: AcpJobRequest,
+): Promise<void> {
+  if (!request.chat?.path || !request.chat.thread_id) return;
+  if (!conatClient) throw Error("conat client must be initialized");
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: request.project_id,
+    path: request.chat.path,
+    fn: async (syncdb) => {
+      const row = preferredThreadConfigRow(syncdb, request.chat!.thread_id!);
+      const value: any = syncdbField(row, "agent_runtime");
+      assertConfiguredHarnessRuntime(
+        request.request_kind === "command" ? {} : request,
+        value?.toJS?.() ?? value,
+      );
+    },
+  });
+}
+
 async function enqueueChatAcpTurn({
   request,
   stream,
@@ -10967,6 +11182,7 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
     throw new Error("chat metadata is required to enqueue an ACP turn");
@@ -11869,6 +12085,29 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "discover_harness_v1") {
+    const runtime = await withChatSyncDB({
+      client,
+      project_id,
+      path,
+      fn: async (syncdb) => {
+        const row = preferredThreadConfigRow(syncdb, thread_id);
+        const value: any = syncdbField(row, "agent_runtime");
+        if (value == null) throw Error("This thread has no ACP harness");
+        return value?.toJS?.() ?? value;
+      },
+    });
+    return {
+      ok: true,
+      harness: await discoverHarnessControls({
+        project_id,
+        account_id: request.account_id,
+        runtime,
+        prompt: "",
+        chat: { project_id, path, thread_id },
+      } as AcpRequest),
+    };
+  }
   if (request.action === "prepare_fresh_conversation") {
     return {
       ok: true,
@@ -12122,18 +12361,14 @@ export async function init(
     preferContainerExecutor(),
   );
   initializeAcpRuntime(client);
-  for (const record of markAllPendingAcpSyncAttentionStale(
-    "Codex attention responder was lost when the ACP service restarted",
-    { preserve: attentionResponderStillLive },
-  )) {
-    void publishStoredAttentionNoticeBestEffort({ client, record });
-  }
+  reconcileOrphanedAcpSyncAttention(client);
   process.once("exit", () => {
     void disposeAcpAgents();
   });
   await initConatAcp(
     {
       evaluate,
+      evaluateHarness: evaluate,
       interrupt: handleInterruptRequest,
       steer: handleAcpSteerRequest,
       forkSession: handleForkSessionRequest,
@@ -12182,12 +12417,16 @@ async function materializeBlobs(
   prompt: string,
   projectId: string,
   projectRoots?: { host: string; runtime: string },
+  forHarness = false,
 ): Promise<{
   prompt: string;
   local_images: string[];
+  image_attachments?: ReturnType<typeof acpImageAttachment>[];
   cleanup: () => Promise<void>;
 }> {
   if (!blobStore && !attachmentBlobReader) {
+    if (forHarness && extractBlobReferences(prompt).length)
+      throw Error("ACP image attachment storage is unavailable");
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
@@ -12208,6 +12447,7 @@ async function materializeBlobs(
     ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
     : tempDir;
   const attachments: MaterializedBlobAttachment[] = [];
+  const imageAttachments: ReturnType<typeof acpImageAttachment>[] = [];
   let bytes = 0;
   try {
     for (const ref of unique) {
@@ -12228,8 +12468,19 @@ async function materializeBlobs(
           }
         }
         data ??= await blobStore?.get(ref.uuid);
-        if (data == null) continue;
+        if (data == null) {
+          if (forHarness) throw Error("ACP image attachment is unavailable");
+          continue;
+        }
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (forHarness) {
+          if (
+            imageAttachments.length >= 8 ||
+            bytes + buffer.byteLength > 10 * 1024 * 1024
+          )
+            throw Error("ACP image attachment limit exceeded");
+          imageAttachments.push(acpImageAttachment(buffer));
+        }
         const safeName = buildSafeBlobFilename(ref);
         const hostFilePath = path.join(tempDir, safeName);
         const runtimeFilePath = projectRoots
@@ -12239,6 +12490,7 @@ async function materializeBlobs(
         bytes += buffer.byteLength;
         attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {
+        if (forHarness) throw err;
         logger.warn("failed to materialize blob", { ref, err });
       }
     }
@@ -12267,10 +12519,13 @@ async function materializeBlobs(
         (att, idx) => `Attachment ${idx + 1}: available locally at ${att.path}`,
       )
       .join("\n");
-    const augmented = `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
+    const augmented = forHarness
+      ? sanitizedPrompt
+      : `${sanitizedPrompt}\n\nAttached images are already included with this request. Local fallback paths:\n${info}\n`;
     return {
       prompt: augmented,
       local_images: attachments.map((att) => att.path),
+      image_attachments: forHarness ? imageAttachments : undefined,
       cleanup: async () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       },
@@ -12284,6 +12539,7 @@ async function materializeBlobs(
       err,
     });
     await fs.rm(tempDir, { recursive: true, force: true });
+    if (forHarness) throw err;
     return { prompt, local_images: [], cleanup: async () => {} };
   }
 }
@@ -12442,15 +12698,33 @@ async function handleInterruptRequest(
     return { ok: false, state: "stale", threadId };
   }
 
-  if (
-    await tryInterruptCandidateIds({
-      projectId: project_id,
-      threadId,
-      chat: request.chat,
-      candidateIds,
-      expectedMessageId: expectedMessageId || undefined,
-    })
-  ) {
+  const interruption = await tryInterruptCandidateIds({
+    projectId: project_id,
+    threadId,
+    chat: request.chat,
+    candidateIds,
+    expectedMessageId: expectedMessageId || undefined,
+  });
+  if (interruption === "requested") {
+    if (project_id && path && threadId) {
+      if (expectedMessageId)
+        markAcpInterruptsHandledForTurn({
+          project_id,
+          path,
+          thread_id: threadId,
+          expected_message_id: expectedMessageId,
+          expected_session_id: request.expected_session_id,
+        });
+      else
+        markAcpInterruptsHandledForThread({
+          project_id,
+          path,
+          thread_id: threadId,
+        });
+    }
+    return { ok: true, state: "queued", threadId };
+  }
+  if (interruption) {
     if (conatClient && request.chat && project_id && path) {
       try {
         await repairInterruptedAcpTurn({
@@ -12599,7 +12873,7 @@ async function interruptCodexSession(
   threadId: string,
   projectId: string,
   expectedMessageId?: string,
-): Promise<boolean> {
+): Promise<false | "requested" | "interrupted"> {
   for (const agent of agentsForProject(projectId)) {
     if (
       "interruptOutstanding" in agent &&
@@ -12609,7 +12883,7 @@ async function interruptCodexSession(
         if (
           await (agent as any).interruptOutstanding(threadId, expectedMessageId)
         ) {
-          return true;
+          return harnessAgents.has(agent) ? "requested" : "interrupted";
         }
       } catch (err) {
         logger.warn("failed to stop outstanding Codex work", {
@@ -12625,7 +12899,7 @@ async function interruptCodexSession(
     ) {
       try {
         if (await (agent as any).interrupt(threadId)) {
-          return true;
+          return harnessAgents.has(agent) ? "requested" : "interrupted";
         }
       } catch (err) {
         logger.warn("failed to interrupt codex session", {
@@ -12651,6 +12925,7 @@ export async function disposeAcpAgents(): Promise<void> {
   }
   await Promise.all(pending);
   agents.clear();
+  harnessConversationProfiles.clear();
 }
 
 export async function fenceAcpProjectAfterStop({
@@ -12686,9 +12961,10 @@ export async function fenceAcpProjectAfterStop({
           },
         );
         throw err;
-      } finally {
-        agents.delete(key);
       }
+      // Retain failed cleanup for a later fence instead of losing its handle.
+      if (agents.get(key) === agent) agents.delete(key);
+      agentProjectIds.delete(agent);
     }),
   );
   // Disposal is asynchronous. Sweep again so a losing completion/recovery race
@@ -12733,6 +13009,20 @@ export function getAcpAgentRuntimeStatus(): {
 
 export const acpTestInternals = {
   handleAcpControlRequest,
+  executeAcpRequest,
+  handleInterruptRequest,
+  processPendingAcpInterruptsOnce,
+  registerInterruptAgentForTests: (
+    key: string,
+    projectId: string,
+    agent: AcpAgent,
+    harness: boolean,
+  ) => {
+    agents.set(key, agent);
+    agentProjectIds.set(agent, projectId);
+    if (harness) harnessAgents.add(agent);
+    return () => agents.delete(key);
+  },
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,

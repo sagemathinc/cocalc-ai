@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 
 import {
   buildAcpChatContext,
@@ -50,6 +51,12 @@ export function prepareChatSend({
   if (!prompt.trim()) throw new Error("message must not be empty");
   if (!accountId) throw new Error("an authenticated account is required");
   if (thread.archived) throw new Error("cannot send to an archived thread");
+  const runtime =
+    thread.agent_runtime == null
+      ? undefined
+      : parseAcpHarnessRuntime(thread.agent_runtime);
+  if (runtime && guidance)
+    throw Error("This ACP harness does not support live guidance");
   if (
     thread.agent_kind !== "acp" &&
     thread.acp_config == null &&
@@ -63,7 +70,7 @@ export function prepareChatSend({
     )
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const latest = messages.at(-1);
-  const config = thread.acp_config ?? {};
+  const config = runtime ? {} : (thread.acp_config ?? {});
   // Match the browser's recovery of a session whose config has not synced yet.
   const inferredSession = [...messages]
     .reverse()
@@ -71,16 +78,19 @@ export function prepareChatSend({
       (row) =>
         !row.acp_automation_id && normalizeCodexSessionId(row.acp_thread_id),
     )?.acp_thread_id;
-  const sessionId =
-    normalizeCodexSessionId(config.sessionId) ?? inferredSession;
-  const acpConfig = buildCodexAcpConfig({
-    path,
-    config: sessionId ? { ...config, sessionId } : config,
-    model: normalizeCodexMention(thread.agent_model),
-    maxConcurrentSubagents: normalizeCodexMaxConcurrentSubagents(
-      otherSettings[OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS],
-    ),
-  });
+  const sessionId = runtime
+    ? (normalizeCodexSessionId(thread.agent_session_id) ?? inferredSession)
+    : (normalizeCodexSessionId(config.sessionId) ?? inferredSession);
+  const acpConfig = runtime
+    ? undefined
+    : buildCodexAcpConfig({
+        path,
+        config: sessionId ? { ...config, sessionId } : config,
+        model: normalizeCodexMention(thread.agent_model),
+        maxConcurrentSubagents: normalizeCodexMaxConcurrentSubagents(
+          otherSettings[OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS],
+        ),
+      });
   // Chat's legacy keys also include dates. Avoid reusing a loaded row's date.
   const dates = new Set(rows.map((row) => Date.parse(row?.date)));
   let date = Date.now();
@@ -100,7 +110,9 @@ export function prepareChatSend({
     ...buildAcpChatContext({
       project_id: projectId,
       path,
-      sender_id: acpConfig.model ?? "openai-codex-agent",
+      sender_id: runtime
+        ? "acp-harness"
+        : (acpConfig?.model ?? "openai-codex-agent"),
       user_message_date: new Date(date).toISOString(),
       user_message_content: prompt,
       user_parent_message_id: message.parent_message_id,
@@ -126,7 +138,8 @@ export function prepareChatSend({
     account_id: accountId,
     prompt,
     config: acpConfig,
-    session_id: sessionId ?? thread.thread_id,
+    runtime,
+    session_id: runtime ? sessionId : (sessionId ?? thread.thread_id),
     chat,
   };
   return { message, request };

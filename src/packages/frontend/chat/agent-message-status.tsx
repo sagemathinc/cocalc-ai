@@ -324,6 +324,7 @@ interface AgentMessageStatusProps {
 }
 
 interface AgentActivityChipProps {
+  agentLabel?: string;
   generating: boolean;
   durationLabel: string;
   lastActivityAtMs?: number;
@@ -345,6 +346,7 @@ export function AgentActivityChip({
   style,
   liveStatus = "idle",
   activeSubagents = 0,
+  agentLabel = "Codex",
 }: AgentActivityChipProps) {
   const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
   const lastActivityInfo = useMemo(
@@ -419,7 +421,7 @@ export function AgentActivityChip({
             onOpen();
           }
         }}
-        aria-label="Open Codex activity details"
+        aria-label={`Open ${agentLabel} activity details`}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -480,7 +482,7 @@ export function AgentActivityChip({
                   {formatTimestampTitle(lastActivityAtMs)}
                 </span>
               ) : (
-                "The turn is running, but no Codex activity event has arrived yet."
+                `The turn is running, but no ${agentLabel} activity event has arrived yet.`
               )
             }
           >
@@ -500,8 +502,8 @@ export function AgentActivityChip({
           <Tooltip
             title={
               liveStatus === "error"
-                ? "The Codex activity stream did not reconnect. Refresh this browser tab if the turn appears stuck."
-                : "The Codex activity stream is reconnecting. New activity may be delayed."
+                ? `The ${agentLabel} activity stream did not reconnect. Refresh this browser tab if the turn appears stuck.`
+                : `The ${agentLabel} activity stream is reconnecting. New activity may be delayed.`
             }
           >
             <span
@@ -784,6 +786,7 @@ export function AgentMessageStatus({
         }}
       >
         <AgentActivityChip
+          agentLabel="Agent"
           generating={generating}
           durationLabel={liveDurationLabel}
           lastActivityAtMs={lastActivityAtMs}
@@ -841,7 +844,7 @@ export function AgentMessageStatus({
               gap: 8,
             }}
           >
-            <span>Codex activity</span>
+            <span>Agent activity</span>
             {onOpenGitBrowser ? (
               <Button
                 size="small"

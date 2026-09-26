@@ -1435,7 +1435,12 @@ export function fenceAcpJobsForProject({
   const running = db
     .prepare(
       `UPDATE ${TABLE}
-       SET state = 'interrupted',
+       SET state = CASE
+             WHEN json_extract(request_json, '$.runtime.kind') = 'acp'
+              AND json_extract(request_json, '$.request_kind') IS NOT 'command'
+             THEN 'error'
+             ELSE 'interrupted'
+           END,
            error = ?,
            recovery_code = NULL,
            recovery_detail = NULL,

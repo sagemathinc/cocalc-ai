@@ -7,6 +7,7 @@ import type {
   CodexGoalCommand,
   CodexGoalAck,
 } from "@cocalc/util/ai/codex-goal";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
@@ -131,6 +132,7 @@ export interface ChatMessage {
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
+  acp_runtime_kind?: "codex" | "acp";
   acp_state?: "queued" | "running" | null;
   acp_manager_finished?: boolean;
   acp_active_descendant_thread_ids?: string[];
@@ -182,6 +184,7 @@ export interface BuildChatMessageOptions {
   historyAuthorId?: string;
   historyEntryDate?: string;
   acp_account_id?: string;
+  acp_runtime_kind?: "codex" | "acp";
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
@@ -218,6 +221,7 @@ export function buildChatMessage(
     acp_started_at_ms: options.acp_started_at_ms,
     acp_usage: options.acp_usage,
     acp_account_id: options.acp_account_id,
+    acp_runtime_kind: options.acp_runtime_kind,
     message_id: options.message_id,
     thread_id: options.thread_id,
     parent_message_id: options.parent_message_id,
@@ -305,6 +309,8 @@ export interface ChatThreadResolvedMeta {
 }
 
 export interface ChatThreadConfigRecord {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -338,6 +344,8 @@ export interface ChatThreadConfigRecord {
 }
 
 export interface BuildThreadConfigRecordOptions {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -394,6 +402,8 @@ export function buildThreadConfigRecord(
     agent_kind: options.agent_kind,
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
+    agent_runtime: options.agent_runtime,
+    agent_session_id: options.agent_session_id,
     acp_config: options.acp_config,
     acp_goal: options.acp_goal,
     acp_goal_request: options.acp_goal_request,

@@ -413,6 +413,11 @@ function runKindFromRequest(request: AcpJobRequest): string {
   return request.chat?.automation_id ? "automation" : "interactive";
 }
 
+function agentKindFromRequest(request: AcpJobRequest): string {
+  if (request.request_kind === "command") return "command";
+  return request.runtime?.kind === "acp" ? "acp" : "codex";
+}
+
 function sessionStateFromJobState(
   state: AcpSessionJobMirrorRow["state"],
 ): AcpSessionState {
@@ -475,7 +480,7 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
         payment_source_owner_account_id = COALESCE(excluded.payment_source_owner_account_id, ${TABLE}.payment_source_owner_account_id),
         site_funded_reservation_id = COALESCE(excluded.site_funded_reservation_id, ${TABLE}.site_funded_reservation_id),
         model = COALESCE(excluded.model, ${TABLE}.model),
-        agent_kind = COALESCE(excluded.agent_kind, ${TABLE}.agent_kind),
+        agent_kind = COALESCE(?, ${TABLE}.agent_kind),
         run_kind = COALESCE(excluded.run_kind, ${TABLE}.run_kind),
         title = COALESCE(excluded.title, ${TABLE}.title),
         prompt_snippet = COALESCE(excluded.prompt_snippet, ${TABLE}.prompt_snippet),
@@ -522,6 +527,7 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
     opts.finished_at ?? null,
     clean(opts.error),
     metadata,
+    clean(opts.agent_kind),
   );
   const row = getAcpSession(key)!;
   publishAcpSession(row);
@@ -563,7 +569,7 @@ export function upsertAcpSessionFromRequest({
     state,
     payment_source_kind: "unknown",
     model: modelFromRequest(request),
-    agent_kind: request.request_kind === "command" ? "command" : "codex",
+    agent_kind: agentKindFromRequest(request),
     run_kind: runKindFromRequest(request),
     title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),
@@ -600,7 +606,7 @@ export function upsertAcpSessionFromJob(
     state,
     payment_source_kind: "unknown",
     model: modelFromRequest(request),
-    agent_kind: request.request_kind === "command" ? "command" : "codex",
+    agent_kind: agentKindFromRequest(request),
     run_kind: runKindFromRequest(request),
     title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),

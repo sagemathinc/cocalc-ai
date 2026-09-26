@@ -1,8 +1,23 @@
 import {
+  acpImageAttachment,
   extractBlobReferences,
   projectBlobMaterializationRoots,
   rewriteBlobReferencesInPrompt,
 } from "../blob-materialization";
+
+describe("acpImageAttachment", () => {
+  it("uses image bytes, not the user-controlled filename, for MIME", () => {
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+    expect(acpImageAttachment(png)).toEqual({
+      mimeType: "image/png",
+      data: png.toString("base64"),
+    });
+    expect(() => acpImageAttachment(Buffer.from("not an image"))).toThrow();
+    expect(() =>
+      acpImageAttachment(Buffer.alloc(5 * 1024 * 1024 + 1)),
+    ).toThrow();
+  });
+});
 
 describe("projectBlobMaterializationRoots", () => {
   it("maps a host project mount to the path visible inside its container", () => {

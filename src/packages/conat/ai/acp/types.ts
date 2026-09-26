@@ -2,6 +2,11 @@ import type {
   CodexPaymentSourcePreference,
   CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
+import type {
+  AcpHarnessCredential,
+  AcpHarnessRuntime,
+} from "@cocalc/util/ai/runtime";
+import type { HarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
@@ -142,6 +147,10 @@ export interface AcpChatContext {
 
 export type AcpRequest = {
   request_kind?: "codex";
+  // Omitted for legacy/native Codex. A profile is snapshotted at admission.
+  runtime?: AcpHarnessRuntime;
+  // Private admission snapshot. Never source this from shared chat config.
+  harness_credential?: AcpHarnessCredential;
   project_id: string;
   account_id: string;
   prompt: string;
@@ -237,7 +246,8 @@ export type AcpControlRequest =
         | "resend"
         | "resend_with_payment"
         | "resend_with_model"
-        | "prepare_fresh_conversation";
+        | "prepare_fresh_conversation"
+        | "discover_harness_v1";
       // Only for retrying a confirmed ChatGPT model-unavailable rejection.
       model_recovery?: { model: string; expected_model: string };
       // Retry a terminal failed job using only a newly selected funding source.
@@ -249,6 +259,10 @@ export type AcpControlRequest =
 
 export type AcpControlResponse = {
   ok: boolean;
+  harness?: {
+    profile: AcpHarnessRuntime["profile"];
+    controls: HarnessSessionControls;
+  };
   active_threads?: Array<{
     path: string;
     thread_id: string;
@@ -445,6 +459,13 @@ export type AcpStreamUsage = {
 
 export type AcpStreamEvent =
   | CodexGoalEvent
+  | {
+      // Generic ACP metadata/tool updates; never interpret data as authority.
+      type: "harness";
+      source: "acp";
+      kind: "update" | "permission" | "stop" | "controls";
+      data: Record<string, unknown>;
+    }
   | {
       type: "config";
       model: string;

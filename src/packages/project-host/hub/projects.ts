@@ -69,6 +69,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { getClaudeSubscriptionLoginService } from "../acp/claude-subscription-service";
 import {
   writeManagedAuthorizedKeys,
   deleteVolume,
@@ -2599,9 +2600,15 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     runtime_exit_reason?: ProjectState["runtime_exit_reason"];
   }): Promise<void> {
     const activity_id = `stop:${project_id}:${Date.now()}`;
+    const { pauseHarnessDiscovery } =
+      await import("@cocalc/lite/hub/acp/harness-runtime");
+    const resumeDiscovery = pauseHarnessDiscovery(project_id);
     beginProjectHostActivity(activity_id, "stop");
     logger.debug("stop: project-host request received", { project_id, force });
     try {
+      // ACP sidecars share the project network namespace. Release their live
+      // runtimes before Podman removes the primary container they depend on.
+      await fenceProjectHostAcpWork({ project_id });
       const status = await runnerApi.stop({ project_id, force });
       noteProjectHostActivityProgress(activity_id);
       let finalState = status?.state ?? "opened";
@@ -2633,6 +2640,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           `project stop did not converge; runner still reports state='${finalState}'`,
         );
       }
+      // Retain the post-stop sweep for late worker/queue completion races.
       await fenceProjectHostAcpWork({ project_id });
       if (!syntheticRuntimeProbeProjects.has(project_id)) {
         try {
@@ -2662,6 +2670,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         force,
       });
     } finally {
+      resumeDiscovery();
       endProjectHostActivity(activity_id);
     }
   }
@@ -3007,6 +3016,75 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
     const canceled = cancelCodexDeviceAuth(id);
     return { id, canceled };
+  }
+
+  async function claudeSubscriptionLoginStart({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }) {
+    assertHostedProjectAccess({ account_id, project_id });
+    return await (
+      await getClaudeSubscriptionLoginService()
+    ).start(project_id, account_id!);
+  }
+
+  async function claudeSubscriptionLoginStatus({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    assertHostedProjectAccess({ account_id, project_id });
+    return (await getClaudeSubscriptionLoginService()).status(
+      id,
+      project_id,
+      account_id!,
+    );
+  }
+
+  async function claudeSubscriptionLoginSubmitCode({
+    account_id,
+    project_id,
+    id,
+    code,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+    code: string;
+  }): Promise<{ accepted: true }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    (await getClaudeSubscriptionLoginService()).submitCode(
+      id,
+      project_id,
+      account_id!,
+      code,
+    );
+    return { accepted: true };
+  }
+
+  async function claudeSubscriptionLoginCancel({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }): Promise<{ canceled: true }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    (await getClaudeSubscriptionLoginService()).cancel(
+      id,
+      project_id,
+      account_id!,
+    );
+    return { canceled: true };
   }
 
   async function codexUploadAuthFile({
@@ -3620,6 +3698,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     getCodexCredentialSelectionCapability;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
+  hubApi.projects.claudeSubscriptionLoginStart = claudeSubscriptionLoginStart;
+  hubApi.projects.claudeSubscriptionLoginStatus = claudeSubscriptionLoginStatus;
+  hubApi.projects.claudeSubscriptionLoginSubmitCode =
+    claudeSubscriptionLoginSubmitCode;
+  hubApi.projects.claudeSubscriptionLoginCancel = claudeSubscriptionLoginCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
   hubApi.projects.codexUploadAuthFileV2 = codexUploadAuthFileV2;
   hubApi.projects.getCodexUsageStatus = getCodexUsageStatus;

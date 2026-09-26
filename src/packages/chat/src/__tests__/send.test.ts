@@ -3,6 +3,88 @@ import {
   submitChatSend,
   admitPreparedChatSend,
 } from "../send";
+import { buildThreadConfigRecord } from "../core";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+
+const runtime: AcpHarnessRuntime = {
+  version: 1,
+  kind: "acp",
+  profile: {
+    version: 1,
+    kind: "acp",
+    id: "pi",
+    revision: "1",
+    executable: "/home/user/bin/pi-acp",
+    args: [],
+    cwd: "/home/user",
+    executionPolicy: "full-access",
+    credentialMode: "project-managed",
+  },
+};
+
+test("generic thread metadata round-trips without inventing Codex funding or a session", () => {
+  const thread = buildThreadConfigRecord({
+    thread_id: "thread",
+    updated_by: "account",
+    agent_kind: "acp",
+    agent_runtime: runtime,
+    acp_config: {
+      model: "codex",
+      sessionId: "legacy",
+      paymentSource: "subscription",
+    },
+  });
+  const prepared = prepareChatSend({
+    projectId: "project",
+    accountId: "account",
+    path: "a.chat",
+    thread,
+    rows: [],
+    prompt: "hello",
+  });
+  expect(prepared.request.runtime).toEqual(runtime);
+  expect(prepared.request.config).toBeUndefined();
+  expect(prepared.request.session_id).toBeUndefined();
+  runtime.profile.args.push("changed-after-admission");
+  expect(prepared.request.runtime!.profile.args).toEqual([]);
+  runtime.profile.args.pop();
+  thread.agent_session_id = "native-pi-session";
+  expect(
+    prepareChatSend({
+      projectId: "project",
+      accountId: "account",
+      path: "a.chat",
+      thread,
+      rows: [],
+      prompt: "again",
+    }).request.session_id,
+  ).toBe("native-pi-session");
+});
+
+test("unknown runtime and unsupported guidance do not fall back to Codex", () => {
+  const options = {
+    projectId: "project",
+    accountId: "account",
+    path: "a.chat",
+    rows: [],
+    prompt: "hello",
+    thread: buildThreadConfigRecord({
+      thread_id: "thread",
+      updated_by: "account",
+      agent_kind: "acp",
+      agent_runtime: runtime,
+    }),
+  };
+  expect(() => prepareChatSend({ ...options, guidance: true })).toThrow(
+    /guidance/,
+  );
+  expect(() =>
+    prepareChatSend({
+      ...options,
+      thread: { ...options.thread, agent_runtime: { kind: "future" } as any },
+    }),
+  ).toThrow(/runtime/);
+});
 
 function fixture(guidance = false) {
   const steps: string[] = [];

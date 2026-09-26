@@ -294,6 +294,7 @@ export const ActiveContent: React.FC = React.memo(() => {
         "agents",
         agentsActive,
         <RouteChunk route="agents">
+          <SurfaceReady segment="agents" />
           <MyAgentsWorkspacePage active={agentsActive} />
         </RouteChunk>,
       ),

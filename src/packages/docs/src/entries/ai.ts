@@ -4,6 +4,7 @@
  */
 
 import type { DocsEntry } from "../types";
+import { CLAUDE_CODE_BODY } from "../content/claude-code";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
   AI_CREDENTIALS_BODY,
@@ -18,6 +19,20 @@ import {
 } from "../content/ai";
 
 export const AI_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CLAUDE_CODE_BODY.trim(),
+    category: "AI",
+    id: "ai.claude-code",
+    lastReviewed: "2026-09-25",
+    noActionReason:
+      "Claude Code preview availability and credential setup depend on the site and account.",
+    slug: "ai/claude-code",
+    status: "ready",
+    summary:
+      "Use Claude Code in CoCalc: experimental setup, images, Agent Networks, credentials, billing, and the security model.",
+    title: "Claude Code in CoCalc (Experimental Preview)",
+  },
   {
     audiences: ["agents", "researchers", "students", "teams"],
     body: MY_AGENTS_BODY.trim(),

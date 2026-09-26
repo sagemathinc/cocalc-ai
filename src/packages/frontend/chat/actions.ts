@@ -101,6 +101,10 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processAI as processAIExternal } from "./actions/ai";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import { parseHarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
 import {
   readCodexSubscriptionSelection,
@@ -200,7 +204,8 @@ export type ThreadAgentKind = "acp" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
 
 export interface NewThreadAgentOptions {
-  mode: "codex" | "human";
+  mode: "codex" | "human" | "acp";
+  runtime?: AcpHarnessRuntime;
   model?: string;
   codexConfig?: Partial<CodexThreadConfig>;
 }
@@ -219,6 +224,9 @@ export interface PreparedChatSendIdentity {
 }
 
 export interface ThreadMetadataSnapshot {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_runtime_controls?: unknown;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -250,6 +258,11 @@ function deriveThreadAgentFromMetadata(args: {
   codexConfig?: CodexThreadConfig;
 }): NewThreadAgentOptions | undefined {
   const metadata = args.metadata;
+  if (metadata?.agent_runtime != null)
+    return {
+      mode: "acp",
+      runtime: parseAcpHarnessRuntime(metadata.agent_runtime),
+    };
   const codexConfig = args.codexConfig;
   const agentModel =
     typeof metadata?.agent_model === "string" && metadata.agent_model.trim()
@@ -360,6 +373,14 @@ function buildNewThreadConfig({
     threadConfigPatch.agent_kind = "none";
     threadConfigPatch.agent_model = null;
     threadConfigPatch.agent_mode = null;
+  } else if (agentMode === "acp") {
+    threadConfigPatch.agent_runtime = parseAcpHarnessRuntime(
+      threadAgent?.runtime,
+    );
+    threadConfigPatch.agent_kind = "acp";
+    threadConfigPatch.agent_model = "acp-harness";
+    threadConfigPatch.agent_mode = "interactive";
+    threadConfigPatch.acp_config = null;
   } else if (agentMode === "codex") {
     const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
     const defaultSessionMode = getDefaultCodexSessionMode();
@@ -2165,6 +2186,7 @@ export class ChatActions extends Actions<ChatState> {
     const readString = (
       key:
         | "name"
+        | "agent_session_id"
         | "thread_color"
         | "thread_accent_color"
         | "thread_icon"
@@ -2225,6 +2247,9 @@ export class ChatActions extends Actions<ChatState> {
       agent_kind,
       agent_model,
       agent_mode,
+      agent_runtime: field<AcpHarnessRuntime>(cfg, "agent_runtime"),
+      agent_runtime_controls: field(cfg, "agent_runtime_controls"),
+      agent_session_id: readString("agent_session_id"),
       acp_config,
       codex_completion_notification:
         normalizeCodexCompletionNotificationOverride(
@@ -2836,6 +2861,7 @@ export class ChatActions extends Actions<ChatState> {
     const metadata = this.getThreadMetadata(normalizedThreadId, {
       threadId: normalizedThreadId,
     });
+    if (metadata.agent_runtime != null) return;
     if (
       !isCodexModelName(model) &&
       metadata.agent_kind !== "acp" &&
@@ -2908,6 +2934,42 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.syncdb.commit();
+    void this.saveSyncdb();
+  };
+
+  discoverHarnessControls = async (threadKey: string) => {
+    const thread_id = this.normalizeThreadId(threadKey);
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    if (!thread_id || !project_id || !path || !this.syncdb)
+      throw Error("ACP conversation is not ready");
+    await this.saveSyncdb();
+    const result = await webapp_client.conat_client.controlAcp({
+      project_id,
+      path,
+      thread_id,
+      user_message_id: thread_id,
+      action: "discover_harness_v1",
+    });
+    if (!result.ok || !result.harness)
+      throw Error("ACP discovery is unavailable on this host");
+    return result.harness;
+  };
+
+  setHarnessSessionSettings = (
+    threadKey: string,
+    settings: HarnessSessionSettings,
+  ): void => {
+    const runtime = parseAcpHarnessRuntime(
+      this.getThreadMetadata(threadKey).agent_runtime,
+    );
+    const next = {
+      ...runtime,
+      settings: parseHarnessSessionSettings(settings),
+    };
+    if (!this.setThreadConfigRecord(threadKey, { agent_runtime: next }))
+      throw Error("Unable to save ACP settings");
+    this.syncdb?.commit();
     void this.saveSyncdb();
   };
 

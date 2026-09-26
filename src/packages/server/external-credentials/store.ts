@@ -4,10 +4,17 @@ import {
   decryptSecretStorageValue,
   encryptSecretStorageValue,
 } from "@cocalc/database/settings/secret-settings";
+import {
+  defaultMetadataKeyForCredentialSelector,
+  leaseExpirationMetadataKeyForCredentialSelector,
+} from "./provider-policy";
+
+export {
+  CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+  CODEX_SUBSCRIPTION_KIND,
+} from "./provider-policy";
 
 const MAX_PAYLOAD_BYTES = 2_000_000;
-export const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
-export const CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY = "cocalc_default";
 
 export type ExternalCredentialScope =
   | "account"
@@ -115,16 +122,6 @@ function selectorValues(selector: ExternalCredentialSelector) {
 
 function selectorLockKey(selector: ExternalCredentialSelector): string {
   return `external-credential:${selectorValues(selector).join(":")}`;
-}
-
-function defaultMetadataKeyForSelector(
-  selector: ExternalCredentialSelector,
-): string | undefined {
-  return selector.provider === "openai" &&
-    selector.kind === CODEX_SUBSCRIPTION_KIND &&
-    selector.scope === "account"
-    ? CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY
-    : undefined;
 }
 
 function rowToSummary(row: ExternalCredentialRow): ExternalCredentialSummary {
@@ -426,22 +423,24 @@ export async function createExternalCredential({
     // Short-lived operation leases share this table so admission follows the
     // same home-bay authority and transaction lock as credentials. Expired
     // leases must not permanently consume maxActive capacity after host loss.
-    if (normalized.kind === "codex-device-auth-lease") {
+    const leaseExpirationMetadataKey =
+      leaseExpirationMetadataKeyForCredentialSelector(normalized);
+    if (leaseExpirationMetadataKey) {
       await client.query(
         `
 UPDATE external_credentials
 SET revoked=NOW(), updated=NOW()
 WHERE ${ownershipClause(1)}
   AND revoked IS NULL
-  AND metadata ? 'lease_expires_at'
+  AND metadata ? $7::text
   AND CASE
-        WHEN metadata->>'lease_expires_at' ~
+        WHEN metadata->>$7::text ~
              '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
-          THEN (metadata->>'lease_expires_at')::timestamptz <= NOW()
+          THEN (metadata->>$7::text)::timestamptz <= NOW()
         ELSE TRUE
       END
         `,
-        [...selectorValues(normalized)],
+        [...selectorValues(normalized), leaseExpirationMetadataKey],
       );
     }
     if (deduplicateMetadata) {
@@ -565,7 +564,8 @@ export async function updateExternalCredentialById({
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       selectorLockKey(normalized),
     ]);
-    const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+    const defaultMetadataKey =
+      defaultMetadataKeyForCredentialSelector(normalized);
     if (defaultMetadataKey) {
       await ensureDefaultExternalCredentialLocked({
         client,
@@ -665,7 +665,8 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
-  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  const defaultMetadataKey =
+    defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {
     const designated = await ensureDefaultExternalCredential({
       selector: normalized,
@@ -781,7 +782,8 @@ export async function updateExternalCredentialPayloadLocked({
       selectorLockKey(normalized),
     ]);
     let resolvedId = id;
-    const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+    const defaultMetadataKey =
+      defaultMetadataKeyForCredentialSelector(normalized);
     if (!resolvedId && defaultMetadataKey) {
       const designated = await ensureDefaultExternalCredentialLocked({
         client,
@@ -918,7 +920,8 @@ export async function hasExternalCredential({
   selector: ExternalCredentialSelector;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
-  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  const defaultMetadataKey =
+    defaultMetadataKeyForCredentialSelector(normalized);
   if (defaultMetadataKey) {
     const designated = await ensureDefaultExternalCredential({
       selector: normalized,
@@ -960,7 +963,8 @@ export async function touchExternalCredential({
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
   let resolvedId = id;
-  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  const defaultMetadataKey =
+    defaultMetadataKeyForCredentialSelector(normalized);
   if (!resolvedId && defaultMetadataKey) {
     const designated = await ensureDefaultExternalCredential({
       selector: normalized,
@@ -1108,7 +1112,8 @@ LIMIT 1
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       selectorLockKey(selector),
     ]);
-    const defaultMetadataKey = defaultMetadataKeyForSelector(selector);
+    const defaultMetadataKey =
+      defaultMetadataKeyForCredentialSelector(selector);
     if (defaultMetadataKey) {
       await ensureDefaultExternalCredentialLocked({
         client,

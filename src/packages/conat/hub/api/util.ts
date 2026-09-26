@@ -11,7 +11,8 @@ export type HubApiPrincipalPolicy =
   | "compute-project"
   | "account-or-compute-project"
   | "account-or-compute-agent"
-  | "account-or-host-or-compute-agent";
+  | "account-or-host-or-compute-agent"
+  | "account-or-bound-agent-project";
 
 export interface HubApiArgTransformContext {
   args: any[];
@@ -107,6 +108,20 @@ export const authFirstRequireAccount = declareHubApiPrincipalPolicy(
     return bindAccount(context);
   },
 );
+
+// Agent session tokens may only inspect the project sealed into the token.
+export const authFirstRequireAccountOrBoundAgentProject =
+  declareHubApiPrincipalPolicy("account-or-bound-agent-project", (context) => {
+    if (!context.account_id) throw Error("user must be signed in");
+    if (context.auth_actor === "agent") {
+      if (!context.project_id) throw Error("agent project is required");
+      const opts = firstArg(context.args);
+      opts.project_id = context.project_id;
+      opts.account_id = context.account_id;
+      return context.args;
+    }
+    return bindAccount(context);
+  });
 
 // Use for methods that derive security policy from the authenticated browser
 // session itself. Unlike the general account transform, callers may not

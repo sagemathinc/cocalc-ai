@@ -276,7 +276,7 @@ function getManagedOpenAiProviderArgs(
   return;
 }
 
-function applyProjectRuntimeCliEnv(
+export function applyProjectRuntimeCliEnv(
   env: Record<string, string>,
   accountId?: string,
 ): void {
@@ -311,7 +311,7 @@ function shouldProtectResolvedRuntimeEnv({
   return !!env[key]?.trim() && env[key] !== value;
 }
 
-function resolveProjectRuntimeApiUrl(explicit?: string): string {
+export function resolveProjectRuntimeApiUrl(explicit?: string): string {
   const masterConat =
     `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim();
   const hostConfigured =
@@ -901,6 +901,43 @@ export async function getBuiltinLaunchpadSkillMounts(
     });
   }
   return mounts;
+}
+
+/** First-party skill text only: never load controller instructions from project HOME. */
+export async function getBuiltinClaudeSkillText(
+  packagedSkillsRoot?: string,
+): Promise<string> {
+  const root = await resolvePackagedSkillsRoot(packagedSkillsRoot);
+  const text = await fs.readFile(join(root, "cocalc", "SKILL.md"), "utf8");
+  if (!text.trim() || Buffer.byteLength(text) > 128 * 1024)
+    throw Error("Invalid packaged CoCalc skill");
+  return text;
+}
+
+export async function getBuiltinClaudeSkillMount(
+  projectHome: string,
+  packagedSkillsRoot?: string,
+): Promise<OptionalBindMount[]> {
+  const projectSkillsRoot = join(projectHome, ".claude", "skills");
+  try {
+    await fs.mkdir(projectSkillsRoot, { recursive: true, mode: 0o700 });
+  } catch {
+    // Best effort: project home mount may already provide this path.
+  }
+  const projectSkill = join(projectSkillsRoot, "cocalc");
+  try {
+    if ((await fs.stat(projectSkill)).isDirectory()) return [];
+  } catch {
+    // A missing project override uses the packaged first-party skill.
+  }
+  const skillsRoot = await resolvePackagedSkillsRoot(packagedSkillsRoot);
+  return [
+    {
+      source: join(skillsRoot, "cocalc"),
+      target: join(PROJECT_RUNTIME_HOME, ".claude", "skills", "cocalc"),
+      readOnly: true,
+    },
+  ];
 }
 
 function truncateForLog(value: string | undefined, max = 500): string {

@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { queryProjects, resolveHost, resolveProject } from "./project-resolve";
+import {
+  queryProjects,
+  resolveHost,
+  resolveProject,
+  resolveProjectFromArgOrContext,
+} from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const AGENT_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 function createContext(
   handler: (table: string, row?: Record<string, unknown>) => any[],
@@ -29,6 +35,33 @@ function createContext(
     },
   } as any;
 }
+
+test("resolveProject uses the sealed project id for an agent session", async () => {
+  const previousProjectId = process.env.COCALC_PROJECT_ID;
+  const previousTokenFile = process.env.COCALC_AGENT_TOKEN_FILE;
+  process.env.COCALC_PROJECT_ID = AGENT_PROJECT_ID;
+  process.env.COCALC_AGENT_TOKEN_FILE = "/tmp/test-agent-token";
+  try {
+    const ctx = createContext(() => {
+      throw Error("account-wide discovery must not run");
+    });
+    const project = await resolveProject(ctx, AGENT_PROJECT_ID, 1000);
+    assert.equal(project.project_id, AGENT_PROJECT_ID);
+    assert.equal(project.title, AGENT_PROJECT_ID);
+    const fromContext = await resolveProjectFromArgOrContext({
+      ctx,
+      projectCacheTtlMs: 1000,
+      readProjectContext: () => undefined,
+      projectContextPath: () => "/tmp/unused",
+    });
+    assert.equal(fromContext.project_id, AGENT_PROJECT_ID);
+  } finally {
+    if (previousProjectId == null) delete process.env.COCALC_PROJECT_ID;
+    else process.env.COCALC_PROJECT_ID = previousProjectId;
+    if (previousTokenFile == null) delete process.env.COCALC_AGENT_TOKEN_FILE;
+    else process.env.COCALC_AGENT_TOKEN_FILE = previousTokenFile;
+  }
+});
 
 test("queryProjects uses legacy projects reads by default", async () => {
   delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;

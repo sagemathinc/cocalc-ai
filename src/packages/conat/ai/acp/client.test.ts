@@ -8,6 +8,21 @@ import {
 } from "./client";
 
 describe("acp client explicit routing", () => {
+  it("routes harness requests to a versioned subject with no native fallback", async () => {
+    const request: any = {
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "hello",
+      runtime: { version: 1, kind: "acp", profile: {} },
+    };
+    const requestMany = jest.fn().mockRejectedValue(Error("no responders"));
+    await expect(
+      streamAcp(request, {}, { requestMany } as any).next(),
+    ).rejects.toThrow("no responders");
+    expect(requestMany).toHaveBeenCalledTimes(1);
+    expect(requestMany.mock.calls[0][0]).toMatch(/\.harness-v1$/);
+  });
+
   it("requires an explicit client for streamAcp", async () => {
     const iterator = streamAcp({
       project_id: "00000000-0000-4000-8000-000000000000",

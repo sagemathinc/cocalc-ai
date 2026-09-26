@@ -60,13 +60,13 @@ describe("AgentMessageStatus activity loading", () => {
     expect(mockCodexLogPanel).not.toHaveBeenCalled();
     expect(screen.getByText(/2 subagents working/)).toBeTruthy();
     const activityButton = screen.getByRole("button", {
-      name: "Open Codex activity details",
+      name: "Open Agent activity details",
     });
     expect(activityButton.style.border).toContain(UI_COLORS.warning);
     expect(activityButton.style.background).toBe(UI_COLORS.warningBg);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Codex activity details" }),
+      screen.getByRole("button", { name: "Open Agent activity details" }),
     );
 
     await waitFor(() => expect(mockCodexLogPanel).toHaveBeenCalled());
@@ -130,7 +130,7 @@ describe("AgentMessageStatus activity loading", () => {
       };
       const first = render(<AgentMessageStatus {...props} />);
       fireEvent.click(
-        screen.getByRole("button", { name: "Open Codex activity details" }),
+        screen.getByRole("button", { name: "Open Agent activity details" }),
       );
       const firstTarget = await screen.findByTestId("attention-target");
       const firstScrollNode = firstTarget.parentElement as HTMLDivElement;

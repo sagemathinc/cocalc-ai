@@ -15,6 +15,7 @@ import {
   Typography,
 } from "antd";
 import type { MenuProps } from "antd";
+import { HarnessRuntimeControl } from "./harness-profile";
 import {
   React,
   useEffect,
@@ -507,7 +508,40 @@ export function CodexPaymentCredentialsModal({
   );
 }
 
-export function CodexConfigButton({
+export function CodexConfigButton(
+  props: CodexConfigButtonProps,
+): React.ReactElement {
+  const metadata = props.actions?.getThreadMetadata?.(props.threadKey);
+  const runtime = metadata?.agent_runtime;
+  return runtime != null ? (
+    <HarnessRuntimeControl
+      key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
+      compact={!!props.compact}
+      runtime={runtime}
+      projectId={props.projectId}
+      threadKey={props.threadKey}
+      reported={metadata?.agent_runtime_controls}
+      onDiscover={
+        props.actions && props.threadKey && !props.turnRunning
+          ? () => props.actions!.discoverHarnessControls(props.threadKey)
+          : undefined
+      }
+      onSettings={
+        props.actions?.setHarnessSessionSettings && props.threadKey
+          ? (settings) =>
+              props.actions!.setHarnessSessionSettings(
+                props.threadKey!,
+                settings,
+              )
+          : undefined
+      }
+    />
+  ) : (
+    <NativeCodexConfigButton {...props} />
+  );
+}
+
+function NativeCodexConfigButton({
   compact = false,
   threadKey,
   chatPath,

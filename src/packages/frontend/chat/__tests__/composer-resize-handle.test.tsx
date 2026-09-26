@@ -387,6 +387,33 @@ describe("ChatRoomComposer resize handle", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each(["button", "keyboard callback"])(
+    "snapshots the live editor for %s sends despite serialized newline differences",
+    async (method) => {
+      const user = userEvent.setup();
+      const send = jest.fn();
+      renderComposer({
+        input: "unsupported-file-write\n",
+        hasInput: true,
+        on_send: send,
+      });
+      lastChatInputProps.inputControlRef.current = {
+        getValue: () => "unsupported-file-write\n\n",
+        focus: () => true,
+      };
+      if (method === "button") {
+        screen.getByRole("button", { name: "Send" }).focus();
+        await user.keyboard("{Enter}");
+      } else {
+        await act(async () => {
+          lastChatInputProps.on_send("unsupported-file-write\n");
+        });
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith("unsupported-file-write\n\n");
+    },
+  );
+
   it.each([false, true])(
     "shows the selected thread title without a custom appearance (AI: %s)",
     async (isAI) => {
@@ -657,6 +684,46 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onOpenCodexPaymentConfig).toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "separates native goals and payment setup from generic runtime=%s",
+    (generic) => {
+      renderComposer({
+        selectedThread: { key: "thread", label: "Agent" } as any,
+        actions: {
+          syncdb: {},
+          isCodexThread: () => true,
+          getThreadMetadata: () => ({
+            agent_kind: "acp",
+            ...(generic ? { agent_runtime: { kind: "acp" } } : {}),
+            acp_goal: {
+              goal: {
+                objective: "Legacy goal",
+                status: "active",
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+              },
+            },
+          }),
+        } as any,
+        isSelectedThreadAI: true,
+        codexPaymentSource: { source: "none" } as any,
+        onOpenCodexPaymentConfig: jest.fn(),
+      });
+      const goal = screen.queryByRole("button", {
+        name: "Goal: Legacy goal (active)",
+      });
+      const payment = screen.queryByRole("button", { name: "Connect AI" });
+      expect(screen.getByRole("button", { name: "Name agent" })).not.toBeNull();
+      if (generic) {
+        expect(goal).toBeNull();
+        expect(payment).toBeNull();
+      } else {
+        expect(goal).not.toBeNull();
+        expect(payment).not.toBeNull();
+      }
+    },
+  );
+
   it("does not show the Codex setup banner while payment source is loading", () => {
     renderComposer({
       codexPaymentSource: { source: "none" } as any,
@@ -763,6 +830,78 @@ describe("ChatRoomComposer resize handle", () => {
     expect(
       screen.getByRole("button", { name: "Message delivery: Queue" }),
     ).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    expect(onSend).toHaveBeenCalledWith("guidance");
+  });
+
+  it("queues generic ACP follow-ups from the keyboard and primary button", () => {
+    const onSend = jest.fn();
+    const onSendImmediately = jest.fn();
+    renderComposer({
+      selectedThread: { key: "generic-thread" } as any,
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "acp",
+          agent_runtime: { kind: "acp" },
+        }),
+        isCodexThread: () => true,
+      } as any,
+      hasActiveAcpTurn: true,
+      hasInput: true,
+      input: "follow-up",
+      isSelectedThreadAI: true,
+      on_send: onSend,
+      on_send_immediately: onSendImmediately,
+    });
+    expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
+    const queue = screen.getByRole("button", { name: "Queue" });
+    expect(queue.className).toContain("ant-btn-primary");
+    act(() => lastChatInputProps.on_send("keyboard follow-up"));
+    expect(onSend).toHaveBeenCalledWith("keyboard follow-up");
+    fireEvent.click(queue);
+    expect(onSend).toHaveBeenCalledWith("follow-up");
+    expect(onSendImmediately).not.toHaveBeenCalled();
+  });
+
+  it("offers live guidance and explicit queueing for a running qualified Claude turn", async () => {
+    const onSend = jest.fn();
+    const onSendImmediately = jest.fn();
+    renderComposer({
+      selectedThread: { key: "claude-thread" } as any,
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "acp",
+          agent_runtime: {
+            version: 1,
+            kind: "acp",
+            profile: { version: 2, id: "claude-code" },
+          },
+        }),
+        isCodexThread: () => true,
+      } as any,
+      hasActiveAcpTurn: true,
+      hasInput: true,
+      input: "guidance",
+      isSelectedThreadAI: true,
+      on_send: onSend,
+      on_send_immediately: onSendImmediately,
+    });
+    expect(screen.getByRole("button", { name: "Steer" })).not.toBeNull();
+    act(() => lastChatInputProps.on_send("keyboard guidance"));
+    expect(onSendImmediately).toHaveBeenCalledWith("keyboard guidance");
+    expect(onSend).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    const delivery = screen.getByRole("button", {
+      name: "Message delivery: To Agent",
+    });
+    delivery.focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Queue Alt\+Enter/ }),
+    );
+    expect(delivery).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(onSend).toHaveBeenCalledWith("guidance");
   });

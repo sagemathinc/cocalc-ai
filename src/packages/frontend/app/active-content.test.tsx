@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { Map } from "immutable";
 import { ActiveContent } from "./active-content";
+import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
 
 let disabled: boolean | undefined;
 const actions = { set_active_tab: jest.fn() };
@@ -64,4 +65,9 @@ it("unmounts and redirects when the opt-out arrives or changes", () => {
   rerender(<ActiveContent />);
   expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
+});
+
+it("marks the Agents workspace ready for browser automation", () => {
+  render(<ActiveContent />);
+  expect(recordSignedInSurfaceReady).toHaveBeenCalledWith("agents");
 });

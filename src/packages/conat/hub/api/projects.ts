@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountOrBoundAgentProject,
   authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
 } from "./util";
@@ -1283,7 +1284,7 @@ export const projects = {
   start: authFirstRequireAccount,
   startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
-  status: authFirstRequireAccount,
+  status: authFirstRequireAccountOrBoundAgentProject,
   restart: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
@@ -1311,6 +1312,10 @@ export const projects = {
   getCodexCredentialSelectionCapability: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
+  claudeSubscriptionLoginStart: authFirstRequireAccount,
+  claudeSubscriptionLoginStatus: authFirstRequireAccount,
+  claudeSubscriptionLoginSubmitCode: authFirstRequireAccount,
+  claudeSubscriptionLoginCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
   codexUploadAuthFileV2: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -2540,6 +2545,39 @@ export interface Projects {
     project_id: string;
     id: string;
   }) => Promise<{ id: string; canceled: boolean }>;
+
+  claudeSubscriptionLoginStart: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<{
+    id: string;
+    state: "pending" | "verifying" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    credentialId?: string;
+    error?: string;
+  }>;
+  claudeSubscriptionLoginStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{
+    id: string;
+    state: "pending" | "verifying" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    credentialId?: string;
+    error?: string;
+  }>;
+  claudeSubscriptionLoginSubmitCode: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+    code: string;
+  }) => Promise<{ accepted: true }>;
+  claudeSubscriptionLoginCancel: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{ canceled: true }>;
 
   codexUploadAuthFile: (opts: {
     account_id?: string;

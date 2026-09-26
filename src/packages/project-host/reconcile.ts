@@ -19,6 +19,7 @@ import {
 } from "./last-edited";
 import { getMountPoint } from "./file-server";
 import { reportProjectStateImmediately } from "./project-state-reporter";
+import { withProjectRuntimeLifecycle } from "./runtime-lifecycle";
 
 const DEFAULT_INTERVAL = 15_000;
 const DEFAULT_MISSING_CYCLES_BEFORE_OPENED = 2;
@@ -206,6 +207,35 @@ function projectHeartbeatAgeMs(
 }
 
 async function reportRuntimeLost(project_id: string, now: number) {
+  await withProjectRuntimeLifecycle({
+    project_id,
+    allow_unversioned: true,
+    fn: async () => {
+      const current = getProject(project_id);
+      if (current?.state !== "running" && current?.state !== "starting") return;
+      // The inventory may predate a queued start. Recheck under the same lock
+      // used by start/stop before fencing work belonging to this project.
+      const probe = await getContainerStates();
+      if (!probe.ok || probe.states.get(project_id)?.state === "running")
+        return;
+      const { pauseHarnessDiscovery } =
+        await import("@cocalc/lite/hub/acp/harness-runtime");
+      const resumeDiscovery = pauseHarnessDiscovery(project_id);
+      try {
+        const { fenceProjectHostAcpWork } =
+          await import("./hub/acp/worker-manager");
+        await fenceProjectHostAcpWork({ project_id });
+        recordRuntimeLost(project_id, now);
+      } finally {
+        resumeDiscovery();
+      }
+    },
+  });
+}
+
+function recordRuntimeLost(project_id: string, now: number) {
+  cgroupReconciledState.delete(project_id);
+  staleHeartbeatCycles.delete(project_id);
   upsertProject({
     project_id,
     state: "opened",
@@ -261,6 +291,13 @@ export async function reconcileOnce(options: ReconcileOptions = {}) {
     if (!known) continue;
     knownById.set(info.project_id, known);
     missingSince.delete(info.project_id);
+    if (
+      info.state === "opened" &&
+      (known.state === "running" || known.state === "starting")
+    ) {
+      await reportRuntimeLost(info.project_id, now);
+      continue;
+    }
     const row: any = {
       project_id: info.project_id,
       state: info.state,

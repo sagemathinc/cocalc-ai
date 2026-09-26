@@ -184,10 +184,16 @@ export function ChatRoomComposer({
   const threadMetadata = selectedThread
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
-  const showGoal =
+  const isGenericHarness = threadMetadata?.agent_runtime?.kind === "acp";
+  const supportsLiveGuidance =
+    !isGenericHarness ||
+    (threadMetadata?.agent_runtime?.profile?.version === 2 &&
+      threadMetadata.agent_runtime.profile.id === "claude-code");
+  const hasAgentControls =
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
+  const showGoal = hasAgentControls && !isGenericHarness;
   const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
   const canPost =
     on_post != null &&
@@ -206,7 +212,7 @@ export function ChatRoomComposer({
   }, [hasRunningCodexTurn]);
   const showComposerCodexConfig =
     isSelectedThreadAI ||
-    showGoal ||
+    hasAgentControls ||
     (selectedThread != null &&
       actions.getCodexConfig?.(selectedThread.key) != null);
   const contextThread = useMemo(
@@ -508,7 +514,11 @@ export function ChatRoomComposer({
 
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
-      const effective = typeof value === "string" ? value : input;
+      // Snapshot the same editor representation that the approval guard reads.
+      // Debounced input and keyboard callbacks can differ in trailing newlines.
+      const effective =
+        chatInputControlRef.current?.getValue?.() ??
+        (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&
@@ -551,7 +561,10 @@ export function ChatRoomComposer({
 
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
-      const effective = typeof value === "string" ? value : input;
+      if (!supportsLiveGuidance) return handleSend(value);
+      const effective =
+        chatInputControlRef.current?.getValue?.() ??
+        (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&
@@ -588,6 +601,8 @@ export function ChatRoomComposer({
       isZenMode,
       on_send,
       on_send_immediately,
+      supportsLiveGuidance,
+      handleSend,
       refocusComposerInput,
       toggleZenMode,
       agentMentions.preflight,
@@ -610,10 +625,12 @@ export function ChatRoomComposer({
   }, [onDecreaseFontSize, onIncreaseFontSize]);
 
   const showCodexPaymentSourceBanner =
+    !isGenericHarness &&
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
-  const handlePrimarySend = hasRunningCodexTurn
+  const canSteerRunningTurn = hasRunningCodexTurn && supportsLiveGuidance;
+  const handlePrimarySend = canSteerRunningTurn
     ? handleSendImmediately
     : handleSend;
   const handlePost = (value?: string | { preventDefault?: () => void }) => {
@@ -717,7 +734,7 @@ export function ChatRoomComposer({
                 flexWrap: "wrap",
               }}
             >
-              {showGoal && selectedThread && (
+              {hasAgentControls && selectedThread && (
                 <NameAgent
                   key={agentMentions.accountId}
                   agent={agentMentions.namedAgent}
@@ -812,7 +829,7 @@ export function ChatRoomComposer({
             </div>
           )}
           {agentMentions.ui}
-          {(showGoal || isNewThreadCodex) &&
+          {(hasAgentControls || isNewThreadCodex) &&
             agentMentions.agents
               .filter((agent) => hasUnboundAgentName(input, agent.name))
               .map((agent) => (
@@ -1027,11 +1044,13 @@ export function ChatRoomComposer({
                 "Post without sending to the agent (Ctrl+Enter)"
               ) : queueOnly ? (
                 "Queue after the running turn (Alt+Enter)"
-              ) : hasRunningCodexTurn ? (
+              ) : canSteerRunningTurn ? (
                 <FormattedMessage
                   id="chatroom.chat_input.steer_button.tooltip"
                   defaultMessage={"Steer running turn (Shift+Enter)"}
                 />
+              ) : hasRunningCodexTurn ? (
+                "Queue after the running turn (Shift+Enter)"
               ) : (
                 <FormattedMessage
                   id="chatroom.chat_input.send_button.tooltip"
@@ -1056,9 +1075,11 @@ export function ChatRoomComposer({
                   ? "Post message"
                   : queueOnly
                     ? "Queue message"
-                    : hasRunningCodexTurn
+                    : canSteerRunningTurn
                       ? "Steer"
-                      : "Send"
+                      : hasRunningCodexTurn
+                        ? "Queue"
+                        : "Send"
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}

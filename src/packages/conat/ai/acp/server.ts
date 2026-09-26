@@ -34,12 +34,14 @@ export {
   acpInterruptSubject,
   acpSteerSubject,
   acpSubject,
+  acpHarnessSubject,
   acpTruncateSubject,
 } from "./subjects";
 
 const logger = getLogger("conat:ai:acp:server");
 
 let apiSub: Subscription | null = null;
+let harnessSub: Subscription | null = null;
 let interruptSub: Subscription | null = null;
 let steerSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
@@ -146,6 +148,7 @@ export async function init(
     control?: ControlHandler;
     automation?: AutomationHandler;
     attention?: AttentionHandler;
+    evaluateHarness?: EvaluateHandler;
   },
   client: Client,
 ): Promise<void> {
@@ -157,6 +160,12 @@ export async function init(
   });
   listenApi(handlers.evaluate);
   await subscribeLegacy(client, "api");
+  if (handlers.evaluateHarness) {
+    harnessSub = await client.subscribe(acpSubscriptionSubject("harness-v1"), {
+      queue: "acp-harness-v1-q",
+    });
+    listenApi(handlers.evaluateHarness, harnessSub, "harness-v1");
+  }
   if (handlers.interrupt) {
     interruptSub = await client.subscribe(acpSubscriptionSubject("interrupt"), {
       queue: "acp-interrupt-q",
@@ -223,6 +232,8 @@ async function subscribeLegacy(
 }
 
 export async function close(): Promise<void> {
+  harnessSub?.close();
+  harnessSub = null;
   if (apiSub != null) {
     apiSub.close();
     apiSub = null;
@@ -300,11 +311,17 @@ async function rejectLegacyRequest(
   await mesg.respond(error, { noThrow: true });
 }
 
-function listenApi(evaluate: EvaluateHandler): void {
-  if (apiSub == null) throw Error("must init first");
+function listenApi(
+  evaluate: EvaluateHandler,
+  sub = apiSub,
+  operation: "api" | "harness-v1" = "api",
+): void {
+  if (sub == null) throw Error("must init first");
   (async () => {
-    for await (const mesg of apiSub!) {
-      void runLimited("message", mesg, () => handleMessage(mesg, evaluate));
+    for await (const mesg of sub) {
+      void runLimited("message", mesg, () =>
+        handleMessage(mesg, evaluate, operation),
+      );
     }
   })().catch((err) => {
     logger.warn("acp api listener stopped", err);
@@ -400,7 +417,11 @@ function listenAttentions(attentionHandler: AttentionHandler): void {
   });
 }
 
-async function handleMessage(mesg, evaluate: EvaluateHandler) {
+async function handleMessage(
+  mesg,
+  evaluate: EvaluateHandler,
+  operation: "api" | "harness-v1" = "api",
+) {
   const options = mesg.data ?? {};
   logger.debug("handleMessage", {
     subject: mesg.subject,
@@ -447,7 +468,14 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
   };
 
   try {
-    bindOptionsToSubject(options, mesg.subject, "api");
+    bindOptionsToSubject(options, mesg.subject, operation);
+    if (operation === "api" && options.runtime !== undefined)
+      throw Error("ACP harness requests require the harness-v1 endpoint");
+    if (
+      operation === "harness-v1" &&
+      (options.runtime?.kind !== "acp" || options.runtime?.version !== 1)
+    )
+      throw Error("harness-v1 requires an ACP v1 runtime");
     if (!options.chat) {
       activeChatTurnKey = chatTurnKey(options);
       if (activeChatTurnKey != null) {
@@ -726,6 +754,7 @@ async function handleAttentionMessage(
 }
 
 export const __test__ = {
+  handleMessage,
   bindOptionsToSubject,
   rejectLegacyRequest,
 };

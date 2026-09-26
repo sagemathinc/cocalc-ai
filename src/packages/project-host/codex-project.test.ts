@@ -1948,7 +1948,7 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     const projectHome = path.join(tmp, "project-home");
     await fs.mkdir(projectHome, { recursive: true });
 
-    const { getBuiltinLaunchpadSkillMounts } =
+    const { getBuiltinLaunchpadSkillMounts, getBuiltinClaudeSkillText } =
       await import("./codex/codex-project");
     const mounts = await getBuiltinLaunchpadSkillMounts(projectHome);
     const canonicalSkill = path.join(
@@ -1965,5 +1965,36 @@ describe("getBuiltinLaunchpadSkillMounts", () => {
     await expect(
       fs.readFile(path.join(mounts[0].source, "SKILL.md"), "utf8"),
     ).resolves.toBe(await fs.readFile(canonicalSkill, "utf8"));
+    await expect(getBuiltinClaudeSkillText()).resolves.toBe(
+      await fs.readFile(canonicalSkill, "utf8"),
+    );
+  });
+});
+
+describe("getBuiltinClaudeSkillMount", () => {
+  it("mounts the canonical skill unless the project provides one", async () => {
+    const tmp = await mkTempDir("claude-skill-test-");
+    const projectHome = path.join(tmp, "project-home");
+    const packagedSkills = path.join(tmp, "packaged-skills");
+    const packagedSkill = path.join(packagedSkills, "cocalc");
+    const projectSkill = path.join(projectHome, ".claude", "skills", "cocalc");
+    await fs.mkdir(packagedSkill, { recursive: true });
+    await fs.mkdir(projectHome, { recursive: true });
+    await fs.writeFile(path.join(packagedSkill, "SKILL.md"), "# cocalc\n");
+    const { getBuiltinClaudeSkillMount } =
+      await import("./codex/codex-project");
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toEqual([
+      {
+        source: packagedSkill,
+        target: "/home/user/.claude/skills/cocalc",
+        readOnly: true,
+      },
+    ]);
+    await fs.mkdir(projectSkill, { recursive: true });
+    await expect(
+      getBuiltinClaudeSkillMount(projectHome, packagedSkills),
+    ).resolves.toEqual([]);
   });
 });

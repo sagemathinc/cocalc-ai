@@ -14,6 +14,24 @@ import {
 } from "../agent-message-status";
 
 describe("reconcileAvailableSubagentEvents", () => {
+  it("identifies generic activity before lazy log loading", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:01",
+        date: 1000,
+        runtimeKind: "acp",
+        logRefs: {},
+        activityContext: {} as any,
+      }),
+    );
+    const chip = screen.getByRole("button", {
+      name: "Open Agent activity details",
+    });
+    fireEvent.keyDown(chip, { key: "Enter" });
+    expect(screen.getByText("Agent activity")).toBeTruthy();
+  });
   it("preserves missing events so the activity panel can load its persisted log", () => {
     expect(reconcileAvailableSubagentEvents(undefined, [])).toBeUndefined();
     expect(reconcileAvailableSubagentEvents(null, [])).toBeNull();
@@ -305,7 +323,7 @@ describe("AgentMessageStatus", () => {
 
     fireEvent.click(screen.getByRole("button"));
 
-    expect(screen.getByText("Codex activity")).toBeTruthy();
+    expect(screen.getByText("Agent activity")).toBeTruthy();
     expect(screen.getByText("use the smaller API")).toBeTruthy();
   });
 

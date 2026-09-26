@@ -222,7 +222,7 @@ export function AgentNetworkTagsEditor({
             type="info"
             showIcon
             title="Network tags are permissions, not just labels."
-            description="Agents sharing a tag can message each other in both directions. Live delivery may interrupt a running turn; removing a tag blocks future messages, not work already accepted."
+            description="Agents sharing a tag can message each other in both directions. Live delivery may interrupt a running turn; removing a tag blocks new messages and queued work that has not started, but not already-running work."
           />
           <div style={{ width: "100%" }}>
             <label htmlFor="agent-network-tags">Network tags</label>
