@@ -2681,8 +2681,14 @@ export class BaseEditorActions<
     id: string,
     parent: HTMLElement,
     terminalThemeOverride?: string | null,
+    isCurrent?: () => boolean,
   ): Promise<undefined | Terminal<CodeEditorState>> {
-    return this.terminals.get_terminal(id, parent, terminalThemeOverride);
+    return this.terminals.get_terminal(
+      id,
+      parent,
+      terminalThemeOverride,
+      isCurrent,
+    );
   }
 
   // The already-open terminal of a terminal frame, or undefined.  Never

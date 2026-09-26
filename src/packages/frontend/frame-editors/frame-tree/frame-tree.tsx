@@ -54,6 +54,7 @@ import { get_file_editor } from "./register";
 import { TabsContainer } from "./tabs-container";
 import { FrameTitleBar } from "./title-bar";
 import * as tree_ops from "./tree-ops";
+import { terminalScopeView } from "./terminal-scope";
 import { EditorDescription, EditorSpec, EditorState, NodeDesc } from "./types";
 
 interface FrameTreeProps {
@@ -240,6 +241,10 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
     const rows_container_ref = React.useRef<HTMLDivElement>(null as any);
 
     const [forceReload, setForceReload] = useState<number>(0);
+    const scopeView = terminalScopeView(
+      local_view_state?.get("frame_tree"),
+      active_id,
+    );
 
     useEffect(() => {
       return () => {
@@ -423,6 +428,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
     }
 
     function render_one(desc: NodeDesc): Rendered {
+      if (!scopeView.isVisible(desc)) return <></>;
       const type = desc.get("type");
       if (type === "node") {
         return render_frame_tree(desc);
@@ -435,6 +441,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
             renderChild={render_one}
             editor_spec={editor_spec}
             active_id={active_id}
+            childIsVisible={scopeView.isVisible}
           />
         );
       }
@@ -506,9 +513,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       const data = {
         pos,
         first: frame_tree.get("first"),
-        style_first: { display: "flex", flex: pos },
         second: frame_tree.get("second"),
-        style_second: { display: "flex", flex: 1 - pos },
         outer_style: undefined as any,
       };
 
@@ -526,18 +531,37 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
 
     function render_cols_legacy() {
       const data = get_data("row");
+      const firstVisible = scopeView.isVisible(data.first);
+      const secondVisible = scopeView.isVisible(data.second);
       return (
         <div ref={cols_container_ref} style={data.outer_style}>
-          <div className={"smc-vfill"} style={data.style_first}>
+          <div
+            key="first"
+            className={"smc-vfill"}
+            style={{
+              display: firstVisible ? "flex" : "none",
+              flex: secondVisible ? data.pos : 1,
+            }}
+          >
             {render_one(data.first)}
           </div>
-          <FrameTreeDragBar
-            actions={actions}
-            containerRef={cols_container_ref}
-            dir={"col"}
-            frame_tree={frame_tree}
-          />
-          <div className={"smc-vfill"} style={data.style_second}>
+          {firstVisible && secondVisible && (
+            <FrameTreeDragBar
+              key="divider"
+              actions={actions}
+              containerRef={cols_container_ref}
+              dir={"col"}
+              frame_tree={frame_tree}
+            />
+          )}
+          <div
+            key="second"
+            className={"smc-vfill"}
+            style={{
+              display: secondVisible ? "flex" : "none",
+              flex: firstVisible ? 1 - data.pos : 1,
+            }}
+          >
             {render_one(data.second)}
           </div>
         </div>
@@ -546,22 +570,41 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
 
     function render_rows_legacy() {
       const data = get_data("column");
+      const firstVisible = scopeView.isVisible(data.first);
+      const secondVisible = scopeView.isVisible(data.second);
       return (
         <div
           className={"smc-vfill"}
           ref={rows_container_ref}
           style={data.outer_style}
         >
-          <div className={"smc-vfill"} style={data.style_first}>
+          <div
+            key="first"
+            className={"smc-vfill"}
+            style={{
+              display: firstVisible ? "flex" : "none",
+              flex: secondVisible ? data.pos : 1,
+            }}
+          >
             {render_one(data.first)}
           </div>
-          <FrameTreeDragBar
-            actions={actions}
-            containerRef={rows_container_ref}
-            dir={"row"}
-            frame_tree={frame_tree}
-          />
-          <div className={"smc-vfill"} style={data.style_second}>
+          {firstVisible && secondVisible && (
+            <FrameTreeDragBar
+              key="divider"
+              actions={actions}
+              containerRef={rows_container_ref}
+              dir={"row"}
+              frame_tree={frame_tree}
+            />
+          )}
+          <div
+            key="second"
+            className={"smc-vfill"}
+            style={{
+              display: secondVisible ? "flex" : "none",
+              flex: firstVisible ? 1 - data.pos : 1,
+            }}
+          >
             {render_one(data.second)}
           </div>
         </div>
@@ -585,8 +628,17 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
         : rows_container_ref;
 
       const elements: React.ReactNode[] = [];
+      const visibleIndices: number[] = [];
       children.forEach((child: any, i: number) => {
-        if (i > 0) {
+        if (scopeView.isVisible(child)) visibleIndices.push(i);
+      });
+      const visibleSize = visibleIndices.reduce(
+        (sum, i) => sum + (sizes?.get(i) ?? 1 / children.size),
+        0,
+      );
+      children.forEach((child: any, i: number) => {
+        if (!scopeView.isVisible(child)) return;
+        if (i !== visibleIndices[0]) {
           elements.push(
             <FrameTreeDragBar
               key={`drag-${i}`}
@@ -595,6 +647,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
               dir={direction}
               frame_tree={frame_tree}
               childIndex={i}
+              visibleChildIndices={visibleIndices}
             />,
           );
         }
@@ -605,7 +658,10 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
           <div
             key={child.get("id")}
             className="smc-vfill"
-            style={{ display: "flex", flex }}
+            style={{
+              display: "flex",
+              flex: visibleSize > 0 ? flex / visibleSize : 1,
+            }}
           >
             {render_one(child)}
           </div>,
@@ -643,7 +699,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       if (full_id) {
         // A single frame is full-tab'd:
         const node = tree_ops.get_node(frame_tree, full_id);
-        if (node != null) {
+        if (node != null && scopeView.isVisible(node)) {
           // only render it if it actually exists, of course.
           return render_one(node);
         }
@@ -661,6 +717,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
             renderChild={render_one}
             editor_spec={editor_spec}
             active_id={active_id}
+            childIsVisible={scopeView.isVisible}
           />
         );
       }

@@ -60,10 +60,18 @@ interface Props {
   frame_tree: Map<string, any>;
   // index of the child after this drag bar for N-ary trees.
   childIndex?: number;
+  visibleChildIndices?: number[];
 }
 
 export const FrameTreeDragBar: React.FC<Props> = React.memo((props: Props) => {
-  const { dir, frame_tree, actions, containerRef, childIndex } = props;
+  const {
+    dir,
+    frame_tree,
+    actions,
+    containerRef,
+    childIndex,
+    visibleChildIndices,
+  } = props;
 
   const dragBarRef = React.useRef<Draggable>(null);
 
@@ -94,14 +102,28 @@ export const FrameTreeDragBar: React.FC<Props> = React.memo((props: Props) => {
     if (childIndex != null) {
       const sizes = frame_tree.get("sizes");
       if (!sizes) return;
-      const i = childIndex - 1;
+      const visibleIndices =
+        visibleChildIndices ?? Array.from({ length: sizes.size }, (_, i) => i);
+      const visibleIndex = visibleIndices.indexOf(childIndex);
+      if (visibleIndex < 1) return;
+      const i = visibleIndices[visibleIndex - 1];
       const j = childIndex;
       const combined = sizes.get(i) + sizes.get(j);
+      const visibleTotal = visibleIndices.reduce(
+        (sum, k) => sum + sizes.get(k),
+        0,
+      );
       let startOffset = 0;
-      for (let k = 0; k < i; k++) startOffset += sizes.get(k);
+      for (const k of visibleIndices) {
+        if (k === i) break;
+        startOffset += sizes.get(k);
+      }
+      // The displayed panes fill the container; translate their normalized
+      // position back to stored sizes without modifying hidden siblings.
+      const minimum = Math.min(0.05, combined / 2);
       const newSizeI = Math.max(
-        0.05,
-        Math.min(combined - 0.05, pos - startOffset),
+        minimum,
+        Math.min(combined - minimum, pos * visibleTotal - startOffset),
       );
       const newSizeJ = combined - newSizeI;
       const newSizes = sizes.set(i, newSizeI).set(j, newSizeJ);
