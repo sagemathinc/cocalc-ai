@@ -257,6 +257,7 @@ import {
 import {
   claimAcpSteer,
   decodeAcpSteerCandidateIds,
+  decodeAcpSteerFallbackRequest,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
@@ -9471,7 +9472,13 @@ async function prepareQueuedUserMessageForExecution({
           prompt: request.prompt,
           guidance: request.chat.send_mode === "immediate",
         }).request;
-        currentAgentConfig = current.config;
+        // Refresh execution settings, but retain admitted funding (including
+        // implicit auto) so execution and durable Q&A guidance agree.
+        currentAgentConfig = {
+          ...current.config,
+          paymentSource: request.config?.paymentSource,
+          credentialId: request.config?.credentialId,
+        };
         currentAgentSessionId = current.session_id;
       }
       if (current != null) {
@@ -10759,13 +10766,16 @@ function enqueueInterruptRequestForExecution({
 function enqueueSteerRequestForExecution({
   request,
   candidateIds,
+  fallbackConfig,
 }: {
   request: AcpSteerRequest;
   candidateIds?: string[];
+  fallbackConfig?: AcpSteerRequest["config"];
 }) {
   return enqueueAcpSteer({
     request,
     candidate_ids: candidateIds,
+    fallback_config: fallbackConfig,
   });
 }
 
@@ -10932,7 +10942,7 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
           continue;
         }
-        await fallbackAcpSteerToQueuedTurn(request);
+        await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
         markAcpSteerError({
@@ -11217,6 +11227,7 @@ async function deliverAsyncAttentionAnswer(
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
+  const fallbackConfig = config;
   const activeJob = listRunningAcpJobs().find(
     (job) =>
       job.project_id === record.project_id &&
@@ -11278,7 +11289,7 @@ async function deliverAsyncAttentionAnswer(
   if (existingSteer?.state === "error" && !retryFailed) {
     throw new Error(existingSteer.error ?? "queued Codex guidance failed");
   }
-  enqueueSteerRequestForExecution({ request });
+  enqueueSteerRequestForExecution({ request, fallbackConfig });
   if (liteUseDetachedAcpWorker()) {
     try {
       await ensureDetachedWorkerRunning({ force: true });

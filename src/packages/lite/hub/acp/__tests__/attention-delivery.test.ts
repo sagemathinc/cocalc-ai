@@ -1,4 +1,5 @@
 import type { Client } from "@cocalc/conat/core/client";
+import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { acquireChatSyncDB } from "@cocalc/chat/server";
 import {
   acpTestInternals,
@@ -15,6 +16,7 @@ import {
   decodeAcpJobRequest,
   enqueueAcpJob,
   listQueuedAcpJobs,
+  setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
 import {
@@ -25,6 +27,10 @@ import {
   markAcpSteerError,
 } from "../../sqlite/acp-steers";
 import type { AcpAttentionStoredRecord } from "../../sqlite/acp-attention";
+import {
+  pinCodexCredentialAtAdmission,
+  setCodexCredentialAdmissionResolver,
+} from "../codex-credential-admission";
 
 const mockSteer = jest.fn();
 jest.mock("@cocalc/ai/acp", () => ({
@@ -88,6 +94,73 @@ const record = {
 let rows: any[];
 const originalDetached = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
 
+function turnRequest(config: AcpRequest["config"]): AcpRequest {
+  return {
+    project_id: projectId,
+    account_id: accountId,
+    prompt: "Ask a question",
+    config,
+    chat: {
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      parent_message_id: "original-user",
+      message_id: "original-assistant",
+      message_date: "2026-09-05T07:51:32.212Z",
+      sender_id: "gpt-6-astra",
+    },
+  };
+}
+
+function startRunningTurn(request: AcpRequest) {
+  enqueueAcpJob(request);
+  return claimNextQueuedAcpJobForThread({
+    project_id: projectId,
+    path: record.path,
+    thread_id: record.thread_id,
+  })!;
+}
+
+function rpcTurnRequest(config: AcpRequest["config"]): AcpRequest {
+  const request = turnRequest(config);
+  request.chat!.agent_rpc_execution = {
+    version: 3,
+    source: { agent_id: "source-agent", project_id: projectId },
+    target: { agent_id: "target-agent", project_id: projectId },
+    target_path: record.path,
+    target_thread_id: record.thread_id,
+    agent_network_id: "network",
+    network_generation: "generation",
+    account_generation: 0,
+    configured_delivery: "queued",
+    principal_account_id: accountId,
+    guidance: false,
+  };
+  return request;
+}
+
+function mockLiveRuntime(config: AcpRequest["config"]) {
+  const { CodexAppServerAgent } = jest.requireActual("@cocalc/ai/acp");
+  const runtime = {
+    opts: {},
+    running: new Map([
+      [
+        sessionId,
+        {
+          executionAccountId: accountId,
+          paymentSource: config?.paymentSource,
+          credentialId: config?.credentialId,
+          turnId: "live-turn",
+          client: { request: jest.fn(async () => ({ turnId: "live-turn" })) },
+        },
+      ],
+    ]),
+  };
+  mockSteer.mockImplementation((id, request) =>
+    CodexAppServerAgent.prototype.steer.call(runtime, id, request),
+  );
+}
+
 beforeAll(() => {
   closeAcpDatabase();
   initAcpDatabase({ filename: ":memory:" });
@@ -144,6 +217,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  setCodexCredentialAdmissionResolver();
   await disposeAcpAgents();
   configureAcpDetachedWorkerRunning(undefined);
   if (originalDetached === undefined)
@@ -275,6 +349,178 @@ it.each(["missing", "not_steerable"])(
     expect(rows[2].parent_message_id).toBe("original-assistant");
   },
 );
+
+it.each(["auto", "subscription", "subscription-credential"])(
+  "preserves the admitted RPC subscription pin while refreshing %s preferences",
+  async (paymentSource) => {
+    setCodexCredentialAdmissionResolver(async () => ({
+      source: "subscription",
+      credentialId: "admitted-credential",
+    }));
+    const admitted = await pinCodexCredentialAtAdmission(
+      rpcTurnRequest({
+        paymentSource: "subscription",
+        workingDirectory: "/old",
+        sessionId: "01a01361-c4fe-7da1-b9f5-4c44a15a479b",
+      }),
+    );
+    const job = startRunningTurn(admitted);
+    rows[0].acp_config = {
+      model: "gpt-6-astra",
+      workingDirectory: "/new",
+      sessionId,
+      paymentSource,
+      ...(paymentSource === "subscription-credential"
+        ? { credentialId: "next-credential" }
+        : {}),
+    };
+    const prepared =
+      await acpTestInternals.prepareQueuedUserMessageForExecution({
+        client: {} as Client,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        user_message_id: job.user_message_id,
+        request: decodeAcpJobRequest(job),
+      });
+    expect(prepared.currentAgentConfig).toMatchObject({
+      workingDirectory: "/new",
+      sessionId,
+      model: "gpt-6-astra",
+      paymentSource: "subscription-credential",
+      credentialId: "admitted-credential",
+    });
+    expect(prepared.currentAgentSessionId).toBe(sessionId);
+    expect(decodeAcpJobRequest(job).config?.workingDirectory).toBe("/old");
+    mockLiveRuntime(prepared.currentAgentConfig);
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer(record),
+    ).resolves.toMatchObject({ state: "steered" });
+    expect(listQueuedAcpJobs()).toEqual([]);
+  },
+);
+
+it.each([
+  undefined,
+  "auto",
+  "subscription",
+  "account-api-key",
+  "site-api-key",
+] as const)(
+  "preserves admitted non-pinned RPC funding %s instead of new thread funding",
+  async (paymentSource) => {
+    const job = startRunningTurn(rpcTurnRequest({ paymentSource }));
+    rows[0].acp_config = {
+      sessionId,
+      workingDirectory: "/new",
+      paymentSource: "subscription-credential",
+      credentialId: "next-credential",
+    };
+    const prepared =
+      await acpTestInternals.prepareQueuedUserMessageForExecution({
+        client: {} as Client,
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        user_message_id: job.user_message_id,
+        request: decodeAcpJobRequest(job),
+      });
+    expect(prepared.currentAgentConfig?.paymentSource).toBe(paymentSource);
+    expect(prepared.currentAgentConfig?.credentialId).toBeUndefined();
+    expect(prepared.currentAgentConfig?.workingDirectory).toBe("/new");
+    mockLiveRuntime(prepared.currentAgentConfig);
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer(record),
+    ).resolves.toMatchObject({ state: "steered" });
+    expect(listQueuedAcpJobs()).toEqual([]);
+    expect(rows[0].acp_config.credentialId).toBe("next-credential");
+  },
+);
+
+it.each(["missing", "not_steerable", "detached"])(
+  "uses next-turn funding after %s delivery instead of the old live pin",
+  async (state) => {
+    const job = startRunningTurn(
+      turnRequest({
+        paymentSource: "subscription-credential",
+        credentialId: "revoked-old-credential",
+      }),
+    );
+    rows[0].acp_config.paymentSource = "subscription";
+    const resolve = jest.fn(async ({ credential_id }) => {
+      if (credential_id === "revoked-old-credential")
+        throw Error("Old credential revoked");
+      return { source: "subscription", credentialId: "next-credential" };
+    });
+    setCodexCredentialAdmissionResolver(resolve);
+    mockSteer.mockResolvedValue({
+      state: state === "detached" ? "missing" : state,
+    });
+    if (state === "detached") {
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+        {
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          session_id: sessionId,
+          owner_instance_id: "other-worker",
+        } as any,
+      ]);
+      await expect(
+        acpTestInternals.deliverAsyncAttentionAnswer(record),
+      ).resolves.toMatchObject({ state: "pending" });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(
+        decodeAcpSteerRequest(listPendingAcpSteers()[0]).config?.credentialId,
+      ).toBe("revoked-old-credential");
+      setAcpJobState({ op_id: job.op_id, state: "completed" });
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+      await acpTestInternals.processPendingAcpSteersOnce();
+    } else {
+      await expect(
+        acpTestInternals.deliverAsyncAttentionAnswer(record),
+      ).resolves.toMatchObject({ state: "queued" });
+    }
+    expect(listQueuedAcpJobs()).toHaveLength(1);
+    expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).config).toMatchObject({
+      paymentSource: "subscription-credential",
+      credentialId: "next-credential",
+    });
+    expect(resolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: accountId,
+        preference: "subscription",
+        credential_id: undefined,
+      }),
+    );
+  },
+);
+
+it("does not bypass a different running principal when answering", async () => {
+  startRunningTurn({ ...turnRequest({}), account_id: "another-account" });
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer(record),
+  ).rejects.toThrow();
+  expect(mockSteer).not.toHaveBeenCalled();
+  expect(listQueuedAcpJobs()).toEqual([]);
+});
+
+it("keeps the runtime funding guard if the active credential changes before delivery", async () => {
+  startRunningTurn(
+    turnRequest({
+      paymentSource: "subscription-credential",
+      credentialId: "old",
+    }),
+  );
+  mockLiveRuntime({
+    paymentSource: "subscription-credential",
+    credentialId: "new",
+  });
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer(record),
+  ).rejects.toThrow("cannot change the active turn's credential");
+  expect(listQueuedAcpJobs()).toEqual([]);
+});
 
 it("forwards guidance to the detached owner instead of creating a follow-up job", async () => {
   mockSteer.mockResolvedValue({ state: "missing" });
