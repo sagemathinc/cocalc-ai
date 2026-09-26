@@ -30,9 +30,9 @@ jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
   KeyboardBoundary: ({ children }) => <div>{children}</div>,
 }));
 jest.mock("@cocalc/frontend/jupyter/readonly-notebook", () => ({
-  ReadonlyNotebook: ({ doc }) => (
+  ReadonlyNotebook: ({ doc, font_size }) => (
     <>
-      <div>{doc.text}</div>
+      <div style={{ fontSize: font_size }}>{doc.text}</div>
       <NotebookContextProbe />
     </>
   ),
@@ -92,6 +92,19 @@ test("observes the project-owned notebook and detaches without closing it", asyn
   expect(screen.getByText("another live edit")).toBeTruthy();
   view.unmount();
   expect(syncdb.listenerCount("change")).toBe(0);
+  expect(syncdb.close).not.toHaveBeenCalled();
+});
+
+test("font zoom updates the live preview without reopening its session", async () => {
+  const { rerender } = render(
+    <NotebookArtifact projectId="p" path="analysis.ipynb" fontSize={14} />,
+  );
+  const content = await screen.findByText("unsaved live contents");
+  rerender(
+    <NotebookArtifact projectId="p" path="analysis.ipynb" fontSize={22} />,
+  );
+  expect(content).toHaveStyle({ fontSize: "22px" });
+  expect(open_file).toHaveBeenCalledTimes(1);
   expect(syncdb.close).not.toHaveBeenCalled();
 });
 

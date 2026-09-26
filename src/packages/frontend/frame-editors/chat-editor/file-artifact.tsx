@@ -166,6 +166,7 @@ export function FileArtifact(props: Parameters<typeof SavedFileArtifact>[0]) {
           projectId={props.projectId}
           path={props.artifact.file.path}
           historical={props.historical}
+          fontSize={props.fontSize}
         />
       </Suspense>
     );
