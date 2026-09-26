@@ -449,6 +449,19 @@ made. This is local transport evidence, not a live terminal result. Clustered
 propagation, rotated-namespace reconnect, application recovery, and independent
 review remain required before rollout.
 
+The follow-up transport suite now passes 11 tests. Added coverage places the
+scoped caller and socket service on distinct brokers joined with authenticated
+cluster links; forward requests, reverse requests, streamed data, and
+expiry-driven remote interest withdrawal all pass. Another test reconnects a
+logical socket under its unchanged authorized return route without creating a
+second service socket. Raw-wire spoofing coverage verifies that client-supplied
+caller metadata is discarded, the broker stamps only the authorized return
+route, and a foreign route is denied. The first spoofing assertion was adjusted
+to accept the wire encoding's null representation of absent metadata; it never
+accepted a forged route. These tests do not establish rotated-namespace recovery
+or a deployed terminal workflow. Production protocol code is unchanged from
+the pinned review candidate.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

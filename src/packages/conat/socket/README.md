@@ -22,9 +22,10 @@ resolve another request. Reverse requests accept one response.
 Broker lease expiry removes the private subscription. Existing socket interest
 cleanup then releases the logical socket; this does not terminate application
 processes launched through it. New brokers and services must be deployed before
-scoped clients rely on this protocol. Cross-broker propagation, reconnect with
-a rotated reply namespace, and application-specific session recovery need their
-own integration coverage beyond the local transport tests.
+scoped clients rely on this protocol. Two-broker tests cover attestation forwarding,
+bidirectional traffic, and expiry-driven interest withdrawal. Reconnect with a
+rotated reply namespace and application-specific session recovery still need
+their own coverage, as does rollout in the deployed multibay environment.
 
 In compute networking, **TCP sockets** are a great idea that's been around since 1974! They are
 incredibly useful as an abstraction. To create

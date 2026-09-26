@@ -13,7 +13,7 @@ jest.mock("@cocalc/conat/logger", () => ({
   }),
 }));
 
-import { Client, connect } from "../core/client";
+import { Client, connect, messageData } from "../core/client";
 import { ConatServer, init } from "../core/server";
 import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 import { isProjectHostApiKeySubjectAllowed } from "../auth/project-host-api-key-policy";
@@ -34,19 +34,44 @@ describe("socket inbox-return protocol", () => {
     await ConatServer.closeAllForTests();
   });
 
-  async function fixture(expires?: number) {
-    const broker = init({
+  async function fixture(expires?: number, clustered = false) {
+    const common = {
       port: 0,
-      getUser: async (socket) => ({
-        ...socket.handshake.auth,
-        ...(socket.handshake.auth.hub_id ? {} : { auth_lease_exp_s: expires }),
-      }),
-      isAllowed: async ({ user, subject, type }) =>
-        user?.hub_id === "service" ||
-        isProjectHostApiKeySubjectAllowed({ binding, subject, type }),
-    });
+      clusterName: "socket-inbox-test",
+      systemAccountPassword: "test-system-password",
+      clusterLinkPassword: "test-cluster-password",
+      autoscanInterval: 0,
+      getUser: async (socket, systemAccounts = {}) => {
+        const cookie = `${socket.handshake.headers.cookie ?? ""}`;
+        for (const [name, account] of Object.entries(systemAccounts) as [
+          string,
+          any,
+        ][]) {
+          if (cookie.includes(`${name}=${account.password}`))
+            return account.user;
+        }
+        return {
+          ...socket.handshake.auth,
+          ...(socket.handshake.auth.hub_id
+            ? {}
+            : { auth_lease_exp_s: expires }),
+        };
+      },
+      isAllowed: async ({ user, subject, type }) => {
+        if (user?.hub_id === "cluster-link")
+          return type === "pub" || subject.startsWith("_INBOX.");
+        return (
+          Boolean(user?.hub_id) ||
+          isProjectHostApiKeySubjectAllowed({ binding, subject, type })
+        );
+      },
+    };
+    const broker = init({ ...common, id: "caller" });
+    const targetBroker = clustered
+      ? init({ ...common, id: "service" })
+      : broker;
     const service = connect({
-      address: broker.address(),
+      address: targetBroker.address(),
       noCache: true,
       auth: { hub_id: "service" },
     });
@@ -64,8 +89,119 @@ describe("socket inbox-return protocol", () => {
       keepAliveTimeout: 1000,
     });
     await listener.waitUntilReady(5000);
-    return { broker, service, client, listener };
+    if (clustered) {
+      await Promise.all([
+        broker.join(targetBroker.address(), { timeout: 5000 }),
+        targetBroker.join(broker.address(), { timeout: 5000 }),
+      ]);
+    }
+    return { broker, targetBroker, service, client, listener };
   }
+
+  it("preserves broker-attested routes across a cluster link and withdraws expired interest", async () => {
+    const expires = (Date.now() + 4000) / 1000;
+    const { client, service, listener } = await fixture(expires, true);
+    const accepted = new Promise<ServerSocket>((resolve) =>
+      listener.once("connection", resolve),
+    );
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: false,
+    });
+    socket.on("request", (message) =>
+      message.respondSync("reverse-over-cluster"),
+    );
+    const serverSocket = await accepted;
+    serverSocket.on("request", (message) =>
+      message.respondSync("forward-over-cluster"),
+    );
+    await socket.waitUntilReady(5000);
+    expect((await socket.request(null, { timeout: 2000 })).data).toBe(
+      "forward-over-cluster",
+    );
+    expect((await serverSocket.request(null, { timeout: 2000 })).data).toBe(
+      "reverse-over-cluster",
+    );
+    const streamed = new Promise((resolve) => socket.once("data", resolve));
+    serverSocket.write("cross-broker-data");
+    expect(await streamed).toBe("cross-broker-data");
+    await delay(Math.max(0, expires * 1000 - Date.now()) + 1600);
+    expect(client.conn.connected).toBe(false);
+    expect(await service.interest(serverSocket.clientSubject)).toBe(false);
+    expect(serverSocket.state).toBe("closed");
+    socket.close();
+    listener.close();
+  }, 15000);
+
+  it("reuses an authorized return route when the logical socket reconnects", async () => {
+    const { client, listener } = await fixture();
+    const accepted = new Promise<ServerSocket>((resolve) =>
+      listener.once("connection", resolve),
+    );
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: true,
+    });
+    const serverSocket = await accepted;
+    serverSocket.on("request", (message) => message.respondSync(message.data));
+    await socket.waitUntilReady(5000);
+    const route = serverSocket.clientSubject;
+    expect((await socket.request("before", { timeout: 2000 })).data).toBe(
+      "before",
+    );
+    socket.disconnect();
+    await socket.waitUntilReady(5000);
+    expect((await socket.request("after", { timeout: 2000 })).data).toBe(
+      "after",
+    );
+    expect(serverSocket.clientSubject).toBe(route);
+    expect(Object.keys(listener.sockets)).toHaveLength(1);
+    socket.close();
+    listener.close();
+  });
+
+  it("replaces forged wire caller metadata with broker-owned return authority", async () => {
+    const { client, service, listener } = await fixture();
+    const destination = subject + ".probe";
+    const subscription = await service.subscribe(destination);
+    const payload = messageData(null);
+    const forged = { socket_return: "_INBOX.foreign.socket" };
+    const send = async (headers, id) =>
+      await client.conn
+        .timeout(3000)
+        .emitWithAck("publish", [
+          destination,
+          id,
+          0,
+          1,
+          payload.encoding,
+          payload.raw,
+          headers,
+          null,
+          forged,
+        ]);
+    expect((await send({}, "without-route")).error).toBeUndefined();
+    expect((await subscription.next()).value?.caller ?? undefined).toBeUndefined();
+    expect(
+      (
+        await send(
+          { [SOCKET_RETURN_HEADER]: prefix + ".socket" },
+          "authorized-route",
+        )
+      ).error,
+    ).toBeUndefined();
+    expect((await subscription.next()).value?.caller).toEqual({
+      socket_return: prefix + ".socket",
+    });
+    expect(
+      await send(
+        { [SOCKET_RETURN_HEADER]: forged.socket_return },
+        "foreign-route",
+      ),
+    ).toMatchObject({ code: 403 });
+    subscription.close();
+    listener.close();
+  });
 
   it("carries requests and reverse requests without broad subscriptions or inbox publication", async () => {
     const { client, listener } = await fixture();
