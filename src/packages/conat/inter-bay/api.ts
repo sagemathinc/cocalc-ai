@@ -2990,6 +2990,7 @@ export type AccountLocalMethod =
   | "create-cli-login-session"
   | "validate-host-action-auth"
   | "get-api-key-authorization-state"
+  | "api-key-actions"
   | "list-project-summaries"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
@@ -4723,6 +4724,13 @@ export interface InterBayAccountLocalApi
     scope_revision: number;
     expire_ms?: number;
   } | null>;
+  requestApiKeyAction: (opts: {
+    principal: import("@cocalc/util/api-key-management").ApiKeyActionPrincipal;
+    request: import("@cocalc/util/api-key-management").ApiKeyActionRequest;
+  }) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview>;
+  decideApiKeyAction: (
+    opts: import("@cocalc/util/api-key-management").ApiKeyActionDecision,
+  ) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview>;
   listProjectSummaries: (opts: {
     account_id: string;
     project_id?: string;
@@ -7412,6 +7420,12 @@ export function createInterBayAccountLocalClient({
       method: "get-api-key-authorization-state",
     }),
   });
+  const apiKeyActionsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "requestApiKeyAction" | "decideApiKeyAction">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "api-key-actions" }),
+  });
   const listProjectSummariesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "listProjectSummaries">
   >({
@@ -8782,6 +8796,10 @@ export function createInterBayAccountLocalClient({
       await validateHostActionAuthClient.validateHostActionAuth(opts),
     getApiKeyAuthorizationState: async (opts) =>
       await getApiKeyAuthorizationStateClient.getApiKeyAuthorizationState(opts),
+    requestApiKeyAction: async (opts) =>
+      await apiKeyActionsClient.requestApiKeyAction(opts),
+    decideApiKeyAction: async (opts) =>
+      await apiKeyActionsClient.decideApiKeyAction(opts),
     listProjectSummaries: async (opts) =>
       await listProjectSummariesClient.listProjectSummaries(opts),
     startCodexFreshAuth: async (opts) =>
@@ -9492,6 +9510,24 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getApiKeyAuthorizationState: async (opts) =>
           await impl.getApiKeyAuthorizationState(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "requestApiKeyAction" | "decideApiKeyAction"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "api-key-actions",
+      }),
+      impl: {
+        requestApiKeyAction: async (opts) =>
+          await impl.requestApiKeyAction(opts),
+        decideApiKeyAction: async (opts) => await impl.decideApiKeyAction(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "listProjectSummaries">>(

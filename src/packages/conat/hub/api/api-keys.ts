@@ -4,7 +4,14 @@
  */
 
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
-import { authFirstRequireHostWithAccountTarget } from "./util";
+import {
+  authFirstRequireHostWithAccountTarget,
+  authFirstRequireAccountWithBoundSession,
+} from "./util";
+import type {
+  ApiKeyActionDecision,
+  ApiKeyActionReview,
+} from "@cocalc/util/api-key-management";
 
 export interface GetApiKeyViewerReadPolicyOptions {
   host_id?: string;
@@ -16,11 +23,18 @@ export interface GetApiKeyViewerReadPolicyOptions {
 }
 
 export interface ApiKeys {
+  decideAction: (
+    opts: Omit<ApiKeyActionDecision, "account_id" | "session_hash"> & {
+      account_id?: string;
+      session_hash?: string;
+    },
+  ) => Promise<ApiKeyActionReview>;
   getViewerReadPolicy: (
     opts: GetApiKeyViewerReadPolicyOptions,
   ) => Promise<ProjectViewerReadPolicy>;
 }
 
 export const apiKeys = {
+  decideAction: authFirstRequireAccountWithBoundSession,
   getViewerReadPolicy: authFirstRequireHostWithAccountTarget,
 } as const;

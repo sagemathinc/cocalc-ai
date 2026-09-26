@@ -14,6 +14,10 @@ jest.mock("./router", () => ({
   __esModule: true,
   default: jest.fn(),
 }));
+jest.mock("../pages/api/conat/api-key-action", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 
 import createConatRouter from "./conat-router";
 import createApiV2Router from "./router";
@@ -25,6 +29,7 @@ describe("Conat HTTP router", () => {
       expect.objectContaining({
         manifest: expect.arrayContaining([
           expect.objectContaining({ path: "/project-host-api-key" }),
+          expect.objectContaining({ path: "/api-key-action" }),
         ]),
       }),
     );

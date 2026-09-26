@@ -11,7 +11,11 @@ import {
   normalizeApiKeyActionBinding,
   normalizeApiKeyActionRequest,
 } from "@cocalc/util/api-key-management";
-import type { ApiKeyActionReview } from "@cocalc/util/api-key-management";
+import type {
+  ApiKeyActionReview,
+  ApiKeyActionPrincipal,
+  ApiKeyActionDecision,
+} from "@cocalc/util/api-key-management";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -24,7 +28,7 @@ import {
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
 import { ensureApiKeysV2Schema } from "./manage";
-import { effectiveApiKeyScope, type ApiKeyPrincipal } from "./api-key-scope";
+import { effectiveApiKeyScope } from "./api-key-scope";
 import { ApiKeyActionStore } from "./key-action-store";
 
 const CAPABILITY = "api-key:revoke:request";
@@ -118,7 +122,7 @@ async function validateLocked(
 // Only the authenticated HTTP/inter-bay adapter may supply principal. There is
 // intentionally no public Hub RPC for nominating a requesting key identity.
 export async function requestApiKeyActionLocal(
-  principal: ApiKeyPrincipal,
+  principal: ApiKeyActionPrincipal,
   input: unknown,
 ): Promise<ApiKeyActionReview> {
   if (principal.auth_method !== "api_key")
@@ -169,12 +173,7 @@ export async function decideApiKeyActionLocal({
   session_hash,
   reviewed,
   decision,
-}: {
-  account_id: string;
-  session_hash: string;
-  reviewed: ApiKeyActionReview;
-  decision: "reject" | "execute";
-}): Promise<ApiKeyActionReview> {
+}: ApiKeyActionDecision): Promise<ApiKeyActionReview> {
   if (reviewed.binding.account_id !== account_id)
     throw new Error("API key action owner mismatch");
   await assertHome(account_id);

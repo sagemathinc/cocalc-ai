@@ -19,6 +19,22 @@ export interface ApiKeyActionRequest {
   action: RevokeApiKeyAction;
 }
 
+// Supplied only by the authenticated API gateway over trusted bay transport.
+export interface ApiKeyActionPrincipal {
+  account_id: string;
+  api_key_id: number;
+  key_id: string;
+  scope_revision?: number;
+  auth_method: "api_key";
+}
+
+export interface ApiKeyActionDecision {
+  account_id: string;
+  session_hash: string;
+  reviewed: ApiKeyActionReview;
+  decision: "reject" | "execute";
+}
+
 export interface ApiKeyActionBinding {
   account_id: string;
   requesting_key_id: string;

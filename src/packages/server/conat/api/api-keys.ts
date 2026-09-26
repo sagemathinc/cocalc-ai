@@ -4,6 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
+export { decideApiKeyAction as decideAction } from "@cocalc/server/api/key-action-routing";
 import type { GetApiKeyViewerReadPolicyOptions } from "@cocalc/conat/hub/api/api-keys";
 import { viewerPolicyForApiKeyGrant } from "@cocalc/util/api-key-scope";
 import {

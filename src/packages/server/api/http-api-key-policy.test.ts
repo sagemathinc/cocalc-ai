@@ -23,6 +23,15 @@ const principal = {
 };
 
 describe("HTTP API key policy audit", () => {
+  it("does not let management request scope invoke human approval", () => {
+    expect(() =>
+      assertHttpHubApiKeyAllowed({
+        principal: { ...principal, capabilities: ["api-key:revoke:request"] },
+        name: "apiKeys.decideAction",
+        args: [{ session_hash: "forged", decision: "execute" }],
+      }),
+    ).toThrow("API keys are not allowed");
+  });
   beforeEach(() => {
     mockRecordApiKeyAuditEventSoon.mockClear();
   });

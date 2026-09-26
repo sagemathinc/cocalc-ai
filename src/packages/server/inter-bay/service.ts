@@ -316,6 +316,10 @@ import {
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
 import { getApiKeyAuthorizationStateLocal } from "@cocalc/server/api/key-authorization-state";
+import {
+  requestApiKeyActionLocal,
+  decideApiKeyActionLocal,
+} from "@cocalc/server/api/key-actions";
 import { listProjectSummaries as listProjectSummariesLocal } from "@cocalc/server/projects/list-account-window";
 import { issueProjectHostApiKeyTokenLocal } from "@cocalc/server/api/project-host-api-key";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
@@ -1509,6 +1513,9 @@ async function startAccountLocalService(): Promise<void> {
     },
     validateHostActionAuth: validateHostActionAuthLocal,
     getApiKeyAuthorizationState: getApiKeyAuthorizationStateLocal,
+    requestApiKeyAction: ({ principal, request }) =>
+      requestApiKeyActionLocal(principal, request),
+    decideApiKeyAction: decideApiKeyActionLocal,
     listProjectSummaries: listProjectSummariesLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
