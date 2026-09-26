@@ -1,5 +1,6 @@
 import path from "node:path";
 import { hubApi } from "../api";
+import { installLiteCodexSpawner } from "../codex-runtime";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -6901,6 +6902,7 @@ export async function recoverDetachedWorkerStartupState(
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
+  if (!preferContainerExecutor()) installLiteCodexSpawner();
   // IMPORTANT: initialize sqlite with the same path used by the embedding
   // process before any ACP queue/lease tables are touched. Otherwise ACP can
   // accidentally lock the sqlite module onto a fallback cwd-relative file or a
