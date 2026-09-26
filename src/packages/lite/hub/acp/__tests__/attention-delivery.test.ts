@@ -10,7 +10,12 @@ import {
   getAcpDatabase,
   initAcpDatabase,
 } from "../../sqlite/acp-database";
-import { decodeAcpJobRequest, listQueuedAcpJobs } from "../../sqlite/acp-jobs";
+import {
+  claimNextQueuedAcpJobForThread,
+  decodeAcpJobRequest,
+  enqueueAcpJob,
+  listQueuedAcpJobs,
+} from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
 import {
   claimAcpSteer,
@@ -23,6 +28,7 @@ import type { AcpAttentionStoredRecord } from "../../sqlite/acp-attention";
 
 const mockSteer = jest.fn();
 jest.mock("@cocalc/ai/acp", () => ({
+  ...jest.requireActual("@cocalc/ai/acp"),
   CodexAppServerAgent: {
     create: async () => ({ steer: mockSteer }),
   },
@@ -179,6 +185,68 @@ it("steers an active turn and records the human answer as delivered", async () =
   expect(mockSteer).toHaveBeenCalledTimes(calls);
   expect(rows[2].parent_message_id).toBe("original-assistant");
 });
+
+it.each(["subscription", "auto", "account-api-key"])(
+  "answers inherit the active credential rather than the thread's %s preference",
+  async (paymentSource) => {
+    rows[0].acp_config.paymentSource = paymentSource;
+    rows[0].acp_config.credentialId = "a-different-next-turn-credential";
+    const runningConfig = {
+      model: "gpt-6-astra",
+      sessionId,
+      paymentSource: "subscription-credential" as const,
+      credentialId: "credential-pinned-when-the-turn-started",
+    };
+    enqueueAcpJob({
+      project_id: projectId,
+      account_id: accountId,
+      prompt: "Keep working and ask me a question",
+      config: runningConfig,
+      chat: {
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        parent_message_id: "original-user",
+        message_id: "original-assistant",
+        message_date: "2026-09-05T07:51:32.212Z",
+        sender_id: "gpt-6-astra",
+      },
+    });
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+      }),
+    ).toBeDefined();
+    mockSteer.mockImplementation(async (_id, request) => {
+      // Match the app-server's invariant: live guidance must not change funding.
+      if (
+        request.config?.paymentSource !== runningConfig.paymentSource ||
+        request.config?.credentialId !== runningConfig.credentialId
+      ) {
+        throw Error(
+          "Send Immediately cannot change the active turn's credential",
+        );
+      }
+      return { state: "steered", threadId: sessionId };
+    });
+
+    await expect(
+      acpTestInternals.deliverAsyncAttentionAnswer(record),
+    ).resolves.toMatchObject({ state: "steered" });
+    expect(listQueuedAcpJobs()).toEqual([]);
+    expect(rows[2]).toMatchObject({
+      acp_state: "sent",
+      acp_send_mode: "immediate",
+      acp_guidance_delivered_at_ms: expect.any(Number),
+    });
+    expect(rows[0].acp_config.paymentSource).toBe(paymentSource);
+    expect(rows[0].acp_config.credentialId).toBe(
+      "a-different-next-turn-credential",
+    );
+  },
+);
 
 it.each(["missing", "not_steerable"])(
   "queues a correctly attributed turn when steering returns %s",

@@ -11197,6 +11197,24 @@ async function deliverAsyncAttentionAnswer(
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
+  const activeJob = listRunningAcpJobs().find(
+    (job) =>
+      job.project_id === record.project_id &&
+      job.path === record.path &&
+      job.thread_id === record.thread_id &&
+      job.account_id === record.account_id,
+  );
+  const activeRequest = activeJob ? decodeAcpJobRequest(activeJob) : undefined;
+  if (activeRequest && activeRequest.request_kind !== "command") {
+    // An answer is guidance, not a request to change the active turn's funding.
+    // Thread preferences are for the next turn and lack its admission-time pin.
+    const activeConfig = activeRequest.config;
+    config = {
+      ...config,
+      paymentSource: activeConfig?.paymentSource,
+      credentialId: activeConfig?.credentialId,
+    };
+  }
   const request: AcpSteerRequest = {
     project_id: record.project_id,
     account_id: record.account_id,
