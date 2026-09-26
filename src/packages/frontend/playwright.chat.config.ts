@@ -13,6 +13,9 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     headless: true,
+    launchOptions: {
+      executablePath: process.env.CHAT_PW_CHROMIUM || undefined,
+    },
   },
   projects: [
     {

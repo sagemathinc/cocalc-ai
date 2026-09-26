@@ -112,6 +112,11 @@ it("offers fullscreen through the compact menu without a floating editor button"
   trigger.focus();
   await user.keyboard("{Enter}");
   const button = await screen.findByRole("button", { name: "Fullscreen" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Close formatting" }),
+    ).toHaveFocus(),
+  );
   button.focus();
   await user.keyboard("{Enter}");
   expect(fullscreen).toHaveBeenCalledTimes(1);

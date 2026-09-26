@@ -1,7 +1,14 @@
 /** @jest-environment jsdom */
 
 import React from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   allowAgentMentionsInComposer,
@@ -40,11 +47,30 @@ jest.mock("../input", () => ({
 
 jest.mock("../codex", () => ({
   CodexConfigButton: (props: any) => {
+    const { useState } = require("react");
+    const { Modal, Popover } = require("antd");
+    const [open, setOpen] = useState(false);
     lastCodexConfigProps = props;
     return (
-      <button type="button" aria-label="Codex settings">
-        Codex settings
-      </button>
+      <>
+        <Popover
+          id="composer-settings-popover"
+          trigger="click"
+          content={<button onClick={() => setOpen(true)}>Choose model</button>}
+        >
+          <button type="button" aria-label="Codex settings">
+            Codex settings
+          </button>
+        </Popover>
+        <Modal
+          title="Model settings"
+          open={open}
+          onCancel={() => setOpen(false)}
+          footer={null}
+        >
+          Model options
+        </Modal>
+      </>
     );
   },
 }));
@@ -821,6 +847,67 @@ describe("ChatRoomComposer resize handle", () => {
     ).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(onSend).toHaveBeenCalledWith("guidance");
+  });
+
+  it("keeps settings popovers and dialogs inside the fullscreen composer", async () => {
+    const user = userEvent.setup();
+    const fullscreenDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "fullscreenElement",
+    );
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    try {
+      renderComposer({
+        isSelectedThreadAI: true,
+        selectedThread: { key: "thread-ai" } as any,
+      });
+      const composer = screen.getByTestId("chat-composer");
+      composer.requestFullscreen = async () => {
+        fullscreenElement = composer;
+        document.dispatchEvent(new Event("fullscreenchange"));
+      };
+      await user.click(
+        screen.getByRole("button", { name: "Fullscreen", exact: true }),
+      );
+
+      screen.getByRole("button", { name: "Codex settings" }).focus();
+      await user.keyboard("{Enter}");
+      const chooseModel = await screen.findByRole("button", {
+        name: "Choose model",
+      });
+      expect(composer).toContainElement(chooseModel);
+      chooseModel.focus();
+      await user.keyboard("{Enter}");
+      const dialog = await screen.findByRole("dialog", {
+        name: "Model settings",
+      });
+      expect(composer).toContainElement(dialog);
+      within(dialog).getByRole("button", { name: "Close" }).focus();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(dialog).not.toBeVisible());
+
+      act(() => {
+        fullscreenElement = null;
+        document.dispatchEvent(new Event("fullscreenchange"));
+      });
+      expect(
+        screen.getByRole("button", { name: "Fullscreen", exact: true }),
+      ).toBeVisible();
+    } finally {
+      if (fullscreenDescriptor) {
+        Object.defineProperty(
+          document,
+          "fullscreenElement",
+          fullscreenDescriptor,
+        );
+      } else {
+        delete (document as any).fullscreenElement;
+      }
+    }
   });
 
   it("keeps phone input readable and expands without browser fullscreen", async () => {

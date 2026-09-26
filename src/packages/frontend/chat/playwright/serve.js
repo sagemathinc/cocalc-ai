@@ -7,7 +7,12 @@ const esbuild = require("esbuild");
 const port = Number(process.env.CHAT_PW_PORT || 4173);
 const rootDir = __dirname;
 const repoFrontendDir = path.join(rootDir, "..", "..");
-const slatePlaywrightDir = path.join(repoFrontendDir, "editors", "slate", "playwright");
+const slatePlaywrightDir = path.join(
+  repoFrontendDir,
+  "editors",
+  "slate",
+  "playwright",
+);
 const distDir = path.join(os.tmpdir(), "cocalc-chat-playwright-dist");
 const bundlePath = path.join(distDir, "bundle.js");
 const indexPath = path.join(rootDir, "index.html");
@@ -20,18 +25,40 @@ const mentionableUsersShim = path.join(rootDir, "mentionable-users-shim.ts");
 const mentionsShim = path.join(rootDir, "mentions-shim.ts");
 
 const environmentShim = path.join(slatePlaywrightDir, "environment-shim.ts");
-const markdownToSlateShim = path.join(slatePlaywrightDir, "markdown-to-slate-shim.ts");
-const slateToMarkdownShim = path.join(slatePlaywrightDir, "slate-to-markdown-shim.ts");
-const elementsTypesShim = path.join(slatePlaywrightDir, "elements-types-shim.tsx");
-const elementsIndexShim = path.join(slatePlaywrightDir, "elements-index-shim.ts");
-const frontendShim = path.join(slatePlaywrightDir, "frontend-shim.ts");
+const markdownToSlateShim = path.join(
+  slatePlaywrightDir,
+  "markdown-to-slate-shim.ts",
+);
+const slateToMarkdownShim = path.join(
+  slatePlaywrightDir,
+  "slate-to-markdown-shim.ts",
+);
+const elementsTypesShim = path.join(
+  slatePlaywrightDir,
+  "elements-types-shim.tsx",
+);
+const elementsIndexShim = path.join(
+  slatePlaywrightDir,
+  "elements-index-shim.ts",
+);
+const frontendShim = path.join(rootDir, "frontend-shim.tsx");
 const assetsShim = path.join(slatePlaywrightDir, "assets-shim.ts");
 const nodeBuiltinsShim = path.join(slatePlaywrightDir, "node-builtins-shim.ts");
-const editorButtonBarShim = path.join(slatePlaywrightDir, "editor-button-bar-shim.ts");
-const frameContextShim = path.join(slatePlaywrightDir, "frame-context-shim.ts");
-const codeEditorConstShim = path.join(slatePlaywrightDir, "code-editor-const-shim.ts");
+const editorButtonBarShim = path.join(
+  slatePlaywrightDir,
+  "editor-button-bar-shim.ts",
+);
+const frameContextShim = path.join(rootDir, "frame-context-shim.ts");
+const composerServicesShim = path.join(rootDir, "composer-services-shim.tsx");
+const codeEditorConstShim = path.join(
+  slatePlaywrightDir,
+  "code-editor-const-shim.ts",
+);
 const linkEditableShim = path.join(slatePlaywrightDir, "link-editable-shim.ts");
-const detectLanguageShim = path.join(slatePlaywrightDir, "detect-language-shim.ts");
+const detectLanguageShim = path.join(
+  slatePlaywrightDir,
+  "detect-language-shim.ts",
+);
 const i18nShim = path.join(slatePlaywrightDir, "i18n-shim.ts");
 const pathShim = path.join(slatePlaywrightDir, "path-shim.ts");
 const editableMarkdownPath = path.join(
@@ -50,13 +77,50 @@ const markdownInputMultimodePath = path.join(
 const shimPlugin = {
   name: "chat-shims",
   setup(build) {
+    build.onResolve(
+      {
+        filter:
+          /^\.\/(thread-badge|codex-goal|acp-prompt-modal|codex-submit-preflight|use-codex-payment-source|audio\/dictate-button|agent-file-attachment|codex)$/,
+      },
+      (args) =>
+        args.importer.endsWith(`${path.sep}chat${path.sep}composer.tsx`)
+          ? { path: composerServicesShim }
+          : undefined,
+    );
+    build.onResolve(
+      {
+        filter: /^@cocalc\/frontend\/agents\/(use-agent-mentions|name-agent)$/,
+      },
+      () => ({ path: composerServicesShim }),
+    );
+    build.onResolve(
+      {
+        filter:
+          /^@cocalc\/frontend\/(agents\/(mention-context|unbound-mentions)|keyboard\/boundary)$/,
+      },
+      (args) => ({
+        path: path.join(
+          repoFrontendDir,
+          args.path.replace("@cocalc/frontend/", "") +
+            (args.path.endsWith("boundary") ? ".tsx" : ".ts"),
+        ),
+      }),
+    );
     build.onResolve({ filter: new RegExp("utils[/\\\\]environment$") }, () => {
       return { path: environmentShim };
     });
-    build.onResolve({ filter: /markdown-to-slate$/ }, () => ({ path: markdownToSlateShim }));
-    build.onResolve({ filter: /slate-to-markdown$/ }, () => ({ path: slateToMarkdownShim }));
-    build.onResolve({ filter: /elements[\\/]+types$/ }, () => ({ path: elementsTypesShim }));
-    build.onResolve({ filter: /[\\/]+elements$/ }, () => ({ path: elementsIndexShim }));
+    build.onResolve({ filter: /markdown-to-slate$/ }, () => ({
+      path: markdownToSlateShim,
+    }));
+    build.onResolve({ filter: /slate-to-markdown$/ }, () => ({
+      path: slateToMarkdownShim,
+    }));
+    build.onResolve({ filter: /elements[\\/]+types$/ }, () => ({
+      path: elementsTypesShim,
+    }));
+    build.onResolve({ filter: /[\\/]+elements$/ }, () => ({
+      path: elementsIndexShim,
+    }));
     build.onResolve({ filter: /elements[\\/]+link[\\/]+editable$/ }, () => ({
       path: linkEditableShim,
     }));
@@ -69,53 +133,50 @@ const shimPlugin = {
       () => ({ path: markdownInputMultimodePath }),
     );
     build.onResolve(
-      { filter: /^@cocalc\/frontend\/editors\/markdown-input\/mentionable-users$/ },
+      {
+        filter:
+          /^@cocalc\/frontend\/editors\/markdown-input\/mentionable-users$/,
+      },
       () => ({ path: mentionableUsersShim }),
     );
     build.onResolve(
       { filter: /^@cocalc\/frontend\/editors\/markdown-input\/mentions$/ },
       () => ({ path: mentionsShim }),
     );
+    build.onResolve({ filter: /mentionable-users$/ }, (args) => {
+      if (
+        args.importer.includes(
+          `${path.sep}editors${path.sep}markdown-input${path.sep}component.tsx`,
+        ) &&
+        args.path.startsWith(".")
+      ) {
+        return { path: mentionableUsersShim };
+      }
+    });
+    build.onResolve({ filter: /mentions$/ }, (args) => {
+      if (
+        args.importer.includes(
+          `${path.sep}editors${path.sep}markdown-input${path.sep}component.tsx`,
+        ) &&
+        args.path.startsWith(".")
+      ) {
+        return { path: mentionsShim };
+      }
+    });
+    build.onResolve({ filter: /^@cocalc\/frontend\/app-framework$/ }, () => ({
+      path: appFrameworkShim,
+    }));
+    build.onResolve({ filter: /^@cocalc\/frontend\/misc$/ }, () => ({
+      path: miscShim,
+    }));
+    build.onResolve({ filter: /^@cocalc\/frontend\/feature$/ }, () => ({
+      path: featureShim,
+    }));
+    build.onResolve({ filter: /^react-intl$/ }, () => ({ path: intlShim }));
     build.onResolve(
-      { filter: /mentionable-users$/ },
-      (args) => {
-        if (
-          args.importer.includes(`${path.sep}editors${path.sep}markdown-input${path.sep}component.tsx`) &&
-          args.path.startsWith(".")
-        ) {
-          return { path: mentionableUsersShim };
-        }
+      {
+        filter: /^@cocalc\/frontend\/frame-editors\/frame-tree\/frame-context$/,
       },
-    );
-    build.onResolve(
-      { filter: /mentions$/ },
-      (args) => {
-        if (
-          args.importer.includes(`${path.sep}editors${path.sep}markdown-input${path.sep}component.tsx`) &&
-          args.path.startsWith(".")
-        ) {
-          return { path: mentionsShim };
-        }
-      },
-    );
-    build.onResolve(
-      { filter: /^@cocalc\/frontend\/app-framework$/ },
-      () => ({ path: appFrameworkShim }),
-    );
-    build.onResolve(
-      { filter: /^@cocalc\/frontend\/misc$/ },
-      () => ({ path: miscShim }),
-    );
-    build.onResolve(
-      { filter: /^@cocalc\/frontend\/feature$/ },
-      () => ({ path: featureShim }),
-    );
-    build.onResolve(
-      { filter: /^react-intl$/ },
-      () => ({ path: intlShim }),
-    );
-    build.onResolve(
-      { filter: /^@cocalc\/frontend\/frame-editors\/frame-tree\/frame-context$/ },
       () => ({ path: frameContextShim }),
     );
     build.onResolve(
@@ -130,10 +191,9 @@ const shimPlugin = {
       { filter: /^@cocalc\/frontend\/misc\/detect-language$/ },
       () => ({ path: detectLanguageShim }),
     );
-    build.onResolve(
-      { filter: /^@cocalc\/frontend\/i18n$/ },
-      () => ({ path: i18nShim }),
-    );
+    build.onResolve({ filter: /^@cocalc\/frontend\/i18n$/ }, () => ({
+      path: i18nShim,
+    }));
     build.onResolve(
       { filter: /^@cocalc\/frontend\/frame-editors\/frame-tree\/path$/ },
       () => ({ path: pathShim }),
@@ -144,8 +204,12 @@ const shimPlugin = {
     build.onResolve({ filter: /^@cocalc\/frontend\// }, () => ({
       path: frontendShim,
     }));
-    build.onResolve({ filter: /^@cocalc\/assets\// }, () => ({ path: assetsShim }));
-    build.onResolve({ filter: /^(path|stream)$/ }, () => ({ path: nodeBuiltinsShim }));
+    build.onResolve({ filter: /^@cocalc\/assets\// }, () => ({
+      path: assetsShim,
+    }));
+    build.onResolve({ filter: /^(path|stream)$/ }, () => ({
+      path: nodeBuiltinsShim,
+    }));
   },
 };
 
@@ -161,7 +225,9 @@ async function buildHarness() {
     target: ["es2019"],
     jsx: "automatic",
     define: {
-      "process.env.NODE_ENV": '"test"',
+      // Ant Design uses constant IDs in test mode; a real browser needs the
+      // normal ID lifecycle for popup/dialog labels and focus management.
+      "process.env.NODE_ENV": '"development"',
     },
     plugins: [shimPlugin],
   });
@@ -184,6 +250,10 @@ async function handleRequest(req, res) {
   if (url.pathname === "/bundle.js") {
     const js = await fs.readFile(bundlePath);
     return send(res, 200, js, "text/javascript; charset=utf-8");
+  }
+  if (url.pathname === "/bundle.css") {
+    const css = await fs.readFile(path.join(distDir, "bundle.css"));
+    return send(res, 200, css, "text/css; charset=utf-8");
   }
   return send(res, 404, "Not Found", "text/plain; charset=utf-8");
 }

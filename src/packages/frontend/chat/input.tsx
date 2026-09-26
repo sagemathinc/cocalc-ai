@@ -171,7 +171,8 @@ export default function ChatInput({
   isFocused,
   autoGrowMaxHeight,
   unboundedAutoGrow,
-  clampAutoGrowToHost = true,
+  // An auto-height host measures its content, not an allocated height limit.
+  clampAutoGrowToHost = height != null && height !== "auto",
   sessionToken,
   fixedMode,
   externalMultilinePasteAsCodeBlock,
@@ -396,6 +397,11 @@ export default function ChatInput({
       active: true,
     };
     const id = window.setTimeout(() => {
+      // Sending starts an empty draft; do not restore the previous text offset.
+      controlRef.current?.setSelectionFromMarkdownPosition?.({
+        line: 0,
+        ch: 0,
+      });
       focusInput();
     }, 0);
     return () => window.clearTimeout(id);

@@ -103,7 +103,8 @@ export default function MultiMarkdownInput({
     cacheId == null
       ? undefined
       : `${project_id ?? ""}:${path ?? ""}:${cacheId}`;
-  const isFrameScoped = Boolean(frameContext.id || project_id || path);
+  // Standalone composers can supply a project without belonging to a frame.
+  const isFrameScoped = Boolean(frameContext.id || frameProjectId || framePath);
   const modeSwitchFrameFocused = isFrameScoped ? isFocusedFrame : true;
   const modeSwitchFrameVisible = isFrameScoped ? isVisible : true;
 

@@ -9,7 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button } from "antd";
+import { Alert, Button, ConfigProvider } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -649,7 +649,7 @@ export function ChatRoomComposer({
       : {}),
   };
 
-  return (
+  const composer = (
     <AgentMentionContext.Provider value={agentMentionContext}>
       <div
         ref={zenContainerRef}
@@ -1077,7 +1077,12 @@ export function ChatRoomComposer({
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}
-              style={{ flex: "0 0 32px", height: 32, minWidth: 32, width: 32 }}
+              style={{
+                flex: "0 0 32px",
+                height: 32,
+                minWidth: 32,
+                width: 32,
+              }}
             />
           </Tooltip>
         </div>
@@ -1090,5 +1095,18 @@ export function ChatRoomComposer({
         />
       </div>
     </AgentMentionContext.Provider>
+  );
+
+  return (
+    <ConfigProvider
+      // Body portals are outside the browser's fullscreen top layer.
+      getPopupContainer={
+        isFullscreen
+          ? () => zenContainerRef.current ?? document.body
+          : undefined
+      }
+    >
+      {composer}
+    </ConfigProvider>
   );
 }
