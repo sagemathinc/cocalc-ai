@@ -79,7 +79,7 @@ uses a different browser access path.
 | Browser to the site | Public HTTPS reaches Caddy, which forwards ordinary application requests to the local CoCalc web service on 127.0.0.1:9100. | Check the public hostname, certificate, and websocket access. The **Sign in** page loading does not by itself verify notebooks and terminals. |
 | CoCalc to project compute | Star registers its project host on the same VM, with an internal HTTP address of 127.0.0.1:9002 and SSH address of 127.0.0.1:2222. | These are backend addresses on the VM, not browser destinations or instructions to expose those ports publicly. |
 | CoCalc to stored site state | The default site uses local PostgreSQL through a local socket. | Include site state as well as project files in recovery planning. |
-| Project backup service | A local Rustic REST service listens on 127.0.0.1:9345 and stores its repository on the VM. | A local backup repository is not an off-VM recovery copy. |
+| Project backup service | A local Rustic REST service listens on 127.0.0.1:9345 and stores its repository on the VM. | A local backup repository is not an off-VM recovery copy, even though the Find **Backups** tab and project **Settings -> Recovery** label it **Off-host backups**. |
 | Installation and updates | The release installer downloads from GitHub; public-address discovery, DNS/TLS setup, package installation, and image preparation can need external services. | Review the selected release and enabled installation paths before restricting egress. A release archive alone does not establish an offline installation. |
 
 Installing CoCalc on your VM does not prevent applications from contacting
@@ -104,7 +104,7 @@ establish a consistent backup.
 | Project filesystem | Btrfs mounted at \`/mnt/cocalc\`; the default backing image is \`/var/lib/cocalc/btrfs.img\` | Identify the actual backing storage separately from the installed software release. |
 | Project-host state, caches, and runtime secrets | \`STAR_PROJECT_HOST_DATA\`: \`/mnt/cocalc/data\` | This lives under the project storage mount; it is not automatically a separate disk. |
 | Configuration and keys | \`/etc/cocalc/star/config.env\`, \`hub.env\`, \`project-host.env\`, and the configured secret paths | Configuration selects the data locations and services. The default site master key is under \`STAR_DATA/secrets\`; preserve it with the state it protects. Keep credentials out of shared logs and handoff notes. |
-| Local backups | \`COCALC_BACKUP_ROOT\`: \`/var/lib/cocalc/star/backup\` | A backup retained on the same VM is not an off-VM recovery copy. |
+| Local backups | \`COCALC_BACKUP_ROOT\`: \`/var/lib/cocalc/star/backup\` | A backup retained on the same VM is not an off-VM recovery copy, even though the Find **Backups** tab and project **Settings -> Recovery** label it **Off-host backups**. |
 | Installed releases and container runtime | \`/opt/cocalc-star/releases\`, \`/opt/cocalc-star/source\`, \`/opt/cocalc-star/current\`, and \`/opt/cocalc/container-runtime\` | The source and current links are siblings of releases and point into the selected release. Record the selected release and runtime; they do not replace database or project backups. |
 | Shared scratch | The configured shared-scratch mount; a local VM can use a folder on the operator's computer | Check where the backing files actually live. Copy results that must be retained into project storage and include them in the backup plan. |
 

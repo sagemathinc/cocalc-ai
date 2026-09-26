@@ -803,7 +803,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [bold("jupyter", "Target language")],
   },
 
-  // Project recovery
+  // Project recovery. The status lines appear on the Find Snapshots and
+  // Backups tabs and in Settings -> Recovery. "Off-host backups" does not
+  // depend on where backups are stored, which the Star guide points out.
   ...(
     [
       ["snapshots", "Local snapshots"],
@@ -817,9 +819,27 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         def(RECOVERY_STATUS, `"${label}"`),
         ren(RECOVERY_STATUS, ": latest confirmed "),
       ],
-      usedIn: [bold("research-specialist", label)],
+      usedIn: [
+        bold("research-specialist", label),
+        bold("files", label),
+        ...(key === "backups" ? [bold("self-hosting", label)] : []),
+      ],
     }),
   ),
+  {
+    id: "settings.recovery",
+    label: "Recovery",
+    anchors: [
+      msg(COMMON, "labels.settings", 'defaultMessage: "Settings"'),
+      ren(FILE_TAB, "label: labels.settings,"),
+      def(SECTIONS, 'label: "Recovery",'),
+      def(SECTIONS, 'id: "recovery",'),
+    ],
+    usedIn: [
+      { file: doc("research-specialist"), text: "**Settings -> Recovery" },
+      { file: doc("self-hosting"), text: "**Settings -> Recovery**" },
+    ],
+  },
   {
     id: "recovery.restore-snapshot",
     label: "Restore Snapshot",

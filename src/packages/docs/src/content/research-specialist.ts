@@ -22,8 +22,11 @@ exercise uses disposable data; do it before you need to recover important work.
 A clone is a copy of the current state, not a selection of an older checkpoint.
 Snapshots are host-local checkpoints. Backups are host-independent archives
 that can include project files, rootfs state, and TimeTravel history; their
-file-search interface searches HOME. Availability, retention, and the newest
-recoverable time depend on the project's runtime and configured schedules.
+file-search interface searches HOME. On a default CoCalc Star installation,
+backups stay on the same VM as the projects; see
+[Install CoCalc Star](/docs/self-hosting/cocalc-star). Availability, retention,
+and the newest recoverable time depend on the project's runtime and configured
+schedules.
 In a narrow window, **Files** shows **Recovery** as an icon whose tooltip is
 **Snapshots and backups**.
 
