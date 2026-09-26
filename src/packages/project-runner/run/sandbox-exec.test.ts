@@ -4,6 +4,16 @@
  */
 
 import { sandboxExec } from "./sandbox-exec";
+import { runStreamingSandboxCommand } from "./sandbox-command-stream";
+import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
+
+jest.mock("./sandbox-command-stream", () => ({
+  runStreamingSandboxCommand: jest.fn(async () => ({
+    code: 0,
+    stdout: "",
+    stderr: "",
+  })),
+}));
 
 const execFileMock = jest.fn();
 const podmanEnvMock = jest.fn(() => ({
@@ -92,5 +102,36 @@ describe("sandboxExec", () => {
     expect(execFileMock.mock.calls[0][2].env).not.toHaveProperty(
       "COCALC_BEARER_TOKEN_FILE",
     );
+  });
+
+  it("streams through the same supervised project launcher and scoped environment", async () => {
+    const signal = new AbortController().signal;
+    const onOutput = jest.fn();
+    await sandboxExec({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      script: "long-build",
+      env: { COCALC_BEARER_TOKEN_FILE: "/tmp/scoped/token" },
+      signal,
+      onOutput,
+      timeoutMs: 3600000,
+    });
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(runStreamingSandboxCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "bash",
+        signal,
+        onOutput,
+        timeoutMs: 3600000,
+        args: expect.arrayContaining([
+          "project-00000000-0000-4000-8000-000000000001",
+          SANDBOX_COMMAND_SUPERVISOR,
+          "long-build",
+          "COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token",
+        ]),
+      }),
+    );
+    await expect(
+      sandboxExec({ project_id: "fixture", script: "x", onOutput }),
+    ).rejects.toThrow("lease");
   });
 });

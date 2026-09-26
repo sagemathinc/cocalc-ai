@@ -11,6 +11,9 @@ test("Claude preview and its security model are public and searchable in both ca
     assert.match(entry.body, /Hidden key bytes do not mean exclusive use/);
     assert.match(entry.body, /authorized Agent Network messages/);
     assert.match(entry.body, /does\s+not ask for approval before each tool/);
+    assert.match(entry.body, /project_exec_wait/);
+    assert.match(entry.body, /not automatically replayed/);
+    assert.match(entry.body, /project terminal --help/);
     assert.ok(
       registry
         .searchDocsEntries("Claude Code")

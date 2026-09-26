@@ -121,6 +121,9 @@ test("trusted MCP helper executes only through the scoped project socket", async
     const listed = await request(2, "tools/list");
     expect(listed.result.tools.map(({ name }) => name)).toEqual([
       "project_exec",
+      "project_exec_wait",
+      "project_exec_cancel",
+      "project_exec_list",
     ]);
     const called = await request(3, "tools/call", {
       name: "project_exec",
@@ -133,6 +136,10 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "pwd",
       "/home/user",
       expect.any(AbortSignal),
+      expect.objectContaining({
+        timeoutMs: 3_600_000,
+        onOutput: expect.any(Function),
+      }),
     );
     authorized = false;
     const revoked = await request(4, "tools/call", {

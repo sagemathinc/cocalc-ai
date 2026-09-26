@@ -15,6 +15,7 @@ import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
 import { SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
+import { runStreamingSandboxCommand } from "./sandbox-command-stream";
 import {
   DEFAULT_PROJECT_RUNTIME_GID,
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -31,6 +32,8 @@ export interface SandboxExecOptions {
   timeoutMs?: number;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+  /** Stream output without execFile's lifetime output buffer. Requires a lease. */
+  onOutput?: (stream: "stdout" | "stderr", data: string) => void;
   /**
    * When true, start a fresh one-off container instead of exec'ing into the
    * existing project container. This is useful when the main container is not
@@ -83,7 +86,10 @@ export async function sandboxExec({
   useEphemeral,
   noNetwork,
   signal,
+  onOutput,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
+  if (onOutput && !signal)
+    throw Error("Streaming sandbox execution requires a lease");
   signal?.throwIfAborted();
   logger.debug("sandboxExec", {
     project_id,
@@ -115,6 +121,16 @@ export async function sandboxExec({
     args: string[],
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
   ): Promise<SandboxExecResult> => {
+    if (onOutput && signal) {
+      return runStreamingSandboxCommand({
+        command: launcher?.command ?? "podman",
+        args: launcher ? [...launcher.argsPrefix, ...args] : args,
+        env: podmanEnv(),
+        signal,
+        timeoutMs: timeoutMs ?? 3_600_000,
+        onOutput,
+      });
+    }
     return await new Promise((resolve) => {
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let deadline: ReturnType<typeof setTimeout> | undefined;

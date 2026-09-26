@@ -133,8 +133,8 @@ detached into a different session can require separate project cleanup.
   project command tool.
 - Project commands receive a scoped CoCalc CLI credential. This is separate
   from the Anthropic credential; CLI actions remain limited by its authority.
-- Subscription project commands have bounded output and a 120-second limit.
-  Long commands should be split into inspectable steps.
+- Subscription project commands are managed jobs. A short tool wait does not
+  kill a running build. See the execution lifecycle below.
 - Live guidance requires adapter support; other messages queue. Automations
   and goal workflows are not yet supported by this integration.
 - A background subprocess finishing does not automatically wake a completed
@@ -143,6 +143,47 @@ detached into a different session can require separate project cleanup.
   network turns are currently rejected by admission.
 
 ## Troubleshooting and agent-readable help
+
+### Long commands and background services
+
+In subscription mode, \`project_exec\` starts a command in the project and
+returns its \`job_id\`, status, output, and \`next_cursor\`. Run builds and
+tests in the foreground: do not add \`&\`, \`nohup\`, or \`setsid\` merely
+to get past a tool wait. \`status: running\` means the command is still running,
+not that it failed. Use \`project_exec_wait\` with the job ID and returned
+cursor to read more output. Continue until the job has finished and
+\`has_more\` is false. \`project_exec_cancel\` stops a job and waits for
+cleanup; \`project_exec_list\` lists this controller's jobs.
+
+\`yield_time_ms\` is the maximum wait for one tool response (0-30 seconds).
+It is independent of \`timeout_ms\`, the command deadline: one hour by
+default, configurable up to 24 hours. Four jobs can run concurrently per
+controller. Output is paginated and bounded; \`output_truncated\` explicitly
+reports lost older output. Redirect verbose build logs to a project file if
+you need their full history. Completed output is retained for up to ten minutes,
+with at most 32 jobs retained per controller.
+
+If a start response is lost, list jobs before repeating the command. An optional
+unique \`request_id\` permits retries of an identical start without running it
+twice within the same controller. An expired result produces an error rather
+than repeating that request. Job IDs and retry IDs do not carry across controller
+restarts; reconnecting is not evidence that an earlier command never ran.
+
+Jobs belong to their subscription controller, not to the individual tool call.
+Cancellation, controller shutdown, or the command deadline stops owned jobs.
+Authorization is rechecked on each tool call and periodically while jobs run;
+loss of authorization stops them. A host failure closes or expires the command
+supervisor's lease. Jobs are not automatically replayed after a project/host
+restart. Do not end a turn while its required foreground work is still running
+or promise an automatic follow-up notification.
+
+For intentionally persistent services or interactive input, use CoCalc's
+existing project terminal facilities: inspect \`project terminal --help\`
+through the installed CLI. These are project-owned terminals, with a separate
+lifecycle, not a way to extend a subscription controller's scoped CLI authority.
+Use project-owned service configuration for persistent applications; do not
+copy a turn's credential into a detached process. A project restart can stop
+these processes too.
 
 If a session fails after a restart, retain the error and agent identity and
 report them to the site administrator. Avoid blindly resending a turn whose

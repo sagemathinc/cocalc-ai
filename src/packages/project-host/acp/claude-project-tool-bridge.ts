@@ -8,15 +8,14 @@ import { createServer, type Socket } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import {
-  sandboxExec,
-  type SandboxExecResult,
-} from "@cocalc/project-runner/run/sandbox-exec";
+  ClaudeProjectJobs,
+  type ProjectJobExecutor,
+} from "./claude-project-jobs";
 
 const MAX_REQUEST_BYTES = 40 * 1024;
-const MAX_SCRIPT_BYTES = 32 * 1024;
-const MAX_OUTPUT_BYTES = 512 * 1024;
-const MAX_CONCURRENT_TOOLS = 4;
+const MAX_CONCURRENT_TOOLS = 8;
 const MAX_OPEN_CONNECTIONS = 16;
 export const CLAUDE_PROJECT_TOOL_MOUNT = "/run/cocalc/agent-tools";
 
@@ -28,25 +27,41 @@ const net = require("node:net");
 const readline = require("node:readline");
 const root = process.env.COCALC_PROJECT_TOOL_DIR || "/run/cocalc/agent-tools";
 const token = fs.readFileSync(root + "/token", "utf8");
-const tool = {
+const tools = [{
   name: "project_exec",
-  description: "Run a shell command in the CoCalc project container, not in the Claude controller. Project files and project secrets are accessible there; Claude subscription login material is not.",
+  description: "Start a managed command in the CoCalc project, not the Claude controller. Run builds in the foreground: do NOT use &/nohup/setsid to avoid a tool timeout. Returns promptly with job_id and status; running is NOT failure. Use project_exec_wait with next_cursor to continue reading until completion, or project_exec_cancel to stop it. Project files/secrets are accessible; subscription login material is not. Jobs belong to this controller and stop on cancellation, revocation, shutdown or deadline. For intentionally persistent services or interactive input use the existing CoCalc CLI project terminal facilities.",
   inputSchema: {
     type: "object",
     properties: {
       script: { type: "string", description: "Shell script to run in the project" },
-      cwd: { type: "string", description: "Optional project-container working directory" }
+      cwd: { type: "string", description: "Optional project-container working directory" },
+      yield_time_ms: {type:"integer",minimum:0,maximum:30000,description:"How long this tool waits, not a job deadline; default 1000 ms"},
+      timeout_ms: {type:"integer",minimum:1,maximum:86400000,description:"Job wall-clock deadline; default 1 hour, maximum 24 hours"},
+      request_id: {type:"string",description:"Optional unique retry ID. Reuse only for the identical command; if a response is lost, list jobs instead of blindly rerunning."}
     },
     required: ["script"],
     additionalProperties: false
   }
-};
-function execute(args) {
+}, {
+  name:"project_exec_wait",
+  description:"Read/poll a project job. Pass its next_cursor as cursor for incremental output. Repeating a cursor replays retained output. Continue while status is running or has_more is true. output_truncated means older output was evicted: redirect verbose logs to a project file when full history is needed. Polling never restarts a command. Completed jobs are retained for up to 10 minutes (at most 32 jobs).",
+  inputSchema:{type:"object",properties:{job_id:{type:"string"},cursor:{type:"integer",minimum:0},yield_time_ms:{type:"integer",minimum:0,maximum:30000}},required:["job_id"],additionalProperties:false}
+}, {
+  name:"project_exec_cancel",
+  description:"Cancel a managed project job and wait for its supervised execution to stop. Repeated cancellation is safe.",
+  inputSchema:{type:"object",properties:{job_id:{type:"string"},cursor:{type:"integer",minimum:0}},required:["job_id"],additionalProperties:false}
+}, {
+  name:"project_exec_list",
+  description:"List jobs owned by this controller, including IDs, retry IDs, status and deadlines. Use after an uncertain tool response; do not automatically repeat a command.",
+  inputSchema:{type:"object",properties:{},additionalProperties:false}
+}];
+function execute(tool, args) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(root + "/tool.sock");
+    socket.setEncoding("utf8");
     let received = "";
     socket.setTimeout(150000, () => socket.destroy(new Error("Project tool timed out")));
-    socket.on("connect", () => socket.write(JSON.stringify({ token, args }) + "\n"));
+    socket.on("connect", () => socket.write(JSON.stringify({ token, tool, args }) + "\n"));
     socket.on("data", (chunk) => {
       received += chunk.toString("utf8");
       if (received.length > 1200000) return socket.destroy(new Error("Project tool response too large"));
@@ -70,10 +85,12 @@ async function handle(message) {
     } else if (message.method === "ping") {
       result = {};
     } else if (message.method === "tools/list") {
-      result = { tools: [tool] };
-    } else if (message.method === "tools/call" && message.params?.name === tool.name) {
-      const output = await execute(message.params.arguments);
-      result = { content: [{ type: "text", text: JSON.stringify(output) }], isError: output.code !== 0 };
+      result = { tools };
+    } else if (message.method === "tools/call" && tools.some(tool => tool.name === message.params?.name)) {
+      const output = await execute(message.params.name, message.params.arguments ?? {});
+      const canceledSuccessfully = message.params.name === "project_exec_cancel" && output.status && !output.cleanup_pending;
+      const isError = !!output.error || (output.status ? (!canceledSuccessfully && ["failed","canceled","timed_out"].includes(output.status)) : ("code" in output && output.code !== 0));
+      result = { content: [{ type: "text", text: JSON.stringify(output) }], isError };
     } else {
       throw new Error("Unsupported project tool method");
     }
@@ -98,18 +115,13 @@ export interface ClaudeProjectToolBridge {
 
 export async function createClaudeProjectToolBridge(
   projectId: string,
-  execute: (
-    script: string,
-    cwd: string | undefined,
-    signal: AbortSignal,
-  ) => Promise<SandboxExecResult> = (script, cwd, signal) =>
+  execute: ProjectJobExecutor = (script, cwd, signal, options) =>
     sandboxExec({
       project_id: projectId,
       script,
       cwd,
       signal,
-      timeoutMs: 120_000,
-      maxOutputBytes: MAX_OUTPUT_BYTES,
+      ...options,
     }),
   authorize: () => Promise<void> = async () => {},
 ): Promise<ClaudeProjectToolBridge> {
@@ -122,8 +134,32 @@ export async function createClaudeProjectToolBridge(
   let fenced = false;
   let paused = false;
   let generation = new AbortController();
+  const jobs = new ClaudeProjectJobs(execute);
+  let checking = false;
+  const checkAuthority = async () => {
+    try {
+      await authorize();
+    } catch (error) {
+      paused = true;
+      generation.abort();
+      await jobs.cancelAll();
+      throw error;
+    }
+  };
+  // Long jobs must not retain execution authority indefinitely between tool calls.
+  const authorityTimer = setInterval(() => {
+    if (!jobs.running || checking || fenced || paused) return;
+    checking = true;
+    void checkAuthority()
+      .catch(() => {})
+      .finally(() => {
+        checking = false;
+      });
+  }, 30_000);
+  authorityTimer.unref();
   const running = new Set<Promise<void>>();
   const server = createServer((socket) => {
+    socket.setEncoding("utf8");
     if (sockets.size >= MAX_OPEN_CONNECTIONS) {
       socket.destroy();
       return;
@@ -148,21 +184,25 @@ export async function createClaudeProjectToolBridge(
       const task = (async () => {
         try {
           const request = JSON.parse(input.slice(0, newline));
-          const script = request?.args?.script;
-          const cwd = request?.args?.cwd;
+          const tool = request?.tool ?? "project_exec";
+          const args = request?.args;
           if (
             request?.token !== token ||
-            typeof script !== "string" ||
-            !script.trim() ||
-            Buffer.byteLength(script) > MAX_SCRIPT_BYTES ||
-            (cwd !== undefined &&
-              (typeof cwd !== "string" || cwd.length > 4096))
+            !args ||
+            typeof args !== "object" ||
+            Array.isArray(args)
           )
             throw Error("Invalid project tool request");
-          await authorize();
+          await checkAuthority();
           signal.throwIfAborted();
           if (fenced || paused) throw Error("Project tool is closed");
-          const result = await execute(script, cwd, signal);
+          let result;
+          if (tool === "project_exec") result = await jobs.start(args);
+          else if (tool === "project_exec_wait") result = await jobs.wait(args);
+          else if (tool === "project_exec_cancel")
+            result = await jobs.cancel(args);
+          else if (tool === "project_exec_list") result = jobs.list();
+          else throw Error("Unsupported project tool");
           socket.end(JSON.stringify(result) + "\n");
         } catch (error) {
           socket.end(
@@ -196,26 +236,35 @@ export async function createClaudeProjectToolBridge(
     return {
       directory,
       resume: () => {
-        if (!fenced) paused = false;
+        if (!fenced) {
+          paused = false;
+          if (generation.signal.aborted) generation = new AbortController();
+          jobs.resume();
+        }
       },
       cancel: async () => {
         paused = true;
         const previous = [...running];
         generation.abort();
         generation = new AbortController();
+        await jobs.cancelAll();
         await Promise.allSettled(previous);
       },
       close: () =>
         (closed ??= (async () => {
           fenced = true;
+          clearInterval(authorityTimer);
           generation.abort();
           for (const socket of sockets) socket.destroy();
           await new Promise<void>((resolve) => server.close(() => resolve()));
+          await jobs.close();
           await Promise.allSettled([...running]);
           await rm(directory, { recursive: true, force: true });
         })()),
     };
   } catch (error) {
+    clearInterval(authorityTimer);
+    await jobs.close();
     if (server.listening) server.close();
     await rm(directory, { recursive: true, force: true });
     throw error;
