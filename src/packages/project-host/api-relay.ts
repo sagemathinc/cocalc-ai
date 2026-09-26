@@ -89,10 +89,9 @@ export async function resolveApiRelayHubUrl(
     masterClient?: Client;
   },
 ): Promise<string> {
-  if (!siteUrl) throw Error("API relay site URL is not configured");
-  const site = normalizeApiRelayHubUrl(siteUrl);
-  const requested = normalizeApiRelayHubUrl(requestedUrl ?? site);
-  if (requested !== site) {
+  const site = siteUrl ? normalizeApiRelayHubUrl(siteUrl) : undefined;
+  let requested = requestedUrl ? normalizeApiRelayHubUrl(requestedUrl) : site;
+  if (!requested || requested !== site) {
     if (!masterClient) throw Error("master Conat connection is unavailable");
     const target = await callHub({
       client: masterClient,
@@ -101,8 +100,9 @@ export async function resolveApiRelayHubUrl(
       args: [{ url: requested }],
       timeout: 10_000,
     });
-    if (target?.url !== requested)
+    if (!target?.url || (requested && target.url !== requested))
       throw Error("API relay hub routing identity mismatch");
+    requested = normalizeApiRelayHubUrl(target.url);
   }
   assertSecureUrlOrLocal({ url: requested, urlName: "API relay hub" });
   return requested;

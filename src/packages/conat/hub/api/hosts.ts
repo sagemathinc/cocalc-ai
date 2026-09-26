@@ -1954,7 +1954,7 @@ export interface Hosts {
   }) => Promise<ProjectApiRelayTarget>;
   resolveProjectApiRelayHub: (opts: {
     host_id?: string;
-    url: string;
+    url?: string;
   }) => Promise<{ url: string }>;
   getCatalog: (opts: {
     account_id?: string;

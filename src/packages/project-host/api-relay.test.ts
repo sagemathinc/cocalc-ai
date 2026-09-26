@@ -72,10 +72,27 @@ it("requires trusted cluster resolution for an account's different home-bay URL"
   );
 });
 
-it("fails closed when the canonical site is absent", async () => {
+it("resolves the canonical site without depending on the main process's environment", async () => {
+  const opts = { hostId: projectId, masterClient: {} as any };
+  (callHub as jest.Mock).mockResolvedValue({ url: "https://site.test" });
+  await expect(resolveApiRelayHubUrl(undefined, opts)).resolves.toBe(
+    "https://site.test",
+  );
+  expect(callHub).toHaveBeenCalledWith(
+    expect.objectContaining({
+      name: "hosts.resolveProjectApiRelayHub",
+      args: [{ url: undefined }],
+    }),
+  );
+  await expect(resolveApiRelayHubUrl("https://site.test", opts)).resolves.toBe(
+    "https://site.test",
+  );
+});
+
+it("fails closed when neither trusted site configuration nor lookup is available", async () => {
   await expect(
     resolveApiRelayHubUrl(undefined, { hostId: projectId }),
-  ).rejects.toThrow("site URL is not configured");
+  ).rejects.toThrow("master Conat connection is unavailable");
 });
 
 it("admits a local running project's own secret, not an upstream account credential", () => {

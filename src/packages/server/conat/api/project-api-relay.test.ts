@@ -88,6 +88,12 @@ it("does not provide relay hub lookup to account/project credentials", async () 
   ).rejects.toThrow("authentication required");
 });
 
+it("returns the canonical site for routers without site environment configuration", async () => {
+  await expect(
+    resolveProjectApiRelayHub({ host_id: sourceHost }),
+  ).resolves.toEqual({ url: "https://example.test/site" });
+});
+
 it("resolves only an assigned, nondeleted project and host in the authoritative bay", async () => {
   await expect(
     resolveProjectApiRelayTarget({ host_id: sourceHost, ...target }),

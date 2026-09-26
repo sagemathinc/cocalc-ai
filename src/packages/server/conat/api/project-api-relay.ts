@@ -32,15 +32,22 @@ export async function resolveProjectApiRelayHub({
   url,
 }: {
   host_id?: string;
-  url: string;
+  url?: string;
 }): Promise<{ url: string }> {
   if (!isValidUUID(host_id))
     throw Error("project-host authentication required");
-  const requested = normalizeApiRelayHubUrl(url);
-  const origins = Object.values(await getClusterBayPublicOrigins());
   const site = await getSitePublicOrigin();
-  if (site) origins.push(site);
   const suffix = basePath ? `/${basePath.replace(/^\/+|\/+$/g, "")}` : "";
+  const canonical = site
+    ? normalizeApiRelayHubUrl(`${site}${suffix}`)
+    : undefined;
+  if (!url) {
+    if (!canonical) throw Error("API relay site URL is not configured");
+    return { url: canonical };
+  }
+  const requested = normalizeApiRelayHubUrl(url);
+  if (requested === canonical) return { url: requested };
+  const origins = Object.values(await getClusterBayPublicOrigins());
   if (
     !origins.some(
       (origin) =>
