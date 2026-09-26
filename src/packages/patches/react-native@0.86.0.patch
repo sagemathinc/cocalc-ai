@@ -1,3 +1,4 @@
+diff --git a/React/CoreModules/RCTWebSocketModule.mm b/React/CoreModules/RCTWebSocketModule.mm
 --- a/React/CoreModules/RCTWebSocketModule.mm
 +++ b/React/CoreModules/RCTWebSocketModule.mm
 @@ -117,7 +117,13 @@
