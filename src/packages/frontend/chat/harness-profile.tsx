@@ -9,6 +9,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
   HarnessSessionControls,
@@ -63,6 +64,11 @@ interface HarnessRuntimeSummaryProps {
   threadKey?: string;
   onSettings?: (settings: HarnessSessionSettings) => void;
   onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
+  configuration?: ReactNode;
+  configureLabel?: string;
+  disabled?: boolean;
+  discoveryKey?: string;
+  unavailableLabel?: string;
 }
 
 function ClaudeCredentialControl({
@@ -318,6 +324,7 @@ export interface HarnessProfileDraft {
 export function qualifiedHarnessRuntime(
   id: string,
   cwd: string,
+  settings?: HarnessSessionSettings,
 ): AcpHarnessRuntime {
   const candidate = getQualifiedHarnessCandidate(id);
   if (!candidate || candidate.status === "disabled") {
@@ -326,6 +333,7 @@ export function qualifiedHarnessRuntime(
   return parseAcpHarnessRuntime({
     version: 1,
     kind: "acp",
+    ...(settings ? { settings } : {}),
     profile: {
       version: 2,
       kind: "acp",
@@ -373,6 +381,11 @@ function HarnessRuntimeSummaryContent({
   onSettings,
   onDiscover,
   compact,
+  configuration,
+  configureLabel,
+  disabled,
+  discoveryKey,
+  unavailableLabel,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
   runtime: AcpHarnessRuntime;
 }) {
@@ -452,6 +465,12 @@ function HarnessRuntimeSummaryContent({
     setAutoDiscovered(false);
     setError("");
   });
+  const previousDiscoveryKey = useRef(discoveryKey);
+  useEffect(() => {
+    if (previousDiscoveryKey.current === discoveryKey) return;
+    previousDiscoveryKey.current = discoveryKey;
+    invalidateCredential();
+  }, [discoveryKey]);
   useEffect(() => {
     if (!claude || !projectId || !threadKey) return;
     const read = () =>
@@ -505,7 +524,7 @@ function HarnessRuntimeSummaryContent({
         id={`${id}-${inline ? "inline-" : ""}${control.id}`}
         aria-label={inline ? `${name} ${control.name}` : undefined}
         value={value}
-        disabled={!onSettings}
+        disabled={disabled || !onSettings}
         size={inline ? "small" : undefined}
         variant={inline ? "borderless" : undefined}
         popupMatchSelectWidth={false}
@@ -573,6 +592,7 @@ function HarnessRuntimeSummaryContent({
       style={{ width: "100%", minWidth: 0 }}
     >
       <Tag>Experimental preview</Tag>
+      {configuration}
       {onSettings && controls && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
           {[
@@ -639,6 +659,7 @@ function HarnessRuntimeSummaryContent({
           type={claude ? "text" : "default"}
           size={claude ? "small" : undefined}
           loading={loading}
+          disabled={disabled}
           style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
           onClick={() => void discover()}
         >
@@ -688,16 +709,17 @@ function HarnessRuntimeSummaryContent({
       >
         <Button
           size="small"
-          type="text"
-          aria-label={`${name} settings`}
+          type={configureLabel && !controls ? "primary" : "text"}
+          disabled={disabled}
+          aria-label={configureLabel ?? `${name} settings`}
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
         >
-          {name}
+          {configureLabel ?? name}
         </Button>
         {claude && (
           <>
-            <Tag style={{ margin: 0 }}>Preview</Tag>
+            {!configureLabel && <Tag style={{ margin: 0 }}>Preview</Tag>}
             {inlineControls.map((control) => (
               <span key={control.id} style={{ minWidth: 0, maxWidth: "100%" }}>
                 {select(control, true)}
@@ -709,13 +731,22 @@ function HarnessRuntimeSummaryContent({
                 type="text"
                 loading={loading}
                 onClick={() => void discover()}
-                disabled={!onDiscover}
+                disabled={disabled || !onDiscover}
               >
-                {loading ? "Loading model" : "Model unavailable - retry"}
+                {loading
+                  ? "Loading model"
+                  : onDiscover
+                    ? "Model unavailable - retry"
+                    : (unavailableLabel ?? "Model unavailable")}
               </Button>
             )}
             {fast && ["on", "true", "enabled"].includes(fastValue ?? "") && (
-              <Button size="small" type="text" onClick={() => setOpen(true)}>
+              <Button
+                disabled={disabled}
+                size="small"
+                type="text"
+                onClick={() => setOpen(true)}
+              >
                 Fast on
               </Button>
             )}
@@ -732,7 +763,10 @@ function HarnessRuntimeSummaryContent({
       {error && <div role="alert">{error}</div>}
       <Modal
         open={open}
-        title={claude ? "Claude Code settings" : "ACP harness settings"}
+        title={
+          configureLabel ??
+          (claude ? "Claude Code settings" : "ACP harness settings")
+        }
         footer={null}
         onCancel={() => setOpen(false)}
         modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}

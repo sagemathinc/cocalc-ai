@@ -22,6 +22,7 @@ export function NewAgentRuntimeSelect({
       value={value}
       disabled={disabled}
       popupMatchSelectWidth={false}
+      style={{ minWidth: 0, maxWidth: "100%" }}
       options={[
         { value: "codex-native", label: "Codex" },
         { value: "claude-code", label: "Claude Code (preview)" },

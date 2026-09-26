@@ -64,12 +64,9 @@ import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
 import {
-  claudeCredentialTrustWarning,
-  HarnessProfileFields,
   harnessRuntimeFromDraft,
   qualifiedHarnessRuntime,
 } from "@cocalc/frontend/chat/harness-profile";
-import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscription-connect";
 import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
@@ -78,16 +75,16 @@ import {
   readHarnessCredentialSelection,
   writeHarnessCredentialSelection,
 } from "@cocalc/frontend/chat/harness-credential-selection";
-import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import {
   NewAgentRuntimeSelect,
   type NewAgentRuntimeKind,
 } from "./new-agent-runtime-select";
+import { newAgentClaudeCredentialDefault } from "./claude-credential-options";
 import {
-  newAgentClaudeCredentialOptions,
-  newAgentClaudeCredentialDefault,
-  newAgentClaudeCredentialValue,
-} from "./claude-credential-options";
+  NewAgentClaudeControls,
+  NewAgentAcpControls,
+} from "./new-agent-harness-controls";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -163,7 +160,6 @@ import {
   Input,
   Modal,
   Popover,
-  Select,
   Space,
   Tag,
   Typography,
@@ -556,6 +552,18 @@ function NewAgentPanel({
       return "acp";
     }
   });
+  const [harnessSettings, setHarnessSettings] =
+    useState<HarnessSessionSettings>(() => {
+      try {
+        const runtime = parseAcpHarnessRuntime(sourceRuntime);
+        return runtime.profile.version === 2 &&
+          runtime.profile.id === "claude-code"
+          ? (runtime.settings ?? {})
+          : {};
+      } catch {
+        return {};
+      }
+    });
   const [harnessDraft, setHarnessDraft] = useState<HarnessProfileDraft>(() => {
     try {
       const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
@@ -650,7 +658,6 @@ function NewAgentPanel({
   const createProjectMounted = useRef(false);
   if (createProjectOpen) createProjectMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
-  const [projectSecretsOpen, setProjectSecretsOpen] = useState(false);
   const [anthropicCredentials, setAnthropicCredentials] = useState<
     ExternalCredentialInfo[]
   >([]);
@@ -928,7 +935,11 @@ function NewAgentPanel({
                   mode: "acp",
                   runtime:
                     runtimeKind === "claude-code"
-                      ? qualifiedHarnessRuntime("claude-code", workingDirectory)
+                      ? qualifiedHarnessRuntime(
+                          "claude-code",
+                          workingDirectory,
+                          harnessSettings,
+                        )
                       : harnessRuntimeFromDraft(harnessDraft, workingDirectory),
                 }
               : {
@@ -1828,62 +1839,89 @@ function NewAgentPanel({
                     </Dropdown>
                   </span>
                 )}
-                <Popover
-                  content={advancedSettings}
-                  open={moreSettingsOpen}
-                  placement="bottomRight"
-                  trigger="click"
-                  onOpenChange={(open) => {
-                    setMoreSettingsOpen(open);
-                    if (open) setSettingsOpen(false);
-                  }}
-                >
-                  <Button
-                    aria-label="More agent settings"
-                    aria-haspopup="dialog"
-                    icon={<Icon name="sliders" />}
-                    size="small"
-                    type="text"
-                    disabled={busy || !!pending}
-                  />
-                </Popover>
-                {runtimeKind === "claude-code" && (
-                  <Select
-                    aria-label="Claude credential"
-                    value={newAgentClaudeCredentialValue(claudeCredential)}
-                    disabled={busy || !!pending || !claudeCredentialsLoaded}
-                    options={newAgentClaudeCredentialOptions(
-                      anthropicCredentials,
-                    )}
-                    onChange={(value) => {
-                      claudeCredentialChosen.current = true;
-                      setClaudeCredential(
-                        value.startsWith("account-subscription:")
-                          ? {
-                              version: 1,
-                              provider: "anthropic",
-                              mode: "account-subscription",
-                              credentialId: value.slice(
-                                "account-subscription:".length,
-                              ),
-                            }
-                          : value.startsWith("account-api-key:")
-                            ? {
-                                version: 1,
-                                provider: "anthropic",
-                                mode: "account-api-key",
-                                credentialId: value.slice(
-                                  "account-api-key:".length,
-                                ),
-                              }
-                            : {
-                                version: 1,
-                                provider: "anthropic",
-                                mode: "project-secret",
-                              },
-                      );
+                {runtimeKind === "codex-native" && (
+                  <Popover
+                    content={advancedSettings}
+                    open={moreSettingsOpen}
+                    placement="bottomRight"
+                    trigger="click"
+                    onOpenChange={(open) => {
+                      setMoreSettingsOpen(open);
+                      if (open) setSettingsOpen(false);
                     }}
-                    style={{ minWidth: 180 }}
+                  >
+                    <Button
+                      aria-label="More agent settings"
+                      aria-haspopup="dialog"
+                      icon={<Icon name="sliders" />}
+                      size="small"
+                      type="text"
+                      disabled={busy || !!pending}
+                    />
+                  </Popover>
+                )}
+                {runtimeKind === "claude-code" && (
+                  <NewAgentClaudeControls
+                    accountId={boundAccount.accountId}
+                    projectId={projectId}
+                    projectHome={projectHome}
+                    cwd={directory.trim() || projectHome || "/home/user"}
+                    settings={harnessSettings}
+                    onSettings={setHarnessSettings}
+                    credential={claudeCredential}
+                    credentials={anthropicCredentials}
+                    credentialsLoaded={claudeCredentialsLoaded}
+                    onCredential={(credential) => {
+                      claudeCredentialChosen.current = true;
+                      setClaudeCredential(credential);
+                    }}
+                    onConnected={async (credentialId) => {
+                      boundAccount.assertCurrent();
+                      claudeCredentialChosen.current = true;
+                      const rows =
+                        await webapp_client.conat_client.hub.system.listExternalCredentials(
+                          { provider: "anthropic", scope: "account" },
+                        );
+                      boundAccount.assertCurrent();
+                      setAnthropicCredentials(
+                        rows.filter(
+                          (row) =>
+                            !row.revoked &&
+                            (row.kind === "anthropic-api-key" ||
+                              row.kind === CLAUDE_SUBSCRIPTION_KIND),
+                        ),
+                      );
+                      if (
+                        !rows.some(
+                          (row) =>
+                            row.id === credentialId &&
+                            row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+                            !row.revoked,
+                        )
+                      )
+                        throw Error(
+                          "Connected Claude subscription is not available",
+                        );
+                      setClaudeCredentialsLoaded(true);
+                      setClaudeCredential({
+                        version: 1,
+                        provider: "anthropic",
+                        mode: "account-subscription",
+                        credentialId,
+                      });
+                    }}
+                    disabled={busy || !!pending}
+                    assertCurrent={() => boundAccount.assertCurrent()}
+                  />
+                )}
+                {runtimeKind === "acp" && (
+                  <NewAgentAcpControls
+                    draft={harnessDraft}
+                    onChange={setHarnessDraft}
+                    cwd={directory.trim() || projectHome || "/home/user"}
+                    disabled={busy || !!pending}
+                    createDisabled={uploading || !!problem || atLimit}
+                    onCreate={() => void create(undefined, true)}
                   />
                 )}
                 <span style={{ flex: 1 }} />
@@ -1909,98 +1947,6 @@ function NewAgentPanel({
             />
           </div>
         </div>
-        {runtimeKind === "acp" && (
-          <Space orientation="vertical">
-            <HarnessProfileFields
-              value={harnessDraft}
-              onChange={setHarnessDraft}
-              disabled={busy || !!pending}
-            />
-            <Button
-              disabled={busy || uploading || !!problem || atLimit}
-              onClick={() => void create(undefined, true)}
-            >
-              Create and configure first
-            </Button>
-            <Text type="secondary">
-              Create without starting a turn, then load model and mode options.
-              Any prompt above is kept as a draft.
-            </Text>
-          </Space>
-        )}
-        {runtimeKind === "claude-code" &&
-          claudeCredential.mode !== "project-secret" && (
-            <Text type="warning">
-              {claudeCredentialTrustWarning(
-                claudeCredential.mode === "account-api-key" ||
-                  claudeCredential.mode === "account-subscription"
-                  ? claudeCredential.mode
-                  : "project-secret",
-              )}
-            </Text>
-          )}
-        {runtimeKind === "claude-code" && projectId && (
-          <ClaudeSubscriptionConnect
-            key={`${boundAccount.accountId}:${projectId}`}
-            projectId={projectId}
-            disabled={busy || !!pending}
-            hasConnection={anthropicCredentials.some(
-              (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
-            )}
-            onConnected={async (credentialId) => {
-              claudeCredentialChosen.current = true;
-              const rows =
-                await webapp_client.conat_client.hub.system.listExternalCredentials(
-                  { provider: "anthropic", scope: "account" },
-                );
-              setAnthropicCredentials(
-                rows.filter(
-                  (row) =>
-                    !row.revoked &&
-                    (row.kind === "anthropic-api-key" ||
-                      row.kind === CLAUDE_SUBSCRIPTION_KIND),
-                ),
-              );
-              if (
-                !rows.some(
-                  (row) =>
-                    row.id === credentialId &&
-                    row.kind === CLAUDE_SUBSCRIPTION_KIND &&
-                    !row.revoked,
-                )
-              )
-                throw Error("Connected Claude subscription is not available");
-              setClaudeCredentialsLoaded(true);
-              setClaudeCredential({
-                version: 1,
-                provider: "anthropic",
-                mode: "account-subscription",
-                credentialId,
-              });
-            }}
-          />
-        )}
-        {runtimeKind === "claude-code" &&
-          claudeCredential.mode === "project-secret" &&
-          projectId && (
-            <Space orientation="vertical" size={4}>
-              <Button onClick={() => setProjectSecretsOpen(true)}>
-                Set ANTHROPIC_API_KEY project secret
-              </Button>
-              <Text type="secondary">
-                The key is mounted read-only at runtime and is not stored in
-                this chat. Claude Code has full access to this project.
-              </Text>
-              {projectSecretsOpen && (
-                <ClaudeProjectSecretModal
-                  open
-                  projectId={projectId}
-                  onClose={() => setProjectSecretsOpen(false)}
-                  warning={claudeCredentialTrustWarning("project-secret")}
-                />
-              )}
-            </Space>
-          )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />
         )}

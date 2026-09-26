@@ -49,6 +49,25 @@ test("qualified Claude profiles contain only trusted catalog identity", () => {
   expect(runtime.profile).not.toHaveProperty("executable");
 });
 
+test("qualified runtime preserves first-turn model and effort separately from its profile", () => {
+  const settings = {
+    configOptions: [
+      { id: "model", value: "sonnet" },
+      { id: "effort", value: "high" },
+    ],
+  };
+  const runtime = qualifiedHarnessRuntime(
+    "claude-code",
+    "/home/user",
+    settings,
+  );
+  expect(runtime.settings).toEqual(settings);
+  expect(runtime.profile).toEqual(
+    qualifiedHarnessRuntime("claude-code", "/home/user").profile,
+  );
+  expect(runtime).not.toHaveProperty("harness_credential");
+});
+
 test("Claude project-key warning is shown only in its focused dialog", async () => {
   render(
     <HarnessRuntimeSummary

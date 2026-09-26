@@ -61,7 +61,11 @@ export function ClaudeSubscriptionConnect({
   }, [login?.id, login?.state, projectId]);
 
   return (
-    <Space orientation="vertical" size={4}>
+    <Space
+      orientation="vertical"
+      size={4}
+      style={{ width: "100%", minWidth: 0 }}
+    >
       {hasConnection && !compact && (
         <Typography.Text type="secondary">
           Already connected. Choose an existing subscription in the Claude
@@ -69,6 +73,7 @@ export function ClaudeSubscriptionConnect({
         </Typography.Text>
       )}
       <Button
+        style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
         disabled={
           disabled || login?.state === "pending" || login?.state === "verifying"
         }
