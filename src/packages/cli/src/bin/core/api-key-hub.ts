@@ -1,5 +1,33 @@
 import type { ApiProjectSummaryPage } from "@cocalc/conat/hub/api/projects";
 
+export async function callHubWithApiKey<T>({
+  apiBaseUrl,
+  apiKey,
+  name,
+  args,
+  timeoutMs = 10_000,
+}: {
+  apiBaseUrl: string;
+  apiKey: string;
+  name: string;
+  args: unknown[];
+  timeoutMs?: number;
+}): Promise<T> {
+  const response = await fetch(new URL("/api/conat/hub", apiBaseUrl), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name, args }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw Error(`API request failed (${response.status})`);
+  const value = await response.json();
+  if (value?.error) throw Error(`${value.error}`);
+  return value as T;
+}
+
 export async function listProjectsWithApiKey({
   apiBaseUrl,
   apiKey,
@@ -15,25 +43,12 @@ export async function listProjectsWithApiKey({
   offset: number;
   search?: string;
 }): Promise<ApiProjectSummaryPage> {
-  const response = await fetch(new URL("/api/conat/hub", apiBaseUrl), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: "projects.listProjectSummaries",
-      args: [{ project_id, limit, offset, search }],
-    }),
-    signal: AbortSignal.timeout(10_000),
+  const value = await callHubWithApiKey<ApiProjectSummaryPage>({
+    apiBaseUrl,
+    apiKey,
+    name: "projects.listProjectSummaries",
+    args: [{ project_id, limit, offset, search }],
   });
-  if (!response.ok) {
-    throw Error(`project list HTTP request failed (${response.status})`);
-  }
-  const value = await response.json();
-  if (value?.error) {
-    throw Error(`${value.error}`);
-  }
   if (!Array.isArray(value?.projects)) {
     throw Error("invalid project list response");
   }

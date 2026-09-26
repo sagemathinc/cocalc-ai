@@ -27,6 +27,7 @@ export interface ApiKeyScope {
   version: 1;
   account: ApiKeyCapability[];
   projects: ApiKeyProjectGrant[];
+  all_projects?: Omit<ApiKeyProjectGrant, "project_id">;
 }
 
 export interface ApiKey {

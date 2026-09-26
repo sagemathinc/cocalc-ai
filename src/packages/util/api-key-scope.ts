@@ -3,7 +3,11 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import type { ApiKeyCapability, ApiKeyScope } from "./db-schema/api-keys";
+import type {
+  ApiKeyCapability,
+  ApiKeyProjectGrant,
+  ApiKeyScope,
+} from "./db-schema/api-keys";
 import { API_KEY_CAPABILITIES } from "./db-schema/api-keys";
 import { isValidUUID } from "./misc";
 import {
@@ -118,9 +122,35 @@ function roots(input: unknown): string[] {
   return [...result].sort();
 }
 
+function projectPermissions(
+  grant: Record<string, unknown>,
+): Omit<ApiKeyProjectGrant, "project_id"> {
+  const allowed = capabilities(
+    grant.capabilities,
+    PROJECT_CAPABILITIES,
+    "project",
+  );
+  if (allowed.length === 0)
+    throw Error("project grant must contain a capability");
+  const hasBroadRuntime =
+    allowed.includes("project:exec") || allowed.includes("file:write");
+  const needsViewerPolicy = allowed.includes("file:read") && !hasBroadRuntime;
+  if (needsViewerPolicy !== (grant.viewer_read_roots != null)) {
+    throw Error(
+      "read-only file grants require viewer roots; broader grants cannot claim viewer roots",
+    );
+  }
+  return {
+    capabilities: allowed,
+    ...(needsViewerPolicy
+      ? { viewer_read_roots: roots(grant.viewer_read_roots) }
+      : {}),
+  };
+}
+
 export function normalizeApiKeyScopeV1(input: unknown): ApiKeyScope {
   const value = record(input, "scope");
-  exactKeys(value, ["version", "account", "projects"], "scope");
+  exactKeys(value, ["version", "account", "projects", "all_projects"], "scope");
   if (value.version !== 1 || !Array.isArray(value.projects)) {
     throw Error("unsupported API key scope version or projects");
   }
@@ -144,35 +174,31 @@ export function normalizeApiKeyScopeV1(input: unknown): ApiKeyScope {
       throw Error("duplicate API key project grant");
     }
     seen.add(project_id);
-    const allowed = capabilities(
-      grant.capabilities,
-      PROJECT_CAPABILITIES,
-      "project",
-    );
-    if (allowed.length === 0) {
-      throw Error("project grant must contain a capability");
-    }
-    const hasBroadRuntime =
-      allowed.includes("project:exec") || allowed.includes("file:write");
-    const needsViewerPolicy = allowed.includes("file:read") && !hasBroadRuntime;
-    if (needsViewerPolicy !== (grant.viewer_read_roots != null)) {
-      throw Error(
-        "read-only file grants require viewer roots; broader grants cannot claim viewer roots",
-      );
-    }
     return {
       project_id,
-      capabilities: allowed,
-      ...(needsViewerPolicy
-        ? { viewer_read_roots: roots(grant.viewer_read_roots) }
-        : {}),
+      ...projectPermissions(grant),
     };
   });
-  if (account.length === 0 && projects.length === 0) {
+  let all_projects: ApiKeyScope["all_projects"];
+  if (value.all_projects != null) {
+    const grant = record(value.all_projects, "all-projects grant");
+    exactKeys(
+      grant,
+      ["capabilities", "viewer_read_roots"],
+      "all-projects grant",
+    );
+    all_projects = projectPermissions(grant);
+  }
+  if (account.length === 0 && projects.length === 0 && !all_projects) {
     throw Error("API key scope must grant at least one capability");
   }
   projects.sort((a, b) => a.project_id.localeCompare(b.project_id));
-  const scope: ApiKeyScope = { version: 1, account, projects };
+  const scope: ApiKeyScope = {
+    version: 1,
+    account,
+    projects,
+    ...(all_projects ? { all_projects } : {}),
+  };
   if (
     new TextEncoder().encode(JSON.stringify(scope)).byteLength > MAX_SCOPE_BYTES
   ) {
@@ -219,9 +245,20 @@ export function apiKeyScopeAllows(
     return scope.account.includes(capability);
   }
   return (
-    scope.projects
-      .find((grant) => grant.project_id === project_id)
-      ?.capabilities.includes(capability) ?? false
+    apiKeyProjectGrant(scope, project_id)?.capabilities.includes(capability) ??
+    false
+  );
+}
+
+// An explicit project grant overrides the default, including a narrower grant.
+// Membership is checked by the authoritative service, not by this scope lookup.
+export function apiKeyProjectGrant(
+  scope: ApiKeyScope,
+  project_id: string,
+): ApiKeyProjectGrant | undefined {
+  return (
+    scope.projects.find((grant) => grant.project_id === project_id) ??
+    (scope.all_projects ? { ...scope.all_projects, project_id } : undefined)
   );
 }
 
@@ -229,7 +266,7 @@ export function viewerPolicyForApiKeyGrant(
   scope: ApiKeyScope,
   project_id: string,
 ): ProjectViewerReadPolicy | undefined {
-  const grant = scope.projects.find((entry) => entry.project_id === project_id);
+  const grant = apiKeyProjectGrant(scope, project_id);
   if (!grant?.viewer_read_roots) return;
   return {
     rules: [

@@ -89,3 +89,25 @@ test("scope editor keeps account and project grants independent", async () => {
     screen.getByRole("checkbox", { name: "List my projects" }),
   ).toBeChecked();
 });
+
+test("all-projects access is explicit and the source project is excluded from selection", async () => {
+  const onChange = jest.fn();
+  render(
+    <ApiKeyScopeEditor
+      value={EMPTY_API_KEY_SCOPE}
+      onChange={onChange}
+      excludeProjectIds={["22222222-2222-4222-8222-222222222222"]}
+    />,
+  );
+  expect(
+    screen.queryByRole("option", { name: "Project B" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Project C" })).toBeInTheDocument();
+  const all = screen.getByRole("checkbox", { name: "All projects" });
+  all.focus();
+  await userEvent.keyboard(" ");
+  expect(onChange).toHaveBeenCalledWith({
+    ...EMPTY_API_KEY_SCOPE,
+    all_projects: { capabilities: ["file:read"], viewer_read_roots: ["."] },
+  });
+});

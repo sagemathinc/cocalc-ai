@@ -14,6 +14,7 @@ import { uuid } from "@cocalc/util/misc";
 import type { ProjectCommandDeps } from "../project";
 import { durationToMs } from "../../../core/utils";
 import { listProjectsWithApiKey } from "../../core/api-key-hub";
+import { apiKeyForProject } from "../../core/managed-connector-auth";
 import {
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
@@ -209,10 +210,8 @@ export function registerProjectBasicCommands(
         command: Command,
       ) => {
         await withContext(command, "project list", async (ctx) => {
-          const apiKeySession = ctx.remote.user?.auth_method === "api_key";
-          if (apiKeySession) {
-            const apiKey = ctx.globals.apiKey ?? process.env.COCALC_API_KEY;
-            if (!apiKey) throw Error("API key credential is unavailable");
+          const apiKey = apiKeyForProject(ctx);
+          if (apiKey) {
             const limitNum = Math.max(
               1,
               Math.min(10000, Number(opts.limit ?? "100") || 100),

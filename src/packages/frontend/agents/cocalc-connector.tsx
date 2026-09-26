@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { LinkOutlined } from "@ant-design/icons";
+import { LinkOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Space, Spin, Switch } from "antd";
 import {
   FreshAuthModal,
@@ -18,8 +18,15 @@ import {
   EMPTY_API_KEY_SCOPE,
 } from "@cocalc/frontend/components/api-key-scope-editor";
 import { personalAgentApi } from "./api";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 
-export function CocalcConnector({ agent }: { agent: NamedAgent }) {
+export function CocalcConnector({
+  agent,
+  composer = false,
+}: {
+  agent: NamedAgent;
+  composer?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -44,7 +51,13 @@ export function CocalcConnector({ agent }: { agent: NamedAgent }) {
       .then((saved) => {
         if (cancelled) return;
         setConfig(saved);
-        setScope(saved?.scope ?? EMPTY_API_KEY_SCOPE);
+        const savedScope = saved?.scope ?? EMPTY_API_KEY_SCOPE;
+        setScope({
+          ...savedScope,
+          projects: savedScope.projects.filter(
+            (grant) => grant.project_id !== agent.endpoint.project_id,
+          ),
+        });
         setEnabled(saved?.enabled ?? false);
         setLoaded(true);
       })
@@ -84,13 +97,15 @@ export function CocalcConnector({ agent }: { agent: NamedAgent }) {
   return (
     <>
       <Button
-        aria-label="CoCalc access"
+        aria-label={composer ? "CoCalc connector" : "CoCalc access"}
         title="CoCalc access"
-        type="text"
+        type={composer ? "default" : "text"}
         size="small"
         icon={<LinkOutlined />}
         onClick={() => setOpen(true)}
-      />
+      >
+        {composer ? "CoCalc" : null}
+      </Button>
       <Modal
         open={open}
         title={`CoCalc access for @${agent.name}`}
@@ -130,8 +145,29 @@ export function CocalcConnector({ agent }: { agent: NamedAgent }) {
                   style={{ marginRight: 8 }}
                 />
                 Enable CoCalc access
+                <Button
+                  type="text"
+                  aria-label="Learn about CoCalc access"
+                  title="Learn about CoCalc access"
+                  icon={<QuestionCircleOutlined />}
+                  onClick={() => {
+                    setOpen(false);
+                    openProjectDocs({
+                      projectId: agent.endpoint.project_id,
+                      slug: "ai/cocalc-access",
+                    });
+                  }}
+                />
               </div>
-              <ApiKeyScopeEditor value={scope} onChange={setScope} />
+              <div>
+                The agent already has full access to its own project. These
+                settings grant additional access.
+              </div>
+              <ApiKeyScopeEditor
+                value={scope}
+                onChange={setScope}
+                excludeProjectIds={[agent.endpoint.project_id]}
+              />
               <Alert
                 type="warning"
                 title="Temporary credential in a shared project"

@@ -9,6 +9,57 @@ import { viewerReadPolicyAllowsPath } from "./project-access";
 const B = "11111111-1111-4111-8111-111111111111";
 const C = "22222222-2222-4222-8222-222222222222";
 
+test("all-projects defaults preserve explicit restrictions and account separation", () => {
+  const scope = normalizeApiKeyScopeV1({
+    version: 1,
+    account: [],
+    all_projects: { capabilities: ["file:read", "project:exec", "file:write"] },
+    projects: [
+      {
+        project_id: C,
+        capabilities: ["file:read"],
+        viewer_read_roots: ["assignments"],
+      },
+    ],
+  });
+  expect(apiKeyScopeAllows(scope, "project:exec", B)).toBe(true);
+  expect(apiKeyScopeAllows(scope, "project:exec", C)).toBe(false);
+  expect(apiKeyScopeAllows(scope, "project:list")).toBe(false);
+  const policy = viewerPolicyForApiKeyGrant(scope, C);
+  expect(
+    viewerReadPolicyAllowsPath({ policy, path: "assignments/work.txt" }),
+  ).toBe(true);
+  expect(viewerReadPolicyAllowsPath({ policy, path: "outside.txt" })).toBe(
+    false,
+  );
+  expect(normalizeApiKeyScopeV1(scope)).toEqual(scope);
+});
+
+test("all-projects viewer policy uses the same path and capability validation", () => {
+  const base = { version: 1, account: [], projects: [] };
+  const scope = normalizeApiKeyScopeV1({
+    ...base,
+    all_projects: { capabilities: ["file:read"], viewer_read_roots: ["."] },
+  });
+  expect(apiKeyScopeAllows(scope, "file:write", B)).toBe(false);
+  expect(
+    viewerReadPolicyAllowsPath({
+      policy: viewerPolicyForApiKeyGrant(scope, B),
+      path: ".ssh/id_rsa",
+    }),
+  ).toBe(false);
+  for (const grant of [
+    { capabilities: ["project:list"] },
+    { capabilities: ["file:read"] },
+    { capabilities: ["file:read"], viewer_read_roots: ["../secret"] },
+    { capabilities: ["project:exec"], viewer_read_roots: ["."] },
+    { capabilities: ["project:exec"], unknown: true },
+  ])
+    expect(() =>
+      normalizeApiKeyScopeV1({ ...base, all_projects: grant }),
+    ).toThrow();
+});
+
 test("mixed project privileges remain independent and canonical", () => {
   const scope = normalizeApiKeyScopeV1({
     version: 1,

@@ -7,6 +7,10 @@ const mockApi = {
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
 };
+const mockOpenProjectDocs = jest.fn();
+jest.mock("@cocalc/frontend/docs/navigation", () => ({
+  openProjectDocs: (...args) => mockOpenProjectDocs(...args),
+}));
 const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
   return true;
@@ -85,4 +89,24 @@ test("a failed load exposes an alert and does not allow saving", async () => {
   expect(
     within(dialog).getByRole("button", { name: "Save access" }),
   ).toBeDisabled();
+});
+
+test("composer entry opens the same access settings and user guide", async () => {
+  const user = userEvent.setup();
+  render(<CocalcConnector agent={agent} composer />);
+  const trigger = screen.getByRole("button", { name: "CoCalc connector" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const help = await screen.findByRole("button", {
+    name: "Learn about CoCalc access",
+  });
+  help.focus();
+  await user.keyboard("{Enter}");
+  expect(mockOpenProjectDocs).toHaveBeenCalledWith({
+    projectId: agent.endpoint.project_id,
+    slug: "ai/cocalc-access",
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });

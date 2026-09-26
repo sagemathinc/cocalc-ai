@@ -4,6 +4,7 @@
  */
 
 import type { DocsEntry } from "../types";
+import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
   AI_CREDENTIALS_BODY,
@@ -18,6 +19,20 @@ import {
 } from "../content/ai";
 
 export const AI_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: COCALC_ACCESS_BODY.trim(),
+    category: "AI",
+    id: "ai.cocalc-access",
+    lastReviewed: "2026-09-26",
+    noActionReason:
+      "Configure CoCalc access from an existing named agent's header or composer.",
+    slug: "ai/cocalc-access",
+    status: "ready",
+    summary:
+      "Give an agent temporary access to selected CoCalc projects or all your projects.",
+    title: "Give an agent CoCalc access",
+  },
   {
     audiences: ["agents", "researchers", "students", "teams"],
     body: MY_AGENTS_BODY.trim(),

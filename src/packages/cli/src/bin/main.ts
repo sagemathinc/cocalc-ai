@@ -82,7 +82,10 @@ import {
   withTimeout,
 } from "./core/context";
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
-import { getProjectHostAccessWithApiKey } from "./core/api-key-hub";
+import {
+  callHubWithApiKey,
+  getProjectHostAccessWithApiKey,
+} from "./core/api-key-hub";
 import {
   apiKeyForProject,
   defaultApiKey,
@@ -1856,6 +1859,22 @@ async function hubCallByName<T>(
   args: any[] = [],
   timeout?: number,
 ): Promise<T> {
+  if (
+    ctx.managedConnector &&
+    [
+      "system.getNames",
+      "projects.createProject",
+      "projects.listProjectSummaries",
+    ].includes(name)
+  ) {
+    return await callHubWithApiKey<T>({
+      apiBaseUrl: ctx.apiBaseUrl,
+      apiKey: apiKeyForProject(ctx)!,
+      name,
+      args,
+      timeoutMs: timeout ?? ctx.rpcTimeoutMs,
+    });
+  }
   return await hubCallByNameCore<T>({
     ctx,
     name,

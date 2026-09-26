@@ -48,6 +48,7 @@ import {
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
+import { CocalcConnector } from "@cocalc/frontend/agents/cocalc-connector";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { ComposerDeliverySelector } from "./composer-delivery";
@@ -970,6 +971,9 @@ export function ChatRoomComposer({
               onBusyChange={onDictationBusyChange}
               onAvailabilityChange={onDictationAvailabilityChange}
             />
+            {agentMentions.namedAgent && (
+              <CocalcConnector agent={agentMentions.namedAgent} composer />
+            )}
             {showComposerCodexConfig && selectedThread ? (
               <div
                 style={{

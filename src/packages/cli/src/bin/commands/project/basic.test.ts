@@ -1,9 +1,65 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { Command } from "commander";
 
 import { registerProjectBasicCommands } from "./basic";
+
+test("project list selects the turn key while the primary connection remains agent authenticated", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "connector-list-"));
+  const keyFile = join(directory, "key");
+  writeFileSync(keyFile, "turn-key", { mode: 0o600 });
+  const originalFetch = global.fetch;
+  const calls: RequestInit[] = [];
+  global.fetch = (async (_url, options) => {
+    calls.push(options!);
+    return {
+      ok: true,
+      json: async () => ({
+        projects: [{ project_id: "target", title: "Assignment" }],
+        next_offset: null,
+      }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    let output: unknown;
+    const program = new Command();
+    registerProjectBasicCommands(program.command("project"), {
+      withContext: async (_command, _label, fn) => {
+        output = await fn({
+          apiBaseUrl: "https://example.test",
+          remote: { user: { auth_actor: "agent" } },
+          managedConnector: {
+            keyFile,
+            sourceProjectId: "11111111-1111-4111-8111-111111111111",
+          },
+          hub: {
+            db: {
+              userQuery: () => {
+                throw Error("must not use agent userQuery");
+              },
+            },
+          },
+        });
+      },
+    } as any);
+    await program.parseAsync(["node", "cocalc", "project", "list"]);
+    assert.deepEqual(output, [{ project_id: "target", title: "Assignment" }]);
+    assert.equal((calls[0].headers as any).Authorization, "Bearer turn-key");
+    rmSync(keyFile);
+    await assert.rejects(
+      program.parseAsync(["node", "cocalc", "project", "list"]),
+      /credential is unavailable/,
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("project status reports the server runtime contract", async () => {
   let output: any;

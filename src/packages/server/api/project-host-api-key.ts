@@ -11,7 +11,10 @@ import type {
 } from "@cocalc/conat/inter-bay/api";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
-import { viewerPolicyForApiKeyGrant } from "@cocalc/util/api-key-scope";
+import {
+  apiKeyProjectGrant,
+  viewerPolicyForApiKeyGrant,
+} from "@cocalc/util/api-key-scope";
 import { isProjectCollaboratorRole } from "@cocalc/util/project-access";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
@@ -63,9 +66,7 @@ export async function issueProjectHostApiKeyTokenLocal({
   if (!state || state.scope_revision !== scope_revision) {
     throw new Error("API key is revoked or its scope changed");
   }
-  const grant = state.scope.projects.find(
-    (entry) => entry.project_id === project_id,
-  );
+  const grant = apiKeyProjectGrant(state.scope, project_id);
   if (!grant) {
     throw new Error("API key does not grant this project");
   }

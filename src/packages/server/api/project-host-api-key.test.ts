@@ -131,6 +131,41 @@ describe("scoped API key project-host issuance", () => {
     );
   });
 
+  it("confines all-projects access to current full membership and exact child targets", async () => {
+    getApiKeyAuthorizationStateMock.mockResolvedValue({
+      scope_revision: 4,
+      scope: {
+        version: 1,
+        account: [],
+        projects: [],
+        all_projects: { capabilities: ["file:read"], viewer_read_roots: ["."] },
+      },
+    });
+    const { issueProjectHostApiKeyTokenLocal } =
+      await import("./project-host-api-key");
+    await issueProjectHostApiKeyTokenLocal(request);
+    expect(issueTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: projectId,
+        host_id: hostId,
+        capabilities: ["file:read"],
+        viewer_policy_hash: expect.any(String),
+      }),
+    );
+    issueTokenMock.mockClear();
+    for (const users of [{}, { [accountId]: { group: "viewer" } }]) {
+      resolveProjectReferenceMock.mockResolvedValue({
+        host_id: hostId,
+        runtime_lifecycle_revision: 7,
+        users,
+      });
+      await expect(issueProjectHostApiKeyTokenLocal(request)).rejects.toThrow(
+        "not authorized",
+      );
+    }
+    expect(issueTokenMock).not.toHaveBeenCalled();
+  });
+
   it("binds a viewer key to its actual read policy", async () => {
     getApiKeyAuthorizationStateMock.mockResolvedValue(
       state(["file:read"], ["data"]),
