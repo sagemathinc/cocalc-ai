@@ -777,9 +777,11 @@ export async function createProjectCliTokenLease({
       turn_ref,
       secret: issued.secret,
     };
+    let renewalPending = false;
     connectorTimer = setInterval(() => {
       const active = connectorTurn;
-      if (!active || closed) return;
+      if (!active || closed || renewalPending) return;
+      renewalPending = true;
       void hubApi.agent
         .renewCocalcConnectorTurn({
           account_id: resolvedAccountId,
@@ -810,6 +812,9 @@ export async function createProjectCliTokenLease({
               });
             });
           }
+        })
+        .finally(() => {
+          renewalPending = false;
         });
     }, 60_000);
     connectorTimer.unref();
