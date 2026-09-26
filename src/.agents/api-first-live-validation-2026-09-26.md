@@ -327,7 +327,7 @@ a timeout-protected subprocess and a simulated post-stat file-growth test that
 verifies no more than 4,097 bytes are read before rejecting an oversized key.
 That reader change alone does not prove a managed turn end to end.
 
-A further, also undeployed follow-up enables managed file-daemon routing by
+A further follow-up enables managed file-daemon routing by
 forwarding the requesting CLI's source-project identity and provider path.
 Daemon admission rereads the provider, ignoring any supplied key snapshot;
 rotation or removal invalidates the old cached context. An unavailable provider
@@ -338,6 +338,31 @@ covering auth isolation, provider snapshots, rotation/removal, source routing,
 and daemon context invalidation. This still needs live validation with an actual
 turn-issued managed credential; the manual-key evidence above is not a
 substitute.
+
+## Managed daemon tools deployment
+
+Built both tools bundles from `a831c858f53699266e1f06380c2cde7a31711870`.
+The CLI bundle SHA-256 is
+`b8ec3306870ee086484f82a67bf4e424ce6f554662885c2688f2c283d6f978ee`.
+The amd64 tools archive SHA-256 is
+`80202a60b09f7d530438f247909c8263436a98477c5f0eaa08bb53af3876bbc9`;
+the arm64 archive SHA-256 is
+`602a178365519cc6b42442d66acce3aabc8b0ced78b48fc1417a06b41da9c9bf`.
+Tools-only upgrade of My host succeeded as operation
+`c3f44b34-8cf6-4336-9588-0806618a52ff`. Existing project tools mounts have not
+been verified against this bundle. This is deployment evidence, not a managed
+turn acceptance result.
+
+Before the upgrade, the primary hub was confirmed stopped (connection refused,
+missing prior process, and dev status reporting stopped). Its log recorded a
+billing-authority lease query timeout at `2026-09-26T23:18:47.942Z`, generation
+76. The standard dev start command recovered it as PID 1067362; attached bays
+remained running as PIDs 956795 and 960838. HTTP then returned 200 and the upgrade
+completed. No fencing or lease timeout setting was changed. This recurring
+environment failure is unresolved and must not be counted as connector
+revocation evidence.
+
+## Remaining validation
 
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
