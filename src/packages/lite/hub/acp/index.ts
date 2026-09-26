@@ -10634,7 +10634,20 @@ async function trySteerCandidateIds({
         throw new Error("durable ACP steer claim was lost");
       }
       try {
-        const result = await agent.steer(id, request);
+        // Authorized RPC guidance inherits the actual live turn's funding,
+        // not next-turn preferences. Keep the original for durable/queue fallback.
+        const steerRequest =
+          request.chat.agent_rpc_execution?.guidance === true
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  paymentSource: undefined,
+                  credentialId: undefined,
+                },
+              }
+            : request;
+        const result = await agent.steer(id, steerRequest);
         if (result.state === "steered") {
           return {
             state: "steered",
@@ -12881,6 +12894,7 @@ export const acpTestInternals = {
   handleAcpAttentionRequest,
   persistAttentionResponseProjection,
   handleAcpControlRequest,
+  handleAcpSteerRequest,
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,
