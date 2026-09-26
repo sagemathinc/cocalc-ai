@@ -192,6 +192,14 @@ Updating the worker alone is not sufficient for this feature: update the
 host bootstrap runtime helper as well, then validate managed execution and
 cancellation on that host before enabling it for users.
 
+After upgrading the helper, restart the test project to establish its verified
+runtime generation. Job admission and project teardown share a host lifecycle
+lock. Failed teardown leaves admission blocked across worker restarts until
+cleanup succeeds; restarting just the worker does not clear that state. The
+host sweep also enforces each job's persisted deadline if its supervisor is
+alive but unresponsive. Host validation must include detached descendants,
+concurrent admission/stop, supervisor failure, and project restart.
+
 For intentionally persistent services or interactive input, use CoCalc's
 existing project terminal facilities: inspect \`project terminal --help\`
 through the installed CLI. These are project-owned terminals, with a separate

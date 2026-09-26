@@ -3,6 +3,7 @@
 import os
 import json
 import base64
+from contextlib import nullcontext
 import inspect
 import re
 from pathlib import Path
@@ -87,15 +88,19 @@ class ManagedJobTests(unittest.TestCase):
             m.POOL = Path(directory)
             project = m.POOL / "project-00000000-0000-4000-8000-000000000001"
             project.mkdir()
-            live = project / "job-10-100-20-200-00000000-0000-4000-8000-000000000001"
-            dead_owner = project / "job-10-99-20-200-00000000-0000-4000-8000-000000000002"
-            dead_guard = project / "job-10-100-20-199-00000000-0000-4000-8000-000000000003"
-            unknown = project / "job-unrecognized"
-            for path in [live, dead_owner, dead_guard, unknown]:
+            live = project / "job-10-100-20-200-999999999999-00000000-0000-4000-8000-000000000001"
+            dead_owner = project / "job-10-99-20-200-999999999999-00000000-0000-4000-8000-000000000002"
+            dead_guard = project / "job-10-100-20-199-999999999999-00000000-0000-4000-8000-000000000003"
+            expired = project / "job-10-100-20-200-1-00000000-0000-4000-8000-000000000004"
+            for path in [live, dead_owner, dead_guard, expired]:
                 path.mkdir()
-            with mock.patch.object(m, "alive", side_effect=lambda pid, start: (pid, start) in [("10", "100"), ("20", "200")]), mock.patch.object(m, "kill_scope") as kill:
-                m.reap()
-                self.assertEqual({call.args[0] for call in kill.call_args_list}, {dead_owner, dead_guard})
+            with mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", side_effect=lambda pid, start: (pid, start) in [("10", "100"), ("20", "200")]), mock.patch.object(m, "kill_scope") as kill:
+                m.reap_locked()
+                self.assertEqual({call.args[0] for call in kill.call_args_list}, {dead_owner, dead_guard, expired})
+            # Losing generation state (or a persisted stop) also expires live jobs.
+            with mock.patch.object(m, "active_state", side_effect=RuntimeError("stopping")), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=True), mock.patch.object(m, "kill_scope") as kill:
+                m.reap_locked()
+                self.assertEqual({call.args[0] for call in kill.call_args_list}, {live, dead_owner, dead_guard, expired})
 
     def test_failed_orphan_cleanup_does_not_starve_other_scopes(self):
         m = helper()
@@ -105,10 +110,137 @@ class ManagedJobTests(unittest.TestCase):
             project.mkdir()
             for i in range(2):
                 (project / f"job-10-100-20-200-00000000-0000-4000-8000-00000000000{i}").mkdir()
-            with mock.patch.object(m, "alive", return_value=False), mock.patch.object(m, "kill_scope", side_effect=[RuntimeError(), None]) as kill:
+            with mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=False), mock.patch.object(m, "kill_scope", side_effect=[RuntimeError(), None]) as kill:
                 with self.assertRaisesRegex(RuntimeError, "not confirmed"):
-                    m.reap()
+                    m.reap_locked()
                 self.assertEqual(kill.call_count, 2)
+
+    def test_unrecognized_scopes_fail_sweep_closed(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as directory:
+            m.POOL = Path(directory)
+            project = m.POOL / ("project-" + str(uuid.uuid4()))
+            (project / "unexpected-child").mkdir(parents=True)
+            with mock.patch.object(m, "active_state"):
+                with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                    m.reap_locked()
+
+    def test_cleanup_removes_children_before_parent_and_persists_stop_on_failure(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+                m = helper()
+                m.POOL = Path(directory)
+                project_id = str(uuid.uuid4())
+                parent = m.POOL / ("project-" + project_id)
+                parent.mkdir()
+                scopes = [parent / ("job-10-100-20-200-" + str(uuid.uuid4())) for _ in range(2)]
+                for scope in scopes:
+                    scope.mkdir()
+                state = Path(directory) / "state"
+                removed = []
+                def kill(scope, _timeout):
+                    self.assertEqual(json.loads(state.read_text())["status"], "stopping")
+                    self.assertEqual((parent / "cgroup.kill").read_text(), "1\n")
+                    removed.append(scope)
+                    if fail and scope == scopes[0]:
+                        raise RuntimeError("busy")
+                with mock.patch.object(m, "state_path", return_value=state), mock.patch.object(m, "parent_scope", return_value=parent), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "kill_scope", side_effect=kill):
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                            m.cleanup_locked(project_id)
+                    else:
+                        m.cleanup_locked(project_id)
+                self.assertEqual(set(removed[:2]), set(scopes))
+                self.assertEqual(json.loads(state.read_text())["status"], "stopping" if fail else "stopped")
+                self.assertEqual(len(removed), 2 if fail else 3)
+                if not fail:
+                    self.assertEqual(removed[-1], parent)
+
+    def test_failed_cleanup_blocks_activation_after_helper_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state"
+            first, restarted = helper(), helper()
+            with mock.patch.object(first, "state_path", return_value=state):
+                first.begin_stop_locked(str(uuid.uuid4()))
+            with mock.patch.object(restarted, "state_path", return_value=state), mock.patch.object(restarted, "lifecycle_lock", return_value=nullcontext()), mock.patch.object(restarted, "parent_scope") as parent:
+                with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                    restarted.activate(str(uuid.uuid4()), os.getpid())
+                parent.assert_not_called()
+
+    def test_activation_requires_successful_sweep_before_admission(self):
+        m = helper()
+        with mock.patch.object(m, "lifecycle_lock", return_value=nullcontext()), mock.patch.object(m, "read_state", return_value=None), mock.patch.object(m, "parent_scope"), mock.patch.object(m, "member", return_value=True), mock.patch.object(m, "reap_locked", side_effect=RuntimeError("unresolved")), mock.patch.object(m, "write_state") as write:
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                m.activate(str(uuid.uuid4()), os.getpid())
+            write.assert_not_called()
+
+    def test_launcher_migration_is_verified_before_gate_opens(self):
+        m = helper()
+        scope = mock.MagicMock()
+        events = []
+        (scope / "cgroup.procs").write_text.side_effect = lambda pid: events.append(("migrate", pid))
+        def verify(pid, _scope):
+            events.append(("verify", pid))
+            return True
+        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write", side_effect=lambda fd, data: events.append(("gate", data))), mock.patch.object(m, "member", side_effect=verify):
+            self.assertEqual(m.launch_locked(scope, None, None, None, []), 123)
+        self.assertEqual(events, [("migrate", "123"), ("verify", 123), ("gate", b"1")])
+
+    def test_failed_migration_never_opens_gate_and_reaps_uncontained_child(self):
+        m = helper()
+        with mock.patch.object(m.os, "pipe", return_value=(100, 101)), mock.patch.object(m.os, "fork", return_value=123), mock.patch.object(m.os, "close"), mock.patch.object(m.os, "write") as gate, mock.patch.object(m.os, "kill") as kill, mock.patch.object(m.os, "waitpid") as wait, mock.patch.object(m, "member", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                m.launch_locked(mock.MagicMock(), None, None, None, [])
+            gate.assert_not_called()
+            kill.assert_called_once_with(123, signal.SIGKILL)
+            wait.assert_called_once_with(123, 0)
+
+    def test_lifecycle_lock_serializes_stop_with_admission(self):
+        # Exercise real cross-process flock without host privileges/cgroups.
+        # Only the fixture lock's owner check is substituted for our test UID.
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "lock"
+            source = bootstrap.MANAGED_PROJECT_JOB_HELPER
+            source = source.replace('LOCK = Path("/run/lock/cocalc-project-cgroups.lock")', f'LOCK = Path({str(lock)!r})')
+            source = source.replace('os.fstat(fd).st_uid != 0', 'os.fstat(fd).st_uid != os.getuid()')
+            source = source.split('if __name__ == "__main__":')[0]
+            admission = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source + '\nwith lifecycle_lock():\n print("membership pending", flush=True)\n sys.stdin.readline()\n'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            stop = None
+            try:
+                self.assertEqual(admission.stdout.readline(), b"membership pending\n")
+                stop = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source + '\nprint("stop waiting", flush=True)\nwith lifecycle_lock():\n print("stop admitted", flush=True)\n'], stdout=subprocess.PIPE)
+                self.assertEqual(stop.stdout.readline(), b"stop waiting\n")
+                time.sleep(0.1)
+                self.assertIsNone(stop.poll())
+                admission.stdin.close()
+                admission.wait(timeout=3)
+                self.assertEqual(stop.communicate(timeout=3)[0], b"stop admitted\n")
+            finally:
+                for process in (admission, stop):
+                    if process is None:
+                        continue
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+                    if process.stdout:
+                        process.stdout.close()
+                    if process.stdin:
+                        process.stdin.close()
+
+    def test_active_generation_checks_inode_and_init_identity(self):
+        m = helper()
+        parent = mock.MagicMock()
+        parent.stat.return_value.st_ino = 123
+        value = {"status": "active", "inode": 123, "init": 99, "start": "42", "generation": "g"}
+        with mock.patch.object(m, "read_state", return_value=value), mock.patch.object(m, "parent_scope", return_value=parent), mock.patch.object(m, "alive", return_value=True) as alive, mock.patch.object(m, "member", return_value=True):
+            self.assertEqual(m.active_state(str(uuid.uuid4())), value)
+            alive.return_value = False
+            with self.assertRaisesRegex(RuntimeError, "blocked"):
+                m.active_state(str(uuid.uuid4()))
+            alive.return_value = True
+            value["inode"] = 122
+            with self.assertRaisesRegex(RuntimeError, "blocked"):
+                m.active_state(str(uuid.uuid4()))
 
 
 @unittest.skipUnless(os.geteuid() == 0 and os.environ.get("COCALC_TEST_JOB_CGROUP_PARENT"),
@@ -135,9 +267,26 @@ class KernelContainmentTests(unittest.TestCase):
                 path = Path(directory)
                 path.chmod(0o755)
                 launcher = path / "podman"
-                launcher.write_text("#!/usr/bin/python3\nimport os,sys\nos.execv('/bin/bash', ['bash','-c',sys.argv[-1]])\n")
+                launcher.write_text("""#!/usr/bin/python3
+import os,sys
+assert os.getuid() != 0 and os.getgid() != 0
+for fd in os.listdir('/proc/self/fd'):
+    if int(fd) > 2:
+        assert not os.path.exists('/proc/self/fd/' + fd), 'inherited control descriptor'
+for line in open('/proc/self/status'):
+    if line.startswith(('CapEff:', 'CapPrm:', 'CapAmb:')):
+        assert int(line.split()[1], 16) == 0
+os.execv('/bin/bash', ['bash','-c',sys.argv[-1]])
+""")
                 launcher.chmod(0o755)
                 source = bootstrap.MANAGED_PROJECT_JOB_HELPER.replace("__PROJECT_POOL_CGROUP__", str(root)).replace("__RUNTIME_USER__", "nobody")
+                m.STATE = path / "state"
+                m.LOCK = path / "lifecycle.lock"
+                source = source.replace('STATE = Path("/run/cocalc-managed-project-jobs")', f'STATE = Path({str(m.STATE)!r})')
+                source = source.replace('LOCK = Path("/run/lock/cocalc-project-cgroups.lock")', f'LOCK = Path({str(m.LOCK)!r})')
+                source = source.replace('PODMAN = "/opt/cocalc/container-runtime/current/bin/podman"', f'PODMAN = {str(launcher)!r}')
+                (project / "cgroup.procs").write_text(str(owner.pid))
+                m.activate(project_id, owner.pid)
                 # The grandchild explicitly escapes the original process group.
                 script = """import os,signal,time
 r,w=os.pipe()
@@ -157,7 +306,7 @@ os.close(r)
 if MODE != 'success': time.sleep(60)
 """.replace("DETACH", repr(detach)).replace("MODE", repr(mode))
                 command = "/usr/bin/python3 - <<'PY'\n" + script + "\nPY"
-                proc = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source, "run", project_id, str(uuid.uuid4()), str(owner.pid), "1500" if mode == "deadline" else "30000"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                proc = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source, "run", project_id, str(uuid.uuid4()), str(owner.pid), "1500" if mode in ("deadline", "wedged-guard") else "30000"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 config = {"args": ["exec", "fixture", command], "env": {"PATH": str(path) + ":/usr/bin:/bin"}}
                 proc.stdin.write((json.dumps(config) + "\n").encode())
                 proc.stdin.flush()
@@ -203,12 +352,22 @@ if MODE != 'success': time.sleep(60)
                             proc.wait()
                             m.reap()
                             break
+                        elif mode == "wedged-guard":
+                            proc.send_signal(signal.SIGSTOP)
+                            time.sleep(2)
+                            m.reap()
+                            proc.send_signal(signal.SIGCONT)
+                        elif mode == "project-stop":
+                            with m.lifecycle_lock():
+                                m.cleanup_locked(project_id)
                 sel.close()
                 self.assertIsNotNone(escaped, proc.stderr.read() if proc.poll() is not None else "missing fixture PID")
                 if mode != "supervisor-crash":
-                    self.assertEqual(proof, {"type": "exit", "code": 0 if mode == "success" else 130, "cleanup": True})
+                    self.assertIsNotNone(proof)
+                    self.assertTrue(proof["cleanup"])
+                    self.assertIn(proof["code"], (130, -9) if mode == "project-stop" else (0 if mode == "success" else 130,))
                     proc.wait(timeout=5)
-                self.assertEqual(list(project.iterdir()), [])
+                self.assertEqual([p for p in project.iterdir() if p.is_dir()] if project.exists() else [], [])
                 with self.assertRaises((FileNotFoundError, ProcessLookupError)):
                     m.identity(escaped)
         finally:
@@ -223,14 +382,16 @@ if MODE != 'success': time.sleep(60)
                         pass
             owner.kill() if owner.poll() is None else None
             owner.wait(timeout=5)
-            for scope in project.iterdir():
-                m.kill_scope(scope)
-            project.rmdir()
+            if project.exists():
+                for scope in project.iterdir():
+                    if scope.is_dir():
+                        m.kill_scope(scope)
+                m.kill_scope(project)
             root.rmdir()
 
     def test_detached_descendants_on_all_stop_paths(self):
         for detach in ("setsid", "double-fork"):
-            for mode in ("cancel", "deadline", "lease-expiry", "success", "owner-death", "supervisor-crash"):
+            for mode in ("cancel", "deadline", "lease-expiry", "success", "owner-death", "supervisor-crash", "wedged-guard", "project-stop"):
                 with self.subTest(detach=detach, mode=mode):
                     self.exercise(mode, detach)
 

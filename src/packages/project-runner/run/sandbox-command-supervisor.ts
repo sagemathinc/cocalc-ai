@@ -46,7 +46,7 @@ export const MANAGED_SANDBOX_COMMAND_SUPERVISOR =
   String.raw`
 const scope = process.env.COCALC_MANAGED_JOB_SCOPE;
 const cgroup = require("node:fs").readFileSync("/proc/self/cgroup", "utf8");
-if (!/^job-\d+-\d+-\d+-\d+-[0-9a-f-]{36}$/.test(scope ?? "") ||
+if (!/^job-\d+-\d+-\d+-\d+-\d+-[0-9a-f-]{36}$/.test(scope ?? "") ||
     !cgroup.split("\n").some(line => line.startsWith("0::") && line.endsWith("/" + scope))) {
   process.stderr.write("Managed project command containment unavailable\n");
   process.exit(125);
