@@ -2038,6 +2038,8 @@ export class ChatStreamWriter {
   private metadata: AcpChatContext;
   private readonly chatKey: string;
   private readonly workspaceRoot?: string;
+  private workingDirectory?: string;
+  private lastCommittedWorkingDirectory?: string;
   private readonly hostWorkspaceRoot?: string;
   private readonly hostProjectRoot?: string;
   private inlineCodeLinksCache?: {
@@ -2701,6 +2703,7 @@ export class ChatStreamWriter {
     this.client = client;
     this.chatKey = chatKey(metadata);
     this.workspaceRoot = workspaceRoot;
+    this.workingDirectory = workspaceRoot;
     this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
     this.hostProjectRoot = hostProjectRoot;
     this.usePool = syncdbOverride == null;
@@ -2838,6 +2841,7 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
+        acp_working_directory: this.workingDirectory,
         acp_account_id: this.approverAccountId,
         acp_started_at_ms:
           Number(this.metadata.started_at_ms) > 0
@@ -2870,6 +2874,9 @@ export class ChatStreamWriter {
       this.observePatchflowVersions("init:placeholder");
       current = this.findChatRow();
     }
+    this.workingDirectory =
+      this.recordField<string>(current, "acp_working_directory") ??
+      this.workingDirectory;
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
     if (arr.length > 0) {
@@ -3036,6 +3043,9 @@ export class ChatStreamWriter {
     if (payload.type === "event") {
       const { event } = payload;
       if (event.type === "config") {
+        if (event.workingDirectory) {
+          this.workingDirectory = event.workingDirectory;
+        }
         const paymentSource = paymentSourceFromAuthSource({
           authSource: event.authSource,
           accountId: this.approverAccountId,
@@ -3234,6 +3244,7 @@ export class ChatStreamWriter {
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3286,6 +3297,7 @@ export class ChatStreamWriter {
       sender_id: rowSender,
       date: rowDate,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3388,6 +3400,10 @@ export class ChatStreamWriter {
 
   private primeCommittedStateFromRow(row: any): void {
     if (row == null) return;
+    this.lastCommittedWorkingDirectory = this.recordField<string>(
+      row,
+      "acp_working_directory",
+    );
     this.lastCommittedThreadId =
       this.recordField<string>(row, "acp_thread_id") ?? null;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
@@ -3411,6 +3427,7 @@ export class ChatStreamWriter {
     const startedAtMs = this.normalizeStartedAtMs(this.metadata.started_at_ms);
     return (
       this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedWorkingDirectory !== this.workingDirectory ||
       this.lastCommittedStartedAtMs !== startedAtMs ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
       this.lastCommittedGenerating !== generating ||
@@ -3431,6 +3448,7 @@ export class ChatStreamWriter {
   }
 
   private markCommitted(generating: boolean): void {
+    this.lastCommittedWorkingDirectory = this.workingDirectory;
     this.lastCommittedThreadId = this.threadId;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
       this.metadata.started_at_ms,
@@ -3466,6 +3484,8 @@ export class ChatStreamWriter {
       }
       return (
         currentContent === (this.content ?? "") &&
+        this.recordField<string>(current, "acp_working_directory") ===
+          this.workingDirectory &&
         currentThreadId === this.threadId &&
         currentStartedAtMs ===
           this.normalizeStartedAtMs(this.metadata.started_at_ms) &&

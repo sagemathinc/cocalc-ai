@@ -56,16 +56,19 @@ export const useProcessLinks = (
   const fileContext = useFileContext();
   const project_id = frameContext.project_id || fileContext.project_id;
   const path = frameContext.path || fileContext.path;
+  const filePath =
+    fileContext.relativeLinkBasePath ??
+    (path ? path_split(path).head : undefined);
   useEffect(() => {
     if (ref.current == null) return;
     const elt = $(ref.current);
     processLinks(elt, {
       projectId: project_id,
-      filePath: path ? path_split(path).head : undefined, // TODO: inefficient to compute this every time.
+      filePath,
       doubleClick,
       $,
       projectActions: redux.getActions("projects"),
     });
-  }, [project_id, path, doubleClick, ...deps]);
+  }, [project_id, filePath, doubleClick, ...deps]);
   return ref;
 };
