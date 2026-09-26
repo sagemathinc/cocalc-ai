@@ -387,11 +387,12 @@ function RuntimeCodexAttentionCard({
                     ? "That turn has ended. Send your answer as a new message to continue."
                     : !pending
                       ? record.resolution_reason
-                    : record.is_blocking
-                      ? (record.summary ?? "The current turn is paused until you respond.")
-                      : record.source_kind === "codex_async_question"
-                        ? "Codex may continue while it waits. Your response starts a new user message."
-                        : record.summary}
+                      : record.is_blocking
+                        ? (record.summary ??
+                          "The current turn is paused until you respond.")
+                        : record.source_kind === "codex_async_question"
+                          ? "Codex may continue while it waits. Your response starts a new user message."
+                          : record.summary}
             </Text>
             {lite && pending ? (
               <Text type="secondary">

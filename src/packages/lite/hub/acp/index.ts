@@ -10887,7 +10887,11 @@ async function tryInterruptCandidateIds({
     });
 
   for (const id of ids) {
-    const result = await interruptCodexSession(id, projectId, expectedMessageId);
+    const result = await interruptCodexSession(
+      id,
+      projectId,
+      expectedMessageId,
+    );
     if (result) {
       if (!expectedMessageId) writer?.notifyInterruptRequested(notifyText);
       return result;
@@ -12703,11 +12707,20 @@ async function handleInterruptRequest(
   });
   if (interruption === "requested") {
     if (project_id && path && threadId) {
-      markAcpInterruptsHandledForThread({
-        project_id,
-        path,
-        thread_id: threadId,
-      });
+      if (expectedMessageId)
+        markAcpInterruptsHandledForTurn({
+          project_id,
+          path,
+          thread_id: threadId,
+          expected_message_id: expectedMessageId,
+          expected_session_id: request.expected_session_id,
+        });
+      else
+        markAcpInterruptsHandledForThread({
+          project_id,
+          path,
+          thread_id: threadId,
+        });
     }
     return { ok: true, state: "queued", threadId };
   }

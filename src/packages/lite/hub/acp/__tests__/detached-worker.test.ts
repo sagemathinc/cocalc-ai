@@ -591,6 +591,59 @@ it.each([
   },
 );
 
+it("targeted harness cancellation leaves other turn interrupts pending", async () => {
+  const request = makeRequest();
+  const expectedMessageId = request.chat.message_id!;
+  const sessionId = "harness-session";
+  (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+    {
+      project_id: request.project_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      message_id: expectedMessageId,
+      session_id: sessionId,
+    },
+  ]);
+  for (const messageId of [expectedMessageId, "another-turn"]) {
+    enqueueAcpInterrupt({
+      project_id: request.project_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id!,
+      chat: { ...request.chat, message_id: messageId },
+      expected_message_id: messageId,
+      expected_session_id: sessionId,
+    });
+  }
+  const interruptOutstanding = jest.fn(async () => true);
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "targeted-cancel-harness",
+    request.project_id,
+    { interruptOutstanding } as any,
+    true,
+  );
+  try {
+    await expect(
+      acpTestInternals.handleInterruptRequest({
+        ...request,
+        threadId: request.chat.thread_id,
+        expected_message_id: expectedMessageId,
+        expected_session_id: sessionId,
+      }),
+    ).resolves.toMatchObject({ ok: true, state: "queued" });
+    expect(interruptOutstanding).toHaveBeenCalledWith(
+      sessionId,
+      expectedMessageId,
+    );
+    expect(listPendingAcpInterrupts()).toEqual([
+      expect.objectContaining({ expected_message_id: "another-turn" }),
+    ]);
+    expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+  } finally {
+    unregister();
+    getAcpDatabase().prepare("DELETE FROM acp_interrupts").run();
+  }
+});
+
 it("preserves native interruption finalization", async () => {
   const request = makeRequest();
   const job = enqueueAcpJob(request);

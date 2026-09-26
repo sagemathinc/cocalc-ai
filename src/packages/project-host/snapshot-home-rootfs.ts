@@ -15,5 +15,9 @@ export async function prepareHomeSnapshotRootfs({
   if (!(await exists(current))) return;
   // Ordinary directories cannot be renamed across Btrfs subvolumes. Use the
   // existing anchored helper, never a direct privileged path-based fallback.
-  await sudo({ command: "copy-tree-reflink", args: [current, staged] });
+  await sudo({
+    command: "copy-tree-reflink",
+    args: [current, staged],
+    timeout: 60 * 60,
+  });
 }

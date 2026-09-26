@@ -1079,7 +1079,7 @@ export function ChatRoomComposer({
                       ? "Steer"
                       : hasRunningCodexTurn
                         ? "Queue"
-                      : "Send"
+                        : "Send"
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}

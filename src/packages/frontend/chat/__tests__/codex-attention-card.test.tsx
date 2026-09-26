@@ -194,9 +194,11 @@ describe("Codex question attention", () => {
         }}
       />,
     );
-    expect(screen.getByText("Request no longer active")).toBeInTheDocument();
+    expect(screen.getByText("Turn ended")).toBeInTheDocument();
     expect(
-      screen.getByText("The request was interrupted."),
+      screen.getByText(
+        "That turn has ended. Send your answer as a new message to continue.",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("The current ACP turn is paused."),

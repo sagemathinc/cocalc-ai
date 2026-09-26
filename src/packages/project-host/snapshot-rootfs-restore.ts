@@ -28,6 +28,7 @@ export async function restoreSnapshotRootfs({
       await sudo({
         command: "copy-tree-reflink",
         args: [snapshot, replacement],
+        timeout: 60 * 60,
       });
     }
     if (await exists(current)) {

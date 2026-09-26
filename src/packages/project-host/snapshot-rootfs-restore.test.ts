@@ -63,6 +63,12 @@ const removed = () =>
 test("copies across subvolumes before swapping siblings and leaves home and snapshot unchanged", async () => {
   await writeFile(join(root, "home", "untouched"), "home");
   await restoreSnapshotRootfs({ current, snapshot });
+  expect(sudo).toHaveBeenCalledWith(
+    expect.objectContaining({
+      command: "copy-tree-reflink",
+      timeout: 60 * 60,
+    }),
+  );
   expect(await marker(current)).toBe("snapshot");
   expect(await marker(snapshot)).toBe("snapshot");
   expect(await readFile(join(root, "home", "untouched"), "utf8")).toBe("home");

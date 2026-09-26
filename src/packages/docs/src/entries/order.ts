@@ -119,7 +119,6 @@ export const DOCS_ENTRY_IDS = [
   "teaching.nbgrader",
   "ai.codex-chat",
   "ai.claude-code",
-  "ai.my-agents",
   "ai.codex-settings",
   "ai.codex-conversations",
   "ai.codex-goals",

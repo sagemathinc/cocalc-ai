@@ -864,7 +864,7 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSendImmediately).not.toHaveBeenCalled();
   });
 
-  it("offers live guidance for a running qualified Claude turn", () => {
+  it("offers live guidance and explicit queueing for a running qualified Claude turn", async () => {
     const onSend = jest.fn();
     const onSendImmediately = jest.fn();
     renderComposer({
@@ -889,11 +889,20 @@ describe("ChatRoomComposer resize handle", () => {
       on_send_immediately: onSendImmediately,
     });
     expect(screen.getByRole("button", { name: "Steer" })).not.toBeNull();
-    const queue = screen.getByRole("button", { name: "Queue" });
     act(() => lastChatInputProps.on_send("keyboard guidance"));
     expect(onSendImmediately).toHaveBeenCalledWith("keyboard guidance");
     expect(onSend).not.toHaveBeenCalled();
-    fireEvent.click(queue);
+    const user = userEvent.setup();
+    const delivery = screen.getByRole("button", {
+      name: "Message delivery: To Agent",
+    });
+    delivery.focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Queue Alt\+Enter/ }),
+    );
+    expect(delivery).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(onSend).toHaveBeenCalledWith("guidance");
   });
 

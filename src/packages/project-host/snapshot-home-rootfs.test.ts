@@ -21,7 +21,13 @@ test("replaces only staged rootfs through the anchored reflink helper", async ()
   await prepareHomeSnapshotRootfs(paths);
   expect((sudo as jest.Mock).mock.calls).toEqual([
     [{ command: "rm", args: ["-rf", paths.staged] }],
-    [{ command: "copy-tree-reflink", args: [paths.current, paths.staged] }],
+    [
+      {
+        command: "copy-tree-reflink",
+        args: [paths.current, paths.staged],
+        timeout: 60 * 60,
+      },
+    ],
   ]);
 });
 

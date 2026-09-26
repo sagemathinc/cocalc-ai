@@ -163,6 +163,7 @@ import {
   Input,
   Modal,
   Popover,
+  Select,
   Space,
   Tag,
   Typography,
@@ -921,14 +922,20 @@ function NewAgentPanel({
         boundAccount.assertCurrent();
         const threadId = chatActions.createEmptyThread({
           name: agentName.trim(),
-          threadAgent: runtimeKind !== "codex-native" ? {
-            mode: "acp",
-            runtime: runtimeKind === "claude-code" ? qualifiedHarnessRuntime("claude-code", workingDirectory) : harnessRuntimeFromDraft(harnessDraft, workingDirectory),
-          } : {
-            mode: "codex",
-            model: executionConfig.model,
-            codexConfig: { ...executionConfig, workingDirectory },
-          },
+          threadAgent:
+            runtimeKind !== "codex-native"
+              ? {
+                  mode: "acp",
+                  runtime:
+                    runtimeKind === "claude-code"
+                      ? qualifiedHarnessRuntime("claude-code", workingDirectory)
+                      : harnessRuntimeFromDraft(harnessDraft, workingDirectory),
+                }
+              : {
+                  mode: "codex",
+                  model: executionConfig.model,
+                  codexConfig: { ...executionConfig, workingDirectory },
+                },
         });
         if (!threadId) throw new Error("Unable to create the agent thread");
         created = { projectId: targetProjectId, path, threadId };
@@ -954,12 +961,18 @@ function NewAgentPanel({
         projectId: targetProjectId,
         threadId,
         credentialId:
+          runtimeKind === "codex-native" &&
           executionConfig.paymentSource === "subscription"
             ? executionConfig.credentialId
             : undefined,
       });
       if (runtimeKind === "claude-code") {
-        writeHarnessCredentialSelection({ accountId: boundAccount.accountId, projectId: targetProjectId, threadKey: threadId, credential: claudeCredential });
+        writeHarnessCredentialSelection({
+          accountId: boundAccount.accountId,
+          projectId: targetProjectId,
+          threadKey: threadId,
+          credential: claudeCredential,
+        });
       }
       return created;
     });
@@ -1190,7 +1203,7 @@ function NewAgentPanel({
         }
         createdProjectTitle = automaticProjectCreated.current.title;
       }
-      if (!withoutTask) {
+      if (!withoutTask && runtimeKind === "codex-native") {
         progress("funding", targetProjectId);
         const source = await fetchCodexPaymentSourceForSubmit({
           projectId: targetProjectId,
@@ -1223,6 +1236,8 @@ function NewAgentPanel({
           paymentSource: source,
         });
         if (executionConfig !== config) setConfig(executionConfig);
+      }
+      if (!withoutTask) {
         if (
           !(await preflightNewAgentProjectStart({
             projectId: targetProjectId,
@@ -1238,6 +1253,7 @@ function NewAgentPanel({
         targetProjectId,
         createdProjectTitle,
         executionConfig,
+        withoutTask ? request : undefined,
       );
     } catch (err) {
       attemptRef.current?.finish(
@@ -1257,6 +1273,7 @@ function NewAgentPanel({
     targetProjectId?: string,
     projectTitleOverride?: string,
     executionConfig: NewAgentCodexConfig = config,
+    draft?: string,
   ): Promise<void> {
     const created = await prepare(targetProjectId, executionConfig);
     boundAccount.assertCurrent();
@@ -1268,12 +1285,14 @@ function NewAgentPanel({
         workbenchEnabled: true,
       });
       await waitForChatReady(actions);
-      if (runtimeKind === "codex-native") actions.setCodexConfig(created.threadId, executionConfig);
+      if (runtimeKind === "codex-native")
+        actions.setCodexConfig(created.threadId, executionConfig);
       writeAgentSubscriptionSelection({
         accountId: boundAccount.accountId,
         projectId: created.projectId,
         threadId: created.threadId,
         credentialId:
+          runtimeKind === "codex-native" &&
           executionConfig.paymentSource === "subscription"
             ? executionConfig.credentialId
             : undefined,
@@ -1286,7 +1305,8 @@ function NewAgentPanel({
       const sent = actions.sendChat({
         input: request,
         reply_thread_id: created.threadId,
-        acpConfigOverride: runtimeKind === "codex-native" ? executionConfig : undefined,
+        acpConfigOverride:
+          runtimeKind === "codex-native" ? executionConfig : undefined,
         chatIdentity,
       });
       if (sent) {
@@ -1305,6 +1325,15 @@ function NewAgentPanel({
           "The agent was created, but the first request could not start. It is preserved as a draft.",
         );
       }
+    }
+    if (draft) {
+      await writeChatComposerDraft({
+        account_id: boundAccount.accountId,
+        project_id: created.projectId,
+        path: created.path,
+        composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
+        text: draft,
+      });
     }
     rememberAgentName(
       claimedNameRef.current ?? normalizeAgentName(agentName),
@@ -1365,6 +1394,10 @@ function NewAgentPanel({
       setMissingDirectory(undefined);
       await submitNewAgentRequest(
         createWithoutTaskRef.current ? undefined : request,
+        missingDirectory.projectId,
+        undefined,
+        config,
+        createWithoutTaskRef.current ? request : undefined,
       );
     } catch (err) {
       handleCreateError(err);
@@ -1670,121 +1703,131 @@ function NewAgentPanel({
                     disabled={busy || !!pending}
                   />
                 </Popover>
-                <NewAgentRuntimeSelect value={runtimeKind} disabled={busy || !!pending} onChange={setRuntimeKind} />
-                {runtimeKind === "codex-native" && <span
-                  style={{
-                    alignItems: "center",
-                    display: "inline-flex",
-                    flex: "0 1 auto",
-                    minWidth: 0,
-                    overflow: "hidden",
-                  }}
-                >
-                  <Dropdown
-                    menu={{
-                      items: modelOptions.map(({ value, label, disabled }) => ({
-                        key: value,
-                        label,
-                        disabled,
-                      })),
-                      selectedKeys: config.model ? [config.model] : [],
-                      onClick: ({ key }) => {
-                        modelCustomized.current = true;
-                        setConfig((current) =>
-                          reconcileAgentConfig(
-                            { ...current, model: key },
-                            modelOptions,
-                          ),
-                        );
-                      },
+                <NewAgentRuntimeSelect
+                  value={runtimeKind}
+                  disabled={busy || !!pending}
+                  onChange={setRuntimeKind}
+                />
+                {runtimeKind === "codex-native" && (
+                  <span
+                    style={{
+                      alignItems: "center",
+                      display: "inline-flex",
+                      flex: "0 1 auto",
+                      minWidth: 0,
+                      overflow: "hidden",
                     }}
-                    trigger={["click"]}
                   >
-                    <ComposerPillButton
-                      aria-label={`Change model. Current model: ${config.model}`}
-                      disabled={busy || !!pending || !!siteFundedPolicy}
-                      style={{
-                        maxWidth: 150,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                    <Dropdown
+                      menu={{
+                        items: modelOptions.map(
+                          ({ value, label, disabled }) => ({
+                            key: value,
+                            label,
+                            disabled,
+                          }),
+                        ),
+                        selectedKeys: config.model ? [config.model] : [],
+                        onClick: ({ key }) => {
+                          modelCustomized.current = true;
+                          setConfig((current) =>
+                            reconcileAgentConfig(
+                              { ...current, model: key },
+                              modelOptions,
+                            ),
+                          );
+                        },
                       }}
+                      trigger={["click"]}
                     >
-                      {config.model}
-                    </ComposerPillButton>
-                  </Dropdown>
-                  <Text type="secondary">·</Text>
-                  <Dropdown
-                    menu={{
-                      items: reasoningOptions.map(({ id, label }) => ({
-                        key: id,
-                        label,
-                      })),
-                      selectedKeys: config.reasoning ? [config.reasoning] : [],
-                      onClick: ({ key }) => {
-                        modelCustomized.current = true;
-                        setConfig((current) => ({
-                          ...current,
-                          reasoning: key as CodexReasoningId,
-                        }));
-                      },
-                    }}
-                    trigger={["click"]}
-                  >
-                    <ComposerPillButton
-                      aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
-                      disabled={
-                        busy ||
-                        !!pending ||
-                        !!siteFundedPolicy ||
-                        reasoningOptions.length === 0
-                      }
-                    >
-                      {selectedReasoningLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                  <Text type="secondary">·</Text>
-                  <Dropdown
-                    menu={{
-                      items: paymentOptions.map(
-                        ({ value, label, disabled }) => ({
-                          key: value,
+                      <ComposerPillButton
+                        aria-label={`Change model. Current model: ${config.model}`}
+                        disabled={busy || !!pending || !!siteFundedPolicy}
+                        style={{
+                          maxWidth: 150,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {config.model}
+                      </ComposerPillButton>
+                    </Dropdown>
+                    <Text type="secondary">·</Text>
+                    <Dropdown
+                      menu={{
+                        items: reasoningOptions.map(({ id, label }) => ({
+                          key: id,
                           label,
-                          disabled,
-                        }),
-                      ),
-                      selectedKeys: [selectedPaymentValue],
-                      onClick: ({ key }) => {
-                        if (key.startsWith("subscription:")) {
+                        })),
+                        selectedKeys: config.reasoning
+                          ? [config.reasoning]
+                          : [],
+                        onClick: ({ key }) => {
+                          modelCustomized.current = true;
                           setConfig((current) => ({
                             ...current,
-                            paymentSource: "subscription",
-                            credentialId: key.slice("subscription:".length),
+                            reasoning: key as CodexReasoningId,
                           }));
-                        } else {
-                          setConfig((current) => ({
-                            ...current,
-                            paymentSource: key as CodexPaymentSourcePreference,
-                            credentialId: undefined,
-                          }));
-                        }
-                      },
-                    }}
-                    trigger={["click"]}
-                  >
-                    <ComposerPillButton
-                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                      disabled={busy || !!pending || paymentSourceLoading}
-                      style={{
-                        maxWidth: 120,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        },
                       }}
+                      trigger={["click"]}
                     >
-                      {selectedPaymentLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                </span>
-                }
+                      <ComposerPillButton
+                        aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                        disabled={
+                          busy ||
+                          !!pending ||
+                          !!siteFundedPolicy ||
+                          reasoningOptions.length === 0
+                        }
+                      >
+                        {selectedReasoningLabel}
+                      </ComposerPillButton>
+                    </Dropdown>
+                    <Text type="secondary">·</Text>
+                    <Dropdown
+                      menu={{
+                        items: paymentOptions.map(
+                          ({ value, label, disabled }) => ({
+                            key: value,
+                            label,
+                            disabled,
+                          }),
+                        ),
+                        selectedKeys: [selectedPaymentValue],
+                        onClick: ({ key }) => {
+                          if (key.startsWith("subscription:")) {
+                            setConfig((current) => ({
+                              ...current,
+                              paymentSource: "subscription",
+                              credentialId: key.slice("subscription:".length),
+                            }));
+                          } else {
+                            setConfig((current) => ({
+                              ...current,
+                              paymentSource:
+                                key as CodexPaymentSourcePreference,
+                              credentialId: undefined,
+                            }));
+                          }
+                        },
+                      }}
+                      trigger={["click"]}
+                    >
+                      <ComposerPillButton
+                        aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                        disabled={busy || !!pending || paymentSourceLoading}
+                        style={{
+                          maxWidth: 120,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {selectedPaymentLabel}
+                      </ComposerPillButton>
+                    </Dropdown>
+                  </span>
+                )}
                 <Popover
                   content={advancedSettings}
                   open={moreSettingsOpen}
@@ -1804,47 +1847,48 @@ function NewAgentPanel({
                     disabled={busy || !!pending}
                   />
                 </Popover>
+                {runtimeKind === "claude-code" && (
+                  <Select
+                    aria-label="Claude credential"
+                    value={newAgentClaudeCredentialValue(claudeCredential)}
+                    disabled={busy || !!pending || !claudeCredentialsLoaded}
+                    options={newAgentClaudeCredentialOptions(
+                      anthropicCredentials,
+                    )}
+                    onChange={(value) => {
+                      claudeCredentialChosen.current = true;
+                      setClaudeCredential(
+                        value.startsWith("account-subscription:")
+                          ? {
+                              version: 1,
+                              provider: "anthropic",
+                              mode: "account-subscription",
+                              credentialId: value.slice(
+                                "account-subscription:".length,
+                              ),
+                            }
+                          : value.startsWith("account-api-key:")
+                            ? {
+                                version: 1,
+                                provider: "anthropic",
+                                mode: "account-api-key",
+                                credentialId: value.slice(
+                                  "account-api-key:".length,
+                                ),
+                              }
+                            : {
+                                version: 1,
+                                provider: "anthropic",
+                                mode: "project-secret",
+                              },
+                      );
+                    }}
+                    style={{ minWidth: 180 }}
+                  />
+                )}
                 <span style={{ flex: 1 }} />
               </div>
             )}
-            {runtimeKind === "claude-code" && (
-              <Select
-                aria-label="Claude credential"
-                value={newAgentClaudeCredentialValue(claudeCredential)}
-                disabled={busy || !!pending || !claudeCredentialsLoaded}
-                options={newAgentClaudeCredentialOptions(anthropicCredentials)}
-                onChange={(value) => {
-                  claudeCredentialChosen.current = true;
-                  setClaudeCredential(
-                    value.startsWith("account-subscription:")
-                      ? {
-                          version: 1,
-                          provider: "anthropic",
-                          mode: "account-subscription",
-                          credentialId: value.slice(
-                            "account-subscription:".length,
-                          ),
-                        }
-                      : value.startsWith("account-api-key:")
-                        ? {
-                            version: 1,
-                            provider: "anthropic",
-                            mode: "account-api-key",
-                            credentialId: value.slice(
-                              "account-api-key:".length,
-                            ),
-                          }
-                        : {
-                            version: 1,
-                            provider: "anthropic",
-                            mode: "project-secret",
-                          },
-                  );
-                }}
-                style={{ minWidth: 180 }}
-              />
-            )}
-            <span style={{ flex: 1 }} />
             <Button
               type="primary"
               shape="circle"
