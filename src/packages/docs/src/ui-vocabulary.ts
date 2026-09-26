@@ -76,7 +76,6 @@ const STUDIO_TOGGLE = "frontend/jupyter/studio/frame-type-toggle.tsx";
 const LOG = "frontend/project/history/log.tsx";
 const RECOVERY_STATUS = "frontend/project/recovery-status.tsx";
 const RESTORE_SNAPSHOT = "frontend/project/snapshots/restore.tsx";
-const FILES_TOOLBAR = "frontend/project/explorer/misc-side-buttons.tsx";
 const AUTH_APP = "frontend/public/auth/app.tsx";
 const CLI_AUTH = "frontend/public/auth/cli-auth-views.tsx";
 const APP_PAGE = "frontend/app/page.tsx";
@@ -914,18 +913,6 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     usedIn: [
       bold("research-specialist", "Restore to original path (overwrite)"),
     ],
-  },
-  {
-    id: "files.recovery",
-    label: "Recovery",
-    anchors: [def(FILES_TOOLBAR, ">Recovery<")],
-    usedIn: [bold("research-specialist", "Recovery")],
-  },
-  {
-    id: "files.recovery.tooltip",
-    label: "Snapshots and backups",
-    anchors: [def(FILES_TOOLBAR, 'title="Snapshots and backups"')],
-    usedIn: [bold("research-specialist", "Snapshots and backups")],
   },
 
   // Virtual machines

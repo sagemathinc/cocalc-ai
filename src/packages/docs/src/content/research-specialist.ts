@@ -27,8 +27,6 @@ backups stay on the same VM as the projects; see
 [Install CoCalc Star](/docs/self-hosting/cocalc-star). Availability, retention,
 and the newest recoverable time depend on the project's runtime and configured
 schedules.
-In a narrow window, **Files** shows **Recovery** as an icon whose tooltip is
-**Snapshots and backups**.
 
 ## Prepare a disposable example
 
@@ -196,8 +194,8 @@ after preserving newer research work.
   current recovery point exists. The **Local snapshots** date covers only
   scheduled snapshots and comes from the last scheduled check, so after a
   restore it can show a snapshot that no longer exists. To see which
-  snapshots exist now, use **Files -> Recovery -> Open Snapshots**; a
-  snapshot folder that opens empty has nothing to recover.
+  snapshots exist now, open **Settings -> Recovery -> Restore Snapshot**,
+  open the **Snapshot to restore** list, then choose **Cancel**.
 - No matching history may mean the file was created after the selected
   checkpoint, retained history expired, the project moved hosts, or a HOME
   or combined restore deleted the local snapshots. Check backup dates and the
@@ -211,8 +209,9 @@ after preserving newer research work.
   restored filesystem. Keep the incident note and checkpoint identifiers
   outside that filesystem while restoring it.
 - Copy useful recovered data out of \`/tmp\`; it is a temporary inspection
-  location. Currently, a HOME or combined restore deletes the named checkpoint,
-  so copy what you need from it first. Keep the safety snapshot until you have
+  location. Retain the named checkpoint until you have verified recovery.
+  Currently, a HOME or combined restore deletes it, so copy what you need from
+  it first; after such a restore, keep the safety snapshot until you have
   verified recovery and copied anything you need out of it. Then remove only
   the disposable files and checkpoints you deliberately created.
 
