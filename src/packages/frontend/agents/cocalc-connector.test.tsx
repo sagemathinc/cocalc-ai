@@ -110,3 +110,38 @@ test("composer entry opens the same access settings and user guide", async () =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
 });
+
+test("a source-only legacy configuration can be disabled after redundant access is removed", async () => {
+  mockApi.getCocalcConnectorConfig.mockResolvedValueOnce({
+    revision: 3,
+    enabled: true,
+    scope: {
+      version: 1,
+      account: [],
+      projects: [
+        {
+          project_id: agent.endpoint.project_id,
+          capabilities: ["project:exec"],
+        },
+      ],
+    },
+  });
+  const user = userEvent.setup();
+  render(<CocalcConnector agent={agent} />);
+  await user.click(screen.getByRole("button", { name: "CoCalc access" }));
+  const toggle = await screen.findByRole("switch", {
+    name: "Enable CoCalc access",
+  });
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+  await user.click(toggle);
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  await waitFor(() =>
+    expect(mockApi.saveCocalcConnectorConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: false,
+        expected_revision: 3,
+        scope: { version: 1, account: [], projects: [] },
+      }),
+    ),
+  );
+});

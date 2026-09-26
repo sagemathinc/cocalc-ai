@@ -9,6 +9,26 @@ import { viewerReadPolicyAllowsPath } from "./project-access";
 const B = "11111111-1111-4111-8111-111111111111";
 const C = "22222222-2222-4222-8222-222222222222";
 
+test("empty drafts require explicit opt-in and cannot become active key scopes", () => {
+  const empty = { version: 1, account: [], projects: [] };
+  const draft = normalizeApiKeyScopeV1(empty, { allowEmpty: true });
+  expect(draft).toEqual(empty);
+  expect(apiKeyScopeAllows(draft, "project:list")).toBe(false);
+  expect(apiKeyScopeAllows(draft, "file:read", B)).toBe(false);
+  expect(() => normalizeApiKeyScopeV1(draft)).toThrow(
+    "at least one capability",
+  );
+  expect(() =>
+    normalizeApiKeyScopeV1({ ...empty, surprise: true }, { allowEmpty: true }),
+  ).toThrow("unknown scope field");
+  expect(() =>
+    normalizeApiKeyScopeV1(
+      { ...empty, account: ["invalid"] },
+      { allowEmpty: true },
+    ),
+  ).toThrow("invalid account capability");
+});
+
 test("all-projects defaults preserve explicit restrictions and account separation", () => {
   const scope = normalizeApiKeyScopeV1({
     version: 1,

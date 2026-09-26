@@ -139,7 +139,8 @@ export async function saveCocalcConnectorConfig({
     project_id: source_project_id,
   });
   await assertNativeAgent({ account_id: owner, agent_id, source_project_id });
-  const canonical = normalizeApiKeyScopeV1(scope);
+  // Disabled settings may retain an empty draft, but cannot issue a key.
+  const canonical = normalizeApiKeyScopeV1(scope, { allowEmpty: !enabled });
   if (enabled) {
     await assertScopeProjectsCollaborator({
       account_id: owner,

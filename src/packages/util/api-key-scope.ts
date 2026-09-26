@@ -148,7 +148,10 @@ function projectPermissions(
   };
 }
 
-export function normalizeApiKeyScopeV1(input: unknown): ApiKeyScope {
+export function normalizeApiKeyScopeV1(
+  input: unknown,
+  { allowEmpty = false }: { allowEmpty?: boolean } = {},
+): ApiKeyScope {
   const value = record(input, "scope");
   exactKeys(value, ["version", "account", "projects", "all_projects"], "scope");
   if (value.version !== 1 || !Array.isArray(value.projects)) {
@@ -189,7 +192,12 @@ export function normalizeApiKeyScopeV1(input: unknown): ApiKeyScope {
     );
     all_projects = projectPermissions(grant);
   }
-  if (account.length === 0 && projects.length === 0 && !all_projects) {
+  if (
+    !allowEmpty &&
+    account.length === 0 &&
+    projects.length === 0 &&
+    !all_projects
+  ) {
     throw Error("API key scope must grant at least one capability");
   }
   projects.sort((a, b) => a.project_id.localeCompare(b.project_id));

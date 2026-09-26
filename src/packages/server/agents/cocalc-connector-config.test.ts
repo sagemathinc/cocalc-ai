@@ -228,4 +228,37 @@ describe("CoCalc connector configuration", () => {
       "COMMIT",
     );
   });
+
+  it("disables empty settings and revokes turns, but cannot enable an empty scope", async () => {
+    activeKeyIds = ["key-a"];
+    const { saveCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    const empty = { version: 1 as const, account: [], projects: [] };
+    await saveCocalcConnectorConfig({
+      ...locator,
+      expected_revision: 1,
+      scope: empty,
+      enabled: false,
+    });
+    const insert = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs"),
+    );
+    expect(JSON.parse(insert?.[1][4])).toEqual(empty);
+    expect(insert?.[1][5]).toBe(false);
+    expect(projectsMock).not.toHaveBeenCalled();
+    expect(directoryDeleteMock).toHaveBeenCalledWith(
+      expect.objectContaining({ key_id: "key-a" }),
+    );
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("DELETE FROM api_keys"),
+      ),
+    ).toBe(true);
+    expect(queryMock.mock.calls.map(([sql]) => sql)).toContain("COMMIT");
+    queryMock.mockClear();
+    await expect(
+      saveCocalcConnectorConfig({ ...locator, scope: empty, enabled: true }),
+    ).rejects.toThrow("at least one capability");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
 });
