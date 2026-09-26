@@ -4,9 +4,11 @@
  */
 
 import type { IncomingMessage, ServerResponse, ClientRequest } from "node:http";
-import type { Duplex } from "node:stream";
+import { Duplex, type Transform } from "node:stream";
+import type { Socket } from "node:net";
 import httpProxy from "http-proxy-3";
 import { isValidUUID } from "@cocalc/util/misc";
+import { meteredStream, type ApiRelayMeter } from "./api-relay-meter";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import {
   API_RELAY_PATH,
@@ -25,7 +27,8 @@ export interface ApiRelayLimits {
   connectionsPerProject: number;
   attemptsPerMinute: number;
   httpBodyBytes: number;
-  connectionBytes: number;
+  preAuthAttemptsPerMinute: number;
+  peerAttemptsPerMinute: number;
   connectionLifetimeMs: number;
   connectTimeoutMs: number;
   checkIntervalMs: number;
@@ -36,7 +39,8 @@ const DEFAULT_LIMITS: ApiRelayLimits = {
   connectionsPerProject: 64,
   attemptsPerMinute: 240,
   httpBodyBytes: 8 * 1024 * 1024,
-  connectionBytes: 512 * 1024 * 1024,
+  preAuthAttemptsPerMinute: 12_000,
+  peerAttemptsPerMinute: 2_400,
   connectionLifetimeMs: 2 * 60 * 60_000,
   connectTimeoutMs: 15_000,
   checkIntervalMs: 5_000,
@@ -125,6 +129,7 @@ export function createApiRelay({
   hostUrl,
   limits: overrides,
   onError,
+  createMeter,
 }: {
   authenticate: (
     req: IncomingMessage,
@@ -133,6 +138,12 @@ export function createApiRelay({
   hostUrl: (hostId: string, projectId: string) => Promise<string>;
   limits?: Partial<ApiRelayLimits>;
   onError?: (error: Error) => void;
+  createMeter: (opts: {
+    projectId: string;
+    target: string;
+    websocket: boolean;
+    onError: (error: Error) => void;
+  }) => Promise<ApiRelayMeter>;
 }) {
   const limits = { ...DEFAULT_LIMITS, ...overrides };
   const proxy = httpProxy.createProxyServer({
@@ -153,8 +164,32 @@ export function createApiRelay({
     IncomingMessage,
     (request: ClientRequest) => void
   >();
+  const responses = new WeakMap<
+    IncomingMessage,
+    (response: IncomingMessage) => void
+  >();
   let closed = false;
+  const buckets = new Map<string, { tokens: number; at: number }>();
+  const admitAttempt = (key: string, limit: number) => {
+    const now = Date.now();
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      if (buckets.size >= 256) fail(429, "API relay admission is busy");
+      bucket = { tokens: limit, at: now };
+      buckets.set(key, bucket);
+    }
+    bucket.tokens = Math.min(
+      limit,
+      bucket.tokens + (Math.max(0, now - bucket.at) * limit) / 60_000,
+    );
+    bucket.at = now;
+    if (bucket.tokens < 1) fail(429, "API relay admission rate exceeded");
+    bucket.tokens--;
+  };
   const cleanup = setInterval(() => {
+    for (const [key, bucket] of buckets) {
+      if (Date.now() - bucket.at > 60_000) buckets.delete(key);
+    }
     for (const [id, state] of projects) {
       if (!state.active && Date.now() - state.since > 60_000)
         projects.delete(id);
@@ -163,6 +198,12 @@ export function createApiRelay({
   cleanup.unref();
   proxy.on("proxyReq", (request, req) => upstream.get(req)?.(request));
   proxy.on("proxyReqWs", (request, req) => upstream.get(req)?.(request));
+  proxy.on("proxyRes", (response, req) => {
+    const handle = responses.get(req);
+    responses.delete(req);
+    if (handle) handle(response);
+    else response.destroy();
+  });
 
   const handle = async (
     req: IncomingMessage,
@@ -176,32 +217,42 @@ export function createApiRelay({
       | { active: number; attempts: number; since: number }
       | undefined;
     let request: ClientRequest | undefined;
+    let upstreamSocket: Duplex | undefined;
+    let meter: ApiRelayMeter | undefined;
+    const streams: Transform[] = [];
+    let wsAdapter: Duplex | undefined;
     let finished = false;
     let connected = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let monitor: ReturnType<typeof setInterval> | undefined;
     let bodyBytes = 0;
-    const initialBytes = req.socket.bytesRead + req.socket.bytesWritten;
-    const finish = () => {
+    const finish = (reason = "completed") => {
       if (finished) return;
       finished = true;
       sessions.delete(session);
       upstream.delete(req);
+      responses.delete(req);
       if (project) project.active--;
       clearTimeout(deadline);
       clearInterval(monitor);
       req.off("data", countBody);
+      for (const stream of streams) stream.destroy();
+      void meter?.close(reason).catch((err) => onError?.(err));
     };
-    const cancel = () => {
-      finish();
+    const cancel = (reason = "cancelled") => {
+      finish(reason);
       request?.destroy();
+      upstreamSocket?.destroy();
+      wsAdapter?.destroy();
       destination.destroy();
     };
     const session = { cancel };
     const reject = (status: number, message: string) => {
       if (finished) return;
-      finish();
+      finish(message);
       request?.destroy();
+      upstreamSocket?.destroy();
+      wsAdapter?.destroy();
       if (websocket) {
         if (connected) socket.destroy();
         else
@@ -227,6 +278,13 @@ export function createApiRelay({
     };
     try {
       if (closed) fail(503, "API relay is stopping");
+      // Claimed project IDs are untrusted here; rotating one must not reset
+      // admission. The local peer is coarse (containers can share loopback).
+      admitAttempt("global", limits.preAuthAttemptsPerMinute);
+      admitAttempt(
+        `peer:${req.socket.remoteAddress ?? "unknown"}`,
+        limits.peerAttemptsPerMinute,
+      );
       if (sessions.size >= limits.connections) fail(429, "API relay is busy");
       sessions.add(session);
       const route = parseApiRelayRoute(req.url ?? "", websocket);
@@ -241,10 +299,10 @@ export function createApiRelay({
         fail(405, "unsupported API relay method");
       }
       destination.once("close", () => {
-        finish();
-        request?.destroy();
+        cancel("downstream closed");
       });
-      if (!websocket) (destination as ServerResponse).once("finish", finish);
+      if (!websocket)
+        (destination as ServerResponse).once("finish", () => finish());
       deadline = setTimeout(
         () => reject(504, "API relay connection timed out"),
         limits.connectTimeoutMs,
@@ -299,22 +357,59 @@ export function createApiRelay({
       if (Number(req.headers["content-length"] ?? 0) > limits.httpBodyBytes) {
         fail(413, "API relay request is too large");
       }
+      meter = await createMeter({
+        projectId: admission.projectId,
+        target: route.hostId
+          ? `host:${route.hostId}/project:${route.projectId}`
+          : target.origin,
+        websocket,
+        onError: (err) => {
+          onError?.(err);
+          cancel("usage renewal failed");
+        },
+      });
+      if (finished) {
+        await meter.close("admission ended");
+        return;
+      }
+      if (!admission.stillAuthorized())
+        fail(403, "project API relay access ended");
+      const stream = (direction: "sent" | "received") => {
+        const value = meteredStream(meter!, direction);
+        value.on("error", (err) => {
+          onError?.(err);
+          cancel(
+            (err as any).statusCode === 429
+              ? "account traffic quota exhausted"
+              : "stream failed",
+          );
+        });
+        streams.push(value);
+        return value;
+      };
       stripRelayHeaders(req);
       upstream.set(req, (value) => {
         request = value;
-        value.once(websocket ? "upgrade" : "response", () => {
+        value.once(websocket ? "upgrade" : "response", (_res, upgraded) => {
+          if (websocket) upstreamSocket = upgraded;
+          if (finished) {
+            upgraded?.destroy();
+            value.destroy();
+            return;
+          }
           connected = true;
           clearTimeout(deadline);
-          deadline = setTimeout(cancel, limits.connectionLifetimeMs);
+          deadline = setTimeout(
+            () => cancel("connection lifetime ended"),
+            limits.connectionLifetimeMs,
+          );
           deadline.unref();
         });
       });
       monitor = setInterval(() => {
         try {
-          const bytes =
-            req.socket.bytesRead + req.socket.bytesWritten - initialBytes;
-          if (!admission!.stillAuthorized() || bytes > limits.connectionBytes)
-            cancel();
+          if (!admission!.stillAuthorized())
+            cancel("source authorization ended");
         } catch {
           cancel();
         }
@@ -326,14 +421,82 @@ export function createApiRelay({
       };
       // Streaming proxying retains backpressure; no response or WebSocket
       // payload is buffered or interpreted by the relay.
-      if (websocket)
-        proxy.ws(req, socket, head!, { target: target.origin }, error);
-      else {
+      if (websocket) {
+        // Wrap both directions, including the upgrade head, so http-proxy's
+        // socket piping retains backpressure while waiting for quota renewal.
+        if (head!.length) socket.unshift(head!);
+        const input = stream("sent");
+        const output = stream("received");
+        socket.pipe(input);
+        output.pipe(socket);
+        wsAdapter = new Duplex({
+          read() {
+            input.resume();
+          },
+          write(chunk, encoding, done) {
+            output.write(chunk, encoding, (err) => {
+              // The meter owns cancellation of both peers. Do not propagate
+              // the same error through a second writable after destroying it.
+              if (err)
+                cancel(
+                  (err as any).statusCode === 429
+                    ? "account traffic quota exhausted"
+                    : "stream failed",
+                );
+              done();
+            });
+          },
+          final(done) {
+            output.end(done);
+          },
+          destroy(err, done) {
+            input.destroy();
+            output.destroy();
+            done(err);
+          },
+        });
+        const adapter = wsAdapter;
+        input.on("data", (chunk) => {
+          if (!adapter.push(chunk)) input.pause();
+        });
+        input.on("end", () => adapter.push(null));
+        wsAdapter.on("error", error);
+        for (const method of [
+          "setTimeout",
+          "setNoDelay",
+          "setKeepAlive",
+          "destroySoon",
+        ]) {
+          (wsAdapter as any)[method] = (...args) =>
+            (socket as any)[method](...args);
+        }
+        proxy.ws(
+          req,
+          wsAdapter as Socket,
+          Buffer.alloc(0),
+          { target: target.origin },
+          error,
+        );
+      } else {
         req.on("data", countBody);
+        const input = req.pipe(stream("sent"));
+        responses.set(req, (upstreamRes) => {
+          const res = destination as ServerResponse;
+          if (finished) {
+            upstreamRes.destroy();
+            return;
+          }
+          const headers = { ...upstreamRes.headers };
+          delete headers.connection;
+          delete headers["transfer-encoding"];
+          res.writeHead(upstreamRes.statusCode ?? 502, headers);
+          upstreamRes.on("error", error);
+          upstreamRes.pipe(stream("received")).pipe(res);
+        });
         proxy.web(
           req,
           destination as ServerResponse,
-          { target: target.origin },
+          { target: target.origin, selfHandleResponse: true, buffer: input },
           error,
         );
       }

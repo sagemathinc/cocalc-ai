@@ -10153,3 +10153,10 @@ export {
   resolveProjectApiRelayTarget,
   resolveProjectApiRelayHub,
 } from "./project-api-relay";
+
+import { updateProjectApiRelayUsage as updateProjectApiRelayUsageImpl } from "./project-api-relay";
+export async function updateProjectApiRelayUsage(
+  opts: Parameters<typeof updateProjectApiRelayUsageImpl>[0],
+) {
+  return await updateProjectApiRelayUsageImpl(opts);
+}

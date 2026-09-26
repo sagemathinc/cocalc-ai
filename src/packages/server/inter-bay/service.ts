@@ -16,6 +16,8 @@ import { list as listOperations } from "@cocalc/server/conat/api/lro";
 import {
   resolveLocalApiRelayHostUrl,
   resolveLocalProjectApiRelayTarget,
+  updateLocalProjectApiRelayUsage,
+  updateLocalApiRelayAccountUsage,
 } from "@cocalc/server/conat/api/project-api-relay";
 
 import {
@@ -2773,6 +2775,8 @@ async function startHostConnectionService(): Promise<void> {
   const impl: InterBayHostConnectionApi = {
     getApiRelayTarget: resolveLocalProjectApiRelayTarget,
     getApiRelayHostUrl: resolveLocalApiRelayHostUrl,
+    updateApiRelayUsage: updateLocalProjectApiRelayUsage,
+    updateApiRelayAccountUsage: updateLocalApiRelayAccountUsage,
     listHostOperations: async ({ account_id, host_id, include_completed }) =>
       await listOperations({
         account_id,

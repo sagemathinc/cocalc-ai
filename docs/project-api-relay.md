@@ -75,9 +75,60 @@ this feature.
 The relay streams requests, responses and WebSocket bytes with backpressure.
 Defaults are 1,024 concurrent connections per router, 64 per source project,
 240 admitted attempts per project per minute, an 8 MiB HTTP request-body limit,
-512 MiB per connection and a two-hour connection lifetime. Route caches are
+and a two-hour connection lifetime. There is no per-connection byte ceiling:
+a 600 MiB read can complete if the account has sufficient traffic quota. Route caches are
 bounded and expire after 30 seconds. Connection setup times out after 15 seconds;
 destination metadata lookup has its own 10-second timeout.
+
+Admission also uses token buckets before parsing routes or checking project
+credentials: 12,000 attempts/minute per router and 2,400 per local socket peer,
+with a one-minute burst capacity. Claimed project IDs do not select these
+buckets. Containers may share the loopback peer, so this is a coarse shared
+safety limit, not a substitute for authenticated per-project admission.
+
+## Traffic Quota and Accounting
+
+Relay traffic consumes the source project's authoritative usage account's
+existing membership traffic quota, across both the five-hour and seven-day
+windows. Both directions on the relayed leg are counted; reconnecting, changing
+destination, or using multiple projects/hosts does not create another account
+allowance. Local project operations that do not use the relay are unchanged.
+
+`hosts.updateProjectApiRelayUsage` is host-authenticated. The source project's
+owning bay verifies current host placement and derives the usage account; that
+account's home bay performs quota reservations. Only small usage/allowance
+messages cross the control plane, never the transferred file contents.
+
+Each connection starts with at most 64 KiB of reserved credit. Busy streams grow
+their credit to at most 4 MiB per renewal. Reservations debit the ordinary usage
+counters transactionally, serialized per account, before the host forwards
+bytes. Metered HTTP and upgraded-socket streams consume credit chunk by chunk,
+pause with backpressure to renew, and stop both peers on quota exhaustion or
+renewal failure. Credit expires after at most a minute or at a usage-window
+boundary. Five-second updates report usage and re-evaluate active sessions;
+the separate source-authorization timer is not used to count bytes.
+
+Normal completion returns unused credit. Cumulative usage and monotonically
+sequenced updates make exact retries idempotent. An unknown renewal is not
+replaced by a different update at the same sequence. If a router crashes or
+settlement is unavailable, its last unreported reservation remains conservatively
+charged until the original quota windows expire (at most 4 MiB per connection),
+rather than refunding bytes that might already have crossed the network.
+
+Actual forwarded bytes appear in the existing traffic history/admin rollups
+under `http-proxy` or `ws-proxy`, marked `source: api-relay`. Metadata identifies
+the source project, usage account, source host, destination, session, directional
+totals and completion reason. Host logs also record successful completion and
+periodic usage; payloads, query strings and credentials are not logged. Counter
+totals temporarily include outstanding reservations; history records reported
+usage. Both are quota/visibility measurements, not cloud-provider invoices.
+
+The accounting unit is forwarded HTTP body/upgraded-stream bytes, not exact
+TLS/IP billing bytes. Transport buffers can receive data ahead of backpressure.
+Existing non-relay metering retains its own reporting delay; these reservations
+prevent concurrent relay sessions from independently spending the same known
+remaining quota. Relay quota enforcement is mandatory even if legacy Conat
+traffic sampling is disabled.
 
 Rejected routes fail explicitly. HTTP redirects are not followed, and the CLI
 does not replay admission credentials across redirects. Transport failure does
@@ -86,7 +137,7 @@ clients must tolerate connection closure, just as for a host restart.
 
 ## Rollout and Validation
 
-Deploy the hub/inter-bay method to all bays, then the project-host/router bundle
+Deploy the hub/inter-bay routing and quota methods to all bays, then the project-host/router bundle
 and CLI tools bundle. The router must be rolled explicitly when upgrading the
 managed runtime stack. Newly started projects receive the environment variables;
 new Codex turns also inject them into existing runtimes. Existing ordinary shell
@@ -97,6 +148,13 @@ cross-host lookup alongside local Socket.IO, caller credential preservation,
 source lifecycle revocation, path and quota rejection, and authoritative
 cross-bay lookup. Real CLI subprocesses exercise local data commands while the
 hub is unreachable.
+
+Quota regressions include a streamed 600 MiB response, fast HTTP and upgraded
+socket bursts in both directions before the first timer tick, pre-authentication
+rate limiting, database reservation concurrency across hosts, idempotent retries,
+unused-credit refunds and usage-window rollover. The live validation below
+predates the quota follow-up; repeat it with the updated hub and router before
+release.
 
 Live validation on lite1b used a disposable free account, a network-disabled
 project with a CoCalc rootfs, and a second project on another host/bay:

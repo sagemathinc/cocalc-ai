@@ -2,6 +2,8 @@ import { createServer, request, type Server } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { randomUUID } from "node:crypto";
+import { createApiRelayMeter } from "./api-relay-meter";
 import { init } from "@cocalc/conat/core/server";
 import { connect } from "@cocalc/conat/core/client";
 import {
@@ -36,7 +38,10 @@ async function close(server: Server): Promise<void> {
   await new Promise<void>((done) => server.close(() => done()));
 }
 
-async function fixture(limits?: Partial<ApiRelayLimits>) {
+async function fixture(
+  limits?: Partial<ApiRelayLimits>,
+  createMeter?: Parameters<typeof createApiRelay>[0]["createMeter"],
+) {
   let authorized = true;
   const upstream = createServer((req, res) => {
     if (req.url === "/base/api/v2/redirect") {
@@ -62,6 +67,9 @@ async function fixture(limits?: Partial<ApiRelayLimits>) {
   const hostUrl = jest.fn(async () => `${upstreamUrl}/base`);
   const hubUrl = jest.fn(() => `${upstreamUrl}/base`);
   const relay = createApiRelay({
+    createMeter:
+      createMeter ??
+      (async () => ({ take: async (bytes) => bytes, close: async () => {} })),
     authenticate: (req) => {
       if (
         req.headers[API_RELAY_SECRET_HEADER] !==
@@ -268,7 +276,10 @@ describe("project API relay", () => {
   });
 
   it("supports real Conat authentication through a delayed cross-host route alongside local Conat", async () => {
-    const f = await fixture({ connectTimeoutMs: 3000 });
+    const f = await fixture(
+      { connectTimeoutMs: 3000 },
+      quota(2 * 1024 * 1024).createMeter,
+    );
     const originalAuth = { bearer: "original-account-token" };
     const target = init({
       httpServer: f.upstream,
@@ -311,6 +322,254 @@ describe("project API relay", () => {
       f.relay.close();
       await local.close();
       await target.close();
+      await f.close();
+    }
+  });
+});
+
+function quota(bytes: number) {
+  const update = jest.fn(async (req) => ({
+    account_id: accountId,
+    allowance: req.close
+      ? req.sent + req.received
+      : Math.min(bytes, req.sent + req.received + 1024 * 1024),
+    expires_at: Date.now() + 60_000,
+  }));
+  const createMeter = async ({ onError }) =>
+    await createApiRelayMeter({
+      request: {
+        project_id: projectId,
+        session_id: randomUUID(),
+        transport: "http",
+        target: "test",
+      },
+      update,
+      onError,
+    });
+  return { update, createMeter };
+}
+
+describe("streaming quota enforcement", () => {
+  it("fails closed before upstream access when quota lookup is unavailable", async () => {
+    const f = await fixture(undefined, async () => {
+      throw Error("quota unavailable");
+    });
+    const upstream = jest.fn();
+    f.upstream.on("request", upstream);
+    try {
+      const response = await fetch(`${f.url}${hubPath}/api/v2/auth`, {
+        headers: sourceHeaders,
+      });
+      expect(response.status).toBe(502);
+      await response.text();
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("rechecks source admission after asynchronous quota reservation", async () => {
+    const close = jest.fn(async () => {});
+    const f = await fixture(undefined, async () => {
+      f.revoke();
+      return { take: async (bytes) => bytes, close };
+    });
+    try {
+      const response = await fetch(`${f.url}${hubPath}/api/v2/auth`, {
+        headers: sourceHeaders,
+      });
+      expect(response.status).toBe(403);
+      await response.text();
+      expect(close).toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+  it("charges and bounds HTTP uploads in the streaming path", async () => {
+    const q = quota(1024);
+    const f = await fixture(undefined, q.createMeter);
+    let received = 0;
+    f.upstream.removeAllListeners("request");
+    f.upstream.on("request", (req, res) => {
+      req.on("data", (chunk) => {
+        received += chunk.length;
+      });
+      req.on("error", () => {});
+      req.on("end", () => res.end());
+    });
+    try {
+      await new Promise<void>((done) => {
+        const req = request(
+          `${f.url}${hubPath}/api/v2/upload`,
+          { method: "POST", headers: sourceHeaders },
+          (res) => {
+            res.resume();
+            res.on("close", done);
+            res.on("error", () => {});
+          },
+        );
+        req.on("error", () => done());
+        req.end(Buffer.alloc(128 * 1024));
+      });
+      expect(received).toBeLessThanOrEqual(1024);
+      expect(
+        q.update.mock.calls.some(([r]) => r.close && r.sent === 1024),
+      ).toBe(true);
+    } finally {
+      await f.close();
+    }
+  });
+  it("limits fast responses before the revocation timer and closes the upstream", async () => {
+    const q = quota(1024);
+    const f = await fixture({ checkIntervalMs: 5_000 }, q.createMeter);
+    let upstreamClosed!: Promise<unknown>;
+    f.upstream.removeAllListeners("request");
+    f.upstream.on("request", (req, res) => {
+      upstreamClosed = new Promise<void>((done) =>
+        req.socket.once("close", done),
+      );
+      req.socket.on("error", () => {});
+      res.writeHead(200, { "content-length": 8 * 1024 * 1024 });
+      res.write(Buffer.alloc(8 * 1024 * 1024));
+    });
+    try {
+      let bytes = 0;
+      await new Promise<void>((done, reject) => {
+        const req = request(
+          `${f.url}${hubPath}/api/v2/large`,
+          { headers: sourceHeaders },
+          (res) => {
+            res.on("data", (chunk) => {
+              bytes += chunk.length;
+            });
+            res.on("close", done);
+            res.on("error", () => {});
+          },
+        );
+        req.on("error", (err: NodeJS.ErrnoException) =>
+          err.code === "ECONNRESET" ? done() : reject(err),
+        );
+        req.end();
+      });
+      await upstreamClosed;
+      expect(bytes).toBeLessThanOrEqual(1024);
+      expect(
+        q.update.mock.calls.some(([r]) => r.close && r.received === 1024),
+      ).toBe(true);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("streams 600 MiB with renewable credit and bounded buffers", async () => {
+    const size = 600 * 1024 * 1024;
+    const q = quota(size);
+    const f = await fixture(undefined, q.createMeter);
+    const chunk = Buffer.alloc(64 * 1024, 42);
+    f.upstream.removeAllListeners("request");
+    f.upstream.on("request", (_req, res) => {
+      res.writeHead(200, { "content-length": size });
+      let remaining = size;
+      const write = () => {
+        while (remaining > 0) {
+          remaining -= chunk.length;
+          if (!res.write(chunk)) {
+            res.once("drain", write);
+            return;
+          }
+        }
+        res.end();
+      };
+      write();
+    });
+    try {
+      const response = await fetch(`${f.url}${hubPath}/api/v2/large`, {
+        headers: sourceHeaders,
+      });
+      let bytes = 0;
+      for await (const chunk of response.body!) bytes += chunk.length;
+      expect(response.status).toBe(200);
+      expect(bytes).toBe(size);
+      expect(q.update.mock.calls.length).toBeGreaterThan(500);
+    } finally {
+      await f.close();
+    }
+  }, 30_000);
+
+  it.each(["sent", "received"])(
+    "meters fast upgraded socket bursts in the %s direction and closes both peers",
+    async (direction) => {
+      const limit = 32 * 1024;
+      const q = quota(limit);
+      const f = await fixture({ checkIntervalMs: 5_000 }, q.createMeter);
+      let upstreamClosed!: Promise<unknown>;
+      let sentToUpstream = 0;
+      f.upstream.on("upgrade", (_req, socket) => {
+        upstreamClosed = new Promise<void>((done) =>
+          socket.once("close", done),
+        );
+        socket.on("error", () => {});
+        socket.on("end", () => socket.end());
+        socket.on("data", (chunk) => {
+          sentToUpstream += chunk.length;
+        });
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
+        if (direction === "received")
+          socket.write(Buffer.alloc(8 * 1024 * 1024));
+      });
+      try {
+        const req = request(`${f.url}${hubPath}/conat/`, {
+          headers: {
+            ...sourceHeaders,
+            Connection: "Upgrade",
+            Upgrade: "websocket",
+          },
+        });
+        req.end();
+        const [, socket, head] = await once(req, "upgrade");
+        let received = head.length;
+        socket.on("data", (chunk) => {
+          received += chunk.length;
+        });
+        const downstreamClosed = new Promise<void>((done) =>
+          socket.once("close", done),
+        );
+        socket.on("error", () => {});
+        if (direction === "sent") socket.write(Buffer.alloc(8 * 1024 * 1024));
+        await downstreamClosed;
+        await upstreamClosed;
+        expect(sentToUpstream).toBeLessThanOrEqual(limit);
+        expect(received).toBeLessThanOrEqual(limit);
+        expect(
+          q.update.mock.calls.some(
+            ([r]) => r.close && r.sent + r.received === limit,
+          ),
+        ).toBe(true);
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it("rate limits bad secrets and malformed routes before destination lookup", async () => {
+    const f = await fixture({
+      preAuthAttemptsPerMinute: 3,
+      peerAttemptsPerMinute: 2,
+    });
+    try {
+      for (const [path, expected] of [
+        ["/api/v2/auth", 403],
+        ["/bad", 403],
+        ["/api/v2/auth", 429],
+      ] as const) {
+        const response = await fetch(`${f.url}${hubPath}${path}`);
+        expect(response.status).toBe(expected);
+        await response.text();
+      }
+      expect(f.hubUrl).not.toHaveBeenCalled();
+    } finally {
       await f.close();
     }
   });

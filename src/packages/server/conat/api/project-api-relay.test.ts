@@ -1,9 +1,26 @@
 const mockQuery = jest.fn();
 const mockRemote = jest.fn();
 const mockRemoteHostUrl = jest.fn();
+const mockUsage = jest.fn();
+const mockAccountUsage = jest.fn();
+const mockHomeBay = jest.fn();
+const mockUsageAccount = jest.fn();
+const mockQuota = jest.fn();
 const mockHostConnection = jest.fn(() => ({
   getApiRelayTarget: mockRemote,
   getApiRelayHostUrl: mockRemoteHostUrl,
+  updateApiRelayUsage: mockUsage,
+  updateApiRelayAccountUsage: mockAccountUsage,
+}));
+jest.mock("@cocalc/server/bay-directory", () => ({
+  resolveAccountHomeBay: (...args) => mockHomeBay(...args),
+}));
+jest.mock("@cocalc/server/membership/project-usage", () => ({
+  getProjectUsageAccountId: (...args) => mockUsageAccount(...args),
+}));
+jest.mock("@cocalc/server/membership/api-relay-quota", () => ({
+  validateRelayUsage: jest.fn(),
+  updateApiRelayQuota: (...args) => mockQuota(...args),
 }));
 const mockResolveHostBay = jest.fn();
 const mockResolveProjectBay = jest.fn();
@@ -41,6 +58,9 @@ import {
   resolveLocalApiRelayHostUrl,
   resolveProjectApiRelayTarget,
   resolveProjectApiRelayHub,
+  updateProjectApiRelayUsage,
+  updateLocalProjectApiRelayUsage,
+  updateLocalApiRelayAccountUsage,
 } from "./project-api-relay";
 
 const target = {
@@ -52,9 +72,60 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockResolveHostBay.mockResolvedValue({ bay_id: "bay-a" });
   mockResolveProjectBay.mockResolvedValue({ bay_id: "bay-a" });
+  mockHomeBay.mockResolvedValue({ home_bay_id: "bay-a" });
+  mockUsageAccount.mockResolvedValue(sourceHost);
   mockQuery.mockResolvedValue({
     rows: [{ public_url: "https://host.example.test" }],
   });
+});
+
+const usage = {
+  host_id: sourceHost,
+  project_id: target.target_project_id,
+  session_id: target.target_host_id,
+  sequence: 0,
+  sent: 0,
+  received: 0,
+  transport: "http" as const,
+  target: "hub",
+};
+
+it("routes source attribution to the project owner before the account home bay", async () => {
+  mockResolveProjectBay.mockResolvedValue({ bay_id: "bay-b" });
+  await updateProjectApiRelayUsage(usage);
+  expect(mockUsage).toHaveBeenCalledWith(usage);
+  expect(mockQuery).not.toHaveBeenCalled();
+  mockHomeBay.mockResolvedValue({ home_bay_id: "bay-c" });
+  await updateLocalProjectApiRelayUsage({
+    ...usage,
+    account_id: "spoofed",
+  } as any);
+  expect(mockAccountUsage).toHaveBeenCalledWith({
+    ...usage,
+    account_id: sourceHost,
+  });
+  expect(mockHostConnection).toHaveBeenCalledWith("bay-c");
+  expect(mockQuota).not.toHaveBeenCalled();
+});
+
+it("fails closed for moved sources, missing attribution and stale home-bay routes", async () => {
+  await expect(
+    updateProjectApiRelayUsage({ ...usage, host_id: undefined }),
+  ).rejects.toThrow("authentication required");
+  mockQuery.mockResolvedValue({ rows: [] });
+  await expect(updateLocalProjectApiRelayUsage(usage)).rejects.toThrow(
+    "not on this host",
+  );
+  mockQuery.mockResolvedValue({ rows: [{}] });
+  mockUsageAccount.mockResolvedValue(undefined);
+  await expect(updateLocalProjectApiRelayUsage(usage)).rejects.toThrow(
+    "no usage account",
+  );
+  mockHomeBay.mockResolvedValue({ home_bay_id: "bay-b" });
+  await expect(
+    updateLocalApiRelayAccountUsage({ ...usage, account_id: sourceHost }),
+  ).rejects.toThrow("not homed");
+  expect(mockQuota).not.toHaveBeenCalled();
 });
 
 it.each(["https://example.test/site", "https://home-bay.example.test/site"])(

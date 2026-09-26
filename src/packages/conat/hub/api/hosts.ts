@@ -5,7 +5,11 @@ import {
   authFirstRequireHostWithAccountTarget,
 } from "./util";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
-import type { ProjectApiRelayTarget } from "@cocalc/conat/project-host/api-relay";
+import type {
+  ProjectApiRelayTarget,
+  ApiRelayUsageRequest,
+  ApiRelayAllowance,
+} from "@cocalc/conat/project-host/api-relay";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -1759,6 +1763,7 @@ export const hosts = {
   resolveHostConnection: authFirstRequireAccount,
   resolveProjectApiRelayTarget: authFirstRequireHost,
   resolveProjectApiRelayHub: authFirstRequireHost,
+  updateProjectApiRelayUsage: authFirstRequireHost,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -1956,6 +1961,9 @@ export interface Hosts {
     host_id?: string;
     url?: string;
   }) => Promise<{ url: string }>;
+  updateProjectApiRelayUsage: (
+    opts: ApiRelayUsageRequest & { host_id?: string },
+  ) => Promise<ApiRelayAllowance>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;

@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 import type { Application } from "express";
 import TTL from "@isaacs/ttlcache";
@@ -24,6 +24,7 @@ import {
 } from "@cocalc/project-proxy/api-relay";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
+import { createApiRelayMeter } from "@cocalc/project-proxy/api-relay-meter";
 
 const logger = getLogger("project-host:api-relay");
 
@@ -122,6 +123,42 @@ export function attachProjectApiRelay({
   const routes = new TTL<string, string>({ max: 1024, ttl: 30_000 });
   const relay = createApiRelay({
     authenticate: authenticateApiRelay,
+    createMeter: async ({ projectId, target, websocket, onError }) => {
+      if (!masterClient) throw Error("master Conat connection is unavailable");
+      return await createApiRelayMeter({
+        request: {
+          project_id: projectId,
+          session_id: randomUUID(),
+          transport: websocket ? "websocket" : "http",
+          target,
+        },
+        update: async (request) => {
+          // An unknown result may have committed a reservation. Only retry the
+          // identical cumulative update; the home bay deduplicates its sequence.
+          const reply = await callHub({
+            client: masterClient,
+            host_id: hostId,
+            name: "hosts.updateProjectApiRelayUsage",
+            args: [request],
+            timeout: 10_000,
+          });
+          const usage = {
+            project_id: projectId,
+            account_id: reply.account_id,
+            target,
+            session_id: request.session_id,
+            sent: request.sent,
+            received: request.received,
+            closed: !!request.close,
+            reason: request.reason,
+          };
+          if (request.close) logger.info("API relay usage", usage);
+          else logger.debug("API relay usage", usage);
+          return reply;
+        },
+        onError,
+      });
+    },
     hubUrl: async (requestedUrl) => {
       const key = `hub:${requestedUrl ?? "site"}`;
       const cached = routes.get(key);

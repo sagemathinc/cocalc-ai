@@ -1596,6 +1596,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "project- or host-scoped accounting with canonical project attribution and server-side abuse enforcement",
   },
+  "hosts.updateProjectApiRelayUsage": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "host-only traffic quota reservations with authoritative project attribution",
+  },
   "system.recordManagedProjectCpuUsage": {
     decision: "fresh-auth-not-required",
     reason:

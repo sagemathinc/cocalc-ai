@@ -21,6 +21,71 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  ApiRelayUsageRequest,
+  ApiRelayAllowance,
+} from "@cocalc/conat/project-host/api-relay";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
+import {
+  updateApiRelayQuota,
+  validateRelayUsage,
+  type RelayQuotaRequest,
+} from "@cocalc/server/membership/api-relay-quota";
+
+export async function updateProjectApiRelayUsage(
+  opts: ApiRelayUsageRequest & { host_id?: string },
+): Promise<ApiRelayAllowance> {
+  if (!isValidUUID(opts.host_id))
+    throw Error("project-host authentication required");
+  validateRelayUsage(opts);
+  const request = { ...opts, host_id: opts.host_id! };
+  const owner = await resolveProjectBay(opts.project_id);
+  if (!owner) throw Error("API relay source project not found");
+  return owner.bay_id === getConfiguredBayId()
+    ? await updateLocalProjectApiRelayUsage(request)
+    : await getInterBayBridge()
+        .hostConnection(owner.bay_id)
+        .updateApiRelayUsage(request);
+}
+
+export async function updateLocalProjectApiRelayUsage(
+  opts: ApiRelayUsageRequest & { host_id: string },
+): Promise<ApiRelayAllowance> {
+  validateRelayUsage(opts);
+  const { rows } = await getPool().query(
+    `SELECT project_id FROM projects
+    WHERE project_id=$1 AND host_id=$2 AND deleted IS NOT TRUE
+      AND COALESCE(owning_bay_id, $3)=$3`,
+    [opts.project_id, opts.host_id, getConfiguredBayId()],
+  );
+  if (!rows.length) throw Error("API relay source project is not on this host");
+  const account_id = await getProjectUsageAccountId(opts.project_id);
+  if (!account_id) throw Error("API relay source project has no usage account");
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  const request = { ...opts, account_id };
+  return home_bay_id === getConfiguredBayId()
+    ? await updateLocalApiRelayAccountUsage(request)
+    : await getInterBayBridge()
+        .hostConnection(home_bay_id)
+        .updateApiRelayAccountUsage(request);
+}
+
+// Internal fabric only: the owning bay already derived account attribution.
+export async function updateLocalApiRelayAccountUsage(
+  opts: RelayQuotaRequest,
+): Promise<ApiRelayAllowance> {
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id: opts.account_id,
+    user_account_id: opts.account_id,
+  });
+  if (home_bay_id !== getConfiguredBayId())
+    throw Error("API relay usage account is not homed on this bay");
+  return await updateApiRelayQuota(opts);
+}
 
 export type RelayTargetRequest = {
   target_host_id: string;

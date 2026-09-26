@@ -34,3 +34,23 @@ export interface ProjectApiRelayTarget {
   // Resolved by the owning bay, never supplied by the project making a request.
   url: string;
 }
+
+// Host-issued cumulative usage updates. Sequence numbers make retries safe
+// when a reply is lost after the account's home bay commits a reservation.
+export interface ApiRelayUsageRequest {
+  project_id: string;
+  session_id: string;
+  sequence: number;
+  sent: number;
+  received: number;
+  transport: "http" | "websocket";
+  target: string;
+  close?: boolean;
+  reason?: string;
+}
+
+export interface ApiRelayAllowance {
+  account_id: string;
+  allowance: number;
+  expires_at: number;
+}
