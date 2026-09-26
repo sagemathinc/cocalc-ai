@@ -97,7 +97,8 @@ export function useNamedAgents(enabled = true) {
   useEffect(() => {
     let disposed = false;
     if (!accountId || !enabled) {
-      setState({ loading: false });
+      // An unresolved account is not an empty agent directory.
+      setState({ loading: enabled });
       return;
     }
     setState((old) => ({ ...old, loading: true }));
@@ -116,7 +117,7 @@ export function useNamedAgents(enabled = true) {
     ? { loading: false }
     : state.accountId === accountId
       ? state
-      : { loading: !!accountId };
+      : { loading: true };
 }
 
 export function useAgentNetworks(enabled = true) {

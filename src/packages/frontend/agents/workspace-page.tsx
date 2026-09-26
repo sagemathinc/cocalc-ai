@@ -4118,7 +4118,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 <AgentsWorkspaceNavigation />
               </div>
             )}
-          {creating || agents.length === 0 ? (
+          {error ? (
+            <Alert
+              type="error"
+              showIcon
+              title="Unable to load agents"
+              description={error}
+              action={
+                <Button onClick={refreshNamedAgents}>Retry directory</Button>
+              }
+            />
+          ) : creating || agents.length === 0 ? (
             <NewAgentPanel
               agents={agents}
               namedAgentDirectory={directory}
@@ -4151,16 +4161,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 setCreating(false);
                 setCreatingSourceAgentId(undefined);
               }}
-            />
-          ) : error ? (
-            <Alert
-              type="error"
-              showIcon
-              title="Unable to load agents"
-              description={error}
-              action={
-                <Button onClick={refreshNamedAgents}>Retry directory</Button>
-              }
             />
           ) : !selected ? (
             <Empty
