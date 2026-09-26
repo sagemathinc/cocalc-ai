@@ -2636,10 +2636,11 @@ export class BaseEditorActions<
     );
   }
 
-  private getMostRecentShellId = (
+  private getMostRecentShellId(
     command?: string,
     args?: string[],
-  ): string | undefined => {
+    terminalScope?: string,
+  ): string | undefined {
     const normalizeArgs = (value: any): string[] => {
       const raw =
         typeof value?.toJS === "function"
@@ -2653,6 +2654,7 @@ export class BaseEditorActions<
       if (node.get("type").slice(0, 8) != "terminal") {
         return false;
       }
+      if (node.get("data-terminalScope") !== terminalScope) return false;
       const c = node.get("command") ?? "";
       const a = normalizeArgs(node.get("args"));
       const c2 = command ?? "";
@@ -2665,7 +2667,7 @@ export class BaseEditorActions<
       }
       return false;
     });
-  };
+  }
 
   public _active_id(): string {
     return this.store.getIn(["local_view_state", "active_id"]) as any;
@@ -3966,13 +3968,19 @@ export class BaseEditorActions<
     id: string,
     no_switch: boolean = false,
     workingDirectory?: string,
+    terminalScope?: string,
   ): Promise<void> {
     // Check if there is already a terminal and if so, just focus it.
-    let shell_id: string | undefined = this.getMostRecentShellId();
+    let shell_id: string | undefined = this.getMostRecentShellId(
+      undefined,
+      undefined,
+      terminalScope,
+    );
     if (shell_id == null) {
       // No such terminal already, so we make one and focus it.
       shell_id = this.split_frame("col", id, "terminal", {
         cwd: workingDirectory,
+        ...(terminalScope ? { "data-terminalScope": terminalScope } : {}),
       });
       if (shell_id == null) return;
     }

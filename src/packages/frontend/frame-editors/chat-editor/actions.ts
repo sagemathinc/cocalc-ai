@@ -428,7 +428,14 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
         ? chatActions?.getCodexConfig(selectedThreadKey)
         : undefined,
     );
-    await super.terminal(frameId, noSwitch, workingDirectory);
+    await super.terminal(
+      frameId,
+      noSwitch,
+      workingDirectory,
+      typeof selectedThreadKey === "string" && selectedThreadKey.trim()
+        ? selectedThreadKey
+        : undefined,
+    );
   }
 
   override focus(id?: string): void {

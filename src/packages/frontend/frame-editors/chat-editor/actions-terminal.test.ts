@@ -46,6 +46,7 @@ describe("chat editor terminal", () => {
       "chat-frame",
       false,
       "/home/user/repo",
+      "thread-1",
     );
     terminal.mockRestore();
   });
