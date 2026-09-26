@@ -155,3 +155,49 @@ export function apiKeyActionExpiresAt(
   }
   return Math.min(now + API_KEY_ACTION_TTL_MS, parentExpiresAt ?? Infinity);
 }
+
+export function normalizeApiKeyActionReview(
+  input: unknown,
+): ApiKeyActionReview {
+  const value = object(input, [
+    "request_id",
+    "action",
+    "binding",
+    "target_name",
+    "target_trunc",
+    "created_at",
+    "expires_at",
+    "status",
+  ]);
+  const request = normalizeApiKeyActionRequest({
+    request_id: value.request_id,
+    action: value.action,
+  });
+  const binding = normalizeApiKeyActionBinding(value.binding);
+  if (
+    request.action.target_key_id !== binding.target_key_id ||
+    typeof value.target_name !== "string" ||
+    value.target_name.length > 128 ||
+    typeof value.target_trunc !== "string" ||
+    value.target_trunc.length > 16 ||
+    typeof value.created_at !== "number" ||
+    !Number.isSafeInteger(value.created_at) ||
+    value.created_at < 0 ||
+    typeof value.expires_at !== "number" ||
+    !Number.isSafeInteger(value.expires_at) ||
+    value.expires_at <= value.created_at ||
+    value.expires_at - value.created_at > API_KEY_ACTION_TTL_MS ||
+    !["pending", "rejected", "executed"].includes(`${value.status}`)
+  ) {
+    throw new Error("invalid API key action review");
+  }
+  return {
+    ...request,
+    binding,
+    target_name: value.target_name,
+    target_trunc: value.target_trunc,
+    created_at: value.created_at,
+    expires_at: value.expires_at,
+    status: value.status as ApiKeyActionReview["status"],
+  };
+}

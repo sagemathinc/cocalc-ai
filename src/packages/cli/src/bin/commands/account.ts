@@ -2,6 +2,9 @@ import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import { humanSize } from "@cocalc/util/misc";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
+import { normalizeApiKeyActionReview } from "@cocalc/util/api-key-management";
+import { apiKeyForProject } from "../core/managed-connector-auth";
+import { requestApiKeyActionWithKey } from "../core/api-key-actions";
 
 import type {
   ManagedEgressEventSummary,
@@ -526,6 +529,82 @@ export function registerAccountCommand(
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");
+
+  accountApiKey
+    .command("request-revocation <key-id>")
+    .description("request human approval to revoke a manual API key")
+    .requiredOption(
+      "--request-id <uuid>",
+      "stable request id; reuse only for retries of this exact action",
+    )
+    .action(async (keyId: string, opts, command: Command) => {
+      await withContext(
+        command,
+        "account api-key request-revocation",
+        async (ctx) => {
+          const apiKey = apiKeyForProject(ctx);
+          if (!apiKey)
+            throw new Error(
+              "a scoped API key or managed connector credential is required",
+            );
+          return requestApiKeyActionWithKey({
+            apiBaseUrl: ctx.apiBaseUrl,
+            apiKey,
+            request: {
+              request_id: opts.requestId,
+              action: { kind: "revoke_api_key", target_key_id: keyId },
+            },
+          });
+        },
+      );
+    });
+
+  accountApiKey
+    .command("decide-action <review-file>")
+    .description(
+      "human decision on an exact API key action review; requires fresh authentication",
+    )
+    .requiredOption("--decision <decision>", "execute or reject")
+    .requiredOption(
+      "--target-key-id <id>",
+      "confirm the reviewed target key lookup id",
+    )
+    .action(async (file: string, opts, command: Command) => {
+      if (!["execute", "reject"].includes(opts.decision))
+        throw new Error("decision must be execute or reject");
+      const data = await readFile(file, "utf8");
+      if (Buffer.byteLength(data) > 16_384)
+        throw new Error("API key action review is too large");
+      const parsed = JSON.parse(data);
+      const reviewed = normalizeApiKeyActionReview(
+        parsed?.ok === true &&
+          parsed.command === "account api-key request-revocation"
+          ? parsed.data
+          : parsed,
+      );
+      if (reviewed.binding.target_key_id !== opts.targetKeyId)
+        throw new Error("target confirmation does not match review");
+      await withContext(
+        command,
+        "account api-key decide-action",
+        async (ctx) => {
+          if (
+            ctx.apiKey ||
+            ctx.managedConnector ||
+            ctx.remote?.user?.auth_actor === "agent"
+          )
+            throw new Error(
+              "human account session required; API keys and agents cannot approve actions",
+            );
+          if (ctx.accountId !== reviewed.binding.account_id)
+            throw new Error("review belongs to another account");
+          return ctx.hub.apiKeys.decideAction({
+            reviewed,
+            decision: opts.decision,
+          });
+        },
+      );
+    });
 
   accountApiKey
     .command("list")

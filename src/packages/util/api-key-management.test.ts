@@ -3,6 +3,7 @@ import {
   apiKeyActionExpiresAt,
   normalizeApiKeyActionBinding,
   normalizeApiKeyActionRequest,
+  normalizeApiKeyActionReview,
 } from "./api-key-management";
 
 const request = {
@@ -16,6 +17,30 @@ const binding = {
   target_key_id: "target-key-id",
   target_scope_revision: 3,
 };
+
+test("review parsing preserves exact consent and rejects malformed or injected fields", () => {
+  const review = {
+    ...request,
+    binding,
+    target_name: "Target",
+    target_trunc: "abc",
+    created_at: 1000,
+    expires_at: 2000,
+    status: "pending",
+  };
+  expect(normalizeApiKeyActionReview(review)).toEqual(review);
+  for (const change of [
+    { approved: true },
+    { status: "approved" },
+    { expires_at: 1000 },
+    { created_at: "1000" },
+    { target_name: "x".repeat(129) },
+    { binding: { ...binding, target_key_id: "different-key" } },
+  ])
+    expect(() =>
+      normalizeApiKeyActionReview({ ...review, ...change }),
+    ).toThrow();
+});
 
 test("request contains only an idempotency id and exact action target", () => {
   expect(normalizeApiKeyActionRequest(request)).toEqual(request);
