@@ -1109,6 +1109,8 @@ export function HostExamPanel({
                       scrolls instead of growing without limit. */}
                   <div
                     tabIndex={0}
+                    role="region"
+                    aria-label="Error message"
                     style={{
                       maxHeight: "10em",
                       overflowY: "auto",

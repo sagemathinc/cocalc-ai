@@ -1392,11 +1392,12 @@ describe("HostExamPanel", () => {
       name: "End exam and erase now",
     });
     await waitFor(() => expect(end).toBeEnabled());
-    // The reason is in the card, not only in the CLI.
+    // The reason is in the card, not only in the CLI, in a named region that
+    // keyboard users can scroll.
     expect(screen.getByText("Error")).toBeInTheDocument();
-    expect(
-      screen.getByText("exam project readiness failed"),
-    ).toBeInTheDocument();
+    const reason = screen.getByRole("region", { name: "Error message" });
+    expect(reason).toHaveTextContent("exam project readiness failed");
+    expect(reason).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("End the exam")).toBeInTheDocument();
     expect(screen.queryByText("Admission")).not.toBeInTheDocument();
     expect(screen.queryByText("Cleanup")).not.toBeInTheDocument();
