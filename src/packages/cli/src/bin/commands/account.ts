@@ -1,12 +1,17 @@
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
 import { humanSize } from "@cocalc/util/misc";
+import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 
 import type {
   ManagedEgressEventSummary,
   ManagedEgressHistory,
   MembershipDetails,
 } from "@cocalc/conat/hub/api/purchases";
-import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
+import type {
+  ApiKeyCapability,
+  ApiKeyScope,
+} from "@cocalc/util/db-schema/api-keys";
 
 export type AccountCommandDeps = {
   withContext: any;
@@ -536,6 +541,8 @@ export function registerAccountCommand(
           trunc?: string;
           capabilities?: string[];
           allowed_project_ids?: string[];
+          scope?: ApiKeyScope | null;
+          scope_revision?: number | null;
           created?: string | Date | null;
           expire?: string | Date | null;
           last_active?: string | Date | null;
@@ -547,6 +554,8 @@ export function registerAccountCommand(
           trunc: row.trunc ?? "",
           capabilities: row.capabilities ?? [],
           allowed_project_ids: row.allowed_project_ids ?? [],
+          scope: row.scope ?? null,
+          scope_revision: row.scope_revision ?? null,
           created: toIso(row.created),
           expire: toIso(row.expire),
           last_active: toIso(row.last_active),
@@ -564,6 +573,10 @@ export function registerAccountCommand(
     )
     .option("--expire-seconds <n>", "expire in n seconds")
     .option(
+      "--scope-file <path>",
+      "JSON versioned scope; cannot be combined with legacy capability/project flags",
+    )
+    .option(
       "--capability <capability...>",
       "explicit capability to grant; repeat or pass multiple values",
     )
@@ -578,10 +591,27 @@ export function registerAccountCommand(
           expireSeconds?: string;
           capability?: string[];
           projectId?: string[];
+          scopeFile?: string;
         },
         command: Command,
       ) => {
         await withContext(command, "account api-key create", async (ctx) => {
+          let scope: ApiKeyScope | undefined;
+          if (opts.scopeFile != null) {
+            if (opts.capability != null || opts.projectId != null) {
+              throw new Error(
+                "--scope-file cannot be combined with --capability or --project-id",
+              );
+            }
+            const text = await readFile(opts.scopeFile, "utf8");
+            let input: unknown;
+            try {
+              input = JSON.parse(text);
+            } catch {
+              throw new Error("invalid JSON in --scope-file");
+            }
+            scope = normalizeApiKeyScopeV1(input);
+          }
           const expireSeconds =
             opts.expireSeconds == null ? undefined : Number(opts.expireSeconds);
           if (
@@ -599,6 +629,7 @@ export function registerAccountCommand(
             expire,
             capabilities: opts.capability as ApiKeyCapability[] | undefined,
             allowed_project_ids: opts.projectId,
+            ...(scope ? { scope } : {}),
           })) as Array<{
             id?: number;
             key_id?: string;
@@ -607,6 +638,8 @@ export function registerAccountCommand(
             secret?: string;
             capabilities?: string[];
             allowed_project_ids?: string[];
+            scope?: ApiKeyScope | null;
+            scope_revision?: number | null;
             created?: string | Date | null;
             expire?: string | Date | null;
           }>;
@@ -622,6 +655,8 @@ export function registerAccountCommand(
             secret: key.secret ?? null,
             capabilities: key.capabilities ?? [],
             allowed_project_ids: key.allowed_project_ids ?? [],
+            scope: key.scope ?? null,
+            scope_revision: key.scope_revision ?? null,
             created: toIso(key.created),
             expire: toIso(key.expire),
           };

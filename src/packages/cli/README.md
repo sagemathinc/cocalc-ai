@@ -252,6 +252,39 @@ project codex execution run in the same project-host containerized path as the U
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
+### Create A Scoped API Key
+
+Use a signed-in human profile with fresh authentication to manage keys. A scoped
+key cannot approve or create its own additional authority.
+
+`account api-key create --scope-file scope.json --expire-seconds 3600` accepts the
+same versioned permissions as the API Keys editor. For example, this scope lists
+your projects and reads their `assignments` directories:
+
+```json
+{
+  "version": 1,
+  "account": ["project:list"],
+  "projects": [],
+  "all_projects": {
+    "capabilities": ["file:read"],
+    "viewer_read_roots": ["assignments"]
+  }
+}
+```
+
+All-projects access includes future projects where you are a full collaborator;
+current membership is still required. Individual entries in `projects` have a
+`project_id` and override that default for the specified project. Omit
+`all_projects` to grant access only to explicit projects.
+
+Do not combine `--scope-file` with legacy `--capability` or `--project-id` flags.
+`account api-key list` reports the stored scope and revision without secrets.
+Creation returns the new secret once; do not put that output in logs or chat.
+The scope file contains permissions, not the key secret. Agents with CoCalc
+access configured receive a managed credential automatically and should not
+create a manual key for their turn.
+
 ## Run And Continue Codex From The CLI
 
 Use the project Codex command for a turn against a project-hosted runtime. Start
