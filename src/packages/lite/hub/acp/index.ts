@@ -200,6 +200,7 @@ import {
   nextQueuedAcpJobAvailability,
   requeueRunningAcpJob,
   resendCanceledAcpJob,
+  AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
   type AcpJobRow,
@@ -12064,6 +12065,28 @@ async function handleAcpControlRequest(
       return { ok: false, state: current?.state ?? "missing" };
     }
     const currentRequest = decodeAcpJobRequest(current);
+    let retryRequest = currentRequest;
+    let requestRecovery:
+      | Parameters<typeof resendCanceledAcpJob>[0]["requestRecovery"]
+      | undefined;
+    if (current.recovery_code === AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE) {
+      if (
+        currentRequest.request_kind === "command" ||
+        !currentRequest.chat?.agent_rpc_execution ||
+        current.account_id !== request.account_id ||
+        currentRequest.account_id !== request.account_id ||
+        currentRequest.chat.agent_rpc_execution.principal_account_id !==
+          request.account_id
+      ) {
+        return { ok: false, state: current.state };
+      }
+      await authorizeAgentDeliveryExecution(currentRequest, hubApi.agent);
+      retryRequest = await pinCodexCredentialAtAdmission(currentRequest);
+      requestRecovery = {
+        expected_request: current.request_json,
+        request: retryRequest,
+      };
+    }
     let fundingRecovery:
       | Parameters<typeof resendCanceledAcpJob>[0]["fundingRecovery"]
       | undefined;
@@ -12105,9 +12128,9 @@ async function handleAcpControlRequest(
     }
     throwIfAcpAdmissionDenied(
       admitAcpJobCreation(
-        currentRequest,
+        retryRequest,
         await resolveAcpAdmissionLimits(
-          acpAdmissionContextFromRequest(currentRequest),
+          acpAdmissionContextFromRequest(retryRequest),
         ),
       ),
       "resend",
@@ -12124,6 +12147,7 @@ async function handleAcpControlRequest(
           }
         : undefined,
       fundingRecovery,
+      requestRecovery,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };

@@ -25,10 +25,22 @@ let getRoutedHostControlClientMock: jest.Mock;
 let assertCanPerformDestructiveStorageActionMock: jest.Mock;
 let upsertProjectSshKeyInDbMock: jest.Mock;
 let deleteProjectSshKeyInDbMock: jest.Mock;
+let automationAcpMock: jest.Mock;
+let conatWithProjectRoutingForAccountMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
   default: jest.fn(),
+}));
+
+jest.mock("@cocalc/conat/ai/acp/client", () => ({
+  automationAcp: (...args: any[]) => automationAcpMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  conatWithProjectRoutingForAccount: (...args: any[]) =>
+    conatWithProjectRoutingForAccountMock(...args),
+  getExplicitProjectRoutedClient: jest.fn(),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -317,6 +329,10 @@ describe("projects.getProjectState / getProjectAddress", () => {
     }));
     upsertProjectSshKeyInDbMock = jest.fn(async () => true);
     deleteProjectSshKeyInDbMock = jest.fn(async () => true);
+    automationAcpMock = jest.fn(async () => ({ ok: true }));
+    conatWithProjectRoutingForAccountMock = jest.fn(() => ({
+      routed: true,
+    }));
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -334,6 +350,26 @@ describe("projects.getProjectState / getProjectAddress", () => {
       project_id: "proj-1",
       epoch: 7,
     });
+  });
+
+  it("routes ACP automation mutations through the account-scoped project route", async () => {
+    const { automationAcp } = await import("./projects");
+    const request = {
+      account_id: "acct-1",
+      project_id: "proj-1",
+      path: "/home/user/agent.chat",
+      thread_id: "thread-1",
+      action: "run_now" as const,
+    };
+    await expect(automationAcp(request)).resolves.toEqual({ ok: true });
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+    });
+    expect(conatWithProjectRoutingForAccountMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+    });
+    expect(automationAcpMock).toHaveBeenCalledWith(request, { routed: true });
   });
 
   it("routes project address reads through the owning bay", async () => {

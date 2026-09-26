@@ -51,7 +51,15 @@ import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
-import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import {
+  conatWithProjectRoutingForAccount,
+  getExplicitProjectRoutedClient,
+} from "@cocalc/server/conat/route-client";
+import { automationAcp as automationAcpOnProjectHost } from "@cocalc/conat/ai/acp/client";
+import type {
+  AcpAutomationRequest,
+  AcpAutomationResponse,
+} from "@cocalc/conat/ai/acp/types";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   resolveProjectBay,
@@ -6965,6 +6973,23 @@ export async function getCodexCredentialSelectionCapability({
   await assertCollab({ account_id, project_id });
   throw Error(
     "credential selection capability is not implemented on the central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function automationAcp({
+  account_id,
+  ...request
+}: Omit<AcpAutomationRequest, "account_id"> & {
+  account_id?: string;
+}): Promise<AcpAutomationResponse> {
+  if (!account_id) throw new Error("account_id is required");
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: request.project_id,
+  });
+  return await automationAcpOnProjectHost(
+    { account_id, ...request },
+    conatWithProjectRoutingForAccount({ account_id }),
   );
 }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env ts-node
 import { randomUUID } from "node:crypto";
+import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import {
   closeAcpDatabase,
   getAcpDatabase,
@@ -48,7 +49,9 @@ import {
   nextQueuedAcpJobAvailability,
   oldestClaimableQueuedAcpJobTimestamp,
   oldestQueuedAcpJobTimestamp,
+  recordRetryableAgentRpcAdmissionFailure,
   resendCanceledAcpJob,
+  AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
@@ -65,7 +68,7 @@ function makeRequest({
   userMessageId: string;
   assistantMessageId: string;
   assistantDate: string;
-}) {
+}): AcpRequest {
   return {
     project_id: "00000000-1000-4000-8000-000000000000",
     account_id: "00000000-1000-4000-8000-000000000001",
@@ -1417,6 +1420,90 @@ describe("acp job queue ordering", () => {
       thread_id: queued.thread_id,
     });
     expect(claimed?.op_id).toBe(queued.op_id);
+  });
+
+  it("retains a failed queued Agent RPC admission for an exact retry", () => {
+    const request = makeRequest({
+      userMessageId: "user-agent-rpc-admission-failure",
+      assistantMessageId: "assistant-agent-rpc-admission-failure",
+      assistantDate: "2026-09-26T20:20:00.000Z",
+    });
+    request.chat.agent_rpc_execution = {
+      version: 3,
+      source: { agent_id: "source-agent", project_id: "source-project" },
+      target: { agent_id: "target-agent", project_id: request.project_id },
+      target_path: request.chat.path,
+      target_thread_id: request.chat.thread_id,
+      agent_network_id: "network",
+      network_generation: "generation",
+      account_generation: 0,
+      configured_delivery: "queued",
+      principal_account_id: request.account_id,
+      guidance: false,
+    };
+
+    const retained = recordRetryableAgentRpcAdmissionFailure({ request });
+    expect(retained.created).toBe(true);
+    expect(retained.job).toMatchObject({
+      state: "error",
+      recovery_code: AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE,
+    });
+    expect(decodeAcpJobRequest(retained.job)).toEqual({
+      ...request,
+      request_kind: "codex",
+    });
+
+    const replacement = {
+      ...request,
+      config: { ...request.config, credentialId: "refreshed-credential" },
+    };
+    const retried = resendCanceledAcpJob({
+      project_id: retained.job.project_id,
+      path: retained.job.path,
+      user_message_id: retained.job.user_message_id,
+      requestRecovery: {
+        expected_request: retained.job.request_json,
+        request: replacement,
+      },
+    });
+    expect(retried).toMatchObject({
+      state: "queued",
+      recovery_code: null,
+    });
+    expect(decodeAcpJobRequest(retried!)).toEqual({
+      ...replacement,
+      request_kind: "codex",
+    });
+  });
+
+  it("does not overwrite an Agent RPC job admitted before recovery", () => {
+    const request = makeRequest({
+      userMessageId: "user-agent-rpc-lost-ack",
+      assistantMessageId: "assistant-agent-rpc-lost-ack",
+      assistantDate: "2026-09-26T20:21:00.000Z",
+    });
+    request.chat.agent_rpc_execution = {
+      version: 3,
+      source: { agent_id: "source-agent", project_id: "source-project" },
+      target: { agent_id: "target-agent", project_id: request.project_id },
+      target_path: request.chat.path,
+      target_thread_id: request.chat.thread_id,
+      agent_network_id: "network",
+      network_generation: "generation",
+      account_generation: 0,
+      configured_delivery: "queued",
+      principal_account_id: request.account_id,
+      guidance: false,
+    };
+    const queued = enqueueAcpJob(request);
+
+    const retained = recordRetryableAgentRpcAdmissionFailure({ request });
+    expect(retained.created).toBe(false);
+    expect(retained.job).toMatchObject({
+      op_id: queued.op_id,
+      state: "queued",
+      recovery_code: null,
+    });
   });
 
   function rejectedModelJob(

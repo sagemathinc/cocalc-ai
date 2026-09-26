@@ -394,6 +394,46 @@ test("lost execution ack is unknown and cannot cause a recovery admission", asyn
   expect(deps.admit).toHaveBeenCalledTimes(2);
 });
 
+test("queued admission failure is saved as visibly retryable", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.admit = jest.fn(async () => {
+    throw new Error("admission transport failed");
+  });
+  deps.recoverAdmissionFailure = jest.fn(async () => "retryable");
+
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "rejected",
+    chat_effect: "saved",
+    reason: expect.stringContaining("submit it again"),
+  });
+  expect(deps.recoverAdmissionFailure).toHaveBeenCalledWith(
+    (deps.admit as jest.Mock).mock.calls[0][0],
+  );
+  expect(db.set).toHaveBeenCalledTimes(2);
+  expect(db.set.mock.calls[0][0]).toMatchObject({ acp_state: "sending" });
+  expect(db.set.mock.calls[1][0]).toMatchObject({
+    event: "chat",
+    date: db.set.mock.calls[0][0].date,
+    message_id: db.set.mock.calls[0][0].message_id,
+    acp_state: "not-sent",
+  });
+  expect(db.save_to_disk).toHaveBeenCalledTimes(2);
+});
+
+test("durable admission found after a lost acknowledgment remains accepted", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.admit = jest.fn(async () => {
+    throw new Error("ack lost after queue admission");
+  });
+  deps.recoverAdmissionFailure = jest.fn(async () => "accepted");
+
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  expect(db.set).toHaveBeenCalledTimes(1);
+});
+
 test("expired deadline cannot start work even after delayed preparation", async () => {
   const { e, deps, service } = fixture();
   e.deadline = Date.now() - 1;

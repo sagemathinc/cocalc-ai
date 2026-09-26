@@ -28,6 +28,7 @@ import {
   releaseChatSyncDB,
   type ImmerDB,
 } from "@cocalc/chat/server";
+import { recordRetryableAgentRpcAdmissionFailure } from "../sqlite/acp-jobs";
 
 type Prepared = ReturnType<typeof prepareChatSend>;
 type ChatDB = Pick<ImmerDB, "get" | "set" | "commit" | "save" | "save_to_disk">;
@@ -46,6 +47,9 @@ export interface AgentRpcExecutionAdapter {
   ): Promise<void>;
   withChat<T>(e: AgentRpcEnvelope, fn: (db: ChatDB) => Promise<T>): Promise<T>;
   admit(prepared: Prepared): Promise<void>;
+  recoverAdmissionFailure?(
+    prepared: Prepared,
+  ): Promise<"accepted" | "retryable" | "unknown">;
 }
 
 class StartupDeadline extends Error {}
@@ -302,6 +306,7 @@ export function createAgentRpcService(
             chatEffect = "unknown";
             db.set({
               ...prepared.message,
+              acp_state: "sending",
               // Correlation metadata comes from the authorized envelope, not
               // JSON supplied in the body. It is never an authorization input.
               agent_rpc: {
@@ -329,7 +334,36 @@ export function createAgentRpcService(
             chatEffect = "saved";
             await guard();
             admissionStarted = true;
-            await deps.admit(prepared);
+            try {
+              await deps.admit(prepared);
+            } catch (error) {
+              const recovery = deps.recoverAdmissionFailure
+                ? await deps.recoverAdmissionFailure(prepared)
+                : "unknown";
+              if (recovery === "accepted") {
+                return rpcOutcome(e, "accepted", { chat_effect: chatEffect });
+              }
+              if (recovery === "retryable") {
+                db.set({
+                  event: "chat",
+                  date: prepared.message.date,
+                  sender_id: prepared.message.sender_id,
+                  message_id: prepared.message.message_id,
+                  thread_id: prepared.message.thread_id,
+                  acp_state: "not-sent",
+                });
+                db.commit();
+                await db.save();
+                await db.save_to_disk();
+                return rpcOutcome(e, "rejected", {
+                  code: "execution_not_allowed",
+                  chat_effect: chatEffect,
+                  reason:
+                    "Message was saved, but execution was not admitted; the recipient can submit it again",
+                });
+              }
+              throw error;
+            }
             return rpcOutcome(e, "accepted", { chat_effect: chatEffect });
           });
         } catch (error) {
@@ -568,6 +602,19 @@ export function createLocalAgentRpcService(
       },
       admit: (prepared) =>
         admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 }),
+      recoverAdmissionFailure: async (prepared) => {
+        if (prepared.request.chat.send_mode === "immediate") return "unknown";
+        const { job, created } = recordRetryableAgentRpcAdmissionFailure({
+          request: prepared.request,
+        });
+        if (created || job.state === "error" || job.state === "canceled") {
+          return "retryable";
+        }
+        if (["queued", "running", "completed"].includes(job.state)) {
+          return "accepted";
+        }
+        return "unknown";
+      },
     },
     attempts,
     capacity,

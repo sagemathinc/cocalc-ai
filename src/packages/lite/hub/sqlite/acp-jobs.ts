@@ -12,6 +12,8 @@ import { installThreadSuccessorFence } from "./acp-thread-successors";
 const TABLE = "acp_jobs";
 export const ACP_PROJECT_RESTART_FENCE_REASON =
   "project restart security fence";
+export const AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE =
+  "agent_rpc_admission_failure";
 const THREAD_QUEUE_ORDER = `
 priority DESC,
 CASE WHEN priority > 0 THEN updated_at END DESC,
@@ -396,6 +398,78 @@ export function enqueueAcpJob(
   }
   mirrorAcpJobSession(job);
   return job;
+}
+
+export function recordRetryableAgentRpcAdmissionFailure({
+  request,
+  error = "Agent Network message was saved, but execution admission was not confirmed",
+}: {
+  request: AcpJobRequest;
+  error?: string;
+}): { job: AcpJobRow; created: boolean } {
+  if (
+    request.request_kind === "command" ||
+    request.chat?.send_mode === "immediate" ||
+    !request.chat?.agent_rpc_execution
+  ) {
+    throw new Error("retryable Agent RPC admission requires a queued delivery");
+  }
+  ensureInit();
+  const db = getAcpDatabase();
+  const {
+    project_id,
+    account_id,
+    path,
+    thread_id,
+    user_message_id,
+    assistant_message_id,
+    assistant_message_date,
+  } = assertChatIdentity(request);
+  const now = Date.now();
+  const request_json = JSON.stringify(normalizeRequest(request));
+  let created = false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const existing = db
+      .prepare(
+        `SELECT 1 FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND user_message_id = ?
+         LIMIT 1`,
+      )
+      .get(project_id, path, user_message_id);
+    if (existing == null) {
+      db.prepare(
+        `INSERT INTO ${TABLE}
+        (op_id, project_id, account_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, available_at, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, recovery_code, recovery_detail, request_json, error, created_at, updated_at, started_at, finished_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'error', NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, ?, ?, ?, NULL, ?)`,
+      ).run(
+        assistant_message_id,
+        project_id,
+        account_id,
+        path,
+        thread_id,
+        user_message_id,
+        assistant_message_id,
+        assistant_message_date,
+        request.session_id ?? null,
+        AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE,
+        request_json,
+        error.slice(0, 1000),
+        now,
+        now,
+        now,
+      );
+      created = true;
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  const job = getAcpJob({ project_id, path, user_message_id });
+  if (!job) throw new Error("failed to retain Agent RPC admission failure");
+  mirrorAcpJobSession(job);
+  return { job, created };
 }
 
 export function getAcpJobByOpId(op_id: string): AcpJobRow | undefined {
@@ -1275,6 +1349,7 @@ export function resendCanceledAcpJob({
   user_message_id,
   modelRecovery,
   fundingRecovery,
+  requestRecovery,
 }: {
   project_id: string;
   path: string;
@@ -1292,8 +1367,15 @@ export function resendCanceledAcpJob({
     payment_source: CodexPaymentSourcePreference;
     credential_id?: string;
   };
+  requestRecovery?: {
+    expected_request: string;
+    request: AcpJobRequest;
+  };
 }): AcpJobRow | undefined {
-  if (modelRecovery && fundingRecovery) return undefined;
+  if (
+    [modelRecovery, fundingRecovery, requestRecovery].filter(Boolean).length > 1
+  )
+    return undefined;
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
@@ -1349,6 +1431,19 @@ export function resendCanceledAcpJob({
       },
     });
   }
+  if (requestRecovery) {
+    const current = getAcpJob({ project_id, path, user_message_id });
+    if (
+      !current ||
+      current.state !== "error" ||
+      current.recovery_code !== AGENT_RPC_ADMISSION_FAILURE_RECOVERY_CODE ||
+      current.request_json !== requestRecovery.expected_request ||
+      !requestRecovery.request.chat?.agent_rpc_execution
+    )
+      return undefined;
+    expectedRequest = current.request_json;
+    replacement = JSON.stringify(normalizeRequest(requestRecovery.request));
+  }
   // Historical name: this also retries terminal error jobs, which keep the
   // original request_json needed to resubmit the same user turn.
   const updated = db
@@ -1383,7 +1478,10 @@ export function resendCanceledAcpJob({
       expectedRequest,
       expectedRequest,
     );
-  if ((modelRecovery || fundingRecovery) && updated.changes !== 1)
+  if (
+    (modelRecovery || fundingRecovery || requestRecovery) &&
+    updated.changes !== 1
+  )
     return undefined;
   const job = getAcpJob({ project_id, path, user_message_id });
   mirrorAcpJobSession(job);

@@ -49,6 +49,10 @@ import type {
   HostRootfsBuildStartRequest,
   HostRootfsBuildStatusResponse,
 } from "@cocalc/conat/project-host/api";
+import type {
+  AcpAutomationRequest,
+  AcpAutomationResponse,
+} from "@cocalc/conat/ai/acp/types";
 import type { ProjectBackupIndexStoreConfig } from "./hosts";
 
 export interface ProjectRecoveryStatus {
@@ -1309,6 +1313,7 @@ export const projects = {
   codexDeviceAuthStart: authFirstRequireAccount,
   codexDeviceAuthStartV2: authFirstRequireAccount,
   getCodexCredentialSelectionCapability: authFirstRequireAccount,
+  automationAcp: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
@@ -2512,6 +2517,10 @@ export interface Projects {
     version: number;
     credentialLifecycle?: boolean;
   }>;
+
+  automationAcp: (
+    opts: Omit<AcpAutomationRequest, "account_id"> & { account_id?: string },
+  ) => Promise<AcpAutomationResponse>;
 
   codexDeviceAuthStatus: (opts: {
     account_id?: string;
