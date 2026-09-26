@@ -37,6 +37,17 @@ describe("inter-bay typed service transport", () => {
       { raw: expect.any(Uint8Array) },
       { timeout: 10_000 },
     );
+    await expect(
+      client.getApiRelayHostUrl({
+        target_host_id: "host-b",
+        target_project_id: "project-b",
+      }),
+    ).resolves.toEqual(target);
+    expect(fastRpcRequest).toHaveBeenLastCalledWith(
+      "bay.bay-b.rpc.host-connection.get-api-relay-host-url",
+      { raw: expect.any(Uint8Array) },
+      { timeout: 10_000 },
+    );
   });
   it("routes environment preflight to the remote bay with a bounded timeout", async () => {
     const fastRpcRequest = jest.fn(async () => ({

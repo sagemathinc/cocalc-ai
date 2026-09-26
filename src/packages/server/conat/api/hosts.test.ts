@@ -6285,6 +6285,53 @@ describe("hosts.resolveHostConnection", () => {
     delete process.env.LOGS;
   });
 
+  it.each([true, false])(
+    "checks the authoritative project ACL for private host metadata (allowed=%s)",
+    async (allowed) => {
+      isAdminMock = jest.fn(async () => false);
+      queryMock = jest.fn(async (sql: string) => {
+        if (sql.includes("FROM project_hosts") && sql.includes("public_url")) {
+          return {
+            rows: [
+              {
+                id: "private-host",
+                bay_id: "bay-0",
+                name: "Private host",
+                public_url: "https://host.test",
+                metadata: { owner: "other-user" },
+                tier: null,
+                status: "running",
+                last_seen: new Date(),
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+      assertAccountProjectHostTokenProjectAccessMock = jest.fn(async () => {
+        if (!allowed) throw Error("project access denied");
+      });
+      const { resolveHostConnectionLocal } = await import("./hosts");
+      const request = resolveHostConnectionLocal({
+        account_id: ACCOUNT_ID,
+        host_id: "private-host",
+        project_id: "remote-project",
+      });
+      if (allowed)
+        await expect(request).resolves.toMatchObject({
+          host_id: "private-host",
+        });
+      else await expect(request).rejects.toThrow("not authorized");
+      expect(
+        assertAccountProjectHostTokenProjectAccessMock,
+      ).toHaveBeenCalledWith({
+        account_id: ACCOUNT_ID,
+        host_id: "private-host",
+        project_id: "remote-project",
+      });
+    },
+  );
+
   it("routes host connection lookup to the owning bay when the host is remote", async () => {
     const { resolveHostConnection } = await import("./hosts");
     await expect(

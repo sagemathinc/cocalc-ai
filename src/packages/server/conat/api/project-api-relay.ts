@@ -8,7 +8,10 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import basePath from "@cocalc/backend/base-path";
 import type { ProjectApiRelayTarget } from "@cocalc/conat/project-host/api-relay";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveHostBay,
+  resolveProjectBay,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -35,8 +38,8 @@ export async function resolveProjectApiRelayTarget({
   if (!isValidUUID(host_id))
     throw Error("project-host authentication required");
   validateTarget(target);
-  const owner = await resolveHostBay(target.target_host_id);
-  if (!owner) throw Error("API relay target host not found");
+  const owner = await resolveProjectBay(target.target_project_id);
+  if (!owner) throw Error("API relay target project not found");
   if (owner.bay_id !== getConfiguredBayId()) {
     return await getInterBayBridge()
       .hostConnection(owner.bay_id)
@@ -50,16 +53,38 @@ export async function resolveLocalProjectApiRelayTarget(
 ): Promise<ProjectApiRelayTarget> {
   validateTarget(target);
   const { rows } = await getPool().query(
+    `SELECT host_id FROM projects
+      WHERE project_id = $1 AND host_id = $2 AND deleted IS NOT TRUE
+        AND COALESCE(owning_bay_id, $3) = $3`,
+    [target.target_project_id, target.target_host_id, getConfiguredBayId()],
+  );
+  if (!rows.length) throw Error("API relay target project is not on this host");
+  // Project ownership and host ownership can differ, including during moves.
+  const owner = await resolveHostBay(target.target_host_id);
+  if (!owner) throw Error("API relay target host not found");
+  if (owner.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(owner.bay_id)
+      .getApiRelayHostUrl(target);
+  }
+  return await resolveLocalApiRelayHostUrl(target);
+}
+
+// Cluster-internal host metadata only. The project-owning bay checks placement
+// before calling this; the upstream service still authorizes the actual caller.
+export async function resolveLocalApiRelayHostUrl(
+  target: RelayTargetRequest,
+): Promise<ProjectApiRelayTarget> {
+  validateTarget(target);
+  const { rows } = await getPool().query(
     `SELECT h.public_url, h.internal_url, h.metadata
-       FROM project_hosts h JOIN projects p ON p.host_id = h.id
-      WHERE h.id = $1 AND p.project_id = $2
-        AND h.deleted IS NULL AND p.deleted IS NOT TRUE
-        AND COALESCE(h.bay_id, $3) = $3
-        AND COALESCE(p.owning_bay_id, $3) = $3`,
-    [target.target_host_id, target.target_project_id, getConfiguredBayId()],
+       FROM project_hosts h
+      WHERE h.id = $1 AND h.deleted IS NULL
+        AND COALESCE(h.bay_id, $2) = $2`,
+    [target.target_host_id, getConfiguredBayId()],
   );
   const row = rows[0];
-  if (!row) throw Error("API relay target project is not on this host");
+  if (!row) throw Error("API relay target host is not owned by this bay");
   const metadata = row.metadata ?? {};
   const machine = metadata.machine ?? {};
   const localProxy =

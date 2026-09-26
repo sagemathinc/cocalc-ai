@@ -2789,6 +2789,7 @@ export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
   | "get-api-relay-target"
+  | "get-api-relay-host-url"
   | "list"
   | "list-host-access"
   | "set-host-access"
@@ -3622,6 +3623,10 @@ export interface InterBayExternalCredentialsApi {
 }
 
 export interface InterBayHostConnectionApi {
+  getApiRelayHostUrl: (opts: {
+    target_host_id: string;
+    target_project_id: string;
+  }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
   getApiRelayTarget: (opts: {
     target_host_id: string;
     target_project_id: string;
@@ -3903,6 +3908,7 @@ export interface InterBayHostConnectionApi {
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
   { name: "getApiRelayTarget", method: "get-api-relay-target" },
+  { name: "getApiRelayHostUrl", method: "get-api-relay-host-url" },
   { name: "list", method: "list" },
   { name: "listHostAccess", method: "list-host-access" },
   { name: "setHostAccess", method: "set-host-access" },
