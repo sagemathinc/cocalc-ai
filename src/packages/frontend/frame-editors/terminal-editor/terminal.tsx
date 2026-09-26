@@ -67,6 +67,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   const { workspaces } = useProjectContext();
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<any>(null);
+  const terminalParentRef = useRef<HTMLElement | null>(null);
   const terminalLoadTokenRef = useRef(0);
   const nativeTouchTapRef = useRef<NativeTouchTap | null>(null);
   const [showMobileToolbar, setShowMobileToolbar] = useState(false);
@@ -88,15 +89,23 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   }, []);
 
   useEffect(() => {
-    if (terminalRef.current != null) {
-      terminalRef.current.is_visible = props.is_visible;
+    const terminal = terminalRef.current;
+    const ownsElement =
+      terminal?.element?.parentElement === terminalDOMRef.current;
+    if (!props.is_visible) {
+      terminalLoadTokenRef.current += 1;
+      if (terminal && ownsElement) terminal.is_visible = false;
+      return;
     }
-    // We *only* init the terminal if it is visible
-    // or switches to being visible and was not initialized.
-    // See https://github.com/sagemathinc/cocalc/issues/5133
-    if (terminalRef.current != null || !props.is_visible) return;
-    void init_terminal();
-  }, [props.is_visible]);
+    // Agents and project tabs can mount the same editor. Reclaim its terminal
+    // when foregrounded instead of retaining a ref to another view's element.
+    if (terminal && ownsElement) {
+      terminal.is_visible = true;
+      measureSize();
+    } else {
+      void init_terminal();
+    }
+  }, [props.is_visible, props.actions]);
 
   useEffect(() => {
     // yes, this can change!! -- see https://github.com/sagemathinc/cocalc/issues/3819
@@ -124,8 +133,12 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   function delete_terminal(): void {
     terminalLoadTokenRef.current += 1;
     if (terminalRef.current == null) return; // already deleted or never created
-    terminalRef.current.element?.remove();
-    terminalRef.current.is_visible = false;
+    if (
+      terminalRef.current.element?.parentElement === terminalParentRef.current
+    ) {
+      terminalRef.current.element.remove();
+      terminalRef.current.is_visible = false;
+    }
     terminalRef.current = undefined;
     setShowMobileToolbar(false);
   }
@@ -137,6 +150,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       // happens, e.g., when terminals are disabled.
       return;
     }
+    terminalParentRef.current = node;
     const token = ++terminalLoadTokenRef.current;
     const terminal = await props.actions._get_terminal(
       props.id,
@@ -149,8 +163,14 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       terminalLoadTokenRef.current !== token ||
       terminalDOMRef.current !== node
     ) {
-      terminal?.element?.remove();
-      if (terminal != null) {
+      // A later load/view may already own this shared terminal. Stale cleanup
+      // must not remove that view's element or mark its live terminal hidden.
+      if (
+        terminal != null &&
+        terminal.element?.parentElement === node &&
+        terminalLoadTokenRef.current === token
+      ) {
+        terminal.element.remove();
         terminal.is_visible = false;
       }
       return;
