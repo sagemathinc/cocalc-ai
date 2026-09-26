@@ -402,6 +402,31 @@ terminal feature or a revocation result. Reproduce with the current bundle and
 explicit transport-denial evidence before attributing the entire runtime failure
 to that mismatch.
 
+A subsequent direct probe using the current locally built Conat library
+confirmed the transport mismatch against the live host. With a fresh full-runtime
+manual key, subscription below the token's own reply prefix succeeded, while a
+terminal client-subject subscription and publication to an inbox each failed with
+explicit code 403. The actual `terminalClient` handshake completed transport wait
+and server discovery, entered `subscribe_start`, then its real terminal
+subscription failed with 403 and spawn rejected as disconnected. The key was
+deleted in cleanup. No shell was admitted by this handshake. This proves the
+failure is not solely the older installed CLI bundle.
+
+The transport requires both a confined return stream and confined responses to
+reverse requests. Allowing project-wide subscriptions or arbitrary inbox
+publication is not an acceptable workaround. A private design-review request
+for a negotiated inbox-return protocol with service-subject reverse-response
+correlation was accepted as attempt
+`f63974b7-2fd0-4025-a880-6c7931e38990`; acceptance is not a review result.
+
+The first diagnostic attempt never reached key issuance: the primary hub had
+again fail-stopped on a billing lease query timeout at
+`2026-09-26T23:34:30.535Z` (generation 77). That attempt returned explicit 503
+with no account API subscriber. Standard dev start recovered PID 1090219;
+attached bays remained running. A post-recovery database snapshot had no active
+transactions/blockers, which does not identify the earlier timeout's cause.
+The successful diagnostic evidence above came from a new attempt after recovery.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
