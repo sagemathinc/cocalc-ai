@@ -1501,10 +1501,12 @@ export class ConatServer extends EventEmitter {
     subject,
     data,
     from,
+    retainAuthority,
   }: {
     subject: string;
     data: any;
     from: any;
+    retainAuthority?: () => boolean;
   }): Promise<{
     count: number;
     auth_ms: number;
@@ -1543,6 +1545,10 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
+    if (retainAuthority && !retainAuthority())
+      throw new ConatError("API-key publication authority is unavailable", {
+        code: 403,
+      });
     // Includes CN-Reply validation; malformed input must be rejected here,
     // not delivered to a service that would fail trying to answer it.
     validateMessageHeaders(data[5]);
@@ -1813,6 +1819,41 @@ export class ConatServer extends EventEmitter {
     // API-key sockets can carry subscriptions for a long time. Reauthenticate
     // the original credential so revocation also closes existing interests.
     let apiKeyRefreshInFlight = false;
+    // Reply inboxes do not identify the project that authorized a request.
+    // Retain publication authority for the lifetime of an API-key connection,
+    // including requests whose replies or streams outlive their initial send.
+    const apiKeyPublicationSubjects = new Set<string>();
+    const trackApiKeyPublication = (
+      subject: string,
+      respond?: (response: { error: string; code: number }) => void,
+    ): boolean => {
+      if (user?.auth_method !== "api_key") return true;
+      if (!socket.connected) {
+        respond?.({ error: "API-key connection is closed", code: 403 });
+        return false;
+      }
+      if (
+        !isValidSubjectWithoutWildcards(subject) ||
+        subject.startsWith("_INBOX.")
+      )
+        return true;
+      if (
+        !apiKeyPublicationSubjects.has(subject) &&
+        apiKeyPublicationSubjects.size >=
+          (this.options.maxSubscriptionsPerClient ??
+            MAX_SUBSCRIPTIONS_PER_CLIENT)
+      ) {
+        respond?.({
+          error: "API-key connection authorization interest limit reached",
+          code: 429,
+        });
+        socket.disconnect(true);
+        socket.conn?.close?.();
+        return false;
+      }
+      apiKeyPublicationSubjects.add(subject);
+      return true;
+    };
     const apiKeyRefreshTimer =
       !user?.error && user?.auth_method === "api_key"
         ? setInterval(async () => {
@@ -1840,6 +1881,11 @@ export class ConatServer extends EventEmitter {
                     // login principal may carry a different random namespace.
                     if (!(await this.isAllowed({ user, subject, type: "sub" })))
                       throw Error("API key subscription authority changed");
+                  }
+                  for (const subject of apiKeyPublicationSubjects) {
+                    if (!socket.connected) throw Error("socket disconnected");
+                    if (!(await this.isAllowed({ user, subject, type: "pub" })))
+                      throw Error("API key request authority changed");
                   }
                   return current;
                 })(),
@@ -1875,6 +1921,7 @@ export class ConatServer extends EventEmitter {
     socket.on("disconnecting", async () => {
       if (leaseTimer) clearTimeout(leaseTimer);
       if (apiKeyRefreshTimer) clearInterval(apiKeyRefreshTimer);
+      apiKeyPublicationSubjects.clear();
       this.log("disconnecting", { id, user });
       this.unregisterClusterInterestPeer(socket.id);
       socket.conn?.off?.("packetCreate", onServerPacketCreate);
@@ -1969,7 +2016,9 @@ export class ConatServer extends EventEmitter {
         )}`;
         this.log(message);
         respond({ error: message, code: 403 });
+        return;
       }
+      if (!trackApiKeyPublication(subject, respond)) return;
       try {
         respond(await this.waitForInterest(subject, timeout, socket.id));
       } catch (err) {
@@ -1983,6 +2032,10 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const [subject, ...data] = payload;
+      if (user?.auth_method === "api_key" && !socket.connected) {
+        respond?.({ error: "API-key connection is closed", code: 403 });
+        return;
+      }
       const handlerStart = Date.now();
       const stats = this.stats[socket.id];
       // The per-socket publish queue can outlive a disconnected socket. The
@@ -2003,6 +2056,7 @@ export class ConatServer extends EventEmitter {
           subject,
           data,
           from: user,
+          retainAuthority: () => trackApiKeyPublication(subject),
         });
         respond?.({
           count,
@@ -2155,6 +2209,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;
@@ -2249,6 +2304,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;
@@ -2351,6 +2407,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authMs = Date.now() - authStart;
+      if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
       const target = this.resolveRpcService(subject);
       const routeMs = Date.now() - routeStart;
