@@ -94,12 +94,13 @@ class ManagedJobTests(unittest.TestCase):
             expired = project / "job-10-100-20-200-1-00000000-0000-4000-8000-000000000004"
             for path in [live, dead_owner, dead_guard, expired]:
                 path.mkdir()
-            with mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", side_effect=lambda pid, start: (pid, start) in [("10", "100"), ("20", "200")]), mock.patch.object(m, "kill_scope") as kill:
-                m.reap_locked()
+            with mock.patch.object(m, "parent_scope"), mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", side_effect=lambda pid, start: (pid, start) in [("10", "100"), ("20", "200")]), mock.patch.object(m, "kill_scope") as kill:
+                m.sweep_project_locked(project.name[8:])
                 self.assertEqual({call.args[0] for call in kill.call_args_list}, {dead_owner, dead_guard, expired})
+                self.assertTrue(all(call.kwargs == {"timeout": 0} for call in kill.call_args_list))
             # Losing generation state (or a persisted stop) also expires live jobs.
-            with mock.patch.object(m, "active_state", side_effect=RuntimeError("stopping")), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=True), mock.patch.object(m, "kill_scope") as kill:
-                m.reap_locked()
+            with mock.patch.object(m, "parent_scope"), mock.patch.object(m, "active_state", side_effect=RuntimeError("stopping")), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=True), mock.patch.object(m, "kill_scope") as kill:
+                m.sweep_project_locked(project.name[8:])
                 self.assertEqual({call.args[0] for call in kill.call_args_list}, {live, dead_owner, dead_guard, expired})
 
     def test_failed_orphan_cleanup_does_not_starve_other_scopes(self):
@@ -110,9 +111,9 @@ class ManagedJobTests(unittest.TestCase):
             project.mkdir()
             for i in range(2):
                 (project / f"job-10-100-20-200-00000000-0000-4000-8000-00000000000{i}").mkdir()
-            with mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=False), mock.patch.object(m, "kill_scope", side_effect=[RuntimeError(), None]) as kill:
+            with mock.patch.object(m, "parent_scope"), mock.patch.object(m, "active_state"), mock.patch.object(m, "validate_scope"), mock.patch.object(m, "alive", return_value=False), mock.patch.object(m, "kill_scope", side_effect=[RuntimeError(), None]) as kill:
                 with self.assertRaisesRegex(RuntimeError, "not confirmed"):
-                    m.reap_locked()
+                    m.sweep_project_locked(project.name[8:])
                 self.assertEqual(kill.call_count, 2)
 
     def test_unrecognized_scopes_fail_sweep_closed(self):
@@ -121,9 +122,9 @@ class ManagedJobTests(unittest.TestCase):
             m.POOL = Path(directory)
             project = m.POOL / ("project-" + str(uuid.uuid4()))
             (project / "unexpected-child").mkdir(parents=True)
-            with mock.patch.object(m, "active_state"):
+            with mock.patch.object(m, "parent_scope"), mock.patch.object(m, "active_state"):
                 with self.assertRaisesRegex(RuntimeError, "not confirmed"):
-                    m.reap_locked()
+                    m.sweep_project_locked(project.name[8:])
 
     def test_cleanup_removes_children_before_parent_and_persists_stop_on_failure(self):
         for fail in (False, True):
@@ -169,10 +170,114 @@ class ManagedJobTests(unittest.TestCase):
 
     def test_activation_requires_successful_sweep_before_admission(self):
         m = helper()
-        with mock.patch.object(m, "lifecycle_lock", return_value=nullcontext()), mock.patch.object(m, "read_state", return_value=None), mock.patch.object(m, "parent_scope"), mock.patch.object(m, "member", return_value=True), mock.patch.object(m, "reap_locked", side_effect=RuntimeError("unresolved")), mock.patch.object(m, "write_state") as write:
+        with mock.patch.object(m, "lifecycle_lock", return_value=nullcontext()), mock.patch.object(m, "read_state", return_value=None), mock.patch.object(m, "parent_scope"), mock.patch.object(m, "member", return_value=True), mock.patch.object(m, "reap_project_locked", side_effect=RuntimeError("unresolved")), mock.patch.object(m, "write_state") as write:
             with self.assertRaisesRegex(RuntimeError, "unresolved"):
                 m.activate(str(uuid.uuid4()), os.getpid())
             write.assert_not_called()
+
+    def test_two_project_admission_and_activation_isolation(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as directory:
+            m.POOL = Path(directory) / "pool"
+            m.POOL.mkdir()
+            broken, healthy = str(uuid.uuid4()), str(uuid.uuid4())
+            for project in (broken, healthy):
+                (m.POOL / ("project-" + project)).mkdir()
+            (m.POOL / ("project-" + broken) / "unexpected-child").mkdir()
+            state_dir = Path(directory) / "state"
+            state_dir.mkdir()
+            with mock.patch.object(m, "state_path", side_effect=lambda project: state_dir / project), mock.patch.object(m, "parent_scope", side_effect=lambda project: m.POOL / ("project-" + project)), mock.patch.object(m, "lifecycle_lock", side_effect=lambda: nullcontext()), mock.patch.object(m, "member", return_value=True):
+                # The periodic pass reports diagnostics, but still attempts B.
+                with self.assertRaisesRegex(RuntimeError, "sweeps failed"):
+                    m.reap()
+                self.assertTrue(m.quarantine_path(broken).exists())
+                self.assertFalse(m.quarantine_path(healthy).exists())
+                # Neither target sweep nor activation can consult A's scopes.
+                m.activate(healthy, os.getpid())
+                m.reap_project_locked(healthy)
+                self.assertEqual(m.active_state(healthy)["status"], "active")
+                with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                    m.activate(broken, os.getpid())
+                self.assertTrue(m.quarantine_path(broken).exists())
+                (m.POOL / ("project-" + broken) / "unexpected-child").rmdir()
+                m.activate(broken, os.getpid())
+                self.assertFalse(m.quarantine_path(broken).exists())
+
+    def test_periodic_sweep_releases_lock_and_continues_after_project_failure(self):
+        m = helper()
+        events = []
+        class Lock:
+            def __enter__(self):
+                events.append("lock")
+            def __exit__(self, *_):
+                events.append("unlock")
+        with tempfile.TemporaryDirectory() as directory:
+            m.POOL = Path(directory)
+            ids = [str(uuid.uuid4()) for _ in range(2)]
+            for project in ids:
+                (m.POOL / ("project-" + project)).mkdir()
+            def sweep(project):
+                events.append(project)
+                if project == ids[0]:
+                    raise RuntimeError("busy")
+            with mock.patch.object(m, "lifecycle_lock", side_effect=Lock), mock.patch.object(m, "reap_project_locked", side_effect=sweep):
+                with self.assertRaisesRegex(RuntimeError, "sweeps failed"):
+                    m.reap()
+            self.assertEqual(set(events[1::3]), set(ids))
+            self.assertEqual(events[::3], ["lock", "lock"])
+            self.assertEqual(events[2::3], ["unlock", "unlock"])
+
+    def test_quarantine_persists_until_target_cleanup_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = str(uuid.uuid4())
+            for fail in (True, True, False):
+                m = helper()  # No in-memory quarantine is trusted across restart.
+                with mock.patch.object(m, "state_path", return_value=Path(directory) / project), mock.patch.object(m, "sweep_project_locked", side_effect=RuntimeError("busy") if fail else None):
+                    if fail:
+                        with self.assertRaises(RuntimeError):
+                            m.reap_project_locked(project)
+                        self.assertEqual(json.loads(m.quarantine_path(project).read_text())["cleanup_error"], "job cleanup not confirmed")
+                    else:
+                        m.reap_project_locked(project)
+                        self.assertFalse(m.quarantine_path(project).exists())
+
+    def test_lease_drain_is_bounded_and_fails_closed(self):
+        for limit in ("bytes", "time"):
+            with self.subTest(limit=limit):
+                m = helper()
+                selector = mock.MagicMock()
+                selector.select.return_value = [True]  # Permanently readable.
+                with mock.patch.object(m.selectors, "DefaultSelector", return_value=selector), mock.patch.object(m.os, "read", return_value=b"x" * 4096) as read, mock.patch.object(m.time, "monotonic", side_effect=[0, 1] if limit == "time" else None, return_value=0):
+                    self.assertFalse(m.lease_connected())
+                    self.assertLessEqual(read.call_count, 16)
+                    selector.close.assert_called_once()
+
+    def test_lease_eof_and_normal_heartbeats(self):
+        m = helper()
+        for chunk, expected in [(b"", False), (b".\n", True)]:
+            selector = mock.MagicMock()
+            selector.select.side_effect = [[True], []]
+            with mock.patch.object(m.selectors, "DefaultSelector", return_value=selector), mock.patch.object(m.os, "read", return_value=chunk):
+                self.assertEqual(m.lease_connected(), expected)
+
+    def test_no_new_privileges_is_irreversible_in_child_process(self):
+        # Exercise the actual hardening helper without changing the test runner.
+        source = bootstrap.MANAGED_PROJECT_JOB_HELPER.split('if __name__ == "__main__":')[0]
+        source += """
+libc = ctypes.CDLL(None, use_errno=True)
+prevent_privilege_gain(libc)
+assert libc.prctl(39, 0, 0, 0, 0) == 1
+assert libc.prctl(38, 0, 0, 0, 0) != 0
+"""
+        subprocess.run(["/usr/bin/python3", "-I", "-c", source], check=True, timeout=5)
+
+    def test_no_new_privileges_failure_prevents_exec(self):
+        m = helper()
+        libc = mock.MagicMock()
+        libc.prctl.return_value = -1
+        with self.assertRaisesRegex(RuntimeError, "disable new privileges"):
+            m.prevent_privilege_gain(libc)
+        libc.prctl.assert_called_once_with(38, 1, 0, 0, 0)
 
     def test_launcher_migration_is_verified_before_gate_opens(self):
         m = helper()
@@ -252,6 +357,18 @@ class KernelContainmentTests(unittest.TestCase):
     disposable test host. The launcher fixture substitutes for Podman only;
     the installed supervisor, privilege drop and cgroup.kill are real.
     """
+    def reap_until_clean(self, m):
+        until = time.monotonic() + 5
+        while True:
+            try:
+                m.reap()
+                return
+            except RuntimeError:
+                if time.monotonic() >= until:
+                    raise
+                # The periodic sweep deliberately never waits under the lock.
+                time.sleep(0.05)
+
     def exercise(self, mode, detach="double-fork"):
         m = helper()
         root = Path(os.environ["COCALC_TEST_JOB_CGROUP_PARENT"]) / ("cocalc-job-test-" + str(uuid.uuid4()))
@@ -276,6 +393,8 @@ for fd in os.listdir('/proc/self/fd'):
 for line in open('/proc/self/status'):
     if line.startswith(('CapEff:', 'CapPrm:', 'CapAmb:')):
         assert int(line.split()[1], 16) == 0
+    if line.startswith('NoNewPrivs:'):
+        assert int(line.split()[1]) == 1
 os.execv('/bin/bash', ['bash','-c',sys.argv[-1]])
 """)
                 launcher.chmod(0o755)
@@ -350,12 +469,12 @@ if MODE != 'success': time.sleep(60)
                         elif mode == "supervisor-crash":
                             proc.kill()
                             proc.wait()
-                            m.reap()
+                            self.reap_until_clean(m)
                             break
                         elif mode == "wedged-guard":
                             proc.send_signal(signal.SIGSTOP)
                             time.sleep(2)
-                            m.reap()
+                            self.reap_until_clean(m)
                             proc.send_signal(signal.SIGCONT)
                         elif mode == "project-stop":
                             with m.lifecycle_lock():

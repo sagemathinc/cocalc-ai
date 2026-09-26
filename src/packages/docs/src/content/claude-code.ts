@@ -199,6 +199,13 @@ cleanup succeeds; restarting just the worker does not clear that state. The
 host sweep also enforces each job's persisted deadline if its supervisor is
 alive but unresponsive. Host validation must include detached descendants,
 concurrent admission/stop, supervisor failure, and project restart.
+Admission checks cleanup only for its target project. A failed sweep records a
+root-owned quarantine for that project; the periodic host sweep continues with
+other projects and retries without waiting for exiting processes under the
+lifecycle lock. A subsequent successful target sweep clears its quarantine.
+Managed exec also disables new privilege gains before launching Podman. Validate
+this with the host's actual rootless runtime; there is no fallback that relaxes
+this restriction if namespace setup or exec fails.
 
 For intentionally persistent services or interactive input, use CoCalc's
 existing project terminal facilities: inspect \`project terminal --help\`

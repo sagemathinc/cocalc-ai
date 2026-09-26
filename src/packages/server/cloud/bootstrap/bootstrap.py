@@ -830,7 +830,7 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-RUNTIME_WRAPPER_VERSION = "20260926-v18"
+RUNTIME_WRAPPER_VERSION = "20260926-v19"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4607,7 +4607,7 @@ def activate(project, init):
         start = identity(init)
         if not member(init, parent):
             raise RuntimeError("project generation is not contained")
-        reap_locked()
+        reap_project_locked(project)
         # Repeated finalization is idempotent; it cannot replace a live generation.
         if previous and previous["status"] == "active":
             if active_state(project)["init"] != init or previous["start"] != start:
@@ -4646,6 +4646,7 @@ def cleanup_locked(project):
             raise RuntimeError("project job cleanup not confirmed")
         kill_scope(parent, max(0, until - time.monotonic()))
     write_state(project, {"status": "stopped"})
+    quarantine_path(project).unlink(missing_ok=True)
 
 def validate_scope(scope):
     if (scope.is_symlink() or scope.stat().st_uid != 0 or
@@ -4690,40 +4691,66 @@ def kill_scope(scope, timeout=10):
             raise RuntimeError("job containment cleanup not confirmed")
         time.sleep(0.05)
 
-def reap_locked():
+def quarantine_path(project):
+    return state_path(project).with_suffix(".quarantine")
+
+def reap_project_locked(project):
+    # Only this project's cleanup gates its admission. No waits for dying
+    # processes under the host-wide lock: subsequent sweeps retry busy scopes.
+    quarantine = quarantine_path(project)
+    try:
+        sweep_project_locked(project)
+    except Exception:
+        temporary = quarantine.with_suffix(".quarantine.tmp")
+        temporary.write_text(json.dumps({"cleanup_error": "job cleanup not confirmed",
+                                         "observed_at": time.time()}))
+        temporary.replace(quarantine)
+        raise
+    quarantine.unlink(missing_ok=True)
+
+def sweep_project_locked(project):
+    parent = POOL / ("project-" + project)
+    if not parent.exists():
+        return
+    parent_scope(project)
     failed = False
-    until = time.monotonic() + 10
-    for project in POOL.glob("project-*"):
-        if not re.fullmatch("project-" + UUID, project.name):
+    try:
+        active_state(project)
+        stopping = False
+    except Exception:
+        stopping = True
+    for scope in parent.iterdir():
+        if not scope.is_dir():
             continue
         try:
-            active_state(project.name.removeprefix("project-"))
-            stopping = False
+            validate_scope(scope)
+            match = JOB.fullmatch(scope.name)
+            expired = True  # Legacy scopes have no enforceable deadline.
+            if match:
+                owner, owner_start, guard, guard_start, deadline, _ = match.groups()
+                expired = (stopping or time.monotonic() * 1000 >= int(deadline) or
+                           not alive(owner, owner_start) or not alive(guard, guard_start))
+            if expired:
+                kill_scope(scope, timeout=0)
         except Exception:
-            stopping = True
-        for scope in project.iterdir():
-            if not scope.is_dir():
-                continue
-            try:
-                validate_scope(scope)
-                match = JOB.fullmatch(scope.name)
-                expired = True  # Legacy scopes have no enforceable deadline.
-                if match:
-                    owner, owner_start, guard, guard_start, deadline, _ = match.groups()
-                    expired = (stopping or time.monotonic() * 1000 >= int(deadline) or
-                               not alive(owner, owner_start) or not alive(guard, guard_start))
-                if expired:
-                    # Bound the whole sweep, but still deliver cgroup.kill to
-                    # every orphan even if an earlier scope cannot be reaped.
-                    kill_scope(scope, max(0, until - time.monotonic()))
-            except Exception:
-                failed = True
+            failed = True
     if failed:
         raise RuntimeError("abandoned job cleanup not confirmed")
 
 def reap():
-    with lifecycle_lock():
-        reap_locked()
+    failed = 0
+    for parent in POOL.glob("project-*"):
+        if not re.fullmatch("project-" + UUID, parent.name):
+            continue
+        try:
+            with lifecycle_lock():
+                reap_project_locked(parent.name.removeprefix("project-"))
+        except Exception:
+            failed += 1
+    # This aggregate is diagnostic only (periodic caller logs a warning), never
+    # an admission decision. Every other project has already been attempted.
+    if failed:
+        raise RuntimeError("some project job sweeps failed")
 
 def config_from_stdin():
     # Bound startup waiting and input before creating any execution authority.
@@ -4746,6 +4773,10 @@ def config_from_stdin():
         return json.loads(data.split(b"\n", 1)[0])
     finally:
         sel.close()
+
+def prevent_privilege_gain(libc):
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise RuntimeError("unable to disable new privileges")
 
 def launch_locked(scope, account, args, env, pipes):
     # Child cannot exec (or fork) until its parent has placed it in the scope
@@ -4775,6 +4806,10 @@ def launch_locked(scope, account, args, env, pipes):
             if any(int(line.split()[1], 16) for line in caps
                    if line.startswith(("CapEff:", "CapPrm:", "CapAmb:"))):
                 os._exit(125)
+            # This path only execs into an already-running project. Do not
+            # allow its executable chain to regain privileges; hosts needing
+            # a fresh privileged UID/GID mapping here must fail closed.
+            prevent_privilege_gain(libc)
             os.chdir("/")
             # Supplied environment/argv are only used after dropping privileges.
             executable = PODMAN if Path(PODMAN).is_file() else "/usr/bin/podman"
@@ -4803,10 +4838,16 @@ def launch_locked(scope, account, args, env, pipes):
 def lease_connected():
     probe = selectors.DefaultSelector()
     probe.register(0, selectors.EVENT_READ)
+    remaining = 64 * 1024
+    until = time.monotonic() + 0.05
     try:
         while probe.select(0):
-            if not os.read(0, 4096):
+            if remaining <= 0 or time.monotonic() >= until:
                 return False
+            chunk = os.read(0, min(remaining, 4096))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
         return True
     finally:
         probe.close()
@@ -4863,7 +4904,7 @@ def supervise(project, job, owner, timeout_ms):
     signal.signal(signal.SIGINT, stop)
     try:
         with lifecycle_lock():
-            reap_locked()
+            reap_project_locked(project)
             if active_state(project)["generation"] != generation:
                 raise RuntimeError("project generation changed before admission")
             # Observe cancellation after the sweep/lock wait, not before it.

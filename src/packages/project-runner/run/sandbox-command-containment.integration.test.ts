@@ -34,6 +34,7 @@ integration.each(["cancel", "deadline", "success"])(
         },
         script: `/usr/bin/python3 - <<'PY'
 import os,signal,time,json
+assert 'NoNewPrivs:\\t1' in open('/proc/self/status').read()
 r,w=os.pipe()
 if os.fork()==0:
     os.close(r)
