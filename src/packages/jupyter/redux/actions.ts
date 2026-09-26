@@ -817,6 +817,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   sync_read_only = (): void => {
     if (this._state == "closed") return;
+    // The syncdb emits "metadata-change" while it is still loading, and _set
+    // drops every write until it is ready, so never unlock editing before then.
+    if (this.syncdb?.get_state() !== "ready") return;
     const a = this.store.get("read_only");
     const b = this.syncdb?.is_read_only();
     if (a !== b) {

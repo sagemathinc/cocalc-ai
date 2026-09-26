@@ -1412,7 +1412,11 @@ export class JupyterActions extends JupyterActions0 {
         this.set_cm_options();
         // Frame-tree wrappers gate rendering on editor_actions.is_loaded.
         // For notebooks, lift that gate as soon as optimistic preview data is ready.
-        this.jupyterEditorActions?.setState?.({ is_loaded: true });
+        // rtc_status "loading" makes the status chip say Loading, not Read-only.
+        this.jupyterEditorActions?.setState?.({
+          is_loaded: true,
+          rtc_status: "loading",
+        });
         this.store.emit("cell-list-recompute");
         this.optimisticFastOpenApplied = true;
         this.noteOpenInitPhase("optimistic_ready", {
@@ -1500,19 +1504,26 @@ export class JupyterActions extends JupyterActions0 {
     this.nbgrader_actions = new NBGraderActions(this, this.redux);
 
     const handleSyncdbReady = () => {
-      this.noteOpenInitPhase("sync_ready", {
-        source: "syncdb",
-      });
-      mark_open_phase(this.project_id, this.path, "sync_ready", {
-        source: "syncdb",
-      });
-      if (this.optimisticFastOpenApplied) {
-        this.optimisticFastOpenApplied = false;
-        mark_open_phase(this.project_id, this.path, "handoff_done", {
+      try {
+        this.noteOpenInitPhase("sync_ready", {
           source: "syncdb",
         });
+        mark_open_phase(this.project_id, this.path, "sync_ready", {
+          source: "syncdb",
+        });
+        if (this.optimisticFastOpenApplied) {
+          this.optimisticFastOpenApplied = false;
+          mark_open_phase(this.project_id, this.path, "handoff_done", {
+            source: "syncdb",
+          });
+        }
+        this.sync_read_only();
+      } finally {
+        // Clear the preview's "loading" chip status even if the steps above
+        // throw: nothing else resets it. Leave it undefined as it was before:
+        // "live" would start notebook edit-ready telemetry.
+        this.jupyterEditorActions?.setState?.({ rtc_status: undefined });
       }
-      this.sync_read_only();
       const ipywidgets_state = this.syncdb.ipywidgets_state;
       if (ipywidgets_state == null) {
         throw Error(
