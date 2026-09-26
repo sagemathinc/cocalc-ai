@@ -111,6 +111,11 @@ const FIELD_LABEL_STYLE: CSSProperties = {
 // in project-host/exam/controller.ts. Only host_running and watchdog describe
 // the host now; the others turn green once preparation, which performed the
 // underlying test, has succeeded.
+// What each readiness check means. Keep in step with readinessForRow in
+// project-host/exam/controller.ts: only host_running and watchdog are live
+// there; the others follow the run's status, so they report what preparation
+// verified. If that changes, change these texts and the "What these checks
+// mean" note below.
 export const EXAM_READINESS_DESCRIPTIONS: Record<string, string> = {
   host_running: "The project host answered this status request.",
   public_route:
@@ -895,6 +900,7 @@ export function HostExamPanel({
               <Checkbox
                 checked={cleanupMode === "manual"}
                 onChange={(event) => setPracticeMode(event.target.checked)}
+                disabled={loading}
               >
                 Practice mode: erase projects manually (no automatic timeout)
               </Checkbox>
@@ -917,6 +923,7 @@ export function HostExamPanel({
                       value={deadline}
                       onChange={(value) => value && setDeadline(value)}
                       minDate={dayjs()}
+                      disabled={loading}
                       status={
                         deadlineTooSoon || deadlineTooLate ? "error" : undefined
                       }
@@ -927,6 +934,7 @@ export function HostExamPanel({
                     onChange={(event) =>
                       setStopHostAtDeadline(event.target.checked)
                     }
+                    disabled={loading}
                   >
                     Also shut down the project host to save resources
                   </Checkbox>

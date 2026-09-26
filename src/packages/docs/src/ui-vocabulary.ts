@@ -545,6 +545,16 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         "This page checks again about every 30 seconds.",
       ],
       [
+        "student-ended",
+        "This exam session has ended. Its temporary projects are being erased.",
+        "This exam session has ended. Its temporary projects are being erased.",
+      ],
+      [
+        "student-unavailable",
+        "This scratchpad is not available right now. Ask your instructor.",
+        "This scratchpad is not available right now. Ask your instructor.",
+      ],
+      [
         "join-same-origin",
         "exam admission requires a same-origin request",
         '"exam admission requires a same-origin request"',

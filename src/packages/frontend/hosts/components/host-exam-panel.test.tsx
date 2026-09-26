@@ -529,6 +529,43 @@ describe("HostExamPanel", () => {
     );
   });
 
+  it("keeps the run settings locked while preparation runs", async () => {
+    mockGetHostExamState.mockResolvedValueOnce({
+      eligible: true,
+      config: savedConfig,
+    });
+    mockCreateHostExamRun.mockImplementation(() => new Promise(() => {}));
+    render(
+      <HostExamPanel
+        host={{ id: "host-1", status: "running" } as any}
+        rootfsImages={[
+          {
+            image: "cocalc.local/rootfs/exam",
+            digest: "sha256:abc",
+          } as any,
+        ]}
+      />,
+    );
+    const prepare = screen.getByRole("button", {
+      name: "Prepare and test run",
+    });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    fireEvent.click(prepare);
+    await screen.findByRole("status");
+
+    // The run already uses the values it was started with, so they cannot be
+    // edited until preparation finishes.
+    expect(
+      screen.getByRole("checkbox", { name: /Practice mode/ }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Delete all exam projects at")).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Also shut down the project host to save resources",
+      }),
+    ).toBeDisabled();
+  });
+
   it("does not present a stopped historical run as the current run", async () => {
     mockGetHostExamState.mockResolvedValueOnce({
       eligible: true,

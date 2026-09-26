@@ -299,12 +299,14 @@ function requestSource(req: express.Request): string {
 export function getExamJoinPage({
   error,
   admission_open,
+  run_status,
   title = "Exam Scratchpad",
   scheduled_stop_at,
   cleanup_mode = "scheduled",
 }: {
   error?: string;
   admission_open: boolean;
+  run_status?: string;
   title?: string;
   scheduled_stop_at?: string;
   cleanup_mode?: "scheduled" | "manual";
@@ -376,7 +378,11 @@ export function getExamJoinPage({
     <input id="token" name="token" type="password" autocomplete="off" required autofocus>
     <button type="submit">Open scratchpad</button>
   </form>`
-      : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
+      : run_status === "closing" || run_status === "cleaning"
+        ? `<p>This exam session has ended. Its temporary projects are being erased.</p>`
+        : run_status === "error"
+          ? `<p>This scratchpad is not available right now. Ask your instructor.</p>`
+          : `<p>This temporary scratchpad has been prepared, but access is not open yet.</p>
   <div class="closed" data-exam-waiting>This page checks again about every 30 seconds. When access opens, it shows the Open scratchpad button.</div>`
   }
   ${escaped ? `<div class="error" role="alert">${escaped}</div>` : ""}
@@ -415,6 +421,7 @@ export async function initHttp({
     res.type("html").send(
       getExamJoinPage({
         admission_open: runtime.admission_open,
+        run_status: runtime.status,
         title: runtime.title,
         scheduled_stop_at: runtime.scheduled_stop_at,
         cleanup_mode: runtime.cleanup_mode,
@@ -434,6 +441,7 @@ export async function initHttp({
     res.type("html").send(
       getExamJoinPage({
         admission_open: runtime.admission_open,
+        run_status: runtime.status,
         title: runtime.title,
         scheduled_stop_at: runtime.scheduled_stop_at,
         cleanup_mode: runtime.cleanup_mode,
@@ -490,6 +498,7 @@ export async function initHttp({
         .send(
           getExamJoinPage({
             admission_open: runtime.admission_open,
+            run_status: runtime.status,
             title: runtime.title,
             scheduled_stop_at: runtime.scheduled_stop_at,
             cleanup_mode: runtime.cleanup_mode,

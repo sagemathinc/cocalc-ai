@@ -223,6 +223,26 @@ describe("project-host exam admission page", () => {
     expect(closed).not.toContain('name="token"');
   });
 
+  it("says the session ended instead of asking students to wait", () => {
+    for (const run_status of ["closing", "cleaning"]) {
+      const page = getExamJoinPage({ admission_open: false, run_status });
+      expect(page).toContain("This exam session has ended");
+      expect(page).not.toContain("data-exam-waiting");
+      expect(page).not.toContain("checks again");
+      expect(page).not.toContain('name="token"');
+    }
+  });
+
+  it("does not promise access when the run failed", () => {
+    const page = getExamJoinPage({
+      admission_open: false,
+      run_status: "error",
+    });
+    expect(page).toContain("not available right now");
+    expect(page).not.toContain("data-exam-waiting");
+    expect(page).not.toContain("access is not open yet");
+  });
+
   it("explains instructor-controlled cleanup for practice sessions", () => {
     const page = getExamJoinPage({
       admission_open: true,
