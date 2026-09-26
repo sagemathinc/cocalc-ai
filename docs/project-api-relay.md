@@ -53,6 +53,11 @@ a different URL; unregistered destinations fail closed. Setting
 `COCALC_API_RELAY=0` opts out of relay transport but does not change the project's
 network policy.
 
+Daemon reuse is keyed by the local transport, relay settings, project admission
+and profile-file configuration as well as the CLI build. A daemon with stale
+configuration is replaced automatically; enabling the relay in a new turn does
+not require users to know about `--no-daemon`.
+
 Local artifacts, notebooks, files, terminals, document builds and backend scripts
 connect to the current project's local service without signing in to the hub
 first. A script that subsequently needs a hub API opens that connection lazily.

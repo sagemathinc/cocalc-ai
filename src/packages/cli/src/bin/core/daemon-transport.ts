@@ -86,18 +86,40 @@ function daemonScriptPath(
 export function currentDaemonFingerprint(
   argv = process.argv,
   execPath = process.execPath,
+  env = process.env,
 ): string {
+  // Connections and profile lookup are created in the daemon's environment.
+  // Reusing it after a project/relay/config change silently uses stale routes.
+  // Hash the configuration so admission credentials never appear in diagnostics.
+  const runtime = createHash("sha256")
+    .update(
+      JSON.stringify(
+        [
+          "CONAT_SERVER",
+          "COCALC_API_RELAY",
+          "COCALC_API_RELAY_HUB_URL",
+          "COCALC_SITE_URL",
+          "COCALC_PROJECT_ID",
+          "COCALC_PROJECT_SECRET",
+          "COCALC_SECRET_TOKEN",
+          "COCALC_CLI_CONFIG",
+          "HOME",
+          "XDG_CONFIG_HOME",
+        ].map((key) => [key, env[key] ?? ""]),
+      ),
+    )
+    .digest("hex");
   const scriptPath = daemonScriptPath(argv, execPath);
   if (scriptPath) {
     const resolved = realpathSync(scriptPath);
     const stats = statSync(resolved);
-    return `${execPath}:${resolved}:${Math.trunc(stats.mtimeMs)}`;
+    return `${execPath}:${resolved}:${Math.trunc(stats.mtimeMs)}:${runtime}`;
   }
   if (existsSync(execPath)) {
     const stats = statSync(execPath);
-    return `${execPath}:sea:${stats.size}:${Math.trunc(stats.mtimeMs)}`;
+    return `${execPath}:sea:${stats.size}:${Math.trunc(stats.mtimeMs)}:${runtime}`;
   }
-  return `${execPath}:sea`;
+  return `${execPath}:sea:${runtime}`;
 }
 
 export function daemonFingerprintMatches(
