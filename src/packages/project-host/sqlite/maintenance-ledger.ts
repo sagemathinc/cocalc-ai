@@ -106,7 +106,17 @@ export function saveValidatedMaintenanceSchedules({
   );
   db.exec("BEGIN IMMEDIATE");
   try {
+    const retain = db.prepare(
+      `UPDATE ${SCHEDULE_TABLE} SET batch_id=?
+       WHERE project_id=? AND host_id=? AND schema_version=?`,
+    );
     for (const row of rows) {
+      if (row.owner_entitlements_unresolved) {
+        // Keep the prior payload and original expiry, but count the project as
+        // present in this inventory so full-scan cleanup does not remove it.
+        retain.run(batchId, row.project_id, hostId, SCHEDULE_SCHEMA_VERSION);
+        continue;
+      }
       upsert.run(
         row.project_id,
         hostId,

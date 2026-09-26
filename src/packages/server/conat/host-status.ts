@@ -271,6 +271,7 @@ export async function listHostProjectMaintenanceSchedules({
       : undefined;
     const schedule: HostProjectMaintenanceSchedule = {
       project_id: row.project_id,
+      ...(unresolvedOwner ? { owner_entitlements_unresolved: true } : {}),
       storage_account_id: storage_account_id || null,
       storage_service_class: service?.service_class ?? "unclassified",
       storage_priority: service?.priority ?? 0,

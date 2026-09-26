@@ -512,6 +512,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     });
     expect(blocked.snapshots?.disabled).toBe(true);
     expect(blocked.backups?.disabled).toBe(true);
+    expect(blocked.owner_entitlements_unresolved).toBe(true);
     expect(recovered).toMatchObject({
       snapshots: project.snapshots,
       backups: project.backups,
@@ -521,6 +522,7 @@ describe("listHostProjectMaintenanceSchedules", () => {
     });
     expect(recovered.snapshots?.disabled).toBeUndefined();
     expect(recovered.backups?.disabled).toBeUndefined();
+    expect(recovered.owner_entitlements_unresolved).toBeUndefined();
   });
 
   it("refreshes funding class when a project's storage payer changes", async () => {
