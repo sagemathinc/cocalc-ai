@@ -29,12 +29,14 @@ export type DaemonServerState<Ctx> = {
   socketPath: string;
   pidPath: string;
   contexts: Map<string, Ctx>;
+  credentialFileContexts?: Map<string, string>;
   server?: NetServer;
   closing: boolean;
 };
 
 type DaemonServerDeps<Ctx> = {
   daemonContextKey: (globals: any) => string;
+  prepareDaemonContextGlobals?: (globals: any) => any;
   contextForGlobals: (globals: any) => Promise<Ctx>;
   closeCommandContext: (ctx: Ctx | undefined) => void;
   globalsFrom: (command: unknown) => any;
@@ -53,6 +55,7 @@ type DaemonServerDeps<Ctx> = {
 export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
   const {
     daemonContextKey,
+    prepareDaemonContextGlobals,
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
@@ -72,12 +75,42 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     state: DaemonServerState<Ctx>,
     globals: any,
   ): Promise<Ctx> {
+    const fileSlot = globals.apiKeyFile ? daemonContextKey(globals) : undefined;
+    const discardFileContext = () => {
+      if (!fileSlot) return;
+      const oldKey = state.credentialFileContexts?.get(fileSlot);
+      if (oldKey) {
+        closeCommandContext(state.contexts.get(oldKey));
+        state.contexts.delete(oldKey);
+        state.credentialFileContexts?.delete(fileSlot);
+      }
+    };
+    try {
+      globals = prepareDaemonContextGlobals?.(globals) ?? globals;
+    } catch (error) {
+      discardFileContext();
+      throw error;
+    }
     const key = daemonContextKey(globals);
+    if (fileSlot) {
+      if (state.credentialFileContexts?.get(fileSlot) !== key)
+        discardFileContext();
+      (state.credentialFileContexts ??= new Map()).set(fileSlot, key);
+    }
     const existing = state.contexts.get(key);
     if (existing) {
       return existing;
     }
     const ctx = await contextForGlobals({ ...globals, noDaemon: true });
+    if (fileSlot && state.credentialFileContexts?.get(fileSlot) !== key) {
+      closeCommandContext(ctx);
+      throw new Error("API key file changed during connection setup");
+    }
+    const concurrent = state.contexts.get(key);
+    if (concurrent) {
+      closeCommandContext(ctx);
+      return concurrent;
+    }
     state.contexts.set(key, ctx);
     return ctx;
   }
@@ -87,6 +120,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
       closeCommandContext(ctx);
     }
     state.contexts.clear();
+    state.credentialFileContexts?.clear();
     try {
       state.server?.close();
     } catch {
@@ -539,6 +573,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
   }
 
   return {
+    handleDaemonAction,
     serveDaemon,
     runDaemonRequestFromCommand,
   };

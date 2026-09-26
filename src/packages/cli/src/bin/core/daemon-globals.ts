@@ -1,4 +1,5 @@
 import { resolveAgentTokenFromEnv } from "../../core/agent-token";
+import { resolve } from "node:path";
 
 export type DaemonGlobalAuthOptions = {
   profile?: string;
@@ -18,7 +19,7 @@ export function shouldUseFileOpsDaemon(
   globals: DaemonGlobalAuthOptions & { daemon?: boolean },
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (env.COCALC_CONNECTOR_API_KEY_FILE || globals.apiKeyFile) return false;
+  if (env.COCALC_CONNECTOR_API_KEY_FILE) return false;
   if (env.COCALC_CLI_DAEMON_MODE === "1") return false;
   if (globals.daemon === false) return false;
   return globals.noDaemon !== true;
@@ -43,6 +44,12 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
     } else if (defaultApiBaseUrl) {
       next.api = defaultApiBaseUrl();
     }
+  }
+
+  if (next.apiKeyFile) {
+    next.apiKeyFile = resolve(next.apiKeyFile);
+    next.disableEnvAuthDefaults = true;
+    return next;
   }
 
   if (next.disableEnvAuthDefaults) {

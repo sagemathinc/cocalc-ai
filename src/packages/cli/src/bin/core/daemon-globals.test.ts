@@ -3,19 +3,20 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolve } from "node:path";
 
 import {
   effectiveDaemonGlobals,
   shouldUseFileOpsDaemon,
 } from "./daemon-globals";
 
-test("file-backed API keys never reuse a daemon authentication context", () => {
+test("manual file-backed keys use the daemon; managed routing remains isolated", () => {
   assert.equal(
     shouldUseFileOpsDaemon(
       { apiKeyFile: "/tmp/scoped-key" },
       {} as NodeJS.ProcessEnv,
     ),
-    false,
+    true,
   );
   assert.equal(
     shouldUseFileOpsDaemon(
@@ -46,6 +47,26 @@ test("effectiveDaemonGlobals propagates env-backed api and auth into daemon requ
   assert.equal(globals.api, "http://localhost:7103");
   assert.equal(globals.accountId, "11111111-1111-4111-8111-111111111111");
   assert.equal(globals.bearer, "bearer-token");
+});
+
+test("key-file daemon requests carry an absolute provider path without ambient credentials", () => {
+  const globals = effectiveDaemonGlobals(
+    { apiKeyFile: "private-key" },
+    {
+      env: {
+        COCALC_API_URL: "https://example.test",
+        COCALC_API_KEY: "ambient-key",
+        COCALC_BEARER_TOKEN: "agent-token",
+        COCALC_HUB_PASSWORD: "admin",
+      },
+    },
+  );
+  assert.equal(globals.apiKeyFile, resolve("private-key"));
+  assert.equal(globals.api, "https://example.test");
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  assert.equal(globals.apiKey, undefined);
+  assert.equal(globals.bearer, undefined);
+  assert.equal(globals.hubPassword, undefined);
 });
 
 test("effectiveDaemonGlobals preserves explicit globals over env fallbacks", () => {

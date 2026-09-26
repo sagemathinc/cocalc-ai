@@ -6,7 +6,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -34,6 +33,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { ProjectHostApiKeyBinding } from "@cocalc/conat/auth/project-host-token";
 import { apiKeyViewerFsSubject } from "@cocalc/conat/auth/project-host-api-key-subject";
+import { resolveApiKeyFileGlobals } from "./core/api-key-file";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -486,6 +486,7 @@ function daemonContextKey(globals: GlobalOptions): string {
     api: globals.api ?? null,
     account_id: getExplicitAccountId(globals) ?? null,
     api_key: globals.apiKey ?? null,
+    api_key_file: globals.apiKeyFile ?? null,
     cookie: globals.cookie ?? null,
     bearer: globals.bearer ?? null,
     hub_password: globals.hubPassword ?? null,
@@ -1527,24 +1528,9 @@ async function contextForGlobals(
   const config = loadAuthConfig();
   const applied = applyAuthProfile(globals, config);
   const preferApiTransport = applied.fromProfile || !!globals.api?.trim();
-  let effectiveGlobals = applied.globals as GlobalOptions;
-  if (effectiveGlobals.apiKeyFile) {
-    if (normalizeOptionalSecret(effectiveGlobals.apiKey)) {
-      throw new Error("use either --api-key or --api-key-file, not both");
-    }
-    const path = effectiveGlobals.apiKeyFile;
-    const stat = statSync(path);
-    if (!stat.isFile() || stat.size < 1 || stat.size > 4096) {
-      throw new Error(
-        "API key file must be a nonempty regular file under 4 KiB",
-      );
-    }
-    const apiKey = readFileSync(path, "utf8").trim();
-    if (!apiKey || apiKey.length > 4096 || /\s/.test(apiKey)) {
-      throw new Error("API key file contains an invalid key");
-    }
-    effectiveGlobals = { ...effectiveGlobals, apiKey };
-  }
+  let effectiveGlobals = resolveApiKeyFileGlobals(
+    applied.globals as GlobalOptions,
+  );
 
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
   const rpcTimeoutMs = Math.max(
@@ -2941,6 +2927,12 @@ async function resolveProxyUrl({
 const { serveDaemon, runDaemonRequestFromCommand } =
   createDaemonServerOps<CommandContext>({
     daemonContextKey,
+    prepareDaemonContextGlobals: (globals) =>
+      globals.apiKeyFile
+        ? resolveApiKeyFileGlobals(
+            applyAuthProfile(globals, loadAuthConfig()).globals,
+          )
+        : globals,
     contextForGlobals,
     closeCommandContext,
     globalsFrom,

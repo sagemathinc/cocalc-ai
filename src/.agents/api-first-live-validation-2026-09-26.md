@@ -271,6 +271,24 @@ rehome during deletion. PGlite tests separately cover the 10,000-record ceiling,
 
 ## Still unverified or incomplete
 
+### Manual-key daemon follow-up (not deployed)
+
+The CLI now permits manual `--api-key-file` file commands to use its daemon.
+Each daemon command rereads the provider before looking up a cached context;
+unchanged credentials reuse the connection, while rotation or an unreadable
+provider invalidates the old cached connection. Delayed setup using an older
+credential cannot repopulate that provider's cache after a newer admission.
+The provider resolves to a bounded snapshot and cannot inherit profile cookies,
+bearers, or hub passwords. It requires a private regular file, rejects symlinks,
+and bounds the actual read even if the file grows after inspection.
+
+The CLI TypeScript build and 30 focused tests passed for provider handling,
+daemon context reuse/invalidation/races, auth profiles, daemon transport, and
+existing managed-key selection. This code has not been deployed or exercised
+through the installed CLI daemon. Managed connector credentials still bypass
+the daemon until source-project routing can be propagated explicitly; this is
+not completion of the persistent-client requirement.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
