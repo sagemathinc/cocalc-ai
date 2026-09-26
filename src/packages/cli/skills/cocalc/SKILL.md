@@ -23,6 +23,28 @@ Prefer these paths in this order:
 6. `cocalc export ...` / `cocalc import ...`
 7. `cocalc browser exec-api` + `cocalc browser exec`
 
+## Project Paths And Links
+
+The project home directory is `$HOME`, which is `/home/user` in CoCalc projects.
+A path that starts with `/` is measured from the filesystem root, so `/notes.md`
+is not `/home/user/notes.md`.
+
+- Give project file paths to `cocalc` as absolute paths, such as
+  `/home/user/work/paper.tex` or `"$PWD/paper.tex"`. Most project commands
+  resolve a relative path against the home directory, not against your shell's
+  working directory, which may be a subfolder. Local inputs such as `--file`,
+  `cocalc export` / `cocalc import` and `api.export` / `api.import` resolve
+  against the working directory.
+- In chat replies, and in Markdown meant to be read inside CoCalc, link project
+  files by absolute path, for example `[notes](/home/user/notes.md)`. A relative
+  link may resolve against the folder of the file that contains it rather than
+  your working directory, and agent chats are often stored in hidden folders.
+- A browser URL for a file is `<site>/projects/<project-id>/files/<path from the
+  filesystem root>`, so `/home/user/notes.md` is `.../files/home/user/notes.md`,
+  and `.../files/notes.md` means `/notes.md`. Inside CoCalc, prefer an
+  absolute-path link to a hand-built URL.
+- Save files the user should keep under the home directory. `/tmp` is temporary.
+
 ## Software Installs: Check RootFS Recipes First
 
 When asked to install software, language runtimes, Jupyter kernels, app launchers,
@@ -72,7 +94,7 @@ command first and then run the complete project-side build:
 
 ```bash
 cocalc project build -h
-cocalc project build path/to/paper.tex
+cocalc project build /home/user/path/to/paper.tex
 ```
 
 Supported source extensions are:
@@ -99,10 +121,10 @@ Timeouts have separate meanings:
 
 ```bash
 # Limit how long this CLI invocation waits. This does not cancel the build.
-cocalc --timeout 20m project build path/to/paper.tex
+cocalc --timeout 20m project build /home/user/path/to/paper.tex
 
 # Set the project-side whole-build deadline. Expiry terminates the active stage.
-cocalc project build path/to/paper.tex --build-timeout 15m
+cocalc project build /home/user/path/to/paper.tex --build-timeout 15m
 ```
 
 Use `--detach` when submission without waiting is intentional. Keep the returned
@@ -234,8 +256,8 @@ Example:
 
 ```bash
 cocalc project jupyter exec-api
-cocalc project jupyter exec --path scratch/demo.ipynb --file ./tool.js
-cocalc project jupyter exec --path scratch/demo.ipynb --stdin <<'EOF'
+cocalc project jupyter exec --path /home/user/scratch/demo.ipynb --file ./tool.js
+cocalc project jupyter exec --path /home/user/scratch/demo.ipynb --stdin <<'EOF'
 let inserted = await api.notebook.insertCell({
   atEnd: true,
   input: "2 + 3",
@@ -425,7 +447,7 @@ Example:
 
 ```bash
 cocalc --json exec '
-  const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
+  const doc = api.tasks.open({ path: "/home/user/scratch/project/a.tasks" });
   const snapshot = await doc.getSnapshot();
   return snapshot.tasks;
 '
@@ -450,7 +472,7 @@ Example:
 
 ```bash
 cocalc --json exec '
-  const tt = api.timetravel.open({ path: "scratch/project/a.md" });
+  const tt = api.timetravel.open({ path: "/home/user/scratch/project/a.md" });
   let history = await tt.listVersions();
   for (const version of [...history.versions].sort((a, b) => b.index - a.index)) {
     const snapshot = await tt.readVersion(version.id);
@@ -472,7 +494,7 @@ Example round trip:
 
 ```bash
 cocalc --json exec '
-  const exported = await api.export.tasks({ path: "scratch/project/a.tasks" });
+  const exported = await api.export.tasks({ path: "/home/user/scratch/project/a.tasks" });
   const imported = await api.import.tasks({ sourcePath: exported.outputPath, dryRun: true });
   return { exported, imported };
 '
@@ -597,6 +619,7 @@ Do not use browser exec for document operations that already have a backend API.
 - If import reports conflicts, stop and inspect instead of forcing overwrites.
 - Do not promise import support for document types that are currently export-only.
 - Do not dump large static type definitions into prompts. Point the agent to `cocalc exec-api` or `cocalc browser exec-api` instead.
+- Before opening or linking a file, confirm it exists (for example `ls -l /home/user/notes.md`). Before creating one, confirm its directory exists. A wrong path often gives no error and can open or create the wrong file.
 
 ## Trigger Examples
 
