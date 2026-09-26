@@ -168,6 +168,7 @@ describe("inter-bay typed service transport", () => {
     await expect(
       client.create({
         source_bay_id: "bay-0",
+        operation_id: "create-op-1",
         options: { project_id: "p1", account_id: "a1", host_id: "h1" },
       }),
     ).resolves.toEqual(response);
@@ -176,6 +177,30 @@ describe("inter-bay typed service transport", () => {
       "bay.bay-1.rpc.project-control.create",
       expect.anything(),
       { timeout: 300_000, waitForInterest: false },
+    );
+    expect(fastRpcRequest).not.toHaveBeenCalled();
+  });
+
+  it("uses a bounded non-retrying read to reconcile creation", async () => {
+    const request = jest.fn(async () => ({ data: null }));
+    const fastRpcRequest = jest.fn();
+    const client = createInterBayProjectControlClient({
+      client: { fastRpcRequest, request } as any,
+      dest_bay: "bay-1",
+      timeout: 300_000,
+    });
+    await expect(
+      client.createStatus({
+        source_bay_id: "bay-0",
+        operation_id: "create-op-1",
+        options: { project_id: "p1", account_id: "a1", host_id: "h1" },
+      }),
+    ).resolves.toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(
+      "bay.bay-1.rpc.project-control.create",
+      expect.anything(),
+      { timeout: 15_000, waitForInterest: false },
     );
     expect(fastRpcRequest).not.toHaveBeenCalled();
   });

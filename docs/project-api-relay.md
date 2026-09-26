@@ -164,6 +164,22 @@ clients must tolerate connection closure, just as for a host restart.
 
 ## Rollout and Validation
 
+For multibay onboarding, project creation selects compute before writing the
+project. The selected host's bay creates the authoritative row and replicates
+the account projection back to the account home. The inter-bay request carries
+one allocated project ID, also used as its operation ID; an exact-request fingerprint is
+committed with the project and its outbox event. Exact retries return that
+project without repeating host registration. Altered requests conflict.
+
+On an unsuccessful create RPC, the source performs a bounded read-only receipt
+lookup at the destination. A committed project is reported as created even if
+host initialization is still in progress. Post-commit initialization errors
+must not delete the receipt; the normal project start path can recover host
+metadata. If the result cannot be confirmed, the caller receives an explicit
+unknown outcome with the allocated project/operation IDs, not a definitive
+failure or an automatic replacement project. Creation receipts share the
+project's lifetime and do not require a separate unbounded operation log.
+
 Deploy the hub/inter-bay routing and quota methods to all bays, then the project-host/router bundle
 and CLI tools bundle. The router must be rolled explicitly when upgrading the
 managed runtime stack. Newly started projects receive the environment variables;

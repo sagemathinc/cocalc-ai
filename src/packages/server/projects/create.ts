@@ -79,6 +79,14 @@ import {
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME } from "@cocalc/util/project-secrets";
 import { recordServerGrowthEvent } from "@cocalc/server/growth-analytics/server-events";
+import type { ProjectControlCreateRequest } from "@cocalc/conat/inter-bay/api";
+import {
+  createWithReconciliation,
+  ensureProjectCreationReceiptSchema,
+  hasProjectCreationReceipt,
+  lockProjectCreation,
+  projectCreationRequestHash,
+} from "./create-request";
 
 const log = getLogger("server:projects:create");
 // Project placement must react quickly to dead hosts; do not use UI heartbeat
@@ -274,20 +282,34 @@ export async function createProjectWithBootstrap(
 // allocates the ID once; the destination must still authorize creation and
 // verify that it owns the selected host, without forwarding again.
 export async function createProjectOnOwningBay(
-  opts: CreateProjectOptions & {
-    project_id: string;
-    host_id: string;
-    account_id: string;
-  },
+  request: ProjectControlCreateRequest,
 ): Promise<CreatedProjectBootstrap> {
-  if (!opts.account_id || !opts.host_id || !opts.project_id) {
-    throw Error("account_id, host_id and project_id are required");
+  const hash = projectCreationRequestHash(request);
+  await ensureProjectCreationReceiptSchema();
+  if (await hasProjectCreationReceipt(request, hash)) {
+    return await createdProjectBootstrap(request.options, {
+      project_id: request.options.project_id,
+    });
   }
+  // Validation may fill in defaults; do not mutate the exact retry envelope.
+  const opts = { ...request.options };
   const result = await createProjectImpl(opts, {
     allowExplicitProjectId: true,
     requireLocalHost: true,
+    creationRequest: { request, hash },
   });
   return await createdProjectBootstrap(opts, result);
+}
+
+export async function getProjectCreationStatus(
+  request: ProjectControlCreateRequest,
+): Promise<CreatedProjectBootstrap | null> {
+  const hash = projectCreationRequestHash(request);
+  await ensureProjectCreationReceiptSchema();
+  if (!(await hasProjectCreationReceipt(request, hash))) return null;
+  return await createdProjectBootstrap(request.options, {
+    project_id: request.options.project_id,
+  });
 }
 
 async function createdProjectBootstrap(
@@ -358,9 +380,11 @@ async function createProjectImpl(
   {
     allowExplicitProjectId,
     requireLocalHost = false,
+    creationRequest,
   }: {
     allowExplicitProjectId: boolean;
     requireLocalHost?: boolean;
+    creationRequest?: { request: ProjectControlCreateRequest; hash: string };
   },
 ): Promise<{ project_id: string; remote?: CreatedProjectBootstrap }> {
   if (opts.account_id != null) {
@@ -474,6 +498,15 @@ async function createProjectImpl(
       );
     }
     if (await projectIdExists(project_id)) {
+      if (
+        creationRequest &&
+        (await hasProjectCreationReceipt(
+          creationRequest.request,
+          creationRequest.hash,
+        ))
+      ) {
+        return { project_id };
+      }
       throw Error("project_id already exists");
     }
   } else {
@@ -702,14 +735,17 @@ async function createProjectImpl(
         "selected host is not in the project's owning bay; rehome the project first",
       );
     }
-    const remote = await getInterBayBridge()
-      .projectControl(assignedHostBayId, {
-        timeout_ms: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
-      })
-      .create({
+    const destination = getInterBayBridge().projectControl(assignedHostBayId, {
+      timeout_ms: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
+    });
+    const remote = await createWithReconciliation(
+      {
         source_bay_id: getConfiguredBayId(),
+        operation_id: project_id,
         options: { ...opts, project_id, host_id, account_id: account_id! },
-      });
+      },
+      destination,
+    );
     return { project_id: remote.project_id, remote };
   }
   if (src_project_id) {
@@ -724,6 +760,19 @@ async function createProjectImpl(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (creationRequest) {
+      await lockProjectCreation(client, project_id);
+      if (
+        await hasProjectCreationReceipt(
+          creationRequest.request,
+          creationRequest.hash,
+          client,
+        )
+      ) {
+        await client.query("COMMIT");
+        return { project_id };
+      }
+    }
     await client.query(
       "INSERT INTO projects (project_id, title, description, users, created, last_edited, rootfs_image, rootfs_image_id, ephemeral, host_id, region, owning_bay_id, course) VALUES($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7::BIGINT, $8, $9, $10, $11)",
       [
@@ -740,6 +789,12 @@ async function createProjectImpl(
         course,
       ],
     );
+    if (creationRequest) {
+      await client.query(
+        "UPDATE projects SET creation_request_hash=$2 WHERE project_id=$1",
+        [project_id, creationRequest.hash],
+      );
+    }
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: "project.created",
@@ -753,186 +808,206 @@ async function createProjectImpl(
   } finally {
     client.release();
   }
-  if (account_id) {
-    recordServerGrowthEvent({
-      account_id,
-      event_name: "project_created",
+  // A committed inter-bay receipt is irreversible. Initialization failures
+  // must not delete it or turn successful creation into a duplicate on retry.
+  try {
+    await finishCreation();
+  } catch (err) {
+    if (!creationRequest) throw err;
+    log.warn("created project needs initialization recovery", {
       project_id,
+      err: `${err}`,
     });
   }
-  await publishProjectAccountFeedEventsBestEffort({
-    project_id,
-    default_bay_id: projectOwningBayId,
-  });
+  return { project_id };
 
-  if (src_project_id) {
-    await cloneProjectRootfsStates({
-      project_id,
-      src_project_id,
-    });
-    try {
-      const result = await copyProjectSecrets({
-        source_project_id: src_project_id,
-        target_project_id: project_id,
-        account_id: account_id!,
-        exclude_names: [PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME],
+  async function finishCreation() {
+    if (account_id) {
+      recordServerGrowthEvent({
+        account_id,
+        event_name: "project_created",
+        project_id,
       });
-      if (result.copied.length > 0) {
-        log.info("createProject: cloned project secrets", {
-          src_project_id,
-          project_id,
-          account_id,
-          count: result.copied.length,
-        });
-      }
-    } catch (err) {
-      log.warn("createProject: failed to copy project secrets for clone", {
+    }
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: projectOwningBayId,
+    });
+
+    if (src_project_id) {
+      await cloneProjectRootfsStates({
         project_id,
         src_project_id,
-        account_id,
-        err: `${err}`,
       });
       try {
-        await pool.query("DELETE FROM projects WHERE project_id=$1", [
-          project_id,
-        ]);
-      } catch (cleanupErr) {
-        log.warn(
-          "createProject: failed to cleanup project row after clone secret copy error",
-          {
-            project_id,
+        const result = await copyProjectSecrets({
+          source_project_id: src_project_id,
+          target_project_id: project_id,
+          account_id: account_id!,
+          exclude_names: [PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME],
+        });
+        if (result.copied.length > 0) {
+          log.info("createProject: cloned project secrets", {
             src_project_id,
-            err: `${cleanupErr}`,
-          },
-        );
-      }
-      throw Error(`failed to copy project secrets for clone: ${err}`);
-    }
-  } else {
-    await initializeProjectRootfsStates({
-      project_id,
-      image: projectRootfsImage,
-      image_id: projectRootfsImageId,
-      set_by_account_id: account_id,
-    });
-  }
-
-  if (!host_id && account_id && !isWorkspaceProjectRuntime()) {
-    try {
-      await ensurePlacement(project_id, account_id);
-    } catch (err) {
-      log.warn("createProject: failed to assign project to a host", {
-        project_id,
-        account_id,
-        err: `${err}`,
-      });
-      try {
-        await pool.query("DELETE FROM projects WHERE project_id=$1", [
-          project_id,
-        ]);
-      } catch (cleanupErr) {
-        log.warn(
-          "createProject: failed to cleanup project row after placement error",
-          {
             project_id,
-            err: `${cleanupErr}`,
-          },
-        );
-      }
-      throw Error(`failed to assign workspace to a host: ${err}`);
-    }
-  }
-
-  // Register on the owning bay's host before starting the project.
-  if (host_id) {
-    let lastErr: unknown;
-    try {
-      for (let attempt = 1; attempt <= 4; attempt += 1) {
-        try {
-          const createOpts = {
-            project_id,
-            title,
-            users,
-            image: projectRootfsImage,
-            start: false,
-            // This row was just created at generation zero. A concurrent
-            // restart advances the durable fence and rejects this registration.
-            runtime_lifecycle_revision: 0,
-          };
-          const client = await getRoutedHostControlClient({
-            host_id,
-            timeout: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
+            account_id,
+            count: result.copied.length,
           });
-          await client.createProject(createOpts);
-          lastErr = undefined;
-          break;
-        } catch (err) {
-          lastErr = err;
-          if (attempt < 4) {
-            await delay(Math.min(8000, attempt * 2000));
-          }
         }
-      }
-      if (lastErr) {
-        throw lastErr;
-      }
-    } catch (err) {
-      log.warn("createProject: failed to register project on host", {
-        project_id,
-        host_id,
-        host_status: hostStatus ?? null,
-        err: `${err}`,
-      });
-      const mustFail =
-        hostStatus === "running" ||
-        hostStatus === "active" ||
-        hostStatus === "starting";
-      if (mustFail) {
+      } catch (err) {
+        log.warn("createProject: failed to copy project secrets for clone", {
+          project_id,
+          src_project_id,
+          account_id,
+          err: `${err}`,
+        });
         try {
           await pool.query("DELETE FROM projects WHERE project_id=$1", [
             project_id,
           ]);
         } catch (cleanupErr) {
           log.warn(
-            "createProject: failed to cleanup project row after host register error",
+            "createProject: failed to cleanup project row after clone secret copy error",
             {
               project_id,
-              host_id,
+              src_project_id,
               err: `${cleanupErr}`,
             },
           );
         }
-        throw Error(
-          `failed to initialize workspace on host ${host_id} (status=${hostStatus ?? "unknown"}): ${err}`,
-        );
+        throw Error(`failed to copy project secrets for clone: ${err}`);
+      }
+    } else {
+      await initializeProjectRootfsStates({
+        project_id,
+        image: projectRootfsImage,
+        image_id: projectRootfsImageId,
+        set_by_account_id: account_id,
+      });
+    }
+
+    if (!host_id && account_id && !isWorkspaceProjectRuntime()) {
+      try {
+        await ensurePlacement(project_id, account_id);
+      } catch (err) {
+        log.warn("createProject: failed to assign project to a host", {
+          project_id,
+          account_id,
+          err: `${err}`,
+        });
+        try {
+          await pool.query("DELETE FROM projects WHERE project_id=$1", [
+            project_id,
+          ]);
+        } catch (cleanupErr) {
+          log.warn(
+            "createProject: failed to cleanup project row after placement error",
+            {
+              project_id,
+              err: `${cleanupErr}`,
+            },
+          );
+        }
+        throw Error(`failed to assign workspace to a host: ${err}`);
       }
     }
-  }
 
-  if (src_project_id && preferredBackupRepoId) {
-    try {
-      await resolveProjectBackupRepoAssignment({
-        project_id,
-        project_region: projectRegion,
-        preferred_backup_repo_id: preferredBackupRepoId,
-      });
-    } catch (err) {
-      log.warn("createProject: clone backup shard preassignment failed", {
-        project_id,
-        src_project_id,
-        preferred_backup_repo_id: preferredBackupRepoId,
-        err: `${err}`,
-      });
+    // Register on the owning bay's host before starting the project.
+    if (host_id) {
+      let lastErr: unknown;
+      try {
+        for (let attempt = 1; attempt <= 4; attempt += 1) {
+          try {
+            const createOpts = {
+              project_id,
+              title,
+              users,
+              image: projectRootfsImage,
+              start: false,
+              // This row was just created at generation zero. A concurrent
+              // restart advances the durable fence and rejects this registration.
+              runtime_lifecycle_revision: 0,
+            };
+            const client = await getRoutedHostControlClient({
+              host_id,
+              timeout: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
+            });
+            await client.createProject(createOpts);
+            lastErr = undefined;
+            break;
+          } catch (err) {
+            lastErr = err;
+            if (attempt < 4) {
+              await delay(Math.min(8000, attempt * 2000));
+            }
+          }
+        }
+        if (lastErr) {
+          throw lastErr;
+        }
+      } catch (err) {
+        log.warn("createProject: failed to register project on host", {
+          project_id,
+          host_id,
+          host_status: hostStatus ?? null,
+          err: `${err}`,
+        });
+        const mustFail =
+          hostStatus === "running" ||
+          hostStatus === "active" ||
+          hostStatus === "starting";
+        if (mustFail) {
+          if (creationRequest) {
+            // The normal start path also upserts host metadata and is recoverable
+            // through its LRO. Never roll back an already acknowledged receipt.
+            if (start)
+              startNewProject(getProject(project_id), project_id, account_id);
+            throw err;
+          }
+          try {
+            await pool.query("DELETE FROM projects WHERE project_id=$1", [
+              project_id,
+            ]);
+          } catch (cleanupErr) {
+            log.warn(
+              "createProject: failed to cleanup project row after host register error",
+              {
+                project_id,
+                host_id,
+                err: `${cleanupErr}`,
+              },
+            );
+          }
+          throw Error(
+            `failed to initialize workspace on host ${host_id} (status=${hostStatus ?? "unknown"}): ${err}`,
+          );
+        }
+      }
+    }
+
+    if (src_project_id && preferredBackupRepoId) {
+      try {
+        await resolveProjectBackupRepoAssignment({
+          project_id,
+          project_region: projectRegion,
+          preferred_backup_repo_id: preferredBackupRepoId,
+        });
+      } catch (err) {
+        log.warn("createProject: clone backup shard preassignment failed", {
+          project_id,
+          src_project_id,
+          preferred_backup_repo_id: preferredBackupRepoId,
+          err: `${err}`,
+        });
+      }
+    }
+
+    if (start) {
+      const project = getProject(project_id);
+      // intentionally not blocking
+      startNewProject(project, project_id, account_id);
     }
   }
-
-  if (start) {
-    const project = getProject(project_id);
-    // intentionally not blocking
-    startNewProject(project, project_id, account_id);
-  }
-
-  return { project_id };
 }
 
 async function startNewProject(

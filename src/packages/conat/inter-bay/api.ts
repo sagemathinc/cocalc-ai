@@ -3290,15 +3290,24 @@ export interface InterBayDirectoryApi {
   ) => Promise<void>;
 }
 
+export interface ProjectControlCreateRequest {
+  source_bay_id: string;
+  // Equal to options.project_id: one operation cannot allocate another project.
+  operation_id: string;
+  options: CreateProjectOptions & {
+    project_id: string;
+    host_id: string;
+    account_id: string;
+  };
+}
+
 export interface InterBayProjectControlApi {
-  create: (opts: {
-    source_bay_id: string;
-    options: CreateProjectOptions & {
-      project_id: string;
-      host_id: string;
-      account_id: string;
-    };
-  }) => Promise<CreatedProjectBootstrap>;
+  create: (
+    opts: ProjectControlCreateRequest,
+  ) => Promise<CreatedProjectBootstrap>;
+  createStatus: (
+    opts: ProjectControlCreateRequest,
+  ) => Promise<CreatedProjectBootstrap | null>;
   checkStartAdmission: (
     opts: ProjectControlStartRequest,
   ) => Promise<ProjectControlStartAdmission>;
@@ -6029,6 +6038,17 @@ export function createInterBayProjectControlClient({
     transport: "request",
     noRetry: true,
   });
+  const createStatusClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "createStatus">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.min(timeout ?? 15_000, 15_000),
+    }),
+    subject: projectControlSubject({ dest_bay, method: "create" }),
+    transport: "request",
+    noRetry: true,
+  });
   const startClient = createServiceClient<
     Pick<InterBayProjectControlApi, "start">
   >({
@@ -6177,6 +6197,7 @@ export function createInterBayProjectControlClient({
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
     create: async (opts) => await createClient.create(opts),
+    createStatus: async (opts) => await createStatusClient.createStatus(opts),
     backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
     getRootfsStates: async (opts) =>
@@ -6214,13 +6235,18 @@ export function createInterBayProjectControlCreateHandler({
   ...options
 }: ServiceHandlerOptions & {
   bay_id: string;
-  impl: Pick<InterBayProjectControlApi, "create">;
+  impl: Pick<InterBayProjectControlApi, "create" | "createStatus">;
 }): ConatService {
-  return createServiceHandler<Pick<InterBayProjectControlApi, "create">>({
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "create" | "createStatus">
+  >({
     ...options,
     service: "inter-bay-project-control",
     subject: projectControlSubject({ dest_bay: bay_id, method: "create" }),
-    impl: { create: async (opts) => await impl.create(opts) },
+    impl: {
+      create: async (opts) => await impl.create(opts),
+      createStatus: async (opts) => await impl.createStatus(opts),
+    },
   });
 }
 

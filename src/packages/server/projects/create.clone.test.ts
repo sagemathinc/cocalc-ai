@@ -24,6 +24,8 @@ let hostControlCreateProjectMock: jest.Mock;
 let ensurePlacementMock: jest.Mock;
 let selectActiveHostMock: jest.Mock;
 let remoteCreateMock: jest.Mock;
+let remoteCreateStatusMock: jest.Mock;
+let creationHash: string | undefined;
 let copyProjectSecretsMock: jest.Mock;
 let initializeProjectRootfsStatesMock: jest.Mock;
 let cloneProjectRootfsStatesMock: jest.Mock;
@@ -35,6 +37,18 @@ const COURSE_PROJECT_ID = "18a627d6-a92e-4dde-a71d-8c1d522f7f79";
 const COURSE_MANAGER_ACCOUNT_ID = "bdd948ab-8b7c-46d1-8094-35e9c73f84e5";
 const SOURCE_PROJECT_ID = "9a79d9ef-d6a5-4ae1-a215-f594e864637c";
 const HOST_ID = "39d74365-65fe-4f13-8efc-ad6b6e58f3ee";
+function creationRequest() {
+  return {
+    source_bay_id: "bay-7",
+    operation_id: SOURCE_PROJECT_ID,
+    options: {
+      account_id: ACCOUNT_ID,
+      project_id: SOURCE_PROJECT_ID,
+      host_id: HOST_ID,
+      start: false,
+    },
+  };
+}
 const STAR_ROOTFS_IMAGE =
   "cocalc.local/rootfs/113f7173e66b81668ebf6f460485d38144e1026f50679d22241b272bcefb7e42";
 const STAR_ROOTFS_IMAGE_ID = "official-cocalc-star-rootfs";
@@ -195,6 +209,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     projectControl: jest.fn(() => ({
       create: (...args: any[]) => remoteCreateMock(...args),
+      createStatus: (...args: any[]) => remoteCreateStatusMock(...args),
     })),
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
@@ -248,6 +263,8 @@ jest.mock("@cocalc/server/projects/rootfs-state", () => ({
 
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
+    creationHash = undefined;
+    remoteCreateStatusMock = jest.fn(async () => null);
     jest.resetModules();
     delete process.env.COCALC_SETUP_PROFILE;
     mockWorkspaceProjectRuntime = false;
@@ -321,6 +338,27 @@ describe("projects.createProject clone routing", () => {
     cloneProjectRootfsStatesMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.startsWith("ALTER TABLE projects") ||
+        sql.startsWith("SELECT pg_advisory_xact_lock")
+      )
+        return { rows: [] };
+      if (sql.startsWith("SELECT creation_request_hash")) {
+        return {
+          rows: creationHash
+            ? [
+                {
+                  creation_request_hash: creationHash,
+                  users: { [ACCOUNT_ID]: { group: "owner" } },
+                },
+              ]
+            : [],
+        };
+      }
+      if (sql.startsWith("UPDATE projects SET creation_request_hash")) {
+        creationHash = params[1];
+        return { rowCount: 1 };
+      }
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
@@ -471,6 +509,7 @@ describe("projects.createProject clone routing", () => {
     expect(remoteCreateMock).toHaveBeenCalledTimes(1);
     expect(remoteCreateMock).toHaveBeenCalledWith({
       source_bay_id: "bay-0",
+      operation_id: expect.any(String),
       options: expect.objectContaining({
         project_id: result.project_id,
         host_id: HOST_ID,
@@ -501,26 +540,16 @@ describe("projects.createProject clone routing", () => {
   it("rejects forwarded creation if the selected host belongs to another bay", async () => {
     resolveHostBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 1 });
     const { createProjectOnOwningBay } = await import("./create");
-    await expect(
-      createProjectOnOwningBay({
-        account_id: ACCOUNT_ID,
-        project_id: SOURCE_PROJECT_ID,
-        host_id: HOST_ID,
-        start: false,
-      }),
-    ).rejects.toThrow("rehome the project first");
+    await expect(createProjectOnOwningBay(creationRequest())).rejects.toThrow(
+      "rehome the project first",
+    );
     expect(remoteCreateMock).not.toHaveBeenCalled();
     expect(poolConnectMock).not.toHaveBeenCalled();
   });
 
   it("creates a forwarded project locally on the host's owning bay", async () => {
     const { createProjectOnOwningBay } = await import("./create");
-    const result = await createProjectOnOwningBay({
-      account_id: ACCOUNT_ID,
-      project_id: SOURCE_PROJECT_ID,
-      host_id: HOST_ID,
-      start: false,
-    });
+    const result = await createProjectOnOwningBay(creationRequest());
     expect(result.project_id).toBe(SOURCE_PROJECT_ID);
     const insert = queryMock.mock.calls.find(([sql]) =>
       sql.startsWith("INSERT INTO projects "),
@@ -550,6 +579,139 @@ describe("projects.createProject clone routing", () => {
     ).rejects.toThrow("no running project-host available");
     expect(poolConnectMock).not.toHaveBeenCalled();
     expect(remoteCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a caller deadline while the committed destination is still registering its host", async () => {
+    const { createProjectOnOwningBay, getProjectCreationStatus } =
+      await import("./create");
+    const { createWithReconciliation } = await import("./create-request");
+    let release!: () => void;
+    let entered!: () => void;
+    const registering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    hostControlCreateProjectMock.mockImplementation(async () => {
+      entered();
+      await held;
+    });
+    const request = creationRequest();
+    let destinationWork!: ReturnType<typeof createProjectOnOwningBay>;
+    const create = jest.fn(async () => {
+      destinationWork = createProjectOnOwningBay(request);
+      await registering;
+      // The destination outlives the source RPC deadline.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      throw new Error("408: timeout waiting for create reply");
+    });
+    const status = jest.fn(getProjectCreationStatus);
+    try {
+      const recovered = await createWithReconciliation(request, {
+        create,
+        createStatus: status,
+      });
+      expect(recovered.project_id).toBe(SOURCE_PROJECT_ID);
+      // An exact retry also returns immediately, even with the host call held.
+      const replay = await createProjectOnOwningBay(request);
+      expect(replay.project_id).toBe(SOURCE_PROJECT_ID);
+      expect(
+        queryMock.mock.calls.filter(([sql]) =>
+          sql.startsWith("INSERT INTO projects "),
+        ),
+      ).toHaveLength(1);
+      expect(appendProjectOutboxEventForProjectMock).toHaveBeenCalledTimes(1);
+      expect(hostControlCreateProjectMock).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(status).toHaveBeenCalledWith(request);
+    } finally {
+      release();
+      await destinationWork;
+    }
+  });
+
+  it("recovers a lost final reply without redoing initialization", async () => {
+    const { createProjectOnOwningBay, getProjectCreationStatus } =
+      await import("./create");
+    const { createWithReconciliation } = await import("./create-request");
+    const request = creationRequest();
+    const result = await createWithReconciliation(request, {
+      create: async (r) => {
+        await createProjectOnOwningBay(r);
+        throw new Error("reply lost");
+      },
+      createStatus: getProjectCreationStatus,
+    });
+    expect(result.project_id).toBe(SOURCE_PROJECT_ID);
+    expect(hostControlCreateProjectMock).toHaveBeenCalledTimes(1);
+    expect(initializeProjectRootfsStatesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["operation_id", "account_id", "host_id", "title"])(
+    "rejects an altered %s on a committed retry",
+    async (field) => {
+      const { createProjectOnOwningBay } = await import("./create");
+      const request = creationRequest();
+      await createProjectOnOwningBay(request);
+      const other = "a105a927-5b1d-4e63-a4d6-f0fb8a9bf252";
+      const changed =
+        field === "operation_id"
+          ? { ...request, operation_id: other }
+          : { ...request, options: { ...request.options, [field]: other } };
+      await expect(createProjectOnOwningBay(changed)).rejects.toThrow(
+        field === "operation_id" ? "invalid inter-bay" : "conflicts",
+      );
+      expect(hostControlCreateProjectMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("preserves the committed receipt when post-commit initialization fails", async () => {
+    initializeProjectRootfsStatesMock.mockRejectedValue(
+      new Error("initialization unavailable"),
+    );
+    const { createProjectOnOwningBay, getProjectCreationStatus } =
+      await import("./create");
+    const request = creationRequest();
+    await expect(createProjectOnOwningBay(request)).resolves.toMatchObject({
+      project_id: SOURCE_PROJECT_ID,
+    });
+    await expect(getProjectCreationStatus(request)).resolves.toMatchObject({
+      project_id: SOURCE_PROJECT_ID,
+    });
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.startsWith("DELETE FROM projects"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not delete an acknowledged project when all host registration attempts fail", async () => {
+    const delay = jest
+      .spyOn(require("awaiting"), "delay")
+      .mockResolvedValue(undefined);
+    hostControlCreateProjectMock.mockRejectedValue(
+      new Error("host unavailable"),
+    );
+    try {
+      const { createProjectOnOwningBay, getProjectCreationStatus } =
+        await import("./create");
+      const request = creationRequest();
+      await expect(createProjectOnOwningBay(request)).resolves.toMatchObject({
+        project_id: SOURCE_PROJECT_ID,
+      });
+      await expect(getProjectCreationStatus(request)).resolves.toMatchObject({
+        project_id: SOURCE_PROJECT_ID,
+      });
+      expect(hostControlCreateProjectMock).toHaveBeenCalledTimes(4);
+      expect(
+        queryMock.mock.calls.some(([sql]) =>
+          sql.startsWith("DELETE FROM projects"),
+        ),
+      ).toBe(false);
+    } finally {
+      delay.mockRestore();
+    }
   });
 
   it("does not forward creation when the remote host denies placement", async () => {
@@ -1229,6 +1391,7 @@ describe("projects.createProject clone routing", () => {
       expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
       expect(remoteCreateMock).toHaveBeenCalledWith({
         source_bay_id: "bay-0",
+        operation_id: expect.any(String),
         options: {
           account_id: ACCOUNT_ID,
           host_id: HOST_ID,

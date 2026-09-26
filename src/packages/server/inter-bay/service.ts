@@ -13,7 +13,10 @@ import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-li
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
-import { createProjectOnOwningBay } from "@cocalc/server/projects/create";
+import {
+  createProjectOnOwningBay,
+  getProjectCreationStatus,
+} from "@cocalc/server/projects/create";
 import {
   resolveLocalApiRelayHostUrl,
   resolveLocalProjectApiRelayTarget,
@@ -2284,7 +2287,8 @@ async function startAccountNotificationFeedService(): Promise<void> {
 async function startProjectControlStartService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectControlApi = {
-    create: async ({ options }) => await createProjectOnOwningBay(options),
+    create: async (request) => await createProjectOnOwningBay(request),
+    createStatus: async (request) => await getProjectCreationStatus(request),
     checkStartAdmission: async (opts) => {
       return await handleProjectControlCheckStartAdmission(opts);
     },
