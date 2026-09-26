@@ -64,7 +64,10 @@ import {
   type CodexThreadConfig,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
-import { movePostedMessageToAgent } from "./post-to-agent";
+import {
+  canMovePostedMessageToAgent,
+  movePostedMessageToAgent,
+} from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
@@ -2016,7 +2019,7 @@ export default function Message({
     ];
 
     if (
-      field<boolean>(message, "post_only") &&
+      canMovePostedMessageToAgent(message) &&
       showEditButton &&
       isCodexThread &&
       messageThreadId &&

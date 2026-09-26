@@ -1,4 +1,7 @@
-import { movePostedMessageToAgent } from "./post-to-agent";
+import {
+  canMovePostedMessageToAgent,
+  movePostedMessageToAgent,
+} from "./post-to-agent";
 
 test("saves the new agent message before removing the posted note", async () => {
   const calls: string[] = [];
@@ -47,7 +50,7 @@ test("does not remove the note if sending or saving fails", async () => {
   expect(
     await movePostedMessageToAgent({
       actions,
-      message: {} as any,
+      message: { post_only: true } as any,
       threadId: "thread-1",
       content: "An idea for later",
     }),
@@ -58,10 +61,37 @@ test("does not remove the note if sending or saving fails", async () => {
   await expect(
     movePostedMessageToAgent({
       actions,
-      message: {} as any,
+      message: { post_only: true } as any,
       threadId: "thread-1",
       content: "An idea for later",
     }),
   ).rejects.toThrow("save failed");
   expect(actions.deleteMessage).not.toHaveBeenCalled();
 });
+
+test.each([
+  { post_only: true, acp_attention_response: { response_id: "answer-1" } },
+  {
+    post_only: true,
+    acp_attention_response: { response_id: "answer-1" },
+    acp_guidance_delivered_at_ms: 1000,
+  },
+  { post_only: true, acp_guidance_delivered_at_ms: 1000 },
+  { post_only: false },
+])(
+  "does not offer or execute note conversion for a Q&A transcript or received message: %j",
+  async (message) => {
+    const actions = { sendChat: jest.fn(), deleteMessage: jest.fn() } as any;
+    expect(canMovePostedMessageToAgent(message as any)).toBe(false);
+    expect(
+      await movePostedMessageToAgent({
+        actions,
+        message: message as any,
+        threadId: "thread-1",
+        content: "Answer already saved",
+      }),
+    ).toBe("failed");
+    expect(actions.sendChat).not.toHaveBeenCalled();
+    expect(actions.deleteMessage).not.toHaveBeenCalled();
+  },
+);
