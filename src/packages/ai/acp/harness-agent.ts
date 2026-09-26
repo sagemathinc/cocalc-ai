@@ -169,6 +169,8 @@ export class HarnessAgent implements AcpAgent {
       });
       await publishControls();
       let finalResponse = "";
+      let lastMessageId: string | undefined;
+      let toolBoundary = false;
       if (this.interrupted)
         throw new HarnessError(
           "rejected",
@@ -178,15 +180,32 @@ export class HarnessAgent implements AcpAgent {
         harnessPrompt(request),
         async (event) => {
           if (event.type === "message") {
+            if (!event.text) return;
+            const messageId = event.messageId || undefined;
+            // ACP chunks are token deltas, not paragraphs. Prefer explicit
+            // message IDs; use tool boundaries only when an ID is unavailable.
+            const newMessage =
+              messageId && lastMessageId
+                ? messageId !== lastMessageId
+                : toolBoundary;
+            let text = event.text;
+            if (newMessage && finalResponse) {
+              const trailing = finalResponse.match(/\n*$/)![0].length;
+              const leading = text.match(/^\n*/)![0].length;
+              text = "\n".repeat(Math.max(0, 2 - trailing - leading)) + text;
+            }
+            lastMessageId =
+              messageId ?? (newMessage ? undefined : lastMessageId);
+            toolBoundary = false;
             if (
-              Buffer.byteLength(finalResponse) + Buffer.byteLength(event.text) >
+              Buffer.byteLength(finalResponse) + Buffer.byteLength(text) >
               4 * 1024 * 1024
             )
               throw Error("ACP response exceeds persistence limit");
-            finalResponse += event.text;
+            finalResponse += text;
             await request.stream({
               type: "event",
-              event: { type: "message", text: event.text, delta: true },
+              event: { type: "message", text, delta: true },
             });
           } else if (event.type === "thinking") {
             await request.stream({
@@ -194,6 +213,13 @@ export class HarnessAgent implements AcpAgent {
               event: { type: "thinking", text: event.text },
             });
           } else {
+            if (
+              event.type === "permission" ||
+              (event.type === "update" &&
+                (event.update.sessionUpdate === "tool_call" ||
+                  event.update.sessionUpdate === "tool_call_update"))
+            )
+              toolBoundary = true;
             await request.stream({
               type: "event",
               event: {

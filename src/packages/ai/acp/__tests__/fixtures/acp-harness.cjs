@@ -195,6 +195,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         /^System note: this message was queued for [^\n]+ while another turn was active, and is being sent automatically now\.\n\n/,
         "",
       );
+      if (text.startsWith("text-sequence:")) {
+        for (const update of JSON.parse(text.slice("text-sequence:".length))) {
+          send({
+            method: "session/update",
+            params: { sessionId: "fixture-session", update },
+          });
+        }
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "images") {
         update(
           JSON.stringify(

@@ -2096,6 +2096,71 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("preserves ACP paragraph boundaries in live previews and saved responses", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      runtimeKind: "acp",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+    const expected =
+      "I'll restart it detached.\n\nNow wire it into `add-collaborators.tsx`:\n\nNow the tests:";
+    const emitText = async (text: string) => {
+      await writer.handle({
+        type: "event",
+        event: { type: "message", text, delta: true },
+      });
+    };
+    await writer.handle({ type: "status", state: "running" });
+    await emitText("I'll restart it det");
+    await emitText("ached.");
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "harness",
+        source: "acp",
+        kind: "update",
+        data: {
+          sessionUpdate: "tool_call",
+          toolCallId: "inspect",
+          title: "Inspect project",
+          status: "completed",
+        },
+      },
+    });
+    await emitText("\n\nNow wire it into `add-collab");
+    await emitText("orators.tsx`:");
+    await emitText("\n\nNow the tests:");
+    await writer.waitForLivePreviewFlush();
+
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(getLiveResponseMarkdown(previewEvents)).toBe(expected);
+    expect(getLiveResponseBlocks(previewEvents)).toEqual([
+      expect.objectContaining({ kind: "agent", text: expected }),
+    ]);
+
+    await writer.handle({ type: "summary", finalResponse: expected });
+    await flush(writer);
+    await writer.waitForLivePreviewFlush();
+    expect(findLastChatSet(sets)?.history?.[0]?.content).toBe(expected);
+    expect(getLiveResponseMarkdown(flattenLivePayloads(previewPayloads))).toBe(
+      expected,
+    );
+    writer.dispose(true);
+  });
+
   it("preserves a leading delta that matches the start of an earlier update", async () => {
     const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();

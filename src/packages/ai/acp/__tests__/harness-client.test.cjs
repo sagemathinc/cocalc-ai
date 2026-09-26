@@ -596,6 +596,147 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   assert.equal(launches(), 1);
 });
 
+const textChunk = (text, messageId) => ({
+  sessionUpdate: "agent_message_chunk",
+  content: { type: "text", text },
+  ...(messageId ? { messageId } : {}),
+});
+const textTool = {
+  sessionUpdate: "tool_call",
+  toolCallId: "inspect",
+  title: "Inspect project",
+  status: "in_progress",
+};
+const textToolDone = {
+  sessionUpdate: "tool_call_update",
+  toolCallId: "inspect",
+  status: "completed",
+};
+
+for (const [name, updates, expected] of [
+  [
+    "Claude messages around tools",
+    [
+      textChunk("I'll restart it det", "one"),
+      textChunk("ached.", "one"),
+      textTool,
+      textToolDone,
+      textChunk("Now the implementation.", "two"),
+      textChunk(" First, check utilities:", "two"),
+      textTool,
+      textToolDone,
+      textChunk("Writing the new module:", "three"),
+    ],
+    "I'll restart it detached.\n\nNow the implementation. First, check utilities:\n\nWriting the new module:",
+  ],
+  [
+    "distinct IDs without tools",
+    [textChunk("First.", "one"), textChunk("Second.", "two")],
+    "First.\n\nSecond.",
+  ],
+  [
+    "same-ID tokens and markdown with interleaved tool updates",
+    [
+      textChunk("`add-collab", "one"),
+      textToolDone,
+      textChunk("orators.tsx`", "one"),
+    ],
+    "`add-collaborators.tsx`",
+  ],
+  [
+    "anonymous chunks stay verbatim",
+    [textChunk("```ts\n  con"), textChunk("st x = 1;\n"), textChunk("```\n")],
+    "```ts\n  const x = 1;\n```\n",
+  ],
+  [
+    "anonymous messages separated by tool calls",
+    [
+      textChunk("First:"),
+      textTool,
+      textToolDone,
+      textChunk("Now "),
+      textChunk("tests:"),
+    ],
+    "First:\n\nNow tests:",
+  ],
+  [
+    "tools before the first message do not add leading space",
+    [textTool, textToolDone, textChunk("First.")],
+    "First.",
+  ],
+  [
+    "empty chunks do not consume boundaries or change IDs",
+    [
+      textChunk("First.", "one"),
+      textChunk("", "two"),
+      textChunk(" Still first.", "one"),
+      textTool,
+      textChunk(""),
+      textChunk("Next."),
+    ],
+    "First. Still first.\n\nNext.",
+  ],
+  [
+    "thinking does not split message tokens",
+    [
+      textChunk("hel"),
+      {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "thinking" },
+        messageId: "thought",
+      },
+      textChunk("lo"),
+    ],
+    "hello",
+  ],
+  [
+    "config updates do not split message tokens",
+    [
+      textChunk("hel"),
+      { sessionUpdate: "config_option_update", configOptions: [] },
+      textChunk("lo"),
+    ],
+    "hello",
+  ],
+  [
+    "existing paragraph breaks are not doubled",
+    [textChunk("First.\n", "one"), textTool, textChunk("\nNext.", "two")],
+    "First.\n\nNext.",
+  ],
+  [
+    "only missing newlines are inserted and indentation survives",
+    [textChunk("First.\n", "one"), textChunk("    code", "two")],
+    "First.\n\n    code",
+  ],
+  [
+    "trailing tool events add no trailing whitespace",
+    [textChunk("Done.", "one"), textToolDone],
+    "Done.",
+  ],
+]) {
+  test(`adapter preserves text boundaries: ${name}`, async (t) => {
+    const { agent, request, events } = adapter(t);
+    // The retained session must reset message assembly for each prompt.
+    for (let turn = 0; turn < 2; turn++) {
+      const start = events.length;
+      await agent.evaluate({
+        ...request,
+        prompt: `text-sequence:${JSON.stringify(updates)}`,
+      });
+      const streamed = events
+        .slice(start)
+        .filter((event) => event.event?.type === "message")
+        .map((event) => {
+          assert.equal(event.event.delta, true);
+          return event.event.text;
+        })
+        .join("");
+      assert.equal(streamed, expected);
+      assert.equal(events.at(-1).finalResponse, expected);
+    }
+  });
+}
+
 test("harness sends pasted images as ACP image blocks", async (t) => {
   const { agent, request, events } = adapter(t);
   await agent.evaluate({
