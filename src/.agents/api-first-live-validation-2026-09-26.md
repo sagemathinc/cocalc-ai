@@ -73,12 +73,48 @@ This is not proof that running project processes or all installed CLI daemons
 have reloaded their tools; the fixture uses the compiled CLI modules. The user's
 earlier successful fresh-agent-turn test is separate evidence for that workflow.
 
+### Membership loss and restoration
+
+Two disposable projects were created through the ordinary API, without starting
+their runtimes. The first stayed on bay-0. The second was rehomed to bay-1 while
+the account and its keys remained on bay-0 (rehome operation
+`33352ed1-4172-40d5-8c6e-d5a72f08c458` completed successfully).
+
+For each project, the fixture changed only its requesting account's membership
+in the owning database, exercising the installed membership-loss trigger. It
+called `projects.getProjectCreated` with the scoped key over HTTP through all
+three bays after each transition:
+
+| State                                          | Result through every bay |
+| ---------------------------------------------- | ------------------------ |
+| Original key, original membership              | Allowed                  |
+| Membership removed                             | Denied                   |
+| Membership restored, original key              | Denied                   |
+| Revocation maintenance settled, original key   | Denied                   |
+| New human-issued key after maintenance settled | Allowed                  |
+
+Both owning databases settled the pending barrier with a string-valued issuance
+cutoff. The bay-1 case exercised the project-owner to account-home watermark
+lookup. Membership was restored, all fixture keys were deleted, and both project
+hard-delete operations completed successfully. Fixture project IDs were
+`96f5a1ae-3a57-4682-9b00-8f33cb378472` and
+`874e4d59-0697-4062-8166-7ce5293b6d0b`.
+
+This proves ordinary HTTP project admission and a fresh-key grant after loss;
+it does not prove editing an existing key to regrant, managed source-turn
+invalidation, or revocation of an established project stream. Membership was
+mutated directly on disposable fixtures, so collaborator UI behavior was not
+tested. The first harness invocation failed to resolve its `pg` dependency
+before creating any resources; it was corrected to resolve from the database
+workspace.
+
 ## Still unverified or incomplete
 
-- Live membership removal/re-addition, source-turn invalidation, and explicit
-  human-approved regrant behavior.
-- Home outage, migration, stale directory faults, and clustered RPC-interest
-  withdrawal; no claims about these follow from ordinary three-bay connectivity.
+- Managed source-turn invalidation, membership loss during established project
+  sessions, and human-approved regrant by editing an existing key.
+- Home outage, account migration, migration with active keys/sessions, stale
+  directory faults, and clustered RPC-interest withdrawal. The empty-project
+  rehome above does not establish those behaviors.
 - Full-runtime CLI command parity, long-running sync/Jupyter/terminal sessions,
   cancellation/crash races, and the entire manual/managed acceptance matrix.
 - Historical database upgrades beyond this dev stack's successful startup.
