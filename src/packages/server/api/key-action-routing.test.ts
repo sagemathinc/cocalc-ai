@@ -39,7 +39,6 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 const principal = {
   account_id: "11111111-1111-4111-8111-111111111111",
   key_id: "requester-key",
-  api_key_id: 1,
   scope_revision: 2,
   auth_method: "api_key" as const,
 };

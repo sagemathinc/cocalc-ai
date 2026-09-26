@@ -20,9 +20,9 @@ export interface ApiKeyActionRequest {
 }
 
 // Supplied only by the authenticated API gateway over trusted bay transport.
+// Numeric database row ids are bay-local and are not part of this identity.
 export interface ApiKeyActionPrincipal {
   account_id: string;
-  api_key_id: number;
   key_id: string;
   scope_revision?: number;
   auth_method: "api_key";

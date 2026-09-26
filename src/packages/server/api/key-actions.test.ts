@@ -129,6 +129,15 @@ describeDb("manual-key revocation action authority", () => {
     });
   });
 
+  it("accepts remotely authenticated stable identity without a local row id", async () => {
+    const remote: ApiKeyPrincipal = { ...principal, api_key_id: -1 };
+    const review = await requestApiKeyActionLocal(remote, input());
+    expect(review.binding.requesting_key_id).toBe(principal.key_id);
+    expect(review.binding.requesting_scope_revision).toBe(
+      principal.scope_revision,
+    );
+  });
+
   it("lists pending unexpired reviews only after human authentication", async () => {
     const expired = await requestApiKeyActionLocal(principal, input());
     await pool.query(
@@ -181,8 +190,11 @@ describeDb("manual-key revocation action authority", () => {
 
   it("rejects managed targets and identity substitution", async () => {
     await expect(
-      requestApiKeyActionLocal({ ...principal, api_key_id: 99 }, input()),
-    ).rejects.toThrow("identity changed");
+      requestApiKeyActionLocal(
+        { ...principal, key_id: "missing-key" },
+        input(),
+      ),
+    ).rejects.toThrow("unavailable");
     await pool.query(
       "INSERT INTO agent_cocalc_connector_turns VALUES('target-key')",
     );

@@ -150,8 +150,6 @@ export async function requestApiKeyActionLocal(
   const store = new ApiKeyActionStore(pool);
   await store.ensureSchema();
   const requester = await keyRow(pool, principal.account_id, principal.key_id);
-  if (requester.id !== principal.api_key_id)
-    throw new Error("requesting API key identity changed");
   assertRequester(requester, principal.scope_revision!);
   const target = await keyRow(
     pool,

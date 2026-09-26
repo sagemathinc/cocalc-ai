@@ -37,7 +37,6 @@ export async function requestApiKeyAction(
   // Forward only authenticated identity, never bearer secrets or client scopes.
   const identity: ApiKeyActionPrincipal = {
     account_id: principal.account_id,
-    api_key_id: principal.api_key_id,
     key_id: principal.key_id,
     scope_revision: principal.scope_revision,
     auth_method: principal.auth_method,
