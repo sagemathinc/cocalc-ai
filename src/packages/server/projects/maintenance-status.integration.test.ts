@@ -281,7 +281,12 @@ describe("project recovery capacity accounting", () => {
   it("counts a due obligation once across retries and report replay", async () => {
     const host_id = uuid();
     const project_id = uuid();
-    const firstDue = new Date(Date.now() - 3 * 60 * 60_000);
+    // The daily rollup is keyed by each due time's UTC date, so keep both
+    // due times (firstDue and secondDue) on one UTC day.
+    const threeHoursAgo = Date.now() - 3 * 60 * 60_000;
+    const secondDueDay = new Date(threeHoursAgo + 60 * 60_000);
+    secondDueDay.setUTCHours(0, 0, 0, 0);
+    const firstDue = new Date(Math.max(threeHoursAgo, secondDueDay.getTime()));
     const firstFailure = new Date(firstDue.getTime() + 5 * 60_000);
     const firstSuccess = new Date(firstDue.getTime() + 20 * 60_000);
     const secondDue = new Date(firstDue.getTime() + 60 * 60_000);
