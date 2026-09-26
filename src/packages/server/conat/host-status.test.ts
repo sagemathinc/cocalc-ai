@@ -396,24 +396,131 @@ describe("listHostProjectMaintenanceSchedules", () => {
     );
   });
 
-  it("defers a page if the owner's entitlement cannot be resolved", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
-      .mockResolvedValueOnce({
-        rows: [
-          { project_id: "proj-1", owner_account_id: "remote-owner" },
-          { project_id: "proj-2", owner_account_id: "local-owner" },
-        ],
+  it.each(["account not found", "home bay unavailable"])(
+    "keeps an unresolved owner in the page without guessing retention: %s",
+    async (error) => {
+      const snapshots = { frequent: 12, disabled: false };
+      const backups = { daily: 8, disabled: false };
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              project_id: "proj-1",
+              owner_account_id: "remote-owner",
+              snapshots,
+              backups,
+            },
+            { project_id: "proj-2", owner_account_id: "local-owner" },
+          ],
+        });
+      resolveRuntimeMembershipMock.mockImplementation(async (account_id) => {
+        if (account_id === "remote-owner") throw Error(error);
+        return { class: "free", source: "free" };
       });
-    resolveRuntimeMembershipMock.mockImplementation(async (account_id) => {
-      if (account_id === "remote-owner") throw Error("home bay unavailable");
-      return { class: "free", source: "free" };
-    });
+      const { listHostProjectMaintenanceSchedules } =
+        await import("./host-status");
+      const rows = await listHostProjectMaintenanceSchedules({
+        host_id: "host-1",
+        limit: 2,
+      });
+      expect(rows.map(({ project_id }) => project_id)).toEqual([
+        "proj-1",
+        "proj-2",
+      ]);
+      expect(rows[0]).toMatchObject({
+        storage_service_class: "unclassified",
+        snapshots: { frequent: 12, disabled: true },
+        backups: { daily: 8, disabled: true },
+        max_snapshots_per_project: null,
+        max_backups_per_project: null,
+      });
+      expect(rows[1]).toMatchObject({
+        snapshots: null,
+        backups: null,
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
+      });
+      expect(snapshots.disabled).toBe(false);
+      expect(backups.disabled).toBe(false);
+      expect(queryMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["account not found", "deleted account", "home bay unavailable"])(
+    "allows maintenance with verified owner limits when a course payer is unresolved: %s",
+    async (error) => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: "host-1" }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              project_id: "proj-1",
+              owner_account_id: "owner-1",
+              course: { type: "student", account_id: "missing-sponsor" },
+            },
+            { project_id: "proj-2", owner_account_id: "owner-1" },
+          ],
+        });
+      resolveRuntimeMembershipMock.mockImplementation(async (id) => {
+        if (id === "missing-sponsor") throw Error(error);
+        return { class: "member" };
+      });
+      const { listHostProjectMaintenanceSchedules } =
+        await import("./host-status");
+      const rows = await listHostProjectMaintenanceSchedules({
+        host_id: "host-1",
+        limit: 2,
+      });
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        storage_account_id: "missing-sponsor",
+        storage_service_class: "unclassified",
+        storage_priority: 0,
+        snapshots: null,
+        backups: null,
+        max_snapshots_per_project: 8,
+        max_backups_per_project: 5,
+      });
+      expect(rows[1].storage_service_class).toBe("paying");
+      expect(resolveRuntimeMembershipMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("retries an unresolved owner on the next inventory without changing stored schedules", async () => {
+    const project = {
+      project_id: "proj-1",
+      owner_account_id: "owner-1",
+      snapshots: { daily: 7 },
+      backups: { daily: 4 },
+    };
+    queryMock.mockImplementation(async (sql) => ({
+      rows: sql.includes("SELECT id FROM project_hosts")
+        ? [{ id: "host-1" }]
+        : [project],
+    }));
+    resolveRuntimeMembershipMock
+      .mockRejectedValueOnce(Error("home bay unavailable"))
+      .mockResolvedValue({ class: "member" });
     const { listHostProjectMaintenanceSchedules } =
       await import("./host-status");
-    await expect(
-      listHostProjectMaintenanceSchedules({ host_id: "host-1" }),
-    ).rejects.toThrow("home bay unavailable");
+    const [blocked] = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    const [recovered] = await listHostProjectMaintenanceSchedules({
+      host_id: "host-1",
+    });
+    expect(blocked.snapshots?.disabled).toBe(true);
+    expect(blocked.backups?.disabled).toBe(true);
+    expect(recovered).toMatchObject({
+      snapshots: project.snapshots,
+      backups: project.backups,
+      storage_service_class: "paying",
+      max_snapshots_per_project: 8,
+      max_backups_per_project: 5,
+    });
+    expect(recovered.snapshots?.disabled).toBeUndefined();
+    expect(recovered.backups?.disabled).toBeUndefined();
   });
 
   it("refreshes funding class when a project's storage payer changes", async () => {

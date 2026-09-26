@@ -23,6 +23,10 @@ import {
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveRuntimeMembership } from "@cocalc/server/membership/runtime-resolution";
 import {
+  DEFAULT_SNAPSHOT_COUNTS,
+  DEFAULT_BACKUP_COUNTS,
+} from "@cocalc/util/consts/snapshots";
+import {
   storageFundingAccountId,
   storageServiceClassFromMembership,
 } from "@cocalc/server/membership/storage-service-class";
@@ -215,24 +219,32 @@ export async function listHostProjectMaintenanceSchedules({
     string,
     { service_class: "paying" | "free"; priority: number }
   >();
-  // An unresolved owner must not fall back to a smaller retention limit.
-  // Let the host retry this page with its bounded cached ownership lease.
+  // Resolve independently: a stale course payer must not poison the inventory
+  // for every project on this host. Keep account-home routing authoritative.
   for (let offset = 0; offset < accountIds.length; offset += 16) {
     await Promise.all(
       accountIds.slice(offset, offset + 16).map(async (account_id) => {
-        const resolution = await resolveRuntimeMembership(account_id);
-        const limits = getEffectiveMembershipUsageLimits(resolution);
-        limitsByOwner.set(account_id, {
-          max_snapshots_per_project:
-            limits.max_snapshots_per_project ??
-            DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
-          max_backups_per_project:
-            limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
-        });
-        serviceByAccount.set(account_id, {
-          service_class: storageServiceClassFromMembership(resolution),
-          priority: limits.shared_compute_priority ?? 0,
-        });
+        try {
+          const resolution = await resolveRuntimeMembership(account_id);
+          const limits = getEffectiveMembershipUsageLimits(resolution);
+          limitsByOwner.set(account_id, {
+            max_snapshots_per_project:
+              limits.max_snapshots_per_project ??
+              DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
+            max_backups_per_project:
+              limits.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+          });
+          serviceByAccount.set(account_id, {
+            service_class: storageServiceClassFromMembership(resolution),
+            priority: limits.shared_compute_priority ?? 0,
+          });
+        } catch (err) {
+          logger.warn("maintenance inventory account resolution failed", {
+            host_id,
+            account_id,
+            err: `${err}`,
+          });
+        }
       }),
     );
   }
@@ -243,6 +255,17 @@ export async function listHostProjectMaintenanceSchedules({
     // here would silently alter the product's storage entitlement policy.
     const ownerId = `${row.owner_account_id ?? ""}`.trim();
     const limits = ownerId ? limitsByOwner.get(ownerId) : undefined;
+    const unresolvedOwner = Boolean(ownerId && !limits);
+    // Preserve the row/cursor, but fail closed for this pass when retention
+    // entitlements are unknown. Existing hosts honor disabled schedules. These
+    // are response-only overrides: no stored setting or success status changes,
+    // and the next inventory request resolves the owner again.
+    const snapshots = unresolvedOwner
+      ? { ...DEFAULT_SNAPSHOT_COUNTS, ...row.snapshots, disabled: true }
+      : (row.snapshots ?? null);
+    const backups = unresolvedOwner
+      ? { ...DEFAULT_BACKUP_COUNTS, ...row.backups, disabled: true }
+      : (row.backups ?? null);
     const service = storage_account_id
       ? serviceByAccount.get(storage_account_id)
       : undefined;
@@ -257,13 +280,16 @@ export async function listHostProjectMaintenanceSchedules({
           : row.last_edited instanceof Date
             ? row.last_edited.toISOString()
             : `${row.last_edited}`,
-      snapshots: row.snapshots ?? null,
-      snapshot_schedule_revision: snapshotScheduleRevision(row.snapshots),
-      backups: row.backups ?? null,
-      max_snapshots_per_project:
-        limits?.max_snapshots_per_project ?? DEFAULT_MAX_SNAPSHOTS_PER_PROJECT,
-      max_backups_per_project:
-        limits?.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT,
+      snapshots,
+      snapshot_schedule_revision: snapshotScheduleRevision(snapshots),
+      backups,
+      max_snapshots_per_project: unresolvedOwner
+        ? null
+        : (limits?.max_snapshots_per_project ??
+          DEFAULT_MAX_SNAPSHOTS_PER_PROJECT),
+      max_backups_per_project: unresolvedOwner
+        ? null
+        : (limits?.max_backups_per_project ?? DEFAULT_MAX_BACKUPS_PER_PROJECT),
     };
     if (row.last_changed != null) {
       schedule.last_changed =
