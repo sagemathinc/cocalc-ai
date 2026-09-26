@@ -26,8 +26,9 @@ This is development evidence, not production approval or completion of phases 1-
 Ran `./scripts/dev/upgrade-all.sh` at
 `d9d5a6805ce914efffec4784b67630928f8b3056`. The full workspace build, production
 frontend, project-host/project bundles, and amd64/arm64 tools bundles passed.
-All three dev hubs restarted. The host-upgrade waiter subsequently timed out;
-this rollout is **not verified complete**.
+All three dev hubs restarted. The host-upgrade waiter subsequently timed out,
+but all three original operations later reached `succeeded`, verified directly
+in the authoritative development database. No replacement upgrades were submitted.
 
 The existing operation IDs are:
 
@@ -38,17 +39,26 @@ The existing operation IDs are:
 My host's bootstrap status reported the project-host bundle
 `20260926T221155Z-d9d5a6805ce9`, project bundle `1790460749814`, and tools bundle
 `1790460811099` installed and aligned. Deployment status also reported the new
-current version for its managed components. These observations do not replace
-the missing terminal operation results or prove every running project adopted
-the new bundles.
+current version for its managed components. Terminal operation timestamps were
+22:34:32 UTC for My host (attempt 2), 22:33:47 for host-2 (attempt 2), and
+22:34:04 for host3 (attempt 1). These observations do not prove every running
+project adopted the new bundles.
 
 At 22:25:43 UTC the primary hub fail-stopped after a billing-authority lease
 query timed out. Its endpoint refused connections; the two attached bays stayed
 running. `pnpm -s dev:hub:start` recovered the primary without restarting those
-bays. Subsequent operation queries still returned the first two operations as
-running at component verification and the third as queued. No replacement
-upgrade or operation cancellation was submitted. The cause of the lease-query
-timeout and final rollout state remain to be investigated.
+bays. The recovered primary failed again at 22:35:11 UTC with the same timeout,
+after the upgrade operations had succeeded. A second recovery started only the
+stopped primary; the attached bays remained running. The cause of the timeout
+remains unresolved; successful upgrades do not establish hub stability.
+
+A six-minute read-only PostgreSQL observer spanning the latest primary recovery
+finished without detecting another outage after the hub became reachable. It
+sampled two brief lease-row lock waits (20 and 50 ms query ages); the blocking
+sessions were waiting on WAL I/O. These samples do not establish the cause of the
+2.5-second query timeouts. The observer deduplicates repeated wait signatures,
+so its two reports are not a count of every wait or a maximum-latency measure.
+No lease timeout, fencing behavior, or billing records were changed.
 
 Before that hub shutdown, an isolated probe ran the installed CLI at
 `/opt/cocalc/bin/node /opt/cocalc/bin2/cocalc-cli.js` inside the test project.
@@ -72,8 +82,10 @@ also cleaned up their resources; they are not additional implementation failures
 This establishes the listed installed-CLI workflows, not the entire ordinary
 CLI command matrix, daemon isolation, exact installed bundle revision, managed
 turn issuance, directory-root restrictions, or long-lived interactive sessions.
-The probe ran while rollout verification was pending, so it is not a clean
-post-rollout acceptance run.
+The same isolated probe was subsequently rerun successfully after all three
+upgrade operations succeeded and the second primary-hub recovery completed.
+Both temporary keys and the fixture directory were cleaned up. This is a
+post-upgrade pass for the enumerated commands, not full deployment acceptance.
 
 ### Established Hub sockets
 
