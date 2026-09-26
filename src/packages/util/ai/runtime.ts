@@ -66,6 +66,8 @@ export type AcpHarnessCredential =
       provider: "anthropic";
       mode: "account-subscription";
       credentialId: string;
+      /** Account-local preference; omitted/true keeps provider connectors enabled. */
+      claudeAiConnectors?: boolean;
     };
 
 export function parseAcpHarnessCredential(
@@ -117,8 +119,19 @@ export function parseAcpHarnessCredential(
   }
   if (
     Object.keys(obj).some(
-      (key) => !["version", "provider", "mode", "credentialId"].includes(key),
+      (key) =>
+        ![
+          "version",
+          "provider",
+          "mode",
+          "credentialId",
+          ...(obj.mode === "account-subscription"
+            ? ["claudeAiConnectors"]
+            : []),
+        ].includes(key),
     ) ||
+    (obj.claudeAiConnectors !== undefined &&
+      typeof obj.claudeAiConnectors !== "boolean") ||
     typeof obj.credentialId !== "string" ||
     !isValidUUID(obj.credentialId)
   ) {
@@ -129,6 +142,9 @@ export function parseAcpHarnessCredential(
     provider: "anthropic",
     mode: obj.mode,
     credentialId: obj.credentialId,
+    ...(obj.mode === "account-subscription" && obj.claudeAiConnectors === false
+      ? { claudeAiConnectors: false }
+      : {}),
   };
 }
 

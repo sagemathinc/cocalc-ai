@@ -1,4 +1,5 @@
 import type { AcpEvaluateRequest } from "./types";
+import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 
 /** Retained harness processes cannot receive updated per-turn environment values. */
 export function harnessPrompt(
@@ -25,6 +26,7 @@ export function harnessPrompt(
 This turn runs inside a CoCalc project. The installed CoCalc CLI is:
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"
 ${projectGuidance}
+${request.harness_credential?.mode === "account-subscription" ? CLAUDE_PROJECT_JOB_GUIDANCE : ""}
 Complete foreground work before ending the turn. CoCalc cannot wake a completed turn when a background command finishes; do not promise a later notification.
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.
 Current turn publication context (non-secret metadata, not an authorization grant):

@@ -346,14 +346,23 @@ test("subscription status accepts only an explicit Claude account identity", () 
 });
 
 test("subscription policy exposes only mediated project tools and refuses unknown or API billing", async (t) => {
-  for (const [flag, permitted] of [
-    ["--subscription-status", true],
-    ["--api-key-status", false],
-    ["--no-status", false],
+  for (const [flag, permitted, resume] of [
+    ["--subscription-status", true, false],
+    ["--api-key-status", false, false],
+    ["--no-status", false, false],
+    ["--subscription-status", true, true],
+    ["--api-key-status", false, true],
+    ["--no-status", false, true],
   ]) {
     const child = spawn(
       process.execPath,
-      [...profile.args, "--claude-adapter", "--expect-skill", flag],
+      [
+        ...profile.args,
+        "--claude-adapter",
+        "--expect-skill",
+        "--versioned-tools",
+        flag,
+      ],
       {
         env: {},
         stdio: "pipe",
@@ -367,6 +376,7 @@ test("subscription policy exposes only mediated project tools and refuses unknow
         profile,
       },
       async () => ({
+        projectToolServerName: "cocalc_project_fixture_v2",
         systemPromptAppend:
           "CoCalc skill fixture: use project_exec for CLI commands.",
         stdin: child.stdin,
@@ -383,7 +393,7 @@ test("subscription policy exposes only mediated project tools and refuses unknow
       "claude-subscription-controller",
     );
     t.after(() => client.dispose());
-    await client.open();
+    await client.open(resume ? "fixture-session" : undefined);
     const events = [];
     if (permitted) {
       await client.prompt("hello", async (event) => events.push(event));
@@ -1167,6 +1177,22 @@ test("harness context preserves user input and does not invent missing attributi
   assert.ok(prompt.includes("not an authorization grant"));
   assert.ok(prompt.includes("cannot wake a completed turn"));
   assert.ok(prompt.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
+  const subscriptionPrompt = harnessPrompt({
+    ...request,
+    harness_credential: { mode: "account-subscription" },
+  });
+  for (const text of [
+    "managed jobs",
+    "yield_time_ms",
+    "timeout_ms",
+    "request_id",
+    "project_exec_wait",
+    "cocalc_project_",
+    "setsid",
+  ]) {
+    assert.ok(subscriptionPrompt.includes(text), text);
+  }
+  assert.ok(!prompt.includes("Project commands are managed jobs"));
   assert.ok(
     !harnessPrompt({
       ...request,

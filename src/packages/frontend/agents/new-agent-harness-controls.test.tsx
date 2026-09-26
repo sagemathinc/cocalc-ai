@@ -75,6 +75,57 @@ beforeEach(() => {
   jest.mocked(discoverNewAgentHarness).mockResolvedValue(result as any);
 });
 
+test("loading is not missing configuration and the composer keeps emails private", async () => {
+  const { rerender } = render(
+    <NewAgentClaudeControls {...props} credentialsLoaded={false} />,
+  );
+  expect(screen.getByText("Loading model")).toBeTruthy();
+  const settings = screen.getByRole("button", {
+    name: "Configure Claude Code",
+  });
+  expect(settings.textContent).toBe("");
+  expect(settings.className).not.toContain("ant-btn-primary");
+  expect(discoverNewAgentHarness).not.toHaveBeenCalled();
+  const subscription = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-subscription",
+    credentialId: "00000000-0000-4000-8000-000000000001",
+  } as const;
+  rerender(
+    <NewAgentClaudeControls
+      {...props}
+      credential={subscription}
+      credentials={[
+        {
+          id: subscription.credentialId,
+          kind: "claude-subscription-home-v1",
+          metadata: {
+            plan: "pro",
+            cocalc_provider_identity: "subscriber@example.com",
+          },
+        } as any,
+      ]}
+    />,
+  );
+  await screen.findByRole("combobox", { name: "Claude Code Model" });
+  expect(screen.getByText("Claude Pro - subscriber")).toBeTruthy();
+  expect(document.body.textContent).not.toContain("subscriber@example.com");
+  const user = userEvent.setup();
+  settings.focus();
+  await user.keyboard("{Enter}");
+  const connectors = screen.getByRole("checkbox", {
+    name: "Use my claude.ai connectors",
+  });
+  expect((connectors as HTMLInputElement).checked).toBe(true);
+  connectors.focus();
+  await user.keyboard(" ");
+  expect(props.onCredential).toHaveBeenCalledWith({
+    ...subscription,
+    claudeAiConnectors: false,
+  });
+});
+
 test("new Claude agent exposes real model/effort controls and keeps both first-turn choices", async () => {
   let selected: HarnessSessionSettings = {};
   function Composer() {
@@ -119,8 +170,8 @@ test("Claude setup opens from the keyboard, contains connection details, and res
   render(<NewAgentClaudeControls {...props} />);
   await screen.findByRole("combobox", { name: "Claude Code Model" });
   const user = userEvent.setup();
-  await user.tab();
   const trigger = screen.getByRole("button", { name: "Configure Claude Code" });
+  trigger.focus();
   expect(document.activeElement).toBe(trigger);
   await user.keyboard("{Enter}");
   await screen.findByRole("dialog", { name: "Configure Claude Code" });
@@ -154,11 +205,11 @@ test("Claude setup opens from the keyboard, contains connection details, and res
   expect(document.activeElement).toBe(trigger);
 });
 
-test("unconfigured Claude is prominent and does not discover before a project is selected", async () => {
+test("Claude does not claim missing configuration before a project is selected", async () => {
   render(<NewAgentClaudeControls {...props} projectId={undefined} />);
   expect(discoverNewAgentHarness).not.toHaveBeenCalled();
   const trigger = screen.getByRole("button", { name: "Configure Claude Code" });
-  expect(trigger.className).toContain("ant-btn-primary");
+  expect(trigger.className).not.toContain("ant-btn-primary");
   await userEvent.setup().click(trigger);
   expect(screen.getByText(/Select a project before connecting/)).toBeTruthy();
 });

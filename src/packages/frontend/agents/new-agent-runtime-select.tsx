@@ -25,7 +25,7 @@ export function NewAgentRuntimeSelect({
       style={{ minWidth: 0, maxWidth: "100%" }}
       options={[
         { value: "codex-native", label: "Codex" },
-        { value: "claude-code", label: "Claude Code (preview)" },
+        { value: "claude-code", label: "Claude" },
         { value: "acp", label: "Custom ACP harness (experimental)" },
       ]}
       onChange={onChange}

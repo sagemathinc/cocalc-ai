@@ -34,6 +34,10 @@ import type {
   HarnessSessionSettings,
 } from "@cocalc/util/ai/harness-controls";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
+import {
+  isSupportedClaudeSubscriptionPlan,
+  CLAUDE_SUBSCRIPTION_PLAN_ERROR,
+} from "@cocalc/util/ai/claude-subscription-plan";
 
 function unsupportedCallback(method: string): () => Promise<never> {
   return async () => {
@@ -44,6 +48,7 @@ function unsupportedCallback(method: string): () => Promise<never> {
 export interface HarnessProcess {
   /** Trusted launcher-owned instructions, never a user-supplied session option. */
   systemPromptAppend?: string;
+  projectToolServerName?: string;
   stdout: Readable;
   stdin: Writable;
   stderr: Readable;
@@ -123,9 +128,7 @@ export function isClaudeSubscriptionStatus(value: unknown): boolean {
   if (!account || typeof account !== "object" || Array.isArray(account))
     return false;
   const plan = (account as Record<string, unknown>).plan;
-  return (
-    typeof plan === "string" && /^(?:claude\s+)?(?:pro|max)(?:\s|$)/i.test(plan)
-  );
+  return isSupportedClaudeSubscriptionPlan(plan);
 }
 
 export class HarnessError extends Error {
@@ -447,7 +450,7 @@ export class AcpHarnessClient {
           this.sessionPolicy === "claude-subscription-controller"
             ? [
                 {
-                  name: "cocalc_project",
+                  name: this.process.projectToolServerName ?? "cocalc_project",
                   command: "/opt/cocalc/bin/node",
                   args: ["/run/cocalc/agent-tools/bridge.cjs"],
                   env: [],
@@ -513,7 +516,7 @@ export class AcpHarnessClient {
     )
       throw new HarnessError(
         "rejected",
-        "Claude subscription billing identity was not verified",
+        `Claude subscription billing identity was not verified. ${CLAUDE_SUBSCRIPTION_PLAN_ERROR}`,
       );
     if (
       typeof text !== "string" ||

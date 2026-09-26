@@ -18,6 +18,30 @@ test("controller uses the same normalized image cache key as project startup", (
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
 });
 
+test.each([undefined, true, false])(
+  "connector preference %s preserves explicit project tools",
+  (claudeAiConnectors) => {
+    const args = claudeSubscriptionContainerArgs({
+      name: "connectors",
+      projectId: "project",
+      owner: "owner",
+      home: "/auth",
+      rootfs: "/rootfs",
+      managedHarnesses: "/harnesses",
+      nodeMounts: {},
+      uid: 1000,
+      gid: 1000,
+      toolBridgeDirectory: "/private-tools",
+      claudeAiConnectors,
+    });
+    expect(args.includes("ENABLE_CLAUDEAI_MCP_SERVERS=false")).toBe(
+      claudeAiConnectors === false,
+    );
+    expect(args).toContain("mount:/private-tools:/run/cocalc/agent-tools:true");
+    expect(args).toContain("--network=slirp4netns");
+  },
+);
+
 test("usage controller cannot mount project tools or transcripts even when provided", () => {
   const args = claudeSubscriptionContainerArgs({
     name: "usage",

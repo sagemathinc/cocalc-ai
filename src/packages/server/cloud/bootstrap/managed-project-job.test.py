@@ -27,6 +27,15 @@ def helper():
 
 
 class ManagedJobTests(unittest.TestCase):
+    def test_leftover_diagnostic_ignores_dead_processes_and_unreadable_scopes(self):
+        m = helper()
+        with tempfile.TemporaryDirectory() as directory:
+            scope = Path(directory)
+            self.assertEqual(m.live_scope_processes(scope), 0)
+            (scope / "cgroup.procs").write_text("10\n11\n12\n")
+            with mock.patch.object(m, "identity", side_effect=["123", ProcessLookupError(), FileNotFoundError()]):
+                self.assertEqual(m.live_scope_processes(scope), 1)
+
     def test_reconciliation_preserves_managed_cgroups(self):
         source = inspect.getsource(bootstrap.install_privileged_wrappers)
         functions = []

@@ -34,10 +34,13 @@ test("new agents list subscriptions and retain the selected billing source", () 
     { value: "project-secret", label: "Project secret" },
     {
       value: "account-subscription:subscription-1",
-      label: "Claude pro - subscriber@example.com",
+      label: "Claude Pro - subscriber@example.com",
     },
     { value: "account-api-key:key-1", label: "Backup key" },
   ]);
+  expect(
+    newAgentClaudeCredentialOptions([subscription] as any, true)[1].label,
+  ).toBe("Claude Pro - subscriber");
   expect(
     newAgentClaudeCredentialValue({
       version: 1,

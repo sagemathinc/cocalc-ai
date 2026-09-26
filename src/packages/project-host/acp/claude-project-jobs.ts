@@ -39,6 +39,7 @@ interface Job {
   done: Promise<void>;
 }
 const DEFAULT_TIMEOUT = 3_600_000;
+const DEFAULT_WAIT = 10_000;
 const MAX_TIMEOUT = 86_400_000;
 const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
@@ -121,7 +122,7 @@ export class ClaudeProjectJobs {
       throw Error("Invalid project command");
     const timeoutMs = integer(args.timeout_ms, DEFAULT_TIMEOUT, MAX_TIMEOUT);
     if (!timeoutMs) throw Error("Command timeout must be positive");
-    const waitMs = integer(args.yield_time_ms, 1000, 30_000);
+    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, 30_000);
     const fingerprint = createHash("sha256")
       .update(JSON.stringify([script, cwd, timeoutMs]))
       .digest("hex");
@@ -133,14 +134,11 @@ export class ClaudeProjectJobs {
           throw Error(
             "Project request ID was already used with different command options",
           );
-        return this.wait(
-          {
-            job_id: previous.jobId,
-            cursor: 0,
-            yield_time_ms: waitMs,
-          },
-          true,
-        );
+        return this.wait({
+          job_id: previous.jobId,
+          cursor: 0,
+          yield_time_ms: waitMs,
+        });
       }
       if (this.requests.size >= 1024)
         throw Error("Project retry-ID capacity reached for this controller");
@@ -234,23 +232,25 @@ export class ClaudeProjectJobs {
         }
         this.wake(job);
       });
-    // Let quick commands finish in one tool call; output alone is not a reason
-    // to yield a newly started command before its short initial wait expires.
-    return this.wait(
-      { job_id: job.id, cursor: 0, yield_time_ms: waitMs },
-      true,
-    );
+    return this.wait({ job_id: job.id, cursor: 0, yield_time_ms: waitMs });
   }
-  async wait(args: Record<string, unknown>, finishOnly = false) {
+  async wait(args: Record<string, unknown>) {
     const job = this.get(args.job_id);
     const cursor = integer(args.cursor, 0, Number.MAX_SAFE_INTEGER);
     if (cursor > job.next) throw Error("Output cursor is ahead of this job");
-    const waitMs = integer(args.yield_time_ms, 1000, 30_000);
-    if (
-      job.status === "running" &&
-      (finishOnly || cursor === job.next) &&
-      waitMs > 0
-    ) {
+    const waitMs = integer(args.yield_time_ms, DEFAULT_WAIT, 30_000);
+    const ready = () => {
+      if (job.status !== "running" || cursor < (job.output[0]?.seq ?? job.next))
+        return true;
+      let bytes = 0;
+      for (const chunk of job.output) {
+        if (chunk.seq < cursor) continue;
+        bytes += chunk.bytes;
+        if (bytes >= PAGE_BYTES) return true;
+      }
+      return false;
+    };
+    if (!ready() && waitMs > 0) {
       await new Promise<void>((resolve) => {
         const done = () => {
           clearTimeout(timer);
@@ -258,7 +258,7 @@ export class ClaudeProjectJobs {
           resolve();
         };
         const changed = () => {
-          if (!finishOnly || job.finished !== undefined) done();
+          if (ready()) done();
         };
         const timer = setTimeout(done, waitMs);
         job.changed.add(changed);

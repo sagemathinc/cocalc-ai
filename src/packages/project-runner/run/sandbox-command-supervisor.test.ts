@@ -53,3 +53,41 @@ test.each(["closed", "expired"])(
   },
   15000,
 );
+
+test.each([false, true])(
+  "normal completion warns only for background leftovers (%s)",
+  async (background) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        SANDBOX_COMMAND_SUPERVISOR,
+        "--",
+        background ? 'sleep 60 & echo "$!"' : "printf done",
+      ],
+      { stdio: "pipe" },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    try {
+      const [code] = await once(child, "close");
+      expect(code).toBe(0);
+      expect(stderr.includes("use cocalc project terminal spawn")).toBe(
+        background,
+      );
+      if (background) {
+        const stat = await readFile(
+          `/proc/${Number(stdout.trim())}/stat`,
+          "utf8",
+        ).catch(() => "");
+        expect(
+          stat === "" || stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z "),
+        ).toBe(true);
+      }
+    } finally {
+      child.kill("SIGKILL");
+    }
+  },
+);

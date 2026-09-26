@@ -53,12 +53,19 @@ export function readHarnessCredentialSelection({
   }
   if (value.startsWith("account-subscription:")) {
     const credentialId = value.slice("account-subscription:".length);
+    const sourceKey =
+      stored != null && projectId
+        ? key(accountId, projectId, threadKey ?? "")
+        : `${PREFIX}:${accountId}:default`;
     if (isValidUUID(credentialId)) {
       return {
         version: 1,
         provider: "anthropic",
         mode: "account-subscription",
         credentialId,
+        ...(localStorage.getItem(`${sourceKey}:claude-ai-connectors`) === "off"
+          ? { claudeAiConnectors: false }
+          : {}),
       };
     }
   }
@@ -86,5 +93,13 @@ export function writeHarnessCredentialSelection({
         : "project-secret";
   localStorage.setItem(storageKey, value);
   localStorage.setItem(`${PREFIX}:${accountId}:default`, value);
+  for (const target of [storageKey, `${PREFIX}:${accountId}:default`]) {
+    if (
+      credential.mode === "account-subscription" &&
+      credential.claudeAiConnectors === false
+    )
+      localStorage.setItem(`${target}:claude-ai-connectors`, "off");
+    else localStorage.removeItem(`${target}:claude-ai-connectors`);
+  }
   window.dispatchEvent(new Event(HARNESS_CREDENTIAL_SELECTION_EVENT));
 }

@@ -125,6 +125,15 @@ test("trusted MCP helper executes only through the scoped project socket", async
     });
     expect(initialized.result.serverInfo.name).toBe("cocalc-project-tools");
     const listed = await request(2, "tools/list");
+    expect(Object.keys(listed.result.tools[0].inputSchema.properties)).toEqual(
+      expect.arrayContaining([
+        "script",
+        "cwd",
+        "yield_time_ms",
+        "timeout_ms",
+        "request_id",
+      ]),
+    );
     expect(listed.result.tools.map(({ name }) => name)).toEqual([
       "project_exec",
       "project_exec_wait",

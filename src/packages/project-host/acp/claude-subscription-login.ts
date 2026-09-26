@@ -10,6 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  isSupportedClaudeSubscriptionPlan,
+  CLAUDE_SUBSCRIPTION_PLAN_ERROR,
+} from "@cocalc/util/ai/claude-subscription-plan";
 import { harnessOwner } from "./harness-reaper";
 import {
   CLAUDE_LOGIN_PREFIX,
@@ -82,11 +86,11 @@ export function verifiedClaudeSubscriptionStatus(output: string): {
   if (
     value?.loggedIn !== true ||
     value?.apiProvider !== "firstParty" ||
-    value?.apiKeySource ||
-    typeof plan !== "string" ||
-    !/^(?:claude\s+)?(?:pro|max)(?:\s|$)/i.test(plan)
+    value?.apiKeySource
   )
     throw Error("Claude Pro/Max subscription was not verified");
+  if (!isSupportedClaudeSubscriptionPlan(plan))
+    throw Error(CLAUDE_SUBSCRIPTION_PLAN_ERROR);
   const identity = value.email;
   if (
     typeof identity !== "string" ||

@@ -189,6 +189,30 @@ test("admitted Agent Network RPC work preserves the selected subscription", () =
   expect(() => prepareHarnessRequest(source)).toThrow("Unsupported ACP");
 });
 
+test("connector opt-out is pinned at admission and changes the retained runtime key", () => {
+  const source = claudeRequest();
+  source.harness_credential = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-subscription",
+    credentialId: randomUUID(),
+    claudeAiConnectors: false,
+  };
+  const admitted = prepareHarnessRequest(source);
+  expect(admitted.harness_credential).toEqual(source.harness_credential);
+  const previousKey = harnessRuntimeKey(admitted);
+  source.harness_credential = {
+    ...source.harness_credential,
+    claudeAiConnectors: true,
+  };
+  expect(harnessRuntimeKey(prepareHarnessRequest(source))).not.toBe(
+    previousKey,
+  );
+  expect(admitted.harness_credential).toMatchObject({
+    claudeAiConnectors: false,
+  });
+});
+
 test("unconfigured or disabled hosts reject instead of choosing native Codex", () => {
   delete process.env.COCALC_ACP_HARNESSES;
   expect(() => prepareHarnessRequest(request())).toThrow(/not enabled/);

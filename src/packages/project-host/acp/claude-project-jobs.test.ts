@@ -196,6 +196,67 @@ test("waiting is awakened by completion with no output", async () => {
   }
 });
 
+test("wait batches intermittent output until its interval expires", async () => {
+  jest.useFakeTimers();
+  const { jobs, runs } = fixture();
+  try {
+    const job = await jobs.start({ script: "ticks", yield_time_ms: 0 });
+    runs[0].output("stdout", "already buffered\n");
+    let returned = false;
+    const waiting = jobs
+      .wait({ job_id: job.job_id, yield_time_ms: 30000 })
+      .then((value) => {
+        returned = true;
+        return value;
+      });
+    for (let i = 0; i < 3; i++) {
+      await jest.advanceTimersByTimeAsync(9999);
+      runs[0].output("stdout", `tick ${i}\n`);
+      await Promise.resolve();
+      expect(returned).toBe(false);
+    }
+    await jest.advanceTimersByTimeAsync(3);
+    expect((await waiting).stdout).toBe(
+      "already buffered\ntick 0\ntick 1\ntick 2\n",
+    );
+  } finally {
+    await jobs.close();
+    jest.useRealTimers();
+  }
+});
+
+test("a full output page ends a wait early without restarting the command", async () => {
+  const { jobs, runs } = fixture();
+  try {
+    const job = await jobs.start({ script: "output", yield_time_ms: 0 });
+    const waiting = jobs.wait({ job_id: job.job_id, yield_time_ms: 30000 });
+    runs[0].output("stdout", "x".repeat(65536));
+    expect((await waiting).stdout).toHaveLength(65536);
+    expect(runs[0].signal.aborted).toBe(false);
+  } finally {
+    await jobs.close();
+  }
+});
+
+test("initial wait defaults to ten seconds, independently of the deadline", async () => {
+  jest.useFakeTimers();
+  const { jobs } = fixture();
+  try {
+    let returned = false;
+    const waiting = jobs.start({ script: "build" }).then((value) => {
+      returned = true;
+      return value;
+    });
+    await jest.advanceTimersByTimeAsync(9999);
+    expect(returned).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+    expect((await waiting).status).toBe("running");
+  } finally {
+    await jobs.close();
+    jest.useRealTimers();
+  }
+});
+
 test("evicted output never turns a retry ID into a duplicate execution", async () => {
   const execute = jest.fn(async () => ({
     code: 0,

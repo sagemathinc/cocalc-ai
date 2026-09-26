@@ -21,6 +21,7 @@ import { ClaudeSubscriptionConnect } from "@cocalc/frontend/chat/claude-subscrip
 import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-secret-modal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DocsLink } from "@cocalc/frontend/docs/link";
+import { ClaudeConnectorPreference } from "@cocalc/frontend/chat/claude-connector-preference";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
   newAgentClaudeCredentialOptions,
@@ -79,8 +80,9 @@ export function NewAgentClaudeControls({
   const options = newAgentClaudeCredentialOptions(credentials);
   const value = newAgentClaudeCredentialValue(credential);
   const payment =
-    options.find((option) => option.value === value)?.label ??
-    "Choose payment method";
+    newAgentClaudeCredentialOptions(credentials, true).find(
+      (option) => option.value === value,
+    )?.label ?? "Choose payment method";
   const configuration = (
     <Space orientation="vertical" style={{ width: "100%", minWidth: 0 }}>
       <Typography.Text strong>Payment method</Typography.Text>
@@ -126,6 +128,15 @@ export function NewAgentClaudeControls({
           options.
         </Typography.Text>
       )}
+      {credential.mode === "account-subscription" && (
+        <ClaudeConnectorPreference
+          enabled={credential.claudeAiConnectors !== false}
+          disabled={disabled}
+          onChange={(enabled) =>
+            onCredential({ ...credential, claudeAiConnectors: enabled })
+          }
+        />
+      )}
       {projectId && credential.mode === "project-secret" && (
         <Button
           disabled={disabled}
@@ -158,6 +169,12 @@ export function NewAgentClaudeControls({
         discoveryKey={JSON.stringify(credential)}
         compact
         configureLabel="Configure Claude Code"
+        discoveryPending={
+          !!projectId &&
+          validDirectory &&
+          (!credentialsLoaded || readyScope !== scope)
+        }
+        inlinePayment={credentialsLoaded ? payment : "Loading payment"}
         unavailableLabel={
           !projectId
             ? "Select a project to load models"
@@ -186,12 +203,6 @@ export function NewAgentClaudeControls({
             : undefined
         }
       />
-      <Typography.Text
-        type="secondary"
-        style={{ overflowWrap: "anywhere", maxWidth: "100%" }}
-      >
-        {credentialsLoaded ? payment : "Loading payment methods"}
-      </Typography.Text>
       {projectId && secretsOpen && (
         <ClaudeProjectSecretModal
           open

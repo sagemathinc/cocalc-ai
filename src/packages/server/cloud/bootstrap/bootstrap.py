@@ -4666,6 +4666,21 @@ def alive(pid, start):
     except (FileNotFoundError, ProcessLookupError):
         return False
 
+def live_scope_processes(scope):
+    # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
+    try:
+        pids = (scope / "cgroup.procs").read_text().split()
+    except OSError:
+        return 0
+    count = 0
+    for pid in pids:
+        try:
+            identity(int(pid))
+            count += 1
+        except (OSError, ValueError):
+            pass
+    return count
+
 def kill_scope(scope, timeout=10):
     # cgroup.kill covers fork/setsid/reparenting races, unlike PID enumeration.
     try:
@@ -4881,6 +4896,7 @@ def supervise(project, job, owner, timeout_ms):
     # monotonic hard deadline. A SIGSTOP'ed but live guard cannot renew it.
     scope = parent / f"job-{owner}-{owner_start}-{os.getpid()}-{identity(os.getpid())}-{int(deadline * 1000)}-{job}"
     child = None
+    completed = False
     pipes = []
     sel = selectors.DefaultSelector()
     pending = bytearray()
@@ -4954,6 +4970,7 @@ def supervise(project, job, owner, timeout_ms):
             pid, status = os.waitpid(child, os.WNOHANG)
             if pid:
                 child = None
+                completed = True
                 result = os.waitstatus_to_exitcode(status)
                 break
         if stopped:
@@ -4963,6 +4980,7 @@ def supervise(project, job, owner, timeout_ms):
         # populated=0 AND rmdir confirm that there is no remaining authority.
         try:
             with lifecycle_lock():
+                leftovers = live_scope_processes(scope) if completed and not stopped else 0
                 kill_scope(scope)
             if child is not None:
                 os.waitpid(child, 0)
@@ -4981,6 +4999,11 @@ def supervise(project, job, owner, timeout_ms):
                     emit({"type": "output", "stream": "stdout" if pair is pipes[1] else "stderr",
                           "data": base64.b64encode(chunk).decode("ascii")})
                     flush()
+            if leftovers:
+                note = ("Remaining job processes were terminated when the command exited; "
+                        "use cocalc project terminal spawn for persistent services.\n")
+                emit({"type": "output", "stream": "stderr",
+                      "data": base64.b64encode(note.encode()).decode("ascii")})
             emit({"type": "exit", "code": result, "cleanup": True})
         except Exception:
             # Leave the cgroup for the independent orphan sweep; no clean exit frame.

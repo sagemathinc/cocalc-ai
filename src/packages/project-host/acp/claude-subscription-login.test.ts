@@ -121,6 +121,24 @@ test("status rejects API billing, no plan, and absent identity", () => {
     ).toThrow();
 });
 
+test.each(["team", "enterprise", "future-plan", "professional", "maximum", ""])(
+  "unsupported plan %s gives an actionable explanation",
+  (subscriptionType) => {
+    expect(() =>
+      verifiedClaudeSubscriptionStatus(
+        JSON.stringify({
+          loggedIn: true,
+          apiProvider: "firstParty",
+          subscriptionType,
+          email: "fixture@example.com",
+        }),
+      ),
+    ).toThrow(
+      "Team, Enterprise, and unrecognized plans are not supported. Use an Anthropic API key instead.",
+    );
+  },
+);
+
 test("verification cannot report cancellation after publication starts", async () => {
   let releasePublish!: () => void;
   let enteredPublish!: () => void;

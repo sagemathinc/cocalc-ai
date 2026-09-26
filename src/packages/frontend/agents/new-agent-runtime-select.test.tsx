@@ -11,17 +11,13 @@ test("runtime selector opens full labels from the keyboard", async () => {
   const picker = screen.getByRole("combobox", { name: "Agent runtime" });
   expect(document.activeElement).toBe(picker);
   await user.keyboard("{Enter}");
-  expect(
-    await screen.findByRole("option", { name: "Claude Code (preview)" }),
-  ).toBeTruthy();
+  expect(await screen.findByRole("option", { name: "Claude" })).toBeTruthy();
   expect(
     screen.getByRole("option", {
       name: "Custom ACP harness (experimental)",
     }),
   ).toBeTruthy();
   expect(document.activeElement).toBe(picker);
-  await user.click(
-    screen.getByRole("option", { name: "Claude Code (preview)" }),
-  );
+  await user.click(screen.getByRole("option", { name: "Claude" }));
   expect(onChange).toHaveBeenCalledWith("claude-code", expect.anything());
 });

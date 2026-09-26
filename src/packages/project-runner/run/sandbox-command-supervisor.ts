@@ -33,7 +33,14 @@ child = spawn("/bin/bash", ["-lc", process.argv[1]], {
 });
 child.once("error", () => { clearInterval(timer); process.exit(1); });
 child.once("exit", (code) => {
+  let background = false;
+  if (!stopped) {
+    try { process.kill(-child.pid, 0); background = true; }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+  }
   kill();
+  if (background) require("node:fs").writeSync(2,
+    "Background processes were terminated when the command exited; use cocalc project terminal spawn for persistent services.\n");
   clearInterval(timer);
   process.exit(stopped ? 130 : code ?? 1);
 });

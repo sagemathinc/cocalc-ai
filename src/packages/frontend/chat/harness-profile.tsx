@@ -42,6 +42,8 @@ import {
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import { ClaudePaymentStatus } from "./claude-payment-status";
+import { ClaudeConnectorPreference } from "./claude-connector-preference";
+import { Icon } from "@cocalc/frontend/components/icon";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -69,6 +71,8 @@ interface HarnessRuntimeSummaryProps {
   disabled?: boolean;
   discoveryKey?: string;
   unavailableLabel?: string;
+  discoveryPending?: boolean;
+  inlinePayment?: string;
 }
 
 function ClaudeCredentialControl({
@@ -98,6 +102,10 @@ function ClaudeCredentialControl({
       ? `${selection.mode}:${selection.credentialId}`
       : "project-secret",
   );
+  const [connectorsEnabled, setConnectorsEnabled] = useState(
+    selection?.mode !== "account-subscription" ||
+      selection.claudeAiConnectors !== false,
+  );
   useEffect(() => {
     let disposed = false;
     setCredentials([]);
@@ -109,6 +117,10 @@ function ClaudeCredentialControl({
         projectId,
         threadKey,
       });
+      setConnectorsEnabled(
+        current?.mode !== "account-subscription" ||
+          current.claudeAiConnectors !== false,
+      );
       setValue(
         current?.mode === "account-api-key" ||
           current?.mode === "account-subscription"
@@ -200,6 +212,26 @@ function ClaudeCredentialControl({
         <Button onClick={() => setSecretsOpen(true)}>
           Manage project secret
         </Button>
+      )}
+      {value.startsWith("account-subscription:") && (
+        <ClaudeConnectorPreference
+          enabled={connectorsEnabled}
+          onChange={(enabled) => {
+            writeHarnessCredentialSelection({
+              accountId,
+              projectId,
+              threadKey,
+              credential: {
+                version: 1,
+                provider: "anthropic",
+                mode: "account-subscription",
+                credentialId: value.slice("account-subscription:".length),
+                ...(enabled ? {} : { claudeAiConnectors: false }),
+              },
+            });
+            setConnectorsEnabled(enabled);
+          }}
+        />
       )}
       {value.startsWith("account-subscription:") && (
         <Popconfirm
@@ -382,6 +414,8 @@ function HarnessRuntimeSummaryContent({
   disabled,
   discoveryKey,
   unavailableLabel,
+  discoveryPending,
+  inlinePayment,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
   runtime: AcpHarnessRuntime;
 }) {
@@ -692,6 +726,20 @@ function HarnessRuntimeSummaryContent({
     fast &&
     (settings.configOptions?.find(({ id }) => id === fast.id)?.value ??
       fast.currentValue);
+  const settingsButton = (
+    <Button
+      size="small"
+      type={configureLabel && error ? "primary" : "text"}
+      disabled={disabled}
+      aria-label={configureLabel ?? `${name} settings`}
+      title={configureLabel ?? `${name} settings`}
+      aria-haspopup="dialog"
+      icon={configureLabel ? <Icon name="sliders" /> : undefined}
+      onClick={() => setOpen(true)}
+    >
+      {configureLabel ? undefined : name}
+    </Button>
+  );
   return (
     <>
       <div
@@ -703,16 +751,7 @@ function HarnessRuntimeSummaryContent({
           minWidth: 0,
         }}
       >
-        <Button
-          size="small"
-          type={configureLabel && !controls ? "primary" : "text"}
-          disabled={disabled}
-          aria-label={configureLabel ?? `${name} settings`}
-          aria-haspopup="dialog"
-          onClick={() => setOpen(true)}
-        >
-          {configureLabel ?? name}
-        </Button>
+        {!configureLabel && settingsButton}
         {claude && (
           <>
             {!configureLabel && <Tag style={{ margin: 0 }}>Preview</Tag>}
@@ -725,11 +764,11 @@ function HarnessRuntimeSummaryContent({
               <Button
                 size="small"
                 type="text"
-                loading={loading}
+                loading={loading || discoveryPending}
                 onClick={() => void discover()}
                 disabled={disabled || !onDiscover}
               >
-                {loading
+                {loading || discoveryPending || (onDiscover && !autoDiscovered)
                   ? "Loading model"
                   : onDiscover
                     ? "Model unavailable - retry"
@@ -755,6 +794,24 @@ function HarnessRuntimeSummaryContent({
             )}
           </>
         )}
+        {inlinePayment && (
+          <Button
+            type="text"
+            size="small"
+            disabled={disabled}
+            aria-label="Claude payment settings"
+            aria-haspopup="dialog"
+            onClick={() => setOpen(true)}
+            style={{
+              maxWidth: 180,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {inlinePayment}
+          </Button>
+        )}
+        {configureLabel && settingsButton}
       </div>
       {error && <div role="alert">{error}</div>}
       <Modal

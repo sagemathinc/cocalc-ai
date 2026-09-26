@@ -5,6 +5,8 @@
 
 import { randomUUID } from "node:crypto";
 import { claudeUsageScript } from "./claude-usage-script";
+import { CLAUDE_PROJECT_MCP_NAME } from "./claude-project-tool-source";
+import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tools";
 import { execFile, spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -127,6 +129,7 @@ export function claudeSubscriptionContainerArgs(options: {
   gid: number;
   runtimeArgs?: string[];
   purpose?: "agent" | "usage";
+  claudeAiConnectors?: boolean;
 }): string[] {
   const {
     name,
@@ -212,6 +215,9 @@ export function claudeSubscriptionContainerArgs(options: {
     "LANG=C.UTF-8",
     "--env",
     "PATH=/opt/cocalc/bin:/usr/bin:/bin",
+    ...(options.claudeAiConnectors === false
+      ? ["--env", "ENABLE_CLAUDEAI_MCP_SERVERS=false"]
+      : []),
     "--rootfs",
     rootfs,
     "/opt/cocalc/bin/node",
@@ -244,7 +250,8 @@ export async function launchClaudeSubscriptionController(
   const skill = purpose === "agent" ? await getBuiltinClaudeSkillText() : "";
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
 This is an isolated subscription controller. Run ALL project filesystem and CLI operations through cocalc_project project_exec, not in the controller. Read applicable project CLAUDE.md instructions through that tool before editing. Skill reference files are available in the project at /home/user/.claude/skills/cocalc/.
-Project commands are managed jobs: run builds/tests in the foreground without &, nohup or setsid. A tool response with status running means the job continues. Use project_exec_wait with job_id and cursor set to the returned next_cursor until it finishes; use project_exec_list after an uncertain response and project_exec_cancel to stop a job. yield_time_ms controls only how long a tool waits, not how long the job runs. Jobs default to a one-hour deadline (timeout_ms can extend to 24 hours), belong to this controller and are canceled on interruption, loss of authority, or controller shutdown. For services that must outlive the controller, or interactive terminal input, use the existing CoCalc CLI project terminal commands (inspect project terminal --help) rather than detaching unmanaged processes.
+Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
+${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
 
 <cocalc-skill>
@@ -427,6 +434,7 @@ ${skill}
         purpose,
         nodeMounts: getNodeRuntimeMounts(),
         toolBridgeDirectory: toolBridge?.directory,
+        claudeAiConnectors: credential.claudeAiConnectors,
         sessionDirectory,
         uid: process.getuid!(),
         gid: process.getgid!(),
@@ -450,6 +458,7 @@ ${skill}
       );
     return {
       systemPromptAppend,
+      projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
       cancelTools: toolBridge ? () => toolBridge!.cancel() : undefined,
       resumeTools: toolBridge ? () => toolBridge!.resume() : undefined,
       stdin: proc.stdin,

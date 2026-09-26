@@ -14,13 +14,14 @@ restore and whose collaborators and code you trust.
 ## Start a conversation
 
 1. Open **Agents**, choose **New Agent**, and select a project.
-2. Select **Claude Code (preview)**.
-3. Choose a credential: a project API-key secret, an account API key, or a
+2. Select **Claude** and open its settings icon to configure Claude Code.
+3. Choose a credential in settings: a project API-key secret, an account API key, or a
    connected Claude Pro/Max subscription, where offered by the site.
 4. For a project key, use the Claude API-key dialog. For a subscription, use
    **Connect Claude Pro/Max (experimental)** and complete the sign-in flow.
    Never paste credentials or login codes into a chat message.
-5. Start with the session's default model, or load the available model options.
+5. Choose the model and effort in the composer before your first turn. Available
+   options load automatically; loading is not a request to reconnect your account.
    Paste an image or ask Claude to inspect a small file and run a test.
 
 Your selected credential is bound when a turn is admitted. Changing the
@@ -47,6 +48,16 @@ popover links to Claude's usage page instead of estimating a percentage.
 API-key modes do not have subscription usage bars.
 
 In settings, expand the help sections for access, billing, and runtime details.
+
+### Claude account connectors
+
+Automatically fetched claude.ai connectors are enabled by default for
+subscription sessions. Claude can use these connected services, including
+sending task content to them. In Claude settings, turn off **Use my claude.ai
+connectors** to exclude them from your next turn. This account-local choice
+does not affect a running or already queued turn, disconnect services on
+claude.ai, or disable CoCalc's project tools. Controller outbound networking
+is unchanged.
 
 ## Security model
 
@@ -89,6 +100,10 @@ when you no longer authorize its use.
 
 ### Claude Pro/Max subscription
 
+Only verified Claude Pro/Max plans are supported here. Team, Enterprise, and
+unrecognized plan names are rejected with an explanation; use an Anthropic API
+key instead. CoCalc does not infer entitlement from unfamiliar plan names.
+
 Subscription login state is account-owned and kept in a separate controller,
 outside the project filesystem. Claude's project commands execute through a
 scoped tool bridge into the project. Ordinary project commands should not be
@@ -121,8 +136,9 @@ lease even if container removal needs retry: credential renewal stops and
 the lease files are removed. This is not a promise that a CLI token previously
 copied by project code becomes instantly invalid; its existing expiry and
 revocation rules still apply. Cancellation cannot roll back file changes,
-external requests, or charges already incurred. A process deliberately
-detached into a different session can require separate project cleanup.
+external requests, or charges already incurred. Managed-command descendants
+are terminated even if they detach into another session. Project-owned terminal
+services have a separate lifecycle and may require separate cleanup.
 
 ## Capabilities and current limits
 
@@ -155,7 +171,9 @@ cursor to read more output. Continue until the job has finished and
 \`has_more\` is false. \`project_exec_cancel\` stops a job and waits for
 cleanup; \`project_exec_list\` lists this controller's jobs.
 
-\`yield_time_ms\` is the maximum wait for one tool response (0-30 seconds).
+\`yield_time_ms\` is the maximum wait for one tool response (0-30 seconds,
+10 seconds by default). Output is batched until that interval expires, a page
+fills, or the job finishes, rather than returning for each output chunk.
 It is independent of \`timeout_ms\`, the command deadline: one hour by
 default, configurable up to 24 hours. Four jobs can run concurrently per
 controller. Output is paginated and bounded; \`output_truncated\` explicitly
@@ -180,7 +198,9 @@ or promise an automatic follow-up notification.
 Managed jobs require the current project-host runtime helper and a kernel with
 cgroup v2 atomic kill support. Each command runs inside the existing project
 container but in a separate root-owned job cgroup. Detached descendants are
-terminated too, including on normal command completion. There is no fallback
+terminated too, including on normal command completion. Detected leftover
+processes produce a stderr note directing you to project terminal services.
+There is no fallback
 to process-group-only cancellation when containment is unavailable.
 
 If \`cleanup_pending\` remains true with a \`cleanup_error\`, the runtime has
@@ -219,6 +239,10 @@ If a session fails after a restart, retain the error and agent identity and
 report them to the site administrator. Avoid blindly resending a turn whose
 execution outcome is uncertain. Missing model options, expired credentials,
 and unavailable runtime setup should be resolved before retrying.
+
+Resumed subscription turns receive current managed-job guidance. Project MCP
+tool names include a version derived from the helper source so cached tool
+definitions from an older controller do not reuse the same tool identity.
 
 This page is part of the shared CoCalc documentation catalog, available to
 humans at /docs/ai/claude-code and through the cocalc-cli docs commands. Agents

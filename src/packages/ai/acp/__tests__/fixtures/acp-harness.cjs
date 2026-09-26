@@ -103,6 +103,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         authMethods: [],
       });
     case "session/new":
+    case "session/load":
       if (
         process.argv.includes("--expect-skill") &&
         message.params._meta?.systemPrompt?.append !==
@@ -125,7 +126,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           !Array.isArray(options.plugins) ||
           options.plugins.length ||
           message.params.mcpServers.length !== 1 ||
-          message.params.mcpServers[0]?.name !== "cocalc_project" ||
+          message.params.mcpServers[0]?.name !==
+            (process.argv.includes("--versioned-tools")
+              ? "cocalc_project_fixture_v2"
+              : "cocalc_project") ||
           message.params.mcpServers[0]?.command !== "/opt/cocalc/bin/node" ||
           message.params.mcpServers[0]?.args?.[0] !==
             "/run/cocalc/agent-tools/bridge.cjs"
@@ -151,11 +155,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             params: { authStatus: { kind: "api_key", label: "API key" } },
           });
       }
-      return result(message.id, {
-        sessionId: "fixture-session",
-        ...controls(),
-      });
-    case "session/load":
+      if (message.method === "session/new")
+        return result(message.id, {
+          sessionId: "fixture-session",
+          ...controls(),
+        });
       update("old replayed answer");
       if (process.argv.includes("--crash-resume")) return process.exit(2);
       if (process.argv.includes("--reject-resume"))
