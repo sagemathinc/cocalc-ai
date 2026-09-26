@@ -2205,7 +2205,10 @@ export class Client extends EventEmitter {
         return { bytes: 0, count: 0 };
       }
       opts.signal?.throwIfAborted();
-      await abortable(this.waitUntilSignedIn(), opts.signal);
+      await abortable(
+        this.waitUntilSignedIn({ timeout: opts.timeout }),
+        opts.signal,
+      );
       const start = Date.now();
       const { bytes, getCount, getServerTiming, promise } = this._publish(
         subject,
@@ -2466,7 +2469,13 @@ export class Client extends EventEmitter {
       phaseReporter,
       headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
     };
-    const { count } = await this.publish(subject, mesg, opts);
+    let count: number;
+    try {
+      ({ count } = await this.publish(subject, mesg, opts));
+    } catch (err) {
+      sub.stop();
+      throw err;
+    }
     if (!count) {
       sub.stop();
       // if you hit this, consider using the option waitForInterest:true

@@ -75,6 +75,39 @@ This is not proof that running project processes or all installed CLI daemons
 have reloaded their tools; the fixture uses the compiled CLI modules. The user's
 earlier successful fresh-agent-turn test is separate evidence for that workflow.
 
+### Full-runtime filesystem and child expiry
+
+A disposable three-minute manual key granted file read/write and runtime access
+to the test project. Its exchanged host token successfully wrote, read, and
+deleted a uniquely named temporary file through the ordinary filesystem service.
+No existing files were changed or their contents logged.
+
+Continuous directory requests exposed a client availability bug: after the host
+disconnected the expired token, publication waited indefinitely for sign-in,
+ignoring the supplied request timeout. The first harness exited prematurely;
+a corrected harness stayed alive and observed the disconnected request still
+pending after four seconds despite a two-second timeout. These were not expiry
+passes. All fixture keys from those attempts were subsequently deleted.
+
+The client now applies the publication timeout to sign-in waiting and releases
+the pending reply listener when publication fails. With the rebuilt Conat client
+against the same live hosts, the final probe observed:
+
+- Temporary file round trip passed.
+- 89 directory requests succeeded; the last response preceded child expiry by
+  64 ms. Continuous traffic did not retain authority past expiry.
+- The next request returned a sign-in timeout after disconnection. A separate
+  request on the disconnected client returned its configured two-second timeout
+  in 2,001 ms.
+- A fresh exchange using the still-valid parent restored directory access.
+- Deleting the parent prevented another exchange. The fixture key was removed.
+
+Ten focused client tests and the Conat TypeScript build passed. This fix was
+live-tested using compiled workspace client modules, not newly deployed CLI
+bundles. It is not a proof of end-to-end timeout budgeting across every request
+phase, full CLI parity, automatic token renewal, or terminal/Jupyter/sync stream
+revocation. Those remain separate validation requirements.
+
 ### Membership loss and restoration
 
 Two disposable projects were created through the ordinary API, without starting
