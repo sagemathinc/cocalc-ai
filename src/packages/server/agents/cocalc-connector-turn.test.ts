@@ -34,6 +34,11 @@ const clusterAccount = jest.fn();
 const hostLease = jest.fn();
 const identity = jest.fn();
 const allocateSequence = jest.fn();
+const sourceDelegation = jest.fn();
+
+jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
+  assertApiKeyProjectMembership: (...args) => sourceDelegation(...args),
+}));
 
 jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   assertAccountNotRehoming: jest.fn(async () => undefined),
@@ -127,7 +132,11 @@ beforeEach(() => {
   savedKey = undefined;
   lockedConfig = config;
   poolQuery.mockImplementation(async (sql) => ({
-    rows: `${sql}`.includes("agent_cocalc_connector_configs") ? [config] : [],
+    rows: `${sql}`.includes("agent_cocalc_connector_configs")
+      ? [config]
+      : `${sql}`.includes("FROM agent_cocalc_connector_turns") && savedTurn
+        ? [savedTurn]
+        : [],
   }));
   clientQuery.mockImplementation(async (sql, args) => {
     const text = `${sql}`;
@@ -200,6 +209,7 @@ beforeEach(() => {
   for (const mock of [
     sourceHost,
     sourceMember,
+    sourceDelegation,
     targets,
     liveRun,
     accountHome,
@@ -371,6 +381,10 @@ test("renewal extends the existing key without exposing a new secret", async () 
     turn_id: issued!.turn_id,
   });
   expect(expiry).toBeGreaterThanOrEqual(issued!.expires_at);
+  expect(sourceDelegation).toHaveBeenCalledWith(
+    { account_id: accountId, key_id: issued!.key_id, scope_revision: 1 },
+    projectId,
+  );
   expect(allocateSequence).toHaveBeenCalledTimes(1);
   expect(directory).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -378,6 +392,24 @@ test("renewal extends the existing key without exposing a new secret", async () 
       expire: savedKey.expire,
     }),
   );
+});
+
+test("renewal rejects a source membership loss even after membership is restored", async () => {
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  sourceDelegation.mockRejectedValueOnce(
+    new Error("API delegation revoked by membership loss"),
+  );
+  clientQuery.mockClear();
+  directory.mockClear();
+  await expect(
+    renewManagedCocalcConnectorTurn({ ...request, turn_id: issued!.turn_id }),
+  ).rejects.toThrow("revoked by membership loss");
+  expect(sourceMember).toHaveBeenCalled();
+  expect(clientQuery).not.toHaveBeenCalled();
+  expect(directory).not.toHaveBeenCalled();
+  expect(savedKey.expire).toEqual(new Date(issued!.expires_at));
 });
 
 test("renewal requires the same live ACP turn", async () => {

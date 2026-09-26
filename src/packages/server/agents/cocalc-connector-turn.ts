@@ -7,6 +7,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { assertAccountNotRehoming } from "@cocalc/database/postgres/account-rehome-fence";
 import { allocateApiKeyIssuanceSequence } from "@cocalc/server/api/issuance-sequence";
+import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -501,6 +502,22 @@ export async function renewManagedCocalcConnectorTurn({
   const scope = normalizeApiKeyScopeV1(config.scope);
   await assertScopeProjectsCollaborator({ account_id: owner, scope });
 
+  // Resolve source delegation before taking transaction locks. Current
+  // membership alone must not revive a turn after removal and re-addition.
+  const { rows: bindings } = await getPool().query<{ key_id: string }>(
+    `SELECT key_id FROM agent_cocalc_connector_turns
+      WHERE turn_id=$1 AND account_id=$2 AND agent_id=$3
+        AND source_project_id=$4 AND source_host_id=$5 AND run_id=$6
+        AND ended_at IS NULL AND expires_at>now()`,
+    [turn_id, owner, agent_id, source_project_id, host, run_id],
+  );
+  if (!bindings[0])
+    throw Error("managed CoCalc connector turn is no longer valid");
+  await assertApiKeyProjectMembership(
+    { account_id: owner, key_id: bindings[0].key_id, scope_revision: 1 },
+    source_project_id,
+  );
+
   const client = await getPool().connect();
   let key: KeyRow | undefined;
   let expiresAt: Date | undefined;
@@ -527,6 +544,7 @@ export async function renewManagedCocalcConnectorTurn({
       turn.thread_id !== turn_ref.thread_id ||
       turn.config_id !== config.config_id ||
       turn.config_revision !== config.revision ||
+      turn.key_id !== bindings[0].key_id ||
       turn.ended_at ||
       new Date(turn.expires_at).valueOf() <= Date.now()
     ) {
