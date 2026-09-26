@@ -8,6 +8,10 @@ import { isValidUUID } from "./misc";
 // This contract does not enable a capability or authorize execution.
 export const API_KEY_ACTION_TTL_MS = 5 * 60 * 1000;
 export const MAX_PENDING_API_KEY_ACTIONS = 20;
+export const MAX_NEW_API_KEY_ACTIONS_PER_MINUTE = 60;
+export const MAX_RETAINED_API_KEY_ACTIONS = 10_000;
+export const API_KEY_ACTION_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const API_KEY_ACTION_CLEANUP_BATCH = 500;
 
 export interface RevokeApiKeyAction {
   kind: "revoke_api_key";

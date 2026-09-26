@@ -11,6 +11,10 @@ import {
 import {
   API_KEY_ACTION_TTL_MS,
   MAX_PENDING_API_KEY_ACTIONS,
+  MAX_NEW_API_KEY_ACTIONS_PER_MINUTE,
+  MAX_RETAINED_API_KEY_ACTIONS,
+  API_KEY_ACTION_HISTORY_RETENTION_MS,
+  API_KEY_ACTION_CLEANUP_BATCH,
   normalizeApiKeyActionBinding,
   normalizeApiKeyActionRequest,
 } from "@cocalc/util/api-key-management";
@@ -137,13 +141,34 @@ export class ApiKeyActionStore {
         return stored;
       }
       await authorize(client, canonical);
+      // Keep retries stable during retention; reclaim only expired history, in
+      // a bounded batch, under the same account-home fence as admission.
+      await client.query(
+        `DELETE FROM api_key_action_requests WHERE account_id=$1 AND request_id IN (
+          SELECT request_id FROM api_key_action_requests WHERE account_id=$1
+          AND expires_at < extract(epoch from clock_timestamp())*1000-$2
+          ORDER BY expires_at,request_id LIMIT $3)`,
+        [
+          binding.account_id,
+          API_KEY_ACTION_HISTORY_RETENTION_MS,
+          API_KEY_ACTION_CLEANUP_BATCH,
+        ],
+      );
       const { rows } = await client.query(
-        `SELECT count(*)::INTEGER AS count FROM api_key_action_requests
-        WHERE account_id=$1 AND status='pending' AND expires_at > extract(epoch from clock_timestamp())*1000`,
+        `SELECT count(*)::INTEGER AS retained,
+          count(*) FILTER (WHERE status='pending' AND
+            expires_at > extract(epoch from clock_timestamp())*1000)::INTEGER AS count,
+          count(*) FILTER (WHERE (review->>'created_at')::BIGINT >
+            extract(epoch from clock_timestamp())*1000-60000)::INTEGER AS recent
+        FROM api_key_action_requests WHERE account_id=$1`,
         [binding.account_id],
       );
       if (Number(rows[0].count) >= MAX_PENDING_API_KEY_ACTIONS)
         throw new Error("too many pending API key actions");
+      if (Number(rows[0].recent) >= MAX_NEW_API_KEY_ACTIONS_PER_MINUTE)
+        throw new Error("API key action creation rate exceeded");
+      if (Number(rows[0].retained) >= MAX_RETAINED_API_KEY_ACTIONS)
+        throw new Error("API key action history limit reached");
       await this.assertLive(client, canonical);
       await client.query(
         `INSERT INTO api_key_action_requests(account_id,request_id,review,expires_at,status)

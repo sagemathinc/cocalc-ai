@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { ApiKeyActionStore } from "./key-action-store";
 import type { ApiKeyActionReview } from "@cocalc/util/api-key-management";
-import { MAX_PENDING_API_KEY_ACTIONS } from "@cocalc/util/api-key-management";
+import {
+  MAX_PENDING_API_KEY_ACTIONS,
+  MAX_NEW_API_KEY_ACTIONS_PER_MINUTE,
+  MAX_RETAINED_API_KEY_ACTIONS,
+  API_KEY_ACTION_HISTORY_RETENTION_MS,
+  API_KEY_ACTION_CLEANUP_BATCH,
+} from "@cocalc/util/api-key-management";
 
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -213,6 +219,81 @@ describeDb("API key action transactional storage", () => {
         )
       ).rows[0].count,
     ).toBe(MAX_PENDING_API_KEY_ACTIONS);
+  });
+
+  it("limits creation across rejected requests and different keys, but permits retries", async () => {
+    const saved = await store.create(review(), authorize);
+    await pool.query(
+      `INSERT INTO api_key_action_requests(account_id,request_id,review,expires_at,status)
+       SELECT $1,id,jsonb_set($2::jsonb,'{request_id}',to_jsonb(id::text)), $3,'rejected'
+       FROM (SELECT gen_random_uuid() AS id FROM generate_series(1,$4)) AS requests`,
+      [
+        account_id,
+        JSON.stringify(review()),
+        Date.now() + 60000,
+        MAX_NEW_API_KEY_ACTIONS_PER_MINUTE - 1,
+      ],
+    );
+    const input = review();
+    input.binding.requesting_key_id = "another-requester-key";
+    await expect(store.create(input, authorize)).rejects.toThrow(
+      "creation rate exceeded",
+    );
+    await expect(store.create(saved, authorize)).resolves.toEqual(saved);
+    await pool.query(
+      `UPDATE api_key_action_requests SET review=jsonb_set(review,'{created_at}',to_jsonb($2::bigint))
+       WHERE account_id=$1`,
+      [account_id, Date.now() - 61000],
+    );
+    await expect(store.create(input, authorize)).resolves.toMatchObject({
+      request_id: input.request_id,
+    });
+  });
+
+  it("bounds retained history independently of pending and recent counts", async () => {
+    const saved = await store.create(review(), authorize);
+    const historic = review();
+    historic.created_at = Date.now() - 120000;
+    historic.expires_at = Date.now() - 60000;
+    await pool.query(
+      `INSERT INTO api_key_action_requests(account_id,request_id,review,expires_at,status)
+       SELECT $1,id,jsonb_set($2::jsonb,'{request_id}',to_jsonb(id::text)), $3,'executed'
+       FROM (SELECT gen_random_uuid() AS id FROM generate_series(1,$4)) AS requests`,
+      [
+        account_id,
+        JSON.stringify(historic),
+        historic.expires_at,
+        MAX_RETAINED_API_KEY_ACTIONS - 1,
+      ],
+    );
+    await expect(store.create(review(), authorize)).rejects.toThrow(
+      "history limit reached",
+    );
+    await expect(store.create(saved, authorize)).resolves.toEqual(saved);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::integer AS count FROM api_key_action_requests WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0].count,
+    ).toBe(MAX_RETAINED_API_KEY_ACTIONS);
+    await pool.query(
+      `UPDATE api_key_action_requests SET expires_at=$2 WHERE account_id=$1 AND status='executed'`,
+      [account_id, Date.now() - API_KEY_ACTION_HISTORY_RETENTION_MS - 1000],
+    );
+    await expect(store.create(review(), authorize)).resolves.toMatchObject({
+      status: "pending",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::integer AS count FROM api_key_action_requests WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0].count,
+    ).toBe(MAX_RETAINED_API_KEY_ACTIONS - API_KEY_ACTION_CLEANUP_BATCH + 1);
+    await expect(store.create(saved, authorize)).resolves.toEqual(saved);
   });
 
   it("rolls back an execution whose approval expires before commit", async () => {
