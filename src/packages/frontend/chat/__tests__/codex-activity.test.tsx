@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { redux } from "@cocalc/frontend/app-framework";
 import CodexActivity, {
   reconcileSubagentEvents,
@@ -15,6 +16,70 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 jest.mock("../activity-diff", () => ({
   ActivityDiff: () => <div>Recorded diff</div>,
 }));
+
+test("jumping to an older entry does not trap subsequent page navigation", () => {
+  const original = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = jest.fn();
+  try {
+    render(
+      <CodexActivity
+        expanded
+        jumpText="Entry 0"
+        jumpToken={1}
+        events={Array.from({ length: 205 }, (_, seq) => ({
+          type: "event" as const,
+          seq,
+          event: {
+            type: seq % 2 ? ("thinking" as const) : ("message" as const),
+            text: `Entry ${seq}`,
+          },
+        }))}
+      />,
+    );
+    expect(screen.getByText("Entry 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Latest activity" }));
+    expect(screen.getByText("Entry 204")).toBeTruthy();
+    expect(screen.queryByText("Entry 0")).toBeNull();
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original;
+  }
+});
+
+test("activity is a bounded window even as a mounted log grows", async () => {
+  const makeEvents = (length: number) =>
+    Array.from({ length }, (_, seq) => ({
+      type: "event" as const,
+      seq,
+      event: {
+        type: seq % 2 ? ("thinking" as const) : ("message" as const),
+        text: `Entry ${seq}`,
+      },
+    }));
+  const { container, rerender } = render(
+    <CodexActivity expanded events={makeEvents(205)} />,
+  );
+  const rows = () =>
+    container.querySelectorAll("[data-codex-activity-entry-index]");
+  expect(rows()).toHaveLength(100);
+  expect(screen.queryByText("Entry 0")).toBeNull();
+  expect(screen.getByText("Entry 204")).toBeTruthy();
+  const user = userEvent.setup();
+  const earlier = screen.getByRole("button", { name: "Earlier activity" });
+  earlier.focus();
+  await user.keyboard("{Enter}");
+  expect(earlier).toHaveFocus();
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 5")).toBeTruthy();
+  rerender(<CodexActivity expanded events={makeEvents(220)} />);
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 5")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Latest activity" }));
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 219")).toBeTruthy();
+  rerender(<CodexActivity expanded events={makeEvents(230)} />);
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 229")).toBeTruthy();
+});
 
 test("an earlier diff link keeps its recorded worktree when later terminal events arrive", async () => {
   const open_file = jest.fn().mockResolvedValue(undefined);

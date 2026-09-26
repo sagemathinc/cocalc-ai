@@ -7,6 +7,7 @@ import type {
   CodexLiveLogStatus,
   CodexPersistedLogLoadState,
 } from "./use-codex-log";
+import { joinedTextSource, type TextSource } from "./text-source";
 
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
@@ -22,28 +23,37 @@ export type InlineCodexActivityBlock = {
 export const DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT = 100;
 
 function guidanceFence(text: string): string {
-  let fence = "```";
-  while (text.includes(fence)) {
-    fence += "`";
+  let length = 3;
+  for (const match of text.matchAll(/`{3,}/g)) {
+    length = Math.max(length, match[0].length + 1);
   }
-  return fence;
+  return "`".repeat(length);
 }
 
 export function codexActivityBlocksToSelectableMarkdown(
   blocks: InlineCodexActivityBlock[],
 ): string {
-  return blocks
-    .map((block) => {
-      const text = `${block.text ?? ""}`;
-      if (!text.trim()) return "";
-      if (block.kind === "agent") return text;
-      const fence = guidanceFence(text);
-      const state =
-        block.state && block.state !== "sent" ? ` ${block.state}` : "";
-      return `${fence}guidance${state}\n${text}\n${fence}`;
-    })
-    .filter(Boolean)
-    .join("\n\n");
+  return codexActivityTextSource(blocks).toString();
+}
+
+export function codexActivityTextSource(
+  blocks: InlineCodexActivityBlock[],
+): TextSource {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    const text = `${block.text ?? ""}`;
+    if (!text.trim()) continue;
+    if (parts.length > 0) parts.push("\n\n");
+    if (block.kind === "agent") {
+      parts.push(text);
+      continue;
+    }
+    const fence = guidanceFence(text);
+    const state =
+      block.state && block.state !== "sent" ? ` ${block.state}` : "";
+    parts.push(`${fence}guidance${state}\n`, text, `\n${fence}`);
+  }
+  return joinedTextSource(parts);
 }
 
 export function resolveLiveCodexActivityBlocks({
@@ -85,7 +95,7 @@ export function resolveLiveCodexActivityBlocks({
   let selectedLength = 0;
   for (const blocks of [reconciledCachedBlocks, previewBlocks]) {
     if (!Array.isArray(blocks) || blocks.length === 0) continue;
-    const length = codexActivityBlocksToSelectableMarkdown(blocks).length;
+    const length = codexActivityTextSource(blocks).length;
     if (length < selectedLength) continue;
     selected = blocks;
     selectedLength = length;
@@ -93,18 +103,20 @@ export function resolveLiveCodexActivityBlocks({
   return selected;
 }
 
-export function limitCodexActivityBlocks(
+export function codexActivityWindow(
   blocks: InlineCodexActivityBlock[],
-  visibleLimit: number,
+  requestedEnd = blocks.length,
 ): {
   visibleBlocks: InlineCodexActivityBlock[];
   hiddenCount: number;
+  end: number;
 } {
-  const limit = Math.max(1, Math.floor(visibleLimit));
-  const hiddenCount = Math.max(0, blocks.length - limit);
+  const end = Math.max(0, Math.min(blocks.length, Math.floor(requestedEnd)));
+  const hiddenCount = Math.max(0, end - DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT);
   return {
-    visibleBlocks: hiddenCount > 0 ? blocks.slice(hiddenCount) : blocks,
+    visibleBlocks: blocks.slice(hiddenCount, end),
     hiddenCount,
+    end,
   };
 }
 
