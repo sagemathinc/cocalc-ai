@@ -64,6 +64,7 @@ import { startBillingAuthorityService } from "@cocalc/server/purchases/billing-a
 import { startLroExpirationMaintenance } from "@cocalc/server/lro/expiration-maintenance";
 import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-retention-maintenance";
 import { startProjectApiKeyRevocationMaintenance } from "@cocalc/server/api/project-membership-maintenance";
+import { startApiKeyActionMaintenance } from "@cocalc/server/api/key-action-maintenance";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
 import { startGrowthAnalyticsMaintenance } from "@cocalc/server/growth-analytics/maintenance";
 import { startFrontendAssetHealthMaintenance } from "@cocalc/server/monitoring/frontend-assets";
@@ -141,6 +142,7 @@ export function startConatApiBackgroundWorkers(): void {
   startRootfsReleaseGcMaintenance();
   startRootfsScanMaintenance();
   startProjectApiKeyRevocationMaintenance();
+  startApiKeyActionMaintenance();
   startRestoreLroWorker();
   if (isPrimaryBayWorker()) {
     startLegacyMigrationProjectRestoreWorker();

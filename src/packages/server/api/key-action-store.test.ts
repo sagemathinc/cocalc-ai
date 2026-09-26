@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { ApiKeyActionStore } from "./key-action-store";
+import { cleanupApiKeyActionHistory } from "./key-action-maintenance";
 import type { ApiKeyActionReview } from "@cocalc/util/api-key-management";
 import {
   MAX_PENDING_API_KEY_ACTIONS,
@@ -293,7 +294,32 @@ describeDb("API key action transactional storage", () => {
         )
       ).rows[0].count,
     ).toBe(MAX_RETAINED_API_KEY_ACTIONS - API_KEY_ACTION_CLEANUP_BATCH + 1);
+    await expect(store.pruneExpired(account_id)).resolves.toBe(
+      API_KEY_ACTION_CLEANUP_BATCH,
+    );
+    await expect(cleanupApiKeyActionHistory()).resolves.toEqual({
+      cursor: account_id,
+      scanned: 1,
+      deleted: API_KEY_ACTION_CLEANUP_BATCH,
+    });
     await expect(store.create(saved, authorize)).resolves.toEqual(saved);
+  });
+
+  it("refuses retention cleanup on a non-home bay", async () => {
+    await pool.query("UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1", [
+      account_id,
+      "foreign-bay",
+    ]);
+    try {
+      await expect(store.pruneExpired(account_id)).rejects.toThrow(
+        "homed on foreign-bay",
+      );
+    } finally {
+      await pool.query(
+        "UPDATE accounts SET home_bay_id=NULL WHERE account_id=$1",
+        [account_id],
+      );
+    }
   });
 
   it("rolls back an execution whose approval expires before commit", async () => {

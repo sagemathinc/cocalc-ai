@@ -41,6 +41,29 @@ export class ApiKeyActionStore {
     )`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS api_key_action_pending_idx
       ON api_key_action_requests(account_id,expires_at) WHERE status='pending'`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS api_key_action_history_idx
+      ON api_key_action_requests(account_id,expires_at,request_id)`);
+  }
+
+  async pruneExpired(account_id: string): Promise<number> {
+    return this.transaction(account_id, (client) =>
+      this.prune(client, account_id),
+    );
+  }
+
+  private async prune(client: PoolClient, account_id: string): Promise<number> {
+    const result = await client.query(
+      `DELETE FROM api_key_action_requests WHERE account_id=$1 AND request_id IN (
+        SELECT request_id FROM api_key_action_requests WHERE account_id=$1
+        AND expires_at < extract(epoch from clock_timestamp())*1000-$2
+        ORDER BY expires_at,request_id LIMIT $3)`,
+      [
+        account_id,
+        API_KEY_ACTION_HISTORY_RETENTION_MS,
+        API_KEY_ACTION_CLEANUP_BATCH,
+      ],
+    );
+    return result.rowCount ?? 0;
   }
 
   async listPending(account_id: string): Promise<ApiKeyActionReview[]> {
@@ -143,17 +166,7 @@ export class ApiKeyActionStore {
       await authorize(client, canonical);
       // Keep retries stable during retention; reclaim only expired history, in
       // a bounded batch, under the same account-home fence as admission.
-      await client.query(
-        `DELETE FROM api_key_action_requests WHERE account_id=$1 AND request_id IN (
-          SELECT request_id FROM api_key_action_requests WHERE account_id=$1
-          AND expires_at < extract(epoch from clock_timestamp())*1000-$2
-          ORDER BY expires_at,request_id LIMIT $3)`,
-        [
-          binding.account_id,
-          API_KEY_ACTION_HISTORY_RETENTION_MS,
-          API_KEY_ACTION_CLEANUP_BATCH,
-        ],
-      );
+      await this.prune(client, binding.account_id);
       const { rows } = await client.query(
         `SELECT count(*)::INTEGER AS retained,
           count(*) FILTER (WHERE status='pending' AND
