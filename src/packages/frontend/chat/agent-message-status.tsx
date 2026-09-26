@@ -15,6 +15,7 @@ import {
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { ChatSourceContent } from "./source-file-context";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -178,14 +179,16 @@ export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
           overflowWrap: "anywhere",
         }}
       >
-        <StaticMarkdown
-          value={steer.text}
-          style={{
-            fontSize: 13,
-            color: UI_COLORS.secondary,
-            overflowWrap: "anywhere",
-          }}
-        />
+        <ChatSourceContent>
+          <StaticMarkdown
+            value={steer.text}
+            style={{
+              fontSize: 13,
+              color: UI_COLORS.secondary,
+              overflowWrap: "anywhere",
+            }}
+          />
+        </ChatSourceContent>
       </div>
     </section>
   );

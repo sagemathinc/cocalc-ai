@@ -107,7 +107,13 @@ export function useNamedAgents(enabled = true) {
         if (!disposed) setState({ accountId, directory, loading: false });
       })
       .catch((err) => {
-        if (!disposed) setState({ accountId, loading: false, error: `${err}` });
+        if (!disposed)
+          setState((old) => ({
+            accountId,
+            directory: old.accountId === accountId ? old.directory : undefined,
+            loading: false,
+            error: `${err}`,
+          }));
       });
     return () => {
       disposed = true;

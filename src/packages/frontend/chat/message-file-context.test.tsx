@@ -2,7 +2,11 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { AgentMessageFileContext } from "./message-file-context";
+import { AttachedSteerStatusList } from "./agent-message-status";
+import { CodexActivity } from "./codex-activity";
+import { ChatEmbeddingOptionsProvider } from "./embedding-options";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
@@ -16,6 +20,10 @@ import {
 
 jest.mock("@cocalc/frontend/editors/markdown-input/mentionable-users", () => ({
   useMentionableUsers: () => () => [],
+}));
+jest.mock("./codex-log-panel", () => ({
+  __esModule: true,
+  default: () => null,
 }));
 
 const openFile = jest.fn();
@@ -48,11 +56,17 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 function Response({
   directory,
   value,
+  selectable = false,
+  children,
 }: {
   directory?: string;
   value?: string;
+  selectable?: boolean;
+  children?: ReactNode;
 }) {
   const location = { project_id: projectId, path: chatPath };
+  const markdown =
+    value ?? "[View the PNG](sin-x-squared.png)\n\n![Plot](sin-x-squared.png)";
   return (
     <FileContext.Provider
       value={{
@@ -62,18 +76,173 @@ function Response({
       }}
     >
       <AgentMessageFileContext projectId={projectId} directory={directory}>
-        <StaticMarkdown
-          value={
-            value ??
-            "[View the PNG](sin-x-squared.png)\n\n![Plot](sin-x-squared.png)"
-          }
-        />
+        {selectable ? (
+          <EditableMarkdown
+            value={markdown}
+            read_only
+            enableUpload={false}
+            minimal
+            hidePath
+            disableWindowing
+            noVfill
+            showEditBar={false}
+            height="auto"
+          />
+        ) : (
+          <StaticMarkdown value={markdown} />
+        )}
+        {children}
       </AgentMessageFileContext>
     </FileContext.Provider>
   );
 }
 
 beforeEach(() => jest.clearAllMocks());
+
+test("activity drawer guidance bypasses agent-relative workbench interception", async () => {
+  const onOpenFileLink = jest.fn();
+  render(
+    <Response directory="/home/user/work" value="Agent response">
+      <ChatEmbeddingOptionsProvider value={{ openFilesInWorkbench: true }}>
+        <CodexActivity
+          expanded
+          projectId={projectId}
+          chatPath={chatPath}
+          basePath="/home/user/work"
+          events={[]}
+          activitySteers={[
+            {
+              messageId: "steer-1",
+              date: 1,
+              text: "[Human reference](reference.png)\n\n![Human image](reference.png)",
+              state: "sent",
+            },
+          ]}
+          onOpenFileLink={onOpenFileLink}
+        />
+      </ChatEmbeddingOptionsProvider>
+    </Response>,
+  );
+  expect(screen.getByRole("img", { name: "Human image" })).toHaveAttribute(
+    "src",
+    fileURL({
+      project_id: projectId,
+      path: "/home/user/.local/share/cocalc/agents/reference.png",
+    }),
+  );
+  await userEvent.click(screen.getByRole("link", { name: "Human reference" }));
+  await waitFor(() =>
+    expect(loadTarget).toHaveBeenCalledWith(
+      "files/home/user/.local/share/cocalc/agents/reference.png",
+      true,
+      false,
+      true,
+      undefined,
+    ),
+  );
+  expect(onOpenFileLink).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["#section", { anchor: "section" }],
+  ["#thread=thread-1&chat=123", { thread: "thread-1", chat: "123" }],
+])(
+  "fragment %s stays in the chat instead of opening a synthetic file",
+  async (href, fragment) => {
+    const user = userEvent.setup();
+    render(<Response directory="/home/user/work" value={`[Jump](${href})`} />);
+    const link = screen.getByRole("link", { name: "Jump" });
+    await user.tab();
+    expect(link).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(loadTarget).toHaveBeenCalledTimes(1);
+    expect(loadTarget).toHaveBeenCalledWith(
+      `files${chatPath}`,
+      true,
+      false,
+      true,
+      fragment,
+    );
+    expect(openFile).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["static", "selectable", "status"])(
+  "%s human guidance keeps chat-relative links and images beside agent-relative content",
+  async (mode) => {
+    const user = userEvent.setup();
+    const guidance =
+      "[Human reference](reference.png)\n\n![Human image](reference.png)";
+    const agent = "[Agent result](result.png)\n\n![Agent image](result.png)";
+    render(
+      <FrameContext.Provider
+        value={{
+          ...defaultFrameContext,
+          project_id: projectId,
+          path: chatPath,
+        }}
+      >
+        <Response
+          directory="/home/user/work"
+          selectable={mode === "selectable"}
+          value={
+            mode === "status"
+              ? agent
+              : `${agent}\n\n\`\`\`guidance\n${guidance}\n\`\`\``
+          }
+        >
+          {mode === "status" && (
+            <AttachedSteerStatusList
+              attachedSteers={[
+                {
+                  messageId: "steer-1",
+                  date: 1,
+                  text: guidance,
+                  state: "sent",
+                },
+              ]}
+            />
+          )}
+        </Response>
+      </FrameContext.Provider>,
+    );
+    expect(screen.getByRole("img", { name: "Human image" })).toHaveAttribute(
+      "src",
+      fileURL({
+        project_id: projectId,
+        path: "/home/user/.local/share/cocalc/agents/reference.png",
+      }),
+    );
+    expect(screen.getByRole("img", { name: "Agent image" })).toHaveAttribute(
+      "src",
+      fileURL({ project_id: projectId, path: "/home/user/work/result.png" }),
+    );
+    const humanLink = screen.getByRole("link", { name: "Human reference" });
+    humanLink.focus();
+    expect(humanLink).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(loadTarget).toHaveBeenCalledWith(
+        `${mode === "selectable" ? `${projectId}/` : ""}files/home/user/.local/share/cocalc/agents/reference.png`,
+        true,
+        false,
+        true,
+        undefined,
+      ),
+    );
+    loadTarget.mockClear();
+    await user.click(screen.getByRole("link", { name: "Agent result" }));
+    await waitFor(() =>
+      expect(loadTarget).toHaveBeenCalledWith(
+        `${mode === "selectable" ? `${projectId}/` : ""}files/home/user/work/result.png`,
+        true,
+        false,
+        true,
+        undefined,
+      ),
+    );
+  },
+);
 
 test("the onboarding response opens its PNG from the turn cwd with keyboard and mouse", async () => {
   const user = userEvent.setup();

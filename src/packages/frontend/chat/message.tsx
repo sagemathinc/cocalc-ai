@@ -1304,6 +1304,7 @@ export default function Message({
     return (
       <AgentMessageFileContext
         projectId={project_id}
+        path={path}
         directory={isCodexAgentMessage ? activityBasePath : undefined}
       >
         {children}
@@ -2382,6 +2383,8 @@ export default function Message({
         return;
       }
       if (!embeddingOptions.openFilesInWorkbench || !actions) return;
+      // Human guidance keeps chat-relative navigation, including in activity.
+      if (anchor?.closest(".cocalc-slate-guidance")) return;
       const file = projectFileTargetFromHref({
         href,
         projectId: project_id,
