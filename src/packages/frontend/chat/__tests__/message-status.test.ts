@@ -3,8 +3,9 @@
 import { getLiveResponseBlocks } from "@cocalc/chat";
 import {
   codexActivityBlocksToSelectableMarkdown,
+  codexActivityTextSource,
   computeAcpStateToRender,
-  limitCodexActivityBlocks,
+  codexActivityWindow,
   shouldShowAcpResubmitToAgentButton,
 } from "../message-state";
 import "../../editors/slate/elements/types";
@@ -12,6 +13,21 @@ import { markdown_to_slate } from "../../editors/slate/markdown-to-slate";
 import { slate_to_markdown } from "../../editors/slate/slate-to-markdown";
 
 describe("codexActivityBlocksToSelectableMarkdown", () => {
+  it("slices across guidance boundaries without eagerly joining a large transcript", () => {
+    const text = "`".repeat(50_000);
+    const source = codexActivityTextSource([
+      { kind: "agent", text: "first" },
+      { kind: "guidance", text },
+      { kind: "agent", text: "last" },
+    ]);
+    const expected = `first\n\n${"`".repeat(50_001)}guidance\n${text}\n${"`".repeat(50_001)}\n\nlast`;
+    expect(source.length).toBe(expected.length);
+    expect(source.slice(4, 20)).toBe(expected.slice(4, 20));
+    expect(source.slice(source.length - 10, source.length)).toBe(
+      expected.slice(-10),
+    );
+    expect(source.toString()).toBe(expected);
+  });
   it("keeps the latest suffix from cumulative live projection events", () => {
     const blocks = getLiveResponseBlocks([
       {
@@ -84,14 +100,14 @@ describe("codexActivityBlocksToSelectableMarkdown", () => {
   });
 });
 
-describe("limitCodexActivityBlocks", () => {
+describe("codexActivityWindow", () => {
   const blocks = Array.from({ length: 250 }, (_, index) => ({
     kind: "agent" as const,
     text: `activity ${index}`,
   }));
 
   it("shows the newest capped window and reports hidden activity", () => {
-    const result = limitCodexActivityBlocks(blocks, 100);
+    const result = codexActivityWindow(blocks);
     expect(result.hiddenCount).toBe(150);
     expect(result.visibleBlocks).toHaveLength(100);
     expect(result.visibleBlocks[0].text).toBe("activity 150");
@@ -99,10 +115,21 @@ describe("limitCodexActivityBlocks", () => {
   });
 
   it("supports loading earlier activity in bounded pages", () => {
-    const result = limitCodexActivityBlocks(blocks, 200);
+    const result = codexActivityWindow(blocks, 150);
     expect(result.hiddenCount).toBe(50);
-    expect(result.visibleBlocks).toHaveLength(200);
+    expect(result.visibleBlocks).toHaveLength(100);
     expect(result.visibleBlocks[0].text).toBe("activity 50");
+    expect(result.visibleBlocks[99].text).toBe("activity 149");
+    expect(
+      codexActivityWindow(blocks, result.hiddenCount).visibleBlocks,
+    ).toHaveLength(50);
+  });
+
+  it("clamps the window after a log is shortened and never exceeds 100 blocks", () => {
+    expect(
+      codexActivityWindow(blocks.slice(0, 5), 250).visibleBlocks,
+    ).toHaveLength(5);
+    expect(codexActivityWindow(blocks, 500).visibleBlocks).toHaveLength(100);
   });
 });
 

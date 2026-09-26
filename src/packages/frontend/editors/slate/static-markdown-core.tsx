@@ -57,14 +57,14 @@ export default function StaticMarkdown({
   const didMountRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const pendingRenderRef = useRef<StaticMarkdownRenderInput | null>(null);
-  const [editor, setEditor] = useState<PartialSlateEditor>({
+  const [editor, setEditor] = useState<PartialSlateEditor>(() => ({
     children: renderStaticMarkdownChildren({
       value,
       inlineCodeLinks,
       inlineCodeProjectRoot,
       highlightQuery,
     }),
-  });
+  }));
   const [change, setChange] = useState<number>(0);
   const [hasPendingRender, setHasPendingRender] = useState(false);
   const renderedChildren = useMemo(

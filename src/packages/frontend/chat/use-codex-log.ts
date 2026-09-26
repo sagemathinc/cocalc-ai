@@ -19,6 +19,7 @@ import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconne
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { LiveLogReplay } from "./live-log-replay";
 import type { LiveLogRanges } from "./live-log-replay";
+import { canCacheActivityLog } from "./log-cache-budget";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
 // lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
@@ -41,9 +42,11 @@ type RecentLogCacheEntry = {
 
 const recentActivityLogCache = new LRUCache<string, RecentLogCacheEntry>({
   max: RECENT_ACTIVITY_LOG_CACHE_SIZE,
+  maxAge: 5 * 60_000,
 });
 const recentPreviewLogCache = new LRUCache<string, RecentLogCacheEntry>({
   max: RECENT_PREVIEW_LOG_CACHE_SIZE,
+  maxAge: 5 * 60_000,
 });
 
 function getRecentLogCacheEntry(
@@ -944,6 +947,10 @@ export function useCodexLog({
     const cache = liveStreamIsProjection
       ? recentPreviewLogCache
       : recentActivityLogCache;
+    if (!canCacheActivityLog(events)) {
+      cache.del(cacheKey);
+      return;
+    }
     cache.set(cacheKey, {
       events,
       liveStreamRanges: liveStreamIsProjection ? appliedLiveRanges : undefined,
