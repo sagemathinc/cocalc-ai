@@ -19,6 +19,79 @@ const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
 
 const claudeAgentAcpBin = process.env.CLAUDE_AGENT_ACP_BIN;
 
+test(
+  "qualified Claude recommended-value extension resolves exact models and concrete effort",
+  { skip: !claudeAgentAcpBin },
+  async () => {
+    const directory = path.dirname(realpathSync(claudeAgentAcpBin));
+    const { clientSupportsAirCapability } = await import(
+      pathToFileURL(path.join(directory, "air-extension.js")).href
+    );
+    const { buildModelConfigOption } = await import(
+      pathToFileURL(path.join(directory, "session-model.js")).href
+    );
+    const { buildEffortConfigOption } = await import(
+      pathToFileURL(path.join(directory, "session-effort.js")).href
+    );
+    assert.equal(
+      clientSupportsAirCapability(
+        {
+          _meta: {
+            jetbrains: {
+              air: { version: 1, capabilities: ["recommendedValue"] },
+            },
+          },
+        },
+        "recommendedValue",
+      ),
+      true,
+    );
+    const infos = [
+      {
+        value: "default",
+        resolvedModel: "claude-opus-test",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high"],
+      },
+      { value: "opus", resolvedModel: "claude-opus-test" },
+    ];
+    const models = {
+      currentModelId: "default",
+      availableModels: [
+        { modelId: "default", name: "Default (recommended)" },
+        { modelId: "opus", name: "Opus Test" },
+      ],
+    };
+    const model = buildModelConfigOption(models, infos, true);
+    assert.equal(model.currentValue, "opus");
+    assert.deepEqual(
+      model.options.map(({ value }) => value),
+      ["opus"],
+    );
+    assert.equal(
+      buildEffortConfigOption(infos, "default", undefined, true).currentValue,
+      "medium",
+    );
+    assert.equal(
+      buildEffortConfigOption(infos, "default", "high", true).currentValue,
+      "high",
+    );
+    assert.ok(
+      buildEffortConfigOption(infos, "default", undefined, true).options.every(
+        ({ value }) => value !== "default",
+      ),
+    );
+    assert.equal(
+      buildModelConfigOption(
+        models,
+        [{ ...infos[0], resolvedModel: "different-model" }, infos[1]],
+        true,
+      ).currentValue,
+      "default",
+    );
+  },
+);
+
 async function probeClaudeAuthMethods(args, remote) {
   const home = await mkdtemp(path.join(os.tmpdir(), "cocalc-claude-auth-"));
   const child = spawn(claudeAgentAcpBin, args, {
@@ -1725,6 +1798,86 @@ test("strict profile validation and defensive copy", () => {
     assert.throws(() => parseAcpHarnessProfile({ ...profile, ...changes }));
   }
 });
+test("qualified Claude negotiates concrete values on new and resumed sessions and migrates saved defaults", async (t) => {
+  for (const resume of [false, true]) {
+    const child = spawn(
+      process.execPath,
+      [...profile.args, "--config-options", "--recommended-values"],
+      {
+        env: {},
+        stdio: "pipe",
+      },
+    );
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: "project-a",
+        accountId: "account-a",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+      async () => ({
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      }),
+    );
+    t.after(() => client.dispose());
+    await client.open(resume ? "fixture-session" : undefined);
+    const settings = {
+      configOptions: [
+        { id: "model", value: "deep" },
+        { id: "effort", value: "default" },
+      ],
+    };
+    await client.configure(settings);
+    assert.equal(settings.configOptions[1].value, "default");
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "model")
+        .currentValue,
+      "deep",
+    );
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "effort")
+        .currentValue,
+      "high",
+    );
+    await client.configure({
+      configOptions: [
+        { id: "model", value: "default" },
+        { id: "effort", value: "default" },
+      ],
+    });
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "model")
+        .currentValue,
+      "fast",
+    );
+    assert.equal(
+      client.controls.configOptions.find(({ id }) => id === "effort")
+        .currentValue,
+      "low",
+    );
+    await assert.rejects(
+      client.configure({ configOptions: [{ id: "model", value: "invented" }] }),
+      /not advertised/,
+    );
+    await client.dispose();
+  }
+});
+
 test("qualified profiles accept only pinned catalog identity", () => {
   const qualified = {
     version: 2,

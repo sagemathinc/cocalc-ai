@@ -10,7 +10,10 @@ import {
 } from "antd";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
+import {
+  parseHarnessSessionControls,
+  resolveClaudeConfigValue,
+} from "@cocalc/util/ai/harness-controls";
 import type {
   HarnessSessionControls,
   HarnessSessionSettings,
@@ -553,7 +556,7 @@ function HarnessRuntimeSummaryContent({
       <Select
         id={`${id}-${inline ? "inline-" : ""}${control.id}`}
         aria-label={inline ? `${name} ${control.name}` : undefined}
-        value={value}
+        value={claude ? resolveClaudeConfigValue(control, value) : value}
         disabled={disabled || !onSettings}
         size={inline ? "small" : undefined}
         variant={inline ? "borderless" : undefined}
@@ -561,7 +564,7 @@ function HarnessRuntimeSummaryContent({
         style={inline ? { minWidth: 90, maxWidth: "100%" } : { width: "100%" }}
         options={control.options.map((option) => ({
           value: option.value,
-          label: option.name,
+          label: claude && option.value === "default" ? "Default" : option.name,
         }))}
         onChange={(value: string) =>
           change(

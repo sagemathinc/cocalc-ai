@@ -10,10 +10,28 @@ let counter = 0;
 let selectedModel = "fast";
 let selectedThinking = "low";
 let selectedMode = "code";
+const recommended = (value) => ({
+  _meta: { jetbrains: { air: { version: 1, recommendedValue: value } } },
+});
 const controls = () =>
   process.argv.includes("--config-options")
     ? {
         configOptions: [
+          ...(process.argv.includes("--recommended-values")
+            ? [
+                {
+                  id: "effort",
+                  name: "Effort",
+                  type: "select",
+                  currentValue: selectedThinking,
+                  ...recommended(selectedModel === "deep" ? "high" : "low"),
+                  options: [
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                  ],
+                },
+              ]
+            : []),
           ...(process.argv.includes("--dependent-config")
             ? [
                 {
@@ -33,6 +51,9 @@ const controls = () =>
             name: "Model",
             type: "select",
             currentValue: selectedModel,
+            ...(process.argv.includes("--recommended-values")
+              ? recommended("fast")
+              : {}),
             options: [
               {
                 group: "fixture",
@@ -86,6 +107,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   switch (message.method) {
     case "initialize":
       if (process.argv.includes("--hang")) return;
+      if (process.argv.includes("--recommended-values")) {
+        require("node:assert/strict").deepEqual(
+          message.params.clientCapabilities._meta,
+          {
+            jetbrains: {
+              air: { version: 1, capabilities: ["recommendedValue"] },
+            },
+          },
+        );
+      }
       return result(message.id, {
         protocolVersion: process.argv.includes("--wrong-version") ? 999 : 1,
         agentInfo: {
@@ -169,6 +200,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       return result(message.id, controls());
     case "session/set_config_option":
+      if (
+        process.argv.includes("--recommended-values") &&
+        message.params.configId === "effort"
+      ) {
+        selectedThinking = message.params.value;
+        return result(message.id, controls());
+      }
       if (process.argv.includes("--ignore-config"))
         return result(message.id, controls());
       if (

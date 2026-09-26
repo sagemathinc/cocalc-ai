@@ -2,6 +2,7 @@ import {
   harnessSessionControls,
   parseHarnessSessionControls,
   parseHarnessSessionSettings,
+  resolveClaudeConfigValue,
 } from "./harness-controls";
 import { parseAcpHarnessRuntime } from "./runtime";
 
@@ -23,6 +24,57 @@ const session = {
     },
   ],
 };
+
+test("retains only valid advertised recommendations and migrates legacy Claude defaults", () => {
+  const option = session.configOptions[0];
+  const controls = harnessSessionControls({
+    configOptions: [
+      {
+        ...option,
+        _meta: {
+          jetbrains: { air: { version: 1, recommendedValue: "a" } },
+          secret: "discard",
+        },
+      },
+    ],
+  });
+  expect(controls.configOptions[0].recommendedValue).toBe("a");
+  expect(parseHarnessSessionControls(controls)).toEqual(controls);
+  expect(JSON.stringify(controls)).not.toContain("secret");
+  const control = controls.configOptions[0];
+  expect(resolveClaudeConfigValue(control, "default")).toBe("a");
+  expect(resolveClaudeConfigValue(control, "explicit")).toBe("explicit");
+  expect(resolveClaudeConfigValue({ ...control, id: "other" }, "default")).toBe(
+    "default",
+  );
+  expect(
+    resolveClaudeConfigValue(
+      { ...control, recommendedValue: undefined },
+      "default",
+    ),
+  ).toBe("default");
+  expect(
+    resolveClaudeConfigValue(
+      {
+        ...control,
+        options: [...control.options, { value: "default", name: "Default" }],
+      },
+      "default",
+    ),
+  ).toBe("default");
+  for (const air of [
+    { version: 1, recommendedValue: "invented" },
+    { version: 0, recommendedValue: "a" },
+    { version: "1", recommendedValue: "a" },
+    { version: 1, recommendedValue: {} },
+  ]) {
+    expect(
+      harnessSessionControls({
+        configOptions: [{ ...option, _meta: { jetbrains: { air } } }],
+      }).configOptions[0].recommendedValue,
+    ).toBeUndefined();
+  }
+});
 
 test("normalizes bounded select catalogs and strips extensions", () => {
   const controls = harnessSessionControls(session);

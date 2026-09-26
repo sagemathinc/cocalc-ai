@@ -31,6 +31,7 @@ const controls = {
       id: "model",
       name: "Model",
       currentValue: "opus",
+      recommendedValue: "opus",
       options: [
         { value: "opus", name: "Opus" },
         { value: "sonnet", name: "Sonnet" },
@@ -39,9 +40,10 @@ const controls = {
     {
       id: "effort",
       name: "Effort",
-      currentValue: "default",
+      currentValue: "medium",
+      recommendedValue: "medium",
       options: [
-        { value: "default", name: "Default" },
+        { value: "medium", name: "Medium" },
         { value: "high", name: "High" },
       ],
     },
@@ -144,6 +146,9 @@ test("new Claude agent exposes real model/effort controls and keeps both first-t
     name: "Claude Code Model",
   });
   expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("Opus")).toBeTruthy();
+  expect(screen.getByText("Medium")).toBeTruthy();
+  expect(screen.queryByText(/Default/)).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Connect Claude subscription" }),
   ).toBeNull();
@@ -164,6 +169,44 @@ test("new Claude agent exposes real model/effort controls and keeps both first-t
   });
   expect(discoverNewAgentHarness).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("combobox", { name: /Mode$/ })).toBeNull();
+});
+
+test("saved default selections display the adapter's concrete recommendations", async () => {
+  render(
+    <NewAgentClaudeControls
+      {...props}
+      settings={{
+        configOptions: [
+          { id: "model", value: "default" },
+          { id: "effort", value: "default" },
+        ],
+      }}
+    />,
+  );
+  await screen.findByRole("combobox", { name: "Claude Code Model" });
+  expect(screen.getByText("Opus")).toBeTruthy();
+  expect(screen.getByText("Medium")).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/Default|default/);
+});
+
+test("unresolved model defaults keep an honest compact label", async () => {
+  jest.mocked(discoverNewAgentHarness).mockResolvedValue({
+    ...result,
+    controls: {
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "default",
+          options: [{ value: "default", name: "Default (recommended)" }],
+        },
+      ],
+    },
+  } as any);
+  render(<NewAgentClaudeControls {...props} />);
+  await screen.findByRole("combobox", { name: "Claude Code Model" });
+  expect(screen.getByText("Default")).toBeTruthy();
+  expect(screen.queryByText("Default (recommended)")).toBeNull();
 });
 
 test("Claude setup opens from the keyboard, contains connection details, and restores focus", async () => {

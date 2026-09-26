@@ -28,6 +28,7 @@ import { harnessTransport } from "./harness-transport";
 import {
   harnessSessionControls,
   parseHarnessSessionSettings,
+  resolveClaudeConfigValue,
 } from "@cocalc/util/ai/harness-controls";
 import type {
   HarnessSessionControls,
@@ -254,9 +255,20 @@ export class AcpHarnessClient {
           protocolVersion: 1,
           clientInfo: { name: "cocalc", version: "1" },
           // No host filesystem, terminals, URL or secret/login callbacks.
-          clientCapabilities: questionHandler
-            ? { elicitation: { form: {} } }
-            : {},
+          clientCapabilities: {
+            ...(questionHandler ? { elicitation: { form: {} } } : {}),
+            // The pinned Claude adapter resolves model defaults and applies
+            // concrete effort to the SDK when this extension is negotiated.
+            ...(profile.version === 2 && profile.id === "claude-code"
+              ? {
+                  _meta: {
+                    jetbrains: {
+                      air: { version: 1, capabilities: ["recommendedValue"] },
+                    },
+                  },
+                }
+              : {}),
+          },
         }),
       );
       if (client.info.protocolVersion !== 1)
@@ -337,6 +349,12 @@ export class AcpHarnessClient {
         const control = this.controls.configOptions.find(
           ({ id }) => id === choice.id,
         );
+        if (
+          control &&
+          this.binding.profile.version === 2 &&
+          this.binding.profile.id === "claude-code"
+        )
+          choice.value = resolveClaudeConfigValue(control, choice.value);
         if (!control?.options.some(({ value }) => value === choice.value))
           throw new HarnessError(
             "unsupported",

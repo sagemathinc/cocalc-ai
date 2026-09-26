@@ -3,6 +3,7 @@ export interface HarnessSelectControl {
   id: string;
   name: string;
   currentValue: string;
+  recommendedValue?: string;
   options: { value: string; name: string }[];
 }
 
@@ -33,7 +34,7 @@ function list(value: unknown, max: number): any[] {
   return value;
 }
 
-/** Strip descriptions/extensions and cap the catalog before persisting or rendering. */
+/** Strip descriptions/unknown extensions and bound the persisted display catalog. */
 export function harnessSessionControls(session: {
   configOptions?: unknown;
   modes?: unknown;
@@ -46,11 +47,20 @@ export function harnessSessionControls(session: {
         item?.group == null ? [item] : list(item.options, 1024),
       );
       if (options.length > 1024) throw Error("ACP control catalog too large");
+      const air = option._meta?.jetbrains?.air;
+      const recommendedValue =
+        Number.isInteger(air?.version) && air.version >= 1
+          ? air.recommendedValue
+          : undefined;
       return [
         {
           id: text(option.id),
           name: text(option.name),
           currentValue: text(option.currentValue),
+          ...(typeof recommendedValue === "string" &&
+          options.some((item) => item?.value === recommendedValue)
+            ? { recommendedValue: text(recommendedValue) }
+            : {}),
           options: options.map((item) => ({
             value: text(item?.value),
             name: text(item?.name),
@@ -90,6 +100,19 @@ export function harnessSessionControls(session: {
   return result;
 }
 
+/** Migrate Claude's old default sentinel only when its adapter resolves it. */
+export function resolveClaudeConfigValue(
+  control: HarnessSelectControl,
+  value: string,
+): string {
+  return value === "default" &&
+    ["model", "effort"].includes(control.id) &&
+    !control.options.some((option) => option.value === "default") &&
+    control.options.some((option) => option.value === control.recommendedValue)
+    ? control.recommendedValue!
+    : value;
+}
+
 export function parseHarnessSessionSettings(
   value: unknown,
 ): HarnessSessionSettings {
@@ -125,6 +148,11 @@ export function parseHarnessSessionControls(
   const configOptions = list(obj.configOptions, 32).map((control) => ({
     ...control,
     type: "select",
+    _meta: {
+      jetbrains: {
+        air: { version: 1, recommendedValue: control.recommendedValue },
+      },
+    },
   }));
   const modes =
     obj.mode == null
