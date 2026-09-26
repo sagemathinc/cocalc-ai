@@ -18,6 +18,31 @@ test("controller uses the same normalized image cache key as project startup", (
   expect(CLAUDE_CONTROLLER_BASE_IMAGE).toBe("docker.io/buildpack-deps:26.04");
 });
 
+test("usage controller cannot mount project tools or transcripts even when provided", () => {
+  const args = claudeSubscriptionContainerArgs({
+    name: "usage",
+    projectId: "project",
+    owner: "owner",
+    home: "/auth",
+    rootfs: "/rootfs",
+    managedHarnesses: "/harnesses",
+    nodeMounts: {},
+    uid: 1000,
+    gid: 1000,
+    toolBridgeDirectory: "/must-not-mount-tools",
+    sessionDirectory: "/must-not-mount-transcripts",
+    purpose: "usage",
+  });
+  expect(args.join(" ")).not.toContain("must-not-mount");
+  expect(args.join(" ")).not.toContain("COCALC_BEARER_TOKEN");
+  expect(args.at(-1)).toContain(
+    "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET",
+  );
+  expect(args.at(-1)).toContain("tools: []");
+  expect(args.at(-1)).toContain("settingSources: []");
+  expect(args.at(-1)).toContain("skipBehaviors: true");
+});
+
 test("Claude transcript survives a controller restart without entering the auth bundle", async () => {
   const projectHome = await mkdtemp(join(tmpdir(), "claude-transcript-test-"));
   const options = {

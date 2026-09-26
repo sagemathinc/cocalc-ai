@@ -11,6 +11,7 @@ import { useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
+import { writeHarnessCredentialSelection } from "../harness-credential-selection";
 import {
   claudeCredentialTrustWarning,
   HarnessProfileFields,
@@ -25,6 +26,13 @@ const draft = {
   revision: "0.86.1",
   executable: "/home/user/bin/pi-acp",
   args: "--flag\nvalue with spaces",
+};
+
+const accountStore = {
+  get: () => "account-a",
+  getIn: () => "account-a",
+  on: jest.fn(),
+  removeListener: jest.fn(),
 };
 
 test("qualified Claude profiles contain only trusted catalog identity", () => {
@@ -74,9 +82,9 @@ test("Claude project-key warning is shown only in its focused dialog", async () 
 });
 
 test("Claude account-key selection links to the shared security model by keyboard", async () => {
-  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
-    get: () => "account-a",
-  } as any);
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
   localStorage.setItem(
     "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
     "account-api-key:00000000-0000-4000-8000-000000000001",
@@ -105,9 +113,9 @@ test("Claude account-key selection links to the shared security model by keyboar
 });
 
 test("Claude subscription selection exposes an explicit disconnect action", () => {
-  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
-    get: () => "account-a",
-  } as any);
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
   localStorage.setItem(
     "cocalc:acp-harness-credential:v1:account-a:project-a:thread-a",
     "account-subscription:00000000-0000-4000-8000-000000000001",
@@ -135,9 +143,9 @@ test("Claude subscription selection exposes an explicit disconnect action", () =
 });
 
 test("Claude subscription shows the verified billing account and plan", async () => {
-  const getStore = jest.spyOn(redux, "getStore").mockReturnValue({
-    get: () => "account-a",
-  } as any);
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
   const list = jest
     .spyOn(webapp_client.conat_client.hub.system, "listExternalCredentials")
     .mockResolvedValue([
@@ -341,6 +349,209 @@ test("discovery is explicit, keyboard accessible and does not select a model", a
   expect(screen.getByRole("combobox", { name: "Model" })).toBeTruthy();
   expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
   expect(document.activeElement).toBe(button);
+});
+
+const claudeControls = {
+  configOptions: [
+    {
+      id: "mode",
+      name: "Mode",
+      currentValue: "manual",
+      options: [{ value: "manual", name: "Manual" }],
+    },
+    {
+      id: "model",
+      name: "Model",
+      currentValue: "opus",
+      options: [
+        { value: "opus", name: "Opus 5.5" },
+        { value: "sonnet", name: "Sonnet" },
+      ],
+    },
+    {
+      id: "effort",
+      name: "Effort",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "high", name: "High" },
+      ],
+    },
+    {
+      id: "fast",
+      name: "Fast mode",
+      currentValue: "off",
+      options: [
+        { value: "off", name: "Off" },
+        { value: "on", name: "On" },
+      ],
+    },
+  ],
+};
+
+test("Claude composer automatically discovers model and effort without selecting a default", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onDiscover = jest.fn(async () => ({
+    profile: runtime.profile,
+    controls: claudeControls,
+  }));
+  const onSettings = jest.fn();
+  const { rerender } = render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      onDiscover={onDiscover}
+      onSettings={onSettings}
+    />,
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(screen.getByText("Opus 5.5")).toBeTruthy();
+  expect(
+    screen.getByRole("combobox", { name: "Claude Code Effort" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: /Mode$/ })).toBeNull();
+  expect(screen.queryByText("Fast on")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onDiscover).toHaveBeenCalledTimes(1);
+  expect(onSettings).not.toHaveBeenCalled();
+  rerender(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      onDiscover={onDiscover}
+      onSettings={onSettings}
+    />,
+  );
+  expect(onDiscover).toHaveBeenCalledTimes(1);
+  const user = userEvent.setup();
+  const model = screen.getByRole("combobox", { name: "Claude Code Model" });
+  await user.click(model);
+  await screen.findByRole("option", { name: "Sonnet" });
+  fireEvent.keyDown(model, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(model, { key: "Enter", keyCode: 13 });
+  expect(onSettings).toHaveBeenLastCalledWith({
+    configOptions: [{ id: "model", value: "sonnet" }],
+  });
+});
+
+test("Claude shows selected fast mode, hides explanations, and restores keyboard focus", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={{
+        ...runtime,
+        settings: { configOptions: [{ id: "fast", value: "on" }] },
+      }}
+      reported={{ profile: runtime.profile, controls: claudeControls }}
+      onSettings={jest.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Fast on" })).toBeTruthy();
+  const user = userEvent.setup();
+  await user.tab();
+  const trigger = screen.getByRole("button", { name: "Claude Code settings" });
+  expect(document.activeElement).toBe(trigger);
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "Claude Code settings" }),
+  ).toBeTruthy();
+  const details = screen
+    .getByText("How access, billing, and settings work")
+    .closest("details")!;
+  expect(details.open).toBe(false);
+  const summary = details.querySelector("summary")!;
+  summary.focus();
+  expect(document.activeElement).toBe(summary);
+  // jsdom does not implement the native Enter-to-toggle behavior of summary.
+  await user.click(summary);
+  expect(details.open).toBe(true);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(document.activeElement).toBe(trigger);
+});
+
+test("failed automatic discovery shows an honest unknown model and permits retry", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onDiscover = jest
+    .fn()
+    .mockRejectedValueOnce(Error("Offline"))
+    .mockResolvedValue({ profile: runtime.profile, controls: claudeControls });
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      onDiscover={onDiscover}
+      onSettings={jest.fn()}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "Error: Offline",
+  );
+  expect(onDiscover).toHaveBeenCalledTimes(1);
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("button", { name: "Model unavailable - retry" }),
+    );
+  expect(
+    await screen.findByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(onDiscover).toHaveBeenCalledTimes(2);
+});
+
+test("changing payment refreshes options and discards the previous credential's late discovery", async () => {
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  let resolve!: (value: any) => void;
+  const pending = new Promise<any>((done) => {
+    resolve = done;
+  });
+  const onDiscover = jest.fn().mockReturnValueOnce(pending).mockResolvedValue({
+    profile: runtime.profile,
+    controls: claudeControls,
+  });
+  try {
+    render(
+      <HarnessRuntimeControl
+        compact
+        runtime={runtime}
+        projectId="project-a"
+        threadKey="thread-a"
+        onDiscover={onDiscover}
+        onSettings={jest.fn()}
+      />,
+    );
+    await waitFor(() => expect(onDiscover).toHaveBeenCalledTimes(1));
+    act(() =>
+      writeHarnessCredentialSelection({
+        accountId: "account-a",
+        projectId: "project-a",
+        threadKey: "thread-a",
+        credential: {
+          version: 1,
+          provider: "anthropic",
+          mode: "account-api-key",
+          credentialId: "00000000-0000-4000-8000-000000000001",
+        },
+      }),
+    );
+    await act(async () =>
+      resolve({ profile: runtime.profile, controls: { configOptions: [] } }),
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "Claude Code Model" }),
+    ).toBeTruthy();
+    expect(onDiscover).toHaveBeenCalledTimes(2);
+  } finally {
+    getStore.mockRestore();
+    localStorage.clear();
+  }
 });
 
 test("discovery errors are announced instead of supplying invented controls", async () => {

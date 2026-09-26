@@ -1006,6 +1006,7 @@ export function ChatRoomComposer({
                   paymentSource={codexPaymentSource}
                   paymentSourceLoading={codexPaymentSourceLoading}
                   refreshPaymentSource={refreshCodexPaymentSource}
+                  turnRunning={hasRunningCodexTurn}
                 />
               </div>
             ) : (

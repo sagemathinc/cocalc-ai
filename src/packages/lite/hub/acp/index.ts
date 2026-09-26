@@ -12102,6 +12102,7 @@ async function handleAcpControlRequest(
       harness: await discoverHarnessControls({
         project_id,
         account_id: request.account_id,
+        harness_credential: request.harness_credential,
         runtime,
         prompt: "",
         chat: { project_id, path, thread_id },

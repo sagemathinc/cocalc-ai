@@ -3018,6 +3018,25 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { id, canceled };
   }
 
+  async function getClaudeSubscriptionUsage({
+    account_id,
+    project_id,
+    credential_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    credential_id: string;
+  }) {
+    assertHostedProjectAccess({ account_id, project_id });
+    const { getClaudeSubscriptionUsage } =
+      await import("../acp/claude-subscription-usage");
+    return getClaudeSubscriptionUsage({
+      projectId: project_id,
+      accountId: account_id!,
+      credentialId: credential_id,
+    });
+  }
+
   async function claudeSubscriptionLoginStart({
     account_id,
     project_id,
@@ -3699,6 +3718,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.claudeSubscriptionLoginStart = claudeSubscriptionLoginStart;
+  hubApi.projects.getClaudeSubscriptionUsage = getClaudeSubscriptionUsage;
   hubApi.projects.claudeSubscriptionLoginStatus = claudeSubscriptionLoginStatus;
   hubApi.projects.claudeSubscriptionLoginSubmitCode =
     claudeSubscriptionLoginSubmitCode;

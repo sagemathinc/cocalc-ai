@@ -2944,12 +2944,19 @@ export class ChatActions extends Actions<ChatState> {
     if (!thread_id || !project_id || !path || !this.syncdb)
       throw Error("ACP conversation is not ready");
     await this.saveSyncdb();
+    const { readHarnessCredentialSelection } =
+      await import("./harness-credential-selection");
     const result = await webapp_client.conat_client.controlAcp({
       project_id,
       path,
       thread_id,
       user_message_id: thread_id,
       action: "discover_harness_v1",
+      harness_credential: readHarnessCredentialSelection({
+        accountId: redux.getStore("account")?.get("account_id"),
+        projectId: project_id,
+        threadKey,
+      }),
     });
     if (!result.ok || !result.harness)
       throw Error("ACP discovery is unavailable on this host");

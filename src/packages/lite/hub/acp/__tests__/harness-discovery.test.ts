@@ -6,6 +6,7 @@ import {
 } from "../harness-runtime";
 import { AcpHarnessClient, disposeFailedHarness } from "@cocalc/ai/acp/harness";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 
 jest.mock("@cocalc/ai/acp/harness", () => ({
   AcpHarnessClient: { start: jest.fn() },
@@ -92,6 +93,41 @@ test("discovery opens a temporary session without a prompt or existing session I
   expect(client.prompt).not.toHaveBeenCalled();
   expect(client.dispose).toHaveBeenCalledTimes(1);
 });
+
+test.each(["account-api-key", "account-subscription"] as const)(
+  "discovery uses the selected %s rather than the project secret",
+  async (mode) => {
+    const credential = {
+      version: 1 as const,
+      provider: "anthropic" as const,
+      mode,
+      credentialId: "00000000-0000-4000-8000-000000000001",
+    };
+    await discoverHarnessControls({
+      ...request,
+      harness_credential: credential,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: CLAUDE_CODE_QUALIFICATION.package.version,
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    });
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({ credential }),
+      { path: "a.chat", threadId: "thread" },
+    );
+    expect(client.prompt).not.toHaveBeenCalled();
+    expect(client.dispose).toHaveBeenCalledTimes(1);
+  },
+);
 
 test.each(["open", "configure"])(
   "%s failure cleans up and releases the discovery slot",

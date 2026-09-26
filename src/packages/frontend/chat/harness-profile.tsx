@@ -5,9 +5,10 @@ import {
   Popconfirm,
   Select,
   Space,
+  Tag,
   Typography,
 } from "antd";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
   HarnessSessionControls,
@@ -21,7 +22,7 @@ import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { getQualifiedHarnessCandidate } from "@cocalc/util/ai/qualified-harnesses";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import {
   ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
@@ -39,6 +40,7 @@ import {
 } from "./harness-credential-selection";
 import { ClaudeSubscriptionConnect } from "./claude-subscription-connect";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { ClaudePaymentStatus } from "./claude-payment-status";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -54,6 +56,7 @@ export function claudeCredentialTrustWarning(
 }
 
 interface HarnessRuntimeSummaryProps {
+  compact?: boolean;
   runtime: unknown;
   reported?: unknown;
   projectId?: string;
@@ -240,6 +243,7 @@ function ClaudeCredentialControl({
         </Popconfirm>
       )}
       <ClaudeSubscriptionConnect
+        compact
         hasConnection={credentials.some(
           (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
         )}
@@ -259,9 +263,6 @@ function ClaudeCredentialControl({
           );
         }}
       />
-      <Typography.Text type="secondary">
-        This account-local choice is applied when the next turn is admitted.
-      </Typography.Text>
       {selectedSubscription && (
         <Typography.Text role="status">
           Billing: Claude {selectedSubscription.metadata?.plan || "Pro/Max"}{" "}
@@ -269,7 +270,7 @@ function ClaudeCredentialControl({
           {selectedSubscription.metadata?.[
             ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY
           ] || "unknown account"}
-          . Anthropic controls plan limits and optional extra usage.
+          .
         </Typography.Text>
       )}
       {credentialsLoaded &&
@@ -303,57 +304,8 @@ function ClaudeCredentialControl({
   );
 }
 
-/** Composer toolbars cannot contain the full, wrapping runtime form. */
-export function HarnessRuntimeControl({
-  compact,
-  ...props
-}: HarnessRuntimeSummaryProps & { compact?: boolean }) {
-  const [open, setOpen] = useState(false);
-  let name = "harness";
-  try {
-    name = parseAcpHarnessRuntime(props.runtime).profile.id;
-  } catch {
-    /* The form explains invalid configuration. */
-  }
-  if (!compact) return <HarnessRuntimeSummary {...props} />;
-  return (
-    <>
-      <Button
-        size="small"
-        type="text"
-        aria-label={`ACP: ${name} settings`}
-        aria-haspopup="dialog"
-        title={`ACP: ${name} settings`}
-        onClick={() => setOpen(true)}
-        style={{
-          minWidth: 0,
-          maxWidth: "100%",
-          width: "100%",
-          justifyContent: "flex-start",
-        }}
-      >
-        <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          ACP: {name}
-        </span>
-      </Button>
-      <Modal
-        open={open}
-        title="ACP harness settings"
-        footer={null}
-        onCancel={() => setOpen(false)}
-        modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
-        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
-      >
-        <HarnessRuntimeSummary {...props} />
-      </Modal>
-    </>
-  );
+export function HarnessRuntimeControl(props: HarnessRuntimeSummaryProps) {
+  return <HarnessRuntimeSummary {...props} />;
 }
 
 export interface HarnessProfileDraft {
@@ -387,6 +339,7 @@ export function qualifiedHarnessRuntime(
 }
 
 export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
+  const accountId = useTypedRedux("account", "account_id");
   let runtime: AcpHarnessRuntime;
   try {
     runtime = parseAcpHarnessRuntime(props.runtime);
@@ -400,7 +353,12 @@ export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
   // Discovery belongs to this executable/profile, not to a later replacement.
   return (
     <HarnessRuntimeSummaryContent
-      key={JSON.stringify(runtime.profile)}
+      key={JSON.stringify([
+        runtime.profile,
+        accountId,
+        props.projectId,
+        props.threadKey,
+      ])}
       {...props}
       runtime={runtime}
     />
@@ -414,24 +372,31 @@ function HarnessRuntimeSummaryContent({
   threadKey,
   onSettings,
   onDiscover,
+  compact,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
   runtime: AcpHarnessRuntime;
 }) {
   const id = useId();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [autoDiscovered, setAutoDiscovered] = useState(false);
+  const generation = useRef(0);
+  const [ignoredReported, setIgnoredReported] = useState<string>();
   const [discovered, setDiscovered] = useState<{
     profile: unknown;
     controls: unknown;
     reportedAtLoad: string | undefined;
   }>();
   const { profile, settings = {} } = runtime;
+  const claude = profile.id === "claude-code";
+  const name = claude ? "Claude Code" : `ACP: ${profile.id}`;
   let controls: HarnessSessionControls | undefined;
   for (const candidate of [
     discovered?.reportedAtLoad === JSON.stringify(reported)
       ? discovered
       : undefined,
-    reported,
+    JSON.stringify(reported) !== ignoredReported ? reported : undefined,
   ]) {
     try {
       const snapshot = candidate as {
@@ -457,24 +422,127 @@ function HarnessRuntimeSummaryContent({
       setError(`${err}`);
     }
   };
-  return (
-    <Space
-      orientation="vertical"
-      size={4}
-      style={{ width: "100%", minWidth: 0 }}
-    >
+  const discover = async () => {
+    if (!onDiscover || loading) return;
+    setLoading(true);
+    setError("");
+    const started = generation.current;
+    try {
+      const result = await onDiscover();
+      if (started !== generation.current) return;
+      parseHarnessSessionControls(result.controls);
+      if (
+        JSON.stringify(parseAcpHarnessProfile(result.profile)) !==
+        JSON.stringify(profile)
+      )
+        throw Error(
+          "Harness profile changed; reload its settings before discovery",
+        );
+      setDiscovered({ ...result, reportedAtLoad: JSON.stringify(reported) });
+    } catch (err) {
+      if (started === generation.current) setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const invalidateCredential = useEffectEvent(() => {
+    generation.current++;
+    setIgnoredReported(JSON.stringify(reported));
+    setDiscovered(undefined);
+    setAutoDiscovered(false);
+    setError("");
+  });
+  useEffect(() => {
+    if (!claude || !projectId || !threadKey) return;
+    const read = () =>
+      JSON.stringify(
+        readHarnessCredentialSelection({
+          accountId: redux.getStore("account")?.get("account_id"),
+          projectId,
+          threadKey,
+        }),
+      );
+    let previous = read();
+    const refresh = () => {
+      const next = read();
+      if (next === previous) return;
+      previous = next;
+      invalidateCredential();
+    };
+    window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [claude, projectId, threadKey]);
+  const autoDiscover = useEffectEvent(discover);
+  useEffect(() => {
+    if (
+      !compact ||
+      !claude ||
+      controls ||
+      !onDiscover ||
+      autoDiscovered ||
+      loading
+    )
+      return;
+    setAutoDiscovered(true);
+    void autoDiscover();
+  }, [compact, claude, !!controls, !!onDiscover, autoDiscovered, loading]);
+  const select = (
+    control: NonNullable<typeof controls>["configOptions"][number],
+    inline = false,
+  ) => {
+    const legacy = control === controls?.mode;
+    const value =
+      (legacy
+        ? settings.modeId
+        : settings.configOptions?.find(({ id }) => id === control.id)?.value) ??
+      control.currentValue;
+    return (
+      <Select
+        id={`${id}-${inline ? "inline-" : ""}${control.id}`}
+        aria-label={inline ? `${name} ${control.name}` : undefined}
+        value={value}
+        disabled={!onSettings}
+        size={inline ? "small" : undefined}
+        variant={inline ? "borderless" : undefined}
+        popupMatchSelectWidth={false}
+        style={inline ? { minWidth: 90, maxWidth: "100%" } : { width: "100%" }}
+        options={control.options.map((option) => ({
+          value: option.value,
+          label: option.name,
+        }))}
+        onChange={(value: string) =>
+          change(
+            legacy
+              ? { ...settings, modeId: value }
+              : {
+                  ...settings,
+                  configOptions: [
+                    ...(settings.configOptions ?? []).filter(
+                      ({ id }) => id !== control.id,
+                    ),
+                    { id: control.id, value },
+                  ],
+                },
+          )
+        }
+      />
+    );
+  };
+  const information = (
+    <>
       <details>
         <summary>
-          ACP: {profile.id} ·{" "}
-          {profile.id === "claude-code"
-            ? "Access depends on credential mode"
-            : "Full project access"}
+          {claude ? "Runtime details" : `${name} · Full project access`}
         </summary>
         <dl style={{ overflowWrap: "anywhere", margin: 8 }}>
           <dt>Credentials</dt>
           <dd>
             {profile.id === "claude-code"
-              ? "Selected below; billing and access vary by credential mode"
+              ? "Billing and access depend on the selected payment method"
               : "Project-managed (not CoCalc billing)"}
           </dd>
           <dt>Revision</dt>
@@ -496,57 +564,86 @@ function HarnessRuntimeSummaryContent({
           <dd>{profile.cwd}</dd>
         </dl>
       </details>
-      <Typography.Text type="secondary">{HARNESS_LIMITATIONS}</Typography.Text>
-      <Typography.Text type="secondary">
-        Full-project-access preview: CoCalc does not pause for per-tool
-        approval. Claude may run project commands and change files during an
-        admitted turn.
-      </Typography.Text>
+    </>
+  );
+  const form = (
+    <Space
+      orientation="vertical"
+      size={12}
+      style={{ width: "100%", minWidth: 0 }}
+    >
+      <Tag>Experimental preview</Tag>
+      {onSettings && controls && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
+          {[
+            ...(controls.mode ? [controls.mode] : []),
+            ...controls.configOptions,
+          ].map((control) => {
+            if (claude && (control.id === "mode" || control === controls.mode))
+              return null;
+            return (
+              <div
+                key={control.id}
+                style={{ flex: "1 1 180px", minWidth: 0, maxWidth: "100%" }}
+              >
+                <label
+                  htmlFor={`${id}-${control.id}`}
+                  style={{ display: "block", overflowWrap: "anywhere" }}
+                >
+                  {control.name}
+                </label>
+                {select(control)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <details>
+        <summary>How access, billing, and settings work</summary>
+        <p>{HARNESS_LIMITATIONS}</p>
+        <p>
+          Full-project-access preview: CoCalc does not pause for per-tool
+          approval. {claude ? "Claude" : "The harness"} may run project commands
+          and change files during an admitted turn.
+        </p>
+        {claude && (
+          <p>
+            Credential selection is private to your account. Project code and
+            authorized Agent Network turns can consume the selected billing
+            authority. Anthropic controls subscription limits and extra usage.
+          </p>
+        )}
+        <p>
+          Changes apply to the next submitted turn, not running or already
+          queued turns. Harness modes do not change container isolation.
+        </p>
+        <p>
+          Loading options starts a temporary session with project access,
+          without sending a prompt.
+        </p>
+      </details>
       {profile.version === 2 &&
         profile.id === "claude-code" &&
         projectId &&
         threadKey && (
-          <ClaudeCredentialControl
-            projectId={projectId}
-            threadKey={threadKey}
-          />
+          <section aria-label="Payment">
+            <Typography.Text strong>Payment</Typography.Text>
+            <ClaudeCredentialControl
+              projectId={projectId}
+              threadKey={threadKey}
+            />
+          </section>
         )}
       {onDiscover && (
         <Button
+          type={claude ? "text" : "default"}
+          size={claude ? "small" : undefined}
           loading={loading}
           style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
-          onClick={async () => {
-            setLoading(true);
-            setError("");
-            try {
-              const result = await onDiscover();
-              parseHarnessSessionControls(result.controls);
-              if (
-                JSON.stringify(parseAcpHarnessProfile(result.profile)) !==
-                JSON.stringify(profile)
-              )
-                throw Error(
-                  "Harness profile changed; reload its settings before discovery",
-                );
-              setDiscovered({
-                ...result,
-                reportedAtLoad: JSON.stringify(reported),
-              });
-            } catch (err) {
-              setError(`${err}`);
-            } finally {
-              setLoading(false);
-            }
-          }}
+          onClick={() => void discover()}
         >
-          Load model and mode options
+          {claude ? "Refresh model options" : "Load model and mode options"}
         </Button>
-      )}
-      {onDiscover && (
-        <Typography.Text type="secondary">
-          Starts a temporary harness session with project access, without
-          sending a prompt.
-        </Typography.Text>
       )}
       <span role="status">
         {loading
@@ -555,67 +652,95 @@ function HarnessRuntimeSummaryContent({
             ? "Harness options loaded"
             : ""}
       </span>
-      {onSettings && controls && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
-          {[
-            ...(controls.mode ? [controls.mode] : []),
-            ...controls.configOptions,
-          ].map((control) => {
-            const legacy = control === controls.mode;
-            const value =
-              (legacy
-                ? settings.modeId
-                : settings.configOptions?.find(({ id }) => id === control.id)
-                    ?.value) ?? control.currentValue;
-            return (
-              <div
-                key={control.id}
-                style={{ flex: "1 1 220px", minWidth: 0, maxWidth: "100%" }}
-              >
-                <label
-                  htmlFor={`${id}-${control.id}`}
-                  style={{ display: "block", overflowWrap: "anywhere" }}
-                >
-                  {control.name}
-                </label>
-                <Select
-                  id={`${id}-${control.id}`}
-                  value={value}
-                  style={{ width: "100%" }}
-                  options={control.options.map((option) => ({
-                    value: option.value,
-                    label: option.name,
-                  }))}
-                  onChange={(value: string) =>
-                    change(
-                      legacy
-                        ? { ...settings, modeId: value }
-                        : {
-                            ...settings,
-                            configOptions: [
-                              ...(settings.configOptions ?? []).filter(
-                                ({ id }) => id !== control.id,
-                              ),
-                              { id: control.id, value },
-                            ],
-                          },
-                    )
-                  }
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
       {onSettings && (
         <Typography.Text type="secondary">
           {controls && (controls.mode || controls.configOptions.length)
-            ? "Changes apply to the next submitted turn, not running or already queued turns. Harness modes do not change container isolation."
+            ? "Applies to your next turn."
             : "Model and mode selectors appear after the harness advertises them. Until then, it uses its project configuration."}
         </Typography.Text>
       )}
+      {information}
       {error && <div role="alert">{error}</div>}
     </Space>
+  );
+  if (!compact) return form;
+  const inlineControls =
+    controls?.configOptions.filter(
+      ({ id }) => id === "model" || id === "effort",
+    ) ?? [];
+  const fast = controls?.configOptions.find(
+    ({ id }) => id === "fast" || id === "fastMode" || id === "fast_mode",
+  );
+  const fastValue =
+    fast &&
+    (settings.configOptions?.find(({ id }) => id === fast.id)?.value ??
+      fast.currentValue);
+  return (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 4,
+          minWidth: 0,
+        }}
+      >
+        <Button
+          size="small"
+          type="text"
+          aria-label={`${name} settings`}
+          aria-haspopup="dialog"
+          onClick={() => setOpen(true)}
+        >
+          {name}
+        </Button>
+        {claude && (
+          <>
+            <Tag style={{ margin: 0 }}>Preview</Tag>
+            {inlineControls.map((control) => (
+              <span key={control.id} style={{ minWidth: 0, maxWidth: "100%" }}>
+                {select(control, true)}
+              </span>
+            ))}
+            {!inlineControls.some(({ id }) => id === "model") && (
+              <Button
+                size="small"
+                type="text"
+                loading={loading}
+                onClick={() => void discover()}
+                disabled={!onDiscover}
+              >
+                {loading ? "Loading model" : "Model unavailable - retry"}
+              </Button>
+            )}
+            {fast && ["on", "true", "enabled"].includes(fastValue ?? "") && (
+              <Button size="small" type="text" onClick={() => setOpen(true)}>
+                Fast on
+              </Button>
+            )}
+            {projectId && threadKey && (
+              <ClaudePaymentStatus
+                projectId={projectId}
+                threadKey={threadKey}
+                onConfigure={() => setOpen(true)}
+              />
+            )}
+          </>
+        )}
+      </div>
+      {error && <div role="alert">{error}</div>}
+      <Modal
+        open={open}
+        title={claude ? "Claude Code settings" : "ACP harness settings"}
+        footer={null}
+        onCancel={() => setOpen(false)}
+        modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
+        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
+      >
+        {form}
+      </Modal>
+    </>
   );
 }
 

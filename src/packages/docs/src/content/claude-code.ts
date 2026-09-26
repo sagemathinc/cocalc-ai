@@ -28,6 +28,26 @@ selection applies to subsequent turns; it does not change an already admitted
 turn. A model saved under a different credential may be unavailable; choose a
 model advertised by the current session.
 
+## Composer settings and subscription usage
+
+The composer shows **Claude Code**, the advertised model and effort selectors,
+and the payment method for your next turn. **Fast on** appears only when fast
+mode is selected. Click **Claude Code** or the payment method to open settings.
+Model options load automatically when needed; **Refresh model options** retries
+discovery. If the host cannot report the model, CoCalc says it is unavailable
+rather than guessing. Settings do not change a turn already running or queued.
+
+Hover over or keyboard-focus **Claude subscription** to see the provider's
+reported five-hour and weekly usage percentages and reset times. These are
+account-wide subscription windows, not a per-agent token budget. Lookups are
+cached briefly and display their update time. The usage read runs in an isolated
+controller without project tools or project filesystem mounts; it submits no
+model prompt. If the experimental Claude SDK usage API is unavailable, the
+popover links to Claude's usage page instead of estimating a percentage.
+API-key modes do not have subscription usage bars.
+
+In settings, expand the help sections for access, billing, and runtime details.
+
 ## Security model
 
 ### Project access and approvals

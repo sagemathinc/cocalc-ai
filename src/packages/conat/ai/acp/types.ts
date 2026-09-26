@@ -248,6 +248,8 @@ export type AcpControlRequest =
         | "resend_with_model"
         | "prepare_fresh_conversation"
         | "discover_harness_v1";
+      // Account-local selection for capability discovery, never shared chat metadata.
+      harness_credential?: AcpHarnessCredential;
       // Only for retrying a confirmed ChatGPT model-unavailable rejection.
       model_recovery?: { model: string; expected_model: string };
       // Retry a terminal failed job using only a newly selected funding source.

@@ -6996,6 +6996,18 @@ export async function codexDeviceAuthCancel({
   );
 }
 
+export async function getClaudeSubscriptionUsage({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription usage must use the project-host endpoint");
+}
+
 export async function claudeSubscriptionLoginStart({
   account_id,
   project_id,
