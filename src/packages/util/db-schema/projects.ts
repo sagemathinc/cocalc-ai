@@ -550,6 +550,15 @@ Table({
       pg_default: "0",
       desc: "Monotonic owning-bay revision of the project collaborator authority map.",
     },
+    api_key_membership_revocations: {
+      type: "map",
+      desc: "Owning-bay API delegation loss barriers by account. Retained through membership re-addition and project migration; sequence values are decimal strings.",
+    },
+    api_key_membership_pending: {
+      type: "boolean",
+      pg_default: "false",
+      desc: "Whether an API delegation loss barrier awaits account-home issuance ordering.",
+    },
     rootfs_image: {
       type: "string",
       desc: "The root filesystem image for this project. This can be an arbitrary Docker image.",

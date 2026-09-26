@@ -12,10 +12,23 @@ const PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION =
 
 const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()
    RETURNS TRIGGER AS $$
+   DECLARE
+     member RECORD;
    BEGIN
      IF NEW.users IS DISTINCT FROM OLD.users THEN
        NEW.runtime_authority_revision :=
          COALESCE(OLD.runtime_authority_revision, 0) + 1;
+       FOR member IN SELECT key, value FROM jsonb_each(COALESCE(OLD.users, '{}'::jsonb)) LOOP
+         IF member.value->>'group' IN ('owner', 'collaborator')
+            AND COALESCE(NEW.users->member.key->>'group', '') NOT IN ('owner', 'collaborator') THEN
+           NEW.api_key_membership_revocations := jsonb_set(
+             COALESCE(NEW.api_key_membership_revocations, '{}'::jsonb),
+             ARRAY[member.key],
+             COALESCE(OLD.api_key_membership_revocations->member.key, '{}'::jsonb) ||
+               jsonb_build_object('generation', gen_random_uuid()::text, 'pending', true));
+           NEW.api_key_membership_pending := true;
+         END IF;
+       END LOOP;
      END IF;
      RETURN NEW;
    END;
@@ -38,6 +51,10 @@ async function triggerExists(db: Client): Promise<boolean> {
 export async function ensureProjectRuntimeAuthorityRevisionSchema(
   db: Client,
 ): Promise<void> {
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS projects_api_key_membership_pending_idx
+       ON projects(project_id) WHERE api_key_membership_pending IS TRUE`,
+  );
   if (await triggerExists(db)) {
     // CREATE OR REPLACE preserves the trigger binding and never exposes an
     // unprotected collaborator-update window during routine schema sync.
@@ -70,5 +87,11 @@ export async function ensureProjectRuntimeAuthorityRevisionSchema(
 export async function projectRuntimeAuthorityRevisionSchemaNeedsSync(
   db: Client,
 ): Promise<boolean> {
-  return !(await triggerExists(db));
+  if (!(await triggerExists(db))) return true;
+  const { rows } = await db.query<{ current: boolean }>(
+    `SELECT position('NEW.api_key_membership_revocations' IN
+       pg_get_functiondef('projects_bump_runtime_authority_revision()'::regprocedure)) > 0
+       AND to_regclass('projects_api_key_membership_pending_idx') IS NOT NULL AS current`,
+  );
+  return rows[0]?.current !== true;
 }

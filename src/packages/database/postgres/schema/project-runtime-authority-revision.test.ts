@@ -22,6 +22,135 @@ afterAll(async () => {
 });
 
 describe("project runtime authority revision", () => {
+  it("retains delegation-loss barriers across removal, re-addition, and rollback", async () => {
+    const pool = getPool();
+    const projectId = uuid();
+    const ownerId = uuid();
+    const memberId = uuid();
+    const otherId = uuid();
+    const users = {
+      [ownerId]: { group: "owner" },
+      [memberId]: { group: "collaborator" },
+      [otherId]: { group: "viewer" },
+    };
+    await pool.query(
+      "INSERT INTO projects(project_id,users) VALUES($1,$2::jsonb)",
+      [projectId, JSON.stringify(users)],
+    );
+    const read = async () =>
+      (
+        await pool.query(
+          "SELECT api_key_membership_revocations AS barriers,api_key_membership_pending AS pending FROM projects WHERE project_id=$1",
+          [projectId],
+        )
+      ).rows[0];
+    const change = async (value) =>
+      pool.query("UPDATE projects SET users=$2::jsonb WHERE project_id=$1", [
+        projectId,
+        JSON.stringify(value),
+      ]);
+    try {
+      await change({
+        ...users,
+        [memberId]: { ...users[memberId], hide: true },
+      });
+      expect((await read()).barriers).toBeNull();
+      await change({ [ownerId]: users[ownerId] });
+      const removed = await read();
+      expect(removed.pending).toBe(true);
+      expect(Object.keys(removed.barriers)).toEqual([memberId]);
+      expect(removed.barriers[memberId]).toEqual({
+        generation: expect.any(String),
+        pending: true,
+      });
+      await change(users);
+      expect(await read()).toEqual(removed);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "UPDATE projects SET users=$2::jsonb WHERE project_id=$1",
+          [projectId, JSON.stringify({ [ownerId]: users[ownerId] })],
+        );
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+      }
+      expect(await read()).toEqual(removed);
+      await change({ ...users, [memberId]: { group: "viewer" } });
+      expect((await read()).barriers[memberId].generation).not.toBe(
+        removed.barriers[memberId].generation,
+      );
+      expect((await read()).barriers[ownerId]).toBeUndefined();
+    } finally {
+      await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
+    }
+  });
+
+  it("retains an installed cutoff when a later loss starts another generation", async () => {
+    const pool = getPool();
+    const projectId = uuid();
+    const memberId = uuid();
+    const barrier = {
+      [memberId]: {
+        generation: uuid(),
+        pending: false,
+        cutoff: "9007199254740993",
+      },
+    };
+    await pool.query(
+      "INSERT INTO projects(project_id,users,api_key_membership_revocations) VALUES($1,$2::jsonb,$3::jsonb)",
+      [
+        projectId,
+        JSON.stringify({ [memberId]: { group: "owner" } }),
+        JSON.stringify(barrier),
+      ],
+    );
+    try {
+      await pool.query(
+        "UPDATE projects SET users='{}'::jsonb WHERE project_id=$1",
+        [projectId],
+      );
+      const { rows } = await pool.query(
+        "SELECT api_key_membership_revocations AS barriers FROM projects WHERE project_id=$1",
+        [projectId],
+      );
+      expect(rows[0].barriers[memberId]).toEqual({
+        generation: expect.any(String),
+        pending: true,
+        cutoff: "9007199254740993",
+      });
+      expect(rows[0].barriers[memberId].generation).not.toBe(
+        barrier[memberId].generation,
+      );
+    } finally {
+      await pool.query("DELETE FROM projects WHERE project_id=$1", [projectId]);
+    }
+  });
+
+  it("detects and upgrades the older trigger function without removing the trigger", async () => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE OR REPLACE FUNCTION projects_bump_runtime_authority_revision()
+        RETURNS TRIGGER AS $$ BEGIN
+        IF NEW.users IS DISTINCT FROM OLD.users THEN
+          NEW.runtime_authority_revision := COALESCE(OLD.runtime_authority_revision,0)+1;
+        END IF;
+        RETURN NEW;
+        END; $$ LANGUAGE plpgsql`);
+      expect(await projectRuntimeAuthorityRevisionSchemaNeedsSync(client)).toBe(
+        true,
+      );
+      await ensureProjectRuntimeAuthorityRevisionSchema(client);
+      expect(await projectRuntimeAuthorityRevisionSchemaNeedsSync(client)).toBe(
+        false,
+      );
+    } finally {
+      client.release();
+    }
+  });
+
   it("advances for each distinct collaborator-map change, including ABA", async () => {
     const pool = getPool();
     const projectId = uuid();

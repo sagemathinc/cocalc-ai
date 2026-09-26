@@ -315,7 +315,10 @@ import {
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
-import { getApiKeyAuthorizationStateLocal } from "@cocalc/server/api/key-authorization-state";
+import {
+  getApiKeyAuthorizationStateLocal,
+  getApiKeyIssuanceWatermarkLocal,
+} from "@cocalc/server/api/key-authorization-state";
 import {
   requestApiKeyActionLocal,
   decideApiKeyActionLocal,
@@ -1514,6 +1517,7 @@ async function startAccountLocalService(): Promise<void> {
     },
     validateHostActionAuth: validateHostActionAuthLocal,
     getApiKeyAuthorizationState: getApiKeyAuthorizationStateLocal,
+    getApiKeyIssuanceWatermark: getApiKeyIssuanceWatermarkLocal,
     requestApiKeyAction: ({ principal, request }) =>
       requestApiKeyActionLocal(principal, request),
     decideApiKeyAction: decideApiKeyActionLocal,

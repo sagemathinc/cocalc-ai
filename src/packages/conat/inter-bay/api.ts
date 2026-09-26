@@ -4723,8 +4723,10 @@ export interface InterBayAccountLocalApi
     hash: string;
     scope: import("@cocalc/util/db-schema/api-keys").ApiKeyScope;
     scope_revision: number;
+    issuance_sequence: string;
     expire_ms?: number;
   } | null>;
+  getApiKeyIssuanceWatermark: (opts: { account_id: string }) => Promise<string>;
   requestApiKeyAction: (opts: {
     principal: import("@cocalc/util/api-key-management").ApiKeyActionPrincipal;
     request: import("@cocalc/util/api-key-management").ApiKeyActionRequest;
@@ -7417,7 +7419,10 @@ export function createInterBayAccountLocalClient({
     }),
   });
   const getApiKeyAuthorizationStateClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "getApiKeyAuthorizationState">
+    Pick<
+      InterBayAccountLocalApi,
+      "getApiKeyAuthorizationState" | "getApiKeyIssuanceWatermark"
+    >
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({
@@ -8804,6 +8809,8 @@ export function createInterBayAccountLocalClient({
       await validateHostActionAuthClient.validateHostActionAuth(opts),
     getApiKeyAuthorizationState: async (opts) =>
       await getApiKeyAuthorizationStateClient.getApiKeyAuthorizationState(opts),
+    getApiKeyIssuanceWatermark: async (opts) =>
+      await getApiKeyAuthorizationStateClient.getApiKeyIssuanceWatermark(opts),
     requestApiKeyAction: async (opts) =>
       await apiKeyActionsClient.requestApiKeyAction(opts),
     decideApiKeyAction: async (opts) =>
@@ -9509,7 +9516,10 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
-      Pick<InterBayAccountLocalApi, "getApiKeyAuthorizationState">
+      Pick<
+        InterBayAccountLocalApi,
+        "getApiKeyAuthorizationState" | "getApiKeyIssuanceWatermark"
+      >
     >({
       ...options,
       service: "inter-bay-account-local",
@@ -9520,6 +9530,8 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getApiKeyAuthorizationState: async (opts) =>
           await impl.getApiKeyAuthorizationState(opts),
+        getApiKeyIssuanceWatermark: async (opts) =>
+          await impl.getApiKeyIssuanceWatermark(opts),
       },
     }),
     createServiceHandler<
