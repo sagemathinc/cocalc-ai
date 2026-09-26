@@ -1105,6 +1105,14 @@ export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
     reason:
       'A HOME or combined snapshot restore deletes the replaced HOME with every local snapshot in it, keeping only the new safety snapshot, and the recover-work guide (docs/src/content/research-specialist.ts) warns about this. If the deletion only moved, point this fact at its new line. If restore no longer deletes the other snapshots, update that guide: the "Restore HOME only" and "Restore both HOME and rootfs" rows of the recovery table; the introduction and steps 2 and 6 of "Restore an environment or an entire HOME"; and the troubleshooting items on the Local snapshots date, missing history and cleanup. Then remove this fact.',
   },
+  {
+    id: "shares.sign-in-required",
+    file: "server/public-directory-shares/index.ts",
+    kind: "present",
+    text: "anonymous public directory shares are not supported",
+    reason:
+      'The "Publish project files" guide (docs/src/content/projects.ts, sections "Share URLs and slugs" and "Viewer access model") says only someone signed in to the site can open an unlisted share. If the message only moved, point this fact at its new location. If anonymous shares become possible, update those sections, then this fact.',
+  },
 ];
 
 export const UI_VOCABULARY_ALIAS_EXCEPTIONS: readonly UiVocabularyAliasException[] =
