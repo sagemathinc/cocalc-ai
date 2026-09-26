@@ -16,7 +16,7 @@ export type InlineCodexActivityBlock = {
   kind: "agent" | "guidance";
   text: string;
   time?: number;
-  state?: "sending" | "sent" | "queued" | "not-sent";
+  state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
 };
 
 export const DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT = 100;
@@ -53,34 +53,10 @@ export function resolveLiveCodexActivityBlocks({
   previewBlocks?: InlineCodexActivityBlock[];
   cachedBlocks?: InlineCodexActivityBlock[];
 }): InlineCodexActivityBlock[] | undefined {
-  const currentGuidanceStates = new Map<
-    string,
-    Array<InlineCodexActivityBlock["state"]>
-  >();
-  for (const block of previewBlocks ?? []) {
-    if (block.kind !== "guidance") continue;
-    const key = JSON.stringify([block.time ?? null, block.text]);
-    const states = currentGuidanceStates.get(key) ?? [];
-    states.push(block.state);
-    currentGuidanceStates.set(key, states);
-  }
-  let reconciledCachedBlocks = cachedBlocks;
-  if (cachedBlocks != null && currentGuidanceStates.size > 0) {
-    let changed = false;
-    reconciledCachedBlocks = cachedBlocks.map((block) => {
-      if (block.kind !== "guidance") return block;
-      const key = JSON.stringify([block.time ?? null, block.text]);
-      const states = currentGuidanceStates.get(key);
-      if (states == null || states.length === 0) return block;
-      const currentState = states?.shift();
-      if (currentState === block.state) return block;
-      changed = true;
-      return { ...block, state: currentState };
-    });
-    if (!changed) {
-      reconciledCachedBlocks = cachedBlocks;
-    }
-  }
+  const reconciledCachedBlocks =
+    cachedBlocks && previewBlocks
+      ? reconcileActivityGuidance(cachedBlocks, previewBlocks)
+      : cachedBlocks;
   let selected: InlineCodexActivityBlock[] | undefined;
   let selectedLength = 0;
   for (const blocks of [reconciledCachedBlocks, previewBlocks]) {
@@ -91,6 +67,31 @@ export function resolveLiveCodexActivityBlocks({
     selectedLength = length;
   }
   return selected;
+}
+
+// The preview may contain less agent output than the cache, but its message
+// projections are current. Never lose new messages by choosing the longer log.
+export function reconcileActivityGuidance(
+  blocks: InlineCodexActivityBlock[],
+  current: InlineCodexActivityBlock[],
+): InlineCodexActivityBlock[] {
+  const remaining = current.filter(({ kind }) => kind === "guidance");
+  const next = blocks.flatMap((block) => {
+    if (block.kind !== "guidance") return [block];
+    const index = remaining.findIndex(
+      ({ time, text }) => time === block.time && text === block.text,
+    );
+    if (index < 0) return [];
+    return remaining.splice(index, 1);
+  });
+  for (const block of remaining) {
+    const index = next.findIndex(
+      ({ time }) => time != null && block.time != null && time > block.time,
+    );
+    if (index < 0) next.push(block);
+    else next.splice(index, 0, block);
+  }
+  return next;
 }
 
 export function limitCodexActivityBlocks(

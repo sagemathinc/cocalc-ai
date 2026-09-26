@@ -31,6 +31,7 @@ import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DivTempHeight } from "@cocalc/frontend/jupyter/div-temp-height";
 import { cmp } from "@cocalc/util/misc";
+import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
@@ -49,6 +50,7 @@ import { getMessageAtDate, newest_content } from "./utils";
 import {
   dateValue,
   field,
+  historyArray,
   isAcpAssistantMessage,
   parentMessageId,
 } from "./access";
@@ -68,6 +70,7 @@ import {
   type CodexAttentionDraft,
   type CodexAttentionDraftUpdater,
 } from "./codex-attention-card";
+import { showAttentionInFooter } from "./attention-response-display";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -189,9 +192,11 @@ function resolveSteerAnchorMessageId({
 function resolveSteerAssistantMessageId({
   message,
   byMessageId,
+  includeMidturnMessages = false,
 }: {
   message: ChatMessageTyped;
   byMessageId: Map<string, ChatMessageTyped>;
+  includeMidturnMessages?: boolean;
 }): string | undefined {
   let current: ChatMessageTyped | undefined = message;
   let guard = 0;
@@ -200,7 +205,12 @@ function resolveSteerAssistantMessageId({
     if (!directParentId) return undefined;
     const directParent = byMessageId.get(directParentId);
     if (directParent == null) return undefined;
-    if (isImmediateAcpSteerMessage(directParent)) {
+    if (field(message, "thread_id") !== field(directParent, "thread_id"))
+      return;
+    if (
+      isImmediateAcpSteerMessage(directParent) ||
+      (includeMidturnMessages && !isAcpAssistantMessage(directParent))
+    ) {
       current = directParent;
       guard += 1;
       continue;
@@ -238,7 +248,15 @@ type SteerCollections = {
   attachedByParentMessageId: Map<string, AttachedSteerMessage[]>;
   byAssistantMessageId: Map<string, AttachedSteerMessage[]>;
   representedMessageIds: Set<string>;
+  compactMessageIds: Map<
+    string,
+    { assistantMessageId: string; active: boolean }
+  >;
 };
+
+const CompactActivityMessagesContext = createContext<
+  SteerCollections["compactMessageIds"] | undefined
+>(undefined);
 
 const ActivitySteersContext = createContext<
   Map<string, AttachedSteerMessage[]> | undefined
@@ -255,6 +273,7 @@ function ReactiveActivitySteersMessage({
   codexActivityBlocksStore?: CodexActivityBlocksStore;
 }) {
   const currentActivitySteers = useContext(ActivitySteersContext);
+  const compactMessages = useContext(CompactActivityMessagesContext);
   const subscribe = useCallback(
     (listener: () => void) =>
       codexActivityBlocksStore?.subscribe(steerMessageId, listener) ??
@@ -276,6 +295,7 @@ function ReactiveActivitySteersMessage({
   return (
     <Message
       {...props}
+      compactActivityMessage={compactMessages?.has(steerMessageId) ?? false}
       activitySteers={
         currentActivitySteers == null
           ? activitySteers
@@ -298,16 +318,30 @@ function collectSteers({
   const attachedByParentMessageId = new Map<string, AttachedSteerMessage[]>();
   const byAssistantMessageId = new Map<string, AttachedSteerMessage[]>();
   const representedMessageIds = new Set<string>();
+  const compactMessageIds: SteerCollections["compactMessageIds"] = new Map();
   const byMessageId = new Map<string, ChatMessageTyped>();
+  const replyParents = new Set<string>();
   for (const [, message] of messages) {
     if (message == null) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     if (messageId) {
       byMessageId.set(messageId, message);
     }
+    if (
+      isAcpAssistantMessage(message) &&
+      resolvedMessageAcpState({ message, acpState }) !== "queue" &&
+      (field(message, "generating") === true ||
+        Number(field(message, "acp_started_at_ms")) > 0 ||
+        (newest_content(message)?.trim() &&
+          newest_content(message)?.trim() !== ":robot: Thinking..."))
+    ) {
+      const parent = parentMessageId(message);
+      if (parent) replyParents.add(parent);
+    }
   }
   for (const [, message] of messages) {
-    if (message == null || !isImmediateAcpSteerMessage(message)) continue;
+    if (message == null || isAcpAssistantMessage(message)) continue;
+    const immediate = isImmediateAcpSteerMessage(message);
     const messageDate = dateValue(message);
     if (!messageDate) continue;
     const messageKey = `${messageDate.valueOf()}`;
@@ -317,6 +351,16 @@ function collectSteers({
     if (!messageId || !rawText) continue;
     const rawRpc = field<any>(message, "agent_rpc");
     const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const rawLaunch = field<any>(message, "agent_rpc_launch");
+    const launch =
+      typeof rawLaunch?.toJS === "function" ? rawLaunch.toJS() : rawLaunch;
+    const messageState = resolvedMessageAcpState({ message, acpState });
+    if (replyParents.has(messageId)) continue;
+    const needsControls =
+      (launch && launch.state !== "accepted") ||
+      messageState === "queue" ||
+      messageState === "not-sent" ||
+      (!immediate && messageState === "sending");
     const text = rpc ? agentRpcMessageMarkdown(rawText, rpc) : rawText;
     const anchoredParentId = resolveSteerAnchorMessageId({
       message,
@@ -325,15 +369,58 @@ function collectSteers({
     const assistantMessageId = resolveSteerAssistantMessageId({
       message,
       byMessageId,
+      includeMidturnMessages: true,
     });
-    const state = toAttachedSteerState(
-      resolvedMessageAcpState({ message, acpState }),
+    const assistant = assistantMessageId
+      ? byMessageId.get(assistantMessageId)
+      : undefined;
+    const assistantDate = assistant && dateValue(assistant);
+    const visibleAssistant =
+      assistantDate &&
+      (!visibleKeys || visibleKeys.has(`${assistantDate.valueOf()}`));
+    if (!visibleAssistant) continue;
+    // Thread-level "running" does not identify which assistant turn owns a row.
+    const activeMidturn =
+      assistant &&
+      (field(assistant, "generating") === true ||
+        resolvedMessageAcpState({ message: assistant, acpState }) ===
+          "running") &&
+      assistantDate.valueOf() < messageDate.valueOf();
+    // Use only model-authored history: a later human edit of the final answer
+    // must not extend this turn and swallow subsequent prompts on reload.
+    const finishedAt = Math.max(
+      0,
+      ...historyArray(assistant).map((entry) => {
+        const author =
+          (entry as any)?.author_id ?? (entry as any)?.get?.("author_id");
+        if (typeof author !== "string" || !isLanguageModelService(author))
+          return 0;
+        const raw = (entry as any)?.date ?? (entry as any)?.get?.("date");
+        const time = new Date(raw).valueOf();
+        return Number.isFinite(time) ? time : 0;
+      }),
     );
-    if (!state || !anchoredParentId) continue;
+    const completedMidturn =
+      assistant &&
+      !activeMidturn &&
+      assistantDate.valueOf() < messageDate.valueOf() &&
+      messageDate.valueOf() <= finishedAt;
+    // Send mode describes intent, not proof that an older turn received it.
+    // In particular a late immediate send must remain visible as a new prompt.
+    if (!activeMidturn && !completedMidturn) continue;
+    const state =
+      immediate && !rpc
+        ? toAttachedSteerState(messageState)
+        : messageState === "queue"
+          ? "queued"
+          : messageState === "not-sent"
+            ? "not-sent"
+            : "saved";
+    if (!state || (immediate && !anchoredParentId)) continue;
     const deliveredAtMs = Number(
       field(message, "acp_guidance_delivered_at_ms"),
     );
-    const steer = {
+    const steer: AttachedSteerMessage = {
       messageId,
       assistantMessageId,
       date:
@@ -341,45 +428,56 @@ function collectSteers({
           ? deliveredAtMs
           : messageDate.valueOf(),
       text,
-      state,
+      state:
+        Number.isFinite(deliveredAtMs) && deliveredAtMs > 0
+          ? "sent"
+          : rpc && state === "sent"
+            ? "saved"
+            : state,
     };
-    const activeAssistantTurn = isActiveAcpAssistantTurn({
-      message: assistantMessageId
-        ? byMessageId.get(assistantMessageId)
-        : undefined,
-      acpState,
-    });
+    const activeAssistantTurn = !immediate
+      ? activeMidturn
+      : isActiveAcpAssistantTurn({
+          message: assistantMessageId
+            ? byMessageId.get(assistantMessageId)
+            : undefined,
+          acpState,
+        });
     // Hide the durable row only after an alternative visible representation exists.
-    if (activeAssistantTurn && assistantMessageId) {
+    if (
+      (activeAssistantTurn || completedMidturn || immediate) &&
+      assistantMessageId
+    ) {
+      if (
+        !activeAssistantTurn &&
+        immediate &&
+        (!anchoredParentId || !byMessageId.has(anchoredParentId))
+      )
+        continue;
       const next = byAssistantMessageId.get(assistantMessageId) ?? [];
       next.push(steer);
       byAssistantMessageId.set(assistantMessageId, next);
-      representedMessageIds.add(messageId);
+      // Keep recovery/queue controls outside the log, but not a second huge body.
+      if (needsControls)
+        compactMessageIds.set(messageId, {
+          assistantMessageId,
+          active: activeMidturn === true,
+        });
+      else representedMessageIds.add(messageId);
       continue;
     }
-    if (!byMessageId.has(anchoredParentId)) continue;
-    if (!assistantMessageId) continue;
-    const activitySteers = byAssistantMessageId.get(assistantMessageId) ?? [];
-    activitySteers.push(steer);
-    byAssistantMessageId.set(assistantMessageId, activitySteers);
-    // Once a turn completes, keep its compact guidance status on the assistant
-    // message. Attaching it to the original user prompt implies the user was
-    // guided and makes the submitted message appear to vanish from agent work.
-    const next = attachedByParentMessageId.get(assistantMessageId) ?? [];
-    next.push(steer);
-    attachedByParentMessageId.set(assistantMessageId, next);
-    representedMessageIds.add(messageId);
   }
   for (const list of attachedByParentMessageId.values()) {
-    list.sort((a, b) => cmp(a.date, b.date));
+    list.sort((a, b) => cmp(a.date, b.date) || cmp(a.messageId, b.messageId));
   }
   for (const list of byAssistantMessageId.values()) {
-    list.sort((a, b) => cmp(a.date, b.date));
+    list.sort((a, b) => cmp(a.date, b.date) || cmp(a.messageId, b.messageId));
   }
   return {
     attachedByParentMessageId,
     byAssistantMessageId,
     representedMessageIds,
+    compactMessageIds,
   };
 }
 
@@ -552,6 +650,22 @@ export function ChatLog({
     () => collectSteers({ messages, visibleKeys, acpState }),
     [messages, visibleKeys, acpState, docVersion],
   );
+  const localActivityVisibilityKey = useRef({});
+  const activityVisibilityKey =
+    actions?.store ?? actions ?? localActivityVisibilityKey.current;
+  const { expanded: expandedActivity } = useActivityVisibility(
+    activityVisibilityKey,
+  );
+  const representedMessageIds = useMemo(() => {
+    const ids = new Set(steerCollections.representedMessageIds);
+    for (const [
+      id,
+      { assistantMessageId, active },
+    ] of steerCollections.compactMessageIds) {
+      if (!active && expandedActivity[assistantMessageId] !== true) ids.add(id);
+    }
+    return ids;
+  }, [steerCollections, expandedActivity]);
   const anyOverlayOpen = useAnyChatOverlayOpen();
   const { agentWorkspace } = useChatEmbeddingOptions();
   const activeTopTab = useTypedRedux("page", "active_top_tab");
@@ -574,7 +688,7 @@ export function ChatLog({
       messages,
       account_id!,
       visibleKeys,
-      steerCollections.representedMessageIds,
+      representedMessageIds,
     );
     // TODO: This is an ugly hack because I'm tired and need to finish this.
     // The right solution would be to move this filtering to the store.
@@ -592,7 +706,7 @@ export function ChatLog({
     account_id,
     docVersion,
     singleThreadView,
-    steerCollections.representedMessageIds,
+    representedMessageIds,
     visibleKeys,
   ]);
 
@@ -741,50 +855,55 @@ export function ChatLog({
       <ActivitySteersContext.Provider
         value={steerCollections.byAssistantMessageId}
       >
-        <MessageList
-          {...{
-            virtuosoRef,
-            sortedDates,
-            messages,
-            account_id,
-            user_map,
-            project_id,
-            path,
-            fontSize,
-            actions,
-            manualScrollRef,
-            manualScroll,
-            setManualScroll,
-            mode,
-            selectedDate,
-            numChildren,
-            singleThreadView,
-            scrollCacheId: threadScrollCacheId,
-            isVisible,
-            scrollToDate,
-            scrollToBottomRef,
-            scrollToIndex,
-            keepBottomAnchoredRef,
-            resumeBottomFollowingRef,
-            acpState,
-            attachedSteersByParentMessageId:
-              steerCollections.attachedByParentMessageId,
-            activitySteersByAssistantMessageId:
-              steerCollections.byAssistantMessageId,
-            searchQuery,
-            searchJumpDate,
-            searchJumpToken,
-            onAtTopStateChange,
-            activityJumpDate,
-            activityJumpToken,
-            activityJumpAttentionId,
-            anyOverlayOpen,
-            onOpenGitBrowser,
-            suppressInlineCodexStatusDate,
-            attentionRecords,
-            readOnly,
-          }}
-        />
+        <CompactActivityMessagesContext.Provider
+          value={steerCollections.compactMessageIds}
+        >
+          <MessageList
+            {...{
+              virtuosoRef,
+              sortedDates,
+              messages,
+              account_id,
+              user_map,
+              project_id,
+              path,
+              fontSize,
+              actions,
+              activityVisibilityKey,
+              manualScrollRef,
+              manualScroll,
+              setManualScroll,
+              mode,
+              selectedDate,
+              numChildren,
+              singleThreadView,
+              scrollCacheId: threadScrollCacheId,
+              isVisible,
+              scrollToDate,
+              scrollToBottomRef,
+              scrollToIndex,
+              keepBottomAnchoredRef,
+              resumeBottomFollowingRef,
+              acpState,
+              attachedSteersByParentMessageId:
+                steerCollections.attachedByParentMessageId,
+              activitySteersByAssistantMessageId:
+                steerCollections.byAssistantMessageId,
+              searchQuery,
+              searchJumpDate,
+              searchJumpToken,
+              onAtTopStateChange,
+              activityJumpDate,
+              activityJumpToken,
+              activityJumpAttentionId,
+              anyOverlayOpen,
+              onOpenGitBrowser,
+              suppressInlineCodexStatusDate,
+              attentionRecords,
+              readOnly,
+            }}
+          />
+        </CompactActivityMessagesContext.Provider>
       </ActivitySteersContext.Provider>
       {!readOnly ? (
         <Composing
@@ -920,6 +1039,7 @@ export function MessageList({
   acpState,
   attachedSteersByParentMessageId,
   activitySteersByAssistantMessageId,
+  activityVisibilityKey,
   searchQuery,
   searchJumpDate,
   searchJumpToken,
@@ -960,6 +1080,7 @@ export function MessageList({
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
   activitySteersByAssistantMessageId?: Map<string, AttachedSteerMessage[]>;
+  activityVisibilityKey?: object;
   searchQuery?: string;
   searchJumpDate?: string;
   searchJumpToken?: number;
@@ -1026,7 +1147,33 @@ export function MessageList({
     explicit: explicitCodexActivityByMessageId,
     setExpanded: setExpandedCodexActivityByMessageId,
     setExplicit: setExplicitCodexActivityByMessageId,
-  } = useActivityVisibility(actions?.store ?? actions);
+  } = useActivityVisibility(activityVisibilityKey ?? actions?.store ?? actions);
+  const projectedAttentionIds = new Set<string>();
+  for (const [, message] of messages) {
+    const projection = field<any>(message, "acp_attention_response");
+    const attentionId =
+      projection?.get?.("attention_id") ?? projection?.attention_id;
+    if (attentionId) projectedAttentionIds.add(attentionId);
+  }
+  const displayedAttentionRecords = attentionRecords.filter((record) => {
+    const date = Date.parse(record.message_date ?? "");
+    const owner = Number.isFinite(date)
+      ? getMessageAtDate({ messages, date })
+      : undefined;
+    const messageId = owner ? field<string>(owner, "message_id") : undefined;
+    return showAttentionInFooter({
+      record,
+      hasDraftResponse: attentionDrafts[record.attention_id]?.submitted != null,
+      projected: projectedAttentionIds.has(record.attention_id),
+      ownerActive: owner
+        ? field(owner, "generating") === true ||
+          resolvedMessageAcpState({ message: owner, acpState }) === "running"
+        : undefined,
+      ownerExpanded: messageId
+        ? expandedCodexActivityByMessageId[messageId] === true
+        : undefined,
+    });
+  });
   const codexActivityBlocksStoreRef = useRef<
     CodexActivityBlocksStore | undefined
   >(undefined);
@@ -1115,6 +1262,13 @@ export function MessageList({
 
   const markUserScrollIntent = () => {
     clearAnchorRestoreTimers();
+    // Foreground/layout retries predate this input. They must not reload a
+    // cached bottom anchor and erase the user's newer manual-scroll intent.
+    visibilityRestoreTokenRef.current += 1;
+    for (const timer of visibilityRestoreTimersRef.current) {
+      clearTimeout(timer);
+    }
+    visibilityRestoreTimersRef.current = [];
     userScrollIntentRef.current = true;
     clearUserScrollIntentLater();
   };
@@ -1655,10 +1809,13 @@ export function MessageList({
                     padding: "8px 12px 25px",
                   }}
                 >
-                  {attentionRecords.map((record) => (
+                  {displayedAttentionRecords.map((record) => (
                     <div key={record.attention_id} style={{ marginTop: 8 }}>
                       <CodexAttentionCard
                         initialRecord={record}
+                        responseInActivity={projectedAttentionIds.has(
+                          record.attention_id,
+                        )}
                         draft={attentionDrafts[record.attention_id]}
                         onDraftChange={(update) =>
                           updateAttentionDraft(record.attention_id, update)
@@ -1894,10 +2051,13 @@ export function MessageList({
           ref={endRef}
           style={{ ...CHAT_LOG_READING_WIDTH, padding: "8px 12px 25px" }}
         >
-          {attentionRecords.map((record) => (
+          {displayedAttentionRecords.map((record) => (
             <div key={record.attention_id} style={{ marginTop: 8 }}>
               <CodexAttentionCard
                 initialRecord={record}
+                responseInActivity={projectedAttentionIds.has(
+                  record.attention_id,
+                )}
                 draft={attentionDrafts[record.attention_id]}
                 onDraftChange={(update) =>
                   updateAttentionDraft(record.attention_id, update)

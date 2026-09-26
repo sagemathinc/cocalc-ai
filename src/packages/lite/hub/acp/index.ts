@@ -291,6 +291,12 @@ import {
   reconcileCodexAction,
 } from "./codex-attention";
 import {
+  attentionResponseMessageId,
+  attentionResponseMetadata,
+  buildAttentionResponseProjection,
+  formatAttentionResponseTranscript,
+} from "./attention-response-projection";
+import {
   getAcpWorker,
   heartbeatAcpWorker,
   listAcpWorkers,
@@ -7493,7 +7499,9 @@ async function ensureAgent(
     const created = await CodexAppServerAgent.create({
       binaryPath: process.env.COCALC_CODEX_BIN,
       cwd: bindings.workspaceRoot ?? process.cwd(),
-      attentionHandler: createCodexAttentionHandler(conatClient!),
+      attentionHandler: createCodexAttentionHandler(conatClient!, {
+        onSyncResponseResolved: persistAttentionResponseProjection,
+      }),
       uploadGeneratedImage: uploadGeneratedImageBlob,
       onOutstandingWorkChanged: async ({
         sessionId,
@@ -11152,6 +11160,56 @@ function formatAttentionAnswer(
   return lines.join("\n");
 }
 
+async function persistAttentionResponseProjection(
+  submitted: AcpAttentionStoredRecord,
+): Promise<void> {
+  if (!submitted.response_id || submitted.response_submitted_at == null) return;
+  if (!conatClient) throw new Error("conat client must be initialized");
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: submitted.project_id,
+    path: submitted.path,
+    fn: async (syncdb) => {
+      // The runtime can acknowledge while the submit RPC is opening the chat.
+      const record = getAcpAttention(submitted.attention_id) ?? submitted;
+      const existing = findChatRowByMessageId(
+        syncdb,
+        attentionResponseMessageId(record),
+      );
+      const ownerDate = record.message_date ?? record.chat.message_date;
+      const owner = ownerDate
+        ? syncdb.get_one({ event: "chat", date: new Date(ownerDate) })
+        : undefined;
+      const projection = buildAttentionResponseProjection(
+        record,
+        record.chat.message_id ?? syncdbField<string>(owner, "message_id"),
+      );
+      if (!projection) return;
+      if (existing) {
+        // Preserve edits and any async continuation/queue state on this same row.
+        syncdb.set({
+          event: "chat",
+          date: syncdbField(existing, "date"),
+          sender_id: syncdbField(existing, "sender_id"),
+          message_id: syncdbField(existing, "message_id"),
+          thread_id: syncdbField(existing, "thread_id"),
+          acp_attention_response: projection.acp_attention_response,
+          ...(projection.acp_guidance_delivered_at_ms != null
+            ? {
+                acp_guidance_delivered_at_ms:
+                  projection.acp_guidance_delivered_at_ms,
+              }
+            : {}),
+        });
+      } else {
+        syncdb.set(projection);
+      }
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
 function asyncAttentionNotificationMetadata(
   record: AcpAttentionStoredRecord,
 ): Pick<
@@ -11177,7 +11235,7 @@ async function deliverAsyncAttentionAnswer(
     record.response_submitted_at ?? record.updated_at ?? Date.now();
   const userDate = new Date(responseSubmittedAt);
   const assistantDate = new Date(userDate.valueOf() + 1);
-  const userMessageId = uuidsha1(`acp-attention-user:${responseIdentity}`);
+  const userMessageId = attentionResponseMessageId(record);
   const assistantMessageId = uuidsha1(
     `acp-attention-assistant:${responseIdentity}`,
   );
@@ -11204,24 +11262,43 @@ async function deliverAsyncAttentionAnswer(
         alreadyDelivered =
           Number(syncdbField(existingAnswer, "acp_guidance_delivered_at_ms")) >
           0;
+        if (
+          !alreadyDelivered &&
+          syncdbField(existingAnswer, "post_only") === true
+        ) {
+          // A continued sync answer is now dispatchable, not transcript-only.
+          // Keep its identity and history so queued/cancel/retry controls apply.
+          syncdb.set({
+            event: "chat",
+            date: syncdbField(existingAnswer, "date"),
+            sender_id: syncdbField(existingAnswer, "sender_id"),
+            message_id: syncdbField(existingAnswer, "message_id"),
+            thread_id: syncdbField(existingAnswer, "thread_id"),
+            post_only: false,
+          });
+          syncdb.commit();
+          await syncdb.save();
+        }
         return;
       }
       const parentMessageId = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: record.thread_id,
       });
-      syncdb.set(
-        buildChatMessage({
+      syncdb.set({
+        ...buildChatMessage({
           sender_id: senderId,
           date: userDate,
           prevHistory: [],
-          content,
+          content: formatAttentionResponseTranscript(record),
+          historyEntryDate: userDate.toISOString(),
           generating: false,
           message_id: userMessageId,
           thread_id: record.thread_id,
           parent_message_id: parentMessageId,
         }),
-      );
+        acp_attention_response: attentionResponseMetadata(record),
+      });
       syncdb.commit();
       await syncdb.save();
     },
@@ -11502,6 +11579,9 @@ async function handleAcpAttentionRequest(
           records.map(async (record) => {
             try {
               await reconcileCodexAction({ client: conatClient!, record });
+              if (record.source_kind === "codex_sync_question") {
+                await persistAttentionResponseProjection(record);
+              }
             } catch (err) {
               logger.debug("failed to reconcile Codex action while listing", {
                 attention_id: record.attention_id,
@@ -11670,6 +11750,21 @@ async function handleAcpAttentionRequest(
           current.state === "stale"
         )
       ) {
+        try {
+          await persistAttentionResponseProjection(submitted.record);
+        } catch (err) {
+          logger.warn("failed to project saved Codex question response", {
+            attention_id: current.attention_id,
+            err,
+          });
+          return {
+            ok: false,
+            state: submitted.state,
+            record: publicAttentionRecord(submitted.record),
+            error:
+              "Response saved, but chat history could not be updated. Please retry.",
+          };
+        }
         return {
           ok: true,
           state: submitted.state,
@@ -12783,6 +12878,8 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  handleAcpAttentionRequest,
+  persistAttentionResponseProjection,
   handleAcpControlRequest,
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,

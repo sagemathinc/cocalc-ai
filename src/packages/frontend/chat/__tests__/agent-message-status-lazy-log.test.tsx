@@ -2,6 +2,7 @@
 
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const mockCodexLogPanel = jest.fn((_props: unknown) => (
   <section
@@ -14,6 +15,10 @@ const mockCodexLogPanel = jest.fn((_props: unknown) => (
 jest.mock("../codex-log-panel", () => ({
   __esModule: true,
   default: (props: unknown) => mockCodexLogPanel(props),
+}));
+
+jest.mock("../peer-message-card", () => ({
+  PeerMessageList: () => <div>Peer message activity</div>,
 }));
 
 import { AgentMessageStatus, SteerGuidanceCard } from "../agent-message-status";
@@ -35,6 +40,58 @@ it("renders attached guidance with theme-aware colors", () => {
 describe("AgentMessageStatus activity loading", () => {
   beforeEach(() => {
     mockCodexLogPanel.mockClear();
+  });
+
+  it("shows a keyboard-operable activity toggle beside the worked-for chip", async () => {
+    const onToggle = jest.fn();
+    const props = {
+      show: true,
+      generating: false,
+      durationLabel: "0:10",
+      date: 1000,
+      logRefs: {},
+      activityContext: {} as any,
+    };
+    const { rerender } = render(
+      <AgentMessageStatus
+        {...props}
+        activityToggle={{
+          expanded: false,
+          label: "Show activity",
+          loading: false,
+          disabled: false,
+          onToggle,
+        }}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Show activity" });
+    expect(screen.queryByText("Peer message activity")).toBeNull();
+    expect(button.parentElement).toContainElement(
+      screen.getByText("Worked for 0:10"),
+    );
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(mockCodexLogPanel).not.toHaveBeenCalled();
+    rerender(
+      <AgentMessageStatus
+        {...props}
+        activityToggle={{
+          expanded: true,
+          label: "Hide activity",
+          loading: false,
+          disabled: false,
+          onToggle,
+        }}
+      />,
+    );
+    const hide = screen.getByRole("button", { name: "Hide activity" });
+    expect(screen.getByText("Peer message activity")).toBeTruthy();
+    expect(hide).toHaveAttribute("aria-expanded", "true");
+    expect(hide).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(onToggle).toHaveBeenCalledTimes(2);
   });
 
   it("does not mount the full activity panel until the drawer opens", async () => {

@@ -26,6 +26,7 @@ import { useNarrowChatViewport } from "./use-chat-viewport";
 import { ArtifactCards } from "./artifacts";
 import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
 import { AgentLaunchStatus } from "./agent-launch-status";
+import { ActivityMessageBody } from "./activity-message-body";
 import {
   DropdownMenu,
   Gap,
@@ -142,10 +143,10 @@ import {
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
   resolveLiveCodexActivityBlocks,
+  reconcileActivityGuidance,
   resolveMessageBodyMode,
   resolveRenderedMessageValue,
   shouldLoadCodexPreviewBody,
-  shouldShowCodexShowActivityButton,
   shouldShowAcpResubmitToAgentButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
@@ -361,6 +362,7 @@ interface Props {
   }) => void;
   attachedSteers?: AttachedSteerMessage[];
   activitySteers?: AttachedSteerMessage[];
+  compactActivityMessage?: boolean;
   suppressInlineCodexStatus?: boolean;
   read_only?: boolean;
   expandedCodexActivity?: boolean;
@@ -466,6 +468,7 @@ export default function Message({
   onOpenGitBrowser,
   attachedSteers,
   activitySteers,
+  compactActivityMessage = false,
   suppressInlineCodexStatus = false,
   read_only = false,
   expandedCodexActivity = false,
@@ -994,8 +997,9 @@ export default function Message({
     if (
       !showCodexActivity ||
       !effectiveGenerating ||
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
+      ((!Array.isArray(codexPreviewLog.events) ||
+        codexPreviewLog.events.length === 0) &&
+        !activitySteers?.length)
     ) {
       return undefined;
     }
@@ -1006,7 +1010,7 @@ export default function Message({
         )
       : [];
     const blocks = getLiveResponseBlocks(
-      codexPreviewLog.events as any,
+      (codexPreviewLog.events ?? []) as any,
       steerItems.map(({ date, text, state }) => ({ date, text, state })),
     ) as InlineCodexActivityBlock[];
     return blocks.length > 0 ? blocks : undefined;
@@ -1026,8 +1030,9 @@ export default function Message({
   );
   const completedCodexActivityBlocksFromEvents = useMemo(() => {
     if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
+      (!Array.isArray(codexPreviewLog.events) ||
+        codexPreviewLog.events.length === 0) &&
+      !activitySteers?.length
     ) {
       return undefined;
     }
@@ -1039,7 +1044,7 @@ export default function Message({
       : [];
     const blocks = (
       getMountedIntermediateResponseBlocks(
-        codexPreviewLog.events as any,
+        (codexPreviewLog.events ?? []) as any,
         steerItems.map(({ date, text, state }) => ({ date, text, state })),
       ) as InlineCodexActivityBlock[]
     ).filter(
@@ -1061,7 +1066,15 @@ export default function Message({
       }) &&
       trimmedCachedBlocks != null
     ) {
-      return trimmedCachedBlocks;
+      return reconcileActivityGuidance(
+        trimmedCachedBlocks,
+        (activitySteers ?? []).map(({ date, text, state }) => ({
+          kind: "guidance",
+          time: date,
+          text,
+          state,
+        })),
+      );
     }
     if (
       allowAsyncCompletedCodexActivityLoad &&
@@ -1069,8 +1082,17 @@ export default function Message({
     ) {
       return completedCodexActivityBlocksFromEvents;
     }
+    if (activitySteers?.length) {
+      return activitySteers.map(({ date, text, state }) => ({
+        kind: "guidance" as const,
+        time: date,
+        text,
+        state,
+      }));
+    }
     return undefined;
   }, [
+    activitySteers,
     allowAsyncCompletedCodexActivityLoad,
     cachedCodexActivityBlocks,
     codexPreviewLog.liveStatus,
@@ -1899,28 +1921,41 @@ export default function Message({
     );
   }
 
-  function getCodexOverflowItems(): MenuItems {
+  function getCodexActivityToggle() {
+    if (
+      !showCodexActivity ||
+      effectiveGenerating ||
+      !onExpandedCodexActivityChange
+    )
+      return;
     const hasVisibleCompletedActivity =
       inlineCodexActivityMode === "completed" &&
       Array.isArray(completedCodexActivityBlocks) &&
       completedCodexActivityBlocks.length > 0;
     const showActivityButtonState = resolveCodexShowActivityButtonState({
       allowAsyncCompletedCodexActivityLoad,
-      hasVisibleCompletedActivity,
+      // Human/peer activity remains available even when the agent log was
+      // pruned or cannot be loaded.
+      hasVisibleCompletedActivity:
+        hasVisibleCompletedActivity || !!activitySteers?.length,
       hasLoadedActivityEvents:
         Array.isArray(codexPreviewLog.events) &&
         codexPreviewLog.events.length > 0,
       hasLogRef: codexPreviewLog.hasLogRef,
       loadState: codexPreviewLog.loadState,
     });
-    const showShowActivityButton = shouldShowCodexShowActivityButton({
-      showCodexActivity,
-      expandedCodexActivity,
-      hasVisibleCompletedActivity,
-      canToggle: onExpandedCodexActivityChange != null,
-      effectiveGenerating,
-      isLastMessageInThread,
-    });
+    return {
+      expanded: expandedCodexActivity,
+      label: expandedCodexActivity
+        ? "Hide activity"
+        : showActivityButtonState.label,
+      loading: !expandedCodexActivity && showActivityButtonState.loading,
+      disabled: !expandedCodexActivity && showActivityButtonState.disabled,
+      onToggle: () => onExpandedCodexActivityChange(!expandedCodexActivity),
+    };
+  }
+
+  function getCodexOverflowItems(): MenuItems {
     const overflowItems: MenuItems = [
       {
         key: "info",
@@ -2010,26 +2045,6 @@ export default function Message({
                 "Could not finish moving this posted message. Check the thread before retrying.",
               ),
             );
-        },
-      });
-    }
-
-    if (showShowActivityButton && onExpandedCodexActivityChange) {
-      overflowItems.push({
-        key: "show-activity",
-        label: showActivityButtonState.loading
-          ? "Loading activity…"
-          : showActivityButtonState.label,
-        disabled:
-          showActivityButtonState.disabled || showActivityButtonState.loading,
-        onClick: () => {
-          if (
-            showActivityButtonState.disabled ||
-            showActivityButtonState.loading
-          ) {
-            return;
-          }
-          onExpandedCodexActivityChange(true);
         },
       });
     }
@@ -2442,6 +2457,7 @@ export default function Message({
         {renderForkNotice()}
         <AgentMessageStatus
           show={showCodexActivity && !suppressInlineCodexActivity}
+          activityToggle={getCodexActivityToggle()}
           generating={effectiveGenerating}
           durationLabel={durationLabel}
           lastActivityAtMs={lastCodexActivityAtMs}
@@ -3209,7 +3225,9 @@ export default function Message({
 
   return (
     <Row ref={messageRowRef} tabIndex={-1} style={getStyle()}>
-      {renderCols()}
+      <ActivityMessageBody compact={compactActivityMessage && !isEditing}>
+        {renderCols()}
+      </ActivityMessageBody>
       {withMessageFileContext(renderZenMessageDrawer())}
       {rpcAttribution && (
         <div style={{ width: "100%" }}>
