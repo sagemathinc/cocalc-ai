@@ -29,7 +29,10 @@ cd packages/server
 
 import type { ConnectionStats, ServerInfo } from "./types";
 import { stampFileReadPrincipal } from "../files/read-principal";
-import { validateMessageHeaders } from "./message-headers";
+import {
+  validateMessageHeaders,
+  SOCKET_RETURN_HEADER,
+} from "./message-headers";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -1552,6 +1555,24 @@ export class ConatServer extends EventEmitter {
     // Includes CN-Reply validation; malformed input must be rejected here,
     // not delivered to a service that would fail trying to answer it.
     validateMessageHeaders(data[5]);
+    const socketReturn = data[5]?.[SOCKET_RETURN_HEADER] as string | undefined;
+    if (
+      socketReturn &&
+      !clusterForward &&
+      !(await this.isAllowed({
+        user: from,
+        subject: socketReturn,
+        type: "sub",
+      }))
+    ) {
+      throw new ConatError("socket return inbox is not authorized", {
+        code: 403,
+      });
+    }
+    if (retainAuthority && !retainAuthority())
+      throw new ConatError("API-key publication authority is unavailable", {
+        code: 403,
+      });
     stampFileReadPrincipal({
       subject,
       data,
@@ -1563,6 +1584,9 @@ export class ConatServer extends EventEmitter {
     // the first server while forwarding the message.
     if (!clusterForward || data[7] == null) {
       data[7] = this.authenticatedCaller(from);
+      if (socketReturn && !clusterForward) {
+        data[7] = { ...data[7], socket_return: socketReturn };
+      }
     }
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();

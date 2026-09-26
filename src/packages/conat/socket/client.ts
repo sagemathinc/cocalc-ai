@@ -3,12 +3,15 @@ import {
   type Subscription,
   type Headers,
   ConatError,
+  type Message,
 } from "@cocalc/conat/core/client";
 import { ConatSocketBase } from "./base";
 import { type TCP, createTCP } from "./tcp";
 import {
   SOCKET_HEADER_CMD,
   SOCKET_HEADER_CONNECT_ATTEMPT,
+  SOCKET_REQUEST_ID,
+  SOCKET_RESPONSE_ID,
   DEFAULT_COMMAND_TIMEOUT,
   type ConatSocketOptions,
   serverStatusSubject,
@@ -17,6 +20,7 @@ import { EventIterator } from "@cocalc/util/event-iterator";
 import { keepAlive, KeepAlive } from "./keepalive";
 import { getLogger } from "@cocalc/conat/logger";
 import { once } from "@cocalc/util/async-utils";
+import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 
 const logger = getLogger("socket:client");
 const INITIAL_SERVER_INTEREST_TIMEOUT = 250;
@@ -49,6 +53,11 @@ export class ConatSocketClient extends ConatSocketBase {
   private requestRetryInFlight = false;
   private dataQueue: { data: any; headers?: Headers }[] = [];
   private dataQueueScheduled = false;
+  private inboxReturn = false;
+  private returnInbox?: string;
+
+  private returnHeaders = (): Headers =>
+    this.returnInbox ? { [SOCKET_RETURN_HEADER]: this.returnInbox } : {};
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
@@ -123,7 +132,11 @@ export class ConatSocketClient extends ConatSocketBase {
     const request = async (mesg, opts?) =>
       await this.client.request(this.serverSubject(), mesg, {
         ...opts,
-        headers: { ...opts?.headers, [SOCKET_HEADER_CMD]: "socket" },
+        headers: {
+          ...opts?.headers,
+          ...this.returnHeaders(),
+          [SOCKET_HEADER_CMD]: "socket",
+        },
       });
 
     this.tcp = createTCP({
@@ -177,6 +190,7 @@ export class ConatSocketClient extends ConatSocketBase {
     timeout = DEFAULT_COMMAND_TIMEOUT,
   ) => {
     const headers = {
+      ...this.returnHeaders(),
       [SOCKET_HEADER_CMD]: cmd,
       id: this.id,
     };
@@ -200,6 +214,7 @@ export class ConatSocketClient extends ConatSocketBase {
     const started_at = Date.now();
     this.client.publishSync(this.serverSubject(), null, {
       headers: {
+        ...this.returnHeaders(),
         [SOCKET_HEADER_CMD]: "connect",
         [SOCKET_HEADER_CONNECT_ATTEMPT]: attempt,
         id: this.id,
@@ -247,6 +262,7 @@ export class ConatSocketClient extends ConatSocketBase {
 
   private processMessages = async () => {
     for await (const mesg of this.sub!) {
+      this.bindReverseResponse(mesg);
       this.alive?.recv();
       const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
       if (cmd == "connected") {
@@ -269,6 +285,34 @@ export class ConatSocketClient extends ConatSocketBase {
         this.tcp?.recv.process(mesg);
       }
     }
+  };
+
+  private bindReverseResponse = (mesg: Message) => {
+    const id = mesg.headers?.[SOCKET_REQUEST_ID];
+    if (!this.returnInbox || typeof id !== "string") return;
+    const options = (opts?) => ({
+      ...opts,
+      headers: {
+        ...opts?.headers,
+        ...this.returnHeaders(),
+        [SOCKET_RESPONSE_ID]: id,
+      },
+    });
+    mesg.isRequest = () => true;
+    mesg.respondSync = (data, opts) =>
+      this.client.publishSync(this.serverSubject(), data, options(opts));
+    mesg.respond = (data, opts) => {
+      const response = this.client.publish(
+        this.serverSubject(),
+        data,
+        options(opts),
+      );
+      response.catch(() => undefined);
+      return response;
+    };
+    mesg.respondMany = async () => {
+      throw Error("reverse socket requests accept one response");
+    };
   };
 
   private waitForConnected = async () => {
@@ -306,6 +350,7 @@ export class ConatSocketClient extends ConatSocketBase {
           { timeout },
         );
         ({ id } = resp.data);
+        this.inboxReturn = resp.data.inboxReturn === 1;
       }
     } catch (err) {
       this.lifecycleReporter?.("get_server_id_error", { error: `${err}` });
@@ -394,8 +439,11 @@ export class ConatSocketClient extends ConatSocketBase {
 
       //  logger.silly("run: getting subscription");
       this.lifecycleReporter?.("subscribe_start");
+      if (this.inboxReturn)
+        this.returnInbox ??= await this.client.socketInboxSubject();
+      else this.returnInbox = undefined;
       const sub = await this.client.subscribe(
-        `${this.subject}.client.${this.id}`,
+        this.returnInbox ?? `${this.subject}.client.${this.id}`,
       );
       this.lifecycleReporter?.("subscribe_done");
       // @ts-ignore
@@ -421,7 +469,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private sendDataToServer = (mesg) => {
     this.client.publishSync(this.serverSubject(), null, {
       raw: mesg.raw,
-      headers: mesg.headers,
+      headers: { ...mesg.headers, ...this.returnHeaders() },
     });
   };
 
@@ -460,6 +508,7 @@ export class ConatSocketClient extends ConatSocketBase {
       return await this.client.request(this.serverSubject(), data, {
         waitForInterest: options?.waitForInterest ?? true,
         ...options,
+        headers: { ...options?.headers, ...this.returnHeaders() },
       });
     };
 
@@ -481,6 +530,7 @@ export class ConatSocketClient extends ConatSocketBase {
       return await this.client.requestMany(this.serverSubject(), data, {
         waitForInterest: options?.waitForInterest ?? true,
         ...options,
+        headers: { ...options?.headers, ...this.returnHeaders() },
       });
     };
     try {
@@ -554,6 +604,7 @@ export class ConatSocketClient extends ConatSocketBase {
     try {
       this.client.publishSync(this.serverSubject(), null, {
         headers: {
+          ...this.returnHeaders(),
           [SOCKET_HEADER_CMD]: "close",
           id: this.id,
         },

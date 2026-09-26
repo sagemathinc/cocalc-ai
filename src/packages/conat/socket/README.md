@@ -1,5 +1,31 @@
 # SOCKETS
 
+## Confined return traffic
+
+Socket discovery advertises `inboxReturn: 1` when the service supports private
+return inboxes. New clients use that protocol; clients with a legacy peer retain
+the service-subject protocol and must independently have its permissions.
+
+In inbox-return mode, clients subscribe only beneath their authenticated reply
+namespace. Every outgoing socket message carries `CN-SocketReturn`. The broker
+validates that it is a concrete inbox subject the sender may subscribe to and
+attests it in server-owned caller metadata. Services reject unattested routes
+(including those passing through an older ingress broker) and bind each logical
+socket to its original return route. No broader subscription grant is added.
+
+Server-initiated requests use unpredictable correlation IDs. Their responses
+return through the already-authorized service subject, not an arbitrary server
+inbox. Each logical socket permits at most 128 outstanding reverse requests;
+timeouts and socket close release them. Unknown and duplicate responses do not
+resolve another request. Reverse requests accept one response.
+
+Broker lease expiry removes the private subscription. Existing socket interest
+cleanup then releases the logical socket; this does not terminate application
+processes launched through it. New brokers and services must be deployed before
+scoped clients rely on this protocol. Cross-broker propagation, reconnect with
+a rotated reply namespace, and application-specific session recovery need their
+own integration coverage beyond the local transport tests.
+
 In compute networking, **TCP sockets** are a great idea that's been around since 1974! They are
 incredibly useful as an abstraction. To create
 a TCP socket you define source and target ports and ip address, and have a client

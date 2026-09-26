@@ -427,6 +427,28 @@ attached bays remained running. A post-recovery database snapshot had no active
 transactions/blockers, which does not identify the earlier timeout's cause.
 The successful diagnostic evidence above came from a new attempt after recovery.
 
+### Confined socket return implementation (not deployed)
+
+The shared Conat socket implementation now negotiates an inbox-return mode via
+service discovery. The broker checks the proposed concrete return inbox against
+the caller's subscription authority and stamps server-owned route metadata;
+services require that attestation and bind the logical socket to that route.
+Reverse-request responses use correlation IDs over the existing service subject,
+not publication rights to server inboxes. Outstanding reverse requests are capped
+at 128 per logical socket and released on timeout or close. The existing API-key
+subject policy is unchanged.
+
+Eight new in-process broker integration tests cover forward/reverse requests,
+streamed data, continued denial of broad subscriptions/inbox publication,
+foreign or wildcard return routes, missing broker attestation, legacy clients,
+pending-request limits/timeout/close, and lease-expiry interest withdrawal.
+The socket/header set passed 40 tests; the existing authorization regression set
+passed 26 tests. Conat and server TypeScript builds passed. Jest required its
+existing force-exit workaround; no claim of test-process handle cleanliness is
+made. This is local transport evidence, not a live terminal result. Clustered
+propagation, rotated-namespace reconnect, application recovery, and independent
+review remain required before rollout.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

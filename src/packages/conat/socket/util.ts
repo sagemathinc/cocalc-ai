@@ -1,6 +1,8 @@
 export const SOCKET_HEADER_CMD = "CN-SocketCmd";
 export const SOCKET_HEADER_CONNECT_ATTEMPT = "CN-SocketConnectAttempt";
 export const SOCKET_HEADER_SEQ = "CN-SocketSeq";
+export const SOCKET_REQUEST_ID = "CN-SocketRequestId";
+export const SOCKET_RESPONSE_ID = "CN-SocketResponseId";
 
 export type State = "disconnected" | "connecting" | "ready" | "closed";
 

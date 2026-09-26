@@ -1061,6 +1061,12 @@ export class Client extends EventEmitter {
     return `${this.inboxSubject}.${randomId()}`;
   };
 
+  // Separate branch from request/reply multiplexing for persistent protocols.
+  socketInboxSubject = async (): Promise<string> => {
+    await this.getInbox();
+    return `${this.inboxSubject}.socket.${randomId()}`;
+  };
+
   private getInbox = reuseInFlight(async (): Promise<EventEmitter> => {
     if (this.inbox == null) {
       if (this.isClosed()) {
@@ -3152,9 +3158,10 @@ function concatArrayBuffers(buffers) {
 export type Headers = { [key: string]: JSONValue };
 
 export interface AuthenticatedCaller {
-  cluster_id: string;
-  bay_id: string;
-  bay_credential_id: string;
+  cluster_id?: string;
+  bay_id?: string;
+  bay_credential_id?: string;
+  socket_return?: string;
 }
 
 export class MessageData<T = any> {
