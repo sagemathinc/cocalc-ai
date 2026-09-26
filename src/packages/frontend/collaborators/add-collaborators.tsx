@@ -59,6 +59,10 @@ import {
 } from "@cocalc/util/project-access";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { InviteEmailAddressRequirement } from "./invite-email-address-requirement";
+import {
+  CollaboratorBulkSelection,
+  bulkSelectableCollaboratorKeys,
+} from "./bulk-selection";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 type InviteRole = "collaborator" | "viewer";
@@ -131,6 +135,58 @@ export function selectedCollaboratorUsersForEntries(
     const user = byKey.get(key);
     return user == null ? [] : [user];
   });
+}
+
+export interface CollaboratorSearchResults {
+  results: User[];
+  // keys of results found by an exact email address query
+  exact_match_keys: Set<string>;
+  // matching accounts that are already on the project
+  num_already_matching: number;
+}
+
+export function emptyCollaboratorSearchResults(): CollaboratorSearchResults {
+  return { results: [], exact_match_keys: new Set(), num_already_matching: 0 };
+}
+
+// Merge the results of one comma-separated search query into acc.
+export function addCollaboratorQueryResults(
+  acc: CollaboratorSearchResults,
+  query: string,
+  query_results: User[],
+  isProjectUser: (account_id: string) => boolean,
+): void {
+  const isEmailQuery = is_valid_email_address(query);
+  if (query_results.length == 0 && isEmailQuery) {
+    const email_address = query;
+    if (!acc.results.some((x) => userKey(x) == email_address)) {
+      acc.results.push({ email_address, sort: "0" + email_address });
+    }
+    acc.exact_match_keys.add(email_address);
+    return;
+  }
+  // There are some results, so not adding non-cloud user via email.
+  // Filter out any users that already a collab on this project.
+  for (const r of query_results) {
+    if (r.account_id == null) continue; // won't happen
+    if (isProjectUser(r.account_id)) {
+      acc.num_already_matching += 1;
+      continue;
+    }
+    if (isEmailQuery && query_results.length == 1) {
+      // email queries only return an exact address match
+      acc.exact_match_keys.add(r.account_id);
+    }
+    const existing = acc.results.find((x) => x.account_id == r.account_id);
+    if (existing == null) {
+      acc.results.push(r);
+    } else if (r.email_address != null) {
+      // if we got additional information about email
+      // address and already have this user, remember that
+      // extra info.
+      existing.email_address = r.email_address;
+    }
+  }
 }
 
 interface Props {
@@ -228,6 +284,7 @@ export const AddCollaborators: React.FC<Props> = ({
 }) => {
   const intl = useIntl();
   const collaboratorSearchId = useId();
+  const collaboratorSearchHelpId = useId();
   const isFlyout = mode === "flyout";
   const student = useStudentProjectFunctionality(project_id);
   const accountCustomize = useTypedRedux("account", "customize")?.toJS() as
@@ -243,6 +300,11 @@ export const AddCollaborators: React.FC<Props> = ({
 
   // list of results for doing the search -- turned into a selector
   const [results, set_results] = useState<User[]>([]);
+  // keys of results that exactly matched an email address query; only
+  // these are eligible for "Select all"
+  const [exact_match_keys, set_exact_match_keys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [num_matching_already, set_num_matching_already] = useState<number>(0);
 
   // list of actually selected entries in the selector list
@@ -318,6 +380,7 @@ export const AddCollaborators: React.FC<Props> = ({
   function reset(): void {
     set_search("");
     set_results([]);
+    set_exact_match_keys(new Set());
     set_num_matching_already(0);
     set_selected_entries([]);
     set_selected_users([]);
@@ -342,57 +405,33 @@ export const AddCollaborators: React.FC<Props> = ({
     if (search.length === 0) {
       set_err("");
       set_results([]);
+      set_exact_match_keys(new Set());
       return;
     }
     set_state("searching");
     let err = "";
-    let search_results: User[] = [];
-    let num_already_matching = 0;
-    const already = new Set<string>([]);
+    const acc = emptyCollaboratorSearchResults();
     try {
       for (let query of search.split(",")) {
         query = query.trim().toLowerCase();
+        if (!query) continue;
         const query_results = await webapp_client.users_client.user_search({
           query,
           limit: 30,
         });
         if (!isMountedRef.current) return; // no longer mounted
-        if (query_results.length == 0 && is_valid_email_address(query)) {
-          const email_address = query;
-          if (!already.has(email_address)) {
-            search_results.push({ email_address, sort: "0" + email_address });
-            already.add(email_address);
-          }
-        } else {
-          // There are some results, so not adding non-cloud user via email.
-          // Filter out any users that already a collab on this project.
-          for (const r of query_results) {
-            if (r.account_id == null) continue; // won't happen
-            if (project.getIn(["users", r.account_id]) == null) {
-              if (!already.has(r.account_id)) {
-                search_results.push(r);
-                already.add(r.account_id);
-              } else {
-                // if we got additional information about email
-                // address and already have this user, remember that
-                // extra info.
-                if (r.email_address != null) {
-                  for (const x of search_results) {
-                    if (x.account_id == r.account_id) {
-                      x.email_address = r.email_address;
-                    }
-                  }
-                }
-              }
-            } else {
-              num_already_matching += 1;
-            }
-          }
-        }
+        addCollaboratorQueryResults(
+          acc,
+          query,
+          query_results,
+          (account_id) => project.getIn(["users", account_id]) != null,
+        );
       }
     } catch (e) {
       err = e.toString();
     }
+    const search_results = acc.results;
+    const num_already_matching = acc.num_already_matching;
     set_num_matching_already(num_already_matching);
     write_email_invite();
     // sort search_results with collaborators first by last_active,
@@ -414,6 +453,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_state("searched");
     set_err(err);
     set_results(search_results);
+    set_exact_match_keys(acc.exact_match_keys);
     set_selected_users((selected) =>
       selectedCollaboratorUsersForEntries(
         selected_entries,
@@ -921,6 +961,10 @@ export const AddCollaborators: React.FC<Props> = ({
       optionUsersByKey.set(userKey(user), user);
     }
     const optionUsers = Array.from(optionUsersByKey.values());
+    const bulkKeys = bulkSelectableCollaboratorKeys(
+      users.map(userKey),
+      exact_match_keys,
+    );
     const showSelector =
       state === ("searched" as State) &&
       (users.length > 0 || selected_entries.length > 0);
@@ -944,11 +988,20 @@ export const AddCollaborators: React.FC<Props> = ({
         >
           Add Collaborator
         </label>
+        <div
+          id={collaboratorSearchHelpId}
+          style={{ color: UI_COLORS.secondary, fontSize: 12, marginBottom: 8 }}
+        >
+          Separate multiple searches with commas to find several people at once.
+          Names only match people you already collaborate with on some project;
+          search by email address to find anyone else.
+        </div>
         <Input.Search
           id={collaboratorSearchId}
           aria-label="Add Collaborator"
+          aria-describedby={collaboratorSearchHelpId}
           autoFocus={autoFocus}
-          placeholder="Search by name or email address..."
+          placeholder="Search by comma separated collaborator names or email addresses"
           value={search}
           enterButton="Search"
           loading={state === ("searching" as State)}
@@ -1015,6 +1068,27 @@ export const AddCollaborators: React.FC<Props> = ({
           >
             {render_options(optionUsers)}
           </Select>
+        )}
+        {showSelector && (
+          <CollaboratorBulkSelection
+            bulkKeys={bulkKeys}
+            nameMatchCount={
+              users.filter((user) => !exact_match_keys.has(userKey(user)))
+                .length
+            }
+            selectedEntries={selected_entries}
+            onChange={(selected) => {
+              set_selected_entries(selected);
+              set_selected_users((selectedUsers) =>
+                selectedCollaboratorUsersForEntries(
+                  selected,
+                  selectedUsers,
+                  optionUsers,
+                ),
+              );
+              set_select_open(false);
+            }}
+          />
         )}
         {selected_entries.length > 0 && (
           <>
