@@ -891,7 +891,15 @@ function HarnessRuntimeSummaryContent({
         footer={null}
         onCancel={() => setOpen(false)}
         modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
-        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
+        styles={{
+          container: { paddingInlineEnd: 8 },
+          header: { paddingInlineEnd: 16 },
+          body: {
+            maxHeight: "70vh",
+            overflowY: "auto",
+            paddingInlineEnd: 16,
+          },
+        }}
       >
         {form}
       </Modal>

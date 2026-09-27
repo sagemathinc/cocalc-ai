@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Button, Input, Space, Typography } from "antd";
+import { Button, Input, Space, Spin, Typography } from "antd";
 import { useEffect, useEffectEvent, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -33,12 +33,15 @@ export function ClaudeSubscriptionConnect({
   const [login, setLogin] = useState<LoginStatus>();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [error, setError] = useState("");
   const connected = useEffectEvent(onConnected);
   const start = async (credentialId?: string) => {
     setBusy(true);
     setError("");
     setCode("");
+    setCodeSubmitted(false);
     try {
       setLogin(
         await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
@@ -104,7 +107,7 @@ export function ClaudeSubscriptionConnect({
         </Button>
       )}
       <Button
-        style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
+        style={{ maxWidth: "100%" }}
         disabled={disabled || signingIn}
         loading={busy}
         onClick={() => void start()}
@@ -117,6 +120,14 @@ export function ClaudeSubscriptionConnect({
       </Button>
       {login && (login.state === "pending" || login.state === "verifying") && (
         <Space orientation="vertical">
+          {(submitting || codeSubmitted || login.state === "verifying") && (
+            <Space role="status" aria-live="polite">
+              <Spin size="small" />
+              {submitting
+                ? "Submitting sign-in code..."
+                : "Verifying Claude sign-in..."}
+            </Space>
+          )}
           {login.verificationUrl && (
             <a
               href={login.verificationUrl}
@@ -132,17 +143,27 @@ export function ClaudeSubscriptionConnect({
                 aria-label="Claude sign-in code"
                 autoComplete="off"
                 value={code}
+                disabled={submitting || codeSubmitted}
                 onChange={(event) => setCode(event.target.value)}
               />
               <Button
+                aria-label="Submit code"
+                aria-busy={submitting || codeSubmitted}
+                loading={submitting || codeSubmitted}
+                disabled={submitting || codeSubmitted || !code.trim()}
                 onClick={async () => {
+                  setSubmitting(true);
+                  setError("");
                   try {
                     await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
                       { project_id: projectId, id: login.id, code },
                     );
                     setCode("");
+                    setCodeSubmitted(true);
                   } catch (err) {
                     setError(`${err}`);
+                  } finally {
+                    setSubmitting(false);
                   }
                 }}
               >

@@ -620,6 +620,7 @@ function adapter(
   attention,
   cleanupFails = false,
   validateAuthority,
+  subscription = false,
 ) {
   let launches = 0;
   let stops = 0;
@@ -627,15 +628,39 @@ function adapter(
     {
       projectId: "project-a",
       accountId: "account-a",
-      profile: { ...profile, args: [...profile.args, ...flags] },
+      profile: subscription
+        ? {
+            version: 2,
+            kind: "acp",
+            id: "claude-code",
+            revision: "0.81.1",
+            cwd: "/tmp",
+            credentialMode: "project-managed",
+            executionPolicy: "full-access",
+          }
+        : { ...profile, args: [...profile.args, ...flags] },
+      ...(subscription
+        ? {
+            credential: {
+              version: 1,
+              provider: "anthropic",
+              mode: "account-subscription",
+              credentialId: "11111111-1111-4111-8111-111111111111",
+            },
+          }
+        : {}),
     },
     { path: "a.chat", threadId: "conversation-a" },
-    async ({ profile }) => {
+    async ({ profile: launchProfile }) => {
       launches++;
-      const child = spawn(profile.executable, profile.args, {
-        env: {},
-        stdio: "pipe",
-      });
+      const child = spawn(
+        subscription ? profile.executable : launchProfile.executable,
+        subscription ? [...profile.args, ...flags] : launchProfile.args,
+        {
+          env: {},
+          stdio: "pipe",
+        },
+      );
       const closed = new Promise((resolve) => {
         child.once("close", resolve);
         child.once("error", resolve);
@@ -666,6 +691,16 @@ function adapter(
     project_id: "project-a",
     account_id: "account-a",
     prompt: "hello",
+    ...(subscription
+      ? {
+          harness_credential: {
+            version: 1,
+            provider: "anthropic",
+            mode: "account-subscription",
+            credentialId: "11111111-1111-4111-8111-111111111111",
+          },
+        }
+      : {}),
     chat: {
       project_id: "project-a",
       path: "a.chat",
@@ -782,6 +817,41 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
   assert.equal(launches(), 1);
+});
+
+test("failed first sign-in never publishes an unresumable native session ID", async (t) => {
+  const failed = adapter(
+    t,
+    ["--claude-adapter", "--none-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  await assert.rejects(
+    failed.agent.evaluate(failed.request),
+    /Claude is not signed in/,
+  );
+  assert.equal(
+    failed.events.some((event) => event.threadId),
+    false,
+  );
+  assert.equal(
+    failed.events.some((event) => event.type === "summary"),
+    false,
+  );
+
+  // A reconnect can start the same chat without trying to load an empty session.
+  const reconnected = adapter(
+    t,
+    ["--claude-adapter", "--subscription-status"],
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  await reconnected.agent.evaluate(reconnected.request);
+  assert.equal(reconnected.events.at(-1).type, "summary");
 });
 
 const textChunk = (text, messageId) => ({
@@ -2317,6 +2387,7 @@ test("unsupported resume never silently creates a new session", async (t) => {
 });
 for (const [flag, code] of [
   ["--reject-resume", "rejected"],
+  ["--missing-resume", "rejected"],
   ["--crash-resume", "unavailable"],
 ]) {
   test(`${flag} discards replay and closes the adapter without fallback`, async (t) => {
@@ -2326,6 +2397,14 @@ for (const [flag, code] of [
       (error) => {
         assert.equal(error.code, code);
         assert.ok(!error.message.includes("private fixture resume detail"));
+        assert.ok(!error.message.includes("Retry once"));
+        if (flag === "--missing-resume") {
+          assert.match(
+            error.message,
+            /Reconnecting will not recreate a missing session/,
+          );
+          assert.match(error.message, /session\/load, code -32002/);
+        }
         return true;
       },
     );

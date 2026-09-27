@@ -533,6 +533,9 @@ export class AcpHarnessClient {
       recovery = subscription
         ? "Sign-in is required. Open agent settings and reconnect your Claude subscription."
         : "Authentication is required. Open agent settings and check the selected connection.";
+    } else if (method === "session/load" && code === -32002) {
+      recovery =
+        "The saved session could not be opened. Reconnecting will not recreate a missing session. Contact the site administrator to check session storage and include the diagnostic code below; your chat history has been kept.";
     } else if (
       code === -32602 &&
       (method === "session/new" || method === "session/load") &&
@@ -553,7 +556,7 @@ export class AcpHarnessClient {
           ? "The installed integration rejected the request. Ask the site administrator to update the agent runtime and include the diagnostic code below."
           : method === "session/prompt" || method === "session/fork"
             ? "Check the agent activity before trying again. If this persists, report this error to the site administrator with the diagnostic code below."
-            : "Retry once; if this persists, report this error to the site administrator with the diagnostic code below.";
+            : "Contact the site administrator to check the agent runtime and include the diagnostic code below.";
     }
     // Protocol messages/data may contain credentials or arbitrary process output.
     // Only expose our operation name, numeric code, and fixed recovery guidance.
@@ -635,6 +638,7 @@ export class AcpHarnessClient {
     text: string,
     listener: (event: HarnessEvent) => Promise<void>,
     images: readonly AcpImageAttachment[] = [],
+    beforeSend?: () => Promise<void>,
   ): Promise<{ stopReason: StopReason }> {
     if (this.disposed || this.failure)
       throw new HarnessError("unavailable", "ACP runtime is closed");
@@ -701,6 +705,12 @@ export class AcpHarnessClient {
     try {
       if (this.sessionPolicy === "claude-subscription-controller")
         await this.verifySubscriptionIdentity();
+      await beforeSend?.();
+      if (this.canceled || this.disposed || this.failure)
+        throw new HarnessError(
+          "rejected",
+          "ACP prompt interrupted before submission",
+        );
       this.process.resumeTools?.();
       const result = await this.request(
         this.connection.prompt(params),

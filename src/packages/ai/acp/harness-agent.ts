@@ -162,12 +162,6 @@ export class HarnessAgent implements AcpAgent {
         await publishControls();
         throw error;
       }
-      await request.stream({
-        type: "status",
-        state: "running",
-        threadId: client.sessionId,
-      });
-      await publishControls();
       let activityText = "";
       let finalResponse = "";
       let lastMessageId: string | undefined;
@@ -238,6 +232,21 @@ export class HarnessAgent implements AcpAgent {
           }
         },
         request.image_attachments ?? [],
+        async () => {
+          // Do not persist an empty native session when preflight/sign-in fails:
+          // Claude does not create its resumable transcript until a prompt runs.
+          await request.stream({
+            type: "status",
+            state: "running",
+            threadId: client.sessionId,
+          });
+          await publishControls();
+          if (this.interrupted)
+            throw new HarnessError(
+              "rejected",
+              "ACP prompt interrupted before submission",
+            );
+        },
       );
       await publishControls();
       await request.stream({

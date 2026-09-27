@@ -50,12 +50,18 @@ test.each([false, true])(
         state: "completed",
         credentialId: "credential-1",
       } as any);
+    let resolveSubmit!: () => void;
     const submit = jest
       .spyOn(
         webapp_client.conat_client.hub.projects,
         "claudeSubscriptionLoginSubmitCode",
       )
-      .mockResolvedValue(undefined as any);
+      .mockImplementation(
+        () =>
+          new Promise<any>((resolve) => {
+            resolveSubmit = () => resolve(undefined);
+          }),
+      );
     const onConnected = jest.fn();
     try {
       render(
@@ -97,6 +103,22 @@ test.each([false, true])(
         id: "login-1",
         code: "example-code",
       });
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Submitting sign-in code...",
+      );
+      expect(
+        screen.getByRole("button", { name: "Submit code" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("textbox", { name: "Claude sign-in code" }),
+      ).toBeDisabled();
+      await act(async () => resolveSubmit());
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Verifying Claude sign-in...",
+      );
+      expect(
+        screen.getByRole("textbox", { name: "Claude sign-in code" }),
+      ).toHaveValue("");
       await act(async () => {
         jest.advanceTimersByTime(1500);
         await Promise.resolve();
@@ -117,3 +139,52 @@ test.each([false, true])(
     }
   },
 );
+
+test("a failed code submission keeps the code and allows correction", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "login-failed",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const submit = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginSubmitCode",
+    )
+    .mockRejectedValue(Error("Unable to submit code"));
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Connect Claude Pro/Max (experimental)",
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Claude sign-in code" }),
+      "example-code",
+    );
+    await user.click(screen.getByRole("button", { name: "Submit code" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unable to submit code",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Claude sign-in code" }),
+    ).toHaveValue("example-code");
+    expect(screen.getByRole("button", { name: "Submit code" })).toBeEnabled();
+    expect(screen.queryByRole("status")).toBeNull();
+  } finally {
+    start.mockRestore();
+    submit.mockRestore();
+  }
+});
