@@ -54,9 +54,14 @@ class FakeAcpState {
 }
 
 describe("processAcpLLM", () => {
-  it.each([false, true])(
-    "submits generic runtime without native config or unsafe ack retry (failure=%s)",
-    async (failure) => {
+  it.each([
+    [false, "harness-session", "harness-session"],
+    [true, "harness-session", "harness-session"],
+    [false, "", undefined],
+    [false, undefined, "historical-session"],
+  ])(
+    "submits generic runtime without native config or unsafe ack retry (failure=%s, persisted=%s)",
+    async (failure, persisted, expected) => {
       const runtime = {
         version: 1,
         kind: "acp",
@@ -89,9 +94,9 @@ describe("processAcpLLM", () => {
         getAllMessages: () => new Map(),
         getThreadMetadata: () => ({
           agent_runtime: runtime,
-          agent_session_id: "harness-session",
+          agent_session_id: persisted,
         }),
-        getMessagesInThread: () => [],
+        getMessagesInThread: () => [{ acp_thread_id: "historical-session" }],
         getCodexConfig: jest.fn(() => ({
           sessionId: "wrong-session",
           model: "codex",
@@ -121,7 +126,7 @@ describe("processAcpLLM", () => {
       expect(mockStreamAcp).toHaveBeenCalledTimes(1);
       expect(mockStreamAcp.mock.calls[0][0]).toMatchObject({
         runtime,
-        session_id: "harness-session",
+        session_id: expected,
         config: undefined,
         chat: { sender_id: "acp-harness" },
       });

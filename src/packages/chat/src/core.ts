@@ -314,6 +314,7 @@ export interface ChatThreadResolvedMeta {
 
 export interface ChatThreadConfigRecord {
   agent_runtime?: AcpHarnessRuntime;
+  // Empty string is an explicit reset, not permission to infer from old messages.
   agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;

@@ -86,6 +86,40 @@ test("unknown runtime and unsupported guidance do not fall back to Codex", () =>
   ).toThrow(/runtime/);
 });
 
+test.each([
+  ["", undefined],
+  [undefined, "old-session"],
+  ["current-session", "current-session"],
+])(
+  "harness session selection preserves an explicit reset (%s)",
+  (persisted, expected) => {
+    const thread = buildThreadConfigRecord({
+      thread_id: "thread",
+      updated_by: "account",
+      agent_kind: "acp",
+      agent_runtime: runtime,
+      agent_session_id: persisted,
+    });
+    expect(
+      prepareChatSend({
+        projectId: "project",
+        accountId: "account",
+        path: "a.chat",
+        thread,
+        rows: [
+          {
+            event: "chat",
+            thread_id: "thread",
+            date: new Date().toISOString(),
+            acp_thread_id: "old-session",
+          },
+        ],
+        prompt: "hello",
+      }).request.session_id,
+    ).toBe(expected);
+  },
+);
+
 function fixture(guidance = false) {
   const steps: string[] = [];
   const prepared = prepareChatSend({

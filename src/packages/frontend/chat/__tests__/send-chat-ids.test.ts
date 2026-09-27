@@ -846,6 +846,7 @@ describe("thread-config by thread_id", () => {
           thread_image: "https://example.com/x.png",
           pin: "true",
           archived: 1,
+          agent_session_id: "",
           acp_config: { model: "gpt-5.3-codex" },
         };
       }
@@ -860,6 +861,7 @@ describe("thread-config by thread_id", () => {
     expect(meta.thread_image).toBe("https://example.com/x.png");
     expect(meta.pin).toBe(true);
     expect(meta.archived).toBe(true);
+    expect(meta.agent_session_id).toBe("");
     expect(meta.agent_kind).toBe("acp");
     expect(meta.agent_mode).toBe("interactive");
     expect(meta.agent_model).toBe("gpt-5.3-codex");
@@ -1460,6 +1462,18 @@ describe("deleteThread identity targeting", () => {
     expect(controlAcp).toHaveBeenCalledTimes(1);
     expect(forkAcpSession).not.toHaveBeenCalled();
     expect(actions.syncdb.set).not.toHaveBeenCalled();
+    actions.getThreadMetadata = jest.fn().mockReturnValue({
+      ...actions.getThreadMetadata("source"),
+      agent_session_id: "",
+    });
+    actions.getMessagesInThread = jest
+      .fn()
+      .mockReturnValue([{ acp_thread_id: "claude-source" }]);
+    controlAcp.mockClear();
+    await expect(
+      actions.forkThread({ threadKey: "source", title: "copy", isAI: true }),
+    ).rejects.toThrow("no saved context");
+    expect(controlAcp).not.toHaveBeenCalled();
   });
 
   it("forkThread writes a canonical thread-config row and preserves codex metadata", async () => {

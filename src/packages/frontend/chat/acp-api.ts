@@ -16,6 +16,7 @@ import {
   buildAcpChatContext,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  resolveHarnessSessionId,
   type CodexThreadConfig,
 } from "@cocalc/chat";
 import {
@@ -434,8 +435,10 @@ export async function processAcpLLM({
     return undefined;
   })();
   const effectiveSessionId = runtime
-    ? (normalizeCodexSessionId(threadMetadata?.agent_session_id) ??
-      inferredSessionId)
+    ? resolveHarnessSessionId(
+        threadMetadata?.agent_session_id,
+        inferredSessionId,
+      )
     : (normalizeCodexSessionId(config.sessionId) ?? inferredSessionId);
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the

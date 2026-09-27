@@ -6,6 +6,7 @@ import {
   buildChatMessage,
   buildCodexAcpConfig,
   normalizeCodexMention,
+  resolveHarnessSessionId,
   type ChatThreadConfigRecord,
 } from "./index";
 import type { ImmerDB } from "./server";
@@ -79,7 +80,7 @@ export function prepareChatSend({
         !row.acp_automation_id && normalizeCodexSessionId(row.acp_thread_id),
     )?.acp_thread_id;
   const sessionId = runtime
-    ? (normalizeCodexSessionId(thread.agent_session_id) ?? inferredSession)
+    ? resolveHarnessSessionId(thread.agent_session_id, inferredSession)
     : (normalizeCodexSessionId(config.sessionId) ?? inferredSession);
   const acpConfig = runtime
     ? undefined

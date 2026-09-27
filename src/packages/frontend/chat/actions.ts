@@ -57,6 +57,7 @@ import {
   CHAT_THREAD_META_ROW_DATE,
   addToHistory,
   threadConfigRecordKey,
+  resolveHarnessSessionId,
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
@@ -2253,7 +2254,11 @@ export class ChatActions extends Actions<ChatState> {
       agent_mode,
       agent_runtime: field<AcpHarnessRuntime>(cfg, "agent_runtime"),
       agent_runtime_controls: field(cfg, "agent_runtime_controls"),
-      agent_session_id: readString("agent_session_id"),
+      // Preserve the explicit reset marker instead of treating it as missing.
+      agent_session_id:
+        field(cfg, "agent_session_id") === ""
+          ? ""
+          : readString("agent_session_id"),
       acp_config,
       codex_completion_notification:
         normalizeCodexCompletionNotificationOverride(
@@ -3135,8 +3140,10 @@ export class ChatActions extends Actions<ChatState> {
     let nextConfig: CodexThreadConfig | undefined = undefined;
     let forkedHarnessSessionId: string | undefined;
     if (sourceRuntime) {
-      const sessionId =
-        sourceMetadata.agent_session_id ?? inferredSourceSessionId;
+      const sessionId = resolveHarnessSessionId(
+        sourceMetadata.agent_session_id,
+        inferredSourceSessionId,
+      );
       if (!sessionId)
         throw Error("This agent has no saved context to copy yet");
       await this.syncdb.save();
