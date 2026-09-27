@@ -195,13 +195,16 @@ not update that running checkout. The PR remains a draft for review.
   conversation reference, survives reload, and does not send a message. The
   parent focused rerun passes 36 tests in two suites; frontend typechecking,
   lint and the rebuilt static bundle also pass.
-- Full CI is not yet claimed green. Its SQL-only integration fixture previously
+- The full CI run at `f4ee43cac0` passes every lane. Its SQL-only integration fixture previously
   opened an unowned disconnected Favorites client; the fixture now supplies an
   explicit empty adapter and both PostgreSQL cases exit cleanly. A subsequent
   dependency check identified the acceptance worker's undeclared test-only
   `@cocalc/sync` import. Checkpoint `f4ee43cac0` declares it; server depcheck,
   version consistency and frozen workspace lockfile verification pass locally.
-  The replacement GitHub Actions run remains pending at this checkpoint.
+  The replacement GitHub Actions run `36332473069` passes build, static and
+  dependency checks plus frontend, both server shards, backend/database and the
+  remaining package lane. This validates that pushed checkpoint, not subsequent
+  uncommitted historical-source and lifecycle integration.
 
 ### Remaining acceptance and UX iteration
 
