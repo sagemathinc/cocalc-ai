@@ -794,6 +794,9 @@ export class JupyterClient {
     };
     this.socket.once("closed", endIterator);
     this.socket.once("close", endIterator);
+    // Reauthorization may never succeed after revocation. Do not leave a run
+    // iterator waiting for a reconnect, or mistake transport loss for completion.
+    this.socket.on("disconnected", endIterator);
     this.socket.on("request", async (mesg) => {
       const { data } = mesg;
       try {

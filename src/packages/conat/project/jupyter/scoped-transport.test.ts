@@ -29,7 +29,7 @@ describe("Jupyter application over scoped transport", () => {
     mockSnapshots.clear();
   });
 
-  it.each([false, true])(
+  it.each([false, "close", "disconnect", "lease"] as const)(
     "delivers output or explicit transport loss without replay (interrupt=%s)",
     async (interrupt) => {
       const project_id = randomUUID();
@@ -42,7 +42,12 @@ describe("Jupyter application over scoped transport", () => {
       const broker = init({
         port: 0,
         autoscanInterval: 0,
-        getUser: async (socket) => socket.handshake.auth,
+        getUser: async (socket) => ({
+          ...socket.handshake.auth,
+          ...(interrupt === "lease" && !socket.handshake.auth.hub_id
+            ? { auth_lease_exp_s: Math.ceil(Date.now() / 1000) + 2 }
+            : {}),
+        }),
         isAllowed: async ({ user, subject, type }) =>
           user?.hub_id === "service" ||
           isProjectHostApiKeySubjectAllowed({ binding, subject, type }),
@@ -116,11 +121,16 @@ describe("Jupyter application over scoped transport", () => {
         if (interrupt) {
           const first = await iterator.next();
           output.push(...first.value);
-          notebook.socket.close();
+          if (interrupt === "disconnect") client.conn.disconnect();
+          else if (interrupt !== "lease") notebook.socket.close();
           await expect(iterator.next()).rejects.toMatchObject({
             code: "JUPYTER_RUN_TRANSPORT_LOST",
             run_id: "scoped-run",
           });
+          if (interrupt === "disconnect" || interrupt === "lease") {
+            client.conn.connect();
+            await client.waitUntilSignedIn({ timeout: 3000 });
+          }
           releaseRun();
           const fresh = jupyterClient({
             client,

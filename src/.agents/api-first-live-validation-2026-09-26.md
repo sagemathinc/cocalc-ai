@@ -303,6 +303,34 @@ A supplemental private review of `0d9db0b52a..9cc0f88888` was accepted and saved
 under attempt `b9c73fea-390f-41e6-ad15-153b7c059277`. No review result has yet
 been received; this is not a security approval.
 
+### Active notebook revocation follow-up (client fix not yet deployed)
+
+An installed-CLI probe used manual key 89 and a disposable Python cell emitting
+one output per second for 90 seconds. The observer waited for actual stream
+output before deleting the key. Deletion completed at `1790478543716` ms UTC;
+the last observed output batch arrived at `1790478547799`, 4,083 ms later.
+No subsequent batch was observed during the remaining polling window. However,
+the CLI never reported stream completion or the expected transport-loss error.
+This is evidence of stopped delivery, not a complete revocation/cleanup pass.
+
+The logical Jupyter socket handled `close`/`closed` but not `disconnected`.
+A denied reconnect can therefore leave the iterator waiting indefinitely. A
+new broker-disconnect regression timed out against the old implementation.
+The fix cancels the active iterator with the existing uncertain-outcome
+`JUPYTER_RUN_TRANSPORT_LOST` error on disconnect too. It does not resubmit code.
+Tests cover normal completion, explicit socket close, transport disconnect,
+and server-enforced lease expiry; reconnect uses a fresh application client,
+and the runner invocation remains exactly one. Fifteen Conat Jupyter tests,
+five project Jupyter API tests, and Conat typechecking pass. The installed CLI
+still needs rebuilding and this live probe must be repeated.
+
+Cleanup exposed a separate runtime failure: the restart operation failed at
+`podman rm -f -t 5` for the disposable container. Host diagnostics then showed
+no running containers. Project start
+`b5c03ab1-320e-4dad-8aec-cf95f9fc2884` succeeded, after which the exact leftover
+private probe directory was removed. Key 89 was already deleted before that
+failure. This restart failure is not treated as a successful lifecycle test.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
