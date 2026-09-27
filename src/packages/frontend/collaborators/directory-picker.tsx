@@ -23,6 +23,7 @@ export function DirectoryPicker({
   sharedOnly = false,
   onSelect,
   onClose,
+  onCreateProject,
 }: {
   api: DirectoryApi;
   kind: "project" | "person";
@@ -32,6 +33,7 @@ export function DirectoryPicker({
   sharedOnly?: boolean;
   onSelect: (item: { id: string; title: string }) => void;
   onClose: () => void;
+  onCreateProject?: () => void;
 }) {
   const id = useId();
   const [returnFocus] = useState(() =>
@@ -70,9 +72,24 @@ export function DirectoryPicker({
       open
       title={title}
       onCancel={cancel}
-      footer={<Button onClick={cancel}>Cancel</Button>}
+      footer={
+        <>
+          {onCreateProject && (
+            <Button onClick={onCreateProject}>Create project</Button>
+          )}
+          <Button onClick={cancel}>Cancel</Button>
+        </>
+      }
     >
-      <KeyboardBoundary boundary="collaborators-picker">
+      <KeyboardBoundary
+        boundary="collaborators-picker"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || event.defaultPrevented) return;
+          event.preventDefault();
+          event.stopPropagation();
+          cancel();
+        }}
+      >
         <label htmlFor={id}>
           Search {kind === "project" ? "projects" : "people"}
         </label>

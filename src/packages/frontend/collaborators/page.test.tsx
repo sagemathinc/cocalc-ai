@@ -14,6 +14,10 @@ import type { CollaboratorsRoute } from "./workspace-types";
 
 let mockAccount = "alice";
 let mockProjects = Map();
+let mockSettings = Map();
+const mockSavePreferences = jest.fn(async (key, value) => {
+  mockSettings = mockSettings.set(key, value);
+});
 const mockApi = {
   check: jest.fn(),
   listPeople: jest.fn(),
@@ -43,10 +47,17 @@ jest.mock("@cocalc/frontend/agents/project-settings-drawer", () => ({
     ) : null,
 }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: (store: string) =>
-    store === "account" ? mockAccount : mockProjects,
+  useTypedRedux: (store: string, key: string) =>
+    store === "account"
+      ? key === "other_settings"
+        ? mockSettings
+        : mockAccount
+      : mockProjects,
   redux: {
-    getActions: () => ({ erase_active_key_handler: jest.fn() }),
+    getActions: () => ({
+      erase_active_key_handler: jest.fn(),
+      set_other_settings_and_wait: mockSavePreferences,
+    }),
     getStore: () => ({ get: () => mockAccount }),
   },
 }));
@@ -104,6 +115,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockAccount = "alice";
   mockProjects = Map();
+  mockSettings = Map();
   mockApi.check.mockResolvedValue({
     revision: "initial",
     reset: true,
@@ -134,23 +146,115 @@ beforeAll(() => {
 });
 afterAll(() => jest.restoreAllMocks());
 
+test("compact tabs support arrow navigation and contextual actions", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "people" }} />);
+  const people = screen.getByRole("tab", { name: "Collaborators" });
+  expect(people).toHaveAttribute("aria-selected", "true");
+  expect(
+    screen.getByRole("tabpanel", { name: "Collaborators" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Invite", exact: true }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "New conversation" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
+  expect(screen.queryByText(/Pins are ordered/)).toBeNull();
+  act(() => people.focus());
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "Shared projects" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Invite to project" }),
+  ).toBeVisible();
+  await user.keyboard("{Home}");
+  expect(screen.getByRole("tab", { name: "Conversations" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "New conversation" }),
+  ).toBeVisible();
+  await user.keyboard("{End}{ArrowLeft}");
+  expect(people).toHaveFocus();
+});
+
+test("filters are contextual, dismiss with Escape, and restore focus", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "people" }} />);
+  const filters = screen.getByRole("button", { name: "Filters", exact: true });
+  expect(
+    screen.queryByRole("button", { name: "Filter by project" }),
+  ).toBeNull();
+  act(() => filters.focus());
+  await user.keyboard("{Enter}");
+  const panel = await screen.findByRole("dialog", { name: "People filters" });
+  await waitFor(() => expect(panel).toHaveFocus());
+  await waitFor(() =>
+    expect(
+      within(panel).getByRole("button", { name: "Filter by project" }),
+    ).toBeVisible(),
+  );
+  expect(
+    within(panel).queryByRole("button", { name: "Filter by person" }),
+  ).toBeNull();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(filters).toHaveFocus();
+});
+
+test("toolbar and cards share a single layout and pin preference writer", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "people" }} />);
+  await screen.findByRole("button", { name: "Pin Bob" });
+  expect(screen.getAllByRole("button", { name: "Grid view" })).toHaveLength(1);
+  const grid = screen.getByRole("button", { name: "Grid view" });
+  act(() => grid.focus());
+  await user.keyboard("{Enter}");
+  expect(grid).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Pin Bob" }));
+  await waitFor(() =>
+    expect(mockSavePreferences).toHaveBeenLastCalledWith(
+      "workspace_collection_people_v1",
+      JSON.stringify({ view: "grid", order: ["bob"] }),
+    ),
+  );
+  expect(
+    screen
+      .getByRole("region", { name: "Pinned" })
+      .querySelector('[role="list"]'),
+  ).toHaveStyle({ display: "grid" });
+});
+
+test("project creation remains available inside the invitation picker", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "people" }} />);
+  expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
+  const picker = await screen.findByRole("dialog", {
+    name: "Choose a project to invite to",
+  });
+  await user.click(
+    within(picker).getByRole("button", { name: "Create project" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Create project" }),
+  ).toBeVisible();
+});
+
 test("People navigation uses shared projects, but inviting allows the first collaborator", async () => {
   const user = userEvent.setup();
   render(<Workspace />);
   expect(
     screen.getByRole("heading", { name: "People", level: 1 }),
   ).toBeVisible();
-  const views = screen.getByRole("navigation", { name: "People views" });
-  await user.click(
-    within(views).getByRole("button", { name: "Collaborators" }),
-  );
-  await user.click(
-    within(views).getByRole("button", { name: "Shared projects" }),
-  );
+  const views = screen.getByRole("tablist", { name: "People views" });
+  await user.click(within(views).getByRole("tab", { name: "Collaborators" }));
+  await user.click(within(views).getByRole("tab", { name: "Shared projects" }));
   await waitFor(() =>
     expect(mockApi.listProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ shared_only: true }),
     ),
+  );
+  await user.click(within(views).getByRole("tab", { name: "Collaborators" }));
+  await user.click(
+    screen.getByRole("button", { name: "Filters", exact: true }),
   );
   await user.click(screen.getByRole("button", { name: "Filter by project" }));
   await waitFor(() =>
@@ -159,9 +263,7 @@ test("People navigation uses shared projects, but inviting allows the first coll
     ),
   );
   await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
-  await user.click(
-    screen.getByRole("button", { name: "Invite collaborator", exact: true }),
-  );
+  await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
   await waitFor(() =>
     expect(mockApi.listProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ shared_only: false, limit: 25 }),
@@ -169,20 +271,31 @@ test("People navigation uses shared projects, but inviting allows the first coll
   );
 });
 
-test.each(["New conversation", "Invite collaborator"])(
+test.each(["New conversation", "Invite"])(
   "%s uses the reduced-motion modal portal",
   async (name) => {
     const user = userEvent.setup();
     render(
-      <Workspace initial={{ view: "conversations", projectId: "geometry" }} />,
+      <Workspace
+        initial={{
+          view: name === "Invite" ? "people" : "conversations",
+          projectId: "geometry",
+        }}
+      />,
     );
     await user.click(screen.getByRole("button", { name, exact: true }));
-    const dialog = await screen.findByRole("dialog", { name, exact: true });
+    const dialogName = name === "Invite" ? "Invite collaborator" : name;
+    const dialog = await screen.findByRole("dialog", {
+      name: dialogName,
+      exact: true,
+    });
     expect(dialog.closest(".collaborators-modal")).not.toBeNull();
     act(() => dialog.focus());
     await user.keyboard("{Escape}");
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", { name: dialogName }),
+      ).not.toBeInTheDocument(),
     );
   },
 );
@@ -191,10 +304,10 @@ test("inviting from a person's overview also offers projects not yet shared with
   const user = userEvent.setup();
   render(<Workspace initial={{ view: "people", personId: "bob" }} />);
   await user.click(
-    screen.getAllByRole("button", {
+    await screen.findByRole("button", {
       name: "Invite collaborator",
       exact: true,
-    })[0],
+    }),
   );
   await waitFor(() =>
     expect(mockApi.listProjects).toHaveBeenLastCalledWith(
@@ -291,9 +404,13 @@ test.each(["Escape", "Cancel"])(
   async (close) => {
     const user = userEvent.setup();
     render(<Workspace />);
-    const trigger = screen.getByRole("button", { name: "Filter by project" });
+    const trigger = screen.getByRole("button", {
+      name: "Filters",
+      exact: true,
+    });
     trigger.focus();
     await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Filter by project" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Filter by project",
     });
@@ -313,6 +430,7 @@ test.each(["Escape", "Cancel"])(
     );
     await waitFor(() => expect(trigger).toHaveFocus());
     await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Filter by project" }));
     const project = await within(await screen.findByRole("dialog")).findByRole(
       "button",
       { name: "Geometry Lab" },
@@ -326,9 +444,20 @@ test.each(["Escape", "Cancel"])(
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Change project filter" }),
+        screen.getByRole("button", { name: "Filters", exact: true }),
       ).toHaveFocus(),
     );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Clear project filter: Geometry Lab",
+      }),
+    );
+    await waitFor(() =>
+      expect(mockApi.listResources).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project_id: undefined }),
+      ),
+    );
+    expect(trigger).toHaveFocus();
   },
 );
 
@@ -468,6 +597,9 @@ test("same-project role downgrades invalidate the selected runtime, not just pro
 test("My collection includes agent and artifact shortcuts without changing follow state", async () => {
   const user = userEvent.setup();
   render(<Workspace />);
+  await user.click(
+    screen.getByRole("button", { name: "Filters", exact: true }),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Show" }),
     "collected",
@@ -504,11 +636,18 @@ test("project views bind server filters, reset cursors, and preserve view on det
       expect.objectContaining({ view: "recent", after: "page-two", limit: 50 }),
     ),
   );
-  const pinned = screen.getByRole("button", { name: "Pinned projects" });
+  await user.click(
+    screen.getByRole("button", { name: "Filters", exact: true }),
+  );
+  const pinned = screen.getByRole("button", {
+    name: "Pinned projects",
+    exact: true,
+  });
   pinned.focus();
   await user.keyboard("{Enter}");
   expect(pinned).toHaveAttribute("aria-pressed", "true");
   expect(pinned).toHaveFocus();
+  await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(mockApi.listProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ view: "pinned", after: undefined, limit: 50 }),
@@ -532,7 +671,11 @@ test("project views bind server filters, reset cursors, and preserve view on det
   back.focus();
   await user.keyboard("{Enter}");
   await waitFor(() => expect(row).toHaveFocus());
-  expect(pinned).toHaveAttribute("aria-pressed", "true");
+  expect(
+    screen.getByRole("button", {
+      name: "Clear pinned projects filter: Pinned projects",
+    }),
+  ).toBeInTheDocument();
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
 });
 
@@ -572,7 +715,13 @@ test("keyboard pin and unpin refresh bounded results and restore focus after rem
     project_id: "geometry",
     pinned: true,
   });
-  await user.click(screen.getByRole("button", { name: "Pinned projects" }));
+  await user.click(
+    screen.getByRole("button", { name: "Filters", exact: true }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Pinned projects", exact: true }),
+  );
+  await user.keyboard("{Escape}");
   const remove = await screen.findByRole("button", {
     name: "Unpin project Geometry Lab",
   });

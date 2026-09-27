@@ -9,6 +9,7 @@ import type { CollaborationProject } from "@cocalc/util/collaborators";
 import type { DirectoryApi } from "./workspace-api";
 import type { ProjectView } from "./workspace-types";
 import { DirectoryCollection } from "./directory-collection";
+import type { DirectoryCollectionPreferences } from "./directory-collection";
 import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
@@ -37,9 +38,6 @@ export function ProjectViewControls({
       >
         Pinned projects
       </Button>
-      <small>
-        Pins are your existing project favorites, not access grants.
-      </small>
     </div>
   );
 }
@@ -49,6 +47,7 @@ export function ProjectList({
   api,
   onOpen,
   onPinChange,
+  preferences,
 }: {
   items: CollaborationProject[];
   api: DirectoryApi;
@@ -57,10 +56,12 @@ export function ProjectList({
     event: MouseEvent<HTMLElement>,
   ) => void;
   onPinChange: (project_id: string) => void;
+  preferences?: DirectoryCollectionPreferences;
 }) {
   return (
     <DirectoryCollection
       items={items}
+      preferences={preferences}
       collection="projects"
       label="Projects"
       itemStyle={(project) => ({

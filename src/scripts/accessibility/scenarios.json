@@ -15,8 +15,11 @@
           "type": "remember",
           "key": "trigger",
           "role": "button",
-          "name": "Filter by project"
+          "name": "Filters"
         },
+        { "type": "focus", "role": "button", "name": "Filters" },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "People filters" },
         {
           "type": "focus",
           "role": "button",

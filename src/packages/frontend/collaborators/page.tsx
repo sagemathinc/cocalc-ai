@@ -7,7 +7,8 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { ProjectSettingsDrawer } from "@cocalc/frontend/agents/project-settings-drawer";
 import type { MouseEvent } from "react";
 import { Map as ImmutableMap } from "immutable";
-import { Alert, Button, Input } from "antd";
+import { Alert, Button } from "antd";
+import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   CollaborationPerson,
@@ -26,7 +27,8 @@ import {
 } from "./use-directory-revision";
 import { useDirectory, useDirectorySearch } from "./use-directory";
 import { DirectoryResults } from "./directory-results";
-import { ProjectList, ProjectViewControls } from "./project-pins";
+import { ProjectList } from "./project-pins";
+import { PEOPLE_VIEWS as VIEWS, WorkspaceToolbar } from "./workspace-toolbar";
 import { DirectoryPicker } from "./directory-picker";
 import { ResourceList } from "./resource-list";
 import { DirectoryCollection } from "./directory-collection";
@@ -37,7 +39,6 @@ import { CollaboratorsModal } from "./modal";
 import type {
   CollaboratorsPageProps,
   CollaboratorsRoute,
-  CollaboratorsView,
   ProjectView,
 } from "./workspace-types";
 import "./page.css";
@@ -55,11 +56,6 @@ const NewProjectCreator = lazy(async () => ({
   default: (await import("@cocalc/frontend/projects/create-project"))
     .NewProjectCreator,
 }));
-const VIEWS: [CollaboratorsView, string][] = [
-  ["conversations", "Conversations"],
-  ["people", "Collaborators"],
-  ["projects", "Shared projects"],
-];
 
 export function CollaboratorsPage(props: CollaboratorsPageProps) {
   const signedIn = useTypedRedux("account", "account_id");
@@ -143,7 +139,7 @@ function CollaboratorsWorkspace({
   const [input, setInput] = useState("");
   const search = useDirectorySearch(input);
   const [scope, setScope] =
-    useState<CollaborationResourceQuery["scope"]>("for-you");
+    useState<NonNullable<CollaborationResourceQuery["scope"]>>("for-you");
   const [projectView, setProjectView] = useState<ProjectView>("recent");
   const [pinRevision, setPinRevision] = useState(0);
   const pinFocus = useRef<string | undefined>(undefined);
@@ -151,13 +147,17 @@ function CollaboratorsWorkspace({
     "project" | "person" | "invite" | "conversation"
   >();
   const [inviteProject, setInviteProject] = useState<string>();
-  const [createProject, setCreateProject] = useState(false);
+  const [createProject, setCreateProject] = useState<
+    "invite" | "conversation"
+  >();
   const [newProject, setNewProject] = useState<{ id: string; title: string }>();
   const [error, setError] = useState("");
   const [settingsProject, setSettingsProject] = useState<string>();
   const [createdResourceId, setCreatedResourceId] = useState<string>();
-  const searchId = useId();
-  const scopeId = useId();
+  const toolbarId = useId();
+  const preferences = useCollectionPreferences(view);
+  const [filterNames, setFilterNames] = useState<Record<string, string>>({});
+  const projects = useTypedRedux("projects", "project_map");
   const detailRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
@@ -183,6 +183,9 @@ function CollaboratorsWorkspace({
     listRoute.current = { view, projectId, personId };
   const listProjectId = listRoute.current.projectId;
   const listPersonId = listRoute.current.personId;
+  const projectTitle = listProjectId
+    ? projects?.getIn([listProjectId, "title"])
+    : undefined;
   const queryKey = JSON.stringify([
     view,
     search,
@@ -335,103 +338,47 @@ function CollaboratorsWorkspace({
       >
         {navigation}
         <h1>People</h1>
-        <p>People, conversations, and work in your shared projects.</p>
-        <nav aria-label="People views" className="collaborators-actions">
-          {VIEWS.map(([key, label]) => (
-            <Button
-              key={key}
-              aria-pressed={view === key}
-              type={view === key ? "primary" : "default"}
-              onClick={() => onNavigate({ view: key, projectId, personId })}
-            >
-              {label}
-            </Button>
-          ))}
-        </nav>
-        <div className="collaborators-actions">
-          <Button onClick={newConversation}>New conversation</Button>
-          <Button onClick={invite}>Invite collaborator</Button>
-          <Button onClick={() => setCreateProject(true)}>Create project</Button>
-        </div>
-        <div className="collaborators-list-controls">
-          {view === "projects" && (
-            <ProjectViewControls view={projectView} onChange={setProjectView} />
-          )}
-          <label htmlFor={searchId}>Search {view}</label>
-          <Input
-            id={searchId}
-            value={input}
-            maxLength={200}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder="Search titles and names"
+        <WorkspaceToolbar
+          active={active}
+          id={toolbarId}
+          view={view}
+          onView={(view) => onNavigate({ view, projectId, personId })}
+          input={input}
+          onInput={setInput}
+          scope={scope}
+          onScope={setScope}
+          projectView={projectView}
+          onProjectView={setProjectView}
+          preferences={preferences}
+          projectLabel={
+            listProjectId
+              ? (revision.ready &&
+                  (filterNames[listProjectId] ||
+                    (typeof projectTitle === "string"
+                      ? projectTitle
+                      : undefined))) ||
+                "Project"
+              : undefined
+          }
+          personLabel={
+            listPersonId
+              ? (revision.ready && filterNames[listPersonId]) || "Person"
+              : undefined
+          }
+          onProjectFilter={() => setPicker("project")}
+          onPersonFilter={() => setPicker("person")}
+          onClearProject={() => filter({ view, personId: listPersonId })}
+          onClearPerson={() => filter({ view, projectId: listProjectId })}
+          onAction={view === "conversations" ? newConversation : invite}
+        />
+        {preferences.error && (
+          <Alert
+            role="alert"
+            type="error"
+            title={preferences.error}
+            action={<Button onClick={preferences.retry}>Retry save</Button>}
           />
-          <div className="collaborators-actions">
-            <Button onClick={() => setPicker("project")}>
-              {projectId ? "Change project filter" : "Filter by project"}
-            </Button>
-            {projectId && (
-              <Button
-                onClick={() =>
-                  filter({
-                    ...route,
-                    projectId: undefined,
-                    resourceId: undefined,
-                    resourceKind: undefined,
-                  })
-                }
-              >
-                Clear project filter
-              </Button>
-            )}
-            <Button onClick={() => setPicker("person")}>
-              {personId ? "Change person filter" : "Filter by person"}
-            </Button>
-            {personId && (
-              <Button onClick={() => filter({ ...route, personId: undefined })}>
-                Clear person filter
-              </Button>
-            )}
-            {view === "conversations" && (
-              <>
-                <label htmlFor={scopeId}>Show</label>
-                <select
-                  id={scopeId}
-                  value={scope}
-                  style={{
-                    color: UI_COLORS.text,
-                    background: UI_COLORS.surface,
-                    border: `1px solid ${UI_COLORS.controlBorder}`,
-                    padding: 6,
-                    borderRadius: 6,
-                  }}
-                  onChange={(event) =>
-                    setScope(
-                      event.target.value as CollaborationResourceQuery["scope"],
-                    )
-                  }
-                >
-                  <option value="for-you">For you</option>
-                  <option value="following">Following</option>
-                  <option value="all">All accessible</option>
-                  <option value="collected">My collection</option>
-                </select>
-              </>
-            )}
-          </div>
-          {view === "conversations" && scope === "for-you" && (
-            <small>
-              Mentions, followed conversations, and conversations you
-              participated in. Access does not automatically follow a
-              discussion.
-            </small>
-          )}
-          {view === "conversations" && scope === "collected" && (
-            <small>
-              Saved conversations, agents, and artifacts. Removing a shortcut
-              never deletes the original.
-            </small>
-          )}
-        </div>
+        )}
       </header>
       {active &&
         !revision.ready &&
@@ -458,7 +405,13 @@ function CollaboratorsWorkspace({
           onClose={() => setError("")}
         />
       )}
-      <div className="collaborators-columns" data-detail={!!selection}>
+      <div
+        className="collaborators-columns"
+        data-detail={!!selection}
+        role="tabpanel"
+        id={`${toolbarId}-panel-${view}`}
+        aria-labelledby={`${toolbarId}-tab-${view}`}
+      >
         <div
           className="collaborators-results"
           ref={listRef}
@@ -492,11 +445,13 @@ function CollaboratorsWorkspace({
                   items={items as CollaborationResource[]}
                   onOpen={openResource}
                   api={api}
+                  preferences={preferences}
                 />
               ) : view === "projects" ? (
                 <ProjectList
                   items={items as CollaborationProject[]}
                   api={api}
+                  preferences={preferences}
                   onOpen={(project, event) =>
                     navigate(
                       {
@@ -523,6 +478,7 @@ function CollaboratorsWorkspace({
                   items={items as CollaborationPerson[]}
                   collection="people"
                   label="People"
+                  preferences={preferences}
                   itemId={(item) => item.account_id}
                   itemTitle={(item) => item.display_name || "Collaborator"}
                   renderItem={(item) => (
@@ -632,7 +588,16 @@ function CollaboratorsWorkspace({
           projectId={projectId}
           personId={picker === "invite" ? undefined : personId}
           onClose={() => setPicker(undefined)}
+          onCreateProject={
+            picker === "invite" || picker === "conversation"
+              ? () => {
+                  setCreateProject(picker);
+                  setPicker(undefined);
+                }
+              : undefined
+          }
           onSelect={(item) => {
+            setFilterNames((names) => ({ ...names, [item.id]: item.title }));
             if (picker === "invite") setInviteProject(item.id);
             else if (picker === "conversation") setNewProject(item);
             else
@@ -684,10 +649,12 @@ function CollaboratorsWorkspace({
           <NewProjectCreator
             default_value=""
             open
-            onClose={() => setCreateProject(false)}
+            onClose={() => setCreateProject(undefined)}
             onCreated={(id) => {
-              setCreateProject(false);
-              setInviteProject(id);
+              setCreateProject(undefined);
+              if (createProject === "conversation")
+                setNewProject({ id, title: "the new project" });
+              else setInviteProject(id);
               result.refresh();
             }}
           />

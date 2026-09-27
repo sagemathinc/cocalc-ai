@@ -65,21 +65,14 @@ export async function checkCollectionViews(page, label, pinnedTitle) {
       await withinViewport(page, mode);
       await focused(mode);
       if (pinnedTitle) {
-        const reorder = page
-          .getByRole("button", {
-            name: `Reorder ${pinnedTitle}`,
-            exact: true,
-          })
-          .or(
-            page.getByRole("button", {
-              name: `More options for ${pinnedTitle}`,
-              exact: true,
-            }),
-          );
-        await keyboardActivate(page, reorder);
-        await page.getByRole("menu").waitFor();
+        const handle = page.getByRole("button", {
+          name: `Drag ${pinnedTitle} to reorder`,
+          exact: true,
+        });
+        await handle.focus();
+        await page.keyboard.press("Space");
         await page.keyboard.press("Escape");
-        await focused(reorder);
+        await focused(handle);
         await withinViewport(
           page,
           page.getByRole("button", {
@@ -98,15 +91,23 @@ export async function checkCollectionViews(page, label, pinnedTitle) {
 // Use an isolated fixture. The pin is toggled and then restored; no access or
 // project settings are changed. Caller selects the account/theme/viewport.
 export async function checkCollaboratorsProjectPins(page, projectTitle) {
-  const views = page.getByRole("navigation", { name: "People views" });
+  const views = page.getByRole("tablist", { name: "People views" });
   await keyboardActivate(
     page,
-    views.getByRole("button", { name: "Shared projects", exact: true }),
+    views.getByRole("tab", { name: "Shared projects", exact: true }),
   );
-  await keyboardActivate(
-    page,
-    page.getByRole("button", { name: "Recent projects", exact: true }),
-  );
+  async function selectProjectView(name) {
+    await keyboardActivate(
+      page,
+      page.getByRole("button", { name: "Filters", exact: true }),
+    );
+    await keyboardActivate(
+      page,
+      page.getByRole("button", { name, exact: true }),
+    );
+    await page.keyboard.press("Escape");
+  }
+  await selectProjectView("Recent projects");
   const pin = page.getByRole("button", {
     name: `Pin project ${projectTitle}`,
     exact: true,
@@ -122,26 +123,18 @@ export async function checkCollaboratorsProjectPins(page, projectTitle) {
       await keyboardActivate(page, pin);
       await focused(unpin);
     }
-    await keyboardActivate(
-      page,
-      page.getByRole("button", { name: "Pinned projects", exact: true }),
-    );
+    await selectProjectView("Pinned projects");
     await unpin.waitFor();
     assert.equal(await unpin.getAttribute("aria-pressed"), "true");
     await withinViewport(page, unpin);
     await keyboardActivate(page, unpin);
     await unpin.waitFor({ state: "hidden" });
     await focused(page.getByLabel("People results", { exact: true }));
-    await keyboardActivate(
-      page,
-      page.getByRole("button", { name: "Recent projects", exact: true }),
-    );
+    await selectProjectView("Recent projects");
     await pin.waitFor();
     assert.equal(await pin.getAttribute("aria-pressed"), "false");
   } finally {
-    await page
-      .getByRole("button", { name: "Recent projects", exact: true })
-      .click();
+    await selectProjectView("Recent projects");
     await pin.or(unpin).waitFor();
     if (wasPinned && (await pin.isVisible())) await pin.click();
     if (!wasPinned && (await unpin.isVisible())) await unpin.click();

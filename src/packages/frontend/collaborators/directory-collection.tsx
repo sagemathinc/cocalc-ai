@@ -13,19 +13,10 @@ import {
 import { moveVisibleCollectionPin } from "@cocalc/frontend/components/collection-order";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 
-/** Adapt existing favorite/collected writes; people use account preferences. */
-export function DirectoryCollection<T>({
-  items,
-  collection,
-  label,
-  itemId,
-  itemTitle,
-  renderItem,
-  isPinned,
-  onPin,
-  pinLabel,
-  itemStyle,
-}: {
+export type DirectoryCollectionPreferences = ReturnType<
+  typeof useCollectionPreferences
+>;
+interface DirectoryCollectionProps<T> {
   items: T[];
   collection: "people" | "projects" | "conversations";
   label: string;
@@ -36,8 +27,43 @@ export function DirectoryCollection<T>({
   onPin?: (item: T, pinned: boolean) => Promise<void>;
   pinLabel?: (item: T) => string;
   itemStyle?: (item: T) => CSSProperties;
+  preferences?: DirectoryCollectionPreferences;
+}
+
+/** Share one preference writer with the toolbar; standalone lists own theirs. */
+export function DirectoryCollection<T>(props: DirectoryCollectionProps<T>) {
+  return props.preferences ? (
+    <DirectoryCollectionContent {...props} preferences={props.preferences} />
+  ) : (
+    <StandaloneCollection {...props} />
+  );
+}
+function StandaloneCollection<T>(props: DirectoryCollectionProps<T>) {
+  const preferences = useCollectionPreferences(props.collection);
+  return (
+    <DirectoryCollectionContent
+      {...props}
+      preferences={preferences}
+      showViewControl
+    />
+  );
+}
+function DirectoryCollectionContent<T>({
+  items,
+  label,
+  itemId,
+  itemTitle,
+  renderItem,
+  isPinned,
+  onPin,
+  pinLabel,
+  itemStyle,
+  preferences: prefs,
+  showViewControl = false,
+}: DirectoryCollectionProps<T> & {
+  preferences: DirectoryCollectionPreferences;
+  showViewControl?: boolean;
 }) {
-  const prefs = useCollectionPreferences(collection);
   const [error, setError] = useState("");
   const [busyIds, setBusyIds] = useState<string[]>([]);
   const pending = useRef(new Set<string>());
@@ -83,18 +109,16 @@ export function DirectoryCollection<T>({
   }
   return (
     <div className="collaborators-list">
-      <div className="collaborators-actions">
-        <CollectionViewControl
-          view={prefs.value.view}
-          onChange={prefs.setView}
-          label={label}
-        />
-        <small>
-          Pins are ordered within this page and filters. Drag to reorder, or
-          focus a drag handle and use Space and the arrow keys.
-        </small>
-      </div>
-      {prefs.error && (
+      {showViewControl && (
+        <div className="collaborators-actions">
+          <CollectionViewControl
+            view={prefs.value.view}
+            onChange={prefs.setView}
+            label={label}
+          />
+        </div>
+      )}
+      {showViewControl && prefs.error && (
         <Alert
           role="alert"
           type="error"

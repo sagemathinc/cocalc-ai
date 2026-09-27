@@ -178,6 +178,7 @@ export function Collection<T>({
                                   <DragHandle
                                     id={id}
                                     ariaLabel={`Drag ${title} to reorder`}
+                                    title="Drag to reorder within this group. Keyboard: Space, arrow keys, then Space to drop or Escape to cancel."
                                     style={{ padding: 4, touchAction: "none" }}
                                   />
                                 ) : null,

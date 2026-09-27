@@ -85,5 +85,5 @@ helpers supplement, not replace, the automated component and axe audits.
 `checkCollectionViews(page, label, pinnedTitle?)` exercises the shared collection
 controls on Artifacts or populated Collaborators People/Projects/Conversations.
 It switches list/grid using the keyboard, checks reachable controls and the
-optional pinned-item reorder menu, then restores the original view. Run against
+optional pinned-item keyboard drag/cancel, then restores the original view. Run against
 isolated fixtures at the same widths/themes above; it does not alter pin order.

@@ -13,6 +13,7 @@ import {
   collaborationTargetKey,
 } from "@cocalc/util/collaborators";
 import { DirectoryCollection } from "./directory-collection";
+import type { DirectoryCollectionPreferences } from "./directory-collection";
 import type { DirectoryApi } from "./workspace-api";
 
 const REASONS = {
@@ -32,9 +33,11 @@ export function ResourceList({
   items,
   onOpen,
   api,
+  preferences,
 }: {
   items: CollaborationResource[];
   api?: DirectoryApi;
+  preferences?: DirectoryCollectionPreferences;
   onOpen: (
     resource: CollaborationResource,
     event: MouseEvent<HTMLElement>,
@@ -114,6 +117,7 @@ export function ResourceList({
   return api ? (
     <DirectoryCollection<CollaborationResource>
       items={items}
+      preferences={preferences}
       collection="conversations"
       label="Conversations"
       itemId={collaborationTargetKey}
