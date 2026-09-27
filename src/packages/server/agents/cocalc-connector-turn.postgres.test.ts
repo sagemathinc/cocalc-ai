@@ -286,4 +286,74 @@ describePostgres("managed issuance across PostgreSQL connections", () => {
     },
     30000,
   );
+
+  test.each(["turn", "key"])(
+    "renewal waiting on a row lock cannot revive an expired %s",
+    async (resource) => {
+      const {
+        beginManagedCocalcConnectorTurn,
+        renewManagedCocalcConnectorTurn,
+      } = await import("./cocalc-connector-turn");
+      const original = request();
+      const issued = await beginManagedCocalcConnectorTurn(original);
+      const table =
+        resource === "turn" ? "agent_cocalc_connector_turns" : "api_keys";
+      const idColumn = resource === "turn" ? "turn_id" : "key_id";
+      const expiryColumn = resource === "turn" ? "expires_at" : "expire";
+      const id = resource === "turn" ? issued!.turn_id : issued!.key_id;
+      await pool.query(
+        `UPDATE ${table} SET ${expiryColumn}=clock_timestamp()+interval '2 seconds' WHERE ${idColumn}=$1`,
+        [id],
+      );
+      publish.mockClear();
+      const blocker = await pool.connect();
+      let renewal: Promise<unknown> | undefined;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query(
+          `SELECT 1 FROM ${table} WHERE ${idColumn}=$1 FOR UPDATE`,
+          [id],
+        );
+        // Observe rejection immediately to avoid an unhandled promise during cleanup.
+        renewal = renewManagedCocalcConnectorTurn({
+          ...original,
+          turn_id: issued!.turn_id,
+        }).then(
+          () => "unexpected success",
+          (error) => error.message,
+        );
+        const deadline = Date.now() + 5000;
+        let waiting = false;
+        while (Date.now() < deadline) {
+          const { rows } = await pool.query(
+            "SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock'",
+            [schema],
+          );
+          if (rows[0].count > 0) {
+            waiting = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(waiting).toBe(true);
+        await pool.query(
+          `SELECT pg_sleep(GREATEST(0,extract(epoch FROM (${expiryColumn}-clock_timestamp())))+0.05) FROM ${table} WHERE ${idColumn}=$1`,
+          [id],
+        );
+      } finally {
+        await blocker.query("ROLLBACK");
+        blocker.release();
+        await renewal;
+      }
+      expect(await renewal).toMatch(/no longer valid|changed or revoked/);
+      expect(publish).not.toHaveBeenCalled();
+      const { rows } = await pool.query(
+        `SELECT ${expiryColumn}<=clock_timestamp() AS expired FROM ${table} WHERE ${idColumn}=$1`,
+        [id],
+      );
+      expect(rows[0].expired).toBe(true);
+      expect(await counts()).toEqual({ keys: 1, turns: 1, sequence: "1" });
+    },
+    30000,
+  );
 });

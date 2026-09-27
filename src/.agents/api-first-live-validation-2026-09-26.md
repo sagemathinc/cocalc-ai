@@ -41,6 +41,25 @@ The probe exited successfully. This verifies deployed stale-target dismissal,
 not interactive MFA, stale requester behavior in the browser, or the full managed
 turn acceptance matrix; stale requester cases remain covered by backend tests.
 
+## Managed renewal expiry under database contention, 2026-09-27
+
+The opt-in `cocalc-connector-turn.postgres.test.ts` suite now exercises renewal
+blocked on either its turn row or key row until that resource expires. Each
+fixture shortens only its isolated-schema synthetic resource lifetime, observes
+a real PostgreSQL lock waiter, waits past the database expiry, then releases the
+lock. Renewal rejects, does not publish directory state, does not allocate a new
+key or turn, and leaves the expired resource expired. The suite's random schema
+is dropped during cleanup; no live account or key rows are modified.
+
+All six real-PostgreSQL tests pass, including existing concurrent issuance,
+per-account burst admission, and both renewal/finalization lock orderings. The
+server TypeScript build passes. Trusted worker, live turn, membership, encryption,
+and directory transports are doubles in this suite. This establishes actual SQL
+expiry/locking behavior, not a genuine ACP crash or the managed CLI matrix.
+
+Agent Network discovery still does not expose the disposable managed-fixture
+agent. No account-credential fallback or alternative send was attempted.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend
