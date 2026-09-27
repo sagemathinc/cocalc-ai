@@ -772,9 +772,9 @@ describe("host pressure controller helpers", () => {
     });
 
     expect(candidates.map((candidate) => candidate.project_id)).toEqual([
+      "proj-protected",
       "proj-default",
       "proj-starting",
-      "proj-protected",
     ]);
   });
 
@@ -839,6 +839,43 @@ describe("host pressure controller helpers", () => {
       "proj-default",
     ]);
     expect(candidates[0].explanation.join(",")).toContain("direct:resource");
+  });
+
+  it("keeps an unknown-policy direct offender stoppable without inventing a tier", () => {
+    const now = 10 * 60 * 60_000;
+    const candidates = buildStopCandidates({
+      zone: "pressure",
+      now,
+      minimumIdleMs: 60 * 60_000,
+      projects: [{ project_id: "offender", state: "running" }],
+      policies: new Map(),
+      directResourceOffenders: new Map([
+        [
+          "offender",
+          {
+            project_id: "offender",
+            score: 2,
+            zone: "pressure",
+            reason: "resource_project_inotify_watches",
+          },
+        ],
+      ]),
+      getStopState: (project_id) => ({
+        project_id,
+        last_started_ms: now - 60_000,
+        pressure_cooldown_until_ms: now + 60_000,
+      }),
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].shared_compute_priority).toBeUndefined();
+    expect(candidates[0].explanation).toEqual(
+      expect.arrayContaining([
+        "policy_missing",
+        "priority:unknown",
+        "idle_ms:unknown",
+        "direct:resource_project_inotify_watches",
+      ]),
+    );
   });
 
   it("escalates repeated pressure stops to quarantine", () => {

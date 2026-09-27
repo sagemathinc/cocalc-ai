@@ -75,7 +75,7 @@ const STARTUP_PROTECTION_MS = Math.max(
 );
 const MEMORY_PRESSURE_MIN_IDLE_MS = clampNonNegativeInteger(
   process.env.COCALC_PROJECT_HOST_MEMORY_PRESSURE_MIN_IDLE_MS,
-  10 * 60_000,
+  60 * 60_000,
 );
 const PRESSURE_PROJECT_COOLDOWN_MS = Math.max(
   0,
@@ -216,13 +216,13 @@ type StopCandidate = {
   project_id: string;
   state: string;
   direct_resource_score: number;
-  shared_compute_priority: number;
+  shared_compute_priority?: number;
   override_rank: number;
   startup_protected: boolean;
   protect_override: boolean;
   policy_missing: boolean;
   cooldown_active: boolean;
-  authoritative_last_edited_ms: number;
+  authoritative_last_edited_ms?: number;
   last_started_ms: number;
   projected_memory_limit_mb: number;
   explanation: string[];
@@ -916,9 +916,24 @@ export function buildStopCandidates({
     if (!project_id) continue;
     const directResourceOffender = directResourceOffenders?.get(project_id);
     const policy = policies.get(project_id);
+    const policyLastEditedMs = policy?.authoritative_last_edited_ms;
+    const lastEditedMs =
+      typeof policyLastEditedMs === "number" &&
+      Number.isFinite(policyLastEditedMs) &&
+      policyLastEditedMs > 0 &&
+      policyLastEditedMs <= now
+        ? policyLastEditedMs
+        : undefined;
+    const policyPriority = policy?.shared_compute_priority;
+    const sharedComputePriority =
+      typeof policyPriority === "number" &&
+      Number.isFinite(policyPriority) &&
+      policyPriority >= 0
+        ? policyPriority
+        : undefined;
     if (
       workloadProtectedProjects?.has(project_id) &&
-      (policy?.shared_compute_priority ?? 0) > 0
+      (sharedComputePriority == null || sharedComputePriority > 0)
     ) {
       continue;
     }
@@ -928,8 +943,7 @@ export function buildStopCandidates({
     if (
       minimumIdleMs != null &&
       !directResourceOffender &&
-      (policy?.authoritative_last_edited_ms == null ||
-        now - policy.authoritative_last_edited_ms < minimumIdleMs)
+      (lastEditedMs == null || now - lastEditedMs < minimumIdleMs)
     ) {
       continue;
     }
@@ -986,12 +1000,10 @@ export function buildStopCandidates({
     if (directResourceOffender) {
       explanation.push(`direct:${directResourceOffender.reason}`);
     }
-    explanation.push(
-      `priority:${Math.max(0, policy?.shared_compute_priority ?? 0)}`,
-    );
+    explanation.push(`priority:${sharedComputePriority ?? "unknown"}`);
     explanation.push(`state:${state}`);
     explanation.push(
-      `idle_ms:${policy?.authoritative_last_edited_ms != null ? Math.max(0, now - policy.authoritative_last_edited_ms) : "unknown"}`,
+      `idle_ms:${lastEditedMs != null ? now - lastEditedMs : "unknown"}`,
     );
     // This is open-page presence, not a keystroke/focus timestamp. Keep it
     // separate from edit idleness so an unattended tab cannot pin a project.
@@ -1002,20 +1014,14 @@ export function buildStopCandidates({
       project_id,
       state,
       direct_resource_score: directResourceOffender?.score ?? 0,
-      shared_compute_priority: Math.max(
-        0,
-        policy?.shared_compute_priority ?? 0,
-      ),
+      shared_compute_priority: sharedComputePriority,
       override_rank:
         policy?.stop_override === "deprioritize" ? 0 : protectOverride ? 2 : 1,
       startup_protected: startupProtected,
       protect_override: protectOverride,
       policy_missing: !policy,
       cooldown_active: cooldownActive,
-      authoritative_last_edited_ms: Math.max(
-        0,
-        policy?.authoritative_last_edited_ms ?? 0,
-      ),
+      authoritative_last_edited_ms: lastEditedMs,
       last_started_ms: Math.max(0, stopState?.last_started_ms ?? 0),
       projected_memory_limit_mb: projectedMemoryLimitMb,
       explanation,
@@ -1026,19 +1032,24 @@ export function buildStopCandidates({
       return right.direct_resource_score - left.direct_resource_score;
     }
     // Ordinary eviction is idle-first across tiers and deprioritize overrides.
-    // Direct offenders still rank first; emergency eligibility is unchanged.
+    // Direct offenders still rank first. Unknown activity is not ancient
+    // activity: emergency fallback candidates follow known activity.
     if (
       left.authoritative_last_edited_ms !== right.authoritative_last_edited_ms
     ) {
       return (
-        left.authoritative_last_edited_ms - right.authoritative_last_edited_ms
+        (left.authoritative_last_edited_ms ?? Infinity) -
+        (right.authoritative_last_edited_ms ?? Infinity)
       );
     }
     if (left.override_rank !== right.override_rank) {
       return left.override_rank - right.override_rank;
     }
     if (left.shared_compute_priority !== right.shared_compute_priority) {
-      return left.shared_compute_priority - right.shared_compute_priority;
+      return (
+        (left.shared_compute_priority ?? Infinity) -
+        (right.shared_compute_priority ?? Infinity)
+      );
     }
     if (left.startup_protected !== right.startup_protected) {
       return Number(left.startup_protected) - Number(right.startup_protected);
@@ -1067,7 +1078,7 @@ export function startHostPressureController({
     force?: boolean;
     pressure_zone: HostPressureZone;
     reason: string;
-    shared_compute_priority: number;
+    shared_compute_priority?: number;
   }) => Promise<void>;
   reportPressureAction?: (opts: {
     project_id: string;

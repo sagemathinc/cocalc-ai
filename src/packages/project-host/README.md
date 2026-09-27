@@ -24,6 +24,34 @@ This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @
 - Keep dependencies narrow: podman, btrfs, project-runner, file-server, and project-proxy live here; frontend and heavy hub logic stay out.
 - Reuse appropriate Lite helpers without exposing the host-wide control database to project clients; the persistence boundaries below still apply.
 
+## Memory Pressure Eviction Policy
+
+Ordinary memory eviction is **idle-first across compute tiers**. Among eligible
+projects, older authoritative edit activity always sorts before newer activity;
+tier and deprioritization are only tie breakers. Eligibility requires at least
+one hour of known edit inactivity by default, configurable with
+`COCALC_PROJECT_HOST_MEMORY_PRESSURE_MIN_IDLE_MS`. Startup, explicit protection,
+and cooldown guards still apply. Missing, non-finite, zero, negative, or future
+edit timestamps are unknown, not evidence of inactivity.
+
+True memory emergencies can relax these protections, including the idle cutoff,
+to preserve the host. Unknown activity remains an emergency fallback after known
+activity, not an artificial epoch-zero timestamp that jumps to the front.
+Directly attributed resource offenders retain their safety bypass and first
+rank. Missing or invalid tier information stays unknown: it is neither priority
+zero nor a paid entitlement, breaks otherwise equal ties after known tiers, and
+does not produce the free-tier stop label.
+
+The ordering signal is `authoritative_last_edited_ms` from the owning bay's
+existing policy mirror, not browser presence. `last_browser_activity_ms` records
+receipt of an open-page heartbeat, not typing or focus. The browser only emits
+these heartbeats when its browser-idle runtime policy is enabled, so absence is
+expected for many paid projects and does not prove inactivity. Conversely, a
+background page can keep emitting indefinitely and must not pin its project.
+Presence age is recorded separately in eviction evidence and does not affect
+eligibility, tier, or idle ordering. This policy does not change browser-idle
+maintenance, heartbeat transport, or policy synchronization.
+
 ## Routing Rules (HTTP vs conat)
 
 - Prefer conat hub RPC for any endpoint that is user-, account-, or project-scoped.

@@ -79,12 +79,15 @@ describe("memory pressure eviction", () => {
   it("protects recent and unknown activity, with an inclusive idle boundary", async () => {
     projects([
       ["active-free", 0, 1],
-      ["just-too-recent", 0, 9.99],
-      ["boundary", 0, 10],
-      ["idle-paid", 5, 60],
+      ["just-too-recent", 0, 59.99],
+      ["boundary", 0, 60],
+      ["idle-paid", 5, 120],
       ["missing-policy", 0, null],
       ["missing-edit", 0, null],
       ["future-edit", 0, -1],
+      ["zero-edit", 0, now / minute],
+      ["invalid-edit", 0, NaN],
+      ["infinite-edit", 0, Infinity],
     ]);
     const { stopProject, reportPressureAction, state } = await run({
       memory_used_percent: 81,
@@ -97,7 +100,7 @@ describe("memory pressure eviction", () => {
     expect(reportPressureAction).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: "idle-paid",
-        reason: expect.stringContaining("idle_ms:3600000"),
+        reason: expect.stringContaining("idle_ms:7200000"),
       }),
     );
   });
@@ -147,12 +150,74 @@ describe("memory pressure eviction", () => {
     },
   );
 
-  it("keeps projects without activity policy evictable in a memory emergency", async () => {
+  it("keeps unknown activity as emergency fallback without inventing priority zero", async () => {
     projects([
       ["missing-policy", 0, null],
-      ["missing-edit", 0, null],
+      ["missing-edit", 5, null],
+      ["idle-paid", 5, 120],
+      ["active-free", 0, 1],
     ]);
     const { stopProject } = await run({ memory_used_percent: 91 });
-    expect(stopProject).toHaveBeenCalledTimes(2);
+    expect(stopProject.mock.calls.map(([opts]) => opts.project_id)).toEqual([
+      "idle-paid",
+      "active-free",
+      "missing-edit",
+      "missing-policy",
+    ]);
+    expect(stopProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "missing-policy",
+        shared_compute_priority: undefined,
+        reason: expect.stringContaining("priority:unknown"),
+      }),
+    );
+  });
+
+  it("does not infer tier or inactivity from absent browser presence", async () => {
+    projects([
+      ["older-paid", 5, 120],
+      ["newer-free", 0, 90],
+      ["active-paid", 5, 30],
+    ]);
+    jest
+      .mocked(getProjectStopState)
+      .mockImplementation((project_id) =>
+        project_id === "newer-free"
+          ? { project_id, last_browser_activity_ms: now }
+          : undefined,
+      );
+    const { stopProject } = await run({ memory_used_percent: 81 });
+    expect(stopProject.mock.calls.map(([opts]) => opts.project_id)).toEqual([
+      "older-paid",
+      "newer-free",
+    ]);
+    expect(stopProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "older-paid",
+        shared_compute_priority: 5,
+        reason: expect.stringContaining("browser_presence_age_ms:unknown"),
+      }),
+    );
+  });
+
+  it("uses unknown priority only as a conservative tie breaker, not priority zero", async () => {
+    projects([
+      ["unknown-tier", NaN, 120],
+      ["paid", 5, 120],
+      ["newer-free", 0, 90],
+    ]);
+    const { stopProject } = await run({ memory_used_percent: 81 });
+    expect(stopProject.mock.calls.map(([opts]) => opts.project_id)).toEqual([
+      "paid",
+      "unknown-tier",
+      "newer-free",
+    ]);
+    expect(stopProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "unknown-tier",
+        shared_compute_priority: undefined,
+        reason: expect.stringContaining("priority:unknown"),
+      }),
+    );
   });
 });
