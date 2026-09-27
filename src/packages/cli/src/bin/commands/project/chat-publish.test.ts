@@ -19,9 +19,13 @@ test("publish source uses turn context and explicit arguments override stale env
       COCALC_CODEX_MESSAGE_DATE: "old-date",
     });
     let result: any;
+    let contextOptions: any;
     const root = new Command();
     registerProjectChatCommands(root.command("project"), {
-      withContext: async (_command: any, _name: any, fn: any) => fn({}),
+      withContext: async (_command: any, _name: any, fn: any, options: any) => {
+        contextOptions = options;
+        return fn({});
+      },
       projectChatArtifactData: async (args: any) => {
         result = args;
       },
@@ -51,6 +55,9 @@ test("publish source uses turn context and explicit arguments override stale env
       file: { path: "/plan.md" },
     });
     assert.equal(result.action, "publish");
+    assert.deepEqual(contextOptions, {
+      projectOnly: { projectIdentifier: undefined },
+    });
     process.env.COCALC_WORKBENCH = "0";
     await assert.rejects(
       root.parseAsync(
@@ -65,4 +72,38 @@ test("publish source uses turn context and explicit arguments override stale env
       else process.env[key] = previous[i];
     });
   }
+});
+
+test("artifact context can use the current project without first connecting to the hub", async () => {
+  const root = new Command();
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  registerProjectChatCommands(root.command("project"), {
+    withContext: async (_command: any, _name: any, fn: any, options: any) => {
+      assert.deepEqual(options, {
+        projectOnly: { projectIdentifier: projectId },
+      });
+      return fn({});
+    },
+    projectChatArtifactData: async (args: any) => {
+      assert.equal(args.action, "context");
+      assert.equal(args.projectIdentifier, projectId);
+    },
+  } as any);
+  await root.parseAsync(
+    [
+      "project",
+      "chat",
+      "artifact",
+      "context",
+      "--project",
+      projectId,
+      "--path",
+      "/home/user/.local/share/cocalc/agents/agent.chat",
+      "--thread-id",
+      "thread",
+      "--message-date",
+      "2026-09-26T05:18:10.980Z",
+    ],
+    { from: "user" },
+  );
 });

@@ -211,6 +211,7 @@ export function registerProjectChatCommands(
             payload,
           });
         },
+        { projectOnly: { projectIdentifier: opts.project } },
       );
     });
   for (const action of [
@@ -281,6 +282,7 @@ export function registerProjectChatCommands(
               payload,
             });
           },
+          { projectOnly: { projectIdentifier: opts.project } },
         );
       });
   }

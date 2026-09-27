@@ -122,6 +122,7 @@ type RecordedSet = {
   acp_account_id?: string;
   acp_thread_id?: string;
   acp_started_at_ms?: number;
+  acp_working_directory?: string;
   acp_guidance_delivered_at_ms?: number;
   acp_log_store?: string;
   acp_log_key?: string;
@@ -690,6 +691,83 @@ describe("ChatStreamWriter", () => {
     );
     expect(startedAtUpdate).toBeTruthy();
     (writer as any).dispose?.(true);
+  });
+
+  it("persists the project-visible turn cwd from placeholder through the final response", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      workspaceRoot: "/home/user",
+      hostWorkspaceRoot: "/srv/projects/private-host-directory",
+      syncdbOverride: syncdb,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.waitUntilReady();
+    expect(
+      sets.find((row) => row.event === "chat")?.acp_working_directory,
+    ).toBe("/home/user");
+    await writer.handle({
+      type: "summary",
+      finalResponse: "[Plot](sin-x-squared.png)",
+    });
+    expect(
+      sets.find((row) => row.generating === false)?.acp_working_directory,
+    ).toBe("/home/user");
+  });
+
+  it("updates turn cwd metadata from runtime config without rewriting streamed content", async () => {
+    const { syncdb, sets, getCommits } = makeFakeSyncDB();
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "event",
+      event: { type: "config", workingDirectory: "/home/user" } as any,
+    });
+    await flush(writer);
+    const metadata = sets.find(
+      (row) => row.acp_working_directory === "/home/user",
+    );
+    expect(metadata).toBeTruthy();
+    expect(metadata?.history).toBeUndefined();
+    const commitsBefore = getCommits();
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "working" },
+    });
+    await flush(writer);
+    expect(getCommits()).toBe(commitsBefore);
+  });
+
+  it("preserves a persisted cwd when a writer is reconstructed without its workspace", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      message_id: baseMetadata.message_id,
+      acp_working_directory: "/home/user/original",
+    });
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "summary",
+      finalResponse: "[Plot](sin-x-squared.png)",
+    });
+    expect(
+      sets.find((row) => row.generating === false)?.acp_working_directory,
+    ).toBe("/home/user/original");
   });
 
   it("does not durably rewrite chat rows for streaming events", async () => {

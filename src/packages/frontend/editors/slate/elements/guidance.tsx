@@ -5,6 +5,7 @@
 
 import { LoadingOutlined } from "@ant-design/icons";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ChatSourceContent } from "@cocalc/frontend/chat/source-file-context";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { register, type SlateElement } from "./register";
 
@@ -157,7 +158,7 @@ const Element = ({ attributes, children, element }) => {
         className="cocalc-slate-guidance-content"
         style={{ minWidth: 0, overflowWrap: "anywhere" }}
       >
-        {children}
+        <ChatSourceContent>{children}</ChatSourceContent>
       </div>
     </section>
   );

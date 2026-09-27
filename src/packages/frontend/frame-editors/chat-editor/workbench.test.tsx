@@ -3,7 +3,7 @@ import { useState } from "react";
 import { fromJS } from "immutable";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
-import { Workbench, workbench } from "./workbench";
+import { Workbench, WorkbenchSurface, workbench } from "./workbench";
 import { focusChatFrameInput } from "./actions";
 import { refreshPR } from "./github-pr-operations";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -73,6 +73,85 @@ test("artifact frames expose the standard font zoom actions", () => {
   expect(workbench.buttons?.increase_font_size).toBe(true);
   expect(workbench.buttons?.decrease_font_size).toBe(true);
 });
+
+test.each(["actions", "file", "direct-file"])(
+  "%s workbench contents resize without remounting or losing review edits",
+  async (kind) => {
+    const record = {
+      ...artifactKey({ thread_id: "thread", artifact_id: "artifact" }),
+      schema_version: 1,
+      thread_id: "thread",
+      artifact_id: "artifact",
+      title: "Zoom test",
+      kind: kind === "actions" ? "actions" : "file",
+      input: "",
+      ...(kind === "actions"
+        ? {
+            actions: [
+              {
+                id: "reply",
+                title: "Reply",
+                target: "Ticket",
+                draft: "Draft text",
+              },
+            ],
+          }
+        : { file: { path: "report.md" } }),
+    };
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: () => record,
+      get: () => [],
+    });
+    const readFile = jest.fn(async () => "Saved markdown text");
+    const project = {
+      ...emptyProjectContext,
+      actions: {
+        fs: () => ({ stat: async () => ({ size: 20 }), readFile }),
+      } as any,
+    };
+    const props: any = {
+      actions: {
+        getArtifactSyncdb: () => syncdb,
+        getChatActions: () => ({ syncdb }),
+        set_frame_data: jest.fn(),
+      },
+      desc: fromJS({
+        "data-thread": "thread",
+        ...(kind === "direct-file"
+          ? { "data-path": "report.md" }
+          : { "data-artifact": "artifact" }),
+      }),
+      project_id: "p",
+      path: "chat.chat",
+      id: "artifact-frame",
+    };
+    const view = (fontSize: number) => (
+      <ProjectContext.Provider value={project}>
+        <WorkbenchSurface {...props} font_size={fontSize} />
+      </ProjectContext.Provider>
+    );
+    const { rerender } = render(view(14));
+    const content =
+      kind === "actions"
+        ? screen.getByRole("textbox", { name: "Draft for Reply" })
+        : (await screen.findByText("Saved markdown text")).closest(
+            ".cocalc-slate-render",
+          )!;
+    if (kind === "actions") {
+      fireEvent.change(content, { target: { value: "My unsent review" } });
+    }
+    rerender(view(22));
+    expect(window.getComputedStyle(content).fontSize).toBe("22px");
+    if (kind === "actions") {
+      expect(screen.getByRole("textbox", { name: "Draft for Reply" })).toBe(
+        content,
+      );
+      expect(content).toHaveValue("My unsent review");
+    } else {
+      expect(readFile).toHaveBeenCalledTimes(1);
+    }
+  },
+);
 
 test.each([
   ["other-project", "other.chat", "thread"],
