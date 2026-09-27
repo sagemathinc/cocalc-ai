@@ -1122,7 +1122,7 @@ export async function startMasterRegistration({
     force?: boolean;
     pressure_zone: HostPressureZone;
     reason: string;
-    shared_compute_priority: number;
+    shared_compute_priority?: number;
   }) => Promise<void>;
 }): Promise<MasterRegistrationHandle | undefined> {
   const masterAddress = resolveProjectHostPreferredMasterConatServer();
