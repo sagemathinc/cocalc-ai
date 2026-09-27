@@ -76,6 +76,19 @@ the Lite TypeScript build passes. This is private, local SQLite evidence, not
 deployed ACP crash/recovery evidence. Finalization and recovery ownership races
 need a separate caller-aware audit; this change only fences heartbeat mutation.
 
+## Worker-owned lease finalization, 2026-09-27 (not deployed)
+
+The follow-up SQLite tests reproduced an obsolete worker marking its replacement
+completed, error, or aborted. Finalization now requires the expected worker and
+matches it in the update predicate; it no longer rewrites lease ownership.
+Orphan recovery supplies the owner from the observed lease, not the recovering
+worker's identity. The recovery caller test now asserts that binding explicitly.
+
+All 148 connector-lease, chat-writer, and detached-worker tests pass, as does the
+Lite TypeScript build. This covers lease-row mutation and the recovery call
+contract, not atomicity of every surrounding job/chat recovery side effect or
+deployed worker replacement. The change remains private and undeployed.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend

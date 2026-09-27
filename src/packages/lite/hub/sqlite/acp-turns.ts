@@ -206,7 +206,7 @@ export function finalizeAcpTurnLease({
   key: AcpTurnLeaseKey;
   state: Exclude<AcpTurnLeaseState, "running">;
   reason?: string;
-  owner_instance_id?: string;
+  owner_instance_id: string;
 }): void {
   ensureInit();
   const db = getAcpDatabase();
@@ -216,21 +216,21 @@ export function finalizeAcpTurnLease({
       SET state = ?,
           reason = COALESCE(?, reason),
           heartbeat_at = ?,
-          ended_at = ?,
-          owner_instance_id = COALESCE(?, owner_instance_id)
+          ended_at = ?
       WHERE project_id = ?
         AND path = ?
         AND message_date = ?
+        AND owner_instance_id = ?
         AND state = 'running'`,
   ).run(
     state,
     reason ?? null,
     now,
     now,
-    owner_instance_id ?? null,
     key.project_id,
     key.path,
     key.message_date,
+    owner_instance_id,
   );
 }
 

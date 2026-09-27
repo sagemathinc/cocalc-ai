@@ -137,6 +137,36 @@ test("an obsolete worker cannot refresh a replacement lease, even with a reused 
 });
 
 test.each(["completed", "error", "aborted"] as const)(
+  "a stale worker cannot mark a replacement lease %s",
+  (state) => {
+    for (const owner_instance_id of ["worker-a", "worker-b"]) {
+      startAcpTurnLease({
+        context: {
+          ...key,
+          message_id: request.message_id,
+          thread_id: request.thread_id,
+        } as any,
+        approver_account_id: request.account_id,
+        owner_instance_id,
+        pid: process.pid,
+      });
+    }
+    const replacement = getAcpTurnLease(key);
+    finalizeAcpTurnLease({ key, state, owner_instance_id: "worker-a" });
+    expect(getAcpTurnLease(key)).toEqual(replacement);
+    expect(verifyActiveAcpConnectorTurn(request).owner_instance_id).toBe(
+      "worker-b",
+    );
+    finalizeAcpTurnLease({ key, state, owner_instance_id: "worker-b" });
+    expect(getAcpTurnLease(key)?.state).toBe(state);
+    expect(getAcpTurnLease(key)?.owner_instance_id).toBe("worker-b");
+    expect(() => verifyActiveAcpConnectorTurn(request)).toThrow(
+      "active authenticated ACP turn unavailable",
+    );
+  },
+);
+
+test.each(["completed", "error", "aborted"] as const)(
   "%s cannot be revived by a late worker heartbeat",
   (state) => {
     startAcpTurnLease({

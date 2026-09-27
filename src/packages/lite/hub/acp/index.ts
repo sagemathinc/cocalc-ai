@@ -5122,8 +5122,7 @@ export function finalizeInterruptedAcpBackendState({
           },
           state: "aborted",
           reason: recoveryReason,
-          owner_instance_id:
-            turn.owner_instance_id ?? row.owner_instance_id ?? undefined,
+          owner_instance_id: turn.owner_instance_id ?? row.owner_instance_id,
         });
         finalized = true;
       }
@@ -6247,7 +6246,7 @@ export async function recoverOrphanedAcpTurns(
         },
         state: "aborted",
         reason: recoveryReason,
-        owner_instance_id: ACP_INSTANCE_ID,
+        owner_instance_id: turn.owner_instance_id,
       });
       recovered += 1;
     } catch (err) {
