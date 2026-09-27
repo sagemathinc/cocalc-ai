@@ -394,3 +394,22 @@ test("credential changes retain the profile but require a distinct runtime", () 
   expect(harnessProfileKey(changed)).toBe(harnessProfileKey(source));
   expect(harnessRuntimeKey(changed)).not.toBe(harnessRuntimeKey(source));
 });
+
+test.each([request, claudeRequest])(
+  "directory changes reopen the runtime without changing adapter identity",
+  (makeRequest) => {
+    const source = makeRequest();
+    const changed = {
+      ...source,
+      runtime: {
+        ...source.runtime!,
+        profile: { ...source.runtime!.profile, cwd: "/home/user/work" },
+      },
+    };
+    expect(harnessProfileKey(changed)).toBe(harnessProfileKey(source));
+    expect(harnessRuntimeKey(changed)).not.toBe(harnessRuntimeKey(source));
+    expect(() =>
+      assertConfiguredHarnessRuntime(source, changed.runtime),
+    ).toThrow();
+  },
+);

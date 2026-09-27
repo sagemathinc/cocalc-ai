@@ -84,6 +84,7 @@ interface HarnessRuntimeSummaryProps {
   unavailableLabel?: string;
   discoveryPending?: boolean;
   inlinePayment?: string;
+  leadingControl?: ReactNode;
 }
 
 function ClaudeCredentialControl({
@@ -410,16 +411,18 @@ export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
       </div>
     );
   }
-  // Discovery belongs to this executable/profile, not to a later replacement.
+  // Directory changes refresh discovery without replacing its focused trigger.
+  const { cwd, ...profileIdentity } = runtime.profile;
   return (
     <HarnessRuntimeSummaryContent
       key={JSON.stringify([
-        runtime.profile,
+        profileIdentity,
         accountId,
         props.projectId,
         props.threadKey,
       ])}
       {...props}
+      discoveryKey={JSON.stringify([props.discoveryKey, cwd])}
       runtime={runtime}
     />
   );
@@ -440,6 +443,7 @@ function HarnessRuntimeSummaryContent({
   unavailableLabel,
   discoveryPending,
   inlinePayment,
+  leadingControl,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
   runtime: AcpHarnessRuntime;
 }) {
@@ -509,11 +513,12 @@ function HarnessRuntimeSummaryContent({
     } catch (err) {
       if (started === generation.current) setError(harnessErrorMessage(err));
     } finally {
-      setLoading(false);
+      if (started === generation.current) setLoading(false);
     }
   };
   const invalidateCredential = useEffectEvent(() => {
     generation.current++;
+    setLoading(false);
     setIgnoredReported(JSON.stringify(reported));
     setDiscovered(undefined);
     setAutoDiscovered(false);
@@ -795,6 +800,7 @@ function HarnessRuntimeSummaryContent({
           minWidth: 0,
         }}
       >
+        {leadingControl}
         {!configureLabel && settingsButton}
         {claude && (
           <>

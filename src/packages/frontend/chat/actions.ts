@@ -2984,6 +2984,24 @@ export class ChatActions extends Actions<ChatState> {
     void this.saveSyncdb();
   };
 
+  setHarnessWorkingDirectory = (threadKey: string, cwd: string): void => {
+    const metadata = this.getThreadMetadata(threadKey);
+    const runtime = parseAcpHarnessRuntime(metadata.agent_runtime);
+    const next = parseAcpHarnessRuntime({
+      ...runtime,
+      profile: { ...runtime.profile, cwd },
+    });
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        agent_runtime: next,
+        acp_config: { ...metadata.acp_config, workingDirectory: cwd },
+      })
+    )
+      throw Error("Unable to save ACP working directory");
+    this.syncdb?.commit();
+    void this.saveSyncdb();
+  };
+
   setCodexCompletionNotificationOverride = (
     threadKey: string,
     value: CodexCompletionNotificationOverride,

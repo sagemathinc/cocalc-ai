@@ -794,46 +794,51 @@ test("arguments remain structured and unknown runtimes do not display Codex cont
   expect(screen.getByRole("alert").textContent).toMatch("Invalid ACP");
 });
 
-test("profile changes discard pending discovery status and late results", async () => {
-  const first = harnessRuntimeFromDraft(draft, "/home/user");
-  const second = harnessRuntimeFromDraft(
-    { ...draft, revision: "new" },
-    "/home/user",
-  );
-  let resolve!: (value: unknown) => void;
-  const pending = new Promise<any>((done) => {
-    resolve = done;
-  });
-  const onDiscover = jest.fn(() => pending);
-  const { rerender } = render(
-    <HarnessRuntimeSummary
-      runtime={first}
-      onDiscover={onDiscover}
-      onSettings={jest.fn()}
-    />,
-  );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Load model and mode options" }));
-  expect(screen.getByRole("status").textContent).toBe(
-    "Loading harness options",
-  );
-  rerender(
-    <HarnessRuntimeSummary
-      runtime={second}
-      onDiscover={onDiscover}
-      onSettings={jest.fn()}
-    />,
-  );
-  expect(screen.getByRole("status").textContent).toBe("");
-  await act(async () => {
-    resolve({ profile: first.profile, controls: { configOptions: [] } });
-    await pending;
-  });
-  expect(screen.getByRole("status").textContent).toBe("");
-  expect(screen.queryByRole("combobox")).toBeNull();
-  expect(screen.queryByRole("alert")).toBeNull();
-});
+test.each(["revision", "cwd"])(
+  "profile %s changes discard pending discovery status and late results",
+  async (field) => {
+    const first = harnessRuntimeFromDraft(draft, "/home/user");
+    const second = harnessRuntimeFromDraft(
+      { ...draft, revision: field === "revision" ? "new" : draft.revision },
+      field === "cwd" ? "/home/user/work" : "/home/user",
+    );
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise<any>((done) => {
+      resolve = done;
+    });
+    const onDiscover = jest.fn(() => pending);
+    const { rerender } = render(
+      <HarnessRuntimeSummary
+        runtime={first}
+        onDiscover={onDiscover}
+        onSettings={jest.fn()}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", { name: "Load model and mode options" }),
+      );
+    expect(screen.getByRole("status").textContent).toBe(
+      "Loading harness options",
+    );
+    rerender(
+      <HarnessRuntimeSummary
+        runtime={second}
+        onDiscover={onDiscover}
+        onSettings={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toBe("");
+    await act(async () => {
+      resolve({ profile: first.profile, controls: { configOptions: [] } });
+      await pending;
+    });
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  },
+);
 
 test("compact runtime settings open by keyboard and restore focus on Escape", async () => {
   render(

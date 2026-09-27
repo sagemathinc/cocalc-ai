@@ -5,7 +5,7 @@ import { CLAUDE_PROJECT_JOB_GUIDANCE } from "@cocalc/util/ai/claude-project-tool
 export function harnessPrompt(
   request: Pick<
     AcpEvaluateRequest,
-    "prompt" | "project_id" | "chat" | "harness_credential"
+    "prompt" | "project_id" | "chat" | "harness_credential" | "runtime"
   >,
 ): string {
   // Leave native harness commands intact, as on the Codex path.
@@ -26,6 +26,7 @@ export function harnessPrompt(
 This turn runs inside a CoCalc project. The installed CoCalc CLI is:
 "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"
 ${projectGuidance}
+${request.runtime ? `Project working directory for this turn: ${JSON.stringify(request.runtime.profile.cwd)}. Use this directory for project commands unless the task requires another directory.` : ""}
 ${request.harness_credential?.mode === "account-subscription" ? CLAUDE_PROJECT_JOB_GUIDANCE : ""}
 Complete foreground work before ending the turn. CoCalc cannot wake a completed turn when a background command finishes; do not promise a later notification.
 Use the scoped runtime identity and credentials already provided in the environment. Do not fall back to account credentials when a scoped operation fails.

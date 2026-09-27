@@ -16,6 +16,8 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import { HarnessRuntimeControl } from "./harness-profile";
+import { ComposerWorkingDirectory } from "./composer-working-directory";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import {
   React,
   useEffect,
@@ -50,7 +52,6 @@ import {
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import type {
   CodexModelCapabilityInfo,
   CodexPaymentSourceInfo,
@@ -91,9 +92,7 @@ import {
 import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
   ComposerPillButton,
-  ComposerProjectDirectoryButton,
   composerPillStyle,
-  displayComposerWorkingDirectory,
 } from "./composer-codex-controls";
 import {
   readCodexSubscriptionSelection,
@@ -514,6 +513,22 @@ export function CodexConfigButton(
   const metadata = props.actions?.getThreadMetadata?.(props.threadKey);
   const runtime = metadata?.agent_runtime;
   return runtime != null ? (
+    <HarnessConfigButton {...props} />
+  ) : (
+    <NativeCodexConfigButton {...props} />
+  );
+}
+
+function HarnessConfigButton(props: CodexConfigButtonProps) {
+  const metadata = props.actions!.getThreadMetadata(props.threadKey);
+  const projectTitle = useProjectMapField<string>(props.projectId, ["title"]);
+  let runtime;
+  try {
+    runtime = parseAcpHarnessRuntime(metadata.agent_runtime);
+  } catch {
+    return <HarnessRuntimeControl runtime={metadata.agent_runtime} />;
+  }
+  return (
     <HarnessRuntimeControl
       key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
       compact={!!props.compact}
@@ -521,6 +536,26 @@ export function CodexConfigButton(
       projectId={props.projectId}
       threadKey={props.threadKey}
       reported={metadata?.agent_runtime_controls}
+      configureLabel={
+        props.compact === "composer"
+          ? runtime.profile.id === "claude-code"
+            ? "Claude Code settings"
+            : "ACP harness settings"
+          : undefined
+      }
+      leadingControl={
+        props.compact === "composer" ? (
+          <ComposerWorkingDirectory
+            projectId={props.projectId}
+            projectTitle={projectTitle ?? "Project"}
+            directory={runtime.profile.cwd}
+            home={getProjectHomeDirectory(props.projectId)}
+            onChange={(cwd) =>
+              props.actions!.setHarnessWorkingDirectory(props.threadKey!, cwd)
+            }
+          />
+        ) : undefined
+      }
       onDiscover={
         props.actions && props.threadKey && !props.turnRunning
           ? () => props.actions!.discoverHarnessControls(props.threadKey)
@@ -536,8 +571,6 @@ export function CodexConfigButton(
           : undefined
       }
     />
-  ) : (
-    <NativeCodexConfigButton {...props} />
   );
 }
 
@@ -566,9 +599,6 @@ function NativeCodexConfigButton({
   const paymentSourceButtonRef = React.useRef<HTMLButtonElement>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [directoryPopoverOpen, setDirectoryPopoverOpen] = useState(false);
-  const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
-  const [directoryDraft, setDirectoryDraft] = useState("");
   const [form] = Form.useForm();
   const [selectedCredentialId, setSelectedCredentialId] = useState<
     string | undefined
@@ -738,11 +768,6 @@ function NativeCodexConfigButton({
       workspaceWorkingDirectory,
       getProjectHomeDirectory(projectId),
     );
-  useEffect(() => {
-    if (!directoryPopoverOpen) {
-      setDirectoryDraft(selectedWorkingDirectory);
-    }
-  }, [directoryPopoverOpen, selectedWorkingDirectory]);
   const activeSessionId = normalizeCodexSessionId(
     Form.useWatch("sessionId", form) ?? value?.sessionId,
   );
@@ -1062,10 +1087,6 @@ function NativeCodexConfigButton({
       )?.label ?? siteFundedPolicy.reasoning)
     : reasoningLabel;
   const displayedServiceTier = siteFundedPolicy ? undefined : serviceTierLabel;
-  const displayedWorkingDirectory = displayComposerWorkingDirectory(
-    selectedWorkingDirectory,
-    getProjectHomeDirectory(projectId),
-  );
   const paymentNeedsAttention =
     paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
   const toggleControlsCollapsed = () => {
@@ -1219,8 +1240,6 @@ function NativeCodexConfigButton({
       getProjectHomeDirectory(projectId),
     );
     applyQuickConfigPatch({ workingDirectory: normalized });
-    setDirectoryDraft(normalized);
-    setDirectoryPopoverOpen(false);
   };
 
   const paymentSourcePatch = (
@@ -1424,61 +1443,13 @@ function NativeCodexConfigButton({
       >
         {compact === "composer" ? (
           <>
-            <Tooltip
-              title={`${projectTitle ?? "Project"} / ${selectedWorkingDirectory}`}
-            >
-              <Popover
-                open={directoryPopoverOpen}
-                onOpenChange={(nextOpen) => {
-                  setDirectoryPopoverOpen(nextOpen);
-                  if (nextOpen) setDirectoryDraft(selectedWorkingDirectory);
-                }}
-                placement="topLeft"
-                trigger="click"
-                content={
-                  <Space
-                    orientation="vertical"
-                    size={8}
-                    style={{ width: "min(360px, calc(100vw - 32px))" }}
-                  >
-                    <Text strong>Working directory</Text>
-                    <Space.Compact style={{ width: "100%" }}>
-                      <Input
-                        aria-label="Working directory"
-                        value={directoryDraft}
-                        onChange={(event) =>
-                          setDirectoryDraft(event.target.value)
-                        }
-                        onPressEnter={() =>
-                          applyWorkingDirectory(directoryDraft)
-                        }
-                      />
-                      <Button
-                        type="primary"
-                        onClick={() => applyWorkingDirectory(directoryDraft)}
-                      >
-                        Apply
-                      </Button>
-                    </Space.Compact>
-                    <Button
-                      icon={<Icon name="folder-open" />}
-                      onClick={() => {
-                        setDirectoryPopoverOpen(false);
-                        setTimeout(() => setDirectorySelectorOpen(true), 0);
-                      }}
-                    >
-                      Choose directory…
-                    </Button>
-                  </Space>
-                }
-              >
-                <ComposerProjectDirectoryButton
-                  projectTitle={projectTitle ?? "Project"}
-                  directory={selectedWorkingDirectory}
-                  displayedDirectory={displayedWorkingDirectory}
-                />
-              </Popover>
-            </Tooltip>
+            <ComposerWorkingDirectory
+              projectId={projectId}
+              projectTitle={projectTitle ?? "Project"}
+              directory={selectedWorkingDirectory}
+              home={getProjectHomeDirectory(projectId)}
+              onChange={applyWorkingDirectory}
+            />
             <span
               style={{
                 alignItems: "center",
@@ -1903,26 +1874,6 @@ function NativeCodexConfigButton({
           </Tooltip>
         ) : null}
       </div>
-      <Modal
-        open={directorySelectorOpen}
-        title="Choose working directory"
-        footer={null}
-        destroyOnHidden
-        onCancel={() => setDirectorySelectorOpen(false)}
-      >
-        {projectId ? (
-          <DirectorySelector
-            project_id={projectId}
-            startingPath={selectedWorkingDirectory}
-            allowAbsolutePaths
-            closable={false}
-            onSelect={(directory) => {
-              applyWorkingDirectory(directory);
-              setDirectorySelectorOpen(false);
-            }}
-          />
-        ) : null}
-      </Modal>
       <Modal
         open={membershipHelpOpen}
         title="Start a new thread to use CoCalc Membership"

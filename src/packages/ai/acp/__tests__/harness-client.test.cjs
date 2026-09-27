@@ -1370,8 +1370,14 @@ test("harness context preserves user input and does not invent missing attributi
   assert.ok(prompt.includes("/home/user/.claude/skills/cocalc/SKILL.md"));
   const subscriptionPrompt = harnessPrompt({
     ...request,
+    runtime: { profile: { cwd: "/home/user/work" } },
     harness_credential: { mode: "account-subscription" },
   });
+  assert.ok(
+    subscriptionPrompt.includes(
+      'Project working directory for this turn: "/home/user/work"',
+    ),
+  );
   for (const text of [
     "managed jobs",
     "yield_time_ms",

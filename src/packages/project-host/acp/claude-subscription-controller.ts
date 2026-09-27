@@ -395,7 +395,7 @@ ${skill}
             result = await sandboxExec({
               project_id: projectId,
               script,
-              cwd,
+              cwd: cwd ?? binding.profile.cwd,
               env: cliEnv,
               signal,
               ...options,

@@ -263,21 +263,23 @@ export function harnessRuntimeKey(request: AcpRequest): string {
   return JSON.stringify([
     harnessProfileKey(request),
     request.harness_credential,
+    request.runtime?.profile.cwd,
   ]);
 }
 
 export function harnessProfileKey(request: AcpRequest): string {
   if (!request.runtime || !request.chat)
     throw Error("Missing ACP runtime binding");
+  // Directory changes reopen the same native session with new launch bindings;
+  // changing the adapter itself still requires a fresh conversation.
+  const { cwd: _cwd, ...profile } = request.runtime.profile;
   return JSON.stringify([
     "acp",
     request.project_id,
     request.account_id,
     request.chat.path,
     request.chat.thread_id,
-    createHash("sha256")
-      .update(JSON.stringify(request.runtime.profile))
-      .digest("hex"),
+    createHash("sha256").update(JSON.stringify(profile)).digest("hex"),
   ]);
 }
 
