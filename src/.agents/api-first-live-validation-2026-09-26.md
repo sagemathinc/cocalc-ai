@@ -6,6 +6,23 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Two-broker interest withdrawal, 2026-09-27
+
+`core/server.cluster-revocation.test.ts` starts two real in-process Conat
+brokers connected through the cluster protocol. An API-key-shaped principal on
+one broker subscribes and registers a fast-RPC service; a client on the other
+broker successfully publishes to that subscription and invokes the service.
+The test then makes the authority callback reject or remain unavailable.
+Using the production 15-second refresh and 10-second timeout, both cases
+disconnect the key client and remove subscription and RPC interest from both
+the local broker and the remote link. A subsequent remote RPC fails.
+
+Both cases passed in 43.5 seconds, exited normally, and closed their clients,
+services, subscriptions, and brokers. Conat typecheck and `git diff --check`
+passed. The authentication/authorization callbacks are test doubles: this is
+cluster transport and cleanup evidence, not deployed two-bay authority outage,
+continuous-load timing, project-host session, or managed-turn validation.
+
 ## Shared-editor browser checkpoint, 2026-09-27
 
 Source checkpoint: `74d11eff2f6bdb91250a07797c5d1b65c8f16be7`.
