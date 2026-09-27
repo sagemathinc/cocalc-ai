@@ -7,6 +7,9 @@ import type {
   CodexLiveLogStatus,
   CodexPersistedLogLoadState,
 } from "./use-codex-log";
+import { trimFinalResponseFromActivity } from "@cocalc/chat";
+import { joinedTextSource } from "./text-source";
+import type { TextSource, TextSourceRange } from "./text-source";
 
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
@@ -48,28 +51,65 @@ export type InlineCodexActivityBlock = {
 export const DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT = 100;
 
 function guidanceFence(text: string): string {
-  let fence = "```";
-  while (text.includes(fence)) {
-    fence += "`";
+  let length = 3;
+  for (const match of text.matchAll(/`{3,}/g)) {
+    length = Math.max(length, match[0].length + 1);
   }
-  return fence;
+  return "`".repeat(length);
 }
 
 export function codexActivityBlocksToSelectableMarkdown(
   blocks: InlineCodexActivityBlock[],
 ): string {
-  return blocks
-    .map((block) => {
-      const text = `${block.text ?? ""}`;
-      if (!text.trim()) return "";
-      if (block.kind === "agent") return text;
-      const fence = guidanceFence(text);
-      const state =
-        block.state && block.state !== "sent" ? ` ${block.state}` : "";
-      return `${fence}guidance${state}\n${text}\n${fence}`;
-    })
-    .filter(Boolean)
-    .join("\n\n");
+  return codexActivityTextSource(blocks).toString();
+}
+
+export function codexActivityTextSource(
+  blocks: InlineCodexActivityBlock[],
+): TextSource {
+  const parts: string[] = [];
+  const bodies: string[] = [];
+  const ranges: TextSourceRange[] = [];
+  let offset = 0;
+  let hasGuidance = false;
+  for (const block of blocks) {
+    const text = `${block.text ?? ""}`;
+    if (!text.trim()) continue;
+    if (parts.length > 0) {
+      parts.push("\n\n");
+      bodies.push("\n\n");
+      offset += 2;
+    }
+    bodies.push(text);
+    const range: TextSourceRange = { start: offset, end: offset + text.length };
+    ranges.push(range);
+    offset = range.end;
+    if (block.kind === "agent") {
+      parts.push(text);
+      continue;
+    }
+    hasGuidance = true;
+    const fence = guidanceFence(text);
+    const state =
+      block.state && block.state !== "sent" ? ` ${block.state}` : "";
+    parts.push(`${fence}guidance${state}\n`, text, `\n${fence}`);
+    range.format = (part) => {
+      const excerptFence = guidanceFence(part);
+      return `${excerptFence}guidance${state}\n${part}\n${excerptFence}`;
+    };
+  }
+  const source = joinedTextSource(parts);
+  if (hasGuidance) {
+    source.rendering = {
+      source: joinedTextSource(bodies),
+      ranges,
+      // A backtick-only body needs two fences of length n + 1. Reserve the
+      // longest state label, newlines, and the minimum three-backtick fences.
+      maxExpansion: 3,
+      maxOverhead: "guidance not-sent".length + 8,
+    };
+  }
+  return source;
 }
 
 export function resolveLiveCodexActivityBlocks({
@@ -87,7 +127,7 @@ export function resolveLiveCodexActivityBlocks({
   let selectedLength = 0;
   for (const blocks of [reconciledCachedBlocks, previewBlocks]) {
     if (!Array.isArray(blocks) || blocks.length === 0) continue;
-    const length = codexActivityBlocksToSelectableMarkdown(blocks).length;
+    const length = codexActivityTextSource(blocks).length;
     if (length < selectedLength) continue;
     selected = blocks;
     selectedLength = length;
@@ -120,18 +160,20 @@ export function reconcileActivityGuidance(
   return next;
 }
 
-export function limitCodexActivityBlocks(
+export function codexActivityWindow(
   blocks: InlineCodexActivityBlock[],
-  visibleLimit: number,
+  requestedEnd = blocks.length,
 ): {
   visibleBlocks: InlineCodexActivityBlock[];
   hiddenCount: number;
+  end: number;
 } {
-  const limit = Math.max(1, Math.floor(visibleLimit));
-  const hiddenCount = Math.max(0, blocks.length - limit);
+  const end = Math.max(0, Math.min(blocks.length, Math.floor(requestedEnd)));
+  const hiddenCount = Math.max(0, end - DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT);
   return {
-    visibleBlocks: hiddenCount > 0 ? blocks.slice(hiddenCount) : blocks,
+    visibleBlocks: blocks.slice(hiddenCount, end),
     hiddenCount,
+    end,
   };
 }
 
@@ -171,29 +213,8 @@ export function trimCompletedCachedCodexActivityBlocks(
   finalResponse?: string,
 ): InlineCodexActivityBlock[] | undefined {
   if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
-  const normalizedFinal = `${finalResponse ?? ""}`
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  if (!normalizedFinal) return blocks;
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i];
-    if (block.kind !== "agent") continue;
-    const normalizedBlock = `${block.text ?? ""}`
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-    if (
-      !normalizedBlock ||
-      (!normalizedBlock.includes(normalizedFinal) &&
-        !normalizedFinal.includes(normalizedBlock))
-    ) {
-      return blocks;
-    }
-    const next = blocks.filter((_, index) => index !== i);
-    return next.length > 0 ? next : undefined;
-  }
-  return blocks;
+  const next = trimFinalResponseFromActivity(blocks, finalResponse);
+  return next.length > 0 ? next : undefined;
 }
 
 export function resolveEditedMessageForSave(

@@ -17,7 +17,8 @@ import CopyButton from "@cocalc/frontend/components/copy-button";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown from "./bounded-static-markdown";
+import { MAX_RENDERED_TEXT_CHARS } from "./paged-text";
 import { ChatSourceContent } from "./source-file-context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
@@ -42,6 +43,9 @@ import { openProjectFileResult } from "./open-result";
 import { projectFileTargetFromHref } from "./project-file-target";
 
 const { Text } = Typography;
+// A page of backticks needs two fences of length n + 1, two newlines,
+// and at most the two-character "sh" language hint: 3n + 6 characters.
+const MAX_TERMINAL_PAGE_CHARS = Math.floor((MAX_RENDERED_TEXT_CHARS - 6) / 3);
 const OpenActivityFileContext = React.createContext<
   ((target: { path: string; line?: number }) => void) | undefined
 >(undefined);
@@ -254,6 +258,7 @@ function renderSteerStatus(state: AttachedSteerMessage["state"], text: string) {
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
 const expandedState = new Map<string, boolean>();
+export const ACTIVITY_PAGE_SIZE = 100;
 
 export const CodexActivity: React.FC<CodexActivityProps> = ({
   events,
@@ -278,6 +283,11 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     () => normalizeEvents(events ?? [], activitySteers),
     [events, activitySteers],
   );
+  const [chosenStart, setChosenStart] = useState<number>();
+  const handledJump = React.useRef(0);
+  const latestStart = Math.max(0, entries.length - ACTIVITY_PAGE_SIZE);
+  const pageStart = Math.min(chosenStart ?? latestStart, latestStart);
+  const pageEnd = Math.min(entries.length, pageStart + ACTIVITY_PAGE_SIZE);
   const waitingForVmApproval = useMemo(
     () =>
       generating === true &&
@@ -363,6 +373,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     if (
       typeof jumpToken !== "number" ||
       jumpToken <= 0 ||
+      handledJump.current === jumpToken ||
       !jumpText ||
       !entries.length
     ) {
@@ -370,13 +381,18 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     }
     const index = findActivityEntryIndexForJumpText(entries, jumpText);
     if (index < 0) return;
+    if (index < pageStart || index >= pageEnd) {
+      setChosenStart(index);
+      return;
+    }
     const node = document.querySelector(
       `[data-codex-activity-entry-index="${index}"]`,
     ) as HTMLElement | null;
     node?.scrollIntoView({ block: "start" });
-  }, [entries, jumpText, jumpToken]);
+    if (node) handledJump.current = jumpToken;
+  }, [entries, jumpText, jumpToken, pageStart, pageEnd]);
 
-  const activityMarkdown = useMemo(
+  const activityMarkdown = React.useCallback(
     () =>
       codexActivityToMarkdown(events ?? [], {
         generating,
@@ -581,14 +597,48 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
             projectId={projectId}
             active={waitingForVmApproval}
           />
-          {entries.map((entry, index) => (
+          {entries.length > ACTIVITY_PAGE_SIZE && (
+            <Space wrap>
+              <span>
+                Activity {pageStart + 1}-{pageEnd} of {entries.length}
+              </span>
+              <Button
+                size="small"
+                disabled={pageStart === 0}
+                onClick={() =>
+                  setChosenStart(Math.max(0, pageStart - ACTIVITY_PAGE_SIZE))
+                }
+              >
+                Earlier activity
+              </Button>
+              <Button
+                size="small"
+                disabled={pageEnd === entries.length}
+                onClick={() =>
+                  setChosenStart(
+                    Math.min(latestStart, pageStart + ACTIVITY_PAGE_SIZE),
+                  )
+                }
+              >
+                Later activity
+              </Button>
+              <Button
+                size="small"
+                disabled={chosenStart == null}
+                onClick={() => setChosenStart(undefined)}
+              >
+                Latest activity
+              </Button>
+            </Space>
+          )}
+          {entries.slice(pageStart, pageEnd).map((entry, index) => (
             <ActivityRow
               key={entry.id}
-              rowIndex={index}
+              rowIndex={pageStart + index}
               entry={entry}
               fontSize={baseFontSize}
               projectId={projectId}
-              basePath={entryBasePaths[index]}
+              basePath={entryBasePaths[pageStart + index]}
               editorTheme={editorTheme}
               inlineCodeLinks={inlineCodeLinks}
             />
@@ -1945,7 +1995,9 @@ export function TerminalRow({
             Input
           </Text>
           <StaticMarkdown
-            value={toFencedCodeBlock(inputText, "sh")}
+            value={inputText}
+            format={(part) => toFencedCodeBlock(part, "sh")}
+            maxChars={MAX_TERMINAL_PAGE_CHARS}
             style={{ fontSize, marginTop: 0 }}
             editorTheme={editorTheme}
           />
@@ -1965,11 +2017,13 @@ export function TerminalRow({
             Output
           </Text>
           <StaticMarkdown
-            value={toFencedCodeBlock(
+            value={
               entry.truncated
                 ? `${outputText}\n[output truncated]`.trim()
-                : outputText,
-            )}
+                : outputText
+            }
+            format={toFencedCodeBlock}
+            maxChars={MAX_TERMINAL_PAGE_CHARS}
             style={{ fontSize, marginTop: 0 }}
             editorTheme={editorTheme}
           />
@@ -2101,7 +2155,9 @@ function FileRow({
       </Space>
       {showCommand && commandLine ? (
         <StaticMarkdown
-          value={toFencedCodeBlock(`$ ${commandLine}`, "sh")}
+          value={`$ ${commandLine}`}
+          format={(part) => toFencedCodeBlock(part, "sh")}
+          maxChars={MAX_TERMINAL_PAGE_CHARS}
           style={{ fontSize, marginTop: 2 }}
           editorTheme={editorTheme}
         />
