@@ -121,6 +121,7 @@ describe("Jupyter application over scoped transport", () => {
         if (interrupt) {
           const first = await iterator.next();
           output.push(...first.value);
+          expect(iterator.replayCursor).toBe(1);
           if (interrupt === "disconnect") client.conn.disconnect();
           else if (interrupt !== "lease") notebook.socket.close();
           await expect(iterator.next()).rejects.toMatchObject({
@@ -143,6 +144,18 @@ describe("Jupyter application over scoped transport", () => {
             expect(
               await fresh.getRun("scoped-run", { limit: 1 }),
             ).toMatchObject({ run_id: "scoped-run", next_seq: 1 });
+            let replay = await fresh.getRun("scoped-run", {
+              after_seq: iterator.replayCursor,
+            });
+            for (let i = 0; i < 100 && !replay?.done; i++) {
+              await delay(10);
+              replay = await fresh.getRun("scoped-run", {
+                after_seq: iterator.replayCursor,
+              });
+            }
+            expect(replay?.done).toBe(true);
+            expect(replay!.batches.length).toBeGreaterThan(0);
+            expect(replay?.batches.every((batch) => batch.seq > 1)).toBe(true);
             expect(await fresh.getRun("absent-run")).toBeNull();
           } finally {
             fresh.close();

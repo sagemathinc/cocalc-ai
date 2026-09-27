@@ -28,6 +28,7 @@ import {
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
+export const JUPYTER_BATCH_SEQUENCE_HEADER = "jupyter-batch-sequence";
 const SOCKET_KEEP_ALIVE = parsePositiveInt(
   process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE,
   25_000,
@@ -542,6 +543,7 @@ async function handleRequest({
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
     void publishLiveBatch(coalescedMesgs);
+    const headers = { [JUPYTER_BATCH_SEQUENCE_HEADER]: batchSeq };
     if (socket.state == "closed") {
       return;
     }
@@ -549,7 +551,7 @@ async function handleRequest({
       if (firstClientWriteAt == null) {
         firstClientWriteAt = Date.now();
       }
-      socket.write(coalescedMesgs);
+      socket.write(coalescedMesgs, { headers });
       if (opts?.fastLane) {
         firstClientBatchFastLane = true;
       }
@@ -558,7 +560,7 @@ async function handleRequest({
         enobufs += 1;
         // wait for the over-filled socket to finish writing out data.
         await socket.drain();
-        socket.write(coalescedMesgs);
+        socket.write(coalescedMesgs, { headers });
         if (opts?.fastLane) {
           firstClientBatchFastLane = true;
         }
@@ -772,6 +774,42 @@ export class JupyterRunTransportError extends Error {
   }
 }
 
+export class JupyterRunIterator extends EventIterator<OutputMessage[]> {
+  private sequences = new WeakMap<OutputMessage[], number>();
+  // Undefined means a legacy or discontinuous stream cannot be resumed safely.
+  public replayCursor: number | undefined = 0;
+
+  constructor(
+    ...args: ConstructorParameters<typeof EventIterator<OutputMessage[]>>
+  ) {
+    super(...args);
+    const include = this.filter;
+    this.filter = (batch) => {
+      if (!include(batch)) return false;
+      if (batch.length > 0) {
+        const sequence = this.sequences.get(batch);
+        this.sequences.delete(batch);
+        // EventIterator filters at consumption, not enqueue. Canceled queues
+        // must not advance the cursor past output the caller never received.
+        this.replayCursor =
+          this.replayCursor != null && sequence === this.replayCursor + 1
+            ? sequence
+            : undefined;
+      }
+      return true;
+    };
+  }
+
+  recordSequence(batch: OutputMessage[], sequence: unknown): void {
+    if (typeof sequence === "string" && /^[1-9][0-9]*$/.test(sequence)) {
+      sequence = Number(sequence);
+    }
+    if (Number.isSafeInteger(sequence) && (sequence as number) > 0) {
+      this.sequences.set(batch, sequence as number);
+    }
+  }
+}
+
 export class JupyterClient {
   private iter?: EventIterator<OutputMessage[]>;
   private activeRunId?: string;
@@ -874,7 +912,7 @@ export class JupyterClient {
       this.iter.end();
       delete this.iter;
     }
-    const iter = new EventIterator<OutputMessage[]>(this.socket, "data", {
+    const iter = new JupyterRunIterator(this.socket, "data", {
       map: (args) => {
         if (args[1]?.error) {
           iter.throw(Error(args[1].error));
@@ -891,6 +929,10 @@ export class JupyterClient {
           if (filtered.length == 0) {
             return [];
           }
+          iter.recordSequence(
+            filtered,
+            args[1]?.[JUPYTER_BATCH_SEQUENCE_HEADER],
+          );
           return filtered;
         }
       },

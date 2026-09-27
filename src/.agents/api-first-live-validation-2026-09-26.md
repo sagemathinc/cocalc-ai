@@ -355,6 +355,29 @@ It is not proof of other transport families, managed-turn finalization,
 membership loss, authority outage, or uninterrupted long-run recovery across
 healthy credential renewal. Those remain separate acceptance cases.
 
+### Consumed-output cursor for renewal recovery (not deployed)
+
+Healthy credential renewal must not require rerunning a notebook cell. The
+existing bounded replay service stores numbered batches, but direct output
+previously omitted their sequence numbers. The direct stream now includes a
+`jupyter-batch-sequence` transport header matching the stored batch, including
+the backpressure retry path. Output messages themselves are unchanged.
+
+`JupyterRunIterator.replayCursor` tracks only batches consumed by the caller,
+not those merely received and queued. Disconnect cancellation therefore cannot
+advance recovery past discarded buffered output. Missing, invalid, duplicate,
+or discontinuous sequences disable the cursor rather than silently guessing a
+resume position. Older clients ignore the added header; a newer client reading
+an older server's unnumbered stream cannot safely resume it.
+
+Thirty Conat Jupyter tests and 55 backend Jupyter tests pass, along with
+Conat typechecking. Tests cover queued cancellation, awakened consumers,
+canonical transport headers, invalid sequences, and replay after socket close,
+transport disconnect, and server lease expiry. Replay excludes the consumed
+batch and runner invocation stays at one. Automatic CLI consumption of replay
+pages across healthy renewal remains unimplemented; this is prerequisite
+sequence bookkeeping, not a long-running-session completion claim.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
