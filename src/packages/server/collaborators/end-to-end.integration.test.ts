@@ -9,6 +9,25 @@ import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators
 import { ensureCollaborationNotificationSchema } from "@cocalc/database/postgres/collaborators-notifications";
 import { SCHEMA } from "@cocalc/util/db-schema";
 
+// This fixture integrates the SQL owner/home pipeline, not a persist server.
+// Keep Favorites explicit and empty instead of implicitly opening an unowned
+// Conat connection. Real pin transport is covered by backend/project-pins and
+// collaborators/multibay.acceptance.test.ts; neither is mocked there.
+let mockPinsRevision = "0";
+jest.mock("@cocalc/backend/conat", () => ({
+  conat: () => Object.freeze({ sqlFixtureOnly: true }),
+}));
+jest.mock("@cocalc/backend/collaborators/project-pins", () => ({
+  accountProjectPins: () => ({
+    read: async () => [],
+    revision: async () => mockPinsRevision,
+    set: async () => {
+      throw Error(
+        "SQL collaboration fixture does not implement Favorites writes",
+      );
+    },
+  }),
+}));
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({ collaborators_enabled: true }),
 }));
@@ -283,3 +302,21 @@ test("canonical message intent reaches the existing notification graph once, the
     }),
   ).rejects.toThrow("access denied");
 }, 30000);
+
+test("the SQL revision still invalidates when the external Favorites revision changes", async () => {
+  const before = await collaboratorsApi.check({ account_id });
+  expect(
+    (await collaboratorsApi.check({ account_id, since: before.revision }))
+      .reset,
+  ).toBe(false);
+  mockPinsRevision = "1";
+  const changed = await collaboratorsApi.check({
+    account_id,
+    since: before.revision,
+  });
+  expect(changed.reset).toBe(true);
+  expect(
+    (await collaboratorsApi.check({ account_id, since: changed.revision }))
+      .reset,
+  ).toBe(false);
+});
