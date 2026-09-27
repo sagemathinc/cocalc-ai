@@ -162,6 +162,25 @@ test("emitError emits structured fresh-auth hint in json mode", () => {
   assert.match(parsed.error.hint, /cocalc auth elevate --dev/);
 });
 
+test("emitError exposes validated retry metadata and a human retry hint", () => {
+  const err = Object.assign(new Error("API search rate limit exceeded"), {
+    code: "api_search_rate_limited",
+    retry_after_ms: 1250,
+  });
+  const output = withStderrCapture(() =>
+    emitError(
+      { globals: { output: "json" } },
+      "project list",
+      err,
+      (url) => url,
+    ),
+  );
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.error.code, "api_search_rate_limited");
+  assert.equal(parsed.error.retry_after_ms, 1250);
+  assert.match(parsed.error.hint, /Wait at least 2 seconds/);
+});
+
 test("emitError suggests auth login for cookie-required CLI failures", () => {
   const output = withStderrCapture(() => {
     emitError(

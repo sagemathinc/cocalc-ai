@@ -15,6 +15,20 @@ export const FailedAPIOperationSchema = z.object({
   error: z.string().describe("Error message if something goes badly wrong."),
 });
 
+export const SearchRateLimitErrorSchema = z.object({
+  error: z.string(),
+  code: z.literal("api_search_rate_limited"),
+  retry_after_ms: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional()
+    .describe(
+      "Suggested delay before a caller-initiated retry; Retry-After rounds up to whole seconds.",
+    ),
+});
+
 export type FailedAPIOperation = z.infer<typeof FailedAPIOperationSchema>;
 export type SuccessfulAPIOperation = z.infer<
   typeof SuccessfulAPIOperationSchema

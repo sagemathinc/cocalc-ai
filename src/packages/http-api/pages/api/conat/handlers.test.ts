@@ -39,6 +39,32 @@ const mockProjectBridge = jest.mocked(projectBridge);
 const mockIsCollaborator = jest.mocked(isCollaborator);
 
 describe("/api/conat/hub", () => {
+  test("returns a structured summary rate denial without retry or account bridge fallback", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      capabilities: ["project:list"],
+    } as any);
+    jest.mocked(listProjectSummariesForApiKey).mockRejectedValue(
+      Object.assign(new Error("remote rate exceeded"), {
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+      }),
+    );
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { name: "projects.listProjectSummaries", args: [{}] },
+    });
+    await hubHandler(req, res);
+    expect(res.statusCode).toBe(429);
+    expect(res.getHeader("Retry-After")).toBe("2");
+    expect(res._getJSONData()).toEqual({
+      error: "API search rate limit exceeded",
+      code: "api_search_rate_limited",
+      retry_after_ms: 1250,
+    });
+    expect(listProjectSummariesForApiKey).toHaveBeenCalledTimes(1);
+    expect(mockHubBridge).not.toHaveBeenCalled();
+  });
   test("summary dispatch preserves authenticated key context outside the account bridge", async () => {
     const principal = {
       account_id: "acc-1",

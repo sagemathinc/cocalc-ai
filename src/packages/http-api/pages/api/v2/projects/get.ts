@@ -8,6 +8,8 @@ import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import { listProjectSummariesForApiKey } from "@cocalc/server/conat/api/projects";
+import { sendAdmissionError } from "@cocalc/http-api/lib/api/admission-error";
+import { SearchRateLimitErrorSchema } from "@cocalc/http-api/lib/api/schema/common";
 
 import {
   GetAccountProjectsInputSchema,
@@ -75,6 +77,7 @@ async function handle(req, res) {
       }),
     );
   } catch (err) {
+    if (sendAdmissionError(res, err)) return;
     res.json({ error: err.message });
   }
 }
@@ -95,6 +98,11 @@ export default apiRoute({
         status: 200,
         contentType: "application/json",
         body: GetAccountProjectsOutputSchema,
+      },
+      {
+        status: 429,
+        contentType: "application/json",
+        body: SearchRateLimitErrorSchema,
       },
     ])
     .handler(handle),

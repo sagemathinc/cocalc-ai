@@ -99,6 +99,26 @@ test("defaults and final-page continuation remain explicit", async () => {
   expect(res.getHeader("X-CoCalc-Next-Offset")).toBeUndefined();
 });
 
+test("returns structured throttling without a legacy fallback or continuation", async () => {
+  mockSummaries.mockRejectedValue(
+    Object.assign(new Error("key rate exceeded"), {
+      code: "api_search_rate_limited",
+      retry_after_ms: 1250,
+    }),
+  );
+  const res = await request();
+  expect(res.statusCode).toBe(429);
+  expect(res.getHeader("Retry-After")).toBe("2");
+  expect(res.getHeader("X-CoCalc-Next-Offset")).toBeUndefined();
+  expect(res._getJSONData()).toEqual({
+    error: "API search rate limit exceeded",
+    code: "api_search_rate_limited",
+    retry_after_ms: 1250,
+  });
+  expect(mockSummaries).toHaveBeenCalledTimes(1);
+  expect(mockLegacy).not.toHaveBeenCalled();
+});
+
 test.each(["limit must be between 1 and 500", "account home unavailable"])(
   "does not fall back to a local legacy reader after %s",
   async (error) => {

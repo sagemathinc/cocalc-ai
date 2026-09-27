@@ -238,6 +238,28 @@ describe("/api/v2/projects list API-key scope", () => {
     expect(mockCreateProject).not.toHaveBeenCalled();
   });
 
+  it("get-one returns a rate denial without creating or replaying", async () => {
+    mockListProjectSummaries.mockRejectedValue(
+      Object.assign(new Error("account rate exceeded"), {
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+      }),
+    );
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: {},
+    });
+    const { default: handler } = await import("./get-one");
+    await handler(req, res);
+    expect(res.statusCode).toBe(429);
+    expect(res.getHeader("Retry-After")).toBe("2");
+    expect(res._getJSONData().code).toBe("api_search_rate_limited");
+    expect(mockListProjectSummaries).toHaveBeenCalledTimes(1);
+    expect(mockCreateProject).not.toHaveBeenCalled();
+    expect(mockGetProjects).not.toHaveBeenCalled();
+  });
+
   it("does not auto-create a project for project-list-only API keys", async () => {
     mockListProjectSummaries.mockResolvedValue({
       projects: [],

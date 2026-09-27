@@ -1,5 +1,6 @@
 import type { ApiProjectSummaryPage } from "@cocalc/conat/hub/api/projects";
 import type { Client } from "@cocalc/conat/core/client";
+import { serviceErrorAttributes } from "@cocalc/conat/util";
 
 export function reconnectApiKeyProjectHostAfterLease(
   client: Client,
@@ -38,9 +39,22 @@ export async function callHubWithApiKey<T>({
     body: JSON.stringify({ name, args }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw Error(`API request failed (${response.status})`);
+  if (!response.ok) {
+    if (response.status === 429) {
+      const value = await response.json().catch(() => undefined);
+      const attributes = serviceErrorAttributes(value);
+      if (attributes.code === "api_search_rate_limited") {
+        throw Object.assign(
+          new Error("API search rate limit exceeded"),
+          attributes,
+        );
+      }
+    }
+    throw Error(`API request failed (${response.status})`);
+  }
   const value = await response.json();
-  if (value?.error) throw Error(`${value.error}`);
+  if (value?.error)
+    throw Object.assign(Error(`${value.error}`), serviceErrorAttributes(value));
   return value as T;
 }
 

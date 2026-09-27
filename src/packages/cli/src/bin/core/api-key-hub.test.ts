@@ -1,9 +1,68 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  callHubWithApiKey,
   getProjectHostAccessWithApiKey,
   listProjectsWithApiKey,
 } from "./api-key-hub";
+
+test("preserves a throttling response without replay or remote private fields", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = (async () => {
+    calls++;
+    return new Response(
+      JSON.stringify({
+        error: "private server context",
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+        credential: "private",
+        stack: "private",
+      }),
+      { status: 429 },
+    );
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      callHubWithApiKey({
+        apiBaseUrl: "https://example.com",
+        apiKey: "test-key",
+        name: "projects.listProjectSummaries",
+        args: [{}],
+      }),
+      (err: any) => {
+        assert.equal(err.code, "api_search_rate_limited");
+        assert.equal(err.retry_after_ms, 1250);
+        assert.equal(err.message, "API search rate limit exceeded");
+        assert.equal(err.credential, undefined);
+        assert.notEqual(err.stack, "private");
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("non-JSON 429 responses retain a useful status error", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = (async () =>
+    new Response("not JSON", { status: 429 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      callHubWithApiKey({
+        apiBaseUrl: "https://example.com",
+        apiKey: "test-key",
+        name: "projects.listProjectSummaries",
+        args: [{}],
+      }),
+      /API request failed \(429\)/,
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
 
 test("uses the scoped HTTP bridge without putting the key in the URL or body", async () => {
   const originalFetch = global.fetch;

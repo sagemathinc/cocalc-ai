@@ -10,6 +10,7 @@ import hubBridge from "@cocalc/server/api/hub-bridge";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { assertHttpHubApiKeyAllowed } from "@cocalc/server/api/http-api-key-policy";
 import { listProjectSummariesForApiKey } from "@cocalc/server/conat/api/projects";
+import { sendAdmissionError } from "@cocalc/http-api/lib/api/admission-error";
 
 export default async function handle(req, res) {
   try {
@@ -34,6 +35,7 @@ export default async function handle(req, res) {
     });
     res.json(resp);
   } catch (err) {
+    if (sendAdmissionError(res, err)) return;
     res.json({ error: err.message });
   }
 }

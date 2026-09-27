@@ -11,6 +11,7 @@ import {
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import { listProjectSummariesForApiKey } from "@cocalc/server/conat/api/projects";
 import getOneProject from "@cocalc/server/projects/get-one";
+import { sendAdmissionError } from "@cocalc/http-api/lib/api/admission-error";
 
 export default async function handle(req, res) {
   const account_id = await getAccountId(req);
@@ -25,6 +26,7 @@ export default async function handle(req, res) {
     }
     res.json(await getOneProject(account_id));
   } catch (err) {
+    if (sendAdmissionError(res, err)) return;
     res.json({ error: err.message });
   }
 }
