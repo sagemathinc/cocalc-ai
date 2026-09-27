@@ -818,7 +818,15 @@ test.each(["List", "Grid"])(
       name: "Drag Result one to reorder",
     });
     expect(handle).toHaveAttribute("tabindex", "0");
-    const trigger = screen.getByRole("button", { name: "Reorder Result one" });
+    expect(
+      screen.queryByRole("button", { name: /^Reorder Result/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /^More options for Result/ }),
+    ).toHaveLength(2);
+    const trigger = screen.getByRole("button", {
+      name: "More options for Result one",
+    });
     act(() => trigger.focus());
     await user.keyboard("{Enter}");
     const down = await screen.findByRole("menuitem", { name: "Move down" });
@@ -839,7 +847,7 @@ test.each(["List", "Grid"])(
       screen.getByRole("checkbox", { name: "Group by project" }),
     );
     await user.click(
-      screen.getByRole("button", { name: "Reorder Result one" }),
+      screen.getByRole("button", { name: "More options for Result one" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Move up" }),
@@ -850,7 +858,7 @@ test.each(["List", "Grid"])(
     );
     await user.keyboard("{Escape}");
     expect(
-      screen.getByRole("button", { name: "Reorder Result one" }),
+      screen.getByRole("button", { name: "More options for Result one" }),
     ).toHaveFocus();
     expect(listProject).toHaveBeenCalledTimes(2);
   },

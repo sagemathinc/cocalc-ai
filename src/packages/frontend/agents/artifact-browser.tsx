@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ComponentRef, ReactNode } from "react";
-import { Alert, Button, Checkbox, Dropdown, Empty, Input, Select } from "antd";
+import { Alert, Button, Checkbox, Empty, Input, Select } from "antd";
 import type { InputRef } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon, isIconName } from "@cocalc/frontend/components";
@@ -614,35 +614,29 @@ function AccountArtifactBrowser({
                       />
                     )}
                     {controls.pinButton}
-                    {controls.orderMenu}
-                    <Dropdown
-                      trigger={["click"]}
-                      menu={{
-                        items: [
-                          {
-                            key: "appearance",
-                            label: "Edit appearance",
+                    {controls.menu(
+                      [
+                        {
+                          key: "appearance",
+                          label: "Edit appearance",
+                          onClick: () => {
+                            if (
+                              !result.hit.artifact_id ||
+                              !result.catalogEntryId
+                            )
+                              return;
+                            setAppearanceTarget({
+                              projectId: result.agent.endpoint.project_id,
+                              path: result.agent.path,
+                              threadId: result.threadId,
+                              artifactId: result.hit.artifact_id,
+                              entryId: result.catalogEntryId,
+                            });
                           },
-                        ],
-                        onClick: () => {
-                          if (!result.hit.artifact_id || !result.catalogEntryId)
-                            return;
-                          setAppearanceTarget({
-                            projectId: result.agent.endpoint.project_id,
-                            path: result.agent.path,
-                            threadId: result.threadId,
-                            artifactId: result.hit.artifact_id,
-                            entryId: result.catalogEntryId,
-                          });
                         },
-                      }}
-                    >
-                      <Button
-                        type="text"
-                        aria-label={`More options for ${result.hit.artifact_title}`}
-                        icon={<Icon name="ellipsis" />}
-                      />
-                    </Dropdown>
+                      ],
+                      `More options for ${result.hit.artifact_title}`,
+                    )}
                   </div>
                 </div>
               );

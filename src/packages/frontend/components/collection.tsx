@@ -9,11 +9,17 @@ import { Icon } from "./icon";
 import { DragHandle, SortableItem, SortableList } from "./sortable-list";
 
 export type CollectionView = "list" | "grid";
+export interface CollectionMenuAction {
+  key: string;
+  label: string;
+  onClick: () => void;
+}
 export interface CollectionControls {
   pinned: boolean;
   dragHandle: ReactNode;
   pinButton: ReactNode;
   orderMenu: ReactNode;
+  menu: (actions: CollectionMenuAction[], label: string) => ReactNode;
 }
 
 export function CollectionViewControl({
@@ -34,7 +40,7 @@ export function CollectionViewControl({
       {(["grid", "list"] as const).map((mode) => (
         <Button
           key={mode}
-          type={view === mode ? "primary" : "text"}
+          type={view === mode ? "primary" : "default"}
           aria-label={`${mode === "grid" ? "Grid" : "List"} view`}
           aria-pressed={view === mode}
           icon={<Icon name={mode === "grid" ? "overview" : "list"} />}
@@ -211,6 +217,20 @@ export function Collection<T>({
                                     }
                                   />
                                 ) : null,
+                                menu: (actions, label) => (
+                                  <CollectionOrderMenu
+                                    title={title}
+                                    label={label}
+                                    actions={actions}
+                                    index={visible.indexOf(id)}
+                                    count={visible.length}
+                                    onMove={
+                                      reorder
+                                        ? (index) => onMove!(visible, id, index)
+                                        : undefined
+                                    }
+                                  />
+                                ),
                               })}
                             </div>
                           );
@@ -239,11 +259,15 @@ export function CollectionOrderMenu({
   index,
   count,
   onMove,
+  actions = [],
+  label = `Reorder ${title}`,
 }: {
   title: string;
   index: number;
   count: number;
-  onMove: (index: number) => void;
+  onMove?: (index: number) => void;
+  actions?: CollectionMenuAction[];
+  label?: string;
 }) {
   const button = useRef<ComponentRef<typeof Button>>(null);
   const [open, setOpen] = useState(false);
@@ -261,25 +285,36 @@ export function CollectionOrderMenu({
       menu={{
         items: open
           ? [
-              { key: "up", label: "Move up", disabled: index === 0 },
-              {
-                key: "down",
-                label: "Move down",
-                disabled: index === count - 1,
-              },
+              ...actions.map(({ key, label }) => ({ key, label })),
+              ...(onMove
+                ? [
+                    {
+                      key: "collection-up",
+                      label: "Move up",
+                      disabled: index === 0,
+                    },
+                    {
+                      key: "collection-down",
+                      label: "Move down",
+                      disabled: index === count - 1,
+                    },
+                  ]
+                : []),
             ]
           : [],
         onClick: ({ key }) => {
           setOpen(false);
-          onMove(index + (key === "up" ? -1 : 1));
           button.current?.focus();
+          if (key === "collection-up" || key === "collection-down")
+            onMove?.(index + (key === "collection-up" ? -1 : 1));
+          else actions.find((action) => action.key === key)?.onClick();
         },
       }}
     >
       <Button
         ref={button}
         type="text"
-        aria-label={`Reorder ${title}`}
+        aria-label={label}
         icon={<Icon name="ellipsis" />}
       />
     </Dropdown>

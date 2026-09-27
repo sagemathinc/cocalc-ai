@@ -1,8 +1,28 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { Collection } from "./collection";
+import { Collection, CollectionViewControl } from "./collection";
+import type { CollectionView } from "./collection";
 import { moveVisibleCollectionPin } from "./collection-order";
+
+test("layout switches keep the focused button mounted", async () => {
+  const user = userEvent.setup();
+  function Example() {
+    const [view, setView] = useState<CollectionView>("list");
+    return (
+      <CollectionViewControl label="Items" view={view} onChange={setView} />
+    );
+  }
+  render(<Example />);
+  for (const name of ["Grid view", "List view"]) {
+    const button = screen.getByRole("button", { name });
+    act(() => button.focus());
+    await user.keyboard("{Enter}");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(button).toHaveFocus();
+    expect(screen.getByRole("button", { name })).toBe(button);
+  }
+});
 
 test("grid drag keyboard navigation moves horizontally, not only vertically", async () => {
   const user = userEvent.setup();

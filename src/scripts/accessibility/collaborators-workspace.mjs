@@ -18,8 +18,19 @@ async function keyboardActivate(page, locator) {
 }
 
 async function withinViewport(page, locator) {
-  await locator.scrollIntoViewIfNeeded();
-  const rect = await locator.boundingBox();
+  let rect;
+  // Account projection refreshes may replace a row while a view save settles.
+  // Re-resolve the locator, but still fail persistent invisibility or overflow.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await locator.scrollIntoViewIfNeeded();
+      rect = await locator.boundingBox();
+      if (rect) break;
+    } catch (error) {
+      if (attempt === 2 || !String(error).includes("not attached")) throw error;
+    }
+    await page.waitForTimeout(100);
+  }
   const viewport = await page.evaluate(() => ({
     width: innerWidth,
     height: innerHeight,
@@ -52,11 +63,19 @@ export async function checkCollectionViews(page, label, pinnedTitle) {
       await focused(mode);
       assert.equal(await mode.getAttribute("aria-pressed"), "true");
       await withinViewport(page, mode);
+      await focused(mode);
       if (pinnedTitle) {
-        const reorder = page.getByRole("button", {
-          name: `Reorder ${pinnedTitle}`,
-          exact: true,
-        });
+        const reorder = page
+          .getByRole("button", {
+            name: `Reorder ${pinnedTitle}`,
+            exact: true,
+          })
+          .or(
+            page.getByRole("button", {
+              name: `More options for ${pinnedTitle}`,
+              exact: true,
+            }),
+          );
         await keyboardActivate(page, reorder);
         await page.getByRole("menu").waitFor();
         await page.keyboard.press("Escape");
