@@ -6,7 +6,7 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
-## Dismissing obsolete approval requests, 2026-09-27 (not deployed)
+## Dismissing obsolete approval requests, 2026-09-27
 
 Human rejection no longer requires the requesting and target API keys to remain
 at their reviewed revisions or even exist. Dismissal grants no key authority;
@@ -20,7 +20,26 @@ execution, idempotent rejection, unchanged key rows, and no directory tombstone
 on rejection. Wrong owner, missing fresh authentication, and modified review
 remain rejected. The server TypeScript build passes. These are backend tests;
 the stale-request rejection flow has not yet been deployed or exercised in the
-rendered UI.
+rendered UI at that point.
+
+### Deployed browser follow-up
+
+Built the server at `1f627470a46827546fe7cebd3eba08434cb5ef93` and restarted
+the local three-bay hub stack through `dev:hub:restart`; all three bays started
+successfully. No project-host or project-runtime restart was required. The
+real Chromium UI probe, using the existing dev-elevated human session, opened
+a disposable revocation request and then renamed its target through the ordinary
+key-management API. Approval displayed `target API key changed since review`
+and preserved the target. Keyboard rejection then returned to the request list;
+authoritative reads confirmed no pending fixture request and the target still
+present. The test subsequently deleted its target and requester keys.
+
+The same run repeated the all-projects/manual-key create, edit, reload, and
+delete round trip (fixture key 138), plus ordinary keyboard rejection. A separate
+fresh API connection confirmed zero remaining `api-ui-roundtrip-` fixture keys.
+The probe exited successfully. This verifies deployed stale-target dismissal,
+not interactive MFA, stale requester behavior in the browser, or the full managed
+turn acceptance matrix; stale requester cases remain covered by backend tests.
 
 ## Shared UI round trips and approval decisions, 2026-09-27
 
