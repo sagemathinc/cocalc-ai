@@ -6,7 +6,45 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
-## Live synchronized-text interruption gap, 2026-09-27
+## Installed text-session follow-up, 2026-09-27
+
+Built the tools bundle from `5f314c31e60102000ebe0176394ec843a351c841` and
+upgraded only host3's tools (version `1790492688735`, operation
+`b5c11247-3442-40c5-a176-920021238590`). The running validation project still
+had the previous CLI, so only that dedicated project was restarted. Its installed
+CLI SHA-256 then matched the local build:
+`d20be971ee22a2390411e95390aad3c335181c023d34bbf0addfdab4a2c0c105`.
+No host runtime or other project was restarted for this tools update.
+
+Three disposable manual-key runs used the installed CLI with an empty environment
+and a private provider file:
+
+- First run: 132 acknowledged writes over 81,986ms before deletion. Last write
+  acknowledgment was 16,325ms after deletion returned. The CLI reported
+  `live text session interrupted: authorization failed`, but the harness only
+  timestamped an inner save-loop catch, missing the outer session rejection.
+  Independent live reads five seconds apart both returned synthetic write 159.
+  This run did not establish interruption timing.
+- Second run: stopped after 79 writes, before the planned deletion. A non-Error
+  thrown value was logged incorrectly as `undefined`. The key was then deleted
+  by cleanup. This unexplained pre-revocation interruption is an open reliability
+  gap; do not infer consistently healthy lease recovery from the passing runs.
+- Third run, with outer rejection timing and string-error logging corrected:
+  131 acknowledged writes over 81,642ms before deletion, 159 writes total.
+  Last acknowledgment was 16,236ms after deletion returned and the session
+  reported authorization interruption at 16,589ms. Independent live reads five
+  seconds apart both returned synthetic write 158. The probe exited successfully.
+
+The third run demonstrates the bounded manual-key text interruption and stable
+post-revocation document in this scenario, including sustained editing across
+multiple host leases. It does not close the preceding intermittent failure,
+prove managed-turn behavior, or cover authority outages/migration. Temporary
+provider/document directories were removed and fixture processes stopped by
+restarting only the dedicated validation project during each cleanup. No user
+document was edited. A private focused review was accepted for the exact code
+head (attempt `1561b8c2-2024-43af-8c15-b4fe0ea12351`); no review result yet.
+
+## Earlier synchronized-text interruption gap, 2026-09-27
 
 The CLI text-session follow-up now guards opening, saving, disk saving, and
 session callbacks against a received authentication denial or explicit client
