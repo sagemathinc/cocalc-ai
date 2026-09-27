@@ -110,9 +110,23 @@ export async function listProjectSummaries({
             : new Date(row.last_edited).toISOString(),
       };
       const size = Buffer.byteLength(JSON.stringify(project), "utf8");
-      if (bytes + size > MAX_PAGE_BYTES) break;
+      const count = projects.length + 1;
+      const envelopeBytes = Buffer.byteLength(
+        JSON.stringify({
+          projects: [],
+          next_offset: count < rows.length ? offset + count : null,
+        }),
+        "utf8",
+      );
+      const nextBytes = bytes + size + (projects.length > 0 ? 1 : 0);
+      if (nextBytes + envelopeBytes > MAX_PAGE_BYTES) {
+        if (projects.length === 0) {
+          throw Error("project summary exceeds page byte budget");
+        }
+        break;
+      }
       projects.push(project);
-      bytes += size;
+      bytes = nextBytes;
     }
     return {
       projects,

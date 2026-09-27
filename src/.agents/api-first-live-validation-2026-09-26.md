@@ -6,6 +6,21 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Project-list byte budget follow-up, 2026-09-27
+
+The shared summary serializer counted project objects but not array separators
+or the page envelope. A regression using 500 valid-length multibyte descriptions
+produced a 2,097,533-byte page against the 2,097,152-byte ceiling. Admission now
+counts the full serialized page, including its actual continuation offset.
+The same fixture returns 499 rows followed by the remaining row, with no loss
+or duplication. An individually oversized summary fails explicitly instead of
+returning an empty page with a nonadvancing continuation.
+
+Sixteen focused summary, ownership-routing, and HTTP policy tests pass, along
+with the server TypeScript build and diff checks. This change is not deployed
+or independently reviewed yet. It fixes response-byte accounting, not the
+remaining shared per-key/account search-rate and concurrent-read budget gates.
+
 ## Scoped HTTP deployment attempt, 2026-09-27
 
 ### Reviewed deployed HTTP probe

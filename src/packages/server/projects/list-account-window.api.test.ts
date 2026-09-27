@@ -91,3 +91,68 @@ test("exact project lookup stays inside the caller account index", async () => {
   expect(String(select?.[0])).toContain("project_id=$2::UUID");
   expect(select?.[1]).toEqual([account_id, project_id, 2, 0]);
 });
+
+test("bounds the whole UTF-8 page including its envelope and continuation", async () => {
+  const maxBytes = 2 * 1024 * 1024;
+  const row = {
+    project_id,
+    title: "",
+    description: "",
+    host_id: null,
+    state: "running",
+    last_edited: null,
+  };
+  const descriptionBytes =
+    Math.floor(maxBytes / 500) - Buffer.byteLength(JSON.stringify(row), "utf8");
+  const twoByteCharacters = descriptionBytes - 2048;
+  expect(twoByteCharacters).toBeGreaterThan(0);
+  expect(twoByteCharacters).toBeLessThan(2048);
+  row.description =
+    "\u00e9".repeat(twoByteCharacters) + "a".repeat(2048 - twoByteCharacters);
+  const rows = Array.from({ length: 500 }, (_, i) => ({
+    ...row,
+    project_id: `22222222-2222-4222-8222-${String(i).padStart(12, "0")}`,
+  }));
+  query.mockImplementation(async (sql, params) =>
+    String(sql).includes("SELECT project_id")
+      ? { rows: rows.slice(params.at(-1), params.at(-1) + params.at(-2)) }
+      : { rows: [] },
+  );
+  const first = await listProjectSummaries({ account_id, limit: 500 });
+  expect(Buffer.byteLength(JSON.stringify(first), "utf8")).toBeLessThanOrEqual(
+    maxBytes,
+  );
+  expect(first.projects).toHaveLength(499);
+  expect(first.next_offset).toBe(499);
+  const next = await listProjectSummaries({
+    account_id,
+    limit: 500,
+    offset: first.next_offset!,
+  });
+  expect(next.projects).toEqual(rows.slice(499));
+  expect(next.next_offset).toBeNull();
+  expect([...first.projects, ...next.projects]).toEqual(rows);
+});
+
+test("rejects an oversized summary instead of returning a nonadvancing page", async () => {
+  query.mockImplementation(async (sql) =>
+    String(sql).includes("SELECT project_id")
+      ? {
+          rows: [
+            {
+              project_id,
+              title: "",
+              description: "",
+              host_id: null,
+              state: "x".repeat(2 * 1024 * 1024),
+              last_edited: null,
+            },
+          ],
+        }
+      : { rows: [] },
+  );
+  await expect(listProjectSummaries({ account_id })).rejects.toThrow(
+    "project summary exceeds page byte budget",
+  );
+  expect(release).toHaveBeenCalledTimes(1);
+});
