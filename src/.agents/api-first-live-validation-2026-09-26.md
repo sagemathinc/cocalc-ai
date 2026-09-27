@@ -661,6 +661,46 @@ pass. This is component evidence, not a deployed interactive-input success.
 The project runtime and CLI both need rebuilding/upgrading before repeating the
 real two-prompt probe and testing revocation while a callback is pending.
 
+### Input recovery deployed: two-prompt live pass
+
+Project and tools builds at `836ac11985fcf5214ab026bb760036a54b42677a`
+completed, and all three project/amd64-tools/arm64-tools archives passed
+`xz --test`. Host3 project upgrade `02a86265-bc03-4428-9123-67a5c667a8d0`
+installed version `1790485877012`; tools upgrade
+`b3cad4c7-8ab9-44a3-8bb3-7999c1d8c72b` installed `1790485950326`.
+Disposable-project restart `54da09ee-2574-441c-a1d3-3a4746cf5a39` succeeded.
+Inside the running project, build identity was
+`20260927T051106Z-836ac11985fc`, with CLI SHA256
+`bdb14be84fdd083bbe963738fefd8308ca3ab4b938ebd7bd9e0eebeabd1e3d53`.
+No other host was upgraded.
+
+The previously failing two-prompt fixture passed with key 100. Run
+`cli-mujd87ji-aj0c89` received its first prompt at 2,626 ms and its second
+at 38,162 ms, with exactly two callback invocations. Both `before=42` and
+`after=42` were observed; the run completed in 40,331 ms. No execution retry
+was used. Project restart/private-directory cleanup completed and key 100 was
+deleted. This supersedes the earlier live input-recovery failure for this
+specific case; pending-input revocation and other acceptance cases remain
+separate tests.
+
+### Revocation while notebook input is pending: live pass
+
+Key 101 ran a Python cell that prints a marker and waits for input. Its callback
+was observed at `1790486278921` ms UTC, then deliberately waited 45 seconds
+before returning the synthetic answer `42`. Key deletion completed at
+`1790486279471`. The last delivered output was at `1790486278959` (512 ms
+before deletion); `JUPYTER_RUN_RECOVERY_FAILED` was reported at
+`1790486301007`, 21,536 ms after deletion. The test's 30-second interruption
+and output-delivery assertions passed.
+
+After waiting until at least 50 seconds after deletion, a separate authorized
+CLI notebook inspection found no `revocation-after=42` output. This observation
+covers the delayed-answer window without using the revoked key to inspect the
+kernel. The probe then completed project restart and private-directory cleanup;
+the key was already deleted. This is one manual-key pending-input case, not
+proof of all cancellation races, managed lifecycle behavior, or clustered RPC
+interest withdrawal.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
