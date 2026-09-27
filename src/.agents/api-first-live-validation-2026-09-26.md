@@ -28,6 +28,33 @@ An independent review was requested for this exact head and its accumulated
 transport changes. Delivery was accepted and saved (attempt
 `41779c61-3050-48fe-af21-ccfada0b13aa`); this is not a completed review or approval.
 
+### Deployable bundle checkpoint (not deployed)
+
+`pnpm dev:hub:build` completed with exit status 0 at
+`e4082b57bfd70e11ea229430aa46b15ace311859` (documentation-only follow-up to
+the code checkpoint above). It built the production frontend, workspace,
+project-host and project runtime bundles, CLI, and amd64/arm64 tools archives.
+The frontend emitted asset/entrypoint size warnings, not compilation errors.
+The tracked checkout remained clean. No hubs or projects were restarted and no
+host upgrade was requested.
+
+Project-host build identity: `20260927T012318Z-e4082b57bfd7`.
+Project runtime build identity: `20260927T012343Z-e4082b57bfd7`.
+All four archives passed `xz --test`. SHA-256 hashes (paths relative to `src`):
+
+| Artifact                                          | SHA-256                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `packages/project-host/build/bundle-linux.tar.xz` | `29d8e71e3793fcf59426eac7baf62d6fbb4f08bf2953c1f19609d46ea3fc5d9d` |
+| `packages/project/build/bundle-linux.tar.xz`      | `da88aca5751921df7bc6277af8e235d2cc9a0e65099f9fd44364598ed1ecbe65` |
+| `packages/project/build/tools-linux-amd64.tar.xz` | `fcca35a5410a18026f42bc9bd97d505f84c78d0f3a4712f0a88e5a099c76a277` |
+| `packages/project/build/tools-linux-arm64.tar.xz` | `3350222ebd2b08cf6a741170f4454a0815b816a91f1e47a9195af9a12e5fbf2d` |
+
+The CLI bundle `packages/cli/build/bundle/index.js` hashes to
+`997caa25f222e04a26a6d8e706d366a93be5f7700336b95cf47c8b3d7018ba0c`.
+Extracting `bin/cocalc-cli.js` from each tools archive produced that same hash.
+These identities support subsequent installed-version checks; archive integrity
+and byte equality do not establish live API authorization or workflow parity.
+
 ## Build and rollout
 
 - `pnpm dev:hub:build` passed, including the workspace build, project-host and
