@@ -42,4 +42,24 @@ describe("app redirect routes", () => {
     const redirected = new URL(`http://host${location}`);
     expect(redirected.searchParams.get("target")).toBe("/agents/agent-123");
   });
+
+  it.each([
+    "/collaborators",
+    "/collaborators/",
+    "/collaborators/conversations",
+    "/collaborators/people",
+    "/collaborators/projects",
+    "/collaborators/conversations/project/project-1/person/person-1/resource/conversation/thread-1",
+    "/collaborators/projects/project/project-1/resource/artifact/folder%2Fitem?foo=bar&label=a%20b",
+  ])(
+    "redirects direct Collaborators URL %s into the app shell",
+    async (path) => {
+      const response = await request(path);
+      expect(response.status).toBe(302);
+      const location = response.headers.get("location");
+      expect(location).toContain("/static/app.html?target=");
+      const redirected = new URL(`http://host${location}`);
+      expect(redirected.searchParams.get("target")).toBe(path);
+    },
+  );
 });

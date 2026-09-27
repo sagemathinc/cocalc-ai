@@ -6,6 +6,11 @@ describe("routing/app", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/agents")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/agents/agent-123")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/collaborators")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/collaborators/conversations")).toBe(
+      true,
+    );
+    expect(hasHostAbsoluteRoutePrefix("/collaborators-other")).toBe(false);
     expect(hasHostAbsoluteRoutePrefix("/app-docs")).toBe(true);
     expect(
       hasHostAbsoluteRoutePrefix("/app-docs/projects/project-secrets"),
@@ -23,6 +28,7 @@ describe("routing/app", () => {
   it("exposes shared markers for base-path inference", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/app-docs");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/collaborators");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/auth");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/lang");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/redeem");
