@@ -1,4 +1,20 @@
 import type { ApiProjectSummaryPage } from "@cocalc/conat/hub/api/projects";
+import type { Client } from "@cocalc/conat/core/client";
+
+export function reconnectApiKeyProjectHostAfterLease(
+  client: Client,
+  invalidateToken: () => void,
+): void {
+  const disconnected = (reason: string) => {
+    if (reason !== "io server disconnect" || client.state === "closed") return;
+    // Socket.IO does not reconnect a server-disconnected namespace. A new
+    // handshake must obtain current authority, never reuse the expired lease.
+    invalidateToken();
+    client.conn.connect();
+  };
+  client.conn.on("disconnect", disconnected);
+  client.once("closed", () => client.conn.off("disconnect", disconnected));
+}
 
 export async function callHubWithApiKey<T>({
   apiBaseUrl,

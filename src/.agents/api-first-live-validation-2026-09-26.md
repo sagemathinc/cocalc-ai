@@ -447,6 +447,26 @@ from the bounded replay request itself; increasing timeouts alone is not proof
 of a correct recovery lifecycle. Interactive stdin remains separately unproven:
 the kernel control path still sends its request through the original run socket.
 
+### Scoped CLI lease reconnection (not deployed)
+
+The host ends expired authorization leases with an explicit server disconnect.
+Socket.IO does not automatically reconnect that namespace, even when ordinary
+transport reconnection is enabled. The previous Jupyter recovery fixture
+manually called `connect()` before reading replay, unlike the actual CLI.
+
+Scoped API-key project-host connections now handle only that server-disconnect
+reason by invalidating the cached child token and initiating a new handshake.
+The existing issuer rechecks parent authority. This does not reuse the old
+lease, broaden scope, retry a command, or attach an old logical socket to a new
+reply prefix. Ordinary transport/client disconnect behavior is unchanged, and
+closing the client removes the listener.
+
+A real broker test expires a short lease, observes fresh authentication and a
+different reply prefix, then revokes its test authority and checks that the next
+handshake is rejected. Focused coverage also verifies disconnect-reason
+selection and explicit-close cleanup. This addresses the transport mismatch;
+installed notebook recovery still requires a new live test.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

@@ -85,6 +85,7 @@ import { isProjectScopedRemoteForProject } from "./core/remote-scope";
 import {
   callHubWithApiKey,
   getProjectHostAccessWithApiKey,
+  reconnectApiKeyProjectHostAfterLease,
 } from "./core/api-key-hub";
 import {
   apiKeyForProject,
@@ -2312,6 +2313,11 @@ async function getOrCreateRoutedProjectHostClient(
       invalidateProjectHostAuthToken(state);
     }
   });
+  if (apiKey) {
+    reconnectApiKeyProjectHostAfterLease(routed, () =>
+      invalidateProjectHostAuthToken(state),
+    );
+  }
   ctx.routedProjectHostClients[cacheKey] = state;
 
   const signInTimeoutMs = Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
