@@ -242,6 +242,23 @@ not update that running checkout. The PR remains a draft for review.
   Room replacement tests cover actor-bound receipts, strict destination checks,
   lost acknowledgments, stale requests, retired identities and rehome. The new
   owner-side state expands the portable project inventory to thirteen tables.
+- Checkpoint `600c0c32aa` also passes a fresh full development build in a separate
+  browser checkout. The refreshed browser sequence passes 20 recorded checks
+  with zero page errors: project pins, sharing, early-dialog focus, mobile tools,
+  and room-replacement confirmation/cancellation in light/dark at 1440px/320px;
+  private draft preservation across navigation, reference insertion and reload;
+  and an actual absent-room replacement in the owned Lite fixture. The new
+  discussion accepts a human message and survives reload. Restoring the retired
+  source file preserves its bytes but does not revive the old conversation link,
+  while the new room remains usable. The first replacement run stopped on an
+  incorrect test selector after a successful send; the corrected full sequence
+  and an independent fresh-browser continuation both pass. These checks do not
+  replace the deployment-level multiuser acceptance listed below. Owned test
+  services were stopped afterward; the developer's lite1b runtime was untouched.
+- GitHub Actions run `36337845319` passes every lane at `600c0c32aa`: build,
+  static/dependency checks, frontend, both server shards, backend/database and
+  the remaining packages including Essential bundle budgets. The follow-up
+  validation record is documentation-only; the tested implementation is unchanged.
 
 ### Remaining acceptance and UX iteration
 
