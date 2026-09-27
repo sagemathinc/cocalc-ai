@@ -104,6 +104,9 @@ describe("project container environment", () => {
     });
 
     expect(env.COCALC_SITE_URL).toBe("https://staging.cocalc.ai");
+    expect(env.COCALC_API_RELAY).toBe("1");
+    expect(env.COCALC_API_RELAY_HUB_URL).toBe("https://staging.cocalc.ai");
+    expect(env.CONAT_SERVER).toContain("host.containers.internal");
   });
 
   it("allows project debug logging to be explicitly enabled by the host", async () => {

@@ -4,6 +4,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { withArtifactCatalog } from "./artifact-catalog";
+import {
+  deleteRedundantSnapshotHome,
+  preserveSnapshotHistory,
+} from "./snapshot-restore-history";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1162,57 +1166,6 @@ async function swapProjectHome({
     },
   });
   return { oldHomePath };
-}
-
-async function rollbackProjectHomeSwap({
-  project_id,
-  oldHomePath,
-}: {
-  project_id: string;
-  oldHomePath: string;
-}): Promise<void> {
-  const home = projectMountpoint(project_id);
-  if (await exists(home)) {
-    const failedHomePath = join(
-      snapshotRestoreRoot(),
-      `${volName(project_id)}.restore-failed.${randomUUID()}`,
-    );
-    await sudo({ command: "mv", args: [home, failedHomePath] });
-    await deleteSubvolumeTree(failedHomePath).catch(() => {});
-  }
-  if (await exists(oldHomePath)) {
-    await sudo({ command: "mv", args: [oldHomePath, home] });
-    await recordManagedProjectVolume({
-      project_id,
-      path: home,
-      force: true,
-    });
-  }
-}
-
-async function createSafetySnapshotFromPath({
-  snapshotPath,
-  project_id,
-  snapshot,
-}: {
-  snapshotPath: string;
-  project_id: string;
-  snapshot: string;
-}): Promise<void> {
-  snapshot = assertValidSnapshotName(snapshot);
-  if (!(await exists(snapshotPath))) return;
-  const home = projectMountpoint(project_id);
-  const destDir = join(home, ".snapshots");
-  const dest = join(destDir, snapshot);
-  await sudo({ command: "mkdir", args: ["-p", destDir] });
-  if (await exists(dest)) {
-    throw new Error(`snapshot already exists after restore: ${snapshot}`);
-  }
-  await btrfs({
-    args: ["subvolume", "snapshot", "-r", snapshotPath, dest],
-    err_on_exit: true,
-    verbose: false,
-  });
 }
 
 export async function getVolume(project_id: string, scratch?: boolean) {
@@ -3233,6 +3186,7 @@ async function restoreSnapshot({
   const stagedRootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
+  const copiedSnapshots: string[] = [];
   try {
     if (mode === "rootfs") {
       await restoreSnapshotRootfs({
@@ -3251,37 +3205,48 @@ async function restoreSnapshot({
       });
     }
 
+    await preserveSnapshotHistory({
+      home,
+      replacement: staged.path,
+      copied: copiedSnapshots,
+    });
+    if (
+      safety_snapshot_name &&
+      !copiedSnapshots.includes(safety_snapshot_name)
+    ) {
+      throw new Error(`safety snapshot is missing: ${safety_snapshot_name}`);
+    }
     ({ oldHomePath } = await swapProjectHome({
       project_id,
       replacementPath: staged.path,
     }));
     cleanupStagedClone = false;
-
-    try {
-      if (oldHomePath && safety_snapshot_name) {
-        await createSafetySnapshotFromPath({
-          project_id,
-          snapshotPath: join(oldHomePath, ".snapshots", safety_snapshot_name),
-          snapshot: safety_snapshot_name,
-        });
-      }
-    } catch (err) {
-      if (oldHomePath) {
-        await rollbackProjectHomeSwap({
-          project_id,
-          oldHomePath,
-        }).catch(() => {});
-      }
-      throw err;
-    }
   } finally {
     if (cleanupStagedClone) {
-      await deleteSubvolumeTree(staged.path).catch(() => {});
+      await deleteRedundantSnapshotHome({
+        home: staged.path,
+        copied: copiedSnapshots,
+      }).catch((err) => {
+        logger.warn("snapshot restore staging cleanup failed", {
+          path: staged.path,
+          err: `${err}`,
+        });
+      });
     }
   }
 
   if (oldHomePath) {
-    await deleteSubvolumeTree(oldHomePath);
+    await deleteRedundantSnapshotHome({
+      home: oldHomePath,
+      copied: copiedSnapshots,
+    }).catch((err) => {
+      // Restore committed successfully; leave redundant history for cleanup
+      // rather than reporting the completed restore as failed.
+      logger.warn("snapshot restore retired HOME cleanup failed", {
+        path: oldHomePath,
+        err: `${err}`,
+      });
+    });
   }
   invalidateProjectFsServer(project_id);
   void touchProjectLastEdited(project_id, "restore-snapshot");

@@ -69,7 +69,12 @@ export function reconcileAvailableSubagentEvents(
   return reconcileSubagentEvents(events, activeThreadIds);
 }
 
-export type AttachedSteerState = "sending" | "sent" | "queued" | "not-sent";
+export type AttachedSteerState =
+  | "saved"
+  | "sending"
+  | "sent"
+  | "queued"
+  | "not-sent";
 
 export interface AttachedSteerMessage {
   messageId: string;
@@ -81,7 +86,16 @@ export interface AttachedSteerMessage {
 
 function renderSteerStatus(state: AttachedSteerState, text: string) {
   const agentDirection = agentMessageDirectionFromMarkdown(text);
-  if (agentDirection === "incoming") {
+  if (state === "saved") {
+    return {
+      label: "Message saved; receipt by Codex unconfirmed",
+      borderColor: UI_COLORS.border,
+      background: UI_COLORS.surface,
+      pillBackground: UI_COLORS.surface,
+      pillColor: UI_COLORS.secondary,
+    };
+  }
+  if (agentDirection === "incoming" && state === "sent") {
     return {
       label: "Agent guidance received",
       borderColor: UI_COLORS.infoBg,
@@ -90,7 +104,7 @@ function renderSteerStatus(state: AttachedSteerState, text: string) {
       pillColor: UI_COLORS.info,
     };
   }
-  if (agentDirection === "outgoing") {
+  if (agentDirection === "outgoing" && state === "sent") {
     return {
       label: "Agent guidance sent",
       borderColor: UI_COLORS.successBg,
@@ -324,6 +338,13 @@ interface AgentMessageStatusProps {
   activityLiveStatus?: CodexLiveLogStatus;
   activeDescendantThreadIds?: readonly string[];
   backgroundTerminalProcesses?: number;
+  activityToggle?: {
+    expanded: boolean;
+    label: string;
+    loading: boolean;
+    disabled: boolean;
+    onToggle: () => void;
+  };
 }
 
 interface AgentActivityChipProps {
@@ -557,6 +578,7 @@ export function AgentMessageStatus({
   activityLiveStatus,
   activeDescendantThreadIds,
   backgroundTerminalProcesses = 0,
+  activityToggle,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [activitySize, setActivitySize0] = useState<number>(
@@ -799,6 +821,19 @@ export function AgentMessageStatus({
           liveStatus={activityLiveStatus}
           activeSubagents={activeSubagents}
         />
+        {activityToggle && (
+          <Button
+            size="small"
+            type="text"
+            style={{ color: UI_COLORS.muted }}
+            aria-expanded={activityToggle.expanded}
+            loading={activityToggle.loading}
+            disabled={activityToggle.disabled}
+            onClick={activityToggle.onToggle}
+          >
+            {activityToggle.label}
+          </Button>
+        )}
         {(generating || outstandingWork > 0) && onInterrupt ? (
           <Button
             size="small"
@@ -834,8 +869,12 @@ export function AgentMessageStatus({
           · AI usage may continue
         </div>
       ) : null}
-      <AttachedSteerStatusList attachedSteers={attachedSteers} />
-      <PeerMessageList events={peerMessages} />
+      {(!activityToggle || activityToggle.expanded) && (
+        <>
+          <AttachedSteerStatusList attachedSteers={attachedSteers} />
+          <PeerMessageList events={peerMessages} />
+        </>
+      )}
 
       <Drawer
         title={

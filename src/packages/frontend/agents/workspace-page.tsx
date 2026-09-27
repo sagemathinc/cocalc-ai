@@ -179,6 +179,7 @@ import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
+import { useRetainedWorkspaces } from "./use-retained-workspaces";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
 import { OrganizationSaveAlert } from "./organization-save-alert";
@@ -3131,9 +3132,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [agentSidebarHidden, setAgentSidebarHidden] = useState(
     initialAgentSidebarHidden,
   );
-  const [mountedWorkspaces, setMountedWorkspaces] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
@@ -3194,6 +3192,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
+  const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
+    useRetainedWorkspaces(
+      active && !libraryOpen && !creating && selected
+        ? agentWorkspaceKey(selected)
+        : undefined,
+    );
   useEffect(() => {
     if (!active) return;
     set_window_title(
@@ -3239,12 +3243,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   useEffect(() => {
     if (!selected || libraryOpen || !active) return;
     const workspace = agentWorkspaceKey(selected);
-    setMountedWorkspaces((old) => {
-      if (old.has(workspace)) return old;
-      const next = new Set(old);
-      next.add(workspace);
-      return next;
-    });
     setWorkspaceAgentIds((old) => {
       if (old.get(workspace) === selected.endpoint.agent_id) return old;
       const next = new Map(old);
@@ -3286,12 +3284,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function mountAgent(agent: NamedAgent) {
     const workspace = agentWorkspaceKey(agent);
-    setMountedWorkspaces((old) => {
-      if (old.has(workspace)) return old;
-      const next = new Set(old);
-      next.add(workspace);
-      return next;
-    });
+    mountWorkspace(workspace);
     setWorkspaceAgentIds((old) => {
       if (old.get(workspace) === agent.endpoint.agent_id) return old;
       const next = new Map(old);
@@ -3620,20 +3613,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           const nextAgent = agents.find(
             ({ endpoint }) => endpoint.agent_id !== agent.endpoint.agent_id,
           );
-          setMountedWorkspaces((old) => {
-            if (
-              agents.some(
-                (candidate) =>
-                  candidate.endpoint.agent_id !== agent.endpoint.agent_id &&
-                  agentWorkspaceKey(candidate) === workspace,
-              )
-            ) {
-              return old;
-            }
-            const next = new Set(old);
-            next.delete(workspace);
-            return next;
-          });
+          if (
+            !agents.some(
+              (candidate) =>
+                candidate.endpoint.agent_id !== agent.endpoint.agent_id &&
+                agentWorkspaceKey(candidate) === workspace,
+            )
+          ) {
+            unmountWorkspace(workspace);
+          }
           if (selected?.endpoint.agent_id === agent.endpoint.agent_id) {
             if (nextAgent) {
               mountAgent(nextAgent);
@@ -4432,7 +4420,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               </Empty>
             ) : (
               <>
-                {[...mountedWorkspaces].map((workspace) => {
+                {[...mountedWorkspaces.keys()].map((workspace) => {
                   const workspaceAgents = agents.filter(
                     (agent) => agentWorkspaceKey(agent) === workspace,
                   );
@@ -4475,11 +4463,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       networks={networks}
                       onEditNetworkTags={setNetworkTagsAgent}
                       onClose={() => {
-                        setMountedWorkspaces((old) => {
-                          const next = new Set(old);
-                          next.delete(workspace);
-                          return next;
-                        });
+                        unmountWorkspace(workspace);
                         if (isNarrow) setMobileList(true);
                       }}
                     />

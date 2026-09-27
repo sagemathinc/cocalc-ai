@@ -8,7 +8,7 @@ export { copyTextToClipboard } from "./copy-to-clipboard-util";
 
 interface Props {
   style?: CSSProperties;
-  value?: string;
+  value?: string | (() => string);
   size?;
   noText?: boolean;
   block?: true;
@@ -29,9 +29,8 @@ export default function CopyButton({
   useEffect(() => {
     setCopied(false);
   }, [value]);
-  const text = value ?? "";
-
   const copy = async () => {
+    const text = (typeof value === "function" ? value() : value) ?? "";
     if (!text) return;
     const ok = await copyTextToClipboard({ text, markdown });
     if (ok) {

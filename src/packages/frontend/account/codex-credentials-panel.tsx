@@ -506,10 +506,16 @@ function CodexCredentialsPanelBody({
         let keyStatus: any = {};
 
         if (lite) {
-          payment =
-            await webapp_client.conat_client.hub.system.getCodexPaymentSource({
+          [payment, list] = await Promise.all([
+            webapp_client.conat_client.hub.system.getCodexPaymentSource({
               project_id,
-            });
+            }),
+            webapp_client.conat_client.hub.system.listExternalCredentials({
+              provider: "openai",
+              kind: "codex-subscription-auth-json",
+              scope: "account",
+            }),
+          ]);
         } else {
           const systemApi: any = webapp_client.conat_client.hub.system as any;
           const result = await Promise.all([
@@ -1186,9 +1192,11 @@ function CodexCredentialsPanelBody({
       const content = await file.text();
       const subscriptions = paymentSource?.subscriptions ?? [];
       const targetCredentialId =
-        credentialMutationTarget?.credentialId ??
-        paymentSource?.credentialId ??
-        (subscriptions.length === 1 ? subscriptions[0].id : undefined);
+        credentialMutationTarget?.create === true
+          ? undefined
+          : (credentialMutationTarget?.credentialId ??
+            paymentSource?.credentialId ??
+            (subscriptions.length === 1 ? subscriptions[0].id : undefined));
       const targetCreate =
         credentialMutationTarget?.create ??
         (!targetCredentialId && !subscriptions.length);
@@ -1529,6 +1537,7 @@ function CodexCredentialsPanelBody({
                 </Space>
                 <input
                   ref={authFileInputRef}
+                  aria-label="ChatGPT auth.json file"
                   type="file"
                   accept="application/json,.json"
                   style={{ display: "none" }}
@@ -1839,36 +1848,33 @@ function CodexCredentialsPanelBody({
                   ),
                 },
               ]),
-          ...(lite
-            ? []
-            : [
-                {
-                  key: "credentials",
-                  label: `Codex subscription credentials (${credentials.length})`,
-                  children: (
-                    <Table
-                      rowKey="id"
-                      size="small"
-                      dataSource={orderedCredentials}
-                      columns={columns as any}
-                      pagination={false}
-                      locale={{
-                        emptyText: "No saved subscription credentials.",
-                      }}
-                      footer={() => (
-                        <Button
-                          size="small"
-                          onClick={() => void startDeviceAuth(undefined, true)}
-                          loading={deviceAuthActionPending}
-                          disabled={deviceAuth?.state === "pending"}
-                        >
-                          Add
-                        </Button>
-                      )}
-                    />
-                  ),
-                },
-              ]),
+          {
+            key: "credentials",
+            label: `Codex subscription credentials (${credentials.length})`,
+            children: (
+              <Table
+                rowKey="id"
+                size="small"
+                dataSource={orderedCredentials}
+                columns={columns as any}
+                pagination={false}
+                scroll={{ x: true }}
+                locale={{
+                  emptyText: "No saved subscription credentials.",
+                }}
+                footer={() => (
+                  <Button
+                    size="small"
+                    onClick={() => void startDeviceAuth(undefined, true)}
+                    loading={deviceAuthActionPending}
+                    disabled={deviceAuth?.state === "pending"}
+                  >
+                    Add
+                  </Button>
+                )}
+              />
+            ),
+          },
         ]}
       />
       <FreshAuthModal {...freshAuthModalProps} />

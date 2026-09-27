@@ -1,5 +1,9 @@
 export {};
 
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  assertClusterAccountTrustedForProductAccess: jest.fn(async () => undefined),
+}));
+
 let queryMock: jest.Mock;
 let getProjectMock: jest.Mock;
 let createLroMock: jest.Mock;
@@ -25,6 +29,12 @@ let getMembershipUsageStatusForAccountMock: jest.Mock;
 let resolveProjectBackupRepoAssignmentMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
+
+// These tests isolate LRO orchestration, independent of host placement.
+jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
+  isWorkspaceProjectRuntime: () => true,
+  assertProjectRuntimeCapability: jest.fn(),
+}));
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {

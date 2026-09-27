@@ -3,7 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -67,6 +74,7 @@ const record: AcpAttentionRecord = {
 describe("Codex fresh-auth attention", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    sessionStorage.clear();
     jest
       .mocked(webapp_client.conat_client.attentionAcp)
       .mockImplementation(async (request: any) => ({
@@ -136,6 +144,7 @@ describe("Codex question attention", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    sessionStorage.clear();
     jest
       .mocked(webapp_client.conat_client.attentionAcp)
       .mockImplementation(async (request: any) => ({
@@ -144,6 +153,235 @@ describe("Codex question attention", () => {
           ? { records: [questionRecord] }
           : { state: "pending", record: questionRecord }),
       }));
+  });
+
+  it("keeps the submitted answer beside its question with keyboard focus and no false receipt", async () => {
+    const user = userEvent.setup();
+    const question = {
+      ...questionRecord,
+      source_kind: "codex_async_question" as const,
+      is_blocking: false,
+    };
+    let saved = question;
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => {
+        if (request.action === "respond") {
+          saved = {
+            ...question,
+            response_submitted_at: Date.now(),
+            updated_at: question.updated_at + 1,
+          };
+          return { ok: true, record: saved };
+        }
+        return { ok: true, records: [saved] };
+      });
+    const view = render(<CodexAttentionCard initialRecord={question} />);
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("radio", { name: "EU" })).toHaveFocus();
+    await user.keyboard(" ");
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Send response" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(
+      "Your response is saved. Receipt by the agent is not confirmed.",
+    );
+    expect(status).toHaveFocus();
+    const response = screen.getByRole("region", {
+      name: "Response for Region",
+    });
+    expect(within(response).getByText("Which region?")).toBeInTheDocument();
+    expect(within(response).getByText("EU")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Send response" }),
+    ).not.toBeInTheDocument();
+
+    view.rerender(
+      <CodexAttentionCard
+        initialRecord={{
+          ...saved,
+          state: "answered",
+          updated_at: saved.updated_at + 1,
+          resolution_reason: "Answer queued as a new Codex message",
+        }}
+      />,
+    );
+    expect(status).toHaveTextContent("Receipt by the agent is not confirmed");
+    expect(response).toHaveTextContent("EU");
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Dismiss" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("button", { name: "Show question" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your response is saved",
+    );
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("region", { name: "Response for Region" }),
+    ).toHaveTextContent("EU");
+  });
+
+  it.each(["Codex", "ACP"])(
+    "requires explicit %s synchronous acceptance before claiming receipt",
+    (runtime) => {
+      const submitted = {
+        ...questionRecord,
+        state: "answered" as const,
+        response_submitted_at: 10,
+      };
+      const view = render(<CodexAttentionCard initialRecord={submitted} />);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Receipt by the agent is not confirmed",
+      );
+      view.rerender(
+        <CodexAttentionCard
+          initialRecord={{
+            ...submitted,
+            updated_at: submitted.updated_at + 1,
+            resolution_reason: `${runtime} accepted the response`,
+          }}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        `${runtime === "ACP" ? "The agent" : "Codex"} accepted your response.`,
+      );
+      expect(
+        screen.getByText(
+          `Received by ${runtime === "ACP" ? "agent" : "Codex"}`,
+        ),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("restores a locally submitted answer after remount and exposes long text by keyboard", async () => {
+    const user = userEvent.setup();
+    const text = "Detailed answer. ".repeat(100);
+    render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          state: "answered",
+          response_submitted_at: 10,
+        }}
+        draft={{
+          selected: {},
+          other: {},
+          submitted: { answers: { region: [text] }, declined: false },
+        }}
+      />,
+    );
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Show question" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Show full response" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("region", { name: "Response for Region" }),
+    ).toHaveTextContent(text.trim());
+    expect(
+      screen.getByRole("button", { name: "Hide full response" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("region", { name: "Response for Region" }),
+    ).not.toHaveTextContent(text.trim());
+  });
+
+  it("keeps a saved answer visible when delivery fails and permits retry", async () => {
+    const user = userEvent.setup();
+    const stale = {
+      ...questionRecord,
+      state: "stale" as const,
+      response_submitted_at: 10,
+      updated_at: questionRecord.updated_at + 1,
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) =>
+        request.action === "respond"
+          ? { ok: false, record: stale, error: "delivery failed" }
+          : { ok: true, records: [] },
+      );
+    render(<CodexAttentionCard initialRecord={questionRecord} />);
+    await user.click(screen.getByRole("radio", { name: "US" }));
+    await user.click(screen.getByRole("button", { name: "Send response" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "delivery failed",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "saved, but could not be delivered",
+    );
+    expect(
+      screen.getByRole("region", { name: "Response for Region" }),
+    ).toHaveTextContent("US");
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Continue with this answer" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "continue" }),
+    );
+  });
+
+  it("does not replace a submitted receipt with an older in-flight poll", async () => {
+    let finishPoll!: (value: any) => void;
+    const oldPoll = new Promise<any>((resolve) => {
+      finishPoll = resolve;
+    });
+    const saved = {
+      ...questionRecord,
+      state: "answered" as const,
+      response_submitted_at: 10,
+      updated_at: questionRecord.updated_at + 1,
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) =>
+        request.action === "list"
+          ? oldPoll
+          : request.action === "respond"
+            ? { ok: true, record: saved }
+            : { ok: true },
+      );
+    const user = userEvent.setup();
+    render(<CodexAttentionCard initialRecord={questionRecord} />);
+    await user.click(screen.getByRole("radio", { name: "EU" }));
+    await user.click(screen.getByRole("button", { name: "Send response" }));
+    await act(async () => {
+      finishPoll({ ok: true, records: [questionRecord] });
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your response is saved",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Send response" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not present a failed submission as saved or discard its draft", async () => {
+    const user = userEvent.setup();
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) =>
+        request.action === "respond"
+          ? { ok: false, error: "not accepted" }
+          : { ok: true },
+      );
+    render(<CodexAttentionCard initialRecord={questionRecord} />);
+    await user.click(screen.getByRole("radio", { name: "EU" }));
+    await user.click(screen.getByRole("button", { name: "Send response" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not accepted");
+    expect(screen.getByRole("radio", { name: "EU" })).toBeChecked();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("only offers custom input when the question permits it", async () => {
@@ -272,6 +510,44 @@ describe("Codex question attention", () => {
         }),
       ),
     );
+    view.unmount();
+  });
+
+  it("keeps keyboard recovery without duplicating an answer already in activity", async () => {
+    const user = userEvent.setup();
+    const record = {
+      ...questionRecord,
+      source_kind: "codex_sync_question" as const,
+      state: "stale" as const,
+      response_submitted_at: Date.now(),
+    };
+    jest.mocked(webapp_client.conat_client.attentionAcp).mockResolvedValue({
+      ok: true,
+      record: { ...record, state: "answered" },
+    });
+    const view = render(
+      <CodexAttentionCard initialRecord={record} responseInActivity />,
+    );
+    expect(
+      screen.queryByRole("region", { name: "Response for Region" }),
+    ).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "could not be delivered",
+    );
+    const retry = screen.getByRole("button", {
+      name: "Continue with this answer",
+    });
+    retry.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "continue",
+          attention_id: record.attention_id,
+        }),
+      ),
+    );
+    expect(screen.queryByText("Received by Codex")).toBeNull();
     view.unmount();
   });
 

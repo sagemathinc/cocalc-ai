@@ -1,5 +1,8 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import * as parser from "@cocalc/frontend/editors/slate/markdown-to-slate";
+import { MAX_RENDERED_TEXT_CHARS } from "../paged-text";
 import { redux } from "@cocalc/frontend/app-framework";
 import CodexActivity, {
   reconcileSubagentEvents,
@@ -57,6 +60,124 @@ test("generic harness tools appear once with their latest reported status", () =
   render(<CodexActivity expanded events={events} />);
   expect(screen.getAllByText("Read project file · completed")).toHaveLength(1);
   expect(screen.getByText("file contents")).toBeTruthy();
+});
+
+test.each([16_384, 32_768])(
+  "terminal backtick runs of %i characters stay fenced and within the parser budget",
+  async (length) => {
+    const value = "`".repeat(length);
+    const parse = jest.spyOn(parser, "markdown_to_slate");
+    try {
+      const { container } = render(
+        <TerminalRow
+          fontSize={14}
+          entry={{
+            kind: "terminal",
+            id: "fence-budget",
+            seq: 1,
+            terminalId: "fence-budget",
+            command: "echo",
+            args: [],
+            output: value,
+            completed: true,
+          }}
+        />,
+      );
+      const next = screen.getByRole("button", { name: "Next part" });
+      const user = userEvent.setup();
+      let recovered = "";
+      for (;;) {
+        const blocks = container.querySelectorAll(
+          "pre.cocalc-slate-code-block",
+        );
+        expect(blocks).toHaveLength(2);
+        // The CodeMirror test shim abbreviates DOM text. Reconstruct from the
+        // real Markdown parser's input, including its balanced output fence.
+        const fenced = parse.mock.calls
+          .map(([text]) => /^(`{3,})\n([\s\S]*)\n\1$/.exec(text))
+          .filter((match) => match != null)
+          .at(-1);
+        expect(fenced).toBeDefined();
+        recovered += fenced![2];
+        if (next.hasAttribute("disabled")) break;
+        next.focus();
+        await user.keyboard("{Enter}");
+      }
+      expect(recovered).toBe(value);
+      expect(parse).toHaveBeenCalled();
+      expect(
+        parse.mock.calls.every(
+          ([text]) => text.length <= MAX_RENDERED_TEXT_CHARS,
+        ),
+      ).toBe(true);
+    } finally {
+      parse.mockRestore();
+    }
+  },
+);
+
+test("jumping to an older entry does not trap subsequent page navigation", () => {
+  const original = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = jest.fn();
+  try {
+    render(
+      <CodexActivity
+        expanded
+        jumpText="Entry 0"
+        jumpToken={1}
+        events={Array.from({ length: 205 }, (_, seq) => ({
+          type: "event" as const,
+          seq,
+          event: {
+            type: seq % 2 ? ("thinking" as const) : ("message" as const),
+            text: `Entry ${seq}`,
+          },
+        }))}
+      />,
+    );
+    expect(screen.getByText("Entry 0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Latest activity" }));
+    expect(screen.getByText("Entry 204")).toBeTruthy();
+    expect(screen.queryByText("Entry 0")).toBeNull();
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original;
+  }
+});
+
+test("activity is a bounded window even as a mounted log grows", async () => {
+  const makeEvents = (length: number) =>
+    Array.from({ length }, (_, seq) => ({
+      type: "event" as const,
+      seq,
+      event: {
+        type: seq % 2 ? ("thinking" as const) : ("message" as const),
+        text: `Entry ${seq}`,
+      },
+    }));
+  const { container, rerender } = render(
+    <CodexActivity expanded events={makeEvents(205)} />,
+  );
+  const rows = () =>
+    container.querySelectorAll("[data-codex-activity-entry-index]");
+  expect(rows()).toHaveLength(100);
+  expect(screen.queryByText("Entry 0")).toBeNull();
+  expect(screen.getByText("Entry 204")).toBeTruthy();
+  const user = userEvent.setup();
+  const earlier = screen.getByRole("button", { name: "Earlier activity" });
+  earlier.focus();
+  await user.keyboard("{Enter}");
+  expect(earlier).toHaveFocus();
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 5")).toBeTruthy();
+  rerender(<CodexActivity expanded events={makeEvents(220)} />);
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 5")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Latest activity" }));
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 219")).toBeTruthy();
+  rerender(<CodexActivity expanded events={makeEvents(230)} />);
+  expect(rows()).toHaveLength(100);
+  expect(screen.getByText("Entry 229")).toBeTruthy();
 });
 
 test("an earlier diff link keeps its recorded worktree when later terminal events arrive", async () => {

@@ -4,11 +4,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 
 import getLogger from "@cocalc/backend/logger";
 import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
-import {
-  codexAuthJsonToAppServerLogin,
-  getCodexAppServerAccountStatus,
-  type CodexAppServerLoginHint,
-} from "@cocalc/ai/acp";
+import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import type {
@@ -24,7 +20,6 @@ import type {
   AccountProjectIndexRebuildResult,
   BayInfo,
   BayOwnershipBackfillResult,
-  CodexPaymentSourceInfo,
   CodexUsageStatusInfo,
   HostBayLocation,
   ProjectBayLocation,
@@ -72,7 +67,6 @@ import {
 } from "@cocalc/util/misc";
 import * as misc from "@cocalc/util/misc";
 import { join } from "node:path";
-import { readFile, stat } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { setSshUi, ssh } from "./ssh";
@@ -89,7 +83,6 @@ import {
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
-import { getLiteServerSettings } from "./settings";
 import {
   deleteChatStoreData,
   getChatStoreStats,
@@ -110,11 +103,17 @@ import type { ConnectionStats } from "@cocalc/conat/core/types";
 import {
   cancelLiteCodexDeviceAuth,
   getLiteCodexDeviceAuthStatus,
-  resolveLiteCodexHome,
   startLiteCodexDeviceAuth,
   uploadLiteSubscriptionAuthFile,
   verifyLiteCodexDeviceAuthStatus,
 } from "./codex-auth";
+import {
+  listLiteCredentials,
+  renameLiteCredential,
+  revokeLiteCredential,
+} from "./codex-credentials";
+import { getLiteCodexPaymentSource as getCodexPaymentSource } from "./codex-payment";
+import { installLiteCodexSpawner } from "./codex-runtime";
 import { getRow, listRows, upsertRow } from "./sqlite/database";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import {
@@ -167,24 +166,6 @@ function syncPurgeHistoryWithExplicitClient(
     ...opts,
     client: getLiteConatClient(),
   });
-}
-
-function parseMap(raw?: string): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    const out: Record<string, string> = {};
-    for (const key in parsed) {
-      const val = parsed[key];
-      if (typeof val === "string" && val.trim()) {
-        out[key] = val.trim();
-      }
-    }
-    return out;
-  } catch {
-    return {};
-  }
 }
 
 function getLiteBayId(): string {
@@ -567,12 +548,16 @@ async function userQueryLite(opts: {
 async function codexDeviceAuthStartLite(opts: {
   account_id?: string;
   project_id?: string;
+  credential_id?: string;
+  create?: boolean;
 }) {
   const account_id = requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   return await startLiteCodexDeviceAuth({
     projectId: project_id,
     accountId: account_id,
+    credentialId: opts.credential_id,
+    create: opts.create,
   });
 }
 
@@ -582,10 +567,8 @@ async function codexDeviceAuthStartV2Lite(opts: {
   credential_id?: string;
   create?: boolean;
 }) {
-  if (opts.credential_id || opts.create !== true) {
-    throw new Error(
-      "Selecting or reconnecting multiple ChatGPT subscriptions requires a project host.",
-    );
+  if (!opts.credential_id && opts.create !== true) {
+    throw new Error("Choose Add or a subscription to reconnect.");
   }
   return await codexDeviceAuthStartLite(opts);
 }
@@ -607,6 +590,14 @@ async function codexDeviceAuthStatusLite(opts: {
   const account_id = requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   const id = `${opts.id ?? ""}`.trim();
+  const initial = getLiteCodexDeviceAuthStatus(id);
+  if (
+    !initial ||
+    initial.accountId !== account_id ||
+    initial.projectId !== project_id
+  ) {
+    throw Error("unknown device auth id");
+  }
   const status = await verifyLiteCodexDeviceAuthStatus(
     id,
     verifyLiteCodexSubscriptionAuth,
@@ -626,13 +617,18 @@ async function codexDeviceAuthStatusLite(opts: {
 
 async function verifyLiteCodexSubscriptionAuth({
   codexHome,
+  projectId,
+  accountId,
 }: {
   projectId: string;
   accountId: string;
   codexHome: string;
 }): Promise<void> {
+  installLiteCodexSpawner();
   const status = await getCodexAppServerAccountStatus({
-    appServerLogin: await getLiteSubscriptionAppServerLogin(codexHome),
+    projectId,
+    accountId,
+    codexHome,
     timeoutMs: CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS,
   });
   if (status.rateLimits) return;
@@ -667,6 +663,8 @@ async function codexUploadAuthFileLite(opts: {
   project_id?: string;
   filename?: string;
   content: string;
+  credential_id?: string;
+  create?: boolean;
 }) {
   const accountId = requireLiteAccountId(opts.account_id);
   requireLiteProjectId(opts.project_id);
@@ -675,6 +673,9 @@ async function codexUploadAuthFileLite(opts: {
   }
   const result = await uploadLiteSubscriptionAuthFile({
     content: opts.content,
+    accountId,
+    credentialId: opts.credential_id,
+    create: opts.create,
   });
   clearLiteCodexModelCatalog(accountId);
   return { ok: true as const, ...result };
@@ -688,112 +689,11 @@ async function codexUploadAuthFileV2Lite(opts: {
   credential_id?: string;
   create?: boolean;
 }) {
-  if (opts.credential_id || opts.create !== true) {
-    throw new Error(
-      "Targeted ChatGPT auth-file upload requires a project host.",
-    );
+  if (!opts.credential_id && opts.create !== true) {
+    throw new Error("Choose Add or a subscription to reconnect.");
   }
   const result = await codexUploadAuthFileLite(opts);
-  return { ...result, synced: true as const, credentialId: "lite-default" };
-}
-
-async function getLocalSubscriptionAuthRevision(
-  codexHome: string,
-): Promise<string | undefined> {
-  const authPath = join(codexHome, "auth.json");
-  try {
-    const [raw, info] = await Promise.all([
-      readFile(authPath, "utf8"),
-      stat(authPath),
-    ]);
-    if (!raw.trim()) return undefined;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
-    }
-    if (!Object.keys(parsed).length) return undefined;
-    return `${info.size}:${Math.floor(info.mtimeMs)}`;
-  } catch {
-    return undefined;
-  }
-}
-
-async function getLiteSubscriptionAppServerLogin(
-  codexHome: string,
-): Promise<CodexAppServerLoginHint | undefined> {
-  try {
-    const raw = await readFile(join(codexHome, "auth.json"), "utf8");
-    return codexAuthJsonToAppServerLogin(raw);
-  } catch {
-    return undefined;
-  }
-}
-
-function getEnvOpenAiApiKey(): string | undefined {
-  const candidates = [
-    process.env.OPENAI_API_KEY,
-    process.env.COCALC_OPENAI_API_KEY,
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY,
-  ];
-  for (const value of candidates) {
-    const trimmed = `${value ?? ""}`.trim();
-    if (trimmed) return trimmed;
-  }
-}
-
-async function getCodexPaymentSource(opts?: {
-  account_id?: string;
-  project_id?: string;
-}): Promise<CodexPaymentSourceInfo> {
-  const account_id = `${opts?.account_id ?? ACCOUNT_ID}`.trim() || ACCOUNT_ID;
-  const project_id = `${opts?.project_id ?? ""}`.trim() || undefined;
-  const codexHome = resolveLiteCodexHome();
-  const subscriptionRevision =
-    await getLocalSubscriptionAuthRevision(codexHome);
-  const hasSubscription = subscriptionRevision != null;
-
-  const projectKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
-  );
-  const hasProjectApiKey =
-    !!(project_id && projectKeys[project_id]) ||
-    !!(
-      project_id &&
-      `${process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY ?? ""}`.trim()
-    );
-  const accountKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
-  );
-  const hasAccountApiKey = !!getEnvOpenAiApiKey() || !!accountKeys[account_id];
-  const settings = getLiteServerSettings();
-  const acpMockMode = `${process.env.COCALC_ACP_MODE ?? ""}`.trim() === "mock";
-  const hasSiteApiKey =
-    acpMockMode ||
-    (!!settings?.openai_enabled &&
-      !!`${settings?.openai_api_key ?? ""}`.trim());
-
-  let source: CodexPaymentSourceInfo["source"] = "none";
-  if (hasSubscription) {
-    source = "subscription";
-  } else if (hasProjectApiKey) {
-    source = "project-api-key";
-  } else if (hasAccountApiKey) {
-    source = "account-api-key";
-  } else if (hasSiteApiKey) {
-    source = "site-api-key";
-  }
-
-  return {
-    source,
-    hasSubscription,
-    subscriptionRevision,
-    hasProjectApiKey,
-    hasAccountApiKey,
-    hasSiteApiKey,
-    // Lite always runs against a local/shared home.
-    sharedHomeMode: "always",
-    project_id,
-  };
+  return { ...result, synced: true as const };
 }
 
 async function getCodexUsageStatus(opts?: {
@@ -802,6 +702,7 @@ async function getCodexUsageStatus(opts?: {
   include_models?: boolean;
   refresh_models?: boolean;
   timeout?: number;
+  credential_id?: string;
 }): Promise<CodexUsageStatusInfo> {
   const checkedAt = new Date().toISOString();
   const paymentSource = await getCodexPaymentSource(opts);
@@ -819,12 +720,13 @@ async function getCodexUsageStatus(opts?: {
   }
   try {
     const accountId = requireLiteAccountId(opts?.account_id);
-    const codexHome = resolveLiteCodexHome();
-    const appServerLogin = await getLiteSubscriptionAppServerLogin(codexHome);
-    const subscriptionId =
-      appServerLogin?.type === "chatgptAuthTokens"
-        ? appServerLogin.chatgptAccountId
-        : undefined;
+    installLiteCodexSpawner();
+    const subscriptionId = `${paymentSource.credentialId}:${paymentSource.subscriptionRevision}`;
+    const authOptions = {
+      projectId: requireLiteProjectId(opts?.project_id),
+      accountId,
+      credentialId: paymentSource.credentialId,
+    };
     const cacheKey = subscriptionId
       ? `${accountId}\0${subscriptionId}`
       : undefined;
@@ -848,12 +750,12 @@ async function getCodexUsageStatus(opts?: {
           `${accountId}\0${subscriptionId ?? paymentSource.subscriptionRevision ?? "unknown"}\0${cacheGeneration}`,
           async () =>
             await getCodexAppServerAccountStatus({
-              appServerLogin,
+              ...authOptions,
               includeModels: true,
             }),
         )
       : await getCodexAppServerAccountStatus({
-          appServerLogin,
+          ...authOptions,
           includeModels: false,
         });
     const liveModels = status.models?.length ? status.models : undefined;
@@ -1451,6 +1353,42 @@ export const hubApi: HubApi = {
     getAccountNotificationIndexProjectionStatus:
       getAccountNotificationIndexProjectionStatusLite,
     getCodexPaymentSource,
+    listExternalCredentials: async (opts: {
+      account_id?: string;
+      provider?: string;
+      kind?: string;
+      scope?: string;
+      include_revoked?: boolean;
+    }) => {
+      const owner = requireLiteAccountId(opts.account_id);
+      if (
+        (opts.provider && opts.provider !== "openai") ||
+        (opts.kind && opts.kind !== "codex-subscription-auth-json") ||
+        (opts.scope && opts.scope !== "account")
+      )
+        return [];
+      return listLiteCredentials(owner, opts.include_revoked);
+    },
+    updateCodexSubscriptionLabel: async (opts: {
+      account_id?: string;
+      id: string;
+      label?: string;
+    }) => ({
+      updated: renameLiteCredential(
+        requireLiteAccountId(opts.account_id),
+        opts.id,
+        opts.label,
+      ),
+    }),
+    revokeExternalCredential: async (opts: {
+      account_id?: string;
+      id: string;
+    }) => {
+      const owner = requireLiteAccountId(opts.account_id);
+      const revoked = revokeLiteCredential(owner, opts.id);
+      clearLiteCodexModelCatalog(owner);
+      return { revoked };
+    },
     getCodexUsageStatus,
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,

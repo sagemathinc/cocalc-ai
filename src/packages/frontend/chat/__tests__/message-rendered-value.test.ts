@@ -46,6 +46,72 @@ describe("resolveCodexOverflowMenuLocation", () => {
 });
 
 describe("resolveLiveCodexActivityBlocks", () => {
+  it("inserts saved midturn messages into a fuller cached log without duplication", () => {
+    const saved = {
+      kind: "guidance" as const,
+      time: 200,
+      text: "My Q&A answer",
+      state: "saved" as const,
+    };
+    const cached = [
+      { kind: "agent" as const, time: 100, text: "Earlier detailed output" },
+      { kind: "agent" as const, time: 300, text: "Later detailed output" },
+    ];
+    expect(
+      resolveLiveCodexActivityBlocks({
+        cachedBlocks: cached,
+        previewBlocks: [saved],
+      }),
+    ).toEqual([cached[0], saved, cached[1]]);
+    expect(
+      resolveLiveCodexActivityBlocks({
+        cachedBlocks: [cached[0], saved, cached[1]],
+        previewBlocks: [saved],
+      }),
+    ).toEqual([cached[0], saved, cached[1]]);
+  });
+
+  it("removes stale cached projections when a row returns to standalone recovery", () => {
+    const agent = { kind: "agent" as const, time: 100, text: "Complete log" };
+    expect(
+      resolveLiveCodexActivityBlocks({
+        cachedBlocks: [
+          agent,
+          {
+            kind: "guidance",
+            time: 200,
+            text: "Saved message",
+            state: "saved",
+          },
+        ],
+        previewBlocks: [agent],
+      }),
+    ).toEqual([agent]);
+  });
+
+  it("moves a saved projection to its acknowledged delivery time without duplicating it", () => {
+    const agent = { kind: "agent" as const, time: 100, text: "Complete log" };
+    const delivered = {
+      kind: "guidance" as const,
+      time: 300,
+      text: "Saved message",
+      state: "sent" as const,
+    };
+    expect(
+      resolveLiveCodexActivityBlocks({
+        cachedBlocks: [
+          agent,
+          {
+            kind: "guidance",
+            time: 200,
+            text: "Saved message",
+            state: "saved",
+          },
+        ],
+        previewBlocks: [delivered],
+      }),
+    ).toEqual([agent, delivered]);
+  });
   it("retains cached output while both network streams are unavailable", () => {
     expect(
       resolveLiveCodexActivityBlocks({
@@ -361,6 +427,27 @@ describe("resolveInlineCodexActivityMode", () => {
 });
 
 describe("trimCompletedCachedCodexActivityBlocks", () => {
+  it("keeps commentary when the final response shares its streamed block", () => {
+    expect(
+      trimCompletedCachedCodexActivityBlocks(
+        [{ kind: "agent", text: "hello\n\ndone", time: 123 }],
+        "done",
+      ),
+    ).toEqual([{ kind: "agent", text: "hello", time: 123 }]);
+  });
+
+  it("does not remove commentary that merely mentions the final response", () => {
+    const blocks = [{ kind: "agent" as const, text: "I will say done later." }];
+    expect(trimCompletedCachedCodexActivityBlocks(blocks, "done")).toBe(blocks);
+  });
+
+  it("does not remove commentary that is only a substring of the final response", () => {
+    const blocks = [{ kind: "agent" as const, text: "hello" }];
+    expect(
+      trimCompletedCachedCodexActivityBlocks(blocks, "Said hello; done."),
+    ).toBe(blocks);
+  });
+
   it("drops the trailing cached agent block when it duplicates the final response", () => {
     expect(
       trimCompletedCachedCodexActivityBlocks(

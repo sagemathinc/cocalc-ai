@@ -42,6 +42,7 @@ interface Props {
   desc: Map<string, any>;
   resize: number;
   is_visible: boolean;
+  tab_is_visible?: boolean;
   name: string;
   onFocus?: () => void;
 }
@@ -67,7 +68,10 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   const { workspaces } = useProjectContext();
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<any>(null);
+  const terminalParentRef = useRef<HTMLElement | null>(null);
   const terminalLoadTokenRef = useRef(0);
+  const latestPropsRef = useRef(props);
+  latestPropsRef.current = props;
   const nativeTouchTapRef = useRef<NativeTouchTap | null>(null);
   const [showMobileToolbar, setShowMobileToolbar] = useState(false);
   const resize = useResizeObserver({ ref: terminalDOMRef });
@@ -84,34 +88,20 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   );
 
   useEffect(() => {
-    return delete_terminal; // clean up on unmount
-  }, []);
+    setShowMobileToolbar(false);
+    if (props.is_visible && props.tab_is_visible !== false)
+      void init_terminal();
+    return delete_terminal;
+  }, [props.is_visible, props.tab_is_visible, props.actions, props.id]);
 
   useEffect(() => {
-    if (terminalRef.current != null) {
-      terminalRef.current.is_visible = props.is_visible;
-    }
-    // We *only* init the terminal if it is visible
-    // or switches to being visible and was not initialized.
-    // See https://github.com/sagemathinc/cocalc/issues/5133
-    if (terminalRef.current != null || !props.is_visible) return;
-    void init_terminal();
-  }, [props.is_visible]);
-
-  useEffect(() => {
-    // yes, this can change!! -- see https://github.com/sagemathinc/cocalc/issues/3819
-    if (terminalRef.current == null) return;
-    delete_terminal();
-    void init_terminal();
-  }, [props.id]);
-
-  useEffect(() => {
-    if (props.is_current) {
+    if (props.is_current && ownsTerminal()) {
       terminalRef.current?.focus();
     }
   }, [props.is_current]);
 
   useEffect(() => {
+    if (!ownsTerminal()) return;
     terminalRef.current?.set_terminal_theme_override(
       workspaceRecord?.terminal_theme,
     );
@@ -123,44 +113,74 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
 
   function delete_terminal(): void {
     terminalLoadTokenRef.current += 1;
-    if (terminalRef.current == null) return; // already deleted or never created
-    terminalRef.current.element?.remove();
-    terminalRef.current.is_visible = false;
+    if (
+      terminalRef.current != null &&
+      terminalRef.current.element?.parentElement === terminalParentRef.current
+    ) {
+      terminalRef.current.element.remove();
+      terminalRef.current.is_visible = false;
+    }
+    terminalParentRef.current?.remove();
+    terminalParentRef.current = null;
     terminalRef.current = undefined;
-    setShowMobileToolbar(false);
+  }
+
+  function ownsTerminal(): boolean {
+    return (
+      latestPropsRef.current.is_visible &&
+      latestPropsRef.current.tab_is_visible !== false &&
+      terminalRef.current != null &&
+      terminalRef.current.element?.parentElement === terminalParentRef.current
+    );
   }
 
   async function init_terminal(): Promise<void> {
-    if (!props.is_visible) return;
-    const node: any = terminalDOMRef.current;
-    if (node == null) {
+    if (!props.is_visible || props.tab_is_visible === false) return;
+    const container = terminalDOMRef.current;
+    if (container == null) {
       // happens, e.g., when terminals are disabled.
       return;
     }
+    // A distinct parent per request makes stale cleanup safe even if the same
+    // view hides/reopens (or changes session) before an earlier load resolves.
+    const node = document.createElement("div");
+    node.className = "smc-vfill";
+    container.appendChild(node);
+    terminalParentRef.current = node;
     const token = ++terminalLoadTokenRef.current;
+    const isCurrent = () =>
+      isMountedRef.current &&
+      terminalLoadTokenRef.current === token &&
+      terminalDOMRef.current === container &&
+      terminalParentRef.current === node &&
+      latestPropsRef.current.is_visible &&
+      latestPropsRef.current.tab_is_visible !== false &&
+      latestPropsRef.current.id === props.id &&
+      latestPropsRef.current.actions === props.actions;
     const terminal = await props.actions._get_terminal(
       props.id,
       node,
       workspaceRecord?.terminal_theme,
+      isCurrent,
     );
-    if (
-      terminal == null ||
-      !isMountedRef.current ||
-      terminalLoadTokenRef.current !== token ||
-      terminalDOMRef.current !== node
-    ) {
-      terminal?.element?.remove();
-      if (terminal != null) {
+    if (terminal == null || !isCurrent()) {
+      // A later load/view may already own this shared terminal. Stale cleanup
+      // must not remove that view's element or mark its live terminal hidden.
+      if (terminal != null && terminal.element?.parentElement === node) {
+        terminal.element.remove();
         terminal.is_visible = false;
       }
       return;
     }
+    // Another live view may have claimed the shared terminal while we awaited.
+    // It alone may update visibility/focus. A foreground transition reclaims it.
+    if (terminal.element?.parentElement !== node) return;
     terminalRef.current = terminal;
     terminal.is_visible = true;
     setShowMobileToolbar(terminal.usesNativeTouchSelection());
     set_font_size();
     measureSize();
-    if (props.is_current) {
+    if (latestPropsRef.current.is_current) {
       terminal.focus();
     }
     $(node).off("contextmenu");
@@ -175,11 +195,16 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   }
 
   const set_font_size = throttle(() => {
-    if (terminalRef.current == null || !isMountedRef.current) {
+    if (
+      !ownsTerminal() ||
+      terminalRef.current == null ||
+      !isMountedRef.current
+    ) {
       return;
     }
-    if (terminalRef.current.getOption("fontSize") !== props.font_size) {
-      terminalRef.current.set_font_size(props.font_size);
+    const fontSize = latestPropsRef.current.font_size;
+    if (terminalRef.current.getOption("fontSize") !== fontSize) {
+      terminalRef.current.set_font_size(fontSize);
       measureSize();
     }
   }, 200);
@@ -187,21 +212,24 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   useEffect(set_font_size, [props.font_size]);
 
   function measureSize(): void {
-    if (isMountedRef.current) {
+    if (isMountedRef.current && ownsTerminal()) {
       terminalRef.current?.measureSize();
     }
   }
 
   function focusTerminal(): void {
+    if (!ownsTerminal()) return;
     props.onFocus?.();
     terminalRef.current?.focus();
   }
 
   function sendData(data: string): void {
+    if (!ownsTerminal()) return;
     terminalRef.current?.conn_write(data);
   }
 
   function pasteData(text?: string): void {
+    if (!ownsTerminal()) return;
     if (text != null) {
       set_buffer(text);
     }

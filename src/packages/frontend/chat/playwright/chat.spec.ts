@@ -104,12 +104,19 @@ async function clickSendButton(page) {
 }
 
 async function switchComposerMode(page, label: "Rich Text" | "Markdown") {
+  const trigger = page.getByRole("button", {
+    name: "Editor mode and formatting",
+  });
+  if (await trigger.isVisible()) await trigger.click();
   const button = page
-    .locator(".ant-radio-button-wrapper")
+    .locator(".ant-radio-button-wrapper:visible")
     .filter({ hasText: label })
     .first();
   await expect(button).toBeVisible();
   await button.click();
+  await expect(
+    page.getByRole("dialog", { name: "Text formatting" }),
+  ).not.toBeVisible();
 }
 
 async function expectMarkdownCaretVisible(page) {
@@ -294,25 +301,14 @@ test("composer mode: markdown keeps the caret visible while typing short multili
   await page.goto("/?mode=composer&editorMode=markdown");
   await waitForHarness(page);
 
-  await page.evaluate(() => {
-    const scroller = document.querySelector<HTMLElement>(".CodeMirror-scroll");
-    (window as any).__cmScrollTops = [];
-    scroller?.addEventListener("scroll", () => {
-      (window as any).__cmScrollTops.push(scroller.scrollTop);
-    });
-  });
-
   await typeInCodeMirror(page, "a\nb\nc\nd\ne\nf\ng\nhx kdkdkdkdk");
   await expectMarkdownCaretVisible(page);
 
-  await expect
-    .poll(async () => {
-      return await page.evaluate(() => {
-        const scrollTops = ((window as any).__cmScrollTops ?? []) as number[];
-        return Math.max(0, ...scrollTops);
-      });
-    })
-    .toBe(0);
+  // The main composer has a user-sized viewport. Scrolling is expected once
+  // its contents fill that viewport; the caret must remain reachable in it.
+  await expectComposerInput(page, "a\nb\nc\nd\ne\nf\ng\nhx kdkdkdkdk");
+  const overflow = await getMarkdownComposerOverflow(page);
+  expect(overflow?.overflow).toBeLessThanOrEqual(1);
 });
 
 test("composer mode: markdown keeps the caret visible while moving upward", async ({
@@ -718,6 +714,8 @@ test("composer editor mode: image-markdown-only shift+enter clears on repeated s
 
   await setInputRaw(page, image1);
   await expectComposerInput(page, image1);
+  // A programmatically injected draft has not received a real paste's focus.
+  await page.locator("[data-slate-editor='true']").click();
   await page.keyboard.press("Shift+Enter");
   await expectComposerInput(page, "");
 

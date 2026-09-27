@@ -318,21 +318,17 @@ export function SlateRichTextAdapter({
           backgroundColor: minimal ? "transparent" : UI_COLORS.surface,
           color: UI_COLORS.text,
         }}
-        pageStyle={
-          minimal
-            ? {
-                background: "transparent",
-                color: UI_COLORS.text,
-                padding: 0,
-                minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
-              }
-            : {
-                background: UI_COLORS.surface,
-                color: UI_COLORS.text,
-                padding: "5px 15px",
-                minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
-              }
-        }
+        pageStyle={{
+          background: minimal ? "transparent" : UI_COLORS.surface,
+          color: UI_COLORS.text,
+          padding: minimal ? 0 : "5px 15px",
+          minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
+          // Cap the editable itself so wheel/touch and caret scrolling have
+          // the same owner, rather than clipping it in the adapter wrapper.
+          ...(!hasFixedHeight && maxHeight != null
+            ? { maxHeight, overflowY: "auto" }
+            : undefined),
+        }}
         minimal={minimal}
         height={height}
         editBarStyle={{

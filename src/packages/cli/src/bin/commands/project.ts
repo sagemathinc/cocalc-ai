@@ -144,15 +144,27 @@ export function registerProjectCommand(
   deps: ProjectCommandDeps,
 ): Command {
   const project = program.command("project").description("project operations");
+  const dataDeps = {
+    ...deps,
+    withContext: (command, name, callback, options) =>
+      deps.withContext(
+        command,
+        name,
+        callback,
+        options ?? {
+          projectOnly: { projectIdentifier: command.opts().project },
+        },
+      ),
+  };
 
   registerProjectBasicCommands(project, deps);
   registerProjectOpsCommands(project, deps);
   registerProjectSyncCommands(project, deps);
   registerProjectCodexCommands(project, deps);
-  registerProjectChatCommands(project, deps);
-  registerProjectJupyterCommands(project, deps);
+  registerProjectChatCommands(project, dataDeps);
+  registerProjectJupyterCommands(project, dataDeps);
   registerProjectCollabCommands(project, deps);
-  registerProjectFileCommands(project, deps);
+  registerProjectFileCommands(project, dataDeps);
   registerProjectStorageCommands(project, deps);
   registerProjectPublishCommands(project, deps);
   registerProjectRootfsCommands(project, deps);
@@ -160,8 +172,8 @@ export function registerProjectCommand(
   registerProjectEnvSecretCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
-  registerProjectTerminalCommands(project, deps);
-  registerProjectDocumentBuildCommands(project, deps);
+  registerProjectTerminalCommands(project, dataDeps);
+  registerProjectDocumentBuildCommands(project, dataDeps);
   registerProjectBuildSmokeCommand(project, deps);
 
   return project;

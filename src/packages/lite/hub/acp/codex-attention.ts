@@ -289,7 +289,15 @@ function titleForQuestions(questions: AcpAttentionQuestion[]): string {
 
 export function createCodexAttentionHandler(
   client: ConatClient,
-  runtimeLabel: "Codex" | "ACP" = "Codex",
+  {
+    runtimeLabel = "Codex",
+    onSyncResponseResolved,
+  }: {
+    runtimeLabel?: "Codex" | "ACP";
+    onSyncResponseResolved?: (
+      record: AcpAttentionStoredRecord,
+    ) => Promise<void>;
+  } = {},
 ): CodexAttentionHandler {
   return {
     async requestSyncQuestion({
@@ -449,6 +457,14 @@ export function createCodexAttentionHandler(
           : `${runtimeLabel} cleared the request before receiving an answer`,
       });
       if (resolved) {
+        if (onSyncResponseResolved) {
+          void onSyncResponseResolved(resolved).catch((err) => {
+            logger.warn("failed to project resolved Codex response", {
+              attention_id: resolved.attention_id,
+              err,
+            });
+          });
+        }
         void publishStoredAttentionNoticeBestEffort({
           client,
           record: resolved,

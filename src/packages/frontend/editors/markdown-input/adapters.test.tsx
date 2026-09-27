@@ -95,6 +95,32 @@ describe("SlateRichTextAdapter", () => {
     expect(container.firstChild).not.toHaveStyle({ overflowY: "auto" });
   });
 
+  it.each([false, true])(
+    "lets the capped auto-growing editable surface scroll (minimal=%s)",
+    (minimal) => {
+      const { container } = render(
+        <SlateRichTextAdapter
+          autoFocus={false}
+          autoGrow
+          autoGrowMaxHeight={420}
+          controlRef={createRef()}
+          editBar2={createRef()}
+          height="auto"
+          minimal={minimal}
+          onChange={() => undefined}
+          saveDebounceMs={0}
+          selectionRef={createRef()}
+        />,
+      );
+
+      expect(container.firstChild).toHaveStyle({ overflow: "hidden" });
+      expect(editableMarkdownProps[0].pageStyle).toMatchObject({
+        maxHeight: "420px",
+        overflowY: "auto",
+      });
+    },
+  );
+
   it("allows rich text auto-grow surfaces to opt out of the default height cap", () => {
     const { container } = render(
       <SlateRichTextAdapter

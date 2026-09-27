@@ -9,7 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button } from "antd";
+import { Alert, Button, ConfigProvider } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -21,7 +21,6 @@ import {
 import ChatInput from "./input";
 import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
-import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
 import { CodexGoalControl } from "./codex-goal";
@@ -173,7 +172,7 @@ export function ChatRoomComposer({
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
-  const IDLE_COLLAPSED_HEIGHT = 40;
+  const DEFAULT_INPUT_HEIGHT = 120;
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
 
@@ -409,18 +408,9 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const collapseWhenIdle =
-    !isZenMode && input.length === 0 && manualHeightPx == null;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
-    : collapseWhenIdle
-      ? `${IDLE_COLLAPSED_HEIGHT}px`
-      : INPUT_HEIGHT;
-  const autoGrowMaxHeight = collapseWhenIdle
-    ? IDLE_COLLAPSED_HEIGHT
-    : isZenMode
-      ? zenHeight
-      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0) + 100);
+    : `${clampHeight(manualHeightPx ?? DEFAULT_INPUT_HEIGHT)}px`;
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -676,7 +666,7 @@ export function ChatRoomComposer({
       : {}),
   };
 
-  return (
+  const composer = (
     <AgentMentionContext.Provider value={agentMentionContext}>
       <div
         ref={zenContainerRef}
@@ -695,15 +685,39 @@ export function ChatRoomComposer({
             minWidth: 0,
           }}
         >
-          {!IS_MOBILE && !mobile && hasInput && (
+          {!IS_MOBILE && !mobile && (
             <Tooltip
               title={
                 isZenMode
-                  ? "Exit zen mode to resize"
+                  ? "Exit fullscreen to resize"
                   : "Drag to resize the composer; double-click to reset"
               }
             >
               <div
+                role="separator"
+                tabIndex={isZenMode ? -1 : 0}
+                aria-label="Resize composer"
+                aria-orientation="horizontal"
+                aria-valuemin={MIN_DRAG_HEIGHT}
+                aria-valuemax={maxDragHeight}
+                aria-valuenow={clampHeight(
+                  manualHeightPx ?? DEFAULT_INPUT_HEIGHT,
+                )}
+                onKeyDown={(event) => {
+                  if (isZenMode) return;
+                  const current = manualHeightPx ?? DEFAULT_INPUT_HEIGHT;
+                  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setManualHeightPx(
+                      clampHeight(
+                        current + (event.key === "ArrowUp" ? 20 : -20),
+                      ),
+                    );
+                  } else if (event.key === "Home") {
+                    event.preventDefault();
+                    setManualHeightPx(null);
+                  }
+                }}
                 onMouseDown={startDrag}
                 onDoubleClick={() => setManualHeightPx(null)}
                 style={{
@@ -721,7 +735,7 @@ export function ChatRoomComposer({
                     width: "42px",
                     height: "3px",
                     borderRadius: "999px",
-                    background: isDragging ? "#719ECE" : "#c2c2c2",
+                    background: isDragging ? UI_COLORS.focus : UI_COLORS.border,
                   }}
                 />
               </div>
@@ -875,9 +889,7 @@ export function ChatRoomComposer({
                 on_post={on_post ? handlePost : undefined}
                 on_font_size_change={handleFontSizeChange}
                 height={chatInputHeight}
-                autoGrowMinHeight={!mobile ? (manualHeightPx ?? 32) : 32}
-                autoGrowMaxHeight={autoGrowMaxHeight}
-                clampAutoGrowToHost={false}
+                autoGrow={false}
                 compactModeSwitch
                 softFocus
                 onChange={(value) => {
@@ -902,25 +914,20 @@ export function ChatRoomComposer({
                     : composerPlaceholder
                 }
                 externalMultilinePasteAsCodeBlock
-                toolbarRightContent={
-                  hasInput ? (
-                    <Tooltip
-                      title={
-                        isZenMode
-                          ? "Exit zen mode"
-                          : "Expand composer for focused writing"
-                      }
-                    >
-                      <Button
-                        aria-label={isZenMode ? "Exit Zen" : "Zen"}
-                        icon={<Icon name="expand-arrows" />}
-                        onClick={toggleZenMode}
-                        size="small"
-                        type="text"
-                      />
-                    </Tooltip>
-                  ) : null
-                }
+                toolbarMenuContent={(close) => (
+                  <Button
+                    aria-label={isZenMode ? "Exit fullscreen" : "Fullscreen"}
+                    icon={<Icon name="expand-arrows" />}
+                    onClick={() => {
+                      close();
+                      toggleZenMode();
+                    }}
+                    size="small"
+                    type="text"
+                  >
+                    {isZenMode ? "Exit fullscreen" : "Fullscreen"}
+                  </Button>
+                )}
               />
             )}
           </div>
@@ -1092,7 +1099,12 @@ export function ChatRoomComposer({
               }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}
-              style={{ flex: "0 0 32px", height: 32, minWidth: 32, width: 32 }}
+              style={{
+                flex: "0 0 32px",
+                height: 32,
+                minWidth: 32,
+                width: 32,
+              }}
             />
           </Tooltip>
         </div>
@@ -1105,5 +1117,18 @@ export function ChatRoomComposer({
         />
       </div>
     </AgentMentionContext.Provider>
+  );
+
+  return (
+    <ConfigProvider
+      // Body portals are outside the browser's fullscreen top layer.
+      getPopupContainer={
+        isFullscreen
+          ? () => zenContainerRef.current ?? document.body
+          : undefined
+      }
+    >
+      {composer}
+    </ConfigProvider>
   );
 }

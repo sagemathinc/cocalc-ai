@@ -44,6 +44,9 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
     return request;
   }
   const requestedCredentialId = `${request.config?.credentialId ?? ""}`.trim();
+  if (preference === "subscription-credential" && !requestedCredentialId) {
+    throw new Error("An explicit ChatGPT subscription is required.");
+  }
   const resolved = await resolver({
     account_id: request.account_id,
     project_id: request.chat?.project_id ?? request.project_id,

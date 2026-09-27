@@ -1,5 +1,5 @@
 import type { Client } from "@cocalc/conat/core/client";
-import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
+import type { AcpRequest, AcpSteerRequest } from "@cocalc/conat/ai/acp/types";
 import { acquireChatSyncDB } from "@cocalc/chat/server";
 import {
   acpTestInternals,
@@ -22,6 +22,7 @@ import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
 import {
   claimAcpSteer,
   decodeAcpSteerRequest,
+  enqueueAcpSteer,
   getAcpSteer,
   listPendingAcpSteers,
   markAcpSteerError,
@@ -159,6 +160,7 @@ function mockLiveRuntime(config: AcpRequest["config"]) {
   mockSteer.mockImplementation((id, request) =>
     CodexAppServerAgent.prototype.steer.call(runtime, id, request),
   );
+  return runtime;
 }
 
 beforeAll(() => {
@@ -598,4 +600,227 @@ it("uses the generic agent identity if the thread has no model", async () => {
   expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).chat?.sender_id).toBe(
     "openai-codex-agent",
   );
+});
+
+describe("agent RPC live guidance funding", () => {
+  const liveConfig: AcpRequest["config"] = {
+    paymentSource: "subscription-credential",
+    credentialId: "actual-live-credential",
+  };
+  const nextConfig: AcpRequest["config"] = {
+    model: "gpt-6-astra",
+    sessionId,
+    paymentSource: "subscription-credential",
+    credentialId: "next-turn-credential",
+  };
+
+  function guidanceRequest(config = nextConfig): AcpSteerRequest {
+    const request = rpcTurnRequest({ ...config });
+    request.chat!.agent_rpc_execution!.guidance = true;
+    request.chat!.agent_rpc_execution!.configured_delivery = "live";
+    request.chat!.send_mode = "immediate";
+    request.chat!.parent_message_id = "rpc-guidance";
+    request.chat!.message_id = "rpc-assistant";
+    rows.push({
+      event: "chat",
+      thread_id: record.thread_id,
+      message_id: "rpc-guidance",
+      sender_id: accountId,
+      date: "2026-09-05T13:56:15.277Z",
+    });
+    return { ...request, session_id: sessionId, chat: request.chat! };
+  }
+
+  function storedSteer(request: AcpSteerRequest) {
+    return getAcpSteer({
+      project_id: projectId,
+      path: request.chat.path,
+      user_message_id: request.chat.parent_message_id!,
+    })!;
+  }
+
+  it.each(["auto", "subscription", "subscription-credential"] as const)(
+    "inherits live funding instead of the next-turn %s config",
+    async (paymentSource) => {
+      // Durable admission metadata may lag the actual active runtime.
+      startRunningTurn(
+        turnRequest({ ...liveConfig, credentialId: "older-admission-pin" }),
+      );
+      const runtime = mockLiveRuntime(liveConfig);
+      const running = runtime.running.get(sessionId)!;
+      const request = guidanceRequest({ ...nextConfig, paymentSource });
+      const original = JSON.stringify(request);
+      Object.freeze(request.config);
+      Object.freeze(request);
+
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(request),
+      ).resolves.toMatchObject({ state: "steered" });
+      expect(running.client.request).toHaveBeenCalledTimes(1);
+      expect(running.client.request).toHaveBeenCalledWith("turn/steer", {
+        threadId: sessionId,
+        expectedTurnId: "live-turn",
+        input: expect.any(Array),
+      });
+      const delivered = mockSteer.mock.calls.find(
+        ([id]) => id === sessionId,
+      )![1];
+      expect(delivered).not.toBe(request);
+      expect(delivered.config).toEqual({
+        ...request.config,
+        paymentSource: undefined,
+        credentialId: undefined,
+      });
+      expect(delivered.account_id).toBe(accountId);
+      expect(delivered.chat).toBe(request.chat);
+      expect(JSON.stringify(request)).toBe(original);
+      expect(running.credentialId).toBe(liveConfig.credentialId);
+      expect(rows[2].acp_guidance_delivered_at_ms).toEqual(expect.any(Number));
+      expect(listQueuedAcpJobs()).toEqual([]);
+    },
+  );
+
+  it("inherits the live credential at detached poll time without rewriting the durable request", async () => {
+    const request = guidanceRequest();
+    mockLiveRuntime(liveConfig).running.clear();
+    jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+      {
+        project_id: projectId,
+        path: record.path,
+        thread_id: record.thread_id,
+        session_id: sessionId,
+        owner_instance_id: "other-worker",
+      } as any,
+    ]);
+    await acpTestInternals.handleAcpSteerRequest(request);
+    const pending = storedSteer(request);
+    expect(pending.state).toBe("pending");
+    expect(decodeAcpSteerRequest(pending)).toEqual(request);
+    expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
+
+    const runtime = mockLiveRuntime({
+      ...liveConfig,
+      credentialId: "credential-changed-before-poll",
+    });
+    const running = runtime.running.get(sessionId)!;
+    await acpTestInternals.processPendingAcpSteersOnce();
+    expect(storedSteer(request)).toMatchObject({
+      state: "handled",
+      request_json: pending.request_json,
+    });
+    expect(rows[2].acp_guidance_delivered_at_ms).toEqual(expect.any(Number));
+    expect(listQueuedAcpJobs()).toEqual([]);
+    await acpTestInternals.processPendingAcpSteersOnce();
+    expect(running.client.request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["direct", "missing"],
+    ["direct", "not_steerable"],
+    ["durable", "missing"],
+    ["durable", "not_steerable"],
+  ])(
+    "retains next-turn funding for %s %s fallback",
+    async (delivery, state) => {
+      const request = guidanceRequest();
+      const original = JSON.stringify(request);
+      const runtime = mockLiveRuntime(liveConfig);
+      if (state === "missing") runtime.running.clear();
+      else {
+        runtime.running
+          .get(sessionId)!
+          .client.request.mockRejectedValue(
+            new Error("cannot steer a review turn"),
+          );
+      }
+      const resolve = jest.fn(async () => ({
+        source: "subscription",
+        credentialId: nextConfig.credentialId,
+      }));
+      setCodexCredentialAdmissionResolver(resolve);
+
+      if (delivery === "durable") {
+        const pending = enqueueAcpSteer({ request });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request)).toMatchObject({
+          state: "handled",
+          request_json: pending.request_json,
+        });
+      } else {
+        expect(["queued", "running"]).toContain(
+          (await acpTestInternals.handleAcpSteerRequest(request)).state,
+        );
+      }
+      expect(listQueuedAcpJobs()).toHaveLength(1);
+      expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).config).toEqual(
+        nextConfig,
+      );
+      expect(resolve).toHaveBeenCalledWith({
+        account_id: accountId,
+        project_id: projectId,
+        preference: "subscription",
+        credential_id: nextConfig.credentialId,
+      });
+      expect(JSON.stringify(request)).toBe(original);
+      expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
+    },
+  );
+
+  it.each(["job", "runtime"])(
+    "rejects guidance from a different %s principal",
+    async (boundary) => {
+      const request = guidanceRequest();
+      const runtime = mockLiveRuntime(liveConfig);
+      const running = runtime.running.get(sessionId)!;
+      if (boundary === "job") {
+        startRunningTurn({ ...turnRequest(liveConfig), account_id: "other" });
+      } else {
+        running.executionAccountId = "other";
+      }
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(request),
+      ).rejects.toMatchObject({ code: "principal_mismatch" });
+      expect(running.client.request).not.toHaveBeenCalled();
+      if (boundary === "job") expect(mockSteer).not.toHaveBeenCalled();
+      expect(listQueuedAcpJobs()).toEqual([]);
+      expect(listPendingAcpSteers()).toEqual([]);
+    },
+  );
+
+  it.each(["human", "non-guidance RPC"])(
+    "keeps explicit credential mismatch rejection for %s Send Immediately",
+    async (kind) => {
+      const request = guidanceRequest();
+      if (kind === "human") delete request.chat.agent_rpc_execution;
+      else request.chat.agent_rpc_execution!.guidance = false;
+      const runtime = mockLiveRuntime(liveConfig);
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(request),
+      ).rejects.toThrow("cannot change the active turn's credential");
+      expect(
+        runtime.running.get(sessionId)!.client.request,
+      ).not.toHaveBeenCalled();
+      expect(mockSteer.mock.calls.every(([, value]) => value === request)).toBe(
+        true,
+      );
+      expect(listQueuedAcpJobs()).toEqual([]);
+    },
+  );
+
+  it("does not retry or queue after an uncertain durable delivery error", async () => {
+    const request = guidanceRequest();
+    const runtime = mockLiveRuntime(liveConfig);
+    const send = runtime.running.get(sessionId)!.client.request;
+    send.mockRejectedValue(new Error("transport disconnected after send"));
+    enqueueAcpSteer({ request });
+    await acpTestInternals.processPendingAcpSteersOnce();
+    expect(storedSteer(request)).toMatchObject({
+      state: "error",
+      error: "transport disconnected after send",
+    });
+    await acpTestInternals.processPendingAcpSteersOnce();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(listQueuedAcpJobs()).toEqual([]);
+    expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
+  });
 });

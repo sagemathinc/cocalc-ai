@@ -17,7 +17,11 @@ afterEach(() => closeAcpDatabase());
 test.each(["answer", "cancel"])(
   "ACP durable attention %s lifecycle",
   async (action) => {
-    const handler = createCodexAttentionHandler({} as any, "ACP");
+    const onSyncResponseResolved = jest.fn(async () => {});
+    const handler = createCodexAttentionHandler({} as any, {
+      runtimeLabel: "ACP",
+      onSyncResponseResolved,
+    });
     const abort = new AbortController();
     let id = "";
     const context: CodexAttentionContext = {
@@ -82,6 +86,9 @@ test.each(["answer", "cancel"])(
       expect(getAcpAttention(id)?.state).toBe("answered");
       expect(getAcpAttention(id)?.resolution_reason).toBe(
         "ACP accepted the response",
+      );
+      expect(onSyncResponseResolved).toHaveBeenCalledWith(
+        expect.objectContaining({ attention_id: id, state: "answered" }),
       );
     }
   },

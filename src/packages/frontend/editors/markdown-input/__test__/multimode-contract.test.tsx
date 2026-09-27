@@ -278,6 +278,39 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(latestPopoverProps?.open).toBe(true);
   });
 
+  it("opens a standalone New Agent menu even with an explicit project", () => {
+    mockFrameContext = {
+      id: "",
+      isFocused: false,
+      isVisible: false,
+      project_id: "",
+      path: "",
+    };
+    render(
+      <MultiMarkdownInput
+        project_id="project-1"
+        value="draft"
+        onChange={() => {}}
+        compactModeSwitch
+        modeSwitchPlacement="toolbar"
+      />,
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: "Editor mode and formatting",
+    });
+    fireEvent.click(trigger);
+    expect(latestPopoverProps?.open).toBe(true);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("still suppresses the menu inside an inactive editor frame", () => {
+    mockFrameContext.isVisible = false;
+    render(<MultiMarkdownInput value="draft" onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Text formatting" }));
+    expect(latestPopoverProps?.open).toBe(false);
+  });
+
   it("switches from markdown to rich text and reapplies the markdown cursor position", () => {
     const onChange = jest.fn();
     const setSelectionFromMarkdownPosition = jest.fn(() => true);

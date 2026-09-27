@@ -5,13 +5,38 @@ import React, {
   useRef,
   useState,
 } from "react";
+import "codemirror/lib/codemirror.css";
 import ReactDOM from "react-dom/client";
 import {
   FrameContext,
   defaultFrameContext,
-} from "../../frame-editors/frame-tree/frame-context";
+} from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import ChatInput from "../input";
 import { ChatRoomComposer } from "../composer";
+
+function NewAgentHarness(): React.JSX.Element {
+  const [input, setInput] = useState("");
+  return (
+    <main style={{ padding: 16, maxWidth: 760 }}>
+      <h1>New Agent composer</h1>
+      <ChatInput
+        projectId="project-1"
+        input={input}
+        onChange={setInput}
+        on_send={() => {}}
+        date={0}
+        syncdb={undefined}
+        fontSize={16}
+        autoGrowMinHeight={40}
+        autoGrowMaxHeight={420}
+        compactModeSwitch
+        softFocus
+        placeholder="Ask your agent"
+        enableUpload={false}
+      />
+    </main>
+  );
+}
 
 declare global {
   interface Window {
@@ -153,7 +178,11 @@ type FakeActions = {
   deleteDraft: (_draftKey: number) => void;
 };
 
-function ComposerHarness(): React.JSX.Element {
+function ComposerHarness({
+  withSettings = false,
+}: {
+  withSettings?: boolean;
+}): React.JSX.Element {
   const [composerDraftKey, setComposerDraftKey] = useState<number>(0);
   const [composerSession, setComposerSession] = useState<number>(1);
   const [input, setInput] = useState<string>("");
@@ -224,15 +253,13 @@ function ComposerHarness(): React.JSX.Element {
       },
       getSendButtonVisible: () => {
         return (
-          Array.from(document.querySelectorAll("button")).some(
-            (btn) => (btn as HTMLButtonElement).innerText.trim() === "Send",
-          ) ?? false
+          document.querySelector('[data-testid="chat-composer-send"]') != null
         );
       },
       getSendButtonDisabled: () => {
-        const btn = Array.from(document.querySelectorAll("button")).find(
-          (el) => (el as HTMLButtonElement).innerText.trim() === "Send",
-        ) as HTMLButtonElement | undefined;
+        const btn = document.querySelector<HTMLButtonElement>(
+          '[data-testid="chat-composer-send"]',
+        );
         return btn ? btn.disabled : true;
       },
     };
@@ -273,9 +300,9 @@ function ComposerHarness(): React.JSX.Element {
           }}
           submitMentionsRef={{ current: undefined }}
           hasInput={hasInput}
-          isSelectedThreadAI={false}
+          isSelectedThreadAI={withSettings}
           threads={[]}
-          selectedThread={null}
+          selectedThread={withSettings ? ({ key: "thread-1" } as any) : null}
           onComposerFocusChange={() => undefined}
         />
       </div>
@@ -299,6 +326,12 @@ function Harness(): React.JSX.Element {
   }
   if (mode === "composer") {
     return <ComposerHarness />;
+  }
+  if (mode === "composer-settings") {
+    return <ComposerHarness withSettings />;
+  }
+  if (mode === "new-agent") {
+    return <NewAgentHarness />;
   }
   if (mode === "archived-search") {
     return <ArchivedSearchHarness />;
