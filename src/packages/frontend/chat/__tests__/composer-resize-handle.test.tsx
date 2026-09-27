@@ -24,6 +24,17 @@ let lastChatInputProps: any;
 let lastCodexConfigProps: any;
 let mockStoredHeight: string | null = null;
 
+// rc-util's fixed Jest ID makes the popover and modal share one Escape-stack
+// entry. Use the distinct IDs supplied by React in a real browser.
+jest.mock("@rc-component/util/lib/hooks/useId", () => ({
+  __esModule: true,
+  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
+  default: (id?: string) => {
+    const reactId = require("react").useId();
+    return id || reactId;
+  },
+}));
+
 jest.mock("../input", () => ({
   __esModule: true,
   default: (props: any) => {
