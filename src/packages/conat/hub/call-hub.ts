@@ -1,5 +1,28 @@
 import { type Client } from "@cocalc/conat/core/client";
+import { resolveHostConnectionSingleFlight } from "./resolve-host-singleflight";
 const DEFAULT_TIMEOUT = 15000;
+
+// Share resolver work across SDK calls and the browser's direct fallback. Other
+// RPCs (especially token issuance) must retain their own scope and semantics.
+export function requestHub(
+  client: Client,
+  subject: string,
+  data: { name: string; args: any[]; auth_session_hash?: string },
+  options: { timeout: number },
+) {
+  const request = () => client.request(subject, data, options);
+  if (data.name !== "hosts.resolveHostConnection") return request();
+  return resolveHostConnectionSingleFlight(
+    client,
+    [
+      subject,
+      data.auth_session_hash ?? client.info?.user?.auth_session_hash,
+      client.info?.user,
+    ],
+    data.args,
+    request,
+  );
+}
 
 function errorField(
   err: unknown,
@@ -41,7 +64,9 @@ export function annotateCallHubError({
   }
   (error as any).code ??= code;
   const codeLabel = code == null ? "unknown" : `${code}`;
-  error.message = `${error.message} - callHub: subject='${subject}', name='${name}', code='${codeLabel}'`;
+  const context = ` - callHub: subject='${subject}', name='${name}', code='${codeLabel}'`;
+  // A single failed resolver RPC can now have many callHub waiters.
+  if (!error.message.endsWith(context)) error.message += context;
   return error;
 }
 
@@ -79,7 +104,7 @@ export default async function callHub({
       args,
       ...(auth_session_hash ? { auth_session_hash } : {}),
     };
-    const resp = await client.request(subject, data, { timeout });
+    const resp = await requestHub(client, subject, data, { timeout });
     return resp.data;
   } catch (err) {
     throw annotateCallHubError({ err, subject, name });

@@ -525,46 +525,53 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Actions.prototype.destroy.call(this);
   };
 
-  private resolve_host_info = reuseInFlight(async (host_id: string) => {
-    const accountId = webapp_client.account_id;
-    const startedAt = Date.now();
-    try {
-      const info: HostConnectionInfo = await withTimeout(
-        webapp_client.conat_client.hub.hosts.resolveHostConnection({
+  private hostInfoRequestScope = (): string => {
+    const cn = webapp_client.conat_client.conat?.();
+    return JSON.stringify([webapp_client.account_id, cn?.id, cn?.info?.user]);
+  };
+
+  private resolve_host_info = reuseInFlight(
+    async (host_id: string, scope: string) => {
+      const startedAt = Date.now();
+      try {
+        const info: HostConnectionInfo = await withTimeout(
+          webapp_client.conat_client.hub.hosts.resolveHostConnection({
+            host_id,
+          }),
+          ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
+        );
+        if (this.hostInfoRequestScope() !== scope) {
+          return;
+        }
+        // Other host lookups may have completed while this RPC was in flight.
+        // Merge into the current map rather than replacing their results with
+        // the snapshot from before this request started.
+        const current = store.get("host_info") ?? Map<string, any>();
+        const next = current.set(
           host_id,
-        }),
-        ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
-      );
-      if (webapp_client.account_id !== accountId) {
+          fromJS({ ...info, updated_at: Date.now() }),
+        );
+        this.setState({ host_info: next } as ProjectsState);
+        delete this.recentHostInfoLookupFailureAt[host_id];
+        return next.get(host_id);
+      } catch (err) {
+        if (this.hostInfoRequestScope() !== scope) return;
+        const errString = `${err}`;
+        const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
+        if (
+          previousFailureAt == null ||
+          startedAt - previousFailureAt >= ProjectsActions.HOST_INFO_TTL_MS
+        ) {
+          console.warn("ensure_host_info failed", {
+            host_id,
+            err: errString,
+          });
+        }
+        this.recentHostInfoLookupFailureAt[host_id] = startedAt;
         return;
       }
-      // Other host lookups may have completed while this RPC was in flight.
-      // Merge into the current map rather than replacing their results with
-      // the snapshot from before this request started.
-      const current = store.get("host_info") ?? Map<string, any>();
-      const next = current.set(
-        host_id,
-        fromJS({ ...info, updated_at: Date.now() }),
-      );
-      this.setState({ host_info: next } as ProjectsState);
-      delete this.recentHostInfoLookupFailureAt[host_id];
-      return next.get(host_id);
-    } catch (err) {
-      const errString = `${err}`;
-      const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
-      if (
-        previousFailureAt == null ||
-        startedAt - previousFailureAt >= ProjectsActions.HOST_INFO_TTL_MS
-      ) {
-        console.warn("ensure_host_info failed", {
-          host_id,
-          err: errString,
-        });
-      }
-      this.recentHostInfoLookupFailureAt[host_id] = startedAt;
-      return;
-    }
-  });
+    },
+  );
 
   ensure_host_info = async (host_id?: string, force = false) => {
     if (!host_id) return;
@@ -589,7 +596,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     // Force controls cache freshness, not in-flight identity. Once a lookup is
     // required, forced and ordinary callers for the same host share one RPC.
-    return await this.resolve_host_info(host_id);
+    return await this.resolve_host_info(host_id, this.hostInfoRequestScope());
   };
 
   private waitForAssignedHostRecovery = async ({
