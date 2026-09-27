@@ -6,6 +6,67 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Shared-editor browser checkpoint, 2026-09-27
+
+Source checkpoint: `74d11eff2f6bdb91250a07797c5d1b65c8f16be7`.
+The live connector dialog initially overflowed at a 320px viewport: its
+304px client width had 399px of scrollable content. The selected-project row
+pushed the Hidden checkbox outside the viewport. The shared editor now allows
+the selector to shrink and the remove button to wrap. Long project titles
+ellipsize inside the selector instead of imposing a minimum content width.
+
+After rebuilding, direct Playwright checks against the local hub's actual
+signed-in frontend found:
+
+| Dialog and viewport | Client / scroll width | Result |
+| --- | --- | --- |
+| Connector, 1280px | 700 / 700px | No horizontal overflow |
+| Connector, 320px | 304 / 304px | No horizontal overflow |
+| Manual API key, 1280px | 760 / 760px | No horizontal overflow |
+| Manual API key opened directly at 320px | 304 / 304px | No horizontal overflow |
+
+All four dialog checks passed the focused axe rules for contrast, labels,
+ARIA attribute values, and button names; this is not a complete accessibility
+audit. Desktop checkbox keyboard toggling, Escape dismissal, and trigger-focus
+restoration passed. Direct-mobile manual-key selection worked with keyboard
+Enter after filtering; its Create button was reachable by scrolling. Mobile
+Escape dismissal passed. Successful runs reported no browser page errors.
+Only draft controls were exercised: no connector configuration was saved and
+no API key was created by these UI probes.
+
+Screenshots are retained locally under `src/.local/api-first-ui` as
+`connector-1280.png`, `connector-320.png`, `manual-1280.png`, and
+`manual-320.png`. The probe obtained its browser cookie through the existing
+fresh-authenticated `system.issueBrowserSignInCookie` operation, kept it in
+memory, and closed the browser and Conat client after each run.
+
+Seventeen focused frontend tests passed, along with frontend typecheck,
+frontend lint, and `git diff --check`. A full `pnpm -C src build:dev` at this
+exact source checkpoint completed successfully. No project-host or tools
+upgrade was performed for this UI change.
+
+### Remaining UI gates and unsuccessful setup paths
+
+- Resizing an already-open manual-key dialog from desktop to 320px made the
+  dialog disappear. The account settings page renders its active content in
+  different desktop/mobile trees; the draft is not proven to survive that
+  transition. Direct-mobile success does not close this issue.
+- Pointer selection of the filtered project option at 320px timed out in one
+  attempt. Keyboard selection passed in the final run; pointer behavior still
+  needs investigation.
+- Dark themes, 200% zoom, saved-value round trips, approval persistence, and
+  connector footer reachability remain unverified by this checkpoint.
+- Typed browser spawning loaded the signed-in page but timed out waiting for
+  automation registration. Direct Playwright was used instead; registration
+  itself is not validated.
+- The primary development hub stopped during setup with a billing-authority
+  lease-query timeout. After verifying it was stopped, normal hub startup
+  recovered it; the attached bays were left running. This does not establish
+  a fix for the unrelated billing failure.
+
+The remaining manual/managed, outage, migration, resource-limit, and persistent
+project-session acceptance gates below remain open.
+
 ## Full-build checkpoint, 2026-09-27 (not deployed)
 
 At `0d9db0b52ae82e5c9cf2ed48f3f90f20882bd899`, `pnpm -C src build:dev`
