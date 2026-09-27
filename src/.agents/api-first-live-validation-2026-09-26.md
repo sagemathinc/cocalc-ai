@@ -467,6 +467,53 @@ handshake is rejected. Focused coverage also verifies disconnect-reason
 selection and explicit-close cleanup. This addresses the transport mismatch;
 installed notebook recovery still requires a new live test.
 
+### Installed long-run notebook recovery pass
+
+The CLI/tools build at `b1893df996ed073070f67b81c97b6b6b72cba558` completed;
+both architecture archives passed `xz --test`. Sixteen focused CLI tests,
+CLI typechecking, and test compilation passed. Host3 tools upgrade
+`2e819df6-95d2-4adc-9bd1-19e3459a7857` installed version `1790481887848`.
+The first project restart failed during container removal; after inspecting
+its terminal operation and observing the project in `opened` state, explicit
+start `b067983c-d466-45bd-800b-8949fa0641d6` succeeded. The installed CLI SHA256
+then matched `874baf80c23dbde45c2c91e0ed7275d749b2ce31b0fc956ffea11ca0ff221e8b`.
+Project runtime remains `20260927T033740Z-8deee7733428`.
+
+Manual key 94 ran the installed CLI with an isolated environment and credential
+file. Real Python execution `cli-mujb0d6z-a44wo4` in cell `28de5f` emitted
+`tick-0` through `tick-79`, one per second, then its final answer. The probe
+asserted all 80 lines appeared exactly once and in order, and that the kernel's
+execution counter was exactly one. It completed in 85,441 ms, consuming 662
+stream characters, across multiple 25-second host-credential lifetimes.
+Notebook save returned `saved: true`; another CLI process reopened the notebook
+and verified the saved output for the same cell. The private fixture directory
+and key were removed successfully.
+
+This is a live manual-key output recovery/save/reopen pass, not a claim that
+interactive stdin recovery, managed turns, or other persistent session families
+are complete. A private supplemental review of
+`9cc0f888885d..b1893df996` was accepted and saved as attempt
+`9f6d0f52-e51b-49c9-914c-5ddda8413eff`; review completion is still pending.
+
+### Revocation after lease-reconnect deployment
+
+The installed continuous-output probe then used key 95. Deletion completed at
+`1790482573249` ms UTC. The last delivered output was at `1790482587136`,
+13,887 ms after deletion, within the 30-second credential-backed I/O bound.
+The CLI reported `JUPYTER_RUN_RECOVERY_FAILED` at `1790482608230`, 34,981 ms
+after deletion. The stricter probe checks both delivery and interruption time,
+so it failed its interruption-time assertion; this is not recorded as a full
+revocation-test pass. The key was already deleted, and the probe's restart and
+private-directory cleanup completed without a cleanup error.
+
+The late error is distinct from continued authorized output. Inspection found
+that a socket request may spend its timeout in readiness, repeat that wait
+after reconnect, and then the CLI may retry the bounded replay read on another
+socket. Consequently the configured five-second request timeout is not a
+five-second end-to-end recovery deadline. Tightening and testing that deadline
+remains work; the observed I/O stop does not justify claiming all long-lived
+session cleanup semantics are complete.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
