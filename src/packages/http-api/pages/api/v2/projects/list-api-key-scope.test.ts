@@ -182,8 +182,66 @@ describe("/api/v2/projects list API-key scope", () => {
     expect(mockCreateProject).not.toHaveBeenCalled();
   });
 
+  it("get-one projects only legacy fields from the owner-routed summary", async () => {
+    mockListProjectSummaries.mockResolvedValue({
+      projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          title: "Project",
+          description: "Description",
+          host_id: "host",
+          state: "running",
+          last_edited: null,
+        },
+      ],
+      next_offset: 1,
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: {},
+    });
+    const { default: handler } = await import("./get-one");
+    await handler(req, res);
+    expect(res._getJSONData()).toEqual({
+      project_id: "22222222-2222-4222-8222-222222222222",
+      title: "Project",
+      description: "Description",
+    });
+    expect(mockListProjectSummaries).toHaveBeenCalledWith({
+      account_id,
+      limit: 1,
+    });
+    expect(mockGetProjects).not.toHaveBeenCalled();
+    expect(mockCreateProject).not.toHaveBeenCalled();
+  });
+
+  it("get-one does not create or fall back when account-home lookup fails", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id,
+      capabilities: ["project:list", "project:create"],
+      allowed_project_ids: [],
+    });
+    mockListProjectSummaries.mockRejectedValue(
+      new Error("account home unavailable"),
+    );
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: {},
+    });
+    const { default: handler } = await import("./get-one");
+    await handler(req, res);
+    expect(res._getJSONData()).toEqual({ error: "account home unavailable" });
+    expect(mockGetProjects).not.toHaveBeenCalled();
+    expect(mockCreateProject).not.toHaveBeenCalled();
+  });
+
   it("does not auto-create a project for project-list-only API keys", async () => {
-    mockGetProjects.mockResolvedValue([]);
+    mockListProjectSummaries.mockResolvedValue({
+      projects: [],
+      next_offset: null,
+    });
     const { req, res } = createMocks({
       method: "POST",
       headers: { Authorization: "Bearer cocalc_api_key_test" },
@@ -200,7 +258,10 @@ describe("/api/v2/projects list API-key scope", () => {
   });
 
   it("auto-creates a project for API keys with project list and create", async () => {
-    mockGetProjects.mockResolvedValue([]);
+    mockListProjectSummaries.mockResolvedValue({
+      projects: [],
+      next_offset: null,
+    });
     mockGetAccountFromApiKey.mockResolvedValue({
       account_id,
       api_key_id: 1,

@@ -10,7 +10,7 @@ import {
 } from "@cocalc/server/api/api-key-scope";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import createProject from "@cocalc/server/projects/create";
-import getProjects from "@cocalc/server/projects/get";
+import { listProjectSummaries } from "@cocalc/server/conat/api/projects";
 import getOneProject from "@cocalc/server/projects/get-one";
 
 export default async function handle(req, res) {
@@ -36,11 +36,12 @@ async function getOneProjectForApiKey({
 }: {
   account_id: string;
   principal: ApiKeyPrincipal;
-}): Promise<{ project_id: string; title?: string }> {
+}): Promise<{ project_id: string; title?: string; description?: string }> {
   requireApiKeyCapability(principal, "project:list");
-  const projects = await getProjects({ account_id, limit: 1 });
+  const { projects } = await listProjectSummaries({ account_id, limit: 1 });
   if (projects.length >= 1) {
-    return projects[0];
+    const { project_id, title, description } = projects[0];
+    return { project_id, title, description };
   }
   requireApiKeyCapability(principal, "project:create");
   const title = "Untitled Project";
