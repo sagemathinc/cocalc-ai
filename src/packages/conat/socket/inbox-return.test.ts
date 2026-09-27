@@ -181,7 +181,9 @@ describe("socket inbox-return protocol", () => {
           forged,
         ]);
     expect((await send({}, "without-route")).error).toBeUndefined();
-    expect((await subscription.next()).value?.caller ?? undefined).toBeUndefined();
+    expect(
+      (await subscription.next()).value?.caller ?? undefined,
+    ).toBeUndefined();
     expect(
       (
         await send(
@@ -276,6 +278,56 @@ describe("socket inbox-return protocol", () => {
     await rejected;
     socket.close();
     listener.close();
+  });
+
+  it("does not redirect an established socket to another authorized return inbox", async () => {
+    const { client, listener } = await fixture();
+    const accepted = new Promise<ServerSocket>((resolve) =>
+      listener.once("connection", resolve),
+    );
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: false,
+    });
+    const serverSocket = await accepted;
+    const handler = jest.fn((message) => message.respondSync(message.data));
+    serverSocket.on("request", handler);
+    await socket.waitUntilReady(5000);
+    const originalRoute = serverSocket.clientSubject;
+    const alternateRoute = await client.socketInboxSubject();
+    const alternate = await client.subscribe(alternateRoute);
+    const delivered: unknown[] = [];
+    const reader = (async () => {
+      for await (const message of alternate) delivered.push(message.data);
+    })();
+    try {
+      for (const extraHeaders of [{}, { "CN-SocketCmd": "connect" }]) {
+        await expect(
+          client.request(socket.serverSubject(), "redirect", {
+            timeout: 150,
+            headers: {
+              ...extraHeaders,
+              [SOCKET_RETURN_HEADER]: alternateRoute,
+            },
+          }),
+        ).rejects.toMatchObject({ code: 408 });
+      }
+      expect(handler).not.toHaveBeenCalled();
+      expect(serverSocket.clientSubject).toBe(originalRoute);
+      expect(Object.keys(listener.sockets)).toHaveLength(1);
+      expect(
+        (await socket.request("still-bound", { timeout: 2000 })).data,
+      ).toBe("still-bound");
+      const streamed = new Promise((resolve) => socket.once("data", resolve));
+      serverSocket.write("original-stream");
+      expect(await streamed).toBe("original-stream");
+      expect(delivered).toEqual([]);
+    } finally {
+      alternate.close();
+      await reader;
+      socket.close();
+      listener.close();
+    }
   });
 
   it("fails closed if an older broker does not attest the return route", async () => {

@@ -490,6 +490,17 @@ return-route rotation or establish deployed CLI recovery. In-flight requests
 are not automatically replayed; callers must handle their existing timeout/error
 semantics without assuming that a timed-out mutation was not executed.
 
+A follow-up confinement test presents an already-established socket with another
+inbox that the caller is authorized to subscribe to. Both a connect command and
+an ordinary request under that replacement route are ignored; the application
+handler is not invoked, the original route and socket remain, original requests
+and streamed output still work, and the replacement receives no output. All
+12 socket-return tests pass. Merely authorizing a new return inbox must not
+implicitly authorize redirecting an existing socket. Persistent-session recovery
+across rotation is still unfinished. Private review follow-up
+`29c8b706-8ef1-413b-bc31-15695dc3253f` was accepted and saved; that is not a
+completed review or approval for deployment.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
