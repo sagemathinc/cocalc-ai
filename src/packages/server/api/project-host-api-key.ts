@@ -4,7 +4,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { issueProjectHostApiKeyAuthToken } from "@cocalc/conat/auth/project-host-token";
+import {
+  issueProjectHostApiKeyAuthToken,
+  issueProjectHostApiKeyHttpToken,
+} from "@cocalc/conat/auth/project-host-token";
 import type {
   IssueProjectHostApiKeyAuthTokenRequest,
   IssueProjectHostAuthTokenResponse,
@@ -49,6 +52,7 @@ export async function issueProjectHostApiKeyTokenLocal({
   scope_revision,
   project_id,
   host_id,
+  http_proxy_port,
 }: IssueProjectHostApiKeyAuthTokenRequest): Promise<IssueProjectHostAuthTokenResponse> {
   if (
     !isValidUUID(account_id) ||
@@ -58,6 +62,14 @@ export async function issueProjectHostApiKeyTokenLocal({
     scope_revision < 1
   ) {
     throw new Error("invalid project-host API key request");
+  }
+  if (
+    http_proxy_port !== undefined &&
+    (!Number.isInteger(http_proxy_port) ||
+      http_proxy_port < 1 ||
+      http_proxy_port > 65535)
+  ) {
+    throw new Error("invalid project-host HTTP proxy port");
   }
   const hostBay = await resolveHostBay(host_id);
   if (hostBay?.bay_id !== getConfiguredBayId()) {
@@ -70,6 +82,12 @@ export async function issueProjectHostApiKeyTokenLocal({
   const grant = apiKeyProjectGrant(state.scope, project_id);
   if (!grant) {
     throw new Error("API key does not grant this project");
+  }
+  if (
+    http_proxy_port !== undefined &&
+    !grant.capabilities.includes("project:exec")
+  ) {
+    throw new Error("HTTP proxy access requires project:exec");
   }
   const reference = await resolveProjectReferenceForMemberAllowRemote({
     account_id,
@@ -104,7 +122,7 @@ export async function issueProjectHostApiKeyTokenLocal({
     project_id,
     expected_host_id: host_id,
   });
-  const { token, expires_at } = issueProjectHostApiKeyAuthToken({
+  const options = {
     account_id,
     host_id,
     project_id,
@@ -116,6 +134,10 @@ export async function issueProjectHostApiKeyTokenLocal({
     parent_exp_s:
       state.expire_ms == null ? undefined : Math.floor(state.expire_ms / 1000),
     private_key: getProjectHostAuthTokenPrivateKey(),
-  });
+  };
+  const { token, expires_at } =
+    http_proxy_port === undefined
+      ? issueProjectHostApiKeyAuthToken(options)
+      : issueProjectHostApiKeyHttpToken({ ...options, port: http_proxy_port });
   return { host_id, token, expires_at };
 }

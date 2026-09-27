@@ -678,6 +678,8 @@ export interface IssueProjectHostApiKeyAuthTokenRequest {
   scope_revision: number;
   project_id: string;
   host_id: string;
+  // Omitted for Conat; HTTP tokens have a separate audience and exact port.
+  http_proxy_port?: number;
 }
 
 export interface ForwardProjectLroProgressRequest {

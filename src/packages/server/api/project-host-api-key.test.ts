@@ -9,6 +9,7 @@ const resolveProjectReferenceMock = jest.fn();
 const syncProjectUsersMock = jest.fn();
 const resolveHostBayMock = jest.fn();
 const issueTokenMock = jest.fn();
+const issueHttpTokenMock = jest.fn();
 const remoteIssueMock = jest.fn();
 
 jest.mock("@cocalc/server/api/key-authorization-state", () => ({
@@ -41,6 +42,8 @@ jest.mock("@cocalc/backend/data", () => ({
 }));
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
   issueProjectHostApiKeyAuthToken: (...args: any[]) => issueTokenMock(...args),
+  issueProjectHostApiKeyHttpToken: (...args: any[]) =>
+    issueHttpTokenMock(...args),
 }));
 
 describe("scoped API key project-host issuance", () => {
@@ -74,6 +77,7 @@ describe("scoped API key project-host issuance", () => {
     syncProjectUsersMock.mockReset();
     resolveHostBayMock.mockReset();
     issueTokenMock.mockReset();
+    issueHttpTokenMock.mockReset();
     remoteIssueMock.mockReset();
     resolveHostBayMock.mockResolvedValue({ bay_id: "bay-0" });
     getApiKeyAuthorizationStateMock.mockResolvedValue(
@@ -87,6 +91,95 @@ describe("scoped API key project-host issuance", () => {
     });
     syncProjectUsersMock.mockResolvedValue(undefined);
     issueTokenMock.mockReturnValue({ token: "child", expires_at: 12345 });
+    issueHttpTokenMock.mockReturnValue({
+      token: "http-child",
+      expires_at: 12345,
+    });
+  });
+
+  it("issues a distinct HTTP child with authoritative scope and exact port", async () => {
+    const key = state(["project:exec", "file:read", "file:write"]);
+    getApiKeyAuthorizationStateMock.mockResolvedValue(key);
+    const { issueProjectHostApiKeyTokenLocal } =
+      await import("./project-host-api-key");
+    await expect(
+      issueProjectHostApiKeyTokenLocal({ ...request, http_proxy_port: 8080 }),
+    ).resolves.toMatchObject({ token: "http-child" });
+    expect(issueTokenMock).not.toHaveBeenCalled();
+    expect(issueHttpTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: accountId,
+        key_id: request.key_id,
+        scope_revision: 4,
+        project_id: projectId,
+        host_id: hostId,
+        placement_revision: 7,
+        capabilities: key.scope.projects[0].capabilities,
+        port: 8080,
+        parent_exp_s: Math.floor(key.expire_ms / 1000),
+      }),
+    );
+  });
+
+  it.each([null, 0, -1, 65536, 1.5, "8080"])(
+    "rejects malformed HTTP port %s",
+    async (port) => {
+      const { issueProjectHostApiKeyTokenLocal } =
+        await import("./project-host-api-key");
+      await expect(
+        issueProjectHostApiKeyTokenLocal({
+          ...request,
+          http_proxy_port: port as any,
+        }),
+      ).rejects.toThrow("invalid project-host HTTP proxy port");
+      expect(getApiKeyAuthorizationStateMock).not.toHaveBeenCalled();
+      expect(issueHttpTokenMock).not.toHaveBeenCalled();
+      expect(issueTokenMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("denies HTTP issuance for file grants, revoked keys, and stale placement", async () => {
+    const { issueProjectHostApiKeyTokenLocal } =
+      await import("./project-host-api-key");
+    const http = { ...request, http_proxy_port: 8080 };
+    for (const capabilities of [["file:read"], ["file:read", "file:write"]]) {
+      getApiKeyAuthorizationStateMock.mockResolvedValueOnce(
+        state(capabilities),
+      );
+      await expect(issueProjectHostApiKeyTokenLocal(http)).rejects.toThrow(
+        "requires project:exec",
+      );
+    }
+    getApiKeyAuthorizationStateMock.mockResolvedValueOnce(null);
+    await expect(issueProjectHostApiKeyTokenLocal(http)).rejects.toThrow(
+      "revoked",
+    );
+    await expect(
+      issueProjectHostApiKeyTokenLocal({ ...http, scope_revision: 3 }),
+    ).rejects.toThrow("scope changed");
+    resolveProjectReferenceMock.mockResolvedValueOnce({ host_id: otherHostId });
+    await expect(issueProjectHostApiKeyTokenLocal(http)).rejects.toThrow(
+      "not authorized",
+    );
+    expect(issueHttpTokenMock).not.toHaveBeenCalled();
+    expect(issueTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the HTTP port when routing to the owning host bay", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-2" });
+    remoteIssueMock.mockResolvedValue({
+      host_id: hostId,
+      token: "remote-http",
+      expires_at: 12345,
+    });
+    const { issueProjectHostApiKeyToken } =
+      await import("./project-host-api-key");
+    const http = { ...request, http_proxy_port: 8080 };
+    await expect(issueProjectHostApiKeyToken(http)).resolves.toMatchObject({
+      token: "remote-http",
+    });
+    expect(remoteIssueMock).toHaveBeenCalledWith(http);
+    expect(issueHttpTokenMock).not.toHaveBeenCalled();
   });
 
   it("derives full runtime claims from current home scope and placement", async () => {
