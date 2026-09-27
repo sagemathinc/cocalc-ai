@@ -113,12 +113,41 @@ dedicated project. A private receipt review request for this source head was
 accepted (attempt `b95d4241-e4de-4084-bb14-c3d02e5bc6c1`); no review disposition
 has been received in this validation run.
 
-### Prompt failure of replaced reply inboxes (not deployed)
+### Prompt failure of replaced reply inboxes
 
 A real-broker regression reproduced one cause of renewal delay: an admitted
 request whose reply namespace was replaced waited for its full timeout and
 returned 408, even though the old response channel could no longer deliver.
 Both rotating-prefix cases failed the new test before the fix.
+
+Installed CLI validation at source `80b3f7093a704d76e4dd3f53fa65640f2b57cb79`
+used tools-only host3 upgrade `ab78e3f1-1feb-4b0a-8b65-38a290eb0b07`, which
+succeeded. The project-host runtime remained at `4d70ab9e1fc8`. The installed
+CLI SHA-256 matched the rebuilt tools:
+`c34db4a03142866273ce51ae7fbc38f69a8e89fbcaaf5266da376efb00f45f7f`.
+The local primary hub stopped during upgrade observation and was restarted
+after confirming its stopped state; the same operation was observed to completion,
+not resubmitted. Project restart failed during Podman removal; a subsequent
+explicit start (`713acd99-69b6-49a8-a949-2cf16857c25f`) restored direct commands.
+
+The revised high-rate probe used a 600-second manual key, a 240-second
+observation budget, 1ms requested inter-write delay, and a target of 600 writes
+before explicit revocation. It acknowledged 484 writes over 104,697ms, with a
+maximum acknowledgment gap of 3,043ms. It then failed during `save-disk` with
+403 at `1790498304006`ms, immediately after the authenticated host lease expiry
+of `1790498304` seconds. The parent key had not expired or been deleted.
+Thus this run exposed a lease-expiry admission race, not a successful explicit
+revocation test. The earlier 484-write result was a harness-budget exhaustion;
+the matching count here is coincidental and the failure is different.
+
+The host policy checks the lease deadline during publication, while the broker
+disconnects the expired socket on a timer. A request can encounter the expired
+policy before timer teardown and receive a terminal permission error. Existing
+receipt recovery intentionally does not retry 403. This remains unresolved at
+the tested head; recovery must distinguish expired transport authority without
+turning genuine permission denials into generic retries or replaying mutations.
+Cleanup deleted fixture key 132. An independent direct project directory scan
+returned no `.api-probe-*` directories after cleanup.
 
 The client now tracks request iterators by their reply inbox. Replacing an
 inbox, or closing the client, cancels its pending single-response and streamed
