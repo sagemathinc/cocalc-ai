@@ -533,6 +533,37 @@ describe("project-host exam admission script", () => {
     expect(page.location.replace).toHaveBeenCalledWith("/");
   });
 
+  it.each(["open", "closing", "cleaning", "error"] as const)(
+    "leaves the waiting page for the generated %s page",
+    async (status) => {
+      const page = runAdmissionScript({
+        waiting: true,
+        fetchResults: [
+          {
+            status: 200,
+            body: getExamJoinPage({
+              admission_open: false,
+              run_status: "ready",
+            }),
+          },
+          {
+            status: 200,
+            body: getExamJoinPage({
+              admission_open: status === "open",
+              run_status: status,
+            }),
+          },
+        ],
+      });
+      await page.runNextCheck();
+      expect(page.location.replace).not.toHaveBeenCalled();
+      expect(page.timers).toHaveLength(1);
+      await page.runNextCheck();
+      expect(page.location.replace).toHaveBeenCalledWith("/");
+      expect(page.timers).toHaveLength(0);
+    },
+  );
+
   it("keeps a token that only the address holds when access opens", async () => {
     const page = runAdmissionScript({
       hash: "#token=abc123",
