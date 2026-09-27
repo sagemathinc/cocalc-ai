@@ -449,6 +449,20 @@ describe("manageApiKeys local bay access", () => {
     ]);
   });
 
+  it("does not cache the authoritative key lookup during revalidation", async () => {
+    const { default: getPool } = await import("@cocalc/database/pool");
+    const { getAccountWithApiKey } = await import("./manage");
+    await getAccountWithApiKey("sk-cc-v2.random-key-id.secret", {
+      recordActivity: false,
+    });
+    expect(getPool).not.toHaveBeenCalledWith("medium");
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("FROM api_keys WHERE key_id=$1"),
+      ),
+    ).toBe(true);
+  });
+
   it("revalidates a local key without updating activity or writing a use audit", async () => {
     queryMock = jest.fn(async (sql) =>
       `${sql}`.includes("WHERE key_id=$1")

@@ -569,7 +569,9 @@ export async function getAccountWithApiKey(
   { recordActivity = true }: { recordActivity?: boolean } = {},
 ): Promise<ApiKeyPrincipal | undefined> {
   log.debug("getAccountWithApiKey");
-  const pool = getPool("medium");
+  // This read is also the socket revalidation authority. A query cache both
+  // delays revocation and mixes stale revisions with fresh membership checks.
+  const pool = getPool();
   await ensureApiKeysV2Schema();
 
   const v2 = parseApiKeyV2(secret);
