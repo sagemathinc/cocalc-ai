@@ -10,6 +10,8 @@ import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/ar
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
+import { createInterBayCollaboratorsHandler } from "@cocalc/conat/inter-bay/collaborators";
+import { collaboratorsControl } from "@cocalc/server/collaborators/api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
@@ -668,6 +670,12 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectReferenceService();
     await startProjectDetailsService();
     services.push(
+      createInterBayCollaboratorsHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: collaboratorsControl,
+      }),
       createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
         client: getInterBayFabricClient({ noCache: true }),
         parallel: true,

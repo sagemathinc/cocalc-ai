@@ -63,6 +63,8 @@ import type { AgentMention } from "./agent-mention";
 import "./agent-mention";
 import type { ArtifactMention } from "./artifact-mention";
 import "./artifact-mention";
+import type { CollaborationReferenceElement } from "./collaboration-reference";
+import "./collaboration-reference";
 import "./mention/editable";
 import type { Meta } from "./meta";
 import "./meta/editable";
@@ -101,6 +103,7 @@ declare module "slate" {
       | Mention
       | AgentMention
       | ArtifactMention
+      | CollaborationReferenceElement
       | Table
       | THead
       | TBody

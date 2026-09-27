@@ -81,6 +81,7 @@ export async function resolveProjectBays(
   const missing = uniqueProjectIds.filter(
     (project_id) => !result.has(project_id),
   );
+  if (missing.length === 0) return result;
   const directory = createInterBayDirectoryClient({
     client: getInterBayFabricClient(),
   });

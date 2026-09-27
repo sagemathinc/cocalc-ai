@@ -5,10 +5,19 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 const empty = (): PersonalLibrarySnapshot => ({ aliases: [], pins: [] });
 const cache = new Map<string, PersonalLibrarySnapshot>();
 const listeners = new Set<
-  (accountId: string, snapshot: PersonalLibrarySnapshot) => void
+  (accountId: string, snapshot?: PersonalLibrarySnapshot) => void
 >();
 const loads = new Map<string, Promise<PersonalLibrarySnapshot>>();
 const writes = new Map<string, Promise<PersonalLibrarySnapshot>>();
+const generations = new Map<string, number>();
+
+/** Invalidate retained Library views after writes through another surface. */
+export function refreshPersonalLibrary(accountId: string) {
+  cache.delete(accountId);
+  loads.delete(accountId);
+  generations.set(accountId, (generations.get(accountId) ?? 0) + 1);
+  for (const listener of listeners) listener(accountId);
+}
 
 function publish(accountId: string, snapshot: PersonalLibrarySnapshot) {
   cache.set(accountId, snapshot);
@@ -17,6 +26,7 @@ function publish(accountId: string, snapshot: PersonalLibrarySnapshot) {
 
 export function usePersonalLibrary() {
   const accountId = useTypedRedux("account", "account_id");
+  const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     accountId?: string;
     snapshot: PersonalLibrarySnapshot;
@@ -44,9 +54,11 @@ export function usePersonalLibrary() {
       setState({ accountId, snapshot: empty(), loading: false, error: "" });
       return;
     }
-    const listener = (id: string, snapshot: PersonalLibrarySnapshot) => {
-      if (id === accountId)
+    const listener = (id: string, snapshot?: PersonalLibrarySnapshot) => {
+      if (id !== accountId) return;
+      if (snapshot)
         setState({ accountId, snapshot, loading: false, error: "" });
+      else setRevision((n) => n + 1);
     };
     listeners.add(listener);
     return () => {
@@ -62,6 +74,13 @@ export function usePersonalLibrary() {
       return;
     }
     let disposed = false;
+    const client = webapp_client.conat_client;
+    const generation = generations.get(accountId) ?? 0;
+    const current = () =>
+      !disposed &&
+      generation === (generations.get(accountId) ?? 0) &&
+      webapp_client.account_id === accountId &&
+      webapp_client.conat_client === client;
     setState((previous) => ({
       accountId,
       snapshot:
@@ -83,11 +102,11 @@ export function usePersonalLibrary() {
     }
     void load
       .then((snapshot) => {
-        if (disposed) return;
+        if (!current()) return;
         publish(accountId, snapshot);
       })
       .catch((err) => {
-        if (disposed) return;
+        if (!current()) return;
         setState({
           accountId,
           snapshot: cache.get(accountId) ?? empty(),
@@ -98,20 +117,33 @@ export function usePersonalLibrary() {
     return () => {
       disposed = true;
     };
-  }, [accountId]);
+  }, [accountId, revision]);
 
   async function mutate(run: () => Promise<PersonalLibrarySnapshot>) {
     if (!accountId) throw Error("Sign in to organize Library.");
+    const generation = generations.get(accountId) ?? 0;
+    const client = webapp_client.conat_client;
+    const assertCurrentAccount = () => {
+      if (
+        webapp_client.account_id !== accountId ||
+        webapp_client.conat_client !== client
+      )
+        throw Error("Account changed");
+    };
     const prior = writes.get(accountId) ?? loads.get(accountId);
     const next = (prior ?? Promise.resolve(empty()))
       .catch(() => empty())
-      .then(run);
+      .then(() => {
+        assertCurrentAccount();
+        return run();
+      });
     writes.set(accountId, next);
     try {
       const snapshot = await next;
-      if (webapp_client.account_id !== accountId)
-        throw Error("Account changed");
-      publish(accountId, snapshot);
+      assertCurrentAccount();
+      if (generation === (generations.get(accountId) ?? 0))
+        publish(accountId, snapshot);
+      else refreshPersonalLibrary(accountId);
       return snapshot;
     } catch (err) {
       setState((previous) =>

@@ -1,6 +1,7 @@
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { libraryConversationHit, openLibrary } from "./library-navigation";
 import { sourceArtifactPublication } from "./open-source-artifact";
+import { closedCollaboratorsState } from "../collaborators/navigation";
 const setState = jest.fn();
 const setActiveTab = jest.fn(async () => undefined);
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -18,6 +19,7 @@ beforeEach(() => jest.clearAllMocks());
 test("Library navigation activates its tab without selecting an agent", async () => {
   await openLibrary();
   expect(setState).toHaveBeenLastCalledWith({
+    ...closedCollaboratorsState,
     library_open: true,
     library_project_id: undefined,
     library_entry_id: undefined,
@@ -28,6 +30,7 @@ test("Library navigation activates its tab without selecting an agent", async ()
   );
   await openLibrary("11111111-1111-4111-8111-111111111111", "a".repeat(64));
   expect(setState).toHaveBeenLastCalledWith({
+    ...closedCollaboratorsState,
     library_open: true,
     library_project_id: "11111111-1111-4111-8111-111111111111",
     library_entry_id: "a".repeat(64),

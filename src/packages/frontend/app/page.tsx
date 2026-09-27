@@ -16,6 +16,7 @@ import { Alert, Spin } from "antd";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -223,6 +224,10 @@ export const Page: React.FC = () => {
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const otherSettings = useTypedRedux("account", "other_settings");
   const aiDisabled = !!otherSettings?.get("openai_disabled");
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
   const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
@@ -490,7 +495,7 @@ export const Page: React.FC = () => {
   }
 
   function render_agents_nav_button(): React.JSX.Element | null {
-    if (aiDisabled) return null;
+    if (aiDisabled && !collaboratorsEnabled) return null;
     return (
       <NavTab
         style={{
@@ -498,13 +503,18 @@ export const Page: React.FC = () => {
           margin: "0",
           overflow: "hidden",
         }}
-        name="agents"
+        name={aiDisabled ? undefined : "agents"}
+        on_click={aiDisabled ? () => void openCollaborators() : undefined}
         active_top_tab={active_top_tab}
-        tooltip="Work with registered agents, chats, artifacts, and terminals"
-        icon="robot"
-        label="Agents"
+        tooltip={
+          aiDisabled
+            ? "People, conversations, and shared work"
+            : "Work with registered agents, chats, artifacts, and terminals"
+        }
+        icon={aiDisabled ? "users" : "robot"}
+        label={aiDisabled ? "Collaborators" : "Agents"}
         hide_label={isNarrow}
-        ariaLabel="Agents"
+        ariaLabel={aiDisabled ? "Collaborators" : "Agents"}
       />
     );
   }

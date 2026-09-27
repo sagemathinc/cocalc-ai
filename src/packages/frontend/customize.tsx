@@ -106,6 +106,7 @@ export interface CustomizeState {
 
   openai_enabled: boolean;
   agent_openai_codex_enabled: boolean;
+  collaborators_enabled: boolean;
   codex_notification_toast_enabled: boolean;
   codex_notification_browser_enabled: boolean;
   browser_raw_exec_policy?: string;

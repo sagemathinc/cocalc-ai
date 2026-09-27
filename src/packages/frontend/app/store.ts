@@ -5,6 +5,7 @@
 
 import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
 import type { AdminRoute } from "@cocalc/frontend/admin/routing";
+import type { CollaboratorsRoute } from "@cocalc/frontend/collaborators/workspace-types";
 import target from "@cocalc/frontend/client/handle-target";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
@@ -30,6 +31,13 @@ export interface PageState {
   library_open?: boolean;
   library_project_id?: string;
   library_entry_id?: string;
+  collaborators_open?: boolean;
+  collaborators_view?: CollaboratorsRoute["view"];
+  collaborators_project_id?: string;
+  collaborators_person_id?: string;
+  collaborators_resource_kind?: CollaboratorsRoute["resourceKind"];
+  collaborators_resource_id?: string;
+  collaborators_route_error?: string;
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -78,8 +86,17 @@ export function init_store() {
   const parsed = parsePageTarget(target);
   const initialProjectId =
     parsed.page === "project" ? parsed.target.split("/")[0] : undefined;
+  const collaborators =
+    parsed.page === "agents" ? parsed.collaborators : undefined;
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    collaborators_open: collaborators != null,
+    collaborators_view: collaborators?.view,
+    collaborators_project_id: collaborators?.projectId,
+    collaborators_person_id: collaborators?.personId,
+    collaborators_resource_kind: collaborators?.resourceKind,
+    collaborators_resource_id: collaborators?.resourceId,
+    collaborators_route_error: collaborators?.routeError,
     library_open: parsed.page === "agents" && parsed.library === true,
     library_project_id:
       parsed.page === "agents" ? parsed.artifact_project_id : undefined,

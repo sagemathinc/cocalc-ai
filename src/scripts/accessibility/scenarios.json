@@ -2,6 +2,46 @@
   "version": 1,
   "pages": [
     {
+      "id": "collaborators-project-filter",
+      "title": "Collaborators project selector keyboard and focus",
+      "path": "/collaborators",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "readySelector": "[aria-label='Collaborators views']",
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "role": "button",
+          "name": "Filter by project"
+        },
+        {
+          "type": "focus",
+          "role": "button",
+          "name": "Filter by project"
+        },
+        { "type": "press", "key": "Enter" },
+        { "type": "wait", "role": "dialog", "name": "Filter by project" },
+        {
+          "type": "assertFocusWithin",
+          "role": "dialog",
+          "name": "Filter by project"
+        }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        {
+          "type": "assertHidden",
+          "role": "dialog",
+          "name": "Filter by project"
+        },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
       "id": "agent-artifact-library",
       "title": "Agent artifact Library navigation",
       "path": "/agents",

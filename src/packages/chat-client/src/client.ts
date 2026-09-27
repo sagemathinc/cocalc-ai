@@ -10,6 +10,7 @@ import {
   type CodexThreadConfig,
 } from "@cocalc/chat/core";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
+import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { immerdb, type ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
@@ -224,6 +225,8 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     const threadId = opts.thread_id.trim();
     if (!db?.isReady()) throw new Error("Chat is not ready.");
     const allRows = db.get();
+    if (isHumanOnlyChat(allRows))
+      throw Error("Project conversations are human-only.");
     const existing = Array.isArray(allRows)
       ? allRows.find(
           (row) =>

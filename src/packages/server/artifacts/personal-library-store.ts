@@ -16,6 +16,7 @@ import {
   validatePersonalLibraryPinKey,
   validatePersonalLibraryTarget,
 } from "@cocalc/util/personal-library";
+import type { PersonalLibraryTarget } from "@cocalc/util/personal-library";
 import { assertPersonalAccountAuthority } from "@cocalc/server/agents/personal-rehome";
 
 type Query = {
@@ -90,6 +91,20 @@ async function replacePins(
        AND pins.rank IS DISTINCT FROM ordered.rank - 1`,
     [account, pins],
   );
+}
+
+/** Remove only the current personal label; retain its historical identity binding. */
+export async function clearPersonalLibraryAlias(
+  opts: PersonalLibraryTarget & { account_id: string },
+): Promise<PersonalLibrarySnapshot> {
+  validatePersonalLibraryTarget(opts);
+  return locked(opts.account_id, async (db) => {
+    await db.query(
+      "UPDATE personal_library_aliases SET active=FALSE WHERE account_id=$1 AND project_id=$2 AND entry_id=$3 AND active",
+      [opts.account_id, opts.project_id, opts.entry_id],
+    );
+    return snapshot(db, opts.account_id);
+  });
 }
 
 export const personalLibraryStore: PersonalLibraryApi = {

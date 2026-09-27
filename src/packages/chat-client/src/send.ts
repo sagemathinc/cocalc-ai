@@ -13,6 +13,7 @@ import {
   type ChatThreadConfigRecord,
 } from "@cocalc/chat/core";
 import { interruptAcp, steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
+import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
 import type {
   AcpInterruptRequest,
   AcpInterruptResponse,
@@ -315,6 +316,8 @@ export class ChatSendPipeline {
     }
     const allRows = rows(this.options.db);
     const configRow = threadConfig(allRows, threadId);
+    if (isHumanOnlyChat(allRows))
+      throw Error("Project conversations are human-only.");
     if (
       !configRow ||
       (configRow.agent_kind !== "acp" && configRow.acp_config == null)
@@ -455,6 +458,8 @@ export class ChatSendPipeline {
     if (!this.options.db.isReady()) throw new Error("Chat is not ready.");
     const allRows = rows(this.options.db);
     const configRow = threadConfig(allRows, threadId);
+    if (isHumanOnlyChat(allRows))
+      throw Error("Project conversations are human-only.");
     if (
       !configRow ||
       (configRow.agent_kind !== "acp" && configRow.acp_config == null)

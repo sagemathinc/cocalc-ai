@@ -17,6 +17,11 @@ import {
 } from "@cocalc/frontend/admin/routing";
 import { getLegacyCommerceTargetPath } from "@cocalc/util/routing/legacy-commerce";
 import type { SettingsPageType } from "@cocalc/util/types/settings";
+import {
+  collaboratorsTargetPath,
+  parseCollaboratorsRoute,
+  type ParsedCollaboratorsRoute,
+} from "@cocalc/frontend/collaborators/routing";
 
 export type PageTopTab =
   | "account"
@@ -41,6 +46,7 @@ export type ParsedPageTarget =
       library?: boolean;
       artifact_project_id?: string;
       artifact_entry_id?: string;
+      collaborators?: ParsedCollaboratorsRoute;
     }
   | { page: "project"; target: string }
   | {
@@ -86,6 +92,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "collaborators":
+      return {
+        page: "agents",
+        collaborators: parseCollaboratorsRoute(segments.slice(1)),
+      };
     case "library":
       return {
         page: "agents",
@@ -185,6 +196,8 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
     case "agents":
+      if (parsed.collaborators)
+        return collaboratorsTargetPath(parsed.collaborators);
       if (parsed.library) {
         if (parsed.artifact_project_id == null) return "library";
         const suffix =

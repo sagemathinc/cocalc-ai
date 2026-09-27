@@ -15,6 +15,7 @@ import { type ReflectApi, reflect } from "./reflect";
 import { type AgentApi, agent } from "./agent";
 import { type ArtifactCatalogApi, artifactCatalog } from "./artifact-catalog";
 import { type PersonalLibraryApi, personalLibrary } from "./personal-library";
+import { type CollaboratorsApi, collaborators } from "./collaborators";
 import { type Notifications, notifications } from "./notifications";
 import { type AdminData, adminData } from "./admin-data-explorer";
 import { type AdminDbApi, adminDb } from "./admin-db";
@@ -53,6 +54,7 @@ export interface HubApi {
   agent: AgentApi;
   artifactCatalog: ArtifactCatalogApi;
   personalLibrary: PersonalLibraryApi;
+  collaborators: CollaboratorsApi;
   notifications: Notifications;
   adminData: AdminData;
   adminDb: AdminDbApi;
@@ -91,6 +93,7 @@ const HubApiStructure = {
   agent,
   artifactCatalog,
   personalLibrary,
+  collaborators,
   notifications,
   adminData,
   adminDb,

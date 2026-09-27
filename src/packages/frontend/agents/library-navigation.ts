@@ -2,11 +2,13 @@ import { redux } from "@cocalc/frontend/app-framework";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import type { AgentSearchHit } from "./search-runner";
+import { closedCollaboratorsState } from "@cocalc/frontend/collaborators/navigation";
 
 /** Library navigation never selects or starts an agent. */
 export function openLibrary(projectId?: string, entryId?: string) {
   const page = redux.getActions("page");
   page.setState({
+    ...closedCollaboratorsState,
     library_open: true,
     library_project_id: projectId,
     library_entry_id: entryId,
@@ -34,6 +36,7 @@ export function libraryConversationHit(
 }
 
 export const closedLibraryState = {
+  ...closedCollaboratorsState,
   library_open: false,
   library_project_id: undefined,
   library_entry_id: undefined,

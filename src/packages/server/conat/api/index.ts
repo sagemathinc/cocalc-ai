@@ -46,6 +46,11 @@ import * as lro from "./lro";
 import * as agent from "./agent";
 import * as artifactCatalog from "./artifact-catalog";
 import * as personalLibrary from "./personal-library";
+import * as collaborators from "./collaborators";
+import {
+  startCollaboratorsMaintenance,
+  stopCollaboratorsMaintenance,
+} from "@cocalc/server/collaborators/maintenance";
 import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as adminDb from "./admin-db";
@@ -111,6 +116,7 @@ export const hubApi: HubApi = {
   agent,
   artifactCatalog,
   personalLibrary,
+  collaborators,
   notifications,
   adminData,
   adminDb,
@@ -200,6 +206,11 @@ async function serve() {
   // below keeps this cache fresh without per-request database or inter-bay work.
   await syncAccountSecurityStateOnce({ maxPages: 1000 });
   startAccountSecurityStateSyncLoop();
+  try {
+    await startCollaboratorsMaintenance();
+  } catch (error) {
+    logger.warn("collaboration indexing unavailable", { error: String(error) });
+  }
   const cn = await conat({ noCache: true });
   let stopAgentMessaging = async () => {};
   try {
@@ -228,6 +239,7 @@ async function serve() {
       }),
     );
   } finally {
+    stopCollaboratorsMaintenance();
     await stopAgentMessaging();
     for (const { subscription } of subscriptions) {
       subscription.close();

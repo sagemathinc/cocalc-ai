@@ -77,6 +77,7 @@ describe("lite init", () => {
       project_id: "00000000-1000-4000-8000-000000000000",
       target: "files/",
       switch_to: true,
+      change_history: true,
       restore_session: false,
     });
   });
@@ -113,41 +114,51 @@ describe("lite init", () => {
     expect(recreate_account_table).not.toHaveBeenCalled();
   });
 
-  it("keeps explicit settings routes in the foreground", async () => {
-    mockTarget = "settings/purchases";
+  it.each([
+    "settings/purchases",
+    "agents",
+    "library",
+    "collaborators",
+    "collaborators/people/project/00000000-1000-4000-8000-000000000000/person/00000000-1000-4000-8000-000000000001",
+  ])(
+    "does not replace explicit %s history during background initialization",
+    async (target) => {
+      mockTarget = target;
 
-    const open_project = jest.fn(async () => {});
-    const redux = {
-      getActions: (name: string) => {
-        if (name === "account") {
-          return { setState: jest.fn() };
-        }
-        if (name === "projects") {
-          return {
-            setState: jest.fn(),
-            open_project,
-          };
-        }
-        throw Error(`unexpected actions store ${name}`);
-      },
-    };
+      const open_project = jest.fn(async () => {});
+      const redux = {
+        getActions: (name: string) => {
+          if (name === "account") {
+            return { setState: jest.fn() };
+          }
+          if (name === "projects") {
+            return {
+              setState: jest.fn(),
+              open_project,
+            };
+          }
+          throw Error(`unexpected actions store ${name}`);
+        },
+      };
 
-    const lite = await import("./index");
-    lite.init(
-      redux as any,
-      {
-        account_id: "00000000-1000-4000-8000-000000000001",
+      const lite = await import("./index");
+      lite.init(
+        redux as any,
+        {
+          account_id: "00000000-1000-4000-8000-000000000001",
+          project_id: "00000000-1000-4000-8000-000000000000",
+        } as any,
+      );
+
+      expect(open_project).toHaveBeenCalledWith({
         project_id: "00000000-1000-4000-8000-000000000000",
-      } as any,
-    );
-
-    expect(open_project).toHaveBeenCalledWith({
-      project_id: "00000000-1000-4000-8000-000000000000",
-      target: "files/",
-      switch_to: false,
-      restore_session: false,
-    });
-  });
+        target: "files/",
+        switch_to: false,
+        change_history: false,
+        restore_session: false,
+      });
+    },
+  );
 
   it("respects explicit project routes for the lite project", async () => {
     mockTarget = "projects/00000000-1000-4000-8000-000000000000/files/test.txt";
@@ -181,6 +192,7 @@ describe("lite init", () => {
       project_id: "00000000-1000-4000-8000-000000000000",
       target: "files/test.txt",
       switch_to: true,
+      change_history: true,
       restore_session: false,
     });
   });

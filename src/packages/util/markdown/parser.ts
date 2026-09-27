@@ -8,6 +8,7 @@ import mathPlugin from "./math-plugin";
 import { checkboxPlugin } from "./checkbox-plugin";
 import { hashtagPlugin } from "./hashtag-plugin";
 import { mentionPlugin } from "./mentions-plugin";
+import { collaborationReferencePlugin } from "../collaboration-references";
 import { blankLinesPlugin } from "./blank-lines-plugin";
 
 export const OPTIONS: MarkdownIt.Options = {
@@ -33,6 +34,7 @@ export function createMarkdownParser({
   parser.use(checkboxPlugin);
   parser.use(hashtagPlugin);
   parser.use(mentionPlugin);
+  parser.use(collaborationReferencePlugin);
   parser.use(blankLinesPlugin);
   parser.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
   if (renderBlankLines) {

@@ -1,8 +1,130 @@
 # Collaborators workspace: discovery, human conversations, and shared work
 
-Status: proposed implementation plan, not an implemented feature.
+Status: implementation in draft PR #727, behind default-off `collaborators_enabled`.
 Date: 2026-09-27.
 Source baseline: `origin/main` at `666b351e60`.
+
+## Implementation record
+
+The plan below remains the design and acceptance checklist. The implementation
+adds the global Collaborators destination, owner/home discovery APIs, bounded
+metadata producers and projections, canonical human rooms, independent personal
+state, and typed references. It reuses the existing project access model, chat
+renderer, Library, agent viewers, and notification graph. This is a review build,
+not a production enablement or a claim that every rollout gate has been passed.
+
+Implementation entry points:
+
+- `packages/util/collaborators.ts` and `collaboration-references.ts`: shared
+  discovery contracts and stable typed reference codecs.
+- `packages/database/postgres/collaborators-*.ts` and
+  `packages/server/collaborators/`: owner catalogs, account-home projections,
+  routed APIs, capacity limits, access leases, and independent personal state.
+- `packages/backend/collaborators/` and `packages/project-host/collaborators*.ts`:
+  durable filesystem intent, identity/activity recovery, metadata production,
+  and the human-room data-plane service.
+- `packages/chat/src/collaborators*.ts`: source metadata extraction, human-only
+  room/thread/message operations, and copy identity namespaces.
+- `packages/server/notifications/collaboration*.ts`: durable event consumption
+  through existing notification policy and delivery infrastructure.
+- `packages/frontend/collaborators/`: global views, bounded queries, detail
+  navigation, human chat, personal controls, and reference selection.
+- `packages/lite/collaborators/`: explicit standalone single-account adapter,
+  not an emulation of multibay or multiuser membership.
+
+Operational contracts and bounds are documented in the backend, server, and Lite
+`collaborators/README.md` files. Important rollout boundaries:
+
+- The flag is off by default. Disabling it preserves chats and personal state;
+  ordinary existing agents and Library remain usable.
+- Browsing reads metadata and never starts compute. Opening one selected chat
+  uses the existing project-host route. New discussions explicitly create the
+  registered room through that data plane.
+- Project-owner membership is authoritative. Global metadata has a bounded
+  60-second access lease plus client polling delay; expired leases fail closed.
+  Already downloaded metadata cannot be remotely erased. Opens and mutations
+  revalidate the authoritative membership rather than treating an alias as access.
+- Coverage is deliberately partial for unindexed historical sources. Explicit
+  `requestSource` requests one known absolute chat path for background indexing;
+  it neither scans the filesystem nor adopts that file as the canonical room.
+  Timestamp-only identities and ambiguous shell copies/moves require explicit
+  reconciliation, not guessed durable identities.
+- Supported mediated same-project moves preserve typed identity; copies receive
+  a separate persisted namespace. Cross-project relocation remains excluded.
+- Existing personal agent names and Library aliases/pins are compatibility
+  adapters. Naming an unnamed agent thread does not enroll an execution identity.
+- Project/account rehome with retained collaboration state is explicitly fenced
+  where the existing rehome machinery cannot yet transfer that state atomically.
+  It must not silently discard journals, room pointers, aliases, or notification
+  state. Full retained-state rehome remains a rollout gate.
+
+Validation is recorded as checks complete below; live multiuser/multibay staging
+acceptance and a human UX review remain required before broad enablement.
+
+### Validation record
+
+The implementation was checked in an isolated worktree, a private PostgreSQL 18
+cluster, and a private standalone Lite instance. No live user project was
+migrated, enabled, or restarted. The PR remains a draft for review.
+
+- Full `pnpm -C src build:dev` completed, followed by package-local builds and a
+  fresh static development bundle for the final UI integration.
+- Consolidated focused runs passed 888 tests across frontend, database, server,
+  project-host, backend, Lite, chat, chat-client, Conat, and util. The three
+  PGlite-only rehome tests are included in that count from their separate run;
+  they are intentionally skipped by the PostgreSQL run.
+- Focused coverage includes frontend routing, accessible controls, cache
+  invalidation, draft preservation, personal controls, human-only dispatch,
+  typed-reference codecs/renderers/completion, and existing alias compatibility.
+- PostgreSQL integration tests cover owner/home routing, membership cutovers,
+  bounded projections, replay/fencing, notification policy/outbox, Library state,
+  and explicit rehome guards. PGlite-specific personal-rehome cases are run
+  separately rather than counted as PostgreSQL coverage.
+- PostgreSQL query-plan tests use 1,000 projects and 100,000 resources, including
+  sparse personal scopes and indexed search. A 50,000-record attention cleanup
+  checks transaction-coalesced revision writes, bounded execution and rollback.
+  The scale suite passed again on the same isolated cluster after fixture cleanup.
+- Host/backend tests cover source extraction, recovery checkpoints, immutable
+  event production, mediated moves/copies, bulk-copy paths, and room lifecycle.
+  Lite tests cover the separate SQLite implementation and its durable adapters.
+- The isolated browser exercises actual human discussion creation, message send
+  and reload, and unsent-draft preservation across list/detail navigation.
+  Final acceptance also verifies dirty-replay recovery without another edit,
+  rapid reload after a new send, correct For You participation/activity, personal
+  alias refresh, and reference insertion/send/reload/open. Account-selected light
+  and dark layouts pass at 320px and 1440px with no horizontal overflow.
+  Keyboard/filter focus restoration passes the repository accessibility harness
+  with zero reported violations.
+- Browser testing exposed a save/reload gap between synchronized messages and
+  the disk-backed index. Autosave now filters no-op changes before debounce and
+  recovers genuinely unsaved state on readiness, with regressions for clean
+  reopen, pending saves, read-only access and disposal. Real serialized-chat
+  pipeline tests cover disk publication, participation, activity and restart.
+- Frontend lint and dependency version consistency checks passed. Detailed
+  machine-local reports are under `src/.local/`; they are test outputs, not
+  runtime dependencies or checked-in user data.
+
+### Remaining acceptance and UX iteration
+
+The foundations and first usable UI are implemented; the design checklist below
+also records acceptance scenarios that still need deployment-level verification.
+Do not interpret automated routing tests or standalone Lite as proof of a live
+two-human, multiple-bay deployment.
+
+- Exercise two real accounts, multiple devices, remote bays, stopped compute,
+  network interruptions, and large collaborator fanout in controlled staging.
+  Measure sustained projection lag and memory in addition to indexed query tests.
+- Implement atomic retained-state project/account rehome before relaxing the
+  explicit rehome guards. This is not a silently supported migration today.
+- Human review should refine discoverability, wording, and navigation. Project
+  browsing currently provides ordered/searchable results rather than a new
+  dedicated pinned-project view; optional person pins are not introduced.
+- Share to conversation inserts a reference into the currently selected human
+  draft. A cross-conversation destination chooser is a follow-up UX improvement;
+  sharing never sends automatically or changes the target's permissions.
+- Historical coverage remains partial until bounded source adoption/reconciliation
+  has run. Legacy path-encoded artifact URLs are not redirected; new typed
+  references use stable identity. Ambiguous shell copies/moves are not guessed.
 
 ## Goal and model
 
@@ -407,8 +529,8 @@ require a polished final layout before validating the foundations.
   restoration, Escape, loading/error announcements, and selector disambiguation.
   Manually check light/dark themes, 320px width, 200% zoom, and reduced motion.
   Follow `accessibility.md`, package-local builds/tests, and frontend lint when
-  implementing UI. This planning-only PR requires formatting/link/diff checks,
-  not a runtime build.
+  implementing UI. The implementation PR also requires a full development build
+  and isolated browser checks before calling the UI reviewable.
 
 ## Open details and exclusions
 

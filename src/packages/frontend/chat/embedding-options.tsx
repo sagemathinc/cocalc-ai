@@ -18,6 +18,7 @@ export function chatIsForeground(
 }
 
 export interface ChatEmbeddingOptions {
+  humanOnly?: boolean;
   agentWorkspace?: boolean;
   agentWorkspaceActive?: boolean;
   onSearchAll?: () => void;

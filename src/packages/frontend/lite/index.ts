@@ -59,6 +59,8 @@ export function init(redux, configuration: CustomizeState) {
       project_id,
       target: initialProjectState.target,
       switch_to: initialProjectState.switch_to,
+      // Background initialization must not replace an explicit global route.
+      change_history: initialProjectState.switch_to,
       restore_session: false,
     })
     .catch((err) => {

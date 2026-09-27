@@ -1,11 +1,15 @@
 /** @jest-environment jsdom */
 
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MarkdownInput } from "../component";
+import { serializeCollaborationReference } from "@cocalc/util/collaboration-references";
 
 type HandlerMap = Record<string, Array<(...args: any[]) => void>>;
 
 let latestEditor: any = null;
+let mockMentionItems: any[] = [];
+const mockMentionProvider = () => mockMentionItems;
+const mockAgentApproval = jest.fn();
 
 async function waitForEditor() {
   await act(async () => {
@@ -102,6 +106,7 @@ function createMockEditor(node?: HTMLTextAreaElement | null) {
       }
     },
     addKeyMap: jest.fn(),
+    cursorCoords: jest.fn(() => ({ bottom: 20, left: 0 })),
     defaultTextHeight: jest.fn(() => 20),
     execCommand: jest.fn(),
     firstLine: jest.fn(() => 0),
@@ -220,11 +225,27 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 jest.mock("@cocalc/frontend/codemirror/init", () => ({}));
 
 jest.mock("../complete", () => ({
-  Complete: () => null,
+  Complete: ({ items, onSelect }) => (
+    <div role="menu" aria-label="Mention choices">
+      {items.map((item) => (
+        <button
+          role="menuitem"
+          key={item.value}
+          onClick={() => onSelect(item.value)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 jest.mock("../mentionable-users", () => ({
-  useMentionableUsers: () => () => [],
+  useMentionableUsers: () => mockMentionProvider,
+}));
+
+jest.mock("@cocalc/frontend/agents/mention-context", () => ({
+  useAgentMentionContext: () => ({ onSelect: mockAgentApproval }),
 }));
 
 jest.mock("../mentions", () => ({
@@ -263,6 +284,8 @@ jest.mock("@cocalc/sync/editor/generic/simple-input-merge", () => ({
 describe("MarkdownInput CodeMirror wrapper contract", () => {
   beforeEach(() => {
     latestEditor = null;
+    mockMentionItems = [];
+    mockAgentApproval.mockClear();
     jest.useFakeTimers();
   });
 
@@ -270,6 +293,54 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
   });
+
+  it.each(["agent", "artifact", "conversation"] as const)(
+    "stores selected %s @ reference markup without person marks or agent approval",
+    async (kind) => {
+      const reference = {
+        version: 1 as const,
+        target: {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          kind,
+          resource_id: "stable-id",
+        },
+        display_fallback: "Shared work",
+      };
+      const markup = serializeCollaborationReference(reference);
+      mockMentionItems = [{ value: markup, label: "Shared work" }];
+      await renderMarkdownInput(
+        <MarkdownInput
+          project_id={reference.target.project_id}
+          path="/human.chat"
+          value="@"
+          enableMentions
+          onChange={() => {}}
+          saveDebounceMs={0}
+        />,
+      );
+      act(() => {
+        latestEditor.setCursor({ line: 0, ch: 1 });
+        latestEditor.__trigger("change", latestEditor, {
+          text: ["@"],
+          from: { line: 0, ch: 0 },
+        });
+      });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Shared work" }));
+      expect(latestEditor.replaceRange).toHaveBeenCalledWith(
+        markup + " ",
+        { line: 0, ch: 0 },
+        { line: 0, ch: 1 },
+      );
+      expect(latestEditor.markText).not.toHaveBeenCalled();
+      expect(mockAgentApproval).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("menu", { name: "Mention choices" }),
+      ).not.toBeInTheDocument();
+      expect(latestEditor.getInputField().focus).toHaveBeenCalledWith({
+        preventScroll: true,
+      });
+    },
+  );
 
   it("focuses and blurs the underlying input when isFocused changes", async () => {
     const { rerender } = await renderMarkdownInput(

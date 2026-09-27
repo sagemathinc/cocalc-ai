@@ -12,12 +12,13 @@ const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
 describeDb("Agent Network account rehome fence", () => {
-  const db = new AgentStore();
+  let db: AgentStore;
   const tables = [
     ...PERSONAL_AGENT_STATE_TABLES,
     ...EXTERNAL_AGENT_STATE_TABLES,
   ];
   beforeAll(async () => {
+    db = new AgentStore();
     await syncSchema(
       Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
     );
@@ -44,9 +45,22 @@ describeDb("Agent Network account rehome fence", () => {
         "agent_network_proposals",
         "agent_network_broadcasts",
         "agent_external_inbox",
+        "collaboration_personal",
+        "collaboration_artifact_bindings",
       ]),
     );
     expect(tables).not.toContain("agent_personal_grants");
     expect(tables).not.toContain("agent_personal_requests");
+  });
+
+  test("collaboration aliases and attention remain protected with the feature disabled", async () => {
+    const account = randomUUID();
+    await db.query(
+      "INSERT INTO collaboration_personal(account_id,entry_key,project_id,alias) VALUES($1,$2,$3,'seminar')",
+      [account, "collaboration-test", randomUUID()],
+    );
+    await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
+      "Account rehome is unavailable",
+    );
   });
 });

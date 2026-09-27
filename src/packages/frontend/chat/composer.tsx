@@ -52,6 +52,8 @@ import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { ComposerDeliverySelector } from "./composer-delivery";
 import type { ComposerDelivery } from "./composer-delivery";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { ReferencePickerComposer } from "@cocalc/frontend/collaborators/reference-picker-composer";
 
 export interface ChatRoomComposerProps {
   isActive?: boolean;
@@ -162,6 +164,10 @@ export function ChatRoomComposer({
   mobile = false,
 }: ChatRoomComposerProps) {
   const embeddingOptions = useChatEmbeddingOptions();
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
   const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
   useEffect(() => setDelivery("agent"), [selectedThread?.key]);
   const visualViewport = useChatVisualViewport(mobile);
@@ -957,6 +963,17 @@ export function ChatRoomComposer({
               minHeight: 32,
             }}
           >
+            {collaboratorsEnabled && isActive && (
+              <ReferencePickerComposer
+                key={`${project_id}:${path}:${composerSession}`}
+                projectId={project_id}
+                inputControlRef={chatInputControlRef}
+                allowShareToConversation={
+                  !!embeddingOptions.humanOnly && selectedThread != null
+                }
+                conversationTitle={threadLabel}
+              />
+            )}
             <AgentFileAttachment
               projectId={project_id}
               workingDirectory={

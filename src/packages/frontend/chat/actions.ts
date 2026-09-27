@@ -4,6 +4,11 @@
  */
 
 import { fromJS } from "immutable";
+import {
+  assertHumanRoomConfigPatch,
+  isHumanOnlyChatDocument,
+  isHumanOnlyThreadConfig,
+} from "@cocalc/util/collaboration-human-room";
 import { debounce } from "lodash";
 import { message as antdMessage } from "antd";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -535,7 +540,9 @@ export class ChatActions extends Actions<ChatState> {
   ): void => {
     if (this.syncdb != null) {
       this.syncdb.removeListener("change", this.autosave);
+      this.syncdb.removeListener("ready", this.recoverUnsavedChat);
     }
+    this.scheduleAutosave.cancel();
     this.syncdb = syncdb;
     this.store = store;
 
@@ -546,6 +553,8 @@ export class ChatActions extends Actions<ChatState> {
 
     // save periodically to disk
     this.syncdb.on("change", this.autosave);
+    if (this.syncdb.get_state() === "ready") this.recoverUnsavedChat();
+    else this.syncdb.once("ready", this.recoverUnsavedChat);
     this.ensureChatStoreRegistered();
     this.ensureProjectReadState();
   };
@@ -713,6 +722,8 @@ export class ChatActions extends Actions<ChatState> {
     this.openImportModal = undefined;
     this.messageCache = undefined;
     this.syncdb?.removeListener("change", this.autosave);
+    this.syncdb?.removeListener("ready", this.recoverUnsavedChat);
+    this.scheduleAutosave.cancel();
     this.syncdb = undefined;
     this.clearProjectReadState();
   }
@@ -957,6 +968,30 @@ export class ChatActions extends Actions<ChatState> {
       this.warnSyncdbNotReady();
       return "";
     }
+    const humanRoom = isHumanOnlyChatDocument(this.syncdb);
+    if (humanRoom) {
+      if (
+        reply_thread_id &&
+        !isHumanOnlyThreadConfig(
+          this.getThreadMetadata(reply_thread_id, {
+            threadId: reply_thread_id,
+          }),
+        )
+      ) {
+        antdMessage.error(
+          "This conversation is no longer configured for human chat.",
+        );
+        return "";
+      }
+      skipModelDispatch = true;
+      noNotification = true; // The durable room event producer owns notification delivery.
+      threadAgent = { mode: "human" };
+      acp_prompt = undefined;
+      acpConfigOverride = undefined;
+      send_mode = undefined;
+      recoveredNotSent = false;
+      postOnly = false;
+    }
     const time_stamp: Date = chatIdentity?.date
       ? new Date(chatIdentity.date)
       : nextChatMessageDate(this);
@@ -992,10 +1027,13 @@ export class ChatActions extends Actions<ChatState> {
         explicitParentMessageId || latestMessageId || undefined;
     }
     const mentionsInput =
-      submitMentionsRef?.current?.({
-        chat: `${time_stamp.valueOf()}`,
-        thread: thread_id,
-      }) ?? "";
+      submitMentionsRef?.current?.(
+        {
+          chat: `${time_stamp.valueOf()}`,
+          thread: thread_id,
+        },
+        humanRoom,
+      ) ?? "";
     if (extraInput != null) {
       // Prefer mention-processed content when available; otherwise use explicit input.
       input = mentionsInput.trim().length > 0 ? mentionsInput : extraInput;
@@ -1530,13 +1568,26 @@ export class ChatActions extends Actions<ChatState> {
     }
   };
 
-  private autosave = debounce(
-    (changes?: unknown): void => {
-      // SyncDoc emits an initial empty change event after the ready replay.
-      // Saving on that no-op creates a fresh timetravel revision on every reload.
-      if (getChangeCount(changes) === 0) {
-        return;
-      }
+  private recoverUnsavedChat = (): void => {
+    // A reload can replay accepted messages before their disk save completed.
+    // Recover only that dirty state, not an unchanged initial replay.
+    if (
+      this.syncdb?.get_state() === "ready" &&
+      !this.syncdb.is_read_only() &&
+      this.syncdb.has_unsaved_changes() === true
+    )
+      this.scheduleAutosave();
+  };
+
+  private autosave = (changes?: unknown): void => {
+    // Filter before debounce: the empty ready replay must not consume the
+    // leading save, and later no-ops must not postpone a pending real save.
+    if (getChangeCount(changes) === 0) return;
+    this.scheduleAutosave();
+  };
+
+  private scheduleAutosave = debounce(
+    (): void => {
       void this.autosaveToDisk();
     },
     AUTOSAVE_INTERVAL,
@@ -2067,6 +2118,7 @@ export class ChatActions extends Actions<ChatState> {
     if (state != null && state !== "ready") {
       return false;
     }
+    if (isHumanOnlyChatDocument(this.syncdb)) assertHumanRoomConfigPatch(patch);
     const thread_id = this.normalizeThreadId(threadKey, opts?.threadId);
     if (!thread_id) {
       if (!warnedMissingThreadIds.has(threadKey)) {

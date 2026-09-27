@@ -9,6 +9,7 @@ export type ProjectRehomeSqlSideTableDecisionStatus =
   | "projection"
   | "seed-global-cleanup"
   | "data-plane-excluded"
+  | "account-home-excluded"
   | "legacy-unused"
   | "audit-local"
   | "operation-local";
@@ -27,6 +28,90 @@ export interface ProjectRehomeSqlSideTablePreflight {
 }
 
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
+  collaboration_memberships: {
+    table: "collaboration_memberships",
+    status: "not-portable",
+    reason:
+      "Recipient membership epochs preserve notification cutovers across unrelated membership changes and require an explicit owner handoff.",
+  },
+  collaboration_notification_events: {
+    table: "collaboration_notification_events",
+    status: "not-portable",
+    reason:
+      "Immutable human-message facts and owner delivery positions require a coordinated handoff before the project owner changes.",
+  },
+  collaboration_notification_floors: {
+    table: "collaboration_notification_floors",
+    status: "not-portable",
+    reason:
+      "Notification replay floors must transfer with the owner's retained message events, never reset independently.",
+  },
+  collaboration_notification_cursors: {
+    table: "collaboration_notification_cursors",
+    status: "account-home-excluded",
+    reason:
+      "Recipient delivery cursors remain on the account home bay and revalidate the current project owner and membership generation.",
+  },
+  collaboration_relocations: {
+    table: "collaboration_relocations",
+    status: "not-portable",
+    reason:
+      "Stable relocation retry identities and source epoch transitions require an explicit owner handoff.",
+  },
+  collaboration_artifact_bindings: {
+    table: "collaboration_artifact_bindings",
+    status: "account-home-excluded",
+    reason:
+      "Personal Library identity bindings remain on the account home bay; project relocation must not rewrite another account's aliases.",
+  },
+  collaboration_projects: {
+    table: "collaboration_projects",
+    status: "not-portable",
+    reason:
+      "Catalog generation and writer fencing require owner-coordinated handoff, not raw row copying.",
+  },
+  collaboration_sources: {
+    table: "collaboration_sources",
+    status: "not-portable",
+    reason:
+      "Durable source sequence floors and writer epochs must be preserved and fenced during project rehome.",
+  },
+  collaboration_source_requests: {
+    table: "collaboration_source_requests",
+    status: "not-portable",
+    reason:
+      "Pending opt-in indexing requests must be reconciled with source catalog ownership during project rehome.",
+  },
+  collaboration_catalog: {
+    table: "collaboration_catalog",
+    status: "not-portable",
+    reason:
+      "Stable resource-to-locator bindings and tombstones require explicit destination reconciliation.",
+  },
+  collaboration_rooms: {
+    table: "collaboration_rooms",
+    status: "not-portable",
+    reason:
+      "Canonical human room registration must survive with the same identity and initialization lifecycle.",
+  },
+  collaboration_access: {
+    table: "collaboration_access",
+    status: "projection",
+    reason:
+      "Account-home access leases must be refreshed from the new project owner, never copied as grants.",
+  },
+  collaboration_index: {
+    table: "collaboration_index",
+    status: "projection",
+    reason:
+      "Account discovery summaries rebuild only under current owner-issued generations and membership leases.",
+  },
+  collaboration_personal: {
+    table: "collaboration_personal",
+    status: "account-home-excluded",
+    reason:
+      "Personal collection and attention belong to the account home bay, not the project owner.",
+  },
   agent_identities: {
     table: "agent_identities",
     status: "not-portable",
@@ -322,6 +407,7 @@ const IGNORED_REHOME_STATUSES =
     "seed-global-cleanup",
     "legacy-unused",
     "audit-local",
+    "account-home-excluded",
   ]);
 
 export function getProjectRehomeSqlSideTablePreflight(): ProjectRehomeSqlSideTablePreflight {

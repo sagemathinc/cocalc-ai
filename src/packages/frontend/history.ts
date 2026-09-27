@@ -135,7 +135,7 @@ export function set_url_with_search(
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   // Empty Library segments are invalid selections, not redundant separators.
   // path.join would turn /library//project/entry into a different, valid route.
-  const full_url = /^\/?library(?:\/|$)/.test(url)
+  const full_url = /^\/?(?:library|collaborators)(?:\/|$)/.test(url)
     ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
     : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
@@ -190,8 +190,15 @@ export function load_target(
         library_open: parsed.library === true,
         library_project_id: parsed.artifact_project_id,
         library_entry_id: parsed.artifact_entry_id,
+        collaborators_open: parsed.collaborators != null,
+        collaborators_view: parsed.collaborators?.view,
+        collaborators_project_id: parsed.collaborators?.projectId,
+        collaborators_person_id: parsed.collaborators?.personId,
+        collaborators_resource_kind: parsed.collaborators?.resourceKind,
+        collaborators_resource_id: parsed.collaborators?.resourceId,
+        collaborators_route_error: parsed.collaborators?.routeError,
         // Library overlays the workspace; keep its selected conversation.
-        ...(!parsed.library
+        ...(!parsed.library && !parsed.collaborators
           ? {
               active_agent_id: parsed.agent_id,
               active_agent_name:

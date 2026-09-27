@@ -68,6 +68,86 @@ function entries(
 export const TABLE_OWNERSHIP = {
   ...entries(
     [
+      "collaboration_projects",
+      "collaboration_sources",
+      "collaboration_source_requests",
+      "collaboration_catalog",
+      "collaboration_rooms",
+      "collaboration_relocations",
+      "collaboration_notification_events",
+      "collaboration_notification_floors",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      notes:
+        "Project-owned human room identity and fenced resource metadata. Rehome must explicitly migrate room pointers and source generations before enabling writes.",
+    },
+  ),
+  ...entries(["collaboration_memberships"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      account_id:
+        "Recipient membership cutover, issued only by the project owner.",
+    },
+    notes:
+      "Per-recipient membership epoch survives unrelated member edits but rotates on removal/rejoin. Rehome must migrate these fences with the catalog.",
+  }),
+  ...entries(["collaboration_personal", "collaboration_artifact_bindings"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Project-owned resource identity; not an authorization grant.",
+    },
+    notes:
+      "Private optional names, collection and attention state. Requires explicit migration on account rehome; resource access remains project-owned.",
+  }),
+  ...entries(["collaboration_access", "collaboration_index"], {
+    ownership: "projection",
+    authority: "account_id",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      project_id: "Project owner provides fresh membership and metadata.",
+    },
+    notes:
+      "Account-home discovery metadata with expiring owner membership leases. Invalidate on rehome or removal; never copy as an access grant.",
+    rebuild:
+      "Collaborators maintenance refreshes bounded project metadata pages from current owners.",
+  }),
+  ...entries(["collaboration_notification_cursors"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Recipient home owns delivery progress and no-history boundaries.",
+    },
+    notes:
+      "Durable notification delivery cursors and retry state require an explicit account rehome/dedup handoff; never silently rebuild and lose pending delivery.",
+  }),
+  ...entries(["collaboration_account_state"], {
+    ownership: "projection",
+    authority: "account_id",
+    portability: "rebuildable",
+    notes:
+      "Account-home durable page invalidation revision, not personal state or authorization.",
+    rebuild:
+      "Discard old bounded revision tokens and resnapshot on the new account home.",
+  }),
+  ...entries(["collaboration_maintenance"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Local bounded index maintenance continuation; not a resource identity or authorization record.",
+  }),
+  ...entries(
+    [
       "account_funding_authorities",
       "account_funding_holds",
       "compute_funding_pools",

@@ -8,6 +8,14 @@ import { init_store } from "./store";
 import { setNotificationsOpen } from "../notifications/drawer-state";
 import { openLibrary } from "../agents/library-navigation";
 
+let mockLite = false;
+jest.mock("@cocalc/frontend/lite", () => ({
+  get lite() {
+    return mockLite;
+  },
+  project_id: "00000000-0000-4000-8000-000000000001",
+}));
+
 jest.mock("../notifications/drawer-state", () => ({
   setNotificationsOpen: jest.fn(),
 }));
@@ -90,6 +98,7 @@ const page = () => redux.getStore("page") as any;
 const projects = () => redux.getStore("projects");
 
 beforeEach(() => {
+  mockLite = false;
   jest.clearAllMocks();
   jest.mocked(ensureProjectReduxRuntime).mockResolvedValue(undefined);
   init_store();
@@ -140,6 +149,101 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    "preserves Lite Collaborators routing (history=%s, enabled=%s)",
+    async (changeHistory, enabled) => {
+      mockLite = true;
+      redux.createActions("customize").setState({
+        collaborators_enabled: enabled,
+      });
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: "people",
+        collaborators_project_id: B,
+        collaborators_person_id: C,
+      });
+      await actions.set_active_tab("agents", changeHistory);
+      // The workspace itself renders the disabled notice when the flag is off.
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("collaborators_project_id")).toBe(B);
+      expect(page().get("collaborators_person_id")).toBe(C);
+      expect(projectActions[A].show).not.toHaveBeenCalled();
+      expect(projectActions[A].push_state).not.toHaveBeenCalled();
+      if (changeHistory) {
+        expect(set_url).toHaveBeenLastCalledWith(
+          `/collaborators/people/project/${B}/person/${C}`,
+          "",
+        );
+      } else {
+        expect(set_url).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it("still redirects unsupported Lite tabs without a Collaborators overlay", async () => {
+    mockLite = true;
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe(A);
+    expect(projectActions[A].show).toHaveBeenCalled();
+  });
+  it("does not let a retained Collaborators overlay bypass Lite tab restrictions", async () => {
+    mockLite = true;
+    actions.setState({ collaborators_open: true });
+    await actions.set_active_tab("projects");
+    expect(page().get("active_top_tab")).toBe(A);
+  });
+  it.each([false, true])(
+    "preserves human routes with AI disabled (Lite=%s)",
+    async (isLite) => {
+      mockLite = isLite;
+      actions.setState({
+        collaborators_open: true,
+        collaborators_view: "conversations",
+        collaborators_project_id: B,
+        collaborators_resource_kind: "conversation",
+        collaborators_resource_id: "human-thread",
+      });
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: true },
+      });
+      await actions.set_active_tab("agents", false);
+      expect(page().get("active_top_tab")).toBe("agents");
+      expect(page().get("collaborators_resource_id")).toBe("human-thread");
+      expect(set_url).not.toHaveBeenCalled();
+      await actions.set_active_tab("agents");
+      expect(set_url).toHaveBeenLastCalledWith(
+        `/collaborators/conversations/project/${B}/resource/conversation/human-thread`,
+        "",
+      );
+      // The route survives settings loading; rendering still gates the feature.
+      expect(projectActions[A].show).not.toHaveBeenCalled();
+    },
+  );
+  it("still blocks the ordinary Lite Agents route with AI disabled", async () => {
+    mockLite = true;
+    redux
+      .getActions("account")
+      .setState({ other_settings: { openai_disabled: true } });
+    await actions.set_active_tab("agents", false);
+    expect(page().get("active_top_tab")).toBe(A);
+  });
+  it("keeps the exam guard for the Lite Collaborators workspace", async () => {
+    mockLite = true;
+    actions.setState({ collaborators_open: true });
+    redux.createActions("customize").setState({
+      exam_mode: true,
+      project_id: A,
+    });
+    redux
+      .getActions("account")
+      .setState({ other_settings: { openai_disabled: true } });
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe(A);
+  });
   it.each([false, true])(
     "keeps Agents navigation in the assigned exam project (AI disabled=%s)",
     async (disabled) => {

@@ -4,6 +4,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { withArtifactCatalog } from "./artifact-catalog";
+import { withCollaborators } from "./collaborators";
+import { journalSameProjectBulkCopy } from "./collaborators-bulk-copy";
 import {
   deleteRedundantSnapshotHome,
   preserveSnapshotHistory,
@@ -2641,6 +2643,18 @@ async function cp({
   let srcPaths = await srcFs.safeAbsPaths(src.path);
   let destPath = await destFs.safeAbsPath(dest.path);
 
+  const journalCopy = (copy: () => Promise<void>) =>
+    src.project_id === dest.project_id
+      ? journalSameProjectBulkCopy({
+          fs: srcFs,
+          project_id: src.project_id,
+          source: src.path,
+          destination: dest.path,
+          options: { ...options, reflink: true },
+          copy,
+        })
+      : copy();
+
   if (exact) {
     if (typeof src.path !== "string") {
       throw new Error("exact copy requires one source path");
@@ -2661,18 +2675,20 @@ async function cp({
       }
       return;
     }
-    await replacePathFromStaging({
-      source: srcPaths[0],
-      destination: destPath,
-      destinationExists: destStat != null,
-      copy: async (source, destination) => {
-        await cpExec(source, destination, {
-          ...options,
-          recursive: options?.recursive ?? true,
-          reflink: true,
-        });
-      },
-    });
+    await journalCopy(() =>
+      replacePathFromStaging({
+        source: srcPaths[0],
+        destination: destPath,
+        destinationExists: destStat != null,
+        copy: async (source, destination) => {
+          await cpExec(source, destination, {
+            ...options,
+            recursive: options?.recursive ?? true,
+            reflink: true,
+          });
+        },
+      }),
+    );
     void touchProjectLastEdited(dest.project_id, "cp-exact");
     return;
   }
@@ -2691,22 +2707,22 @@ async function cp({
     srcPaths = srcPaths.map(toRelative);
     destPath = toRelative(destPath);
     // Fast path: btrfs-aware copy inside the shared file-server mount.
-    await fs.subvolumes.fs.cp(
-      typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
-      destPath,
-      { ...options, reflink: true },
+    await journalCopy(() =>
+      fs!.subvolumes.fs.cp(
+        typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
+        destPath,
+        { ...options, reflink: true },
+      ),
     );
   } else {
     // Fallback path for absolute rootfs/temp-volume locations that are outside
     // the subvolume mount root.
-    await cpExec(
-      typeof src.path == "string" ? srcPaths[0] : srcPaths,
-      destPath,
-      {
+    await journalCopy(() =>
+      cpExec(typeof src.path == "string" ? srcPaths[0] : srcPaths, destPath, {
         ...options,
         recursive: options?.recursive ?? true,
         reflink: true,
-      },
+      }),
     );
   }
   void touchProjectLastEdited(dest.project_id, "cp");
@@ -5035,16 +5051,19 @@ export async function initFsServer({
       }
       const project_id = projectIdFromSubject(subject);
       const { path } = await getOrEnsureVolume(project_id);
-      return withArtifactCatalog(
-        createProjectSandboxFilesystem({
+      return withCollaborators(
+        withArtifactCatalog(
+          createProjectSandboxFilesystem({
+            project_id,
+            home: path,
+            rootfs: getRootfsMountpoint(project_id),
+            scratch: getScratchMountpoint(project_id),
+            sharedScratch: getSharedScratchMountpoint(),
+            deleteSnapshot: async (name: string) =>
+              await deleteSnapshot({ project_id, name }),
+          }),
           project_id,
-          home: path,
-          rootfs: getRootfsMountpoint(project_id),
-          scratch: getScratchMountpoint(project_id),
-          sharedScratch: getSharedScratchMountpoint(),
-          deleteSnapshot: async (name: string) =>
-            await deleteSnapshot({ project_id, name }),
-        }),
+        ),
         project_id,
       );
     },

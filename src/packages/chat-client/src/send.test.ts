@@ -98,6 +98,28 @@ function pipeline({
 }
 
 describe("ChatSendPipeline", () => {
+  it.each(["send", "sendGuidance"] as const)(
+    "never dispatches %s from a canonical human room, even with stale AI metadata",
+    async (method) => {
+      const events: string[] = [];
+      const db = fakeDb(events);
+      db.rows.push({ event: "collaborators-room", mode: "human" });
+      const transport: ChatSendTransport = {
+        stream: jest.fn(),
+        interrupt: jest.fn(),
+        steer: jest.fn(),
+      };
+      await expect(
+        pipeline({ db, transport })[method]({
+          thread_id: "thread-1",
+          text: "@an-agent please help",
+        }),
+      ).rejects.toThrow("human-only");
+      expect(events).toEqual([]);
+      expect(transport.stream).not.toHaveBeenCalled();
+      expect(transport.steer).not.toHaveBeenCalled();
+    },
+  );
   it("saves the stable user row before submitting one ACP turn", async () => {
     const events: string[] = [];
     let request: any;

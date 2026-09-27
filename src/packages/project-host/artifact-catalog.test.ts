@@ -53,6 +53,7 @@ let getProject: jest.Mock;
 let listProjects: jest.Mock;
 let lifecycle: typeof import("./project-volume-lifecycle");
 let warn: jest.Mock;
+let assertCollaborationReady: jest.Mock;
 let now: number;
 
 beforeEach(async () => {
@@ -72,6 +73,7 @@ beforeEach(async () => {
   getProject = jest.fn((project_id: string) => ({ project_id }));
   listProjects = jest.fn().mockReturnValue([{ project_id: projectA }]);
   warn = jest.fn();
+  assertCollaborationReady = jest.fn().mockResolvedValue(undefined);
   instance = {
     journal: {},
     start: jest.fn(),
@@ -104,6 +106,9 @@ beforeEach(async () => {
   }));
   jest.doMock("./sqlite/hosts", () => ({ getLocalHostId: getHostId }));
   jest.doMock("./sqlite/projects", () => ({ getProject, listProjects }));
+  jest.doMock("./collaborators", () => ({
+    assertArtifactCollaborationSourceReady: assertCollaborationReady,
+  }));
   adapter = require("./artifact-catalog");
   lifecycle = require("./project-volume-lifecycle");
 });
@@ -153,6 +158,35 @@ test("filesystem wrapping is inert before startup and uses the service journal a
   wrap.mockReturnValueOnce(wrapped);
   expect(adapter.withArtifactCatalog(fs, projectA)).toBe(wrapped);
   expect(wrap).toHaveBeenCalledWith(fs, projectA, instance.journal);
+});
+test("collaboration transitions fence artifact registration, reads and captured delivery retries before RPC", async () => {
+  start();
+  assertCollaborationReady.mockRejectedValue(
+    Error("source identity transition pending"),
+  );
+  await expect(options.register(registration)).rejects.toThrow(/transition/);
+  await expect(options.send(snapshot)).rejects.toThrow(/transition/);
+  await expect(options.read(source)).rejects.toThrow(/transition/);
+  expect(callHub).not.toHaveBeenCalled();
+  expect(getFilesystem).not.toHaveBeenCalled();
+  assertCollaborationReady.mockResolvedValue(undefined);
+  await options.send(snapshot);
+  expect(callHub).toHaveBeenCalledWith(
+    rpc("ingest", { ...snapshot, snapshot }),
+  );
+});
+test("a move starting during artifact read discards extraction and closes the filesystem", async () => {
+  start();
+  read.mockImplementationOnce(async () => {
+    assertCollaborationReady.mockRejectedValue(
+      Error("source identity transition pending"),
+    );
+    return [];
+  });
+  await expect(options.read(source)).rejects.toThrow(/transition/);
+  expect(extract).not.toHaveBeenCalled();
+  expect(closeFilesystem).toHaveBeenCalledTimes(1);
+  expect(callHub).not.toHaveBeenCalled();
 });
 
 test("writer lookup, registration, and ingestion carry fresh authenticated host context and exact payloads", async () => {

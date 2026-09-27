@@ -49,6 +49,9 @@ import { OnboardingAttempt } from "@cocalc/frontend/monitoring/onboarding";
 import type { OnboardingPhase } from "@cocalc/util/onboarding-metrics";
 import { AgentArtifactBrowser } from "./artifact-browser";
 import { LibraryEntry } from "./library-entry";
+import { CollaboratorsPage } from "@cocalc/frontend/collaborators/page";
+import type { CollaboratorsRoute } from "@cocalc/frontend/collaborators/workspace-types";
+import { openCollaborators } from "@cocalc/frontend/collaborators/navigation";
 import {
   closedLibraryState,
   libraryConversationHit,
@@ -2838,6 +2841,55 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | undefined;
   const searchNavigation = useNavigationIntent(active, accountId);
   const libraryOpen = !!useTypedRedux("page", "library_open");
+  const collaboratorsOpen = !!useTypedRedux("page", "collaborators_open");
+  const collaboratorsEnabled = !!useTypedRedux(
+    "customize",
+    "collaborators_enabled",
+  );
+  const collaboratorsView = useTypedRedux("page", "collaborators_view");
+  const collaboratorsProjectId = useTypedRedux(
+    "page",
+    "collaborators_project_id",
+  );
+  const collaboratorsPersonId = useTypedRedux(
+    "page",
+    "collaborators_person_id",
+  );
+  const collaboratorsResourceKind = useTypedRedux(
+    "page",
+    "collaborators_resource_kind",
+  );
+  const collaboratorsResourceId = useTypedRedux(
+    "page",
+    "collaborators_resource_id",
+  );
+  const collaboratorsRouteError = useTypedRedux(
+    "page",
+    "collaborators_route_error",
+  );
+  const workspaceOverlayOpen = libraryOpen || collaboratorsOpen;
+  const retainedCollaborators = useRef<{
+    accountId?: string;
+    route: CollaboratorsRoute;
+    error?: string;
+  }>({ accountId, route: { view: "conversations" } });
+  if (retainedCollaborators.current.accountId !== accountId)
+    retainedCollaborators.current = {
+      accountId,
+      route: { view: "conversations" },
+    };
+  if (collaboratorsOpen)
+    retainedCollaborators.current = {
+      accountId,
+      route: {
+        view: collaboratorsView ?? "conversations",
+        projectId: collaboratorsProjectId,
+        personId: collaboratorsPersonId,
+        resourceKind: collaboratorsResourceKind,
+        resourceId: collaboratorsResourceId,
+      },
+      error: collaboratorsRouteError,
+    };
   const libraryProjectId = useTypedRedux("page", "library_project_id");
   const libraryEntryId = useTypedRedux("page", "library_entry_id");
   const { names: artifactNames } = useArtifactNames();
@@ -2863,7 +2915,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
-  const [mobileList, setMobileList] = useState(!libraryOpen);
+  const [mobileList, setMobileList] = useState(!workspaceOverlayOpen);
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     initialAgentSidebarWidth,
@@ -2881,8 +2933,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const boundAccount = useBoundAgentAccount();
 
   useEffect(() => {
-    if (libraryOpen) setMobileList(false);
-  }, [libraryOpen, libraryProjectId, libraryEntryId]);
+    if (workspaceOverlayOpen) setMobileList(false);
+  }, [
+    workspaceOverlayOpen,
+    libraryProjectId,
+    libraryEntryId,
+    collaboratorsView,
+    collaboratorsProjectId,
+    collaboratorsPersonId,
+    collaboratorsResourceId,
+  ]);
 
   function libraryNavigationControl() {
     return isNarrow ? (
@@ -2933,22 +2993,24 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         agentOrganization.groups.unpinned[0]);
   const { mountedWorkspaces, mountWorkspace, unmountWorkspace } =
     useRetainedWorkspaces(
-      active && !libraryOpen && !creating && selected
+      active && !workspaceOverlayOpen && !creating && selected
         ? agentWorkspaceKey(selected)
         : undefined,
     );
   useEffect(() => {
     if (!active) return;
     set_window_title(
-      libraryOpen
-        ? "Library"
-        : creating
-          ? "New Agent"
-          : selected
-            ? `@${selected.name} - Agents`
-            : "Agents",
+      collaboratorsOpen
+        ? "Collaborators"
+        : libraryOpen
+          ? "Library"
+          : creating
+            ? "New Agent"
+            : selected
+              ? `@${selected.name} - Agents`
+              : "Agents",
     );
-  }, [active, libraryOpen, creating, selected?.name]);
+  }, [active, libraryOpen, collaboratorsOpen, creating, selected?.name]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)
     ? undefined
     : (agents.find(
@@ -2956,7 +3018,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       ) ?? selected);
 
   useWorkspaceRoute({
-    active: active && !libraryOpen,
+    active: active && !workspaceOverlayOpen,
     activeAgentId,
     selected,
   });
@@ -2980,7 +3042,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   );
 
   useEffect(() => {
-    if (!selected || libraryOpen || !active) return;
+    if (!selected || workspaceOverlayOpen || !active) return;
     const workspace = agentWorkspaceKey(selected);
     setWorkspaceAgentIds((old) => {
       if (old.get(workspace) === selected.endpoint.agent_id) return old;
@@ -2988,11 +3050,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       next.set(workspace, selected.endpoint.agent_id);
       return next;
     });
-  }, [selected?.endpoint.agent_id, libraryOpen, active]);
+  }, [selected?.endpoint.agent_id, workspaceOverlayOpen, active]);
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
-      if (!active || libraryOpen) return;
+      if (!active || workspaceOverlayOpen) return;
       setWorkspaceAgentIds((old) => {
         if (old.get(workspace) === nextAgent.endpoint.agent_id) return old;
         const next = new Map(old);
@@ -3012,7 +3074,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         }),
       );
     },
-    [active, libraryOpen],
+    [active, workspaceOverlayOpen],
   );
 
   function selectAgent(agent: NamedAgent, keepNavigation = false) {
@@ -3406,7 +3468,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         | undefined,
     );
     const active =
-      !libraryOpen && agent.endpoint.agent_id === selected?.endpoint.agent_id;
+      !workspaceOverlayOpen &&
+      agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
     const appearance = agentAppearances.get(id);
     const theme = resolveNamedAgentTheme(agent, appearance);
@@ -3628,7 +3691,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     );
   }
 
-  if (loading && !directory && !libraryOpen) return <Loading theme="medium" />;
+  if (loading && !directory && !workspaceOverlayOpen)
+    return <Loading theme="medium" />;
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3732,6 +3796,32 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   >
                     Library
                   </Button>
+                  {collaboratorsEnabled && (
+                    <Button
+                      block
+                      type="text"
+                      style={{
+                        justifyContent: "flex-start",
+                        background: collaboratorsOpen
+                          ? UI_COLORS.selected
+                          : undefined,
+                      }}
+                      icon={<Icon name="users" />}
+                      aria-pressed={collaboratorsOpen}
+                      aria-current={collaboratorsOpen ? "page" : undefined}
+                      onClick={() => {
+                        searchNavigation.current++;
+                        openCollaborators(
+                          retainedCollaborators.current.error
+                            ? {}
+                            : retainedCollaborators.current.route,
+                        );
+                        setMobileList(false);
+                      }}
+                    >
+                      Collaborators
+                    </Button>
+                  )}
                   {accountId && (
                     <AgentSearch
                       accountId={accountId}
@@ -4026,11 +4116,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         ref={workspaceContent}
         tabIndex={-1}
         aria-label={
-          libraryOpen
-            ? "Artifact Library"
-            : selected
-              ? `Agent @${selected.name}`
-              : "Agent workspace"
+          collaboratorsOpen
+            ? "Collaborators"
+            : libraryOpen
+              ? "Artifact Library"
+              : selected
+                ? `Agent @${selected.name}`
+                : "Agent workspace"
         }
         style={{
           flex: 1,
@@ -4042,6 +4134,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        {accountId &&
+          (collaboratorsEnabled ? (
+            <CollaboratorsPage
+              key={accountId}
+              accountId={accountId}
+              active={active && collaboratorsOpen && (!isNarrow || !mobileList)}
+              {...retainedCollaborators.current.route}
+              routeError={retainedCollaborators.current.error}
+              navigation={libraryNavigationControl()}
+              onNavigate={(route) => {
+                searchNavigation.current++;
+                openCollaborators(route);
+              }}
+            />
+          ) : collaboratorsOpen ? (
+            <div style={{ padding: 24 }} role="status">
+              {libraryNavigationControl()}
+              The Collaborators workspace is not enabled on this site.
+            </div>
+          ) : null)}
         {accountId && (
           <AgentArtifactBrowser
             key={accountId}
@@ -4075,7 +4187,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             flex: 1,
             minHeight: 0,
             position: "relative",
-            display: libraryOpen ? "none" : undefined,
+            display: workspaceOverlayOpen ? "none" : undefined,
           }}
         >
           {active &&
@@ -4148,7 +4260,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 description="This registered agent is not available in your directory."
               >
                 <Space>
-                  <Button onClick={refreshNamedAgents}>
+                  <Button onClick={() => refreshNamedAgents()}>
                     Refresh directory
                   </Button>
                   <Button onClick={() => setMobileList(true)}>
@@ -4179,7 +4291,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       accountId={accountId}
                       active={
                         active &&
-                        !libraryOpen &&
+                        !workspaceOverlayOpen &&
                         !!selected &&
                         agentWorkspaceKey(selected) === workspace
                       }

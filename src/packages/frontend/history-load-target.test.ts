@@ -99,8 +99,39 @@ import {
 } from "./history";
 import { authViewUrl, signedInRedirectUrl } from "./auth/util";
 import { getPageUrlPath, parsePageTarget } from "./page-routing";
+import { closedCollaboratorsState } from "./collaborators/navigation";
 
 describe("load_target", () => {
+  it("preserves the active agent across Collaborators browsing and back navigation", () => {
+    const state: Record<string, unknown> = {};
+    pageActions.setState.mockImplementation((update) =>
+      Object.assign(state, update),
+    );
+    load_target("agents/reviewer");
+    load_target(
+      "collaborators/conversations/project/project-1/resource/conversation/thread-1",
+    );
+    expect(state).toMatchObject({
+      active_agent_id: "reviewer",
+      collaborators_open: true,
+      library_open: false,
+      collaborators_project_id: "project-1",
+      collaborators_resource_id: "thread-1",
+    });
+    load_target("library");
+    expect(state.collaborators_open).toBe(false);
+    expect(state.collaborators_resource_id).toBeUndefined();
+    load_target("collaborators/people/person/person-1", false, false);
+    expect(state.active_agent_id).toBe("reviewer");
+    expect(state.library_open).toBe(false);
+    expect(state.collaborators_person_id).toBe("person-1");
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+      "agents",
+      false,
+    );
+    load_target("agents/reviewer");
+    expect(state.collaborators_open).toBe(false);
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     pageActions.setState.mockReset();
@@ -235,6 +266,7 @@ describe("load_target", () => {
       load_target("library/project-1/entry-1");
       load_target(target);
       expect(pageActions.setState).toHaveBeenLastCalledWith({
+        ...closedCollaboratorsState,
         library_open: false,
         library_project_id: undefined,
         library_entry_id: undefined,
@@ -253,6 +285,7 @@ describe("load_target", () => {
     expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("agents", true);
     expect(projectsActions.load_target).not.toHaveBeenCalled();
     expect(pageActions.setState).toHaveBeenCalledWith({
+      ...closedCollaboratorsState,
       library_open: true,
       library_project_id: target.split("/")[1],
       library_entry_id: target.split("/").slice(2).join("/") || undefined,
@@ -282,6 +315,7 @@ describe("load_target", () => {
       false,
     );
     expect(pageActions.setState).toHaveBeenLastCalledWith({
+      ...closedCollaboratorsState,
       library_open: true,
       library_project_id: "project-1",
       library_entry_id: "entry-1",
@@ -306,6 +340,7 @@ describe("load_target", () => {
       );
       window.onpopstate?.(new PopStateEvent("popstate"));
       expect(pageActions.setState).toHaveBeenLastCalledWith({
+        ...closedCollaboratorsState,
         library_open: true,
         library_project_id: target.split("/")[1],
         library_entry_id: target.split("/").slice(2).join("/"),

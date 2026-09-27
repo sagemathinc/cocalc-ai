@@ -11,6 +11,8 @@ let examMode = false;
 let isLite = false;
 let loggedIn = true;
 let aiDisabled = false;
+let collaboratorsEnabled = false;
+const openCollaborators = jest.fn();
 const actions = { set_active_tab: jest.fn(), clear_all_handlers: jest.fn() };
 const openProjects = { size: 0 };
 const topBarStyle = { display: "flex", height: 36 };
@@ -26,7 +28,11 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (field === "is_logged_in") return loggedIn;
     if (field === "fullscreen") return fullscreen;
     if (field === "exam_mode") return examMode;
+    if (field === "collaborators_enabled") return collaboratorsEnabled;
   },
+}));
+jest.mock("@cocalc/frontend/collaborators/navigation", () => ({
+  openCollaborators: (...args) => openCollaborators(...args),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({
   get lite() {
@@ -157,6 +163,7 @@ beforeEach(() => {
   isLite = false;
   loggedIn = true;
   aiDisabled = false;
+  collaboratorsEnabled = false;
   jest.clearAllMocks();
 });
 
@@ -225,3 +232,27 @@ test("retained tabs preserve login and AI visibility", () => {
   expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
 });
+
+test.each([false, true])(
+  "AI opt-out exposes only the feature-gated human entry (narrow=%s)",
+  async (isNarrow) => {
+    narrow = isNarrow;
+    aiDisabled = true;
+    collaboratorsEnabled = true;
+    const mounted = render(view());
+    expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+    const entry = screen.getByRole("button", { name: "Collaborators" });
+    entry.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(openCollaborators).toHaveBeenCalledTimes(1);
+    expect(openCollaborators).toHaveBeenCalledWith();
+    expect(actions.set_active_tab).not.toHaveBeenCalled();
+    collaboratorsEnabled = false;
+    mounted.rerender(view());
+    expect(screen.queryByRole("button", { name: "Collaborators" })).toBeNull();
+    collaboratorsEnabled = true;
+    loggedIn = false;
+    mounted.rerender(view());
+    expect(screen.queryByRole("button", { name: "Collaborators" })).toBeNull();
+  },
+);

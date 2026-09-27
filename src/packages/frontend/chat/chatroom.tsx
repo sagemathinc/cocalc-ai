@@ -36,6 +36,7 @@ import {
 } from "./use-chat-viewport";
 import "./mobile-chat.css";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { isHumanOnlyChatDocument } from "@cocalc/util/collaboration-human-room";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -145,9 +146,7 @@ import type {
   AcpAutomationConfig,
   AcpAutomationState,
 } from "@cocalc/conat/ai/acp/types";
-import {
-  setChatOverlayOpen,
-} from "./drawer-overlay-state";
+import { setChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
@@ -2344,7 +2343,20 @@ function ChatPanelContent({
             threadId: reply_thread_id,
           })
         : undefined;
+    if (
+      embeddingOptions.humanOnly &&
+      (!reply_thread_id ||
+        existingThreadMetadata?.agent_kind !== "none" ||
+        existingThreadMetadata.acp_config ||
+        existingThreadMetadata.agent_model)
+    ) {
+      antdMessage.error(
+        "This view only sends to an existing human conversation. Refresh to check its current state.",
+      );
+      return;
+    }
     const isCodexSubmit =
+      !isHumanOnlyChatDocument(actions.syncdb) &&
       !opts?.postOnly &&
       isCodexSubmitTarget({
         newThreadAgentMode: !reply_thread_id
@@ -2464,10 +2476,13 @@ function ChatPanelContent({
 
     const chatIdentity = actions.reserveChatSendIdentity({ reply_thread_id });
     const mentionProcessedInput =
-      submitMentionsRef?.current?.({
-        chat: `${new Date(chatIdentity.date).valueOf()}`,
-        thread: chatIdentity.thread_id,
-      }) ?? "";
+      submitMentionsRef?.current?.(
+        {
+          chat: `${new Date(chatIdentity.date).valueOf()}`,
+          thread: chatIdentity.thread_id,
+        },
+        embeddingOptions.humanOnly || isHumanOnlyChatDocument(actions.syncdb),
+      ) ?? "";
     const resolvedInput =
       mentionProcessedInput.trim().length > 0
         ? mentionProcessedInput
@@ -2579,6 +2594,7 @@ function ChatPanelContent({
       threadAppearance,
       acpConfigOverride,
       chatIdentity,
+      skipModelDispatch: embeddingOptions.humanOnly,
       skipDraftDelete: !pendingStored,
       postOnly: opts?.postOnly,
     });

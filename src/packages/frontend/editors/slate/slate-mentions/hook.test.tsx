@@ -32,6 +32,8 @@ test.each([
   "ask @review-agent",
   "(@review-agent",
   "ask @review-agent ",
+  "@r\u00e9union",
+  "@\u6a21\u578b",
 ])("hyphenated cursor query: %s", (text) => {
   const offset = text.trimEnd().length;
   expect(mentionQueryAtCursor(text, offset)?.search).toBe(
@@ -54,14 +56,18 @@ test("typing after a hyphen keeps the picker open and asynchronous provider refr
   Transforms.select(editor, { path: [0, 0], offset: "ask @review-".length });
   let change: () => void = () => {};
   const matching = jest.fn(() => [] as any[]);
+  const onSearchChange = jest.fn();
+  let keyDown = (_event: any) => {};
   function Harness({ provider }) {
     const mentions = useMentions({
       editor: editor as any,
       insertMention: jest.fn(),
       matchingUsers: provider,
       isVisible: true,
+      onSearchChange,
     });
     change = mentions.onChange;
+    keyDown = mentions.onKeyDown;
     return <>{mentions.Mentions}</>;
   }
   const view = render(<Harness provider={matching} />);
@@ -77,12 +83,16 @@ test("typing after a hyphen keeps the picker open and asynchronous provider refr
     jest.advanceTimersByTime(251);
   });
   expect(matching).toHaveBeenLastCalledWith("review-agent");
+  expect(onSearchChange).toHaveBeenLastCalledWith("review-agent");
   const refreshed = jest.fn(() => [
     { value: "stable-agent-reference", label: "@review-agent" },
   ]);
   view.rerender(<Harness provider={refreshed} />);
   expect(refreshed).toHaveBeenLastCalledWith("review-agent");
   expect(screen.getByRole("option", { name: "@review-agent" })).toBeTruthy();
+  act(() => keyDown({ key: "Escape", preventDefault: jest.fn() }));
+  expect(onSearchChange).toHaveBeenLastCalledWith(undefined);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   view.unmount();
   jest.useRealTimers();
 });

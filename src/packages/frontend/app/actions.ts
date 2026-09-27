@@ -179,8 +179,11 @@ export class PageActions extends Actions<PageState> {
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {
+    // Human routes share this tab key, but not the AI opt-out. The renderer
+    // independently gates Collaborators on its site feature flag.
     if (
       key === "agents" &&
+      !this.redux.getStore("page").get("collaborators_open") &&
       redux.getStore("account")?.getIn(["other_settings", "openai_disabled"])
     ) {
       key = "projects";
@@ -195,7 +198,11 @@ export class PageActions extends Actions<PageState> {
       }
     }
     if (lite) {
-      if (!LITE_TABS.has(key)) {
+      // Collaborators uses the agents workspace shell, not Lite's project tab.
+      const collaboratorsWorkspace =
+        key === "agents" &&
+        this.redux.getStore("page").get("collaborators_open");
+      if (!LITE_TABS.has(key) && !collaboratorsWorkspace) {
         key = project_id;
       }
       if (key === "ssh") {
@@ -260,11 +267,29 @@ export class PageActions extends Actions<PageState> {
               library: page.get("library_open"),
               artifact_project_id: page.get("library_project_id"),
               artifact_entry_id: page.get("library_entry_id"),
+              collaborators: page.get("collaborators_open")
+                ? {
+                    view: page.get("collaborators_view"),
+                    projectId: page.get("collaborators_project_id"),
+                    personId: page.get("collaborators_person_id"),
+                    resourceKind: page.get("collaborators_resource_kind"),
+                    resourceId: page.get("collaborators_resource_id"),
+                    routeError: page.get("collaborators_route_error"),
+                  }
+                : undefined,
             }),
-            page.get("library_open") ? "" : undefined,
+            page.get("library_open") || page.get("collaborators_open")
+              ? ""
+              : undefined,
           );
         }
-        set_window_title(page.get("library_open") ? "Library" : "Agents");
+        set_window_title(
+          page.get("collaborators_open")
+            ? "Collaborators"
+            : page.get("library_open")
+              ? "Library"
+              : "Agents",
+        );
         return;
       }
       case "projects":
