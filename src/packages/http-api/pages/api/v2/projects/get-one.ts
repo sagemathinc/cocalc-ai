@@ -1,5 +1,5 @@
 /* Get projects that belongs to the authenticated user.
-   If the user has no projects, creates one.
+   Browser sessions retain legacy implicit creation; API keys only read.
    If they have projects, returns the most recently active one.
 */
 
@@ -9,7 +9,6 @@ import {
   type ApiKeyPrincipal,
 } from "@cocalc/server/api/api-key-scope";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
-import createProject from "@cocalc/server/projects/create";
 import { listProjectSummaries } from "@cocalc/server/conat/api/projects";
 import getOneProject from "@cocalc/server/projects/get-one";
 
@@ -43,7 +42,9 @@ async function getOneProjectForApiKey({
     const { project_id, title, description } = projects[0];
     return { project_id, title, description };
   }
-  requireApiKeyCapability(principal, "project:create");
-  const title = "Untitled Project";
-  return { project_id: await createProject({ account_id, title }), title };
+  // Projection absence is not authoritative absence, especially across bays.
+  // Creating must be an explicit caller operation, not a side effect of a read.
+  throw Error(
+    "No project is currently visible in the account index; retry later or explicitly create a project",
+  );
 }

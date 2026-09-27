@@ -252,12 +252,13 @@ describe("/api/v2/projects list API-key scope", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      error: "API key lacks required capability 'project:create'",
+      error:
+        "No project is currently visible in the account index; retry later or explicitly create a project",
     });
     expect(mockCreateProject).not.toHaveBeenCalled();
   });
 
-  it("auto-creates a project for API keys with project list and create", async () => {
+  it("does not create from empty projections even with list and create capabilities", async () => {
     mockListProjectSummaries.mockResolvedValue({
       projects: [],
       next_offset: null,
@@ -280,12 +281,10 @@ describe("/api/v2/projects list API-key scope", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      project_id: "33333333-3333-4333-8333-333333333333",
-      title: "Untitled Project",
+      error:
+        "No project is currently visible in the account index; retry later or explicitly create a project",
     });
-    expect(mockCreateProject).toHaveBeenCalledWith({
-      account_id,
-      title: "Untitled Project",
-    });
+    expect(mockCreateProject).not.toHaveBeenCalled();
+    expect(mockGetProjects).not.toHaveBeenCalled();
   });
 });
