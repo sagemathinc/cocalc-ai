@@ -8,6 +8,36 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Scoped HTTP deployment attempt, 2026-09-27
 
+### Reviewed deployed HTTP probe
+
+Independent re-review passed both HTTP blockers at
+`007fca331965b2dbb4eacec65c0a9da9e3bb7636` (12 proxy and 53 host HTTP tests).
+The previous CLI failure was traced to an old tools bind mount in the running
+disposable project. Restart `da4f5582-1ba5-450c-89d5-a8cb99fb3810` completed;
+inspection then confirmed the installed CLI contained the scoped-proxy branch.
+
+Build `20260927T182207Z-007fca331965` was promoted and healthy at
+18:25:35 UTC after explicit-version operation
+`9710d35c-98ec-41a6-bcdb-4bf0f33fd264`. A preceding `@latest` alignment
+operation reported success but wrote the previously observed version back into
+desired state. The explicit desired-version reconciliation was allowed to run
+without another imperative `@latest` request. This deployment-path problem
+is separate from scoped HTTP authorization and still needs follow-up.
+
+The installed CLI's manual-key proxy request succeeded. Raw requests verified
+viewer exchange denial, wrong-port denial, and removal of synthetic query,
+authorization, cookie, and scoped-header credentials before the fixture app.
+The diagnostic streaming run received 75 chunks and was interrupted after
+7635 ms total, 6538 ms after key deletion completed; the last delivered chunk
+was 6534 ms after deletion. A new exchange with the revoked key was denied.
+Disposable keys and the app were cleaned up.
+
+An earlier run against this reviewed deployment failed the stream-bound
+assertion without recording chunk/timing diagnostics. Its cause remains
+unresolved; the later passing run does not establish repeatability or explain
+that failure. These are manual-key HTTP results, not WebSocket, managed-turn,
+authority-outage, or load acceptance evidence.
+
 ### Deployment reconciliation and review follow-up
 
 Operation `74380069-9505-48f1-b589-f042c74076b1` ultimately succeeded, but
