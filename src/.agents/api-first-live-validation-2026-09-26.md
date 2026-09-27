@@ -124,6 +124,35 @@ an open-handle warning after assertions but exited with status 0. Installed
 CLI retesting is still required before treating the live default-write failure
 as resolved.
 
+### Installed terminal cleanup retest: pass, 2026-09-27
+
+At `073db91f44ea28c1a6a55e33dc6c0a54f0d8ebfd`, `pnpm build:tools` completed
+and both architecture archives passed `xz --test`. Only host3's tools were
+upgraded, operation `1e432fb1-d99c-4fc6-a76c-45bb826ad0b1` (`succeeded`).
+Bootstrap status reported tools version `1790474475343` installed with zero
+drift. No host protocol or project runtime bundle changed.
+
+The validation project's restart reported a `stopProject` timeout. Subsequent
+status and get requests both reported `opened`, so a separate start was
+submitted as `3b9b7956-209f-4e9e-aeed-dafab00a608d`. The project then served
+commands with installed CLI SHA-256
+`0f89fd38eb2df579c7da3970028a10a0857e1272bbec7444f7d4077399e7c0e0`, matching
+the new build. The restart timeout remains an operational observation, not a
+successful restart claim. Delta was not restarted or upgraded.
+
+The same isolated manual-key probe now requires ordinary input acceptance;
+its forced-write fallback was removed. With an empty environment, a private
+key file, explicit public API URL, and `--no-daemon`, the installed CLI spawned
+terminal `api-probe-6e9ee806-8c4c-45a7-b3a3-4e60c3acdc0b` (PID 45).
+Default input returned `written: true`, `bytes: 24`, `kind: auto`; history
+contained the shell-generated `answer-42`. The probe exited 0, deleted key 81,
+removed its credential directory, and hung up the fixture shell. A subsequent
+process listing confirmed the shell was gone.
+
+This closes the reproduced installed spawn/default-write/history failure for
+an ordinary manual key. It does not establish daemon recovery, revocation
+during sustained terminal traffic, managed-turn parity, or Jupyter persistence.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
