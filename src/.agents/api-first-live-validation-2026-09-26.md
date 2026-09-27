@@ -953,6 +953,73 @@ tested. The first harness invocation failed to resolve its `pg` dependency
 before creating any resources; it was corrected to resolve from the database
 workspace.
 
+### Explicit human regrant by scope edit: live failure
+
+On 2026-09-27, disposable project `bf537fc6-5378-4cbe-955f-afd7cfe8c58c`
+on bay-0 repeated the membership fixture. Initial admission, removal denial,
+restoration-with-old-key denial, settled-barrier denial, and fresh-key admission
+all behaved as expected through ports 9100, 13114, and 13214.
+
+The human-authorized management API then explicitly edited the old key with
+the project-read scope again. The edit returned, but its first subsequent HTTP
+admission through port 9100 failed with `API key revoked or scope changed`.
+The assertion stopped there; edited-key admission through the other two bays
+was not exercised. All fixture keys were deleted, membership restored, and
+project hard-delete completed successfully. This is a regrant failure, not
+evidence of unintended revival. Source inspection showed edits advancing
+scope revision without a new issuance sequence. The fix must distinguish
+explicit renewed project consent from name-only edits or automatic renewal.
+
+### Explicit human regrant: corrected and live-validated
+
+Private source commits `3368c0d90e` and `a97d99800a` address two separate causes:
+
+- Explicit manual scope edits now allocate an account-home issuance sequence
+  atomically with the key update. Name/expiry edits do not; managed keys remain
+  excluded from manual editing.
+- Authentication no longer uses the database pool's 15-second query cache.
+  That cache paired a stale authentication revision with fresh membership
+  authority and also weakened persistent socket revalidation freshness.
+
+The first fix alone was retested on disposable project
+`4f87d136-f735-43a9-9f61-a5f0c5bf026a`. Metadata edits correctly retained denial,
+but explicit scope approval still failed with the revision error. It was cleaned
+up before the cache fix was developed.
+
+After both fixes, the server package build passed in the private and main
+checkouts. The normal dev hub restart command restarted the primary hub and
+both attached bays. No project-host or tools upgrade was needed. The full
+fixture passed on project `a628e578-0b83-4a40-8579-37a23f2702fd` owned by bay-0
+and project `44e4de3a-1aca-43ed-a57d-f238f537a3ba` rehomed to bay-1
+(operation `b16eb07d-aa38-40ab-95c9-f07428fa6efd`, succeeded).
+
+For each project, ordinary HTTP admission through ports 9100, 13114, and 13214
+proved initial access; denial after removal, restoration, and settled barrier;
+fresh-key access; continued old-key denial after rename and expiry extension;
+and restored old-key access immediately after explicit human scope approval.
+All fixture keys were deleted, membership restored, and both disposable project
+hard-deletes succeeded.
+
+The focused server suites passed 131 tests: management, issuance ordering,
+membership revocation, authoritative key state, HTTP policy, and socket auth.
+The database-backed run used `COCALC_TEST_USE_PGLITE=1` and
+`NODE_OPTIONS=--experimental-vm-modules`. Earlier invocations lacked the database
+setup or VM-module flag and failed; they are not passing evidence. Jest used
+`--forceExit`, so these results do not establish clean open-handle teardown.
+
+This proves manual HTTP scope regrant, including distinct project-owner and
+account-home bays. It does not establish managed-turn regrant, established-stream
+membership revocation, outage behavior, or rendered UI scope consent.
+
+Supplemental private review of `a97d99800a2afce22c44355f95379d7a0a85ef43`
+was accepted and saved as attempt `8aac9838-f200-47d5-bbc5-131d957344b3`
+(correlation `api-first-regrant-a97d99800a`). Acceptance is not review completion.
+
+The independent input-recovery review request for source `836ac11985fc` was
+accepted and saved under attempt `1bb40e88-7252-4b8b-bb83-e08f7f7836ab`
+(correlation `api-first-input-836ac11985`). This is a new supplemental scope,
+not a retry of previous review requests, and is not a completed review.
+
 ### Approval rate and scheduled retention
 
 Built the changed backend with `pnpm exec tsc --build` in `packages/server`,
