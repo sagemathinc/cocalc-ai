@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemonServerOps, type DaemonServerState } from "./daemon-server";
+import {
+  createDaemonServerOps,
+  DAEMON_MAX_CONTEXTS,
+  type DaemonServerState,
+} from "./daemon-server";
 import { prepareDaemonAuthGlobals } from "./daemon-globals";
 
 type Context = { secret: string; closed: boolean };
@@ -48,6 +52,12 @@ function fixture(create?: (globals: any) => Promise<Context>) {
   return {
     created,
     state,
+    rawRequest: (apiKey: string) =>
+      ops.handleDaemonAction(state, {
+        id: "raw",
+        action: "project.file.list",
+        globals: { apiKey },
+      }),
     request: (path: string) =>
       ops.handleDaemonAction(state, {
         id: "test",
@@ -67,6 +77,109 @@ function fixture(create?: (globals: any) => Promise<Context>) {
       }),
   };
 }
+
+test("daemon bounds cached contexts without evicting existing connections", async () => {
+  const f = fixture();
+  for (let n = 0; n < DAEMON_MAX_CONTEXTS; n++) {
+    assert.equal((await f.rawRequest(`key-${n}`)).ok, true);
+  }
+  const excess = await f.rawRequest("excess");
+  assert.equal(excess.ok, false);
+  assert.match(excess.error!, /context limit/);
+  assert.equal(f.created.length, DAEMON_MAX_CONTEXTS);
+  assert.equal((await f.rawRequest("key-0")).data, "key-0");
+  assert.equal(
+    f.created.some((ctx) => ctx.closed),
+    false,
+  );
+});
+
+test("pending daemon setup consumes capacity and releases it on failure", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let fail = true;
+  const f = fixture(async (globals) => {
+    await gate;
+    if (fail) throw new Error("setup failed");
+    return { secret: globals.apiKey, closed: false };
+  });
+  const pending = Array.from({ length: DAEMON_MAX_CONTEXTS }, (_, n) =>
+    f.rawRequest(`pending-${n}`),
+  );
+  try {
+    assert.equal(f.state.pendingContexts, DAEMON_MAX_CONTEXTS);
+    assert.equal((await f.rawRequest("excess")).ok, false);
+  } finally {
+    release();
+  }
+  assert.equal(
+    (await Promise.all(pending)).every((result) => !result.ok),
+    true,
+  );
+  assert.equal(f.state.pendingContexts, 0);
+  assert.equal(f.state.contexts.size, 0);
+  fail = false;
+  assert.equal((await f.rawRequest("retry")).ok, true);
+});
+
+test("provider rotation frees its old slot even at the context limit", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "daemon-full-provider-"));
+  const path = join(dir, "key");
+  const f = fixture();
+  try {
+    for (let n = 0; n < DAEMON_MAX_CONTEXTS - 1; n++) {
+      assert.equal((await f.rawRequest(`key-${n}`)).ok, true);
+    }
+    writeFileSync(path, "first", { mode: 0o600 });
+    assert.equal((await f.request(path)).data, "first");
+    writeFileSync(path + ".next", "second", { mode: 0o600 });
+    renameSync(path + ".next", path);
+    assert.equal((await f.request(path)).data, "second");
+    assert.equal(f.state.contexts.size, DAEMON_MAX_CONTEXTS);
+    assert.equal(f.created.find((ctx) => ctx.secret === "first")?.closed, true);
+    writeFileSync(path + ".other", "excess", { mode: 0o600 });
+    assert.equal((await f.request(path + ".other")).ok, false);
+    assert.equal(f.state.credentialFileContexts?.size, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("failed provider setup does not retain credential-file index entries", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "daemon-failed-provider-"));
+  const path = join(dir, "key");
+  const f = fixture(async () => {
+    throw new Error("setup failed");
+  });
+  try {
+    writeFileSync(path, "key", { mode: 0o600 });
+    assert.equal((await f.request(path)).ok, false);
+    assert.equal(f.state.credentialFileContexts?.size, 0);
+    assert.equal(f.state.pendingContexts, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("shutdown rejects delayed setup without caching its context", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = fixture(async (globals) => {
+    await gate;
+    return { secret: globals.apiKey, closed: false };
+  });
+  const pending = f.rawRequest("late");
+  f.state.closing = true;
+  release();
+  assert.equal((await pending).ok, false);
+  assert.equal(f.created[0].closed, true);
+  assert.equal(f.state.contexts.size, 0);
+  assert.equal((await f.rawRequest("new")).ok, false);
+});
 
 test("daemon reuses an unchanged key but invalidates on rotation and removal", async () => {
   const dir = mkdtempSync(join(tmpdir(), "daemon-key-file-")),

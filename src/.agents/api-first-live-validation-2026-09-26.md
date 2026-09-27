@@ -510,6 +510,19 @@ Conat rebuild and diff checks pass. This establishes that explicit terminal
 reattachment can preserve the process without redirecting an old socket. It is
 not automatic logical-socket recovery, a Jupyter/sync result, or deployed evidence.
 
+### Daemon context budget (not deployed)
+
+The file-command daemon now admits at most 64 cached plus in-flight contexts,
+rejecting excess setup explicitly without evicting established connections.
+Provider rotation releases its old slot before replacement. Failed setup clears
+unused provider-index entries and releases its reservation; shutdown rejects and
+closes delayed setup rather than repopulating the cache. All 23 daemon tests
+pass, including pending admission, capacity reuse, rotation at capacity, provider
+failure, shutdown races, and prior credential-isolation cases. CLI TypeScript
+build and test compilation pass. The CLI README documents the ceiling and
+one-shot/daemon-stop alternatives. This local bound does not prove aggregate
+server or multibay resource budgets.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

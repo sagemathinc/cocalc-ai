@@ -23,12 +23,15 @@ import {
   type DaemonResponse,
 } from "./daemon-transport";
 
+export const DAEMON_MAX_CONTEXTS = 64;
+
 export type DaemonServerState<Ctx> = {
   startedAtMs: number;
   daemonFingerprint: string;
   socketPath: string;
   pidPath: string;
   contexts: Map<string, Ctx>;
+  pendingContexts?: number;
   credentialFileContexts?: Map<string, string>;
   server?: NetServer;
   closing: boolean;
@@ -75,6 +78,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     state: DaemonServerState<Ctx>,
     globals: any,
   ): Promise<Ctx> {
+    if (state.closing) throw new Error("CLI daemon is shutting down");
     const fileSlot =
       globals.apiKeyFile || globals.managedConnector?.keyFile
         ? daemonContextKey(globals)
@@ -98,24 +102,49 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     if (fileSlot) {
       if (state.credentialFileContexts?.get(fileSlot) !== key)
         discardFileContext();
-      (state.credentialFileContexts ??= new Map()).set(fileSlot, key);
     }
     const existing = state.contexts.get(key);
     if (existing) {
       return existing;
     }
-    const ctx = await contextForGlobals({ ...globals, noDaemon: true });
-    if (fileSlot && state.credentialFileContexts?.get(fileSlot) !== key) {
-      closeCommandContext(ctx);
-      throw new Error("API key file changed during connection setup");
+    if (
+      state.contexts.size + (state.pendingContexts ?? 0) >=
+      DAEMON_MAX_CONTEXTS
+    ) {
+      throw new Error(
+        `CLI daemon context limit (${DAEMON_MAX_CONTEXTS}) reached; stop the daemon to release cached connections or use --no-daemon`,
+      );
     }
-    const concurrent = state.contexts.get(key);
-    if (concurrent) {
-      closeCommandContext(ctx);
-      return concurrent;
+    if (fileSlot)
+      (state.credentialFileContexts ??= new Map()).set(fileSlot, key);
+    state.pendingContexts = (state.pendingContexts ?? 0) + 1;
+    try {
+      const ctx = await contextForGlobals({ ...globals, noDaemon: true });
+      if (state.closing) {
+        closeCommandContext(ctx);
+        throw new Error("CLI daemon is shutting down");
+      }
+      if (fileSlot && state.credentialFileContexts?.get(fileSlot) !== key) {
+        closeCommandContext(ctx);
+        throw new Error("API key file changed during connection setup");
+      }
+      const concurrent = state.contexts.get(key);
+      if (concurrent) {
+        closeCommandContext(ctx);
+        return concurrent;
+      }
+      state.contexts.set(key, ctx);
+      return ctx;
+    } finally {
+      state.pendingContexts--;
+      if (
+        fileSlot &&
+        !state.contexts.has(key) &&
+        state.credentialFileContexts?.get(fileSlot) === key
+      ) {
+        state.credentialFileContexts.delete(fileSlot);
+      }
     }
-    state.contexts.set(key, ctx);
-    return ctx;
   }
 
   function closeDaemonServerState(state: DaemonServerState<Ctx>): void {

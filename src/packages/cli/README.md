@@ -240,6 +240,13 @@ an admin account for smoke-test workflows.
 short-lived host tokens kept in-process (no on-disk token cache). All
 `project file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
+
+Each daemon admits at most 64 cached or in-flight authentication contexts.
+Existing contexts remain usable at the limit; additional contexts receive an
+explicit error. Use `daemon stop` to release cached connections, or
+`--no-daemon` for a one-shot command. Credential-file rotation replaces the old
+context rather than consuming another cache slot. This is a local daemon limit,
+not a substitute for server-side account and API-key resource limits.
 These file commands do not require the project to be running.
 `project sync forward ...` uses `reflect-sync` for SSH forward sessions.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
