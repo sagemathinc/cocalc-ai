@@ -15,7 +15,11 @@ jest.mock("@cocalc/frontend/components", () => ({
 test("Projects navigation works from the keyboard", async () => {
   const user = userEvent.setup();
   const onProjects = jest.fn();
-  render(<WorkspaceSidebarActions onProjects={onProjects} />);
+  render(
+    <WorkspaceSidebarActions
+      firstNavigationItem={<button onClick={onProjects}>Projects</button>}
+    />,
+  );
   await user.tab();
   expect(
     screen.getByRole("region", { name: "Agent navigation and list" }),
@@ -35,7 +39,7 @@ test("account footer stays outside the keyboard-accessible navigation scroll are
   const user = userEvent.setup();
   render(
     <WorkspaceSidebarActions
-      onProjects={() => {}}
+      firstNavigationItem={<button>Projects</button>}
       footer={<button>Account menu</button>}
     >
       <button>Library</button>
@@ -64,18 +68,40 @@ test("account footer stays outside the keyboard-accessible navigation scroll are
 });
 
 test("does not render a duplicate New Agent button above navigation", () => {
-  render(<WorkspaceSidebarActions />);
-  expect(screen.queryByRole("button")).toBeNull();
+  render(
+    <WorkspaceSidebarActions firstNavigationItem={<button>Projects</button>} />,
+  );
+  expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
 });
 
-test("sidebar hide control is inside the sidebar and keyboard operable", async () => {
-  const user = userEvent.setup();
-  const onHideSidebar = jest.fn();
-  render(<WorkspaceSidebarActions onHideSidebar={onHideSidebar} />);
-  const hide = screen.getByRole("button", { name: "Hide Agents sidebar" });
-  expect(hide).toHaveAttribute("aria-expanded", "true");
-  await user.tab();
-  expect(hide).toHaveFocus();
-  await user.keyboard("{Enter}");
-  expect(onHideSidebar).toHaveBeenCalledTimes(1);
-});
+test.each(["Projects", "Library"])(
+  "sidebar hide control shares the %s row without a spacer and is keyboard operable",
+  async (name) => {
+    const user = userEvent.setup();
+    const onHideSidebar = jest.fn();
+    render(
+      <WorkspaceSidebarActions
+        firstNavigationItem={<button>{name}</button>}
+        onHideSidebar={onHideSidebar}
+      />,
+    );
+    const scroll = screen.getByRole("region", {
+      name: "Agent navigation and list",
+    });
+    const first = screen.getByRole("button", { name });
+    const hide = screen.getByRole("button", { name: "Hide Agents sidebar" });
+    expect(first.parentElement?.parentElement).toBe(hide.parentElement);
+    expect(scroll).toContainElement(hide);
+    expect(scroll.previousElementSibling).toBeNull();
+    expect(scroll.style.marginTop).toBe("");
+    expect(hide).toHaveAttribute("aria-expanded", "true");
+    await user.tab();
+    expect(scroll).toHaveFocus();
+    await user.tab();
+    expect(first).toHaveFocus();
+    await user.tab();
+    expect(hide).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onHideSidebar).toHaveBeenCalledTimes(1);
+  },
+);

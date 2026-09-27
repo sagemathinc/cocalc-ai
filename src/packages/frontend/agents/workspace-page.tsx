@@ -3693,6 +3693,23 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   if (loading && !directory && !workspaceOverlayOpen)
     return <Loading theme="medium" />;
+  const libraryNavigationItem = (
+    <Button
+      ref={libraryButton}
+      block
+      type="text"
+      style={{
+        justifyContent: "flex-start",
+        background: libraryOpen ? UI_COLORS.selected : undefined,
+      }}
+      icon={<Icon name="files" />}
+      aria-pressed={libraryOpen}
+      aria-current={libraryOpen ? "page" : undefined}
+      onClick={showLibrary}
+    >
+      Library
+    </Button>
+  );
   const sidebar = (
     <aside
       id={AGENT_SIDEBAR_ID}
@@ -3723,12 +3740,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             <AgentsAccountMenu />
           </div>
         }
-        onProjects={
-          lite
-            ? undefined
-            : () => {
+        firstNavigationItem={
+          lite ? (
+            libraryNavigationItem
+          ) : (
+            <Button
+              block
+              type="text"
+              icon={<Icon name="folder-open" />}
+              style={{ justifyContent: "flex-start" }}
+              onClick={() => {
                 void redux.getActions("page").set_active_tab("projects");
-              }
+              }}
+            >
+              Projects
+            </Button>
+          )
         }
       >
         <AgentSidebarFilter
@@ -3764,21 +3791,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             return (
               <>
                 <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                  <Button
-                    ref={libraryButton}
-                    block
-                    type="text"
-                    style={{
-                      justifyContent: "flex-start",
-                      background: libraryOpen ? UI_COLORS.selected : undefined,
-                    }}
-                    icon={<Icon name="files" />}
-                    aria-pressed={libraryOpen}
-                    aria-current={libraryOpen ? "page" : undefined}
-                    onClick={showLibrary}
-                  >
-                    Library
-                  </Button>
+                  {!lite && libraryNavigationItem}
                   {collaboratorsEnabled && (
                     <Button
                       block
@@ -3805,16 +3818,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       Collaborators
                     </Button>
                   )}
-                  {accountId && (
-                    <AgentSearch
-                      accountId={accountId}
-                      agents={agents}
-                      activity={agentOrganization.organization.lastOpened}
-                      active={active}
-                      onSelect={openSearchHit}
-                      available={(agent) => agent.available}
-                    />
-                  )}
                   <AgentOrganizationControls
                     mode={agentOrganization.organization.mode}
                     groupByProject={
@@ -3840,6 +3843,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       setMobileList(false);
                     }}
                   />
+                  {accountId && (
+                    <AgentSearch
+                      accountId={accountId}
+                      agents={agents}
+                      activity={agentOrganization.organization.lastOpened}
+                      active={active}
+                      onSelect={openSearchHit}
+                      available={(agent) => agent.available}
+                    />
+                  )}
                   {input}
                   {networkError && (
                     <Alert

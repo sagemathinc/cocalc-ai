@@ -1,32 +1,19 @@
-import { Button } from "antd";
-import { Icon } from "@cocalc/frontend/components/icon";
 import type { ReactNode } from "react";
 import { AgentsSidebarToggle } from "./workspace-sidebar-toggle";
 
 export function WorkspaceSidebarActions({
-  onProjects,
+  firstNavigationItem,
   children,
   footer,
   onHideSidebar,
 }: {
-  onProjects?: () => void;
+  firstNavigationItem: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
   onHideSidebar?: () => void;
 }) {
   return (
     <>
-      {onHideSidebar && (
-        <div
-          style={{
-            flex: "0 0 auto",
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
-        </div>
-      )}
       <div
         role="region"
         aria-label="Agent navigation and list"
@@ -37,7 +24,6 @@ export function WorkspaceSidebarActions({
           minWidth: 0,
           overflowY: "auto",
           overflowX: "hidden",
-          marginTop: 10,
         }}
       >
         <div
@@ -47,17 +33,12 @@ export function WorkspaceSidebarActions({
             gap: 10,
           }}
         >
-          {onProjects && (
-            <Button
-              type="text"
-              block
-              icon={<Icon name="folder-open" />}
-              onClick={onProjects}
-              style={{ justifyContent: "flex-start" }}
-            >
-              Projects
-            </Button>
-          )}
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>{firstNavigationItem}</div>
+            {onHideSidebar && (
+              <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
+            )}
+          </div>
           {children}
         </div>
       </div>
