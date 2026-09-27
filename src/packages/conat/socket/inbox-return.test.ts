@@ -338,6 +338,48 @@ describe("socket inbox-return protocol", () => {
     listener.close();
   });
 
+  it.each([false, true])(
+    "acknowledges server cleanup before graceful close resolves (clustered=%s)",
+    async (clustered) => {
+      const { client, listener } = await fixture(undefined, clustered);
+      const accepted = new Promise<ServerSocket>((resolve) =>
+        listener.once("connection", resolve),
+      );
+      const socket = client.socket.connect(subject, {
+        keepAlive: 0,
+        reconnection: false,
+      });
+      const serverSocket = await accepted;
+      await socket.waitUntilReady(5000);
+      const closed = jest.fn();
+      serverSocket.once("closed", closed);
+      await socket.closeAndWait();
+      expect(closed).toHaveBeenCalledTimes(1);
+      expect(socket.state).toBe("closed");
+      listener.close();
+    },
+  );
+
+  it("closes locally but reports an unconfirmed graceful close", async () => {
+    const { client, listener } = await fixture();
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: false,
+    });
+    await socket.waitUntilReady(5000);
+    const request = jest
+      .spyOn(client, "request")
+      .mockRejectedValueOnce(new ConatError("timeout", { code: 408 }));
+    try {
+      await expect(socket.closeAndWait()).rejects.toMatchObject({ code: 408 });
+      expect(socket.state).toBe("closed");
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally {
+      request.mockRestore();
+      listener.close();
+    }
+  });
+
   it("rejects pending reverse requests on close", async () => {
     const { client, listener } = await fixture();
     const accepted = new Promise<ServerSocket>((resolve) =>

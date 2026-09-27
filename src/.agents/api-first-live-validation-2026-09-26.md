@@ -105,6 +105,25 @@ only the unique `api-probe-*` sessions and hung up their PIDs (45, 89, 181).
 It too was deleted. A subsequent process listing confirmed all three shells
 were gone. Local and remote private credential directories were removed.
 
+### Acknowledged terminal cleanup follow-up (not deployed)
+
+CLI spawn previously called the socket's fire-and-forget close and could tear
+down its transport before the terminal service released leadership. The shared
+socket client now exposes `closeAndWait`, using the server's existing close
+request/acknowledgment protocol. It closes locally even if confirmation fails,
+but propagates failure rather than claiming confirmed remote cleanup. The
+terminal client forwards that method; CLI spawn awaits it after successful
+spawn and before returning. No new server RPC or agent-specific path is added.
+
+Twenty socket tests pass, including acknowledged cleanup through one broker
+and two linked brokers, plus an unconfirmed-close error with no request replay.
+Both real-PTY cases pass: automatic input remains denied to an attached
+terminal, becomes allowed after acknowledged close, and the same process can
+be reattached. Conat, project, and CLI builds pass. The project Jest run emitted
+an open-handle warning after assertions but exited with status 0. Installed
+CLI retesting is still required before treating the live default-write failure
+as resolved.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

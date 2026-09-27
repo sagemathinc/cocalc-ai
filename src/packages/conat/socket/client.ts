@@ -568,6 +568,19 @@ export class ConatSocketClient extends ConatSocketBase {
     this.close();
   }
 
+  // Short-lived callers must confirm server cleanup before closing their transport.
+  async closeAndWait({ timeout = 5000 }: { timeout?: number } = {}) {
+    try {
+      const { data } = await this.request(null, {
+        timeout,
+        headers: { [SOCKET_HEADER_CMD]: "close", id: this.id },
+      });
+      if (data !== "closed") throw Error("socket close was not acknowledged");
+    } finally {
+      this.close();
+    }
+  }
+
   close() {
     if (this.state == "closed") {
       return;

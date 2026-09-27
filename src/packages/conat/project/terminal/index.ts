@@ -882,6 +882,14 @@ export class TerminalClient extends EventEmitter {
     } catch {}
   };
 
+  closeAndWait = async (options?: { timeout?: number }) => {
+    try {
+      await this.socket.closeAndWait(options);
+    } finally {
+      this.close();
+    }
+  };
+
   spawn = async (
     command,
     args?: string[],

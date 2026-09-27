@@ -111,6 +111,36 @@ describe("terminal over scoped project-host transport", () => {
           rows: 31,
           cols: 97,
         });
+        const writer = terminalClient({
+          client,
+          project_id,
+          reconnection: false,
+        });
+        try {
+          expect(await writer.write({ id, input: "ignored\n" })).toMatchObject({
+            written: false,
+            reason: "terminal has an active browser leader",
+          });
+          await terminal.closeAndWait();
+          expect(await writer.state(id)).toBe("running");
+          const detachedMarker = `detached-${randomUUID()}`;
+          expect(
+            await writer.write({
+              id,
+              input: `printf '%s%s\\n' 'detached-' '${detachedMarker.slice(9)}'\n`,
+            }),
+          ).toMatchObject({ written: true });
+          for (let n = 0; n < 100; n++) {
+            if ((await writer.history(id))?.includes(detachedMarker)) break;
+            await delay(20);
+          }
+          expect(await writer.history(id)).toContain(detachedMarker);
+        } finally {
+          writer.close();
+        }
+        terminal = terminalClient({ client, project_id, reconnection: true });
+        await terminal.attach(id, { timeout: 5000 });
+        expect(terminal.pid).toBe(pid);
         await expect(
           client.subscribe(subject + ".client.foreign"),
         ).rejects.toMatchObject({ code: 403 });
