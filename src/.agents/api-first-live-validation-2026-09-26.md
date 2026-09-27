@@ -55,6 +55,21 @@ Extracting `bin/cocalc-cli.js` from each tools archive produced that same hash.
 These identities support subsequent installed-version checks; archive integrity
 and byte equality do not establish live API authorization or workflow parity.
 
+## Shared-editor round-trip coverage (component tests)
+
+The connector wrapper tests now render the real shared scope editor, replacing
+only project lookup and backend/fresh-auth services. Both header and composer
+entry points load an all-projects viewer default with a narrower explicit
+directory override, change an account privilege by keyboard, save, reload, and
+save again. Assertions check exact scope preservation, revision advancement,
+fresh-auth invocation, source-project exclusion, and focus restoration. The
+manual-key editor also preserves a restricted all-projects grant alongside
+mixed explicit grants when saved without a privilege change.
+
+All 14 tests across the connector, shared editor, and manual-key suites pass.
+Frontend lint and TypeScript build pass. This establishes component integration, not real backend
+approval, live persistence, browser layout, theme contrast, or mobile reflow.
+
 ## Build and rollout
 
 - `pnpm dev:hub:build` passed, including the workspace build, project-host and

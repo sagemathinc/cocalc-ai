@@ -66,44 +66,55 @@ test("manual key creation submits the shared scope and shows its secret", async 
   );
 });
 
-test("editing a mixed key preserves separate project grants", async () => {
-  const originalScope = {
-    version: 1 as const,
-    account: ["project:list" as const],
-    projects: [
-      {
-        project_id: "22222222-2222-4222-8222-222222222222",
-        capabilities: ["project:exec" as const],
-      },
-      {
-        project_id: "33333333-3333-4333-8333-333333333333",
-        capabilities: ["file:read" as const, "project:read" as const],
-        viewer_read_roots: ["docs"],
-      },
-    ],
-  };
-  const key = {
-    id: 8,
-    name: "Mixed key",
-    trunc: "sk-cc...12345678",
-    capabilities: [],
-    allowed_project_ids: [],
-    scope: originalScope,
-  } as ApiKey;
-  const manage = jest.fn(async ({ action }: { action: string }) =>
-    action === "get" ? [key] : undefined,
-  );
-  render(<ApiKeys manage={manage} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  const dialog = screen.getByRole("dialog", { name: "Edit API Key" });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-  await waitFor(() =>
-    expect(manage).toHaveBeenCalledWith({
-      action: "edit",
+test.each([false, true])(
+  "editing a mixed key preserves separate project grants (all projects=%s)",
+  async (allProjects) => {
+    const originalScope = {
+      version: 1 as const,
+      account: ["project:list" as const],
+      ...(allProjects
+        ? {
+            all_projects: {
+              capabilities: ["file:read" as const],
+              viewer_read_roots: ["assignments"],
+            },
+          }
+        : {}),
+      projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          capabilities: ["project:exec" as const],
+        },
+        {
+          project_id: "33333333-3333-4333-8333-333333333333",
+          capabilities: ["file:read" as const, "project:read" as const],
+          viewer_read_roots: ["docs"],
+        },
+      ],
+    };
+    const key = {
       id: 8,
       name: "Mixed key",
-      expire: null,
+      trunc: "sk-cc...12345678",
+      capabilities: [],
+      allowed_project_ids: [],
       scope: originalScope,
-    }),
-  );
-});
+    } as ApiKey;
+    const manage = jest.fn(async ({ action }: { action: string }) =>
+      action === "get" ? [key] : undefined,
+    );
+    render(<ApiKeys manage={manage} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit API Key" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(manage).toHaveBeenCalledWith({
+        action: "edit",
+        id: 8,
+        name: "Mixed key",
+        expire: null,
+        scope: originalScope,
+      }),
+    );
+  },
+);

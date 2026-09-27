@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import { CocalcConnector } from "./cocalc-connector";
 
 const mockApi = {
@@ -24,9 +25,26 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
     freshAuthModalProps: {},
   }),
 }));
-jest.mock("@cocalc/frontend/components/api-key-scope-editor", () => ({
-  EMPTY_API_KEY_SCOPE: { version: 1, account: [], projects: [] },
-  ApiKeyScopeEditor: () => <div>Shared scope editor</div>,
+jest.mock("@cocalc/frontend/projects/select-project", () => ({
+  SelectProject: ({ ariaLabel, value, exclude = [], onChange }) => (
+    <select
+      aria-label={ariaLabel}
+      value={value ?? ""}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="">Select a project</option>
+      {[
+        ["00000000-0000-4000-8000-000000000001", "Source project"],
+        ["22222222-2222-4222-8222-222222222222", "Project B"],
+      ]
+        .filter(([id]) => !exclude.includes(id) || id === value)
+        .map(([id, title]) => (
+          <option key={id} value={id}>
+            {title}
+          </option>
+        ))}
+    </select>
+  ),
 }));
 
 const agent = {
@@ -56,7 +74,7 @@ test("keyboard opens the dialog and saving uses fresh auth", async () => {
     name: "CoCalc access for @builder",
   });
   await waitFor(() =>
-    expect(within(dialog).getByText("Shared scope editor")).toBeVisible(),
+    expect(within(dialog).getByText("Account privileges")).toBeVisible(),
   );
   const enabled = within(dialog).getByRole("switch", {
     name: "Enable CoCalc access",
@@ -72,6 +90,85 @@ test("keyboard opens the dialog and saving uses fresh auth", async () => {
   expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(dialog).not.toBeVisible());
 });
+
+test.each([false, true])(
+  "real editor preserves defaults and restricted overrides on save/reload (composer=%s)",
+  async (composer) => {
+    const scope: ApiKeyScope = {
+      version: 1,
+      account: ["project:list"],
+      all_projects: { capabilities: ["file:read"], viewer_read_roots: ["."] },
+      projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          capabilities: ["file:read"],
+          viewer_read_roots: ["assignments", "results"],
+        },
+      ],
+    };
+    let saved = { enabled: true, revision: 4, scope };
+    mockApi.getCocalcConnectorConfig.mockImplementation(async () => saved);
+    mockApi.saveCocalcConnectorConfig.mockImplementation(async (opts) => {
+      saved = { ...saved, scope: opts.scope, revision: saved.revision + 1 };
+      return saved;
+    });
+    const user = userEvent.setup();
+    render(<CocalcConnector agent={agent} composer={composer} />);
+    const trigger = screen.getByRole("button", {
+      name: composer ? "CoCalc connector" : "CoCalc access",
+    });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const roots = await screen.findByRole("textbox", {
+      name: "Allowed directories",
+    });
+    expect(roots).toHaveValue("assignments\nresults");
+    expect(
+      screen.getByRole("checkbox", { name: "All projects" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Whole project" }),
+    ).not.toBeChecked();
+    expect(
+      screen.queryByRole("option", { name: "Source project" }),
+    ).not.toBeInTheDocument();
+    const account = screen.getByRole("checkbox", {
+      name: "Read basic account information",
+    });
+    account.focus();
+    await user.keyboard(" ");
+    await user.click(screen.getByRole("button", { name: "Save access" }));
+    const expectedScope = {
+      ...scope,
+      account: ["project:list", "account:read"],
+    };
+    await waitFor(() =>
+      expect(mockApi.saveCocalcConnectorConfig).toHaveBeenCalledWith({
+        agent_id: agent.endpoint.agent_id,
+        source_project_id: agent.endpoint.project_id,
+        enabled: true,
+        expected_revision: 4,
+        scope: expectedScope,
+      }),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("textbox", { name: "Allowed directories" }),
+    ).toHaveValue("assignments\nresults");
+    await user.click(screen.getByRole("button", { name: "Save access" }));
+    await waitFor(() =>
+      expect(mockApi.saveCocalcConnectorConfig).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          expected_revision: 5,
+          scope: expectedScope,
+        }),
+      ),
+    );
+    expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(2);
+    expect(scope.account).toEqual(["project:list"]);
+  },
+);
 
 test("a failed load exposes an alert and does not allow saving", async () => {
   mockApi.getCocalcConnectorConfig.mockRejectedValueOnce(
