@@ -20,6 +20,11 @@ import { isProjectHostApiKeySubjectAllowed } from "../auth/project-host-api-key-
 import type { ProjectHostApiKeyBinding } from "../auth/project-host-token";
 import type { ServerSocket } from "./server-socket";
 import { delay } from "awaiting";
+import {
+  initLoadBalancer,
+  getPersistServerInfo,
+  getPersistServerId,
+} from "../persist/load-balancer";
 
 const subject = "terminal.project-00000000-0000-4000-8000-000000000001.0";
 const prefix = "_INBOX.api-key-test";
@@ -34,7 +39,12 @@ describe("socket inbox-return protocol", () => {
     await ConatServer.closeAllForTests();
   });
 
-  async function fixture(expires?: number, clustered = false) {
+  async function fixture(
+    expires?: number,
+    clustered = false,
+    serviceSubject = subject,
+    scopedBinding = binding,
+  ) {
     const common = {
       port: 0,
       clusterName: "socket-inbox-test",
@@ -62,7 +72,11 @@ describe("socket inbox-return protocol", () => {
           return type === "pub" || subject.startsWith("_INBOX.");
         return (
           Boolean(user?.hub_id) ||
-          isProjectHostApiKeySubjectAllowed({ binding, subject, type })
+          isProjectHostApiKeySubjectAllowed({
+            binding: scopedBinding,
+            subject,
+            type,
+          })
         );
       },
     };
@@ -84,7 +98,7 @@ describe("socket inbox-return protocol", () => {
     });
     await service.waitUntilSignedIn({ timeout: 5000 });
     await client.waitUntilSignedIn({ timeout: 5000 });
-    const listener = service.socket.listen(subject, {
+    const listener = service.socket.listen(serviceSubject, {
       keepAlive: 0,
       keepAliveTimeout: 1000,
     });
@@ -97,6 +111,61 @@ describe("socket inbox-return protocol", () => {
     }
     return { broker, targetBroker, service, client, listener };
   }
+
+  it.each([false, true])(
+    "negotiates confined persistence sockets through load balancing (clustered=%s)",
+    async (clustered) => {
+      const persist = "persist.project-00000000-0000-4000-8000-000000000001";
+      const { client, service, listener } = await fixture(
+        undefined,
+        clustered,
+        persist,
+        {
+          ...binding,
+          subjects: [persist + "."],
+        },
+      );
+      initLoadBalancer({ client: service, ids: [listener.id] });
+      await client.waitForInterest(persist + ".id", { timeout: 5000 });
+      // Existing clients still receive a bare ID; feature negotiation is opt-in.
+      expect((await client.request(persist + ".id", null)).data).toBe(
+        listener.id,
+      );
+      expect(await getPersistServerInfo({ client, subject: persist })).toEqual({
+        id: listener.id,
+        inboxReturn: 1,
+      });
+      expect(await getPersistServerId({ client, subject: persist })).toBe(
+        listener.id,
+      );
+      const accepted = new Promise<ServerSocket>((resolve) =>
+        listener.once("connection", resolve),
+      );
+      const socket = client.socket.connect(persist, {
+        keepAlive: 0,
+        reconnection: false,
+        loadBalancer: (subject) => getPersistServerInfo({ client, subject }),
+      });
+      await socket.waitUntilReady(5000);
+      const serverSocket = await accepted;
+      expect(serverSocket.clientSubject.startsWith(prefix + ".")).toBe(true);
+      serverSocket.on("request", (message) =>
+        message.respondSync("persist-response"),
+      );
+      expect((await socket.request(null, { timeout: 2000 })).data).toBe(
+        "persist-response",
+      );
+      await expect(
+        client.subscribe(persist + ".client.foreign"),
+      ).rejects.toThrow();
+      await expect(
+        client.subscribe("_INBOX.account-foreign.>"),
+      ).rejects.toThrow();
+      await socket.closeAndWait();
+      listener.close();
+    },
+    15000,
+  );
 
   it("preserves broker-attested routes across a cluster link and withdraws expired interest", async () => {
     const expires = (Date.now() + 4000) / 1000;

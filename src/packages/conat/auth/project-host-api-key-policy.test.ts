@@ -54,7 +54,7 @@ describe("project-host API key subject confinement", () => {
       subjects: [
         `fs.project-${projectId}`,
         `jupyter.project-${projectId}.`,
-        `persist.project-${projectId}`,
+        `persist.project-${projectId}.`,
         `project.${projectId}.api.`,
         `project.${projectId}.run`,
         `terminal.project-${projectId}.`,
@@ -63,6 +63,17 @@ describe("project-host API key subject confinement", () => {
     expect(allowed(full, `project.${projectId}.run`)).toBe(true);
     expect(allowed(full, `terminal.project-${projectId}.0`)).toBe(true);
     expect(allowed(full, `jupyter.project-${projectId}.0`)).toBe(true);
+    expect(allowed(full, `persist.project-${projectId}.id`)).toBe(true);
+    expect(
+      allowed(full, `persist.project-${projectId}.server.shard.client`),
+    ).toBe(true);
+    expect(allowed(full, `persist.project-${otherProjectId}.id`)).toBe(false);
+    expect(allowed(full, `persist.project-${projectId}-other.id`)).toBe(false);
+    expect(allowed(full, `persist.account-${base.account_id}.id`)).toBe(false);
+    expect(
+      allowed(full, `persist.project-${projectId}.client.other`, "sub"),
+    ).toBe(false);
+    expect(allowed(base, `persist.project-${projectId}.id`)).toBe(false);
     expect(allowed(full, `project.${otherProjectId}.run`)).toBe(false);
     expect(allowed(full, `project.${projectId}.future-control.-`)).toBe(false);
     expect(allowed(full, `hub.project.${projectId}.api`)).toBe(false);

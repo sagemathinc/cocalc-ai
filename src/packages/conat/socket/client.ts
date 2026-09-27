@@ -14,6 +14,7 @@ import {
   SOCKET_RESPONSE_ID,
   DEFAULT_COMMAND_TIMEOUT,
   type ConatSocketOptions,
+  type SocketServerInfo,
   serverStatusSubject,
 } from "./util";
 import { EventIterator } from "@cocalc/util/event-iterator";
@@ -43,7 +44,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private tcp?: TCP;
   private alive?: KeepAlive;
   private serverId?: string;
-  private loadBalancer?: (subject: string) => Promise<string>;
+  private loadBalancer?: ConatSocketOptions["loadBalancer"];
   private loadBalancerTimeout?: number;
   private nextConnectAttemptId = 0;
   private connectAttempts = new Map<
@@ -352,10 +353,13 @@ export class ConatSocketClient extends ConatSocketBase {
       const timeout = this.loadBalancerTimeout ?? DEFAULT_COMMAND_TIMEOUT;
       if (this.loadBalancer != null) {
         logger.debug("getting server id from load balancer");
-        id = await this.withServerIdTimeout(
+        const selected = await this.withServerIdTimeout(
           this.loadBalancer(this.subject),
           timeout,
         );
+        id = typeof selected === "string" ? selected : selected.id;
+        this.inboxReturn =
+          typeof selected !== "string" && selected.inboxReturn === 1;
       } else {
         logger.debug("getting server id from socket server");
         const resp = await this.client.request(
@@ -375,9 +379,9 @@ export class ConatSocketClient extends ConatSocketBase {
   }
 
   private withServerIdTimeout = async (
-    promise: Promise<string>,
+    promise: Promise<string | SocketServerInfo>,
     timeout: number,
-  ): Promise<string> => {
+  ): Promise<string | SocketServerInfo> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([

@@ -151,6 +151,8 @@ describe("project-host API key child tokens", () => {
       `project.${projectId}.api.-`,
       `project.${projectId}.project-info.-`,
       `terminal.project-${projectId}.session`,
+      `persist.project-${projectId}.id`,
+      `persist.project-${projectId}.server.shard.client`,
     ]) {
       expect(
         isProjectHostApiKeySubjectAllowed({ binding, subject, type: "pub" }),
@@ -160,6 +162,8 @@ describe("project-host API key child tokens", () => {
       `project.${projectId}.future-control.-`,
       `project.${projectId}.api-management.-`,
       `hub.project.${projectId}.api`,
+      `persist.project-${projectId}-foreign.id`,
+      `persist.account-${accountId}.id`,
     ]) {
       expect(
         isProjectHostApiKeySubjectAllowed({ binding, subject, type: "pub" }),

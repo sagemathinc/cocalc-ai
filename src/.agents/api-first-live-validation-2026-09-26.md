@@ -187,6 +187,34 @@ coverage, not broader account inbox access or an agent-only notebook path.
 The new-notebook initialization case and the full installed workflow must then
 be retested. No production authorization behavior was changed in this probe.
 
+### Persistence discovery fix (not deployed)
+
+Full-runtime tokens now grant the dot-delimited persistence service namespace
+for exactly their target project, including discovery and socket subjects.
+Viewer keys still receive no persistence authority. Cross-project, account,
+prefix-collision, and subscription denials remain tested, as does storage-path
+confinement inside a permitted project service.
+
+The shared socket load-balancer contract accepts either the legacy server ID
+or a server descriptor carrying `inboxReturn: 1`. Persistence clients opt into
+feature discovery; updated load balancers retain the string response for old
+clients. New clients normalize legacy responses without claiming inbox-return
+support, share the discovery cache, clear it on disconnect, and reject malformed
+responses without caching them. The persist client passes negotiated features
+to the normal socket path rather than subscribing to a broad project inbox.
+
+All 48 tests in eight Conat suites pass, including real single-/two-broker
+load-balanced socket negotiation, request/response, confined return routes,
+foreign-inbox denial, and confirmed cleanup. All 35 host authorization tests
+pass; Conat and project-host TypeScript builds and `git diff --check` pass.
+These tests establish transport primitives and policy, not a real notebook
+save or a persistence database round-trip.
+
+The issuer and token verifier both validate the canonical audience. Their
+updated versions must be deployed together with the persistence service and
+CLI before the installed notebook retest; mixed audience versions fail closed.
+No live installation was changed by this follow-up.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

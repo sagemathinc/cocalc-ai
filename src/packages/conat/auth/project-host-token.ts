@@ -143,7 +143,7 @@ function apiKeySubjects({
       `project.${project_id}.run`,
       `terminal.project-${project_id}.`,
       `jupyter.project-${project_id}.`,
-      `persist.project-${project_id}`,
+      `persist.project-${project_id}.`,
     );
   }
   if (grants.has("file:write") || grants.has("project:exec")) {

@@ -540,6 +540,8 @@ describe("project-host Conat auth", () => {
       `project.${project_id}.archive-info.-`,
       `project.${project_id}.touch.-`,
       `persist.project-${project_id}`,
+      `persist.project-${project_id}.id`,
+      `persist.project-${project_id}.server.shard.client`,
       `acp.project-${project_id}`,
       `codex.project-${project_id}.device-auth`,
       `hub.project.${project_id}.api`,
