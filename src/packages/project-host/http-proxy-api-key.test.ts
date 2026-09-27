@@ -166,3 +166,48 @@ test("cleans timers on completion and rejects an already expired transport immed
   expireScopedHttpTransport(response, Date.now() / 1000);
   expect(response.destroy).toHaveBeenCalledTimes(1);
 });
+
+test("fences incoming data and writes before overdue timers run after a stall", async () => {
+  jest.useFakeTimers();
+  const write = jest.fn(() => true);
+  const end = jest.fn();
+  const writeHead = jest.fn();
+  const flushHeaders = jest.fn();
+  const transport = Object.assign(new EventEmitter(), {
+    destroy: jest.fn(),
+    write,
+    end,
+    writeHead,
+    flushHeaders,
+  });
+  const data = jest.fn();
+  transport.on("data", data);
+  const now = Date.now();
+  expireScopedHttpTransport(transport, now / 1000 + 25);
+  expect(transport.write("allowed")).toBe(true);
+  transport.emit("data", "allowed");
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(data).toHaveBeenCalledTimes(1);
+  // Move wall time without executing the pending expiry timer.
+  jest.setSystemTime(now + 25_000);
+  expect(transport.destroy).not.toHaveBeenCalled();
+  expect(transport.write("denied")).toBe(false);
+  const callback = jest.fn();
+  (transport as any).write("denied with callback", callback);
+  jest.runAllTicks();
+  expect(callback).toHaveBeenCalledWith(
+    expect.objectContaining({ code: "ERR_AUTHORIZATION_EXPIRED" }),
+  );
+  transport.end("denied");
+  transport.writeHead(200);
+  transport.flushHeaders();
+  expect(transport.emit("data", "denied")).toBe(false);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(end).not.toHaveBeenCalled();
+  expect(writeHead).not.toHaveBeenCalled();
+  expect(flushHeaders).not.toHaveBeenCalled();
+  expect(data).toHaveBeenCalledTimes(1);
+  expect(transport.destroy).toHaveBeenCalled();
+  transport.emit("close");
+  expect(jest.getTimerCount()).toBe(0);
+});

@@ -782,6 +782,11 @@ export function createProjectHostHttpProxyAuth({
         scoped_api_key_exp_s: scoped.exp,
       });
       expireScopedHttpTransport(res, scoped.exp, true);
+      const stopInputTimer = expireScopedHttpTransport(req, scoped.exp);
+      // Do not retain a request deadline on a reused keep-alive socket after
+      // this response completes (the request may already have emitted close).
+      res.once("finish", stopInputTimer);
+      res.once("close", stopInputTimer);
       return;
     }
     const accountFromBrowserSession = browserSessionAccountId(req);

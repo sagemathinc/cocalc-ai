@@ -62,14 +62,58 @@ export function authorizeScopedHttpProxy(
 
 // Admission is not permission to retain an unbounded response or WebSocket.
 export function expireScopedHttpTransport(
-  transport: EventEmitter & { destroy: () => unknown },
+  transport: EventEmitter & {
+    destroy: () => unknown;
+    write?: (...args: any[]) => any;
+    end?: (...args: any[]) => any;
+    writeHead?: (...args: any[]) => any;
+    flushHeaders?: (...args: any[]) => any;
+  },
   expires_at_s: number,
   response = false,
 ) {
   const remaining = expires_at_s * 1000 - Date.now();
   if (remaining <= 0) {
     transport.destroy();
-    return;
+    return () => {};
+  }
+  // Timers alone cannot fence data delivered before overdue timers after a stall.
+  const expired = () => Date.now() >= expires_at_s * 1000;
+  const originalEmit = transport.emit;
+  transport.emit = function (event, ...args) {
+    if (event === "data" && expired()) {
+      this.destroy();
+      return false;
+    }
+    return originalEmit.call(this, event, ...args);
+  };
+  for (const method of ["write", "end", "writeHead", "flushHeaders"] as const) {
+    const original = transport[method];
+    if (!original) continue;
+    transport[method] = function (...args) {
+      if (expired()) {
+        this.destroy();
+        const callback = args.at(-1);
+        if (
+          (method === "write" || method === "end") &&
+          typeof callback === "function"
+        ) {
+          const error = Object.assign(
+            new Error("scoped HTTP authorization expired"),
+            {
+              code: "ERR_AUTHORIZATION_EXPIRED",
+            },
+          );
+          queueMicrotask(() => callback(error));
+        }
+        return method === "write"
+          ? false
+          : method === "flushHeaders"
+            ? undefined
+            : this;
+      }
+      return original.apply(this, args);
+    };
   }
   const events = response ? ["finish", "close"] : ["close"];
   const cleanup = () => {
@@ -82,4 +126,5 @@ export function expireScopedHttpTransport(
   }, remaining);
   timer.unref();
   for (const event of events) transport.once(event, cleanup);
+  return cleanup;
 }

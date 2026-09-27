@@ -108,43 +108,50 @@ describe("project-host HTTP session cookie", () => {
     mockGetProject.mockReset();
   });
 
-  it("does not promote scoped HTTP access into cookies and expires active responses", async () => {
-    jest.useFakeTimers();
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      mockVerifyHttpToken.mockReturnValue({
-        sub: account_id,
-        iat: now,
-        exp: now + 25,
-        api_key: { placement_revision: 7 },
-      });
-      mockGetProject.mockReturnValue({
-        users: { [account_id]: "owner" },
-        runtime_lifecycle_revision: 7,
-      });
-      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
-      const req = {
-        url: `/${project_id}/proxy/8080/`,
-        headers: {
-          [PROJECT_HOST_API_KEY_HTTP_HEADER]: "scoped-token",
-          cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
-        },
-      } as any;
-      const res = Object.assign(new EventEmitter(), createResponse(), {
-        destroy: jest.fn(),
-      });
-      await auth.authorizeHttpRequest(req, res, project_id);
-      expect(mockVerifyHttpToken).toHaveBeenCalledWith(
-        expect.objectContaining({ project_id, port: 8080 }),
-      );
-      expect(res.setHeader).not.toHaveBeenCalled();
-      expect(req.headers).toEqual({});
-      jest.advanceTimersByTime(25_000);
-      expect(res.destroy).toHaveBeenCalledTimes(1);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
+  it.each([false, true])(
+    "does not promote scoped HTTP access and handles response completion (%s)",
+    async (completed) => {
+      jest.useFakeTimers();
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        mockVerifyHttpToken.mockReturnValue({
+          sub: account_id,
+          iat: now,
+          exp: now + 25,
+          api_key: { placement_revision: 7 },
+        });
+        mockGetProject.mockReturnValue({
+          users: { [account_id]: "owner" },
+          runtime_lifecycle_revision: 7,
+        });
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        const req = {
+          url: `/${project_id}/proxy/8080/`,
+          headers: {
+            [PROJECT_HOST_API_KEY_HTTP_HEADER]: "scoped-token",
+            cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
+          },
+        } as any;
+        Object.setPrototypeOf(req, new EventEmitter());
+        req.destroy = jest.fn();
+        const res = Object.assign(new EventEmitter(), createResponse(), {
+          destroy: jest.fn(),
+        });
+        await auth.authorizeHttpRequest(req, res, project_id);
+        expect(mockVerifyHttpToken).toHaveBeenCalledWith(
+          expect.objectContaining({ project_id, port: 8080 }),
+        );
+        expect(res.setHeader).not.toHaveBeenCalled();
+        expect(req.headers).toEqual({});
+        if (completed) res.emit("finish");
+        jest.advanceTimersByTime(25_000);
+        expect(res.destroy).toHaveBeenCalledTimes(completed ? 0 : 1);
+        expect(req.destroy).toHaveBeenCalledTimes(completed ? 0 : 1);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it("fails closed before browser cookies when a scoped header is invalid", async () => {
     const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
