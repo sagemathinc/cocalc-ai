@@ -402,6 +402,51 @@ This is not a deployed long-run test. Healthy renewal across several token
 lifetimes, notebook save after recovery, and interactive stdin during recovery
 remain to be validated with the real installed CLI/runtime.
 
+### Recovery deployment verification, 2026-09-27
+
+Project and tools bundles built successfully at
+`8deee7733428c79113efed50b65191d6f90a9ccc`; all three archives passed
+`xz --test`. Project archive SHA256 is
+`eb11dc3c0e010a07042e9c4fe9cffd91e43dbdb2f5afc2ee4a5851fe18b1c2db`;
+the installed CLI SHA256 is
+`ea4cc5e2950adf1d4464014aa24e84f27be038f7234a798614cf472c60b13701`.
+
+The initial combined project/tools upgrade reported success, but the project
+runtime remained at `cf59599857a9` while the CLI was current. A real Python
+80-second probe using key 91 consequently reported `JUPYTER_RUN_TRANSPORT_LOST`;
+inspection confirmed the old runtime lacked `jupyter-batch-sequence`. Its
+private credential directory and key were removed. This attempt does not test
+the new server/client recovery combination.
+
+The primary dev hub also stopped with a billing-authority lease query timeout.
+It was restored through `pnpm dev:hub:start`; the attached bays remained running.
+The prior project restart was terminal/canceled due to a host-process change,
+and a subsequent explicit start succeeded. No uncertain notebook execution was
+automatically resubmitted.
+
+A project-only upgrade pinned to version `1790480271355`, operation
+`04c327ee-78c8-4a08-b12f-e25b1b9f49f9`, succeeded on host3. Its desired and
+installed project versions then agreed; tools remained `1790480368473`.
+Disposable-project restart `1d4c7bd8-8121-4149-b016-8fd699dcd94e` succeeded.
+Inside the project, `build-identity.json` now identifies
+`20260927T033740Z-8deee7733428`, and the runtime contains the sequence header.
+Host authorization remains at `9cc0f888885d`; other hosts were not upgraded.
+
+Two new, independently named 80-second notebook fixtures (keys 92 and 93)
+then exercised the installed combination. Both reached retained-output recovery
+but failed with `JUPYTER_RUN_RECOVERY_FAILED`. The second captured only safe
+error categories: its cause had code `408`, was a timeout, and was not classified
+as a permission denial, closed-connection error, or unknown command. Neither
+attempt passed output-completeness, save, or fresh-client verification. Each
+private provider/notebook directory and key was removed by the probe cleanup.
+These are new test runs, not retries of an uncertain execution.
+
+Healthy long-run recovery is therefore **not working end to end yet** at this
+checkpoint. The next investigation must distinguish replay connection setup
+from the bounded replay request itself; increasing timeouts alone is not proof
+of a correct recovery lifecycle. Interactive stdin remains separately unproven:
+the kernel control path still sends its request through the original run socket.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
