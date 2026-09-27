@@ -380,6 +380,39 @@ describe("socket inbox-return protocol", () => {
     listener.close();
   });
 
+  it("cancels reverse requests and releases pending reply state", async () => {
+    const { client, listener } = await fixture();
+    const accepted = new Promise<ServerSocket>((resolve) =>
+      listener.once("connection", resolve),
+    );
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: false,
+    });
+    const serverSocket = await accepted;
+    await socket.waitUntilReady(5000);
+    const delivered = new Promise<any>((resolve) =>
+      socket.once("request", resolve),
+    );
+    const controller = new AbortController();
+    const request = serverSocket.request("pending", {
+      timeout: 60_000,
+      signal: controller.signal,
+    });
+    const rejected = expect(request).rejects.toThrow("input settled");
+    const message = await delivered;
+    expect((serverSocket as any).pendingReplies.size).toBe(1);
+    controller.abort(Error("input settled"));
+    await rejected;
+    expect((serverSocket as any).pendingReplies.size).toBe(0);
+    await message.respond("late");
+    expect((serverSocket as any).pendingReplies.size).toBe(0);
+    await expect(
+      serverSocket.request("already canceled", { signal: controller.signal }),
+    ).rejects.toThrow("input settled");
+    socket.close();
+  });
+
   it("carries requests and reverse requests without broad subscriptions or inbox publication", async () => {
     const { client, listener } = await fixture();
     const accepted = new Promise<ServerSocket>((resolve) =>

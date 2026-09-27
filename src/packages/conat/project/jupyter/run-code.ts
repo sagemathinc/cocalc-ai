@@ -16,6 +16,11 @@ import { getLogger } from "@cocalc/conat/logger";
 import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import { Throttle } from "@cocalc/util/throttle";
 import {
+  JupyterRunInput,
+  type JupyterInputPrompt,
+  type JupyterInputRequest,
+} from "./run-input";
+import {
   canonicalJupyterLiveRunPath,
   jupyterLiveRunKey,
   jupyterLiveRunPage,
@@ -221,6 +226,7 @@ export interface RunOptions {
   // the socket is used for raw_input, to communicate between the client
   // that initiated the request and the server.
   socket: ServerSocket;
+  stdin?: (prompt: JupyterInputPrompt) => Promise<string>;
 }
 
 type JupyterCodeRunner = (
@@ -272,6 +278,25 @@ export function jupyterServer({
   let activeRuns = 0;
   let activeSockets = 0;
   let activeReplayReads = 0;
+  const runInputs = new Map<string, JupyterRunInput>();
+  const inputKey = (path: unknown, runId: unknown) => {
+    if (
+      typeof path !== "string" ||
+      path.length > 4096 ||
+      typeof runId !== "string" ||
+      !runId ||
+      runId.length > 256
+    )
+      throw Error("invalid run input target");
+    return jupyterLiveRunKey({
+      path: canonicalJupyterLiveRunPath(path),
+      run_id: runId,
+    });
+  };
+  server.once("closed", () => {
+    for (const input of runInputs.values()) input.close();
+    runInputs.clear();
+  });
 
   server.on("connection", (socket: ServerSocket) => {
     if (activeSockets >= maxActiveSockets) {
@@ -302,7 +327,20 @@ export function jupyterServer({
     socket.on("request", async (mesg) => {
       const { data } = mesg;
       const { cmd, path } = data;
-      if (cmd === "get-run") {
+      if (cmd === "get-input" || cmd === "answer-input") {
+        try {
+          const input = runInputs.get(inputKey(path, data.run_id));
+          if (cmd === "get-input") mesg.respondSync(input?.get() ?? null);
+          else {
+            if (!input) throw Error("run input is unavailable");
+            mesg.respondSync({
+              status: input.answer(data.request_id, data.answer),
+            });
+          }
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+        }
+      } else if (cmd === "get-run") {
         if (activeReplayReads >= maxActiveRuns) {
           mesg.respondSync(null, {
             headers: { error: "jupyter replay service is busy" },
@@ -374,6 +412,16 @@ export function jupyterServer({
           mesg.respondSync(null, { headers: { error } });
           return;
         }
+        let key: string;
+        try {
+          key = inputKey(path, run_id);
+          if (runInputs.has(key)) throw Error("run is already active");
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+          return;
+        }
+        const input = new JupyterRunInput();
+        runInputs.set(key, input);
         try {
           activeRuns += 1;
           mesg.respondSync({
@@ -404,6 +452,29 @@ export function jupyterServer({
             noHalt,
             limit,
             moreOutput: moreOutput[path],
+            stdin: (prompt: JupyterInputPrompt) => {
+              const result = input.request(prompt);
+              const request = input.get()!;
+              // Legacy delivery and authenticated recovery compete for the same
+              // pending request. A lost socket leaves it available until expiry.
+              if (socket.state !== "ready") return result;
+              const delivery = new AbortController();
+              const stopDelivery = () => delivery.abort();
+              void result.then(stopDelivery, stopDelivery);
+              void socket
+                .request(
+                  { type: "stdin", ...request },
+                  {
+                    timeout: Math.max(1, request.expires_at - Date.now()),
+                    signal: delivery.signal,
+                  },
+                )
+                .then(({ data }) => {
+                  input.answer(request.request_id, data);
+                })
+                .catch(() => {});
+              return result;
+            },
           });
         } catch (err) {
           logger.debug("server: failed to handle execute request -- ", err);
@@ -419,6 +490,8 @@ export function jupyterServer({
             }
           }
         } finally {
+          input.close();
+          runInputs.delete(key);
           activeRuns -= 1;
         }
       } else {
@@ -450,6 +523,7 @@ async function handleRequest({
   noHalt,
   limit,
   moreOutput,
+  stdin,
 }) {
   const startedAt = Date.now();
   let firstMesgAt: number | null = null;
@@ -476,7 +550,7 @@ async function handleRequest({
     path: liveRunPath,
   });
   const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
-  const runner = await run({ path, cells, noHalt, socket, run_id });
+  const runner = await run({ path, cells, noHalt, socket, run_id, stdin });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
   let batchSeq = 0;
@@ -895,6 +969,30 @@ export class JupyterClient {
       cmd: "get-kernel-status",
       path: this.path,
     });
+    return data;
+  };
+
+  getInput = async (
+    run_id: string,
+    options?: { timeout?: number },
+  ): Promise<JupyterInputRequest | null> => {
+    const { data } = await this.socket.request(
+      { cmd: "get-input", path: this.path, run_id },
+      options,
+    );
+    return data;
+  };
+
+  answerInput = async (
+    run_id: string,
+    request_id: string,
+    answer: string,
+    options?: { timeout?: number },
+  ): Promise<{ status: "accepted" | "already-accepted" }> => {
+    const { data } = await this.socket.request(
+      { cmd: "answer-input", path: this.path, run_id, request_id, answer },
+      options,
+    );
     return data;
   };
 

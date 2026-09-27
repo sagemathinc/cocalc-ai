@@ -296,7 +296,9 @@ export class ServerSocket extends EventEmitter {
 
   // use request reply where the client responds
   request = async (data, options?) => {
+    options?.signal?.throwIfAborted();
     await this.waitUntilReady(options?.timeout);
+    options?.signal?.throwIfAborted();
     if (this.returnInbox) return await this.requestViaService(data, options);
     // logger.silly("server sending request to ", this.clientSubject);
     return await this.conatSocket.client.request(
@@ -321,6 +323,11 @@ export class ServerSocket extends EventEmitter {
       throw new ConatError("too many socket requests", { code: 429 });
     const id = randomId();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const signal: AbortSignal | undefined = options?.signal;
+    const abort = () =>
+      this.pendingReplies
+        .get(id)
+        ?.reject(signal?.reason ?? Error("socket request aborted"));
     const response = new Promise<Message>((resolve, reject) => {
       this.pendingReplies.set(id, { resolve, reject });
       timer = setTimeout(
@@ -331,13 +338,16 @@ export class ServerSocket extends EventEmitter {
     });
     // A failed publish and a concurrent close must not leave an unhandled reply.
     response.catch(() => undefined);
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      signal?.throwIfAborted();
       await this.conatSocket.client.publish(this.clientSubject, data, {
         ...options,
         headers: { ...options?.headers, [SOCKET_REQUEST_ID]: id },
       });
       return await response;
     } finally {
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timer);
       this.pendingReplies.delete(id);
     }

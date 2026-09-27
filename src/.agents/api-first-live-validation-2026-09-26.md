@@ -607,6 +607,36 @@ and diagnostics. Revoked or out-of-scope clients must not acquire this channel.
 Validation must cover prompts both before and after renewal, a reply crossing
 renewal, duplicate/stale answers, cancellation, and revocation while waiting.
 
+### Pending-input service foundation (not deployed)
+
+The ordinary Jupyter service now owns bounded, in-memory pending input for each
+admitted run. `get-input` and `answer-input` use the existing authorized Jupyter
+service and exact notebook/run/request targets. The original socket's response
+and recovery responses resolve the same pending request, first answer wins.
+Only the most recent accepted request ID is retained for duplicate acknowledgments;
+answers are not retained in that state or written to the output replay store.
+Run completion/service close clears state. Limits are one pending prompt per
+active run, 16 KiB UTF-8 prompt, 64 KiB answer, and a 15-minute input lifetime.
+An active duplicate run ID for the same canonical notebook is rejected.
+
+The Python execution adapter uses this callback when available, preserving the
+old socket adapter for other callers. Recovery acceptance cancels the obsolete
+reverse request; inbox-return sockets now honor its abort signal and release
+pending reply state. No cell execution retry was added.
+
+Five state-machine cases and six scoped Jupyter cases pass, including a fresh
+socket answering after original-socket closure, wrong notebook/request rejection,
+duplicate-answer isolation, and no answer in replay snapshots. Together with
+22 inbox-return cases, 33 focused tests pass; 55 backend Jupyter tests pass.
+Conat and Jupyter typechecks pass. The initial transport Jest invocation passed
+assertions but retained open handles; it was terminated, and subsequent combined
+transport/backend runs used `--forceExit`. This is not clean-exit evidence.
+
+Automatic CLI prompt recovery, callback deduplication across replacement clients,
+and live two-prompt/revocation validation remain to be implemented and exercised.
+These tests do not establish fresh credential issuance or revocation while a
+prompt is pending, and the deployed failure above remains the live result.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

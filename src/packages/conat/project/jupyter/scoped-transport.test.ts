@@ -30,6 +30,128 @@ describe("Jupyter application over scoped transport", () => {
     mockSnapshots.clear();
   });
 
+  it("answers pending input through a fresh scoped socket without rerunning", async () => {
+    const project_id = randomUUID();
+    const subject = `jupyter.project-${project_id}.0`;
+    const prefix = `_INBOX.jupyter-input-${randomUUID()}`;
+    const binding = {
+      reply_prefix: prefix,
+      subjects: [subject + "."],
+    } as ProjectHostApiKeyBinding;
+    const broker = init({
+      port: 0,
+      autoscanInterval: 0,
+      getUser: async (socket) => socket.handshake.auth,
+      isAllowed: async ({ user, subject, type }) =>
+        user?.hub_id === "service" ||
+        isProjectHostApiKeySubjectAllowed({ binding, subject, type }),
+    });
+    const service = connect({
+      address: broker.address(),
+      noCache: true,
+      auth: { hub_id: "service" },
+    });
+    const client = connect({
+      address: broker.address(),
+      noCache: true,
+      auth: { account_id: "test" },
+      inboxPrefix: prefix,
+    });
+    await service.waitUntilSignedIn({ timeout: 3000 });
+    await client.waitUntilSignedIn({ timeout: 3000 });
+    let releaseNext!: () => void;
+    let releaseDone!: () => void;
+    const next = new Promise<void>((resolve) => {
+      releaseNext = resolve;
+    });
+    const done = new Promise<void>((resolve) => {
+      releaseDone = resolve;
+    });
+    const answers: string[] = [];
+    const run = jest.fn(async ({ stdin }) =>
+      (async function* () {
+        answers.push(await stdin({ id: "cell", prompt: "first?" }));
+        yield {
+          id: "cell",
+          msg_type: "stream",
+          content: { name: "stdout", text: "ready" },
+        };
+        await next;
+        answers.push(
+          await stdin({ id: "cell", prompt: "second?", password: true }),
+        );
+        await done;
+      })(),
+    );
+    const server = jupyterServer({
+      client: service,
+      project_id,
+      run,
+      getKernelStatus: async () => ({
+        backend_state: "running",
+        kernel_state: "idle",
+        identity: "fixture",
+      }),
+    });
+    await server.waitUntilReady(3000);
+    const original = jupyterClient({
+      client,
+      project_id,
+      path: "input.ipynb",
+      stdin: async () => "first-answer",
+    });
+    const fresh = jupyterClient({ client, project_id, path: "input.ipynb" });
+    const other = jupyterClient({ client, project_id, path: "other.ipynb" });
+    try {
+      const iter = await original.run([{ id: "cell", input: "fixture" }], {
+        run_id: "input-run",
+      });
+      await iter.next();
+      original.close();
+      releaseNext();
+      let pending = await fresh.getInput("input-run");
+      for (let i = 0; i < 100 && !pending; i++) {
+        await delay(10);
+        pending = await fresh.getInput("input-run");
+      }
+      expect(pending).toMatchObject({
+        id: "cell",
+        prompt: "second?",
+        password: true,
+      });
+      expect(await other.getInput("input-run")).toBeNull();
+      await expect(
+        other.answerInput("input-run", pending!.request_id, "wrong"),
+      ).rejects.toThrow();
+      await expect(
+        fresh.answerInput("input-run", "wrong-id", "wrong"),
+      ).rejects.toThrow();
+      expect(
+        await fresh.answerInput(
+          "input-run",
+          pending!.request_id,
+          "synthetic-secret",
+        ),
+      ).toEqual({ status: "accepted" });
+      expect(
+        await fresh.answerInput("input-run", pending!.request_id, "different"),
+      ).toEqual({ status: "already-accepted" });
+      expect(await fresh.getInput("input-run")).toBeNull();
+      expect(answers).toEqual(["first-answer", "synthetic-secret"]);
+      expect(JSON.stringify([...mockSnapshots.values()])).not.toContain(
+        "synthetic-secret",
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseNext();
+      releaseDone();
+      original.close();
+      fresh.close();
+      other.close();
+      server.close();
+    }
+  });
+
   it.each([false, "close", "disconnect", "lease", "recover"] as const)(
     "delivers output or explicit transport loss without replay (interrupt=%s)",
     async (interrupt) => {
