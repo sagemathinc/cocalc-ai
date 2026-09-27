@@ -631,6 +631,22 @@ and 21 socket/inbox tests pass; Conat and project TypeScript builds pass.
 Automatic application-level reattachment is still not implemented by this
 change; this supplies its explicit transport invalidation boundary.
 
+### Terminal supervisor integration (not deployed)
+
+The existing frontend terminal reconnect supervisor now recognizes
+`reply-namespace-changed` on an initialized terminal and uses the attach-only
+RPC on replacement clients. It retains attach-only intent across failed and
+subsequent recovery attempts; no retry falls back to spawning a replacement
+shell. An observed process exit or explicit runtime-replacement notice restores
+the existing new-runtime behavior. Buffered, not-yet-sent UI input is released
+only after attachment succeeds; obsolete socket transport buffers are not moved.
+
+Focused component coverage invokes the registered supervisor callback after the
+closed event, tests successful and failed-first attachment, and asserts no spawn
+and no early input delivery. This is supervisor/component evidence combined
+with the separate real-PTY transport tests, not a rendered/deployed browser
+end-to-end test. CLI daemon and Jupyter/sync recovery remain separate work.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
