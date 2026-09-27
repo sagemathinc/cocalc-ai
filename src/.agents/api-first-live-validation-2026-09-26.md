@@ -6,6 +6,37 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Live terminal revocation and reattachment, 2026-09-27
+
+Validation project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535` remained on host3.
+Its installed CLI SHA-256 was checked directly:
+`bdb14be84fdd083bbe963738fefd8308ca3ab4b938ebd7bd9e0eebeabd1e3d53`.
+No host/runtime/tools upgrade was performed for this checkpoint.
+
+The installed CLI, launched with an empty environment and a private API-key
+file, spawned a shell, wrote a synthetic command, and read its expected output
+through ordinary terminal history. The shell, provider directory, and key were
+removed afterward (key ID 120). This is ordinary manual-key CLI evidence.
+
+A separate raw scoped-client probe used the current local Conat client code
+and the deployed project terminal service. Its shell produced a line every
+500ms. After deletion of the parent manual key, 47 output deliveries had been
+observed in total; the last arrived 21,684ms after deletion returned, and the
+connection was observed disconnected at 22,112ms. A new host exchange using
+the deleted key was rejected. These observations are within the documented
+30-second bound, not a claim of immediate revocation or a load-test bound.
+
+A fresh authorized manual key then attached, without spawning, to the same
+terminal PID (75) and received new output. This demonstrates the intended
+distinction between revoked session access and a process that remains alive.
+The fresh client destroyed the fixture process, all clients closed, and both
+test keys were deleted. The probe exited successfully.
+
+This closes the manual-key continuous terminal-output and fresh-key
+reattachment cases for this deployed fixture. It does not prove installed CLI
+automatic terminal recovery, managed-turn parity, source-membership loss,
+authority outage, or all terminal input/reconnect races.
+
 ## Two-broker interest withdrawal, 2026-09-27
 
 `core/server.cluster-revocation.test.ts` starts two real in-process Conat
