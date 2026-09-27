@@ -3007,8 +3007,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           : creating
             ? "New Agent"
             : selected
-              ? `@${selected.name} - Agents`
-              : "Agents",
+              ? `@${selected.name} - Home`
+              : "Home",
     );
   }, [active, libraryOpen, collaboratorsOpen, creating, selected?.name]);
   const creatingSourceAgent = agentFirstRunStarted(accountId)

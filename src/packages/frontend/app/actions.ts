@@ -288,7 +288,7 @@ export class PageActions extends Actions<PageState> {
             ? "Collaborators"
             : page.get("library_open")
               ? "Library"
-              : "Agents",
+              : "Home",
         );
         return;
       }

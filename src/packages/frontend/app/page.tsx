@@ -509,12 +509,12 @@ export const Page: React.FC = () => {
         tooltip={
           aiDisabled
             ? "People, conversations, and shared work"
-            : "Work with registered agents, chats, artifacts, and terminals"
+            : "Your home for agents, conversations, artifacts, and shared work"
         }
-        icon={aiDisabled ? "users" : "robot"}
-        label={aiDisabled ? "Collaborators" : "Agents"}
+        icon={aiDisabled ? "users" : "home"}
+        label={aiDisabled ? "Collaborators" : "Home"}
         hide_label={isNarrow}
-        ariaLabel={aiDisabled ? "Collaborators" : "Agents"}
+        ariaLabel={aiDisabled ? "Collaborators" : "Home"}
       />
     );
   }

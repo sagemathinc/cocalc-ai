@@ -2,6 +2,7 @@
 
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
 import { set_url } from "@cocalc/frontend/history";
+import { set_window_title } from "@cocalc/frontend/browser";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
@@ -184,6 +185,12 @@ describe("project context across global navigation", () => {
       }
     },
   );
+  it("labels the workspace Home without changing the agents route", async () => {
+    await actions.set_active_tab("agents");
+    expect(page().get("active_top_tab")).toBe("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/agents", undefined);
+    expect(set_window_title).toHaveBeenLastCalledWith("Home");
+  });
   it("still redirects unsupported Lite tabs without a Collaborators overlay", async () => {
     mockLite = true;
     await actions.set_active_tab("agents");

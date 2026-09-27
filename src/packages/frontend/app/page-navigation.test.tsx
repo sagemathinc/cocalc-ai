@@ -168,23 +168,25 @@ beforeEach(() => {
 });
 
 test.each([false, true])(
-  "Agents hides the full navigation and Projects restores it (narrow=%s)",
+  "Home hides the full navigation and Projects restores it (narrow=%s)",
   async (isNarrow) => {
     narrow = isNarrow;
     const mounted = render(view());
     const nav = screen.getByRole("navigation");
     const logo = within(nav).getByRole("link", { name: "CoCalc home" });
-    const agents = within(nav).getByRole("button", { name: "Agents" });
+    const home = within(nav).getByRole("button", { name: "Home" });
+    expect(within(nav).queryByRole("button", { name: "Agents" })).toBeNull();
     const projects = within(nav).getByRole("button", { name: "Projects" });
     const hosts = within(nav).getByRole("button", { name: "Compute" });
-    const segment = [logo, agents, projects, hosts];
+    const segment = [logo, home, projects, hosts];
     expect(Array.from(nav.children).slice(0, 4)).toEqual(segment);
     expect(
       screen.getByRole("region", { name: "post-surface project navigation" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Docs" })).toBeVisible();
     const user = userEvent.setup();
-    agents.focus();
+    home.focus();
+    expect(home).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(actions.set_active_tab).toHaveBeenCalledWith("agents");
     activeTab = "agents";
@@ -222,13 +224,13 @@ test("retained tabs preserve login and AI visibility", () => {
   loggedIn = false;
   const mounted = render(view());
   expect(screen.getByRole("link", { name: "CoCalc home" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Compute" })).toBeNull();
   loggedIn = true;
   aiDisabled = true;
   mounted.rerender(view());
-  expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
   expect(screen.getByRole("button", { name: "Projects" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Compute" })).toBeVisible();
 });
@@ -240,7 +242,7 @@ test.each([false, true])(
     aiDisabled = true;
     collaboratorsEnabled = true;
     const mounted = render(view());
-    expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
     const entry = screen.getByRole("button", { name: "Collaborators" });
     entry.focus();
     await userEvent.keyboard("{Enter}");

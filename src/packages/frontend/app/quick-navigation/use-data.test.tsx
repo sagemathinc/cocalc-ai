@@ -315,6 +315,15 @@ it("offers the top navigation pages, with Admin only for admins", async () => {
   ]);
   const [hosts] = searchCandidates(result.current.items, "hosts");
   expect(hosts.item.id).toBe("app:hosts");
+  const [home] = searchCandidates(result.current.items, "Home");
+  expect(home.item).toMatchObject({
+    id: "app:agents",
+    title: "Home",
+    destination: { kind: "app-page", page: "agents" },
+  });
+  expect(
+    searchCandidates(result.current.items, "agents").map(({ item }) => item.id),
+  ).toContain("app:agents");
   account = account.setIn(
     ["other_settings", "experimental_my_agents_page"],
     false,
