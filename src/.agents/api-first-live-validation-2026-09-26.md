@@ -558,6 +558,24 @@ does not prove collaborative notebook persistence, deployed CLI behavior,
 mid-run reconnect, or managed-turn lifecycle. Ordinary CI skips this opt-in test
 unless explicitly enabled in an environment with a local Python kernel.
 
+### Host-token provider and inbox readiness follow-up (not deployed)
+
+Tracing the CLI revealed that its host inbox hook reads mutable token state,
+not just authenticated `info.user`. A new regression reproduced a timeout when
+that provider changed before the next sign-in: recomputing both old and new
+prefixes observed the new value twice. The client now compares the current hook
+result with the prefix actually used to initialize its inbox.
+
+The expanded tests also exposed a stable-prefix reconnect race: a new request
+could precede restoration of its reply subscription. On a new transport
+connection the client now confirms inbox subscription before exposing it to
+requests. An unchanged authorized prefix retains its inbox subject and emitter;
+a changed prefix gets a new one. Four cases cover stable/rotated prefixes from
+both sign-in data and mutable providers, deliberately blocking subscription
+restoration to verify requests do not leave early. These four cases pass, the
+broader 28-test request/socket/Jupyter selection passes, and Conat builds. This
+fixes shared request/reply readiness, not persistent socket session recovery.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

@@ -627,6 +627,8 @@ export class Client extends EventEmitter {
   } = { servers: {}, clients: {} };
   public readonly options: ClientOptions;
   private inboxSubject: string;
+  private initializedInboxPrefix?: string;
+  private inboxConnectionId?: string;
   private inbox?: EventEmitter;
   private inboxSubscription?: Subscription;
   private inboxGeneration = 0;
@@ -768,10 +770,15 @@ export class Client extends EventEmitter {
         ack();
       }
       const firstTime = this.info == null;
-      const previousInboxPrefix = firstTime ? undefined : this.getInboxPrefix();
       this.info = info;
-      if (firstTime || previousInboxPrefix !== this.getInboxPrefix()) {
-        void this.initInbox().catch((err) => {
+      const prefixChanged =
+        this.initializedInboxPrefix !== this.getInboxPrefix();
+      if (
+        firstTime ||
+        prefixChanged ||
+        this.inboxConnectionId !== this.conn.id
+      ) {
+        void this.initInbox({ preserve: !prefixChanged }).catch((err) => {
           if (this.isClosed()) {
             return;
           }
@@ -1106,7 +1113,9 @@ export class Client extends EventEmitter {
     this.options?.inboxPrefix ??
     INBOX_PREFIX;
 
-  private initInbox = async () => {
+  private initInbox = async ({ preserve = false } = {}) => {
+    const preservedInbox = preserve ? this.inbox : undefined;
+    const preservedSubject = preservedInbox ? this.inboxSubject : undefined;
     // A new authenticated namespace must not reuse replies or subscriptions
     // from the previous one, including an initialization still in flight.
     const generation = ++this.inboxGeneration;
@@ -1130,7 +1139,9 @@ export class Client extends EventEmitter {
     if (!inboxPrefix.startsWith(INBOX_PREFIX)) {
       throw Error(`custom inboxPrefix must start with '${INBOX_PREFIX}'`);
     }
-    const inboxSubject = `${inboxPrefix}.${randomId()}`;
+    this.initializedInboxPrefix = inboxPrefix;
+    this.inboxConnectionId = this.conn.id;
+    const inboxSubject = preservedSubject ?? `${inboxPrefix}.${randomId()}`;
     this.inboxSubject = inboxSubject;
     const superseded = () =>
       this.isClosed() || generation !== this.inboxGeneration;
@@ -1163,7 +1174,7 @@ export class Client extends EventEmitter {
     }
 
     this.inboxSubscription = sub;
-    const inbox = new EventEmitter();
+    const inbox = preservedInbox ?? new EventEmitter();
     this.inbox = inbox;
     (async () => {
       for await (const mesg of sub) {

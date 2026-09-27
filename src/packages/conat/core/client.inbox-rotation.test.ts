@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { delay } from "awaiting";
 import { Client, connect } from "./client";
 import { ConatServer, init } from "./server";
 
@@ -13,19 +14,26 @@ describe("authenticated reply namespace rotation", () => {
     await ConatServer.closeAllForTests();
   });
 
-  it.each([true, false])(
-    "uses the authorized inbox after transport reconnection (rotation=%s)",
-    async (rotate) => {
+  it.each([
+    [true, false],
+    [false, false],
+    [true, true],
+    [false, true],
+  ])(
+    "uses the authorized inbox after transport reconnection (rotation=%s, mutable provider=%s)",
+    async (rotate, mutableProvider) => {
       const stablePrefix = `_INBOX.stable-${randomUUID()}`;
+      let providerPrefix = stablePrefix;
       const broker = init({
         port: 0,
         autoscanInterval: 0,
-        getUser: async (socket) => ({
-          ...socket.handshake.auth,
-          reply_prefix: rotate
+        getUser: async (socket) => {
+          const reply_prefix = rotate
             ? `_INBOX.rotation-${randomUUID()}`
-            : stablePrefix,
-        }),
+            : stablePrefix;
+          if (!socket.handshake.auth.hub_id) providerPrefix = reply_prefix;
+          return { ...socket.handshake.auth, reply_prefix };
+        },
         isAllowed: async ({ user, subject, type }) =>
           user.hub_id === "service" ||
           (type === "pub"
@@ -43,12 +51,18 @@ describe("authenticated reply namespace rotation", () => {
         reconnection: false,
         auth: { account_id: "test" },
       });
-      client.inboxPrefixHook = (info) => info?.user?.reply_prefix;
+      client.inboxPrefixHook = mutableProvider
+        ? () => providerPrefix
+        : (info) => info?.user?.reply_prefix;
       await client.waitUntilSignedIn({ timeout: 3000 });
       const subscription = await service.subscribe("rotation.echo");
+      let receivedAfter = false;
+      let releaseRefresh = () => {};
       const responder = (async () => {
-        for await (const message of subscription)
+        for await (const message of subscription) {
+          if (message.data === "after") receivedAfter = true;
           message.respondSync(message.data);
+        }
       })();
       try {
         expect(
@@ -58,16 +72,28 @@ describe("authenticated reply namespace rotation", () => {
         const previous = client.info!.user.reply_prefix;
         const previousInbox = (client as any).inboxSubject;
         client.conn.disconnect();
+        const refreshGate = new Promise<void>((resolve) => {
+          releaseRefresh = resolve;
+        });
+        const emitWithAck = client.conn.emitWithAck.bind(client.conn);
+        client.conn.emitWithAck = (async (event, ...args) => {
+          if (event === "subscribe") await refreshGate;
+          return await emitWithAck(event, ...args);
+        }) as typeof client.conn.emitWithAck;
         const signedIn = new Promise<void>((resolve) =>
           client.once("info", () => resolve()),
         );
         client.conn.connect();
         await signedIn;
         expect(client.info!.user.reply_prefix === previous).toBe(!rotate);
-        expect(
-          (await client.request("rotation.echo", "after", { timeout: 2000 }))
-            .data,
-        ).toBe("after");
+        const after = client.request("rotation.echo", "after", {
+          timeout: 2000,
+        });
+        void after.catch(() => {});
+        await delay(30);
+        expect(receivedAfter).toBe(false);
+        releaseRefresh();
+        expect((await after).data).toBe("after");
         expect((client as any).inboxSubject === previousInbox).toBe(!rotate);
         expect(client.numSubscriptions()).toBe(1);
         if (rotate) {
@@ -76,6 +102,7 @@ describe("authenticated reply namespace rotation", () => {
           ).rejects.toMatchObject({ code: 403 });
         }
       } finally {
+        releaseRefresh();
         subscription.close();
         await responder;
       }
