@@ -6,6 +6,28 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Full-build checkpoint, 2026-09-27 (not deployed)
+
+At `0d9db0b52ae82e5c9cf2ed48f3f90f20882bd899`, `pnpm -C src build:dev`
+completed with exit status 0 in `/home/user/cocalc-ai`. The tracked checkout
+remained clean. This builds the accumulated transport, terminal recovery, and
+Jupyter reconciliation changes together; it does not deploy them or establish
+the live manual/managed acceptance matrix.
+
+Nine Conat suites passed all 53 tests against the rebuilt workspace outputs:
+inbox rotation, inbound admission, usage monitoring, socket inbox-return,
+socket client/base/TCP, Jupyter replay pagination, and scoped Jupyter transport.
+The initial Jest process remained alive after reporting success and an
+open-handle warning; it was terminated after test completion. A diagnostic run
+located open test broker listeners. The initial invocation omitted
+`COCALC_TEST_MODE=1`, which enables Conat's instance tracking and test cleanup.
+Repeating all nine suites with that setting passed all 53 tests and exited
+normally with status 0, without `--forceExit`. No runtime code change was needed.
+
+An independent review was requested for this exact head and its accumulated
+transport changes. Delivery was accepted and saved (attempt
+`41779c61-3050-48fe-af21-ccfada0b13aa`); this is not a completed review or approval.
+
 ## Build and rollout
 
 - `pnpm dev:hub:build` passed, including the workspace build, project-host and
@@ -355,8 +377,7 @@ turn acceptance result.
 
 Before the upgrade, the primary hub was confirmed stopped (connection refused,
 missing prior process, and dev status reporting stopped). Its log recorded a
-billing-authority lease query timeout at `2026-09-26T23:18:47.942Z`, generation
-76. The standard dev start command recovered it as PID 1067362; attached bays
+billing-authority lease query timeout at `2026-09-26T23:18:47.942Z`, generation 76. The standard dev start command recovered it as PID 1067362; attached bays
 remained running as PIDs 956795 and 960838. HTTP then returned 200 and the upgrade
 completed. No fencing or lease timeout setting was changed. This recurring
 environment failure is unresolved and must not be counted as connector
