@@ -18,10 +18,12 @@ import { Throttle } from "@cocalc/util/throttle";
 import {
   canonicalJupyterLiveRunPath,
   jupyterLiveRunKey,
+  jupyterLiveRunPage,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
   type JupyterLiveRunSnapshot,
+  type JupyterLiveRunPage,
 } from "@cocalc/conat/project/jupyter/live-run";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
@@ -268,6 +270,7 @@ export function jupyterServer({
   const moreOutput: { [path: string]: { [id: string]: any[] } } = {};
   let activeRuns = 0;
   let activeSockets = 0;
+  let activeReplayReads = 0;
 
   server.on("connection", (socket: ServerSocket) => {
     if (activeSockets >= maxActiveSockets) {
@@ -298,7 +301,47 @@ export function jupyterServer({
     socket.on("request", async (mesg) => {
       const { data } = mesg;
       const { cmd, path } = data;
-      if (cmd == "more") {
+      if (cmd === "get-run") {
+        if (activeReplayReads >= maxActiveRuns) {
+          mesg.respondSync(null, {
+            headers: { error: "jupyter replay service is busy" },
+          });
+          return;
+        }
+        activeReplayReads++;
+        try {
+          if (
+            typeof path !== "string" ||
+            path.length > 4096 ||
+            typeof data.run_id !== "string" ||
+            !data.run_id ||
+            data.run_id.length > 256
+          ) {
+            throw Error("invalid run replay target");
+          }
+          const store = await openJupyterLiveRunStore({
+            client,
+            project_id,
+            path,
+          });
+          try {
+            const snapshot = store.get(
+              jupyterLiveRunKey({ path, run_id: data.run_id }),
+            );
+            mesg.respondSync(
+              snapshot == null
+                ? null
+                : jupyterLiveRunPage(snapshot, data.after_seq, data.limit),
+            );
+          } finally {
+            store.close();
+          }
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+        } finally {
+          activeReplayReads--;
+        }
+      } else if (cmd == "more") {
         logger.debug("more output ", { id: data.id });
         mesg.respondSync(moreOutput[path]?.[data.id]);
       } else if (cmd == "get-kernel-status") {
@@ -783,6 +826,21 @@ export class JupyterClient {
       cmd: "more",
       path: this.path,
       id,
+    });
+    return data;
+  };
+
+  // Retained output only: null means unavailable/expired, not "never executed".
+  // done marks stream termination; callers must inspect output for execution errors.
+  getRun = async (
+    run_id: string,
+    options: { after_seq?: number; limit?: number } = {},
+  ): Promise<JupyterLiveRunPage | null> => {
+    const { data } = await this.socket.request({
+      cmd: "get-run",
+      path: this.path,
+      run_id,
+      ...options,
     });
     return data;
   };

@@ -664,6 +664,28 @@ tests, and the separate real Python-kernel test pass (69 total); Conat and proje
 builds pass. Resumption of the interrupted stream and deployed notebook
 persistence are not established by this test.
 
+### Bounded Jupyter run reconciliation (not deployed)
+
+The ordinary Jupyter service now exposes `get-run`, with `JupyterClient.getRun`
+for callers holding a run ID after interruption. It reads the existing project
+replay store on the host; no new subscription or persistence authority is granted
+to the caller. Pages have an exclusive sequence cursor, at most 100 batches
+(32 by default), and at most 1 MiB of encoded response data. A batch too large
+to fit is rejected rather than skipped. Concurrent replay reads are capped by
+the service's run concurrency limit. Target path/run-ID lengths are bounded.
+
+Replay is ephemeral under the existing retention policy. A missing result means
+unavailable or expired, not proof that execution never happened; `done` means
+the output stream ended, not that all executed code succeeded. This lookup
+does not start or rerun code and does not yet implement automatic replay
+consumption in CLI/agent clients.
+
+Thirteen scoped-transport/page tests pass, covering interrupted-run lookup,
+missing results, cursor/page bounds and oversized output. All 52 backend Jupyter
+tests pass, including a new fresh-client pagination check using the real replay
+store. That backend fixture still uses a simulated code runner; deployed
+notebook persistence and end-to-end CLI resumption remain unverified.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

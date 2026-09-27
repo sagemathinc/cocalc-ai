@@ -100,6 +100,32 @@ describe("create very simple mocked jupyter runner and test evaluating code", ()
     });
   });
 
+  it("reads retained output pages through a fresh client without rerunning code", async () => {
+    const run_id = uuid();
+    const expected: any[] = [];
+    for await (const batch of await client.run(cells, { run_id }))
+      expected.push(...batch);
+    const fresh = jupyterClient({ path, project_id, client: client2 });
+    try {
+      const output: any[] = [];
+      let cursor = 0;
+      for (;;) {
+        const page = await fresh.getRun(run_id, {
+          after_seq: cursor,
+          limit: 1,
+        });
+        expect(page).toMatchObject({ run_id, done: true });
+        output.push(...page!.batches.flatMap((batch) => batch.mesgs));
+        cursor = page!.next_seq;
+        if (!page!.has_more) break;
+      }
+      expect(output).toEqual(expected);
+      expect(await fresh.getRun(uuid())).toBeNull();
+    } finally {
+      fresh.close();
+    }
+  });
+
   it("start iterating over the output after waiting", async () => {
     // this is the same as the previous test, except we insert a
     // delay from when we create the iterator, and when we start

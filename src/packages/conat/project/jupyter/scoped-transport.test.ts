@@ -8,6 +8,7 @@ jest.mock("@cocalc/conat/project/jupyter/live-run", () => ({
   ...jest.requireActual("@cocalc/conat/project/jupyter/live-run"),
   openJupyterLiveRunStore: async () => ({
     set: (key, value) => mockSnapshots.set(key, value),
+    get: (key) => mockSnapshots.get(key),
     delete: (key) => mockSnapshots.delete(key),
     close: () => {},
   }),
@@ -129,6 +130,10 @@ describe("Jupyter application over scoped transport", () => {
           });
           try {
             expect(await fresh.getKernelStatus()).toEqual(status);
+            expect(
+              await fresh.getRun("scoped-run", { limit: 1 }),
+            ).toMatchObject({ run_id: "scoped-run", next_seq: 1 });
+            expect(await fresh.getRun("absent-run")).toBeNull();
           } finally {
             fresh.close();
           }
