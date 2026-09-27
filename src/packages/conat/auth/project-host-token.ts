@@ -111,6 +111,7 @@ const API_KEY_RUNTIME_SERVICES = [
   "jupyter-live-run",
   "project-info",
   "project-status",
+  "pubsub-cursors",
   "run",
   "storage-info",
   "touch",

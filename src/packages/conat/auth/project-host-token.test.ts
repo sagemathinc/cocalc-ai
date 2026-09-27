@@ -153,6 +153,7 @@ describe("project-host API key child tokens", () => {
       `terminal.project-${projectId}.session`,
       `persist.project-${projectId}.id`,
       `persist.project-${projectId}.server.shard.client`,
+      `project.${projectId}.pubsub-cursors.document`,
     ]) {
       expect(
         isProjectHostApiKeySubjectAllowed({ binding, subject, type: "pub" }),

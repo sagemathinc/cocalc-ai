@@ -80,4 +80,30 @@ describe("project-host API key subject confinement", () => {
     expect(allowed(full, `file-server.${projectId}.api`)).toBe(false);
     expect(allowed(full, `project.${projectId}.>`, "sub")).toBe(false);
   });
+
+  it("allows full-runtime document presence without broadening subscriptions", () => {
+    const root = `project.${projectId}.pubsub-cursors.`;
+    const full = {
+      ...base,
+      capabilities: ["project:exec" as const],
+      viewer_policy_hash: undefined,
+      subjects: [root],
+    };
+    const document = root + "Zm9sZGVyL25vdGVib29r";
+    expect(allowed(full, document)).toBe(true);
+    expect(allowed(full, document, "sub")).toBe(true);
+    expect(allowed(base, document, "sub")).toBe(false);
+    expect(allowed({ ...full, subjects: [] }, document, "sub")).toBe(false);
+    for (const subject of [
+      root,
+      root + ">",
+      root + "*",
+      root + "document.extra",
+      `project.${otherProjectId}.pubsub-cursors.document`,
+      `project.${projectId}.pubsub-future.document`,
+      `project.${projectId}.api.document`,
+      "_INBOX.account-foreign.reply",
+    ])
+      expect(allowed(full, subject, "sub")).toBe(false);
+  });
 });

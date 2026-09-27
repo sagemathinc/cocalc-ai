@@ -215,6 +215,54 @@ updated versions must be deployed together with the persistence service and
 CLI before the installed notebook retest; mixed audience versions fail closed.
 No live installation was changed by this follow-up.
 
+### Persistence rollout and notebook presence follow-up
+
+`pnpm dev:hub:build` passed at `cf59599857a95e7a3f9220cf882d7cf0523349ec`;
+all four runtime/tools archives passed `xz --test`. The three dev bays were
+restarted (the primary was already stopped when the restart script inspected
+it). Host3 upgrade `64f51edb-e722-453d-8719-8608b9e45f3e` succeeded with
+project-host, project, tools, and managed-service alignment. Bootstrap status
+reported zero drift:
+
+- Host build: `20260927T023413Z-cf59599857a9`.
+- Project bundle: `1790476486202`.
+- Tools bundle: `1790476544436`.
+
+Validation-project restart `cd18147c-d47f-47d9-9c09-332155b10217` succeeded.
+Its installed CLI hash matched the build:
+`053399247109928b8542ec92d3195c478f242a834b5e69ad829d180cbac9b4bb`.
+Delta's host was not upgraded. Older hosts can reject the new canonical token
+audience; this is a limited dev rollout, not a fleet-wide readiness claim.
+
+The first installed manual-key retest (key 85) completed kernel discovery,
+returning an empty list instead of timing out. The minimal image has Python
+3.14.4 but no ipykernel or jupyter-client. A dedicated temporary environment at
+`/home/user/.api-first-jupyter-validation-20260927` was provisioned using the
+development uv binary because the image also lacks ensurepip. It contains
+ipykernel 7.3.0 and jupyter-client 8.10.0, with user kernelspec
+`api-first-validation-20260927`. This fixture remains installed for the next
+test; no system packages or project image were changed.
+
+The next key (86) discovered that Python kernel, but notebook editing failed
+with `patchflow commit failed permission denied publishing` to the document's
+`project.<id>.pubsub-cursors.<encoded-path>` subject. Both keys and their private
+provider/notebook directories were removed. A later process listing showed no
+remaining Python kernel or probe process. Execution/save/reopen remain unproved.
+
+The subsequent, not-yet-deployed fix includes the reviewed `pubsub-cursors`
+service in full-runtime token audiences. Subscription policy additionally
+requires the matching project, `project:exec`, an explicitly signed service
+root, and a single concrete document segment. It does not grant wildcard,
+foreign-project, viewer, other-service, or account-inbox subscription rights.
+This preserves collaborative presence instead of disabling it in headless
+clients to bypass the error.
+
+Thirty-four Conat tests and 35 host authorization tests pass. The new two-broker
+test receives scoped presence, verifies interest remains active, expires the
+client lease, and observes both disconnection and remote interest removal.
+Conat typechecking and `git diff --check` pass. This follow-up still needs a
+coordinated issuer/host upgrade and installed notebook retest.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

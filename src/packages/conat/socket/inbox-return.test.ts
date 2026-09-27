@@ -202,6 +202,33 @@ describe("socket inbox-return protocol", () => {
     listener.close();
   }, 15000);
 
+  it("withdraws scoped document presence interest after expiry across brokers", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000001";
+    const cursors = `project.${projectId}.pubsub-cursors.`;
+    const expires = (Date.now() + 4000) / 1000;
+    const { client, service } = await fixture(expires, true, subject, {
+      ...binding,
+      project_id: projectId,
+      capabilities: ["project:exec"],
+      subjects: [...binding.subjects, cursors],
+    });
+    const document = cursors + "ZmlsZS5pcHluYg==";
+    const sub = await client.subscribe(document);
+    await service.waitForInterest(document, { timeout: 2000 });
+    const received = sub.next();
+    await service.publish(document, { cursor: 1 });
+    expect((await received).value?.data).toEqual({ cursor: 1 });
+    expect(await service.interest(document)).toBe(true);
+    await expect(client.subscribe(cursors + ">")).rejects.toThrow();
+    await expect(
+      client.subscribe(`project.${projectId}.api.>`),
+    ).rejects.toThrow();
+    await delay(Math.max(0, expires * 1000 - Date.now()) + 1600);
+    expect(client.conn.connected).toBe(false);
+    expect(await service.interest(document)).toBe(false);
+    sub.close();
+  }, 15000);
+
   it.each(["timeout", "service-unavailable"])(
     "does not replay an admitted request after %s",
     async (failure) => {
