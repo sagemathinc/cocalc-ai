@@ -263,29 +263,46 @@ export async function openCourseSyncDB({
   }
   let syncdb: CourseSyncDB | undefined;
   let phase = "checking project document access";
+  const deadline = performance.now() + timeoutMs;
+  const deadlineError = () =>
+    Object.assign(new Error(`Timed out after ${timeoutMs}ms while ${phase}`), {
+      code: 408,
+    });
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          Object.assign(
-            new Error(`Timed out after ${timeoutMs}ms while ${phase}`),
-            { code: 408 },
-          ),
-        ),
-      timeoutMs,
-    );
+    timer = setTimeout(() => reject(deadlineError()), timeoutMs);
   });
   let errorListener: ((error: unknown) => void) | undefined;
   try {
     // SyncDB startup can obscure a discovery 403 as a retryable disconnect.
     // Check the same project-host persistence subject before constructing it.
-    await Promise.race([
-      client.request(`${persistSubject({ project_id })}.id`, null, {
-        timeout: Math.min(timeoutMs, 2_000),
-      }),
-      timeout,
-    ]);
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw deadlineError();
+      try {
+        await Promise.race([
+          client.request(`${persistSubject({ project_id })}.id`, null, {
+            timeout: Math.min(Math.ceil(remaining), 2_000),
+          }),
+          timeout,
+        ]);
+        break;
+      } catch (err) {
+        const code = Number((err as { code?: string | number })?.code);
+        if (code !== 503 && code !== 408) throw err;
+        if (performance.now() >= deadline) throw deadlineError();
+        // Discovery can have no subscribers while persistence restarts. Back
+        // off without resetting the shared discovery/document-open deadline.
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            retryTimer = setTimeout(resolve, 250);
+          }),
+          timeout,
+        ]);
+      }
+    }
+    if (performance.now() >= deadline) throw deadlineError();
     phase = "opening the course document";
     syncdb = client.sync.db({
       project_id,
@@ -323,6 +340,7 @@ export async function openCourseSyncDB({
     );
   } finally {
     clearTimeout(timer);
+    clearTimeout(retryTimer);
     if (errorListener && typeof syncdb?.off === "function") {
       syncdb.off("error", errorListener);
     }
