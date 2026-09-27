@@ -10,6 +10,22 @@ This is development evidence, not production approval or completion of phases 1-
 
 ### Reviewed deployed HTTP probe
 
+Follow-up repeats used asynchronous CLI deletion so the response reader was not
+blocked by the test harness. Both repeats received data only within the signed
+lifetime, but did not observe client-visible stream termination before the
+35-second client timeout. One received 245 chunks with last data 23615 ms after
+deletion; the other received 243 chunks with last data 23409 ms after deletion.
+Deletion took 481 ms and 486 ms, respectively. An app-side close marker in the
+second repeat confirmed upstream closure 24509 ms after stream start and
+23420 ms after deletion. Cleanup completed on both failed assertions.
+
+Thus the deployed host's upstream teardown and data cutoff have evidence within
+the bound, while client-facing termination through the public ingress remains
+unresolved. The test still fails its original completion assertion; no timeout
+was widened. These repeats explain the observed failure shape but do not prove
+the mechanism responsible for the earlier undiagnosed run or clear the whole
+long-lived-session acceptance gate.
+
 Independent re-review passed both HTTP blockers at
 `007fca331965b2dbb4eacec65c0a9da9e3bb7636` (12 proxy and 53 host HTTP tests).
 The previous CLI failure was traced to an old tools bind mount in the running
