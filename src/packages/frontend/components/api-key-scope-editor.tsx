@@ -233,7 +233,14 @@ export function ApiKeyScopeEditor({
           return (
             <div key={grant.project_id}>
               <Divider style={{ margin: "12px 0" }} />
-              <Space wrap style={{ width: "100%" }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  width: "100%",
+                }}
+              >
                 <SelectProject
                   ariaLabel={`Project ${index + 1}`}
                   value={grant.project_id}
@@ -249,7 +256,7 @@ export function ApiKeyScopeEditor({
                     if (!project_id) return;
                     updateGrant(grant.project_id, { ...grant, project_id });
                   }}
-                  style={{ minWidth: 220, flex: 1 }}
+                  style={{ minWidth: 0, flex: "1 1 220px" }}
                 />
                 <Button
                   aria-label={`Remove project ${index + 1}`}
@@ -265,7 +272,7 @@ export function ApiKeyScopeEditor({
                     })
                   }
                 />
-              </Space>
+              </div>
               <Radio.Group
                 aria-label={`Access for project ${index + 1}`}
                 optionType="button"

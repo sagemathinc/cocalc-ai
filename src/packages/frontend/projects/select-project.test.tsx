@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Map as ImmutableMap } from "immutable";
 import React from "react";
 
@@ -6,8 +7,18 @@ import { SelectProject } from "./select-project";
 
 jest.mock("antd", () => {
   const actual = jest.requireActual("antd");
-  const Select = ({ children }: { children: React.ReactNode }) => (
-    <select>{children}</select>
+  const Select = ({
+    children,
+    style,
+    "aria-label": ariaLabel,
+  }: {
+    children: React.ReactNode;
+    style?: React.CSSProperties;
+    "aria-label"?: string;
+  }) => (
+    <select style={style} aria-label={ariaLabel}>
+      {children}
+    </select>
   );
   Select.Option = ({
     children,
@@ -74,6 +85,18 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 describe("SelectProject", () => {
+  it("allows the selector to shrink beside the keyboard-operable hidden-project control", async () => {
+    render(<SelectProject ariaLabel="Project" onChange={jest.fn()} />);
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveStyle({
+      minWidth: "0",
+    });
+    const hidden = screen.getByRole("checkbox", { name: "Hidden" });
+    hidden.focus();
+    await userEvent.keyboard(" ");
+    expect(hidden).toBeChecked();
+    expect(hidden).toHaveFocus();
+    expect(screen.getByText("Hidden Project")).toBeInTheDocument();
+  });
   it("can limit choices to full collaborator projects", () => {
     render(<SelectProject fullCollaboratorOnly onChange={jest.fn()} />);
 

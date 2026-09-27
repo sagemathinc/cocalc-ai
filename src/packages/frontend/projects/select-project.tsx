@@ -127,7 +127,7 @@ export function SelectProject({
           aria-label={ariaLabel}
           allowClear
           disabled={disabled}
-          style={{ marginRight: "15px", flex: 1 }}
+          style={{ marginRight: "15px", flex: 1, minWidth: 0 }}
           showSearch={true}
           placeholder={"Select a project..."}
           optionFilterProp={"children"}
