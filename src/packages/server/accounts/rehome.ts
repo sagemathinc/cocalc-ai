@@ -176,6 +176,9 @@ async function ensureAccountRehomeSchema(): Promise<void> {
     await getPool().query(
       "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
     );
+    await getPool().query(
+      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+    );
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
         op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

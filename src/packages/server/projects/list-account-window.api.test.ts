@@ -1,5 +1,10 @@
 import getPool from "@cocalc/database/pool";
 import { listProjectSummaries } from "./list-account-window";
+import { admitAccountSearch } from "@cocalc/server/api/search-admission";
+
+jest.mock("@cocalc/server/api/search-admission", () => ({
+  admitAccountSearch: jest.fn(),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -12,6 +17,7 @@ const release = jest.fn();
 const query = jest.fn();
 
 beforeEach(() => {
+  jest.mocked(admitAccountSearch).mockReset().mockResolvedValue(undefined);
   release.mockClear();
   query.mockReset();
   jest.mocked(getPool).mockClear();
@@ -79,6 +85,18 @@ test("rejects over-limit inputs before accessing the database", async () => {
   await expect(
     listProjectSummaries({ account_id, project_id: "not-a-uuid" }),
   ).rejects.toThrow(/project id/);
+  expect(getPool).not.toHaveBeenCalled();
+  expect(admitAccountSearch).not.toHaveBeenCalled();
+});
+
+test("rejects account admission before allocating a summary query", async () => {
+  jest
+    .mocked(admitAccountSearch)
+    .mockRejectedValue(new Error("account search rate exceeded"));
+  await expect(listProjectSummaries({ account_id })).rejects.toThrow(
+    "account search rate exceeded",
+  );
+  expect(admitAccountSearch).toHaveBeenCalledWith(account_id);
   expect(getPool).not.toHaveBeenCalled();
 });
 

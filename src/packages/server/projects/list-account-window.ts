@@ -10,6 +10,7 @@ import type {
 import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
+import { admitAccountSearch } from "@cocalc/server/api/search-admission";
 import type {
   ApiProjectSummary,
   ApiProjectSummaryPage,
@@ -53,6 +54,7 @@ export async function listProjectSummaries({
   if (terms.length > MAX_SEARCH_TERMS) {
     throw Error("too many project list search terms");
   }
+  await admitAccountSearch(account_id);
   const params: unknown[] = [account_id];
   const where = [
     "account_id=$1::UUID",

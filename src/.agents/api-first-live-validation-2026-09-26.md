@@ -6,6 +6,30 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Project-summary admission follow-up, 2026-09-27
+
+Legacy HTTP API-key `projects/get` now uses the same bounded account-home
+summary service, preserving its array response and exposing continuation through
+`X-CoCalc-Next-Offset`. The API-key `get-one` lookup shares that reader, but no
+longer creates implicitly when the projection is empty: projection lag cannot
+prove authoritative absence. Keys can still use the explicit create operation.
+This corrects the independent review finding on `3db5939968`; the correction
+is `1f6f02d485`. Fifteen focused HTTP route tests pass.
+
+The account-home summary reader now admits requests through durable account
+state: a token bucket of 300 requests/minute sustained with burst 30. All keys
+share that account bucket; paging and unfiltered summary reads count too.
+Admission uses the database clock, an account-rehome fence and row lock, and
+bounded lock/statement timeouts. Denials provide retry information without
+charging more budget. Account rehome carries the bucket state instead of
+resetting it. Twenty-four admission, summary and rehome tests pass, including
+PGlite transaction checks; eleven routing/policy tests and server/HTTP builds
+also pass. This is not a live multi-bay or load-test result.
+
+These changes are not deployed. Independent review of the correction and
+account admission is pending. Per-key search limits, other search surfaces,
+and aggregate file-read/download concurrency remain unfinished.
+
 ## Project-list byte budget follow-up, 2026-09-27
 
 The shared summary serializer counted project objects but not array separators
@@ -17,8 +41,8 @@ or duplication. An individually oversized summary fails explicitly instead of
 returning an empty page with a nonadvancing continuation.
 
 Sixteen focused summary, ownership-routing, and HTTP policy tests pass, along
-with the server TypeScript build and diff checks. This change is not deployed
-or independently reviewed yet. It fixes response-byte accounting, not the
+with the server TypeScript build and diff checks. Independent review passed at
+`7263ac28b2`; this change is not deployed. It fixes response-byte accounting, not the
 remaining shared per-key/account search-rate and concurrent-read budget gates.
 
 ## Scoped HTTP deployment attempt, 2026-09-27

@@ -181,9 +181,7 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
-        sql.includes(
-          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
-        ) ||
+        sql.includes("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_") ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
@@ -475,9 +473,7 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE") ||
         sql.includes("CREATE INDEX") ||
-        sql.includes(
-          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
-        )
+        sql.includes("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_")
       )
         return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
@@ -537,9 +533,7 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
-        sql.includes(
-          "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence",
-        ) ||
+        sql.includes("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_") ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
@@ -1265,10 +1259,11 @@ describe("account rehome", () => {
       expect(inserts[i][1]).toEqual([actionRows[i]]);
     }
   });
-  it("imports the account issuance counter without converting it to a number", async () => {
+  it("imports account issuance and search admission state without resetting it", async () => {
     const account = {
       account_id: TARGET_ACCOUNT_ID,
       api_key_issuance_sequence: "9007199254740993",
+      api_search_next_ms: "1790536633803",
       home_bay_id: "bay-1",
     };
     queryMock = jest.fn(async (sql: string) => ({

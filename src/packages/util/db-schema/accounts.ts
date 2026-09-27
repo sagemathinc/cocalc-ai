@@ -155,6 +155,11 @@ export function ensureAutoBalanceValid(obj) {
 Table({
   name: "accounts",
   fields: {
+    api_search_next_ms: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home API search token-bucket virtual arrival time in milliseconds; internal admission state carried through rehome.",
+    },
     api_key_issuance_sequence: {
       type: "integer",
       pg_type: "BIGINT",
