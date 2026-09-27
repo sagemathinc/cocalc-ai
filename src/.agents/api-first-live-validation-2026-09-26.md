@@ -501,6 +501,15 @@ across rotation is still unfinished. Private review follow-up
 `29c8b706-8ef1-413b-bc31-15695dc3253f` was accepted and saved; that is not a
 completed review or approval for deployment.
 
+The real-PTY test now also disconnects the broker transport, receives a different
+server-issued reply prefix on sign-in, verifies old-prefix subscription denial,
+and explicitly creates a new terminal client attached to the existing session
+ID. It verifies the same shell PID, retained history, and fresh shell-generated
+output after reattachment. Both stable-prefix and rotated-prefix cases pass;
+Conat rebuild and diff checks pass. This establishes that explicit terminal
+reattachment can preserve the process without redirecting an old socket. It is
+not automatic logical-socket recovery, a Jupyter/sync result, or deployed evidence.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
