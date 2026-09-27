@@ -9,7 +9,7 @@ This is development evidence, not production approval or completion of phases 1-
 ## Write-outcome recovery foundation, 2026-09-27
 
 The existing edit-journal service deduplicates collaborative-history commits,
-while ordinary filesystem writes have no operation receipt. The conditional
+while ordinary filesystem writes previously had no operation receipt. The conditional
 patch helper is not proof that an earlier request executed. Recovery therefore
 needs an explicit outcome contract rather than automatic full-write replay.
 
@@ -40,8 +40,8 @@ Lost reservation acknowledgments may leave unused expiring slots, not writes.
 After reservation, retries always use the same ID. Changed authority, unknown
 outcomes, authorization failures, and other application errors stop recovery;
 there is no fallback to an unreceipted write. Ordinary non-key filesystem calls
-retain their prior behavior. This source change has not been deployed or proven
-against the installed live editing workload yet.
+retain their prior behavior. The isolated host deployment and installed live
+editing evidence are recorded below; this is not a production deployment.
 
 The Conat router now adds an opaque mutation-authority binding to authenticated
 caller metadata for project-host API-key principals. It binds account, key,
@@ -63,11 +63,55 @@ connection, successful writes with a simulated lost acknowledgment, lost
 reservation replies, unknown outcomes, authority changes, concurrent duplicate
 requests, changed payloads, revoked transport access, reservation capacity,
 missing authenticated metadata, and retained failed outcomes. Filesystem storage is
-mocked in these tests; actual host filesystem behavior and forced token-lease
-disconnects still require the installed live probe.
+mocked in these tests; they do not substitute for installed live probes.
 All 18 filesystem suites passed (140 tests before the last three focused cases);
 the final receipt suite passes all 12 cases. Conat, CLI, and project-host
 TypeScript builds passed during integration.
+
+### Installed receipt-recovery validation
+
+Source: `4d70ab9e1fc8e98392e111a704fe7d9a47de403a`. Rebuilt the main review
+checkout's project-host bundle and tools. Host3 upgrade operation
+`ae260c9c-2371-4bbf-8b05-714b974d32b5` succeeded with managed runtime alignment:
+host build `20260927T080100Z-4d70ab9e1fc8`, tools `1790496014152`.
+Only host3 was upgraded. The dedicated validation project was restarted to
+refresh its tool mount; its installed CLI SHA-256 matched the local build:
+`29d8a8839c2d4bfb739aa94898ce0e28e48c31b38af04d688033dc04490b9af9`.
+
+The first attempt made 71 acknowledged writes over 48,184ms before the primary
+dev hub fail-stopped on a billing-authority lease query timeout. The text session
+reported authorization failure. This is not a controlled outage test and does
+not count as a successful healthy/revocation run. Key 129 was deleted, the test
+project restarted, and its fixture directory independently verified removed.
+No billing safety checks were weakened.
+
+The replacement manual-key run reached 130 acknowledged synchronized writes
+over 112,631ms before key deletion, crossing multiple 25-second host leases.
+It acknowledged 133 writes total. The last acknowledgment was 9,450ms after
+deletion returned, and the session interrupted at 10,171ms during `save-history`
+with authorization failure. Two independent live-document reads, five seconds
+apart, both returned `sync-revocation-write-133`; an unacknowledged final edit can
+appear in the live document. These are live-document reads, not a claim that
+the final unacknowledged edit was saved to disk.
+
+The run's editing/revocation assertions passed, but cleanup restart failed and
+the harness exited nonzero. The project was observed in `opened` state; a
+separate start operation `8a6f0958-4aca-4b86-90c1-61b43bc6964e` succeeded.
+Fixture `.api-probe-171f0cd9-4ca1-4f11-b74f-dff35197fea0` was independently
+verified absent afterward.
+
+A faster run (1ms requested delay, target 600 writes) remained healthy through
+484 acknowledged writes, but exhausted the harness's 100 trace polls before
+the target. Progress at 438 writes measured 156,366ms. It did not reach its
+planned explicit-deletion phase, so it is not a passing revocation run. Cleanup
+completed and deleted key 131. The scratch harness now uses an explicit
+240-second observation deadline instead of a polling-count budget and reports
+acknowledgment gaps even when the threshold is missed. A completed high-rate
+run and investigation of renewal pauses remain follow-ups.
+An independent final directory scan found no `.api-probe-*` fixtures in the
+dedicated project. A private receipt review request for this source head was
+accepted (attempt `b95d4241-e4de-4084-bb14-c3d02e5bc6c1`); no review disposition
+has been received in this validation run.
 
 ## Disk-save disconnect reproduction, 2026-09-27
 
