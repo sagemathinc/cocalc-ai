@@ -69,6 +69,29 @@ project-session acceptance gates below remain open.
 
 ## Full-build checkpoint, 2026-09-27 (not deployed)
 
+### Mobile project-picker follow-up
+
+At `8dd6f53d820402b0242ca65eeb00d4fcd4917d2e`, the shared editor keeps
+its add-project picker explicitly empty after selection instead of retaining
+the just-added title. Eighteen focused tests, frontend typecheck, and lint pass.
+The new integration test uses the actual Ant Design picker for two successive
+pointer selections and checks its placeholder and retained focus.
+
+After rebuilding the static frontend at that revision, a live 320px manual-key
+dialog accepted a pointer click on the filtered project's visible dropdown
+option. The selected project remained in its grant row and the add picker
+cleared. Client/scroll widths were both 304px, the four focused axe rules passed,
+the Create button was reachable, and Escape dismissed the dialog. No page
+errors occurred, and no key or configuration was saved. This supplies the
+previously missing mobile pointer-selection evidence for this flow.
+
+An earlier attempt ran while the primary hub was stopped and produced no
+assertions; it is not counted. Its log records a billing-authority lease-query
+timeout at 2026-09-27T06:28:27.008Z. Normal startup recovered the primary without
+restarting the attached bays. The successful probe refreshed the hub environment
+and closed both browser and connection. Repeated dev-hub fail-stops remain an
+environment reliability concern, not a resolved API-first acceptance gate.
+
 ### Responsive draft-retention follow-up
 
 At `2c618235fa3fa89acd8cbece1aef0a60fe84cc9b`, settings content stays at
