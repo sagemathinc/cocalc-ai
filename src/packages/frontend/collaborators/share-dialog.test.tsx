@@ -159,6 +159,26 @@ test("Escape cancels and restores opener focus without modifying a draft", async
   expect(mockWrite).not.toHaveBeenCalled();
 });
 
+test("missing project titles use a readable fallback rather than an internal ID", async () => {
+  api.listResources.mockResolvedValue({
+    items: [{ ...destination, project_title: undefined }],
+    coverage: "complete",
+  });
+  render(button());
+  await userEvent.click(
+    screen.getByRole("button", { name: "Share to conversation" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Research discussion Human conversation / Untitled project",
+    }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Share to conversation" });
+  expect(dialog).toHaveTextContent("all collaborators in Untitled project");
+  expect(dialog).not.toHaveTextContent(destination.project_id);
+  expect(mockWrite).not.toHaveBeenCalled();
+});
+
 test("bounded global search, paging, coverage, and client-side human-only filtering", async () => {
   api.listResources
     .mockResolvedValueOnce({

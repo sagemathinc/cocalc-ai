@@ -230,7 +230,7 @@ function ShareContents({
             Sending this draft will make it visible to{" "}
             <strong>
               all collaborators in{" "}
-              {selection.project_title || selection.project_id}
+              {selection.project_title || "Untitled project"}
             </strong>
             , not a private recipient list. Recipients still need access to the
             linked resource.
@@ -339,7 +339,7 @@ function ShareContents({
                   </strong>
                   <span style={{ display: "block" }}>
                     Human conversation /{" "}
-                    {destination.project_title || destination.project_id}
+                    {destination.project_title || "Untitled project"}
                   </span>
                 </button>
               </li>
