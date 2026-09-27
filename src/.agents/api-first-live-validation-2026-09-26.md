@@ -164,9 +164,10 @@ verify that pending-request tracking and inbox listeners are released.
 The five focused suites pass 35 tests, and the reconnect-policy suite passes
 eight more with normal timing settings (test-mode timing changes its defaults).
 Conat and CLI TypeScript builds pass. Installed validation of this client change
-is recorded above; a completed high-rate probe remains required.
+is recorded above; the subsequent broker fix and completed high-rate probe are
+recorded below.
 
-### Lease-expiry admission classification (not deployed)
+### Lease-expiry admission classification
 
 The broker now checks the authenticated lease deadline before and after the
 publication policy check, across publish, interest waits, RPC, fast RPC, and
@@ -186,8 +187,34 @@ including caller/revocation, admission, reply rotation, receipts, and confined
 socket return paths; the process exits normally. A first invocation without
 test mode also passed assertions but retained handles and was terminated after
 reporting completion, so it is not the clean-exit verification.
-Installed sustained editing and explicit revocation must still be rerun with
-this broker change before the live failure above can be considered closed.
+
+Installed retest: rebuilt source `0d1d7dd87f6f224e7f61da252b8bb4defbb754f5`
+as host bundle `20260927T085229Z-0d1d7dd87f6f`. Host3 upgrade operation
+`661399a9-29d0-4586-8136-2c4112cb26fc` succeeded with managed component alignment
+(project-host, Conat router, persistence, ACP worker). The primary dev hub was
+confirmed stopped before this operation was admitted and was restarted; the
+operation was not submitted twice. The installed CLI remained at the verified
+`c34db4a0...` SHA-256 recorded above, tools version `1790497614068`.
+
+The same isolated manual-key harness, with a 600-second parent lifetime,
+240-second observation budget, 1ms requested delay, and target of 600 writes,
+completed successfully and exited zero:
+
+- 605 acknowledged synchronized writes over 143,968ms before explicit key deletion.
+- Maximum acknowledgment gap before deletion: 2,463ms.
+- 625 acknowledged writes total; last acknowledgment 3,772ms after deletion returned.
+- Session interruption at 3,991ms after deletion, during `save-history`, with
+  `live text session interrupted: authorization failed`.
+- Independent live-document reads five seconds apart both returned
+  `sync-revocation-write-624`; these inspect live state, not unacknowledged disk writes.
+- Cleanup completed. A subsequent direct project check independently confirmed
+  the unchanged installed CLI hash and no `.api-probe-*` directories.
+
+This closes the observed high-rate manual-key renewal/revocation failure for
+this installed run. It does not establish the entire manual/managed matrix,
+migration, authority-outage behavior, or production readiness. The private
+follow-up review request for `0d1d7dd87f` was accepted under attempt
+`1e911507-bd67-4be3-98c6-c3bb51181ef0`; a disposition has not been received here.
 
 ## Disk-save disconnect reproduction, 2026-09-27
 
