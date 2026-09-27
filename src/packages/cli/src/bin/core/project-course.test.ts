@@ -1,17 +1,335 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { emitError } from "./cli-output";
 
 import {
   applyCourseRootfsToManagedProjects,
   buildCourseReconfigureRequest,
   courseSettingsHash,
   courseRootfsProjectIds,
+  openCourseSyncDB,
   readCourseRows,
   reconfigureCourseProjects,
   setCourseRootfs,
   summarizeCourseRows,
   type CourseSyncDB,
 } from "./project-course";
+
+test("course open reports persistence permission denial before opening SyncDB", async (t) => {
+  const output: string[] = [];
+  t.mock.method(console, "error", (text: string) => output.push(text));
+  for (const code of [403, "403"]) {
+    const denial = Object.assign(new Error("permission denied publishing"), {
+      code,
+    });
+    let opens = 0;
+    let requests = 0;
+    await assert.rejects(
+      openCourseSyncDB({
+        client: {
+          request: async (subject, data) => {
+            requests++;
+            assert.equal(subject, "persist.project-course-project.id");
+            assert.equal(data, null);
+            throw denial;
+          },
+          sync: {
+            db: () => {
+              opens++;
+            },
+          },
+        },
+        project_id: "course-project",
+        path: "math.course",
+      }),
+      (err: any) => {
+        assert.equal(err.code, code);
+        assert.equal(err.cause, denial);
+        assert.match(err.message, /Permission denied \(403\)/);
+        assert.match(err.message, /collaborator access/);
+        assert.match(err.message, /No course changes or provisioning job/);
+        assert.match(err.message, /math\.course.*course-project/);
+        emitError(
+          { globals: { json: true } },
+          "project course reconfigure",
+          err,
+          (url) => url,
+        );
+        const json = JSON.parse(output.pop()!);
+        assert.equal(json.ok, false);
+        assert.equal(json.error.code, "403");
+        assert.match(json.error.message, /Permission denied/);
+        emitError({}, "project course reconfigure", err, (url) => url);
+        assert.match(output.pop()!, /^ERROR:.*Permission denied \(403\)/);
+        return true;
+      },
+    );
+    assert.equal(opens, 0);
+    assert.equal(requests, 1);
+  }
+});
+
+test("course open preserves non-retryable discovery errors", async () => {
+  const error = Object.assign(new Error("invalid discovery request"), {
+    code: 400,
+  });
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async () => {
+          throw error;
+        },
+      },
+      project_id: "course-project",
+      path: "math.course",
+    }),
+    (err: any) => {
+      assert.equal(err.code, 400);
+      assert.equal(err.cause, error);
+      assert.match(err.message, /invalid discovery request/);
+      assert.doesNotMatch(err.message, /Permission denied/);
+      return true;
+    },
+  );
+});
+
+test("course open retries transient discovery failures before opening SyncDB", async () => {
+  for (const code of [503, "503", 408, "408"]) {
+    const syncdb = fakeCourse([]).syncdb;
+    let requests = 0;
+    let opens = 0;
+    const result = await openCourseSyncDB({
+      client: {
+        request: async () => {
+          requests++;
+          if (requests === 1) {
+            throw Object.assign(new Error("persistence restarting"), { code });
+          }
+          return { data: "persist-server" };
+        },
+        sync: {
+          db: () => {
+            opens++;
+            return syncdb;
+          },
+        },
+      },
+      project_id: "course-project",
+      path: "math.course",
+      timeout_ms: 2_000,
+    });
+    assert.equal(result.syncdb, syncdb);
+    assert.equal(requests, 2);
+    assert.equal(opens, 1);
+  }
+});
+
+test("course open does not retry a permission denial after transient discovery failure", async () => {
+  let requests = 0;
+  const denial = Object.assign(new Error("permission denied"), { code: 403 });
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async () => {
+          requests++;
+          if (requests === 1)
+            throw Object.assign(new Error("no subscribers"), { code: 503 });
+          throw denial;
+        },
+        sync: {
+          db: () => assert.fail("must not open an unauthorized document"),
+        },
+      },
+      project_id: "course-project",
+      path: "math.course",
+    }),
+    (err: any) => {
+      assert.equal(err.code, 403);
+      assert.equal(err.cause, denial);
+      return true;
+    },
+  );
+  assert.equal(requests, 2);
+});
+
+test("course open stops discovery retries at the shared deadline", async () => {
+  let requests = 0;
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async () => {
+          requests++;
+          throw Object.assign(new Error("no subscribers"), { code: 503 });
+        },
+        sync: {
+          db: () => assert.fail("must not open after discovery timeout"),
+        },
+      },
+      project_id: "course-project",
+      path: "math.course",
+      timeout_ms: 30,
+    }),
+    (err: any) => {
+      assert.equal(err.code, 408);
+      assert.match(err.message, /checking project document access/);
+      assert.doesNotMatch(err.message, /Permission denied/);
+      return true;
+    },
+  );
+  assert.equal(requests, 1);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(requests, 1);
+});
+
+test("course open bounds discovery and never opens a document after timeout", async () => {
+  let resolveDiscovery!: (value: unknown) => void;
+  let opens = 0;
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: (_subject, _data, options) => {
+          assert.equal(options.timeout, 10);
+          return new Promise((resolve) => {
+            resolveDiscovery = resolve;
+          });
+        },
+        sync: {
+          db: () => {
+            opens++;
+          },
+        },
+      },
+      project_id: "course-project",
+      path: "math.course",
+      timeout_ms: 10,
+    }),
+    (err: any) => {
+      assert.equal(err.code, 408);
+      assert.match(err.message, /checking project document access/);
+      return true;
+    },
+  );
+  resolveDiscovery({ data: "persist-server" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(opens, 0);
+});
+
+test("discovery retries share the document readiness deadline", async () => {
+  const syncdb = fakeCourse([]).syncdb;
+  syncdb.wait_until_ready = () => new Promise(() => {});
+  let closes = 0;
+  syncdb.close = async () => {
+    closes++;
+  };
+  const budgets: number[] = [];
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async (_subject, _data, options) => {
+          budgets.push(options.timeout);
+          if (budgets.length === 1)
+            throw Object.assign(new Error("no subscribers"), { code: 503 });
+          return { data: "persist-server" };
+        },
+        sync: { db: () => syncdb },
+      },
+      project_id: "course-project",
+      path: "math.course",
+      timeout_ms: 1_000,
+    }),
+    (err: any) => {
+      assert.equal(err.code, 408);
+      assert.match(
+        err.message,
+        /Timed out after 1000ms while opening the course document/,
+      );
+      return true;
+    },
+  );
+  assert.equal(budgets.length, 2);
+  assert.ok(budgets[1] < budgets[0]);
+  assert.equal(closes, 1);
+});
+
+test("course open bounds readiness even if cleanup never settles", async () => {
+  const syncdb = Object.assign(new EventEmitter(), fakeCourse([]).syncdb);
+  syncdb.wait_until_ready = () => new Promise(() => {});
+  let closes = 0;
+  syncdb.close = () => {
+    closes++;
+    return new Promise(() => {});
+  };
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async () => ({ data: "persist-server" }),
+        sync: { db: () => syncdb },
+      },
+      project_id: "course-project",
+      path: "math.course",
+      timeout_ms: 10,
+    }),
+    (err: any) => {
+      assert.equal(err.code, 408);
+      assert.match(err.message, /opening the course document/);
+      return true;
+    },
+  );
+  assert.equal(closes, 1);
+  assert.equal(syncdb.listenerCount("error"), 0);
+});
+
+test("course open preserves emitted errors despite cleanup errors", async () => {
+  const syncdb = Object.assign(new EventEmitter(), fakeCourse([]).syncdb);
+  const denial = Object.assign(new Error("access revoked"), { code: 403 });
+  syncdb.wait_until_ready = () => {
+    queueMicrotask(() => syncdb.emit("error", denial));
+    return new Promise(() => {});
+  };
+  syncdb.close = () => {
+    throw new Error("cleanup failed");
+  };
+  await assert.rejects(
+    openCourseSyncDB({
+      client: {
+        request: async () => ({ data: "persist-server" }),
+        sync: { db: () => syncdb },
+      },
+      project_id: "course-project",
+      path: "math.course",
+    }),
+    (err: any) => {
+      assert.equal(err.cause, denial);
+      assert.equal(err.code, 403);
+      return true;
+    },
+  );
+  assert.equal(syncdb.listenerCount("error"), 0);
+});
+
+test("course open returns an authorized ready document without saving or closing it", async () => {
+  const course = fakeCourse([]);
+  const syncdb = Object.assign(new EventEmitter(), course.syncdb);
+  let closes = 0;
+  syncdb.close = async () => {
+    closes++;
+  };
+  const result = await openCourseSyncDB({
+    client: {
+      request: async () => ({ data: "persist-server" }),
+      sync: { db: () => syncdb },
+    },
+    project_id: "course-project",
+    path: "math.course",
+  });
+  assert.equal(result.syncdb, syncdb);
+  assert.equal(result.path, "math.course");
+  assert.equal(syncdb.listenerCount("error"), 0);
+  assert.equal(closes, 0);
+  assert.equal(course.saves, 0);
+  assert.equal(course.diskSaves, 0);
+});
 
 function fakeCourse(rows: Record<string, any>[]) {
   const state = rows.map((row) => ({ ...row }));

@@ -6,6 +6,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import "@cocalc/conat/sync-doc/install";
+import { persistSubject } from "@cocalc/conat/persist/util";
 import type {
   CourseReconfigureItemResult,
   CourseReconfigureRequest,
@@ -248,38 +249,102 @@ export async function openCourseSyncDB({
   client,
   project_id,
   path,
+  timeout_ms = 30_000,
 }: {
   client: any;
   project_id: string;
   path: string;
+  timeout_ms?: number;
 }): Promise<{ path: string; syncdb: CourseSyncDB }> {
   const normalizedPath = normalizeCoursePath(path);
-  const syncdb = client.sync.db({
-    project_id,
-    path: normalizedPath,
-    primary_keys: COURSE_PRIMARY_KEYS,
-    string_cols: COURSE_STRING_COLUMNS,
-    change_throttle: 500,
-  }) as CourseSyncDB;
-
-  let errorListener: ((error: unknown) => void) | undefined;
-  const error = new Promise<never>((_resolve, reject) => {
-    if (typeof syncdb.once !== "function") return;
-    errorListener = (err) =>
-      reject(err instanceof Error ? err : new Error(`${err}`));
-    syncdb.once("error", errorListener);
+  const timeoutMs = Math.min(timeout_ms, 30_000);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("course document open timeout must be positive and finite");
+  }
+  let syncdb: CourseSyncDB | undefined;
+  let phase = "checking project document access";
+  const deadline = performance.now() + timeoutMs;
+  const deadlineError = () =>
+    Object.assign(new Error(`Timed out after ${timeoutMs}ms while ${phase}`), {
+      code: 408,
+    });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(deadlineError()), timeoutMs);
   });
+  let errorListener: ((error: unknown) => void) | undefined;
   try {
-    await Promise.race([syncdb.wait_until_ready(), error]);
+    // SyncDB startup can obscure a discovery 403 as a retryable disconnect.
+    // Check the same project-host persistence subject before constructing it.
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw deadlineError();
+      try {
+        await Promise.race([
+          client.request(`${persistSubject({ project_id })}.id`, null, {
+            timeout: Math.min(Math.ceil(remaining), 2_000),
+          }),
+          timeout,
+        ]);
+        break;
+      } catch (err) {
+        const code = Number((err as { code?: string | number })?.code);
+        if (code !== 503 && code !== 408) throw err;
+        if (performance.now() >= deadline) throw deadlineError();
+        // Discovery can have no subscribers while persistence restarts. Back
+        // off without resetting the shared discovery/document-open deadline.
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            retryTimer = setTimeout(resolve, 250);
+          }),
+          timeout,
+        ]);
+      }
+    }
+    if (performance.now() >= deadline) throw deadlineError();
+    phase = "opening the course document";
+    syncdb = client.sync.db({
+      project_id,
+      path: normalizedPath,
+      primary_keys: COURSE_PRIMARY_KEYS,
+      string_cols: COURSE_STRING_COLUMNS,
+      change_throttle: 500,
+    }) as CourseSyncDB;
+    const error = new Promise<never>((_resolve, reject) => {
+      if (typeof syncdb!.once !== "function") return;
+      errorListener = reject;
+      syncdb!.once("error", errorListener);
+    });
+    await Promise.race([syncdb.wait_until_ready(), error, timeout]);
+    return { path: normalizedPath, syncdb };
   } catch (err) {
-    await syncdb.close();
-    throw err;
+    // Cleanup must not hide the original failure or extend the open deadline.
+    if (syncdb != null) {
+      try {
+        void Promise.resolve(syncdb.close()).catch(() => undefined);
+      } catch {}
+    }
+    const code = (err as { code?: string | number })?.code;
+    const denied = Number(code) === 403;
+    const detail = denied
+      ? "Permission denied (403). The signed-in account needs collaborator access to this project; administrative account/billing access does not grant course-document access. Use an authorized project collaborator's session."
+      : err instanceof Error
+        ? err.message
+        : String(err);
+    throw Object.assign(
+      new Error(
+        `Cannot open course ${JSON.stringify(normalizedPath)} in project ${project_id}: ${detail} No course changes or provisioning job were submitted by this command.`,
+      ),
+      { code, cause: err },
+    );
   } finally {
-    if (errorListener && typeof syncdb.off === "function") {
+    clearTimeout(timer);
+    clearTimeout(retryTimer);
+    if (errorListener && typeof syncdb?.off === "function") {
       syncdb.off("error", errorListener);
     }
   }
-  return { path: normalizedPath, syncdb };
 }
 
 export function readCourseRows(syncdb: CourseSyncDB): Record<string, any>[] {

@@ -6,6 +6,53 @@ import { Command } from "commander";
 import type { CourseSyncDB } from "../../core/project-course";
 import { registerProjectCourseCommands } from "./course";
 
+test("reconfigure stops on document permission denial before submitting work", async () => {
+  let opened = false;
+  let submitted = false;
+  const deps = {
+    withContext: async (_command, _label, fn) =>
+      await fn({
+        timeoutMs: 100,
+        hub: {
+          projects: {
+            reconfigureCourseProjects: async () => {
+              submitted = true;
+            },
+          },
+        },
+      }),
+    resolveProjectConatClient: async () => ({
+      project: { project_id: "course-project" },
+      client: {
+        request: async (_subject, _data, options) => {
+          assert.equal(options.timeout, 100);
+          throw Object.assign(new Error("permission denied"), { code: 403 });
+        },
+        sync: {
+          db: () => {
+            opened = true;
+          },
+        },
+      },
+    }),
+  };
+  const program = new Command();
+  registerProjectCourseCommands(program.command("project"), deps as any);
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "cocalc",
+      "project",
+      "course",
+      "reconfigure",
+      "math.course",
+    ]),
+    /Permission denied \(403\)/,
+  );
+  assert.equal(opened, false);
+  assert.equal(submitted, false);
+});
+
 test("course RootFS apply acquires account authority before mutation", async () => {
   const calls: string[] = [];
   const rows: Record<string, any>[] = [{ table: "settings", title: "Math" }];
@@ -68,7 +115,10 @@ test("course RootFS apply acquires account authority before mutation", async () 
       calls.push("resolve-project-client");
       return {
         project: { project_id: "course-project" },
-        client: { sync: { db: () => syncdb } },
+        client: {
+          request: async () => ({ data: "persist-server" }),
+          sync: { db: () => syncdb },
+        },
       };
     },
   };
