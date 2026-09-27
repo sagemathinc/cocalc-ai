@@ -51,6 +51,7 @@ export default function MultiMarkdownInput({
   modeSwitchPlacement = "float",
   reserveModeSwitchSpace = false,
   compactModeSwitch = false,
+  modeSwitchMenuContent,
   softFocus = false,
   modeSwitchRightContent,
   modeSwitchStyle,
@@ -102,7 +103,8 @@ export default function MultiMarkdownInput({
     cacheId == null
       ? undefined
       : `${project_id ?? ""}:${path ?? ""}:${cacheId}`;
-  const isFrameScoped = Boolean(frameContext.id || project_id || path);
+  // Standalone composers can supply a project without belonging to a frame.
+  const isFrameScoped = Boolean(frameContext.id || frameProjectId || framePath);
   const modeSwitchFrameFocused = isFrameScoped ? isFocusedFrame : true;
   const modeSwitchFrameVisible = isFrameScoped ? isVisible : true;
 
@@ -332,6 +334,7 @@ export default function MultiMarkdownInput({
               hidden={!showToolbarModeSwitch}
               overflowEllipsis={overflowEllipsis}
               compactModeSwitch={compactModeSwitch}
+              menuContent={modeSwitchMenuContent}
               style={modeSwitchStyle}
               editBarContentRef={editBar2}
               onSelectMode={(nextMode) => {
@@ -360,6 +363,7 @@ export default function MultiMarkdownInput({
           hidden={!!fixedMode || !!hideModeSwitch}
           overflowEllipsis={overflowEllipsis}
           compactModeSwitch={compactModeSwitch}
+          menuContent={modeSwitchMenuContent}
           style={modeSwitchStyle}
           editBarContentRef={editBar2}
           onSelectMode={(nextMode) => {

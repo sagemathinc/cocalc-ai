@@ -69,6 +69,7 @@ export interface MultiMarkdownInputProps {
   modeSwitchPlacement?: "float" | "toolbar";
   reserveModeSwitchSpace?: boolean;
   compactModeSwitch?: boolean;
+  modeSwitchMenuContent?: (close: () => void) => ReactNode;
   softFocus?: boolean;
   modeSwitchRightContent?: ReactNode;
   disableModeSwitchShortcuts?: boolean;

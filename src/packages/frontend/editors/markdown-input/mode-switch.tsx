@@ -15,6 +15,7 @@ interface MarkdownInputModeSwitchProps {
   hidden?: boolean;
   overflowEllipsis?: boolean;
   compactModeSwitch?: boolean;
+  menuContent?: (close: () => void) => React.ReactNode;
   style?: React.CSSProperties;
   editBarContentRef: MutableRefObject<React.JSX.Element | undefined>;
   onSelectMode: (mode: Mode) => void;
@@ -31,6 +32,7 @@ export function MarkdownInputModeSwitch({
   hidden,
   overflowEllipsis = true,
   compactModeSwitch = false,
+  menuContent,
   style,
   editBarContentRef,
   onSelectMode,
@@ -109,7 +111,30 @@ export function MarkdownInputModeSwitch({
                 overflowY: "auto",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                {compactModeSwitch ? (
+                  <div role="group" aria-label="Editor mode">
+                    <Radio.Group
+                      options={modeOptions}
+                      onChange={(event) =>
+                        selectMode(event.target.value as Mode)
+                      }
+                      value={mode}
+                      optionType="button"
+                      size="small"
+                      buttonStyle="solid"
+                    />
+                  </div>
+                ) : (
+                  <span>Text formatting</span>
+                )}
                 <Button
                   type="text"
                   aria-label="Close formatting"
@@ -118,18 +143,7 @@ export function MarkdownInputModeSwitch({
                   style={{ minWidth: 44, minHeight: 44 }}
                 />
               </div>
-              {compactModeSwitch && (
-                <div role="group" aria-label="Editor mode">
-                  <Radio.Group
-                    options={modeOptions}
-                    onChange={(event) => selectMode(event.target.value as Mode)}
-                    value={mode}
-                    optionType="button"
-                    size="small"
-                    buttonStyle="solid"
-                  />
-                </div>
-              )}
+              {menuContent?.(closeMenu)}
               {editBarContentRef.current}
             </div>
           </KeyboardBoundary>

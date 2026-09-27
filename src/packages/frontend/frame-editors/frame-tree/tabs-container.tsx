@@ -148,6 +148,7 @@ interface Props {
   renderChild: (child: NodeDesc) => Rendered;
   editor_spec: EditorSpec;
   active_id?: string;
+  childIsVisible?: (child: Map<string, any>) => boolean;
 }
 
 export function TabsContainer({
@@ -156,6 +157,7 @@ export function TabsContainer({
   renderChild,
   editor_spec,
   active_id,
+  childIsVisible,
 }: Props) {
   const [addTabMenuOpen, setAddTabMenuOpen] = useState(false);
   const children = frame_tree.get("children");
@@ -163,13 +165,18 @@ export function TabsContainer({
   const tabsId = frame_tree.get("id") as string;
 
   const activeTab = useMemo(() => {
-    if (!active_id || !children) return storedActiveTab;
-    const idx = children.findIndex(
-      (child: Map<string, any>) =>
-        child.get("id") === active_id || has_id(child, active_id),
-    );
-    return idx >= 0 ? idx : storedActiveTab;
-  }, [active_id, children, storedActiveTab]);
+    if (!children) return storedActiveTab;
+    const idx = active_id
+      ? children.findIndex(
+          (child: Map<string, any>) =>
+            child.get("id") === active_id || has_id(child, active_id),
+        )
+      : -1;
+    const candidate = idx >= 0 ? idx : storedActiveTab;
+    if (!childIsVisible || childIsVisible(children.get(candidate)))
+      return candidate;
+    return children.findIndex(childIsVisible);
+  }, [active_id, children, storedActiveTab, childIsVisible]);
 
   const switchToFiles: List<string> | undefined = useRedux([
     actions.name,
@@ -204,6 +211,7 @@ export function TabsContainer({
     if (!children) return [];
     return children
       .map((child: Map<string, any>, i: number) => {
+        if (childIsVisible && !childIsVisible(child)) return null;
         const type = child.get("type");
         const frameId = child.get("id") as string;
         const spec = editor_spec?.[type];
@@ -244,8 +252,9 @@ export function TabsContainer({
           children: null,
         };
       })
+      .filter((item) => item != null)
       .toArray();
-  }, [actions, childIds, children, editor_spec, tabsId]);
+  }, [actions, childIds, children, editor_spec, tabsId, childIsVisible]);
 
   const addTabMenu = useMemo((): MenuProps => {
     if (!addTabMenuOpen) {
@@ -379,19 +388,21 @@ export function TabsContainer({
             />
           </ConfigProvider>
         </div>
-        {children.map((child: Map<string, any>, i: number) => (
-          <div
-            key={child.get("id")}
-            className="smc-vfill"
-            style={{
-              flex: 1,
-              overflow: "hidden",
-              display: i === activeTab ? undefined : "none",
-            }}
-          >
-            {renderChild(child)}
-          </div>
-        ))}
+        {children.map((child: Map<string, any>, i: number) =>
+          childIsVisible && !childIsVisible(child) ? null : (
+            <div
+              key={child.get("id")}
+              className="smc-vfill"
+              style={{
+                flex: 1,
+                overflow: "hidden",
+                display: i === activeTab ? undefined : "none",
+              }}
+            >
+              {renderChild(child)}
+            </div>
+          ),
+        )}
       </div>
     </TabContainerContext.Provider>
   );

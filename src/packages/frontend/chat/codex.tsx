@@ -789,6 +789,7 @@ export function CodexConfigButton({
         : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
   const membershipNeedsNewThread =
+    !lite &&
     hasEstablishedSession &&
     paymentSource?.source !== "site-api-key" &&
     getCodexPaymentSourceOptions(paymentSource).some(
@@ -830,7 +831,7 @@ export function CodexConfigButton({
     );
   const paymentSourceOptions = getCodexPaymentSourceOptions(paymentSource).map(
     (option) => {
-      if (!hasEstablishedSession) return option;
+      if (lite || !hasEstablishedSession) return option;
       if (option.value === "site-api-key" && membershipNeedsNewThread) {
         return {
           ...option,
@@ -1264,9 +1265,9 @@ export function CodexConfigButton({
     ({ value }) => value !== "auto",
   );
   const showPaymentSourceSelector =
-    !lite &&
-    (configuredPaymentSources.length > 1 ||
-      (paymentSource?.subscriptions?.length ?? 0) > 1);
+    configuredPaymentSources.length > 1 ||
+    (paymentSource?.subscriptions?.length ?? 0) > 1 ||
+    (lite && configuredPaymentSources.length > 0);
   const paymentSourceMenu: MenuProps = {
     selectedKeys: [
       selectedPaymentSource === "subscription" && selectedSubscription
@@ -1514,52 +1515,29 @@ export function CodexConfigButton({
                 </>
               ) : null}
               <Text type="secondary">·</Text>
-              {lite ? (
-                <Tooltip
-                  allow_touch
-                  ignore_hide_setting
-                  title={sourceTooltipDetails}
-                  styles={{ root: { maxWidth: 420 } }}
-                >
+              <Tooltip
+                allow_touch
+                ignore_hide_setting
+                title={sourceTooltipDetails}
+                styles={{ root: { maxWidth: 420 } }}
+              >
+                <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
                   <ComposerPillButton
                     aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
-                    aria-haspopup="dialog"
                     onMouseEnter={() => setCodexUsageRequested(true)}
-                    onClick={() => setPaymentOpen(true)}
                     style={{
                       color: paymentNeedsAttention
                         ? UI_COLORS.danger
                         : UI_COLORS.secondary,
+                      maxWidth: 120,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     {sourceShortLabel}
                   </ComposerPillButton>
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  allow_touch
-                  ignore_hide_setting
-                  title={sourceTooltipDetails}
-                  styles={{ root: { maxWidth: 420 } }}
-                >
-                  <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
-                    <ComposerPillButton
-                      aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
-                      onMouseEnter={() => setCodexUsageRequested(true)}
-                      style={{
-                        color: paymentNeedsAttention
-                          ? UI_COLORS.danger
-                          : UI_COLORS.secondary,
-                        maxWidth: 120,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {sourceShortLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                </Tooltip>
-              )}
+                </Dropdown>
+              </Tooltip>
             </span>
             <Tooltip title="More agent settings">
               <Button
@@ -1995,44 +1973,42 @@ export function CodexConfigButton({
             </div>
 
             <div style={gridTwoColStyle}>
-              {!lite ? (
-                <Form.Item
-                  label={
-                    <SectionTitle
-                      help={
-                        hasEstablishedSession
-                          ? "Established sessions may restrict switching to membership funding."
-                          : "Choose how future turns in this chat are funded."
-                      }
-                    >
-                      Payment source
-                    </SectionTitle>
-                  }
-                  style={formItemStyle}
-                >
-                  <Select
-                    aria-label="Payment source"
-                    value={draftPaymentChoice}
-                    options={dialogPaymentOptions}
-                    optionRender={(option) =>
-                      renderOptionWithDescription({
-                        title: `${option.data.label}`,
-                        description: option.data.description,
-                      })
+              <Form.Item
+                label={
+                  <SectionTitle
+                    help={
+                      !lite && hasEstablishedSession
+                        ? "Established sessions may restrict switching to membership funding."
+                        : "Choose how future turns in this chat are funded."
                     }
-                    onChange={(next: string) => {
-                      setDraftPaymentChoice(next);
-                      form.setFieldsValue(
-                        paymentSourcePatch(
-                          next.startsWith("subscription:")
-                            ? "subscription"
-                            : (next as CodexPaymentSourcePreference),
-                        ),
-                      );
-                    }}
-                  />
-                </Form.Item>
-              ) : null}
+                  >
+                    Payment source
+                  </SectionTitle>
+                }
+                style={formItemStyle}
+              >
+                <Select
+                  aria-label="Payment source"
+                  value={draftPaymentChoice}
+                  options={dialogPaymentOptions}
+                  optionRender={(option) =>
+                    renderOptionWithDescription({
+                      title: `${option.data.label}`,
+                      description: option.data.description,
+                    })
+                  }
+                  onChange={(next: string) => {
+                    setDraftPaymentChoice(next);
+                    form.setFieldsValue(
+                      paymentSourcePatch(
+                        next.startsWith("subscription:")
+                          ? "subscription"
+                          : (next as CodexPaymentSourcePreference),
+                      ),
+                    );
+                  }}
+                />
+              </Form.Item>
               {siteFundedPolicy ? (
                 <Form.Item
                   label={

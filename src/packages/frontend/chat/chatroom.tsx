@@ -147,7 +147,6 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import {
   setChatOverlayOpen,
-  useAnyChatOverlayOpen,
 } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
@@ -1143,7 +1142,6 @@ function ChatPanelContent({
     setActivityJumpAttentionId(codexAttentionJumpId);
     setActivityJumpToken((n) => n + 1);
   }, [codexAttentionJumpDate, codexAttentionJumpId, codexAttentionJumpToken]);
-  const anyOverlayOpen = useAnyChatOverlayOpen();
   const gitBrowserOverlayKey = useMemo(
     () => `${project_id ?? "no-project"}:${path ?? "no-path"}:git-browser`,
     [project_id, path],
@@ -2594,6 +2592,7 @@ function ChatPanelContent({
       setAcpPrompt(rawAcpPrompt);
       return;
     }
+    if (reply_thread_id) scrollToBottomRef.current?.(true);
     if (
       isCodexSubmit &&
       opts?.immediate !== true &&
@@ -2668,8 +2667,9 @@ function ChatPanelContent({
       }, 100);
     }
     setTimeout(() => {
-      if (anyOverlayOpen) return;
-      scrollToBottomRef.current?.(true);
+      // Existing threads already resumed following at submit time. A later
+      // manual scroll must take precedence over this layout follow-up.
+      scrollToBottomRef.current?.(!reply_thread_id);
     }, 100);
   }
   function on_send(value?: string): Promise<void> {

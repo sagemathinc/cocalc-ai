@@ -53,6 +53,33 @@ jest.mock("use-debounce", () => ({
 }));
 
 describe("ChatInput send lifecycle regressions", () => {
+  it.each([
+    [undefined, undefined, false],
+    ["auto", undefined, false],
+    ["120px", undefined, true],
+    [undefined, true, true],
+    ["120px", false, false],
+  ])(
+    "resolves host clamping for height=%s override=%s as %s",
+    (height, clampAutoGrowToHost, expected) => {
+      render(
+        <ChatInput
+          projectId="new-agent-project"
+          input="draft"
+          onChange={() => {}}
+          on_send={() => {}}
+          syncdb={undefined}
+          date={0}
+          height={height}
+          autoGrowMinHeight={40}
+          autoGrowMaxHeight={420}
+          clampAutoGrowToHost={clampAutoGrowToHost}
+        />,
+      );
+      expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(expected);
+    },
+  );
+
   it("routes Ctrl+Enter to Post, Shift+Enter to the agent, and Alt+Enter to Queue", () => {
     const send = jest.fn();
     const post = jest.fn();
@@ -181,7 +208,7 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.reserveModeSwitchSpace).toBe(true);
     expect(lastMarkdownInputProps.disableModeSwitchShortcuts).toBe(true);
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
-    expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);
+    expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(false);
     expect(lastMarkdownInputProps.onCtrlEnter).toEqual(expect.any(Function));
     expect(lastMarkdownInputProps.onFontSizeChange).toBeUndefined();
 
@@ -380,6 +407,7 @@ describe("ChatInput send lifecycle regressions", () => {
       set_cursor_locs: jest.fn(),
     } as any;
     const focus = jest.fn(() => true);
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
 
     function Harness() {
       const [value, setValue] = useState("");
@@ -402,6 +430,7 @@ describe("ChatInput send lifecycle regressions", () => {
     render(<Harness />);
     lastMarkdownInputProps.controlRef.current = {
       focus,
+      setSelectionFromMarkdownPosition,
       allowNextValueUpdateWhileFocused: jest.fn(),
     };
 
@@ -417,5 +446,9 @@ describe("ChatInput send lifecycle regressions", () => {
 
     expect(lastMarkdownInputProps.value).toBe("");
     expect(focus).toHaveBeenCalled();
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 0,
+      ch: 0,
+    });
   });
 });

@@ -116,8 +116,9 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     id: string,
     parent: HTMLElement,
     terminalThemeOverride?: string | null,
+    isCurrent: () => boolean = () => true,
   ): Promise<undefined | Terminal<T>> {
-    if (this.actions == null) {
+    if (this.actions == null || !isCurrent()) {
       return Promise.resolve(undefined);
     }
 
@@ -159,6 +160,9 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
             terminalThemeOverride,
             { autoStartProjectOnFirstConnect: true },
           );
+          // Construction opens xterm in the original caller's parent. That
+          // caller may have gone away while the shared constructor loaded.
+          if (!isCurrent()) terminal.element.remove();
           terminal.connect();
           if (this.terminals !== terminals) {
             terminal.close();
@@ -175,7 +179,8 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
     }
 
     return this.terminalLoads[id].then((terminal) => {
-      if (terminal == null) {
+      // Each waiter owns its own attachment request, not the shared load.
+      if (terminal == null || !isCurrent()) {
         return undefined;
       }
       if (terminal.element.parentElement !== parent) {

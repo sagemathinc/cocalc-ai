@@ -14,15 +14,6 @@ export type CodexPaymentSourceOption = {
 export function getCodexPaymentSourceOptions(
   paymentSource?: CodexPaymentSourceInfo,
 ): CodexPaymentSourceOption[] {
-  if (lite) {
-    return [
-      {
-        value: "auto",
-        label: "Automatic",
-        description: "Use the first configured local Codex credential.",
-      },
-    ];
-  }
   const includedAvailable =
     paymentSource?.hasSiteApiKey === true &&
     paymentSource.siteFundedCodex?.enabled === true &&
@@ -31,17 +22,30 @@ export function getCodexPaymentSourceOptions(
     {
       value: "auto",
       label: "Automatic",
-      description:
-        "Prefer your ChatGPT Plan, then project or account API keys, then your CoCalc Membership.",
+      description: lite
+        ? "Use the designated local ChatGPT subscription, then configured API keys."
+        : "Prefer your ChatGPT Plan, then project or account API keys, then your CoCalc Membership.",
     },
-    {
-      value: "site-api-key",
-      label: "CoCalc Membership",
-      description: includedAvailable
-        ? "Use the Codex allowance provided by your CoCalc membership."
-        : "Membership-funded Codex usage is not currently available for this account.",
-      disabled: !includedAvailable,
-    },
+    ...(lite
+      ? paymentSource?.hasSiteApiKey
+        ? [
+            {
+              value: "site-api-key" as const,
+              label: "Site OpenAI API key",
+              description: "Charge the locally configured site OpenAI API key.",
+            },
+          ]
+        : []
+      : [
+          {
+            value: "site-api-key" as const,
+            label: "CoCalc Membership",
+            description: includedAvailable
+              ? "Use the Codex allowance provided by your CoCalc membership."
+              : "Membership-funded Codex usage is not currently available for this account.",
+            disabled: !includedAvailable,
+          },
+        ]),
     ...(paymentSource?.hasSubscription || paymentSource?.subscriptions?.length
       ? [
           {
@@ -67,6 +71,17 @@ export function getCodexPaymentSourceOptions(
             value: "account-api-key" as const,
             label: "Account OpenAI API key",
             description: "Charge your account's configured OpenAI API key.",
+          },
+        ]
+      : []),
+    ...(lite &&
+    paymentSource?.sharedHomeMode &&
+    paymentSource.sharedHomeMode !== "disabled"
+      ? [
+          {
+            value: "shared-home" as const,
+            label: "Local Codex auth",
+            description: "Use the API key in the local Codex auth file.",
           },
         ]
       : []),

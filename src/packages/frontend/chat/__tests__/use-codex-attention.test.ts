@@ -50,6 +50,41 @@ describe("Codex attention summaries", () => {
     jest.clearAllMocks();
   });
 
+  it.each(["throws", "not-ok"])(
+    "applies fresh actionable questions even when settled history %s",
+    async (failure) => {
+      const old = record("old-thread", "pending");
+      const fresh = record("new-thread", "pending");
+      let current = old;
+      jest
+        .mocked(webapp_client.conat_client.attentionAcp)
+        .mockImplementation(async (request: any) => {
+          if (request.state === "all") {
+            if (failure === "throws") throw Error("history unavailable");
+            return { ok: false, error: "history unavailable" };
+          }
+          return { ok: true, records: [current] };
+        });
+      const hook = renderHook(() =>
+        useCodexAttentionSummary({
+          active: true,
+          account_id: "account-1",
+          project_id: "project-1",
+          path: "agent.chat",
+        }),
+      );
+      await waitFor(() => expect(hook.result.current.records).toEqual([old]));
+      current = fresh;
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(hook.result.current.records).toEqual([fresh]));
+      expect(hook.result.current.targetByThread.get("new-thread")).toBe(
+        fresh.attention_id,
+      );
+      expect(hook.result.current.targetByThread.has("old-thread")).toBe(false);
+      hook.unmount();
+    },
+  );
+
   it("tracks native attention and clears it after resolution", async () => {
     const pending = record("thread-1", "pending");
     jest
@@ -163,11 +198,108 @@ describe("Codex attention summaries", () => {
         { ...record("thread-1", "pending"), attention_id: "second" },
         record("thread-1", "answered"),
         record("thread-2", "pending"),
+        { ...record("thread-3", "pending"), response_submitted_at: 2 },
       ]),
     ]).toEqual([
       ["thread-1", 2],
       ["thread-2", 1],
     ]);
+  });
+
+  it("retains submitted questions without badges or repeat notifications", async () => {
+    const pending = record("thread-1", "pending");
+    let current = pending;
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        records:
+          request.state === "all" || current.state === "pending"
+            ? [current]
+            : [],
+      }));
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.count).toBe(1));
+    current = { ...pending, response_submitted_at: 2, updated_at: 2 };
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(hook.result.current.count).toBe(0));
+    expect(hook.result.current.records).toEqual([current]);
+    expect(hook.result.current.targetByThread.size).toBe(0);
+    expect(showCodexNotificationBestEffort).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        row: expect.objectContaining({
+          summary: expect.objectContaining({ attention_state: "resolved" }),
+        }),
+      }),
+    );
+    current = { ...current, state: "answered", updated_at: 3 };
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(hook.result.current.records).toEqual([current]));
+    expect(hook.result.current.count).toBe(0);
+    hook.unmount();
+  });
+
+  it("does not let submitted history displace open requests or another account's data", async () => {
+    const pending = record("open", "pending");
+    const submitted = {
+      ...record("done", "answered"),
+      response_submitted_at: 2,
+    };
+    let resolved = false;
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        records:
+          request.state === "actionable"
+            ? [
+                pending,
+                ...(resolved ? [] : [{ ...submitted, state: "pending" }]),
+              ]
+            : [
+                submitted,
+                {
+                  ...submitted,
+                  attention_id: "other-account",
+                  account_id: "account-2",
+                },
+              ],
+      }));
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.records).toHaveLength(2));
+    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: "all" }),
+    );
+    resolved = true;
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(hook.result.current.records).toEqual([submitted, pending]),
+    );
+    expect(hook.result.current.count).toBe(1);
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledTimes(4),
+    );
+    expect(
+      jest
+        .mocked(webapp_client.conat_client.attentionAcp)
+        .mock.calls.filter(([request]) => request.state === "all"),
+    ).toHaveLength(1);
+    hook.unmount();
   });
 
   it("delivers pending notifications and closes them after resolution", async () => {
