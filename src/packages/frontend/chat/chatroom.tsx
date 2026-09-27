@@ -214,6 +214,20 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
+export function restoreChatToolsFocus(opts: {
+  trigger: HTMLElement | null;
+  drawer: Element | null | undefined;
+  open: boolean;
+}): void {
+  if (opts.open || !opts.trigger?.isConnected) return;
+  const { activeElement, body } = opts.trigger.ownerDocument;
+  // AntD can leave focus on its retained wrapper after a rapid reopen/close.
+  // Recover that abandoned focus, but preserve an intentional handoff elsewhere.
+  if (activeElement === body || opts.drawer?.contains(activeElement)) {
+    opts.trigger.focus({ preventScroll: true });
+  }
+}
+
 function isActiveAcpState(state: unknown): boolean {
   if (typeof state !== "string") return false;
   return ACP_ACTIVE_STATES.has(state.trim().toLowerCase());
@@ -728,6 +742,8 @@ function ChatPanelContent({
   const focusRootRef = useRef<HTMLDivElement>(null);
   useChatFocusIsolation(focusRootRef, focused && messages != null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const mobileToolsVisibleRef = useRef(narrow && mobileToolsOpen);
+  mobileToolsVisibleRef.current = narrow && mobileToolsOpen;
   const mobileChatsTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [mobileToolsPortal, setMobileToolsPortal] =
@@ -3514,15 +3530,19 @@ function ChatPanelContent({
       )}
       <Drawer
         title="Chat tools"
+        rootClassName="cocalc-chat-tools-drawer"
         open={narrow && mobileToolsOpen}
         afterOpenChange={(open) => {
           if (!open)
             requestAnimationFrame(() => {
-              if (document.activeElement === document.body)
-                mobileToolsTriggerRef.current?.focus({ preventScroll: true });
+              restoreChatToolsFocus({
+                trigger: mobileToolsTriggerRef.current,
+                drawer: mobileToolsPortal?.closest(".cocalc-chat-tools-drawer"),
+                open: mobileToolsVisibleRef.current,
+              });
             });
         }}
-        forceRender
+        // A force-rendered closed drawer would claim AntD's top Escape slot.
         placement="right"
         size="min(360px, 100vw)"
         onClose={() => setMobileToolsOpen(false)}

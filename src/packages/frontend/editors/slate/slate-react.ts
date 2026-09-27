@@ -1,4 +1,9 @@
-import React, { useCallback, useLayoutEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { Editor } from "slate";
 import type { BaseEditor, Descendant, Path, Point, Range } from "slate";
 import {
@@ -23,6 +28,7 @@ import type {
   RenderPlaceholderProps,
 } from "slate-react";
 import { ensurePoint, ensureRange, slateDebug } from "./slate-util";
+import { autofocusEditor } from "../autofocus";
 
 type ExtraEditorFields = {
   windowedListRef: { current: any };
@@ -263,6 +269,7 @@ type EditableProps = React.ComponentProps<typeof UpstreamEditable> & {
 export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
   (props, forwardedRef) => {
     const {
+      autoFocus,
       windowing: _windowing,
       divref,
       style,
@@ -273,6 +280,14 @@ export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
     const ref = divref ?? forwardedRef;
     const editor = useSlateStatic() as ReactEditor;
     normalizeEditorSelection(editor);
+
+    // Replace upstream's unconditional mount autofocus, not explicit focus
+    // controls. Its Editable has attached the editor DOM before this effect.
+    useEffect(() => {
+      if (autoFocus) {
+        autofocusEditor(UpstreamReactEditor.toDOMNode(editor, editor));
+      }
+    }, [autoFocus, editor]);
 
     const shouldIgnoreSlateClipboard = useCallback(
       (event: React.ClipboardEvent<HTMLDivElement>): boolean => {

@@ -56,6 +56,7 @@ import { EditorFunctions, SelectionController } from "./types";
 import { resolveUndoHandler } from "./undo-policy";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
+import { autofocusEditor } from "../autofocus";
 
 type EventHandlerFunction = (cm: CodeMirror.Editor) => void;
 
@@ -939,7 +940,7 @@ export function MarkdownInput(props: Props) {
       }
 
       if (autoFocus) {
-        cm.current.getInputField().focus({ preventScroll: true });
+        autofocusEditor(cm.current.getInputField(), { preventScroll: true });
       }
 
       if (selectionRef != null) {

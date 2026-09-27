@@ -1,9 +1,34 @@
 /** @jest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import * as immutable from "immutable";
-import { ChatPanel } from "../chatroom";
+import { ChatPanel, restoreChatToolsFocus } from "../chatroom";
 import { ChatEmbeddingOptionsProvider } from "../embedding-options";
+import { CollaboratorsModal } from "@cocalc/frontend/collaborators/modal";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { ThreadPanelToolbar } from "../thread-panel-toolbar";
+
+// rc-util's fixed Jest ID hides ordering bugs between distinct real portals.
+jest.mock(
+  require.resolve("@rc-component/util/lib/hooks/useId", {
+    paths: [require.resolve("antd")],
+  }),
+  () => ({
+    __esModule: true,
+    default: (id?: string) => {
+      const reactId = require("react").useId();
+      return id || reactId;
+    },
+  }),
+);
 
 const persistExternalSideChatSelectedThreadKey = jest.fn();
 const renderChatRoomThreadPanel = jest.fn((props: any) => (
@@ -169,7 +194,13 @@ describe("ChatPanel external side chat persistence", () => {
     attentionRecords = [];
     persistExternalSideChatSelectedThreadKey.mockClear();
     renderChatRoomThreadPanel.mockClear();
+    const getComputedStyle = window.getComputedStyle;
+    jest
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation((element) => getComputedStyle(element));
   });
+
+  afterEach(() => jest.restoreAllMocks());
 
   function renderPanel(
     desc?: Record<string, unknown>,
@@ -218,6 +249,121 @@ describe("ChatPanel external side chat persistence", () => {
 
     return actions;
   }
+
+  it("keeps Escape owned by sharing when chat mounts its closed tools drawer", () => {
+    const cancel = jest.fn();
+    render(
+      <CollaboratorsModal
+        open
+        title="Share to conversation"
+        onCancel={cancel}
+        transitionName=""
+        maskTransitionName=""
+      >
+        <KeyboardBoundary boundary="collaboration-share-dialog">
+          <input aria-label="Search conversations" />
+        </KeyboardBoundary>
+      </CollaboratorsModal>,
+    );
+    const search = screen.getByRole("textbox", {
+      name: "Search conversations",
+    });
+    act(() => search.focus());
+
+    renderPanel(undefined, {
+      agentWorkspace: true,
+      agentWorkspaceActive: true,
+    });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Escape", code: "Escape", keyCode: 27 });
+    fireEvent.keyUp(search, { key: "Escape", code: "Escape", keyCode: 27 });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("mounts mobile tools on first open and restores focus after Escape", async () => {
+    const matchMedia = window.matchMedia;
+    jest.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query.includes("max-width"),
+    }));
+    const previous = renderChatRoomThreadPanel.getMockImplementation()!;
+    renderChatRoomThreadPanel.mockImplementation((props) => (
+      <ThreadPanelToolbar
+        showInline={false}
+        portal={props.topRightControlsPortal}
+        render={() => (
+          <button onClick={props.onMobileToolsAction}>Search thread</button>
+        )}
+      />
+    ));
+    try {
+      renderPanel();
+      expect(
+        screen.queryByRole("button", { name: "Search thread" }),
+      ).toBeNull();
+      const trigger = screen.getByRole("button", { name: "Chat tools" });
+      const user = userEvent.setup();
+      act(() => trigger.focus());
+      await user.keyboard("{Enter}");
+      const tools = await screen.findByRole("dialog", { name: "Chat tools" });
+      const search = within(tools).getByRole("button", {
+        name: "Search thread",
+      });
+      await user.click(search);
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Chat tools" })).toBeNull(),
+      );
+      await waitFor(() => expect(trigger).toHaveFocus());
+
+      await user.keyboard("{Enter}");
+      await screen.findByRole("dialog", { name: "Chat tools" });
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Chat tools" })).toBeNull(),
+      );
+      await waitFor(() => expect(trigger).toHaveFocus());
+    } finally {
+      renderChatRoomThreadPanel.mockImplementation(previous);
+    }
+  });
+
+  it("recovers focus left on the closed drawer wrapper", () => {
+    render(
+      <>
+        <button>Chat tools</button>
+        <div tabIndex={-1} data-testid="closed-tools">
+          <div hidden role="dialog" aria-label="Chat tools" />
+        </div>
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Chat tools" });
+    const drawer = screen.getByTestId("closed-tools");
+    act(() => drawer.focus());
+    expect(drawer).toHaveFocus();
+    act(() => restoreChatToolsFocus({ trigger, drawer, open: false }));
+    expect(trigger).toHaveFocus();
+  });
+
+  it("does not steal handed-off focus or focus from a reopened drawer", () => {
+    render(
+      <>
+        <button>Chat tools</button>
+        <div role="dialog" aria-label="Chat tools" tabIndex={-1} />
+        <div role="dialog" aria-label="Thread search">
+          <input aria-label="Find messages" />
+        </div>
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Chat tools" });
+    const drawer = screen.getByRole("dialog", { name: "Chat tools" });
+    const search = screen.getByRole("textbox", { name: "Find messages" });
+    act(() => search.focus());
+    act(() => restoreChatToolsFocus({ trigger, drawer, open: false }));
+    expect(search).toHaveFocus();
+    act(() => drawer.focus());
+    act(() => restoreChatToolsFocus({ trigger, drawer, open: true }));
+    expect(drawer).toHaveFocus();
+  });
 
   it("uses workspace activity for an agent composer when shared frame visibility is stale", () => {
     renderPanel(undefined, {

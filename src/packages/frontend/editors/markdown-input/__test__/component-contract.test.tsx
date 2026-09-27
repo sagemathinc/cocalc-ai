@@ -74,14 +74,19 @@ function createMockEditor(node?: HTMLTextAreaElement | null) {
     clientHeight: 0,
     clientWidth: 0,
   };
-  const inputField = {
-    blur: jest.fn(() => {
-      editor.__trigger("blur", editor);
-    }),
-    focus: jest.fn((_opts?: any) => {
-      editor.__trigger("focus", editor);
-    }),
-  };
+  const inputField = document.createElement("textarea");
+  inputField.setAttribute("aria-label", "Chat draft");
+  wrapper.appendChild(inputField);
+  const focus = inputField.focus.bind(inputField);
+  const blur = inputField.blur.bind(inputField);
+  inputField.focus = jest.fn((opts?: FocusOptions) => {
+    focus(opts);
+    editor.__trigger("focus", editor);
+  });
+  inputField.blur = jest.fn(() => {
+    blur();
+    editor.__trigger("blur", editor);
+  });
 
   const editor = {
     options: {},
@@ -292,6 +297,45 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
   afterEach(() => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
+  });
+
+  it("does not steal dialog focus after asynchronous editor initialization", async () => {
+    const view = render(<MarkdownInput value="Draft" autoFocus />);
+    expect(latestEditor).toBeNull();
+    // Open and focus the dialog after the editor rendered but before its
+    // awaited CodeMirror initialization finishes.
+    view.rerender(
+      <>
+        <MarkdownInput value="Draft" autoFocus />
+        <div role="dialog" aria-modal="true" aria-label="Collaborators">
+          <input aria-label="Search collaborators" />
+        </div>
+      </>,
+    );
+    const search = screen.getByRole("textbox", {
+      name: "Search collaborators",
+    });
+    search.focus();
+    await waitForEditor();
+    expect(search).toHaveFocus();
+    expect(latestEditor.getInputField().focus).not.toHaveBeenCalled();
+  });
+
+  it("autofocuses after initialization when no dialog owns focus", async () => {
+    await renderMarkdownInput(<MarkdownInput value="Draft" autoFocus />);
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toHaveFocus();
+  });
+
+  it("autofocuses after initialization inside the active dialog", async () => {
+    render(
+      <div role="dialog" aria-modal="true" aria-label="Collaborators">
+        <input aria-label="Search collaborators" />
+        <MarkdownInput value="Draft" autoFocus />
+      </div>,
+    );
+    screen.getByRole("textbox", { name: "Search collaborators" }).focus();
+    await waitForEditor();
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toHaveFocus();
   });
 
   it.each(["agent", "artifact", "conversation"] as const)(
@@ -603,7 +647,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
   });
 
   it("clears the mode switch float on the editor box so markdown keeps full width", async () => {
-    const { container } = await renderMarkdownInput(
+    await renderMarkdownInput(
       <MarkdownInput
         value="hello"
         onChange={() => {}}
@@ -612,8 +656,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
       />,
     );
 
-    const editorHost = container.querySelector("textarea")
-      ?.parentElement as HTMLElement;
+    const editorHost = latestEditor.getWrapperElement().parentElement;
     expect(editorHost.style.width).toBe("100%");
     expect(editorHost.style.minWidth).toBe("0");
     expect(editorHost.style.maxWidth).toBe("100%");
