@@ -44,15 +44,12 @@ import {
   type ExamBrowserBootstrap,
 } from "./browser-bootstrap";
 import { validateExamCapacityIncrease } from "./capacity";
-import TTL from "@isaacs/ttlcache";
+import { ExamTokenFailureLimit } from "./token-failure-limit";
 
 const logger = getLogger("project-host:exam:controller");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const WATCHDOG_INTERVAL_MS = 5_000;
 const POWEROFF_RESPONSE_GRACE_MS = 5_000;
-const TOKEN_FAILURE_WINDOW_MS = 10 * 60_000;
-const TOKEN_FAILURE_LIMIT = 12;
-const TOKEN_FAILURE_SOURCE_LIMIT = 10_000;
 const MANUAL_CLEANUP_DEADLINE_MS = Date.UTC(9999, 11, 31, 23, 59, 59);
 
 interface LocalExamRunRow {
@@ -79,10 +76,7 @@ interface LocalExamSessionRow {
   last_error: string | null;
 }
 
-const tokenFailures = new TTL<string, number[]>({
-  max: TOKEN_FAILURE_SOURCE_LIMIT,
-  ttl: TOKEN_FAILURE_WINDOW_MS,
-});
+const tokenFailures = new ExamTokenFailureLimit();
 let watchdogStarted = false;
 let cleanupInFlight: Promise<HostExamRuntimeStatus> | undefined;
 
@@ -296,23 +290,6 @@ async function privilegedExamCommand(
       `${command} failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
     );
   }
-}
-
-function assertTokenRateLimit(source: string): void {
-  const now = Date.now();
-  const recent = (tokenFailures.get(source) ?? []).filter(
-    (time) => now - time < TOKEN_FAILURE_WINDOW_MS,
-  );
-  tokenFailures.set(source, recent);
-  if (recent.length >= TOKEN_FAILURE_LIMIT) {
-    throw new Error("too many unsuccessful exam join attempts; try later");
-  }
-}
-
-function noteTokenFailure(source: string): void {
-  const recent = tokenFailures.get(source) ?? [];
-  recent.push(Date.now());
-  tokenFailures.set(source, recent);
 }
 
 function reserveProject({
@@ -879,12 +856,20 @@ export async function joinExamRun({
   ) {
     throw new Error("scratchpad access is closed");
   }
-  assertTokenRateLimit(source);
-  if (!verifyExamTokenHash(token.trim(), row.token_hash)) {
-    noteTokenFailure(source);
+  const normalizedToken = token.trim();
+  const attempt = {
+    source,
+    token: normalizedToken,
+    token_hash: row.token_hash,
+  };
+  if (tokenFailures.knownInvalidOrThrow(attempt)) {
     throw new Error("invalid access token");
   }
-  tokenFailures.delete(source);
+  if (!verifyExamTokenHash(normalizedToken, row.token_hash)) {
+    tokenFailures.noteInvalid(attempt);
+    throw new Error("invalid access token");
+  }
+  tokenFailures.clear(source);
   const account_id = randomUUID();
   const project_id = randomUUID();
   reserveProject({ row, account_id, project_id });

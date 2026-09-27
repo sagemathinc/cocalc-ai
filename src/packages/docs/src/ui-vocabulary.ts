@@ -577,10 +577,6 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       ["join-invalid-token", "invalid access token"],
       ["join-closed", "scratchpad access is closed"],
       ["join-capacity", "exam project capacity has been reached"],
-      [
-        "join-rate-limit",
-        "too many unsuccessful exam join attempts; try later",
-      ],
     ] as const
   ).map(
     ([key, label]): UiVocabularyEntry => ({
@@ -590,6 +586,19 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
       usedIn: [bold("hosts", label)],
     }),
   ),
+  {
+    id: "hosts.exam.join-rate-limit",
+    label: "too many unsuccessful exam join attempts; try later",
+    anchors: [
+      def(
+        "project-host/exam/token-failure-limit.ts",
+        '"too many unsuccessful exam join attempts; try later"',
+      ),
+    ],
+    usedIn: [
+      bold("hosts", "too many unsuccessful exam join attempts; try later"),
+    ],
+  },
 
   // Sign-in wording
   {
