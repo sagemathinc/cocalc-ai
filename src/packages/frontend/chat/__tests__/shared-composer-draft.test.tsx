@@ -235,6 +235,93 @@ test("programmatic writes and clearing another draft key update mounted views", 
   await settle();
 });
 
+test("guarded append hydrates and preserves remote text including authored whitespace", async () => {
+  const opts = options();
+  const key = `${opts.account_id}:${opts.project_id}:${opts.path}:1`;
+  remote.set(key, {
+    version: 1,
+    text: "unfinished  \n",
+    updatedAt: Date.now(),
+  });
+  await expect(
+    writeChatComposerDraft({
+      ...opts,
+      text: "reference",
+      append: true,
+      isCurrent: () => true,
+    }),
+  ).resolves.toBe("unfinished  \n\n\nreference");
+  const hook = renderHook(() => useChatComposerDraft(opts));
+  await settle();
+  expect(hook.result.current.input).toBe("unfinished  \n\n\nreference");
+  hook.unmount();
+  await settle();
+});
+
+test("a canceled share waiting for hydration cannot append to the destination", async () => {
+  const opts = options();
+  let current = true;
+  let finish!: (value: any) => void;
+  load = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const pending = writeChatComposerDraft({
+    ...opts,
+    text: "never insert",
+    append: true,
+    isCurrent: () => current,
+  });
+  current = false;
+  finish({ version: 1, text: "existing draft", updatedAt: Date.now() });
+  await expect(pending).rejects.toThrow("changed");
+  await settle();
+  expect(
+    save.mock.calls.every((call) => !call[2].text.includes("never insert")),
+  ).toBe(true);
+});
+
+test("a shared reference appends to newer edits in an already mounted destination", async () => {
+  const opts = options();
+  let finish!: (value: any) => void;
+  load = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const hook = renderHook(() => useChatComposerDraft(opts));
+  const pending = writeChatComposerDraft({
+    ...opts,
+    text: "reference",
+    append: true,
+    isCurrent: () => true,
+  });
+  act(() => hook.result.current.setInput("new live edit"));
+  await act(async () => {
+    finish({ version: 1, text: "stale remote draft", updatedAt: Date.now() });
+    await pending;
+  });
+  expect(hook.result.current.input).toBe("new live edit\n\nreference");
+  hook.unmount();
+  await settle();
+});
+
+test("failed share hydration neither appends nor overwrites an unread draft on cleanup", async () => {
+  const opts = options();
+  load = async () => {
+    throw Error("disconnected");
+  };
+  await expect(
+    writeChatComposerDraft({
+      ...opts,
+      text: "never insert",
+      append: true,
+      isCurrent: () => true,
+    }),
+  ).rejects.toThrow("could not be loaded");
+  await settle();
+  expect(save).not.toHaveBeenCalled();
+});
+
 test("accounts, threads, and prompt suffixes are isolated", async () => {
   const opts = options();
   const first = renderHook(() => useChatComposerDraft(opts));

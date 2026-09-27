@@ -20,7 +20,13 @@ describeDb("Agent Network account rehome fence", () => {
   beforeAll(async () => {
     db = new AgentStore();
     await syncSchema(
-      Object.fromEntries(tables.map((name) => [name, SCHEMA[name]])),
+      Object.fromEntries(
+        [
+          ...tables,
+          "collaboration_personal",
+          "collaboration_artifact_bindings",
+        ].map((name) => [name, SCHEMA[name]]),
+      ),
     );
   });
 
@@ -45,19 +51,37 @@ describeDb("Agent Network account rehome fence", () => {
         "agent_network_proposals",
         "agent_network_broadcasts",
         "agent_external_inbox",
-        "collaboration_personal",
-        "collaboration_artifact_bindings",
       ]),
     );
     expect(tables).not.toContain("agent_personal_grants");
     expect(tables).not.toContain("agent_personal_requests");
+    expect(tables).not.toContain("collaboration_personal");
+    expect(tables).not.toContain("collaboration_artifact_bindings");
   });
 
-  test("collaboration aliases and attention remain protected with the feature disabled", async () => {
+  test("portable collaboration aliases no longer trip the unrelated agent guard", async () => {
     const account = randomUUID();
     await db.query(
       "INSERT INTO collaboration_personal(account_id,entry_key,project_id,alias) VALUES($1,$2,$3,'seminar')",
       [account, "collaboration-test", randomUUID()],
+    );
+    await expect(
+      assertNoPersonalStateForRehome(db, account),
+    ).resolves.toBeUndefined();
+  });
+
+  test("native Library state still blocks rehome alongside portable collaboration state", async () => {
+    const account = randomUUID();
+    await db.query(
+      "INSERT INTO collaboration_artifact_bindings(account_id,entry_key,project_id,entry_id) VALUES($1,'binding',$2,'entry')",
+      [account, randomUUID()],
+    );
+    await expect(
+      assertNoPersonalStateForRehome(db, account),
+    ).resolves.toBeUndefined();
+    await db.query(
+      "INSERT INTO personal_library_controls(account_id) VALUES($1)",
+      [account],
     );
     await expect(assertNoPersonalStateForRehome(db, account)).rejects.toThrow(
       "Account rehome is unavailable",

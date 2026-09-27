@@ -14,8 +14,6 @@ export const PERSONAL_AGENT_STATE_TABLES = [
   "personal_library_controls",
   "personal_library_aliases",
   "personal_library_pins",
-  "collaboration_personal",
-  "collaboration_artifact_bindings",
 ] as const;
 
 export const EXTERNAL_AGENT_STATE_TABLES = [
@@ -73,7 +71,7 @@ export async function assertNoPersonalStateForRehome(
       ).rows.length
     )
       throw new Error(
-        "Account rehome is unavailable while this account has personal agent names, networks, controls, proposals, collaboration preferences, or external-agent history. Personal state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
+        "Account rehome is unavailable while this account has personal agent names, networks, controls, proposals, personal-library state, or external-agent history. Personal state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
       );
   }
 }

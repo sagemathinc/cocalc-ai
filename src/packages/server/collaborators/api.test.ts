@@ -28,9 +28,27 @@ const seed = jest.fn();
 const ownedResource = jest.fn();
 const personal = jest.fn();
 const updatePersonal = jest.fn();
+const projects = jest.fn();
+const readPins = jest.fn();
+const pinsRevision = jest.fn();
+const setPin = jest.fn();
+const pinFence = jest.fn();
+jest.mock("@cocalc/backend/conat", () => ({ conat: () => "local-client" }));
+jest.mock("@cocalc/backend/collaborators/project-pins", () => ({
+  accountProjectPins: () => ({
+    read: readPins,
+    set: setPin,
+    revision: pinsRevision,
+  }),
+}));
+jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
+  withAccountRehomeWriteFence: (...args) => pinFence(...args),
+}));
 const remote = {
   listResources: jest.fn(),
   listPeople: jest.fn(),
+  listProjects: jest.fn(),
+  setProjectPinned: jest.fn(),
   getResource: jest.fn(),
   ownedResource: jest.fn(),
   roomForHost: jest.fn(),
@@ -81,6 +99,7 @@ jest.mock("@cocalc/database/postgres/collaborators-project-page", () => ({
 }));
 jest.mock("@cocalc/database/postgres/collaborators-discovery", () => ({
   listCollaborationResources: (...a) => list(...a),
+  listCollaborationProjects: (...a) => projects(...a),
 }));
 jest.mock("@cocalc/database/postgres/collaborators-projection", () => ({
   seedCollaborationProjectionJobs: (...a) => seed(...a),
@@ -120,12 +139,125 @@ beforeEach(() => {
   settings.mockResolvedValue({ collaborators_enabled: true });
   dbQuery.mockResolvedValue({ rows: [{ deleted: false, banned: false }] });
   list.mockResolvedValue({ items: [], coverage: "partial" });
+  readPins.mockResolvedValue([project_id]);
+  pinsRevision.mockResolvedValue("0");
+  projects.mockResolvedValue({ items: [{ project_id }], coverage: "partial" });
+  pinFence.mockImplementation(({ fn }) => fn({ query: dbQuery }));
   room.mockResolvedValue({
     project_id,
     room_id: randomUUID(),
     chat_path: "/home/user/.cocalc/collaborators.chat",
   });
   ingest.mockResolvedValue({ revision: 1, replayed: false });
+});
+
+test("project pin API routes only to the account home and forwards bounded filters", async () => {
+  home.mockResolvedValue({ home_bay_id: "elsewhere" });
+  await collaboratorsApi.listProjects({
+    account_id,
+    view: "pinned",
+    person_id: account_id,
+    search: "Geometry",
+    limit: 5,
+  });
+  expect(remote.listProjects).toHaveBeenCalledWith({
+    account_id,
+    view: "pinned",
+    person_id: account_id,
+    search: "Geometry",
+    limit: 5,
+    route: { bay_id: "elsewhere" },
+  });
+  await collaboratorsApi.setProjectPinned({
+    account_id,
+    project_id,
+    pinned: true,
+  });
+  expect(remote.setProjectPinned).toHaveBeenCalledWith({
+    account_id,
+    project_id,
+    pinned: true,
+    route: { bay_id: "elsewhere" },
+  });
+  expect(readPins).not.toHaveBeenCalled();
+  expect(setPin).not.toHaveBeenCalled();
+  expect(owner).not.toHaveBeenCalled();
+});
+
+test("local project list captures revision before favorites/page reads and supplies server-side pins", async () => {
+  await collaboratorsControl.listProjects({
+    account_id,
+    view: "pinned",
+    route: { bay_id: "home" },
+  });
+  const revisionCall = dbQuery.mock.calls.findIndex(([sql]) =>
+    sql.includes("AS revision"),
+  );
+  expect(revisionCall).toBeGreaterThanOrEqual(0);
+  expect(dbQuery.mock.invocationCallOrder[revisionCall]).toBeLessThan(
+    readPins.mock.invocationCallOrder[0],
+  );
+  expect(projects).toHaveBeenCalledWith(
+    expect.objectContaining({ account_id, view: "pinned" }),
+    [project_id],
+  );
+});
+
+test("project pin mutation is rehome-fenced, visibility-checked, and bumps account revision", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    pinned: true,
+    route: { bay_id: "home" },
+  };
+  await expect(collaboratorsControl.setProjectPinned(opts)).resolves.toEqual({
+    pinned: true,
+  });
+  expect(pinFence).toHaveBeenCalledWith(
+    expect.objectContaining({ account_id }),
+  );
+  expect(projects).toHaveBeenCalledWith({ account_id, project_id, limit: 1 });
+  expect(setPin).toHaveBeenCalledWith(project_id, true);
+  expect(
+    dbQuery.mock.calls.some(([sql]) =>
+      sql.includes("INSERT INTO collaboration_account_state"),
+    ),
+  ).toBe(true);
+  setPin.mockClear();
+  projects.mockResolvedValue({ items: [] });
+  await expect(collaboratorsControl.setProjectPinned(opts)).rejects.toThrow(
+    "not accessible",
+  );
+  expect(setPin).not.toHaveBeenCalled();
+  pinFence.mockRejectedValueOnce(Error("rehome frozen"));
+  await expect(collaboratorsControl.setProjectPinned(opts)).rejects.toThrow(
+    "rehome frozen",
+  );
+  expect(setPin).not.toHaveBeenCalled();
+});
+
+test("project pins fail closed for disabled, stale-home and malformed requests", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    pinned: true,
+    route: { bay_id: "home" },
+  };
+  settings.mockResolvedValueOnce({ collaborators_enabled: false });
+  await expect(collaboratorsApi.setProjectPinned(opts)).rejects.toThrow(
+    "not enabled",
+  );
+  await expect(
+    collaboratorsControl.setProjectPinned({
+      ...opts,
+      route: { bay_id: "old-home" },
+    }),
+  ).rejects.toThrow("stale");
+  await expect(
+    collaboratorsControl.setProjectPinned({ ...opts, pinned: 1 as any }),
+  ).rejects.toThrow("invalid");
+  expect(setPin).not.toHaveBeenCalled();
+  expect(pinFence).not.toHaveBeenCalled();
 });
 test("feature flag fails closed for human methods and host room use, but host journals may ingest", async () => {
   settings.mockResolvedValue({ collaborators_enabled: false });
@@ -362,6 +494,28 @@ test("point lookup goes from account home to resource owner, not the alias owner
     ...target,
     route,
   });
+});
+test("point lookup keeps identity migration metadata private to the account-home adapter", async () => {
+  const requested = { ...target, kind: "agent" as const };
+  const current = {
+    ...requested,
+    title: "shared agent",
+    agent_id: randomUUID(),
+    artifact_entry_ids: ["old-artifact-locator"],
+    agent_resource_ids: ["agent-thread:old"],
+    agent_catalog_resource_id: "agent-thread:old",
+  };
+  remote.ownedResource.mockResolvedValue(current);
+  personal.mockResolvedValue({ collected: true });
+  expect(
+    await collaboratorsApi.getResource({ account_id, ...requested }),
+  ).toEqual({
+    ...requested,
+    title: current.title,
+    agent_id: current.agent_id,
+    personal: { collected: true },
+  });
+  expect(personal).toHaveBeenCalledWith(account_id, current);
 });
 test("personal writes recheck owner authorization after mutation and never let aliases authorize", async () => {
   const current = { ...target, title: "shared" };

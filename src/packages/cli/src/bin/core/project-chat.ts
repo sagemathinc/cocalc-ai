@@ -27,7 +27,13 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
-import { prepareChatSend, submitChatSend } from "./project-chat-send";
+import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
+import {
+  prepareChatSend,
+  submitChatSend,
+  submitHumanChatOperation,
+  type HumanChatContext,
+} from "./project-chat-send";
 
 type ProjectIdentity = {
   project_id: string;
@@ -201,7 +207,6 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   ctx,
   projectIdentifier,
   chatPath,
-  ensureParentDir,
   cwd,
   fn,
 }: {
@@ -209,7 +214,6 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   ctx: Ctx;
   projectIdentifier?: string;
   chatPath: string;
-  ensureParentDir?: boolean;
   cwd?: string;
   fn: (args: {
     project: Project;
@@ -227,11 +231,6 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
     projectIdentifier,
     cwd,
   );
-  if (ensureParentDir) {
-    await client.fs({ project_id: project.project_id }).mkdir(dirname(path), {
-      recursive: true,
-    });
-  }
   const syncdb = await acquireChatSyncDB({
     client,
     project_id: project.project_id,
@@ -254,21 +253,45 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     threadId,
     prompt,
     guidance,
+    human,
+    requestId,
     cwd,
   }: {
     ctx: Ctx;
     projectIdentifier?: string;
-    path: string;
+    path?: string;
     threadId: string;
     prompt: string;
     guidance?: boolean;
+    human?: boolean;
+    requestId?: string;
     cwd?: string;
   }) {
+    if (human) {
+      if (guidance || path)
+        throw Error(
+          "--human uses the canonical room; --guidance and --path are not accepted",
+        );
+      const { project, client } = await deps.resolveProjectConatClient(
+        ctx,
+        projectIdentifier,
+        cwd,
+      );
+      return await submitHumanChatOperation({
+        ctx: ctx as HumanChatContext,
+        projectId: project.project_id,
+        client,
+        requestId: requestId ?? randomUUID(),
+        operation: { action: "send", threadId, text: prompt },
+      });
+    }
+    if (requestId)
+      throw Error("--request-id requires --human for project chat sends");
     return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
-      chatPath: path,
+      chatPath: path ?? "",
       cwd,
       fn: async ({ project, client, rows, syncdb }) => {
         const thread = getThreadConfigRecord(rows, threadId);
@@ -282,7 +305,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
           projectId: project.project_id,
           accountId: context.accountId,
           apiUrl: context.apiBaseUrl,
-          path,
+          path: path!,
           thread,
           rows,
           prompt,
@@ -428,27 +451,54 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     agentModel,
     agentMode,
     acpConfig,
+    human,
+    requestId,
     cwd,
   }: {
     ctx: Ctx;
     projectIdentifier?: string;
-    path: string;
+    path?: string;
     threadId?: string;
     name?: string;
     agentKind?: "acp" | "llm" | "none";
     agentModel?: string;
     agentMode?: "interactive" | "single_turn";
     acpConfig?: CodexSessionConfig;
+    human?: boolean;
+    requestId?: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
+    if (human) {
+      if (path || threadId || agentKind || agentModel || agentMode || acpConfig)
+        throw Error(
+          "--human creates in the canonical room; path, thread ID and agent options are not accepted",
+        );
+      const { project, client } = await deps.resolveProjectConatClient(
+        ctx,
+        projectIdentifier,
+        cwd,
+      );
+      return await submitHumanChatOperation({
+        ctx: ctx as HumanChatContext,
+        projectId: project.project_id,
+        client,
+        requestId: requestId ?? randomUUID(),
+        operation: { action: "createThread", title: name },
+      });
+    }
+    if (requestId)
+      throw Error("--request-id requires --human for thread creation");
     return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
-      chatPath: path,
-      ensureParentDir: true,
+      chatPath: path ?? "",
       cwd,
-      fn: async ({ project, rows, syncdb }) => {
+      fn: async ({ project, client, rows, syncdb }) => {
+        if (isHumanOnlyChat(rows))
+          throw Error(
+            "Project conversations are human-only; use project chat thread create --human.",
+          );
         const nextThreadId = `${threadId ?? ""}`.trim() || randomUUID();
         if (getThreadConfigRecord(rows, nextThreadId)) {
           throw new Error(`thread '${nextThreadId}' already exists`);
@@ -465,6 +515,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             : undefined),
           ...(acpConfig ? { acp_config: acpConfig } : undefined),
         });
+        // Chat SyncDB loads missing paths without creating them. Check the live
+        // room marker before any mkdir/config writes, then prepare disk saving.
+        await client
+          .fs({ project_id: project.project_id })
+          .mkdir(dirname(path!), {
+            recursive: true,
+          });
+        if (isHumanOnlyChat(chatRows(syncdb)))
+          throw Error(
+            "Project conversations are human-only; use project chat thread create --human.",
+          );
         syncdb.set(record);
         syncdb.commit();
         await syncdb.save();
@@ -561,6 +622,10 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             record: null,
           };
         }
+        if (isHumanOnlyChat(rows) || row.agent_kind === "none")
+          throw Error(
+            "Project conversations are human-only; agent automation is not available.",
+          );
         const response = (await humanChatAutomation(
           {
             project_id: project.project_id,

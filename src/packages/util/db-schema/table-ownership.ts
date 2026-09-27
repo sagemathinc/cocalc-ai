@@ -80,32 +80,32 @@ export const TABLE_OWNERSHIP = {
     {
       ownership: "project-owning",
       authority: "project_id",
-      portability: "unsupported",
+      portability: "portable",
       notes:
-        "Project-owned human room identity and fenced resource metadata. Rehome must explicitly migrate room pointers and source generations before enabling writes.",
+        "The project collaboration handoff transfers bounded hash-checked metadata pages under durable source fencing, atomically restores the canonical room and catalog, and renews destination generations and writer epochs.",
     },
   ),
   ...entries(["collaboration_memberships"], {
     ownership: "project-owning",
     authority: "project_id",
-    portability: "unsupported",
+    portability: "portable",
     secondary_reference_fields: {
       account_id:
         "Recipient membership cutover, issued only by the project owner.",
     },
     notes:
-      "Per-recipient membership epoch survives unrelated member edits but rotates on removal/rejoin. Rehome must migrate these fences with the catalog.",
+      "Per-recipient membership epochs survive the fenced catalog handoff with notification cutovers. Access leases are separately rebuilt from the destination owner.",
   }),
   ...entries(["collaboration_personal", "collaboration_artifact_bindings"], {
     ownership: "account-home",
     authority: "account_id",
-    portability: "unsupported",
+    portability: "portable",
     secondary_reference_fields: {
       project_id:
         "Project-owned resource identity; not an authorization grant.",
     },
     notes:
-      "Private optional names, collection and attention state. Requires explicit migration on account rehome; resource access remains project-owned.",
+      "Private names, collection, attention and Library compatibility bindings move via the fenced account collaboration handoff. Project membership and metadata leases are rebuilt, never copied as grants.",
   }),
   ...entries(["collaboration_access", "collaboration_index"], {
     ownership: "projection",
@@ -122,13 +122,13 @@ export const TABLE_OWNERSHIP = {
   ...entries(["collaboration_notification_cursors"], {
     ownership: "account-home",
     authority: "account_id",
-    portability: "unsupported",
+    portability: "portable",
     secondary_reference_fields: {
       project_id:
         "Recipient home owns delivery progress and no-history boundaries.",
     },
     notes:
-      "Durable notification delivery cursors and retry state require an explicit account rehome/dedup handoff; never silently rebuild and lose pending delivery.",
+      "The fenced account collaboration handoff transfers delivery cursors with notification dedup and pending outbox records; transient worker claims are reset.",
   }),
   ...entries(["collaboration_account_state"], {
     ownership: "projection",
@@ -916,6 +916,22 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     notes:
       "Bay-local source/destination handoff journal and fencing history. Each side retains its own durable operation state; the account's financial snapshot is transferred through this protocol rather than copying the coordinator journal.",
   }),
+  ...adHocEntries(
+    ["account_collaboration_handoffs", "account_collaboration_rehome_pages"],
+    {
+      ownership: "stable-bay",
+      authority: "local",
+      portability: "stable",
+      source: "account collaboration rehome coordinator bootstrap",
+      migrate_to_schema: true,
+      secondary_reference_fields: {
+        account_id:
+          "Account being moved; bay-local transfer receipts remain at each endpoint.",
+      },
+      notes:
+        "Immutable bounded snapshot pages and durable source/destination fences. Payloads are discarded after retirement/activation; hashes retain replay protection.",
+    },
+  ),
   ...adHocEntries(["course_funding_approval_intents"], {
     ownership: "account-home",
     authority: "payer_account_id",
@@ -1205,6 +1221,8 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "long_running_operations",
       "parallel_ops_limits",
       "project_rehome_operations",
+      "project_collaboration_rehome_transfers",
+      "project_collaboration_rehome_pages",
     ],
     {
       ownership: "stable-bay",

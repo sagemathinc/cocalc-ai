@@ -292,7 +292,7 @@ export function registerProjectChatCommands(
   chat
     .command("send")
     .description(
-      "send to an existing Codex thread; start a turn or queue behind active work",
+      "send to a Codex thread, or use --human for a canonical project conversation",
     )
     .argument(
       "[message...]",
@@ -305,6 +305,10 @@ export function registerProjectChatCommands(
     )
     .option("-w, --project <project>", "project id or name")
     .option(
+      "--human",
+      "send a human message in the canonical project room; never run an agent",
+    )
+    .option(
       "--to <name>",
       "exact personal agent name or selected @mention; uses scoped RPC",
     )
@@ -314,7 +318,7 @@ export function registerProjectChatCommands(
     )
     .option(
       "--request-id <uuid>",
-      "stable idempotency key for identity sends and receipt lookup",
+      "stable idempotency key for identity or --human sends; reuse on retry",
     )
     .option("--stdin", "read the message from standard input")
     .option(
@@ -344,11 +348,12 @@ export function registerProjectChatCommands(
       async (
         message: string[],
         opts: {
-          path: string;
+          path?: string;
           threadId: string;
           project?: string;
           stdin?: boolean;
           guidance?: boolean;
+          human?: boolean;
           toAgent?: string;
           to?: string;
           requestId?: string;
@@ -364,6 +369,41 @@ export function registerProjectChatCommands(
           throw new Error("use either message arguments or --stdin, not both");
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
+        if (opts.human) {
+          if (
+            opts.path ||
+            opts.guidance ||
+            opts.to ||
+            opts.toAgent ||
+            opts.rpc ||
+            opts.externalAgent ||
+            opts.agentNetwork ||
+            opts.attemptId ||
+            opts.attach?.length ||
+            process.env.COCALC_AGENT_IDENTITY_FILE
+          )
+            throw Error(
+              "--human requires account authentication and cannot be combined with --path, guidance, attachments or agent delivery options",
+            );
+          const threadId = normalizeThreadId(opts.threadId);
+          requireUuid(threadId, "thread-id");
+          const requestId = opts.requestId ?? randomUUID();
+          requireUuid(requestId, "request-id");
+          process.stderr.write(
+            `Human chat request ${requestId}; retry with the same --request-id and text if unconfirmed\n`,
+          );
+          await withContext(command, "project chat send", async (ctx) =>
+            projectChatSendData({
+              ctx,
+              projectIdentifier: opts.project,
+              threadId,
+              prompt,
+              human: true,
+              requestId,
+            }),
+          );
+          return;
+        }
         if (opts.rpc || opts.to || opts.externalAgent) {
           if (opts.guidance)
             throw new Error(
@@ -599,16 +639,28 @@ export function registerProjectChatCommands(
 
   thread
     .command("create")
-    .description("create a thread in a .chat document")
-    .requiredOption("--path <path>", "chat document path inside the project")
+    .description(
+      "create a thread in a .chat document, or --human in the canonical project room",
+    )
+    .option(
+      "--path <path>",
+      "chat document path inside the project (agent threads)",
+    )
+    .option(
+      "--human",
+      "create a human-only conversation in the canonical project room",
+    )
+    .option(
+      "--request-id <uuid>",
+      "stable --human creation key; reuse on retry",
+    )
     .option("-w, --project <project>", "project id or name")
     .option("--thread-id <id>", "explicit thread id (defaults to random uuid)")
     .option("--name <name>", "thread display name")
-    .option("--agent-kind <kind>", "agent kind (acp|llm|none)", "acp")
+    .option("--agent-kind <kind>", "agent kind (acp|llm|none); defaults to acp")
     .option(
       "--agent-mode <mode>",
-      "agent mode (interactive|single_turn)",
-      "interactive",
+      "agent mode (interactive|single_turn); defaults to interactive",
     )
     .option("--agent-model <model>", "agent model label shown in the UI")
     .option("--model <model>", "Codex model name for ACP threads")
@@ -629,8 +681,10 @@ export function registerProjectChatCommands(
     .action(
       async (
         opts: {
-          path: string;
+          path?: string;
           project?: string;
+          human?: boolean;
+          requestId?: string;
           threadId?: string;
           name?: string;
           agentKind?: "acp" | "llm" | "none";
@@ -645,12 +699,53 @@ export function registerProjectChatCommands(
         },
         command: Command,
       ) => {
+        if (opts.human) {
+          if (
+            opts.path ||
+            opts.threadId ||
+            opts.agentKind ||
+            opts.agentMode ||
+            opts.agentModel ||
+            opts.model ||
+            opts.reasoning ||
+            opts.serviceTier ||
+            opts.fast ||
+            opts.sessionMode ||
+            opts.workdir ||
+            process.env.COCALC_AGENT_IDENTITY_FILE
+          )
+            throw Error(
+              "--human requires account authentication and cannot be combined with --path, --thread-id or agent configuration options",
+            );
+          const requestId = opts.requestId ?? randomUUID();
+          requireUuid(requestId, "request-id");
+          process.stderr.write(
+            `Human conversation request ${requestId}; retry with the same --request-id if unconfirmed\n`,
+          );
+          await withContext(
+            command,
+            "project chat thread create",
+            async (ctx) =>
+              projectChatThreadCreateData({
+                ctx,
+                projectIdentifier: opts.project,
+                name: opts.name,
+                human: true,
+                requestId,
+              }),
+          );
+          return;
+        }
+        if (opts.requestId)
+          throw Error("--request-id requires --human for thread creation");
+        const path = normalizePath(opts.path);
+        const agentKind = opts.agentKind ?? "acp";
         await withContext(
           command,
           "project chat thread create",
           async (ctx) => {
             const acpConfig =
-              opts.agentKind === "acp"
+              agentKind === "acp"
                 ? buildCodexSessionConfig({
                     model: opts.model,
                     reasoning: opts.reasoning,
@@ -663,14 +758,14 @@ export function registerProjectChatCommands(
             return await projectChatThreadCreateData({
               ctx,
               projectIdentifier: opts.project,
-              path: normalizePath(opts.path),
+              path,
               threadId: opts.threadId,
               name: opts.name,
-              agentKind: opts.agentKind,
+              agentKind,
               agentModel:
                 opts.agentModel ??
-                (opts.agentKind === "acp" ? opts.model : undefined),
-              agentMode: opts.agentMode,
+                (agentKind === "acp" ? opts.model : undefined),
+              agentMode: opts.agentMode ?? "interactive",
               acpConfig,
             });
           },

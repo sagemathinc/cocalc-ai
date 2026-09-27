@@ -83,6 +83,10 @@ Table({
     ],
     pg_custom_indexes: [
       {
+        name: "collaboration_catalog_agent_references",
+        query: "USING GIN(agent_resource_ids)",
+      },
+      {
         name: "collaboration_catalog_title",
         query:
           "USING GIN(to_tsvector('simple',COALESCE(metadata->>'title',''))) WHERE deleted_at IS NULL",
@@ -108,6 +112,8 @@ Table({
     activity_floor: bigint,
     metadata: { type: "map" },
     artifact_entry_ids: { type: "array", pg_type: "TEXT[]" },
+    agent_resource_ids: { type: "array", pg_type: "TEXT[]" },
+    agent_source_activity: bigint,
     revision: bigint,
     activity: bigint,
     deleted_at: time,

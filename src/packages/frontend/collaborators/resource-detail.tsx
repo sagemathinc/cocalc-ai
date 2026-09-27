@@ -11,6 +11,7 @@ import { useDirectory } from "./use-directory";
 import { PersonalControls } from "./personal-controls";
 import { resolveCollaborationResource } from "./resource-query";
 import { participantSummary } from "./resource-list";
+import { ShareToConversationButton } from "./share-dialog";
 
 const HumanConversation = lazy(async () => ({
   default: (await import("./human-conversation")).HumanConversation,
@@ -109,6 +110,12 @@ export function ResourceDetail({
         api={api}
         resource={resource}
         onChange={onChange}
+      />
+      <ShareToConversationButton
+        key={`${accountId}:${collaborationTargetKey(resource)}`}
+        api={api}
+        accountId={accountId}
+        resource={resource}
       />
       {showSource ? (
         <>

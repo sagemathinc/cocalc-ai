@@ -18,6 +18,7 @@ const mockApi = {
   check: jest.fn(),
   listPeople: jest.fn(),
   listProjects: jest.fn(),
+  setProjectPinned: jest.fn(),
   listResources: jest.fn(),
   getResource: jest.fn(),
   setPersonalState: jest.fn(),
@@ -365,6 +366,133 @@ test("My collection includes agent and artifact shortcuts without changing follo
     ),
   );
   expect(mockApi.setPersonalState).not.toHaveBeenCalled();
+});
+
+test("project views bind server filters, reset cursors, and preserve view on detail back", async () => {
+  const user = userEvent.setup();
+  const project = {
+    project_id: "geometry",
+    title: "Geometry Lab",
+    description: "Research",
+    role: "owner",
+    pinned: true,
+  };
+  mockApi.listProjects.mockResolvedValue(page([project], { next: "page-two" }));
+  render(<Workspace initial={{ view: "projects" }} />);
+  await screen.findByRole("button", { name: /Geometry Lab Research/ });
+  const next = screen.getByRole("button", { name: "Next", exact: true });
+  next.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ view: "recent", after: "page-two", limit: 50 }),
+    ),
+  );
+  const pinned = screen.getByRole("button", { name: "Pinned projects" });
+  pinned.focus();
+  await user.keyboard("{Enter}");
+  expect(pinned).toHaveAttribute("aria-pressed", "true");
+  expect(pinned).toHaveFocus();
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ view: "pinned", after: undefined, limit: 50 }),
+    ),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Search projects" }),
+    "Geometry",
+  );
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ view: "pinned", search: "Geometry" }),
+    ),
+  );
+  const row = await screen.findByRole("button", {
+    name: /Geometry Lab Research/,
+  });
+  row.focus();
+  await user.keyboard("{Enter}");
+  const back = await screen.findByRole("button", { name: "Back to results" });
+  back.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(row).toHaveFocus());
+  expect(pinned).toHaveAttribute("aria-pressed", "true");
+  expect(mockApi.ensureRoom).not.toHaveBeenCalled();
+});
+
+test("keyboard pin and unpin refresh bounded results and restore focus after removal", async () => {
+  const user = userEvent.setup();
+  let pinned = false;
+  mockApi.listProjects.mockImplementation(async (opts) =>
+    page(
+      opts.view === "pinned" && !pinned
+        ? []
+        : [
+            {
+              project_id: "geometry",
+              title: "Geometry Lab",
+              description: "Research",
+              role: "owner",
+              pinned,
+            },
+          ],
+    ),
+  );
+  mockApi.setProjectPinned.mockImplementation(async (opts) => {
+    pinned = opts.pinned;
+    return { pinned };
+  });
+  render(<Workspace initial={{ view: "projects" }} />);
+  const pin = await screen.findByRole("button", {
+    name: "Pin project Geometry Lab",
+  });
+  pin.focus();
+  await user.keyboard("{Enter}");
+  const unpin = await screen.findByRole("button", {
+    name: "Unpin project Geometry Lab",
+  });
+  await waitFor(() => expect(unpin).toHaveFocus());
+  expect(mockApi.setProjectPinned).toHaveBeenCalledWith({
+    project_id: "geometry",
+    pinned: true,
+  });
+  await user.click(screen.getByRole("button", { name: "Pinned projects" }));
+  const remove = await screen.findByRole("button", {
+    name: "Unpin project Geometry Lab",
+  });
+  remove.focus();
+  await user.keyboard(" ");
+  await screen.findByText(/No pinned projects match/);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Collaborators results")).toHaveFocus(),
+  );
+  expect(mockApi.setPersonalState).not.toHaveBeenCalled();
+  expect(mockApi.ensureRoom).not.toHaveBeenCalled();
+});
+
+test("changed-favorites cursor errors offer a keyboard-operable restart without dropping filters", async () => {
+  const user = userEvent.setup();
+  mockApi.listProjects
+    .mockResolvedValueOnce(page([], { next: "obsolete" }))
+    .mockRejectedValueOnce(
+      Error("invalid collaboration cursor; restart paging"),
+    )
+    .mockResolvedValue(page([]));
+  render(<Workspace initial={{ view: "projects" }} />);
+  const next = await screen.findByRole("button", { name: "Next", exact: true });
+  next.focus();
+  await user.keyboard("{Enter}");
+  const restart = await screen.findByRole("button", {
+    name: "Restart results",
+  });
+  restart.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ view: "recent", after: undefined }),
+    ),
+  );
+  expect(screen.getByLabelText("Collaborators results")).toHaveFocus();
 });
 
 test("participant totals do not treat a bounded preview as the full audience", async () => {

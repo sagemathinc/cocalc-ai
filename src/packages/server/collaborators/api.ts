@@ -19,7 +19,13 @@ import { requestCollaborationSource } from "@cocalc/database/postgres/collaborat
 import { readCollaborationAccess } from "@cocalc/database/postgres/collaborators-access";
 import type { CollaborationAccessJob } from "@cocalc/database/postgres/collaborators-access";
 import getPool from "@cocalc/database/pool";
-import { checkCollaborationRevision } from "@cocalc/database/postgres/collaborators-changes";
+import { accountProjectPins } from "@cocalc/backend/collaborators/project-pins";
+import { conat } from "@cocalc/backend/conat";
+import { withAccountRehomeWriteFence } from "@cocalc/database/postgres/account-rehome-fence";
+import {
+  checkCollaborationRevision,
+  bumpCollaborationRevision,
+} from "@cocalc/database/postgres/collaborators-changes";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   uuid,
@@ -61,6 +67,10 @@ import {
 async function enabled() {
   if (!(await getServerSettings()).collaborators_enabled)
     throw Error("Collaborators is not enabled on this server");
+}
+async function accountRevision(account_id: string, since?: string) {
+  const pins = await accountProjectPins(conat(), account_id).revision();
+  return checkCollaborationRevision(account_id, since, pins);
 }
 function client(bay_id: string): InterBayCollaboratorsApi {
   return bay_id === getConfiguredBayId()
@@ -206,6 +216,12 @@ export const collaboratorsApi: CollaboratorsApi = {
       api.listProjects({ ...opts, route }),
     );
   },
+  setProjectPinned: async (opts) => {
+    await enabled();
+    return home(opts.account_id, (api, route) =>
+      api.setProjectPinned({ ...opts, route }),
+    );
+  },
   listResources: async (opts) => {
     await enabled();
     return home(opts.account_id, (api, route) =>
@@ -293,7 +309,7 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async listProjectResources(opts) {
     await checkHome(opts.account_id, opts.route);
-    const { revision } = await checkCollaborationRevision(opts.account_id!);
+    const { revision } = await accountRevision(opts.account_id!);
     const page = await owner(opts.project_id, (api, route) =>
       api.ownedProjectResources({ ...opts, route }),
     );
@@ -345,21 +361,46 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async check(opts) {
     await checkHome(opts.account_id, opts.route);
-    return checkCollaborationRevision(opts.account_id!, opts.since);
+    return accountRevision(opts.account_id!, opts.since);
   },
   async listPeople(opts) {
     await checkHome(opts.account_id, opts.route);
-    const { revision } = await checkCollaborationRevision(opts.account_id!);
+    const { revision } = await accountRevision(opts.account_id!);
     return { ...(await listCollaborationPeople(opts)), revision };
   },
   async listProjects(opts) {
     await checkHome(opts.account_id, opts.route);
-    const { revision } = await checkCollaborationRevision(opts.account_id!);
-    return { ...(await listCollaborationProjects(opts)), revision };
+    const { revision } = await accountRevision(opts.account_id!);
+    const pins = await accountProjectPins(conat(), opts.account_id!).read();
+    return { ...(await listCollaborationProjects(opts, pins)), revision };
+  },
+  async setProjectPinned(opts) {
+    await checkHome(opts.account_id, opts.route);
+    uuid(opts.project_id, "project_id");
+    if (typeof opts.pinned !== "boolean") throw Error("invalid project pin");
+    return withAccountRehomeWriteFence({
+      account_id: opts.account_id!,
+      action: "change project favorites",
+      fn: async (db) => {
+        await checkHome(opts.account_id, opts.route);
+        const page = await listCollaborationProjects({
+          account_id: opts.account_id,
+          project_id: opts.project_id,
+          limit: 1,
+        });
+        if (!page.items.length) throw Error("project is not accessible");
+        await accountProjectPins(conat(), opts.account_id!).set(
+          opts.project_id,
+          opts.pinned,
+        );
+        await bumpCollaborationRevision(db, opts.account_id!);
+        return { pinned: opts.pinned };
+      },
+    });
   },
   async listResources(opts) {
     await checkHome(opts.account_id, opts.route);
-    const { revision } = await checkCollaborationRevision(opts.account_id!);
+    const { revision } = await accountRevision(opts.account_id!);
     return { ...(await listCollaborationResources(opts)), revision };
   },
   async getResource(opts) {
@@ -368,7 +409,12 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       api.ownedResource({ ...opts, route }),
     );
     if (!current) return null;
-    const { artifact_entry_ids: _history, ...resource } = current;
+    const {
+      artifact_entry_ids: _history,
+      agent_resource_ids: _agents,
+      agent_catalog_resource_id: _catalog,
+      ...resource
+    } = current;
     return {
       ...resource,
       personal: await collaborationPersonalState(opts.account_id!, current),

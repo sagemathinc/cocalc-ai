@@ -13,6 +13,7 @@ import type {
   ProjectControlAddressRequest,
   ProjectControlAssignHostRequest,
   ProjectControlAcceptRehomeRequest,
+  ProjectControlCollaborationRehomeRequest,
   ProjectControlBackupRequest,
   ProjectControlClearEntitlementOverrideRequest,
   ProjectControlGetEntitlementOverrideRequest,
@@ -88,6 +89,7 @@ import { BACKUP_TIMEOUT_MS } from "@cocalc/server/projects/backup-lro";
 import { sleep } from "@cocalc/util/async-utils";
 import {
   acceptProjectRehome,
+  acceptProjectCollaborationRehome,
   rehomeProjectOnOwningBay,
 } from "@cocalc/server/projects/rehome";
 import { assertProjectNotHardDeleting } from "@cocalc/server/projects/hard-delete-state";
@@ -716,6 +718,12 @@ export async function handleProjectControlAcceptRehome(
   });
 }
 
+export async function handleProjectControlCollaborationRehome(
+  req: ProjectControlCollaborationRehomeRequest,
+) {
+  return acceptProjectCollaborationRehome(req);
+}
+
 export async function handleProjectControlActiveOperation(
   req: ProjectControlActiveOperationRequest,
 ) {
@@ -964,6 +972,15 @@ export async function dispatchProjectControlRpc(
   if (subject === acceptRehomeExpected) {
     return await handleProjectControlAcceptRehome(
       payload as ProjectControlAcceptRehomeRequest,
+    );
+  }
+  const collaborationRehomeExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "collaboration-rehome",
+  });
+  if (subject === collaborationRehomeExpected) {
+    return await handleProjectControlCollaborationRehome(
+      payload as ProjectControlCollaborationRehomeRequest,
     );
   }
   const activeOpExpected = projectControlSubject({

@@ -9,6 +9,7 @@ import {
   type CollaborationResource,
 } from "@cocalc/util/collaborators";
 import { uuidsha1 } from "@cocalc/util/misc";
+import { agentThreadResourceId } from "@cocalc/util/collaboration-agent-identity";
 import {
   COLLABORATION_MENTION_LIMIT,
   collaborationAccountId,
@@ -133,7 +134,7 @@ export function extractCollaborationMetadata(
         !!text(config?.agent_model) ||
         group.some((row) => !!row.acp_thread_id));
     const kind = agent ? "agent" : "conversation";
-    const resource_id = identity(agent ? `agent-thread:${id}` : id);
+    const resource_id = identity(agent ? agentThreadResourceId(id) : id);
     const participants = [
       ...new Set(
         group.map((row) => text(row.sender_id)).filter((id) => UUID.test(id)),

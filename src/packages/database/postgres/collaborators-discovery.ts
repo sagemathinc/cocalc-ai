@@ -20,6 +20,7 @@ import type {
   CollaborationPerson,
   CollaborationPersonalState,
   CollaborationProject,
+  CollaborationProjectQuery,
   CollaborationQuery,
   CollaborationResource,
   CollaborationResourceQuery,
@@ -121,14 +122,16 @@ export { query as collaborationPageQuery, next as collaborationNextCursor };
 async function coverage(
   account_id: string,
   project_id?: string,
+  project_ids?: string[],
 ): Promise<Pick<CollaborationPage<never>, "coverage" | "coverage_message">> {
   const result = await getPool().query(
     `SELECT EXISTS(SELECT 1 FROM account_project_index p
     LEFT JOIN collaboration_access x USING(account_id,project_id)
     WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.project_id=$2)
+    AND ($3::uuid[] IS NULL OR p.project_id=ANY($3::uuid[]))
     AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator')
     AND (x.generation IS NULL OR x.lease_until<=now() OR NOT x.complete OR x.last_error IS NOT NULL)) AS pending`,
-    [account_id, project_id ?? null],
+    [account_id, project_id ?? null, project_ids ?? null],
   );
   return result.rows[0].pending
     ? {
@@ -174,6 +177,7 @@ async function page<T>(
   map: (row: any) => T,
   order: (row: any) => number,
   key: (row: any) => string,
+  coverageProjects?: string[],
 ): Promise<CollaborationPage<T>> {
   const items: T[] = [];
   let bytes = 2048;
@@ -190,7 +194,7 @@ async function page<T>(
     ...(last && rows.length > items.length
       ? { next: next(opts.binding, order(last), key(last)) }
       : {}),
-    ...(await coverage(opts.account_id, opts.project_id)),
+    ...(await coverage(opts.account_id, opts.project_id, coverageProjects)),
   };
 }
 
@@ -304,19 +308,29 @@ export async function listCollaborationResources(
 }
 
 export async function listCollaborationProjects(
-  input: CollaborationQuery,
+  input: CollaborationProjectQuery,
+  pinnedProjects: string[] = [],
 ): Promise<CollaborationPage<CollaborationProject>> {
-  const q = query(input, "projects");
+  const view = input.view ?? "recent";
+  if (view !== "recent" && view !== "pinned")
+    throw Error("invalid project view");
+  if (pinnedProjects.length > 10_000)
+    throw Error("project favorites limit exceeded");
+  for (const id of pinnedProjects) uuid(id, "pinned project");
+  const pins = [...new Set(pinnedProjects)].sort();
+  const q = query(input, `projects:${view}:${hash(JSON.stringify(pins))}`);
   if (q.after) uuid(q.after.key, "project cursor");
   const { rows } = await getPool().query(
     `SELECT p.project_id,left(p.title,512) AS title,left(p.description,1024) AS description,
     p.users_summary #>> ARRAY[$1::text,'group'] AS role,
-    floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint AS activity
+    floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint AS activity,
+    p.project_id=ANY($8::uuid[]) AS pinned
     FROM collaboration_access x ${ACCESS} WHERE x.account_id=$1::uuid AND ${VISIBLE}
     AND ($2::uuid IS NULL OR p.project_id=$2)
     AND ($3::uuid IS NULL OR p.users_summary #>> ARRAY[$3::text,'group'] IN ('owner','collaborator'))
     AND ($4='' OR to_tsvector('simple',COALESCE(p.title,'')) @@ plainto_tsquery('simple',$4))
     AND ($5::bigint IS NULL OR (floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint,p.project_id)<($5,$6::uuid))
+    AND ($9::boolean IS FALSE OR p.project_id=ANY($8::uuid[]))
     ORDER BY activity DESC,p.project_id DESC LIMIT $7`,
     [
       q.account_id,
@@ -326,6 +340,8 @@ export async function listCollaborationProjects(
       q.after?.order ?? null,
       q.after?.key ?? null,
       q.limit + 1,
+      pins,
+      view === "pinned",
     ],
   );
   return page(
@@ -337,9 +353,11 @@ export async function listCollaborationProjects(
       description: row.description ?? "",
       role: row.role,
       last_activity_at: Number(row.activity),
+      pinned: !!row.pinned,
     }),
     (row) => Number(row.activity),
     (row) => row.project_id,
+    view === "pinned" ? pins : undefined,
   );
 }
 

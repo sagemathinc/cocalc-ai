@@ -9,6 +9,7 @@ export const {
   markRoomInitialized,
   listPeople,
   listProjects,
+  setProjectPinned,
   listResources,
   listProjectResources,
   checkpointPage,

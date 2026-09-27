@@ -144,6 +144,8 @@ test("fresh preparation precedes database locking and retries do not switch twic
     return { ok: true, successor_thread_id: successor };
   });
   query.mockImplementation(async (sql, params) => {
+    if (sql.includes("COALESCE(owning_bay_id,$2)=$2"))
+      return { rows: [{ project_id }] };
     if (sql.startsWith("SELECT * FROM agent_identities"))
       return { rows: [identity] };
     if (sql.startsWith("UPDATE agent_identities SET thread_id")) {

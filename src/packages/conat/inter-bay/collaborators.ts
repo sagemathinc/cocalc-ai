@@ -63,6 +63,10 @@ export interface CollaborationAccessGrant {
 /** Owner-only relocation lineage; never accepted from host snapshots or exposed publicly. */
 export interface CollaborationOwnedResource extends CollaborationResource {
   artifact_entry_ids?: string[];
+  /** Owner-verified old typed IDs; used only for personal-state migration. */
+  agent_resource_ids?: string[];
+  /** Stored key before canonical publication; point lookups echo the caller's typed ID. */
+  agent_catalog_resource_id?: string;
 }
 export type CollaborationProjectionPage =
   | { allowed: false }

@@ -30,6 +30,7 @@ export interface ReferencePickerProps {
   onSelect: (reference: CollaborationReference) => void;
   onClose: () => void;
   afterClose?: () => void;
+  focusTriggerAfterClose?: boolean;
   api?: ReferencePickerApi;
 }
 
@@ -38,6 +39,7 @@ export function ReferencePicker({
   open,
   onClose,
   afterClose,
+  focusTriggerAfterClose,
   intent = "insert",
   ...props
 }: ReferencePickerProps) {
@@ -53,6 +55,7 @@ export function ReferencePicker({
       }
       onCancel={onClose}
       afterClose={afterClose}
+      focusable={{ focusTriggerAfterClose: focusTriggerAfterClose ?? true }}
       afterOpenChange={(visible) => {
         if (visible) searchRef.current?.focus();
       }}
@@ -80,7 +83,6 @@ function ReferencePickerContents({
   accountId,
   searchRef,
   intent = "insert",
-  conversationTitle,
   api = referencePickerApi(),
 }: Omit<ReferencePickerProps, "open"> & {
   accountId?: string;
@@ -141,10 +143,9 @@ function ReferencePickerContents({
     <KeyboardBoundary boundary="collaboration-reference-picker">
       {intent === "share-artifact" ? (
         <p>
-          Share an original artifact in{" "}
-          {conversationTitle || "this conversation"}. Its reference will be
-          inserted into your draft; send the message when ready. This does not
-          publish a copy or grant access.
+          Choose an original artifact, then choose a destination human
+          conversation. Its reference will be added to that conversation's
+          draft, without sending. This does not publish a copy or grant access.
         </p>
       ) : (
         <p>

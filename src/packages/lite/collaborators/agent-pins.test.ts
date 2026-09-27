@@ -44,6 +44,14 @@ beforeEach(async () => {
     project_id,
     isEnabled: () => true,
     agentPins: liteAgentPins(account_id),
+    agentIdentities: () => [
+      {
+        agent_id,
+        project_id,
+        path: resource.chat_path,
+        thread_id: resource.thread_id,
+      },
+    ],
   });
   const { epoch } = await store.registerSource({
     project_id,
@@ -105,7 +113,7 @@ test("an external Agents pin change is reflected without manufacturing identitie
     (
       await store.api.listResources({ account_id, scope: "collected" })
     ).items.map((item) => item.resource_id),
-  ).toEqual([resource.resource_id]);
+  ).toEqual([agent_id]);
   await store.api.setPersonalState({
     ...resource,
     account_id,
@@ -117,7 +125,7 @@ test("an external Agents pin change is reflected without manufacturing identitie
     (
       await store.api.listResources({ account_id, scope: "collected" })
     ).items.map((item) => item.resource_id),
-  ).toEqual([resource.resource_id, "unnamed"]);
+  ).toEqual([agent_id, "unnamed"]);
   liteAgentPins(account_id).set(agent_id, false);
   expect(
     (

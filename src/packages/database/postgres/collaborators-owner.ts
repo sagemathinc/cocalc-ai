@@ -3,6 +3,13 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { agentReferenceIds } from "@cocalc/util/collaboration-agent-identity";
+import {
+  adaptCollaborationAgents,
+  normalizeOwnedCollaborationAgent,
+  saveCollaborationAgentBindings,
+  upsertCollaborationAgent,
+} from "./collaborators-agent-identity";
 import { assertProjectNotRehoming } from "./project-rehome-fence";
 import {
   appendCollaborationNotificationEvents,
@@ -10,7 +17,6 @@ import {
 } from "./collaborators-notifications";
 import type { PoolClient } from "@cocalc/database/pool";
 import type {
-  CollaborationResource,
   CollaborationSourceSnapshot,
   CollaborationTarget,
 } from "@cocalc/util/collaborators";
@@ -271,36 +277,27 @@ export async function ingestCollaborationSnapshot(
       return { revision: Number(current.revision), replayed: true };
     }
     await appendCollaborationNotificationEvents(db, snapshot, authority);
+    const { resources, bindings } = await adaptCollaborationAgents(
+      db,
+      snapshot,
+      snapshot.resources,
+    );
     const existing = (
       await db.query(
         `SELECT c.entry_key,c.source_id,c.metadata->>'agent_id' AS previous_agent_id,a.path AS agent_path
       FROM collaboration_catalog c LEFT JOIN agent_identities a ON a.agent_id::text=c.metadata->>'agent_id' AND a.disabled_at IS NULL
       WHERE c.entry_key=ANY($1::text[])`,
-        [snapshot.resources.map(entryKey)],
+        [resources.map(entryKey)],
       )
     ).rows;
     const previous = new Map(existing.map((row) => [row.entry_key, row]));
-    const identities = (
-      await db.query(
-        "SELECT agent_id,thread_id FROM agent_identities WHERE project_id=$1 AND path=$2 AND disabled_at IS NULL",
-        [snapshot.project_id, snapshot.chat_path],
-      )
-    ).rows;
-    const byThread = new Map(
-      identities.map((row) => [row.thread_id, row.agent_id]),
-    );
-    const resources = snapshot.resources.map((input): CollaborationResource => {
-      const { agent_id: _untrusted, ...resource } = input;
-      if (resource.kind !== "agent") return resource;
-      const old = previous.get(entryKey(resource));
-      if (old?.agent_path && old.agent_path !== snapshot.chat_path)
-        throw Error("agent endpoint moved; stale source metadata");
-      const agent_id = byThread.get(resource.thread_id);
-      return agent_id ? validateResource({ ...resource, agent_id }) : resource;
-    });
     const metadata_hash = hash(
       JSON.stringify([
         resources,
+        bindings.map(({ agent_resource_ids, agent_source_activity }) => [
+          agent_resource_ids,
+          agent_source_activity,
+        ]),
         snapshot.coverage ?? "complete",
         snapshot.coverage_message ?? "",
       ]),
@@ -377,9 +374,10 @@ export async function ingestCollaborationSnapshot(
         source_id=excluded.source_id,revision=excluded.revision,activity=excluded.activity,deleted_at=NULL`,
       [source_id, snapshot.project_id, revision, JSON.stringify(entries)],
     );
+    await saveCollaborationAgentBindings(db, bindings, revision);
     const size = (
       await db.query(
-        "SELECT count(*) AS n,COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)),0) AS bytes FROM collaboration_catalog WHERE project_id=$1",
+        "SELECT count(*) AS n,COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)+COALESCE(octet_length(agent_resource_ids::text),0)),0) AS bytes FROM collaboration_catalog WHERE project_id=$1",
         [snapshot.project_id],
       )
     ).rows[0];
@@ -633,7 +631,7 @@ export async function relocateCollaborationSource(
     );
     const size = (
       await db.query(
-        `SELECT COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)),0) AS bytes
+        `SELECT COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)+COALESCE(octet_length(agent_resource_ids::text),0)),0) AS bytes
       FROM collaboration_catalog WHERE project_id=$1`,
         [opts.project_id],
       )
@@ -725,15 +723,51 @@ export async function getOwnedCollaborationResource(
   validateTarget(target);
   return transaction(async (db) => {
     assertMember(await project(db, target.project_id, authority), account_id);
-    const row = (
+    const rows = (
       await db.query(
-        "SELECT metadata,artifact_entry_ids FROM collaboration_catalog WHERE entry_key=$1 AND deleted_at IS NULL",
-        [entryKey(target)],
+        `SELECT metadata,artifact_entry_ids,agent_resource_ids FROM collaboration_catalog
+        WHERE project_id=$2 AND deleted_at IS NULL AND (entry_key=$1 OR
+        ($3='agent' AND kind='agent' AND (agent_resource_ids @> ARRAY[$4::text]
+          OR metadata->>'agent_id'=$4))) ORDER BY (entry_key=$1) DESC LIMIT 2`,
+        [entryKey(target), target.project_id, target.kind, target.resource_id],
       )
-    ).rows[0];
+    ).rows;
+    if (rows.length > 1) throw Error("ambiguous collaboration reference");
+    const row = rows[0];
+    if (
+      row?.metadata.kind === "agent" &&
+      row.metadata.agent_id &&
+      !row.metadata.resource_id.startsWith("copy:")
+    ) {
+      const identity = (
+        await db.query(
+          "SELECT path,thread_id FROM agent_identities WHERE project_id=$1 AND agent_id::text=$2 AND disabled_at IS NULL",
+          [target.project_id, row.metadata.agent_id],
+        )
+      ).rows[0];
+      if (!identity) return null;
+      row.agent_catalog_resource_id = row.metadata.resource_id;
+      row.agent_resource_ids = agentReferenceIds(row.agent_resource_ids ?? []);
+      row.metadata = {
+        ...row.metadata,
+        chat_path: identity.path,
+        thread_id: identity.thread_id,
+        ...(row.metadata.thread_id !== identity.thread_id
+          ? { archived: false }
+          : {}),
+      };
+    }
     return row
       ? {
           ...row.metadata,
+          // Legacy callers compare the returned typed target to their authored target.
+          resource_id: target.resource_id,
+          ...(row.agent_catalog_resource_id
+            ? { agent_catalog_resource_id: row.agent_catalog_resource_id }
+            : {}),
+          ...(row.agent_resource_ids?.length
+            ? { agent_resource_ids: row.agent_resource_ids }
+            : {}),
           ...(row.artifact_entry_ids?.length
             ? { artifact_entry_ids: row.artifact_entry_ids }
             : {}),
@@ -765,7 +799,7 @@ export async function readCollaborationProjection(
     const revision = reset ? 0 : opts.revision;
     const after_key = reset ? "" : opts.after_key;
     const { rows } = await db.query(
-      `SELECT entry_key,metadata,revision,artifact_entry_ids FROM collaboration_catalog
+      `SELECT entry_key,metadata,revision,artifact_entry_ids,agent_resource_ids FROM collaboration_catalog
       WHERE project_id=$1 AND ${after_key ? "(revision,entry_key)>($2::bigint,$3::text)" : "revision>$2::bigint"}
       ORDER BY revision,entry_key LIMIT 51`,
       after_key
@@ -783,6 +817,9 @@ export async function readCollaborationProjection(
         resource: row.metadata
           ? {
               ...row.metadata,
+              ...(row.agent_resource_ids?.length
+                ? { agent_resource_ids: row.agent_resource_ids }
+                : {}),
               ...(row.artifact_entry_ids?.length
                 ? { artifact_entry_ids: row.artifact_entry_ids }
                 : {}),
@@ -827,7 +864,7 @@ export async function compactCollaborationProject(
   return transaction(async (db) => {
     await project(db, project_id, authority);
     const result = await db.query(
-      "DELETE FROM collaboration_catalog WHERE project_id=$1 AND deleted_at < now()-interval '7 days'",
+      "DELETE FROM collaboration_catalog WHERE project_id=$1 AND deleted_at < now()-interval '7 days' AND agent_resource_ids IS NULL",
       [project_id],
     );
     if (result.rowCount)
@@ -879,14 +916,17 @@ export async function reconcileCollaborationAgents(
   return transaction(async (db) => {
     await project(db, project_id, authority);
     const { rows } = await db.query(
-      `SELECT c.entry_key,c.source_id,c.metadata,a.agent_id,a.path,a.thread_id
+      `SELECT c.entry_key,c.source_id,c.metadata,c.agent_source_activity,a.agent_id,a.path,a.thread_id,a.conversation_history
       FROM collaboration_catalog c LEFT JOIN LATERAL (
-        SELECT agent_id,path,thread_id FROM agent_identities a WHERE a.project_id=c.project_id AND a.disabled_at IS NULL
+        SELECT agent_id,path,thread_id,conversation_history FROM agent_identities a WHERE a.project_id=c.project_id AND a.disabled_at IS NULL
         AND ((c.metadata ? 'agent_id' AND a.agent_id::text=c.metadata->>'agent_id')
-          OR (NOT(c.metadata ? 'agent_id') AND a.path=c.metadata->>'chat_path' AND a.thread_id=c.metadata->>'thread_id')) LIMIT 1
+          OR (NOT(c.metadata ? 'agent_id') AND c.metadata->>'resource_id' NOT LIKE 'copy:%'
+            AND a.path=c.metadata->>'chat_path' AND (a.thread_id=c.metadata->>'thread_id'
+              OR a.conversation_history @> jsonb_build_array(jsonb_build_object('thread_id',c.metadata->>'thread_id'))))) LIMIT 1
       ) a ON TRUE WHERE c.project_id=$1 AND c.kind='agent' AND c.deleted_at IS NULL
       AND (c.metadata->>'agent_id' IS DISTINCT FROM a.agent_id::text
-        OR (a.agent_id IS NOT NULL AND (c.metadata->>'chat_path' IS DISTINCT FROM a.path OR c.metadata->>'thread_id' IS DISTINCT FROM a.thread_id)))
+        OR (a.agent_id IS NOT NULL AND (c.resource_id IS DISTINCT FROM a.agent_id::text
+          OR c.metadata->>'chat_path' IS DISTINCT FROM a.path OR c.metadata->>'thread_id' IS DISTINCT FROM a.thread_id)))
       ORDER BY c.entry_key LIMIT 50`,
       [project_id],
     );
@@ -898,22 +938,53 @@ export async function reconcileCollaborationAgents(
       )
     ).rows[0].revision;
     for (const row of rows) {
-      const metadata = { ...row.metadata };
-      delete metadata.agent_id;
-      if (row.agent_id) {
-        metadata.agent_id = row.agent_id;
-        metadata.chat_path = row.path;
-        metadata.thread_id = row.thread_id;
+      if (!row.agent_id) {
+        await db.query(
+          "UPDATE collaboration_catalog SET metadata=NULL,deleted_at=now(),revision=$2 WHERE entry_key=$1",
+          [row.entry_key, revision],
+        );
+        continue;
       }
-      await db.query(
-        "UPDATE collaboration_catalog SET metadata=$2::jsonb,revision=$3 WHERE entry_key=$1",
-        [row.entry_key, JSON.stringify(validateResource(metadata)), revision],
+      const { bindings } = await adaptCollaborationAgents(
+        db,
+        { project_id, chat_path: row.path },
+        [
+          normalizeOwnedCollaborationAgent(
+            {
+              ...row.metadata,
+              chat_path: row.path,
+              activity:
+                row.metadata.resource_id === row.agent_id
+                  ? Number(row.agent_source_activity)
+                  : row.metadata.activity,
+            },
+            { ...row, project_id },
+          ),
+        ],
       );
+      for (const binding of bindings)
+        await upsertCollaborationAgent(
+          db,
+          binding,
+          row.source_id,
+          Number(revision),
+        );
     }
     await db.query(
       "UPDATE collaboration_sources SET metadata_hash=NULL WHERE source_id=ANY($1::text[])",
       [[...new Set(rows.map((row) => row.source_id))]],
     );
+    const size = (
+      await db.query(
+        "SELECT count(*) AS n,COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)+COALESCE(octet_length(agent_resource_ids::text),0)),0) AS bytes FROM collaboration_catalog WHERE project_id=$1",
+        [project_id],
+      )
+    ).rows[0];
+    if (
+      Number(size.n) > MAX_PROJECT_RESOURCES ||
+      Number(size.bytes) > 32 * 1024 * 1024
+    )
+      throw Error("collaboration project catalog quota exceeded");
     return rows.length;
   });
 }

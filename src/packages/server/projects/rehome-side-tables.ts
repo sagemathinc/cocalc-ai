@@ -30,21 +30,21 @@ export interface ProjectRehomeSqlSideTablePreflight {
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
   collaboration_memberships: {
     table: "collaboration_memberships",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Recipient membership epochs preserve notification cutovers across unrelated membership changes and require an explicit owner handoff.",
+      "The fenced collaboration handoff preserves recipient epochs and notification cutovers without copying access leases.",
   },
   collaboration_notification_events: {
     table: "collaboration_notification_events",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Immutable human-message facts and owner delivery positions require a coordinated handoff before the project owner changes.",
+      "Immutable human-message facts and project-local delivery positions transfer before ownership changes through hash-checked pages.",
   },
   collaboration_notification_floors: {
     table: "collaboration_notification_floors",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Notification replay floors must transfer with the owner's retained message events, never reset independently.",
+      "Notification replay floors transfer atomically with the owner's retained message events and recipient cutovers.",
   },
   collaboration_notification_cursors: {
     table: "collaboration_notification_cursors",
@@ -54,9 +54,9 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
   },
   collaboration_relocations: {
     table: "collaboration_relocations",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Stable relocation retry identities and source epoch transitions require an explicit owner handoff.",
+      "Stable relocation retry receipts transfer with catalog bindings; current writer epochs are renewed on activation.",
   },
   collaboration_artifact_bindings: {
     table: "collaboration_artifact_bindings",
@@ -66,33 +66,45 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
   },
   collaboration_projects: {
     table: "collaboration_projects",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Catalog generation and writer fencing require owner-coordinated handoff, not raw row copying.",
+      "The fenced handoff preserves catalog revision and rotates destination generation before rebuilding access projections.",
   },
   collaboration_sources: {
     table: "collaboration_sources",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Durable source sequence floors and writer epochs must be preserved and fenced during project rehome.",
+      "Source bindings transfer with renewed writer epochs and reset registration state; old source writers remain fenced.",
   },
   collaboration_source_requests: {
     table: "collaboration_source_requests",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Pending opt-in indexing requests must be reconciled with source catalog ownership during project rehome.",
+      "Pending opt-in indexing requests transfer with their authoritative source catalog.",
   },
   collaboration_catalog: {
     table: "collaboration_catalog",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Stable resource-to-locator bindings and tombstones require explicit destination reconciliation.",
+      "Stable resource identities, locator bindings, activity floors and tombstones are restored atomically from validated transfer pages.",
   },
   collaboration_rooms: {
     table: "collaboration_rooms",
-    status: "not-portable",
+    status: "portable",
     reason:
-      "Canonical human room registration must survive with the same identity and initialization lifecycle.",
+      "Canonical room identity, location and initialization lifecycle transfer unchanged; transfer never opens or creates a chat file.",
+  },
+  project_collaboration_rehome_pages: {
+    table: "project_collaboration_rehome_pages",
+    status: "operation-local",
+    reason:
+      "Immutable bounded transfer pages belong to their source or destination handoff receipt and are not recursively copied.",
+  },
+  project_collaboration_rehome_transfers: {
+    table: "project_collaboration_rehome_transfers",
+    status: "operation-local",
+    reason:
+      "Durable retry checkpoints and frozen/activated receipts remain on the bay that performed the handoff.",
   },
   collaboration_access: {
     table: "collaboration_access",

@@ -55,6 +55,8 @@ export interface CollaborationProject {
   description: string;
   role: "owner" | "collaborator";
   last_activity_at?: number;
+  /** Existing account project bookmark; never an access grant. */
+  pinned?: boolean;
 }
 
 export interface CollaborationQuery {
@@ -64,6 +66,11 @@ export interface CollaborationQuery {
   search?: string;
   after?: string;
   limit?: number;
+}
+
+export interface CollaborationProjectQuery extends CollaborationQuery {
+  /** Both views use descending project activity and keyset pagination. */
+  view?: "recent" | "pinned";
 }
 
 export interface CollaborationResourceQuery extends CollaborationQuery {

@@ -3,9 +3,13 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { ReactNode } from "react";
-import type { CollaborationResourceKind } from "@cocalc/util/collaborators";
+import type {
+  CollaborationResourceKind,
+  CollaborationProjectQuery,
+} from "@cocalc/util/collaborators";
 
 export type CollaboratorsView = "conversations" | "people" | "projects";
+export type ProjectView = NonNullable<CollaborationProjectQuery["view"]>;
 
 export interface CollaboratorsRoute {
   view: CollaboratorsView;

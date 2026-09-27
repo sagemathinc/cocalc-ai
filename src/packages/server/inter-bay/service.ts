@@ -55,6 +55,7 @@ import {
   createInterBayProjectControlHandler,
   createInterBayProjectControlCreateHandler,
   createInterBayProjectControlAcceptRehomeHandler,
+  createInterBayProjectControlCollaborationRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
   createInterBayProjectControlAssignHostHandler,
   createInterBayProjectControlMoveHandler,
@@ -394,6 +395,7 @@ import {
   handleProjectControlCheckStartAdmission,
   handleProjectControlClearEntitlementOverride,
   handleProjectControlAcceptRehome,
+  handleProjectControlCollaborationRehome,
   handleProjectControlGetEntitlementOverride,
   handleProjectControlGetRootfsStates,
   handleProjectControlHardDeleteStatus,
@@ -2324,6 +2326,8 @@ async function startProjectControlStartService(): Promise<void> {
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
     acceptRehome: async (opts) => await handleProjectControlAcceptRehome(opts),
+    collaborationRehome: async (opts) =>
+      await handleProjectControlCollaborationRehome(opts),
     activeOp: async (opts) => await handleProjectControlActiveOperation(opts),
     getProjectEntitlementOverride: async (opts) =>
       await handleProjectControlGetEntitlementOverride(opts),
@@ -2423,6 +2427,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlAcceptRehomeHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlCollaborationRehomeHandler({
       client,
       bay_id,
       parallel: true,

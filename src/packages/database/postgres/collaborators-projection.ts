@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { moveCollaborationAgentPersonalState } from "./collaborators-agent-personal";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,
@@ -222,16 +223,22 @@ export async function applyCollaborationProjection(
           title: resource.title,
           initial_activity,
           artifact_entry_ids: item.resource.artifact_entry_ids,
+          agent_resource_ids: item.resource.agent_resource_ids,
         },
       ];
     });
-    for (const entry of entries)
+    for (const entry of entries) {
+      await moveCollaborationAgentPersonalState(db, job.account_id, {
+        ...entry.metadata,
+        agent_resource_ids: entry.agent_resource_ids,
+      });
       await moveCollaborationArtifactPersonalState(
         db,
         job.account_id,
         { ...entry.metadata, artifact_entry_ids: entry.artifact_entry_ids },
         entry.entry_key,
       );
+    }
     if (entries.length)
       await db.query(
         `INSERT INTO collaboration_index(account_id,entry_key,project_id,generation,kind,activity,metadata,created_by,participant_ids,search_text)

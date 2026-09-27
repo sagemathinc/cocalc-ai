@@ -24,6 +24,7 @@ import {
 } from "./use-directory-revision";
 import { useDirectory, useDirectorySearch } from "./use-directory";
 import { DirectoryResults } from "./directory-results";
+import { ProjectList, ProjectViewControls } from "./project-pins";
 import { DirectoryPicker } from "./directory-picker";
 import { ResourceList } from "./resource-list";
 import { Overview } from "./overview";
@@ -34,6 +35,7 @@ import type {
   CollaboratorsPageProps,
   CollaboratorsRoute,
   CollaboratorsView,
+  ProjectView,
 } from "./workspace-types";
 import "./page.css";
 
@@ -139,6 +141,9 @@ function CollaboratorsWorkspace({
   const search = useDirectorySearch(input);
   const [scope, setScope] =
     useState<CollaborationResourceQuery["scope"]>("for-you");
+  const [projectView, setProjectView] = useState<ProjectView>("recent");
+  const [pinRevision, setPinRevision] = useState(0);
+  const pinFocus = useRef<string | undefined>(undefined);
   const [picker, setPicker] = useState<
     "project" | "person" | "invite" | "conversation"
   >();
@@ -180,6 +185,8 @@ function CollaboratorsWorkspace({
     listProjectId,
     listPersonId,
     scope,
+    projectView,
+    pinRevision,
   ]);
   const result = useDirectory<
     CollaborationResource | CollaborationPerson | CollaborationProject
@@ -194,7 +201,8 @@ function CollaboratorsWorkspace({
         limit: 50,
       };
       if (view === "people") return api.listPeople(opts);
-      if (view === "projects") return api.listProjects(opts);
+      if (view === "projects")
+        return api.listProjects({ ...opts, view: projectView });
       return api.listResources({
         ...opts,
         kind: scope === "collected" ? undefined : "conversation",
@@ -207,6 +215,20 @@ function CollaboratorsWorkspace({
   useEffect(() => {
     if (selection && active) detailRef.current?.focus();
   }, [selection, active]);
+
+  useEffect(() => {
+    if (!pinFocus.current || result.loading || !active || selection) return;
+    if (view !== "projects") {
+      pinFocus.current = undefined;
+      return;
+    }
+    const button = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>("[data-project-pin]") ??
+        [],
+    ).find((item) => item.dataset.projectPin === pinFocus.current);
+    (button ?? listRef.current)?.focus({ preventScroll: true });
+    pinFocus.current = undefined;
+  }, [result.loading, result.page, active, selection, view]);
 
   function navigate(next: CollaboratorsRoute, event?: MouseEvent<HTMLElement>) {
     if (event) trigger.current = event.currentTarget;
@@ -328,6 +350,9 @@ function CollaboratorsWorkspace({
           <Button onClick={() => setCreateProject(true)}>Create project</Button>
         </div>
         <div className="collaborators-list-controls">
+          {view === "projects" && (
+            <ProjectViewControls view={projectView} onChange={setProjectView} />
+          )}
           <label htmlFor={searchId}>Search {view}</label>
           <Input
             id={searchId}
@@ -438,12 +463,22 @@ function CollaboratorsWorkspace({
         >
           <DirectoryResults
             result={result}
+            onRestart={
+              view === "projects"
+                ? () => {
+                    listRef.current?.focus();
+                    setPinRevision((value) => value + 1);
+                  }
+                : undefined
+            }
             label={VIEWS.find(([key]) => key === view)![1]}
             empty={
               view === "people"
                 ? "No collaborators match this scope. Invite someone to an existing project or create a project to work together."
                 : view === "projects"
-                  ? "No accessible projects match. Create a project or clear your filters."
+                  ? projectView === "pinned"
+                    ? "No pinned projects match. Pin a project from Recent projects or clear your filters."
+                    : "No accessible projects match. Create a project or clear your filters."
                   : "No indexed conversations match. Start a discussion in a project, or try All accessible."
             }
           >
@@ -452,6 +487,31 @@ function CollaboratorsWorkspace({
                 <ResourceList
                   items={items as CollaborationResource[]}
                   onOpen={openResource}
+                />
+              ) : view === "projects" ? (
+                <ProjectList
+                  items={items as CollaborationProject[]}
+                  api={api}
+                  onOpen={(project, event) =>
+                    navigate(
+                      {
+                        view: "projects",
+                        projectId: project.project_id,
+                        personId,
+                      },
+                      event,
+                    )
+                  }
+                  onPinChange={(id) => {
+                    pinFocus.current =
+                      document.activeElement?.getAttribute(
+                        "data-project-pin",
+                      ) === id
+                        ? id
+                        : undefined;
+                    // Restart at page one: the favorite-set-bound cursor is now stale.
+                    setPinRevision((value) => value + 1);
+                  }}
                 />
               ) : (
                 <ul className="collaborators-list">
@@ -477,34 +537,6 @@ function CollaboratorsWorkspace({
                           </span>
                           <span>
                             {item.common_project_count} shared projects
-                          </span>
-                        </Button>
-                      </li>
-                    ) : "description" in item ? (
-                      <li key={item.project_id}>
-                        <Button
-                          type="text"
-                          className="collaborators-row"
-                          onClick={(event) =>
-                            navigate(
-                              {
-                                view: "projects",
-                                projectId: item.project_id,
-                                personId,
-                              },
-                              event,
-                            )
-                          }
-                        >
-                          <span className="collaborators-row-title">
-                            {item.title || "Untitled project"}
-                          </span>
-                          <span>{item.description}</span>
-                          <span>
-                            {item.role === "owner" ? "Owner" : "Collaborator"}
-                            {item.last_activity_at
-                              ? ` · Active ${new Date(item.last_activity_at).toLocaleDateString()}`
-                              : ""}
                           </span>
                         </Button>
                       </li>

@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import { reconcileCollaborationAgentPersonalState } from "./collaborators-agent-personal";
 import type {
   CollaborationPage,
   CollaborationResource,
@@ -82,7 +83,7 @@ export async function readCollaborationProjectPage(
         `(c.activity,c.entry_key)<(${param(q.after.order)}::bigint,${param(q.after.key)}::text)`,
       );
     const { rows } = await db.query(
-      `SELECT c.entry_key,c.activity,c.metadata,c.artifact_entry_ids,left(p.title,128) AS project_title
+      `SELECT c.entry_key,c.activity,c.metadata,c.artifact_entry_ids,c.agent_resource_ids,left(p.title,128) AS project_title
       FROM collaboration_catalog c JOIN projects p USING(project_id) WHERE ${where.join(" AND ")}
       ORDER BY c.activity DESC,c.entry_key DESC LIMIT ${param(q.limit + 1)}`,
       values,
@@ -92,6 +93,9 @@ export async function readCollaborationProjectPage(
     for (const row of rows.slice(0, q.limit)) {
       const item = {
         ...row.metadata,
+        ...(row.agent_resource_ids?.length
+          ? { agent_resource_ids: row.agent_resource_ids }
+          : {}),
         project_title: row.project_title,
         ...(row.artifact_entry_ids?.length
           ? { artifact_entry_ids: row.artifact_entry_ids }
@@ -134,6 +138,7 @@ export async function overlayCollaborationProjectPage(
     throw Error("project page limit exceeded");
   if (!page.items.length) return page;
   await reconcileCollaborationArtifactPersonalState(account_id, page.items);
+  await reconcileCollaborationAgentPersonalState(account_id, page.items);
   const pins = await collaborationAgentPins(account_id);
   const { rows } = await getPool().query(
     `WITH r AS (
@@ -157,27 +162,33 @@ export async function overlayCollaborationProjectPage(
   const states = new Map(rows.map((row) => [row.entry_key, row]));
   return {
     ...page,
-    items: page.items.map(({ artifact_entry_ids: _history, ...item }) => {
-      const row = states.get(entryKey(item));
-      const personal = {
-        ...(row?.alias ? { alias: row.alias } : {}),
-        collected: !!row?.collected,
-        following: !!row?.following,
-        muted: !!row?.muted,
-        read_through: Number(row?.read_through ?? 0),
-      };
-      return {
-        ...item,
-        personal,
-        ...(Number(row?.last_mention ?? 0) >
-        Math.max(personal.read_through, Number(row?.notify_after ?? 0))
-          ? { reason: "mention" as const }
-          : personal.following
-            ? { reason: "following" as const }
-            : item.participant_ids.includes(account_id)
-              ? { reason: "participation" as const }
-              : {}),
-      };
-    }),
+    items: page.items.map(
+      ({
+        artifact_entry_ids: _history,
+        agent_resource_ids: _agents,
+        ...item
+      }) => {
+        const row = states.get(entryKey(item));
+        const personal = {
+          ...(row?.alias ? { alias: row.alias } : {}),
+          collected: !!row?.collected,
+          following: !!row?.following,
+          muted: !!row?.muted,
+          read_through: Number(row?.read_through ?? 0),
+        };
+        return {
+          ...item,
+          personal,
+          ...(Number(row?.last_mention ?? 0) >
+          Math.max(personal.read_through, Number(row?.notify_after ?? 0))
+            ? { reason: "mention" as const }
+            : personal.following
+              ? { reason: "following" as const }
+              : item.participant_ids.includes(account_id)
+                ? { reason: "participation" as const }
+                : {}),
+        };
+      },
+    ),
   };
 }

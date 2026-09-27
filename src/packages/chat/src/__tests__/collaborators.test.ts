@@ -75,6 +75,34 @@ test("ordering, path and metadata changes preserve native identities and activit
   ).toBe(before.resources.find((r) => r.resource_id === "human")!.updated_at);
 });
 
+test("extraction never treats copied or authored agent IDs/names as an enrolled identity", () => {
+  const asserted = rows.map((row) => ({
+    ...row,
+    agent_id: account,
+    name: "Named agent",
+  }));
+  const original = extractCollaborationMetadata(asserted, source);
+  expect(original.resources.find((r) => r.kind === "agent")).toMatchObject({
+    resource_id: "agent-thread:agent",
+  });
+  expect(original.resources.every((r) => r.agent_id === undefined)).toBe(true);
+  const copy = extractCollaborationMetadata(
+    [
+      ...asserted,
+      {
+        event: "collaborators-identity",
+        identity_namespace: account,
+        schema_version: 1,
+      },
+    ],
+    source,
+  );
+  expect(copy.resources.find((r) => r.kind === "agent")?.resource_id).toMatch(
+    /^copy:/,
+  );
+  expect(copy.resources.every((r) => r.agent_id === undefined)).toBe(true);
+});
+
 test("unknown legacy identities and duplicate metadata fail the whole snapshot", () => {
   expect(() =>
     extractCollaborationMetadata(

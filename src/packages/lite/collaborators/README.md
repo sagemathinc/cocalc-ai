@@ -64,6 +64,16 @@ Agent collection uses the existing local account's pinned-agent preference.
 Unnamed threads without a global agent identity keep their typed-target shortcut
 locally; collection never invents or enrolls an execution identity.
 
+Project pins reuse the existing account-scoped Conat `bookmarks/projects` key.
+The factory uses its configured `client`; a metadata-only store can instead
+receive a `projectPins` adapter with `read`, `set`, and `revision` methods.
+`listProjects({view: "recent" | "pinned"})` filters the local project without
+creating rooms. `setProjectPinned` changes only this local account's favorite,
+never project membership. Pin writes are compare-and-set against the existing
+key, and polling uses its store's metadata inventory sequence so edits through
+the original project favorites UI invalidate results too. Favorite arrays over
+10,000 entries fail explicitly rather than returning truncated/empty success.
+
 Publish only `.api`, never the store instance. All human methods require the
 local authenticated account and a current `isEnabled()` result of exactly true.
 The hub's existing auth transform must bind the account from the principal,
@@ -130,7 +140,7 @@ retain the last valid metadata and retry through the durable source journal.
 
 ## Query And Persistence Semantics
 
-- Reads query SQLite only. They never scan directories, open source chats, start
+- Reads query SQLite and existing personal stores. They never scan directories, open source chats, start
   compute or start a producer. The background worker discovers from the existing
   service-side source index and its own journal, in pages of at most 100 sources.
 - Metadata search uses SQLite FTS5 literal token prefixes over titles and this
@@ -143,7 +153,7 @@ retain the last valid metadata and retry through the durable source journal.
   the response revision is captured before its query. `check({account_id,since})`
   returns an opaque account/project-bound token expiring within 30 seconds,
   `reset` on change/expiry/malformed input, and a 5-second poll hint. Polling also
-  observes changes made through the original Library and agent-pin UIs. This is
+  observes changes made through the original Library, agent-pin and project-favorites UIs. This is
   bounded revision polling, not an event feed.
 - Source replacement validates the whole bounded payload before committing.
   Epoch/sequence floors fence delayed writes; same-sequence different content

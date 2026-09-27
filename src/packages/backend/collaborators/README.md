@@ -128,11 +128,25 @@ successful disk write whose acknowledgement was lost.
 
 ## Identity and lifecycle handoffs
 
-Thread resource IDs use durable native thread IDs. Unnamed agents are discoverable
+Thread resource IDs use durable native thread IDs. Extraction emits unnamed agents
 as `agent-thread:<thread_id>` with no `agent_id`: discovery never registers,
-enrolls, forks, or invokes an agent. A canonical agent-identity adapter is still
-needed, especially for identities with successor conversations. Artifact IDs
-hash the native thread/artifact ID pair to a bounded UUID; existing viewer `entry_id` is the catalog's
+enrolls, forks, or invokes an agent. The owner matches these source IDs against
+the existing agent registry and its verified conversation history, using the
+registered agent UUID as the canonical resource ID. Its catalog retains bounded
+`agent_resource_ids` compatibility bindings (also on deleted rows) and
+`agent_source_activity` for monotone activity across successor conversations.
+Rehome must transfer both fields. Legacy point lookups echo the requested target
+while resolving the current registered endpoint; personal-state migration runs
+at the account home. Writer recovery checkpoints retain the native current-thread
+ID and its raw activity counter, not the canonical agent's accumulated activity.
+Lineage is limited to 1,001 IDs / 64 KiB per agent; overflow or conflicting claims
+fail closed rather than rebinding old references.
+
+Lite uses the same adapter through a read-only `agentIdentities` provider. The
+standalone runtime has no existing enrollment registry to supply it: those
+sessions keep native thread IDs, and discovery does not create a registry or
+enroll them. Copy-namespace IDs never join either adapter. Artifact IDs hash the
+native thread/artifact ID pair to a bounded UUID; existing viewer `entry_id` is the catalog's
 SHA-256 locator key. Creator attribution is omitted when the source does not know
 it; thread creators are not assumed to be artifact publishers.
 

@@ -65,8 +65,11 @@ export async function collaborationCheckpointPage(
       }
     }
     const { rows } = await db.query(
-      `SELECT entry_key,kind,COALESCE(resource_id,metadata->>'resource_id') AS resource_id,
-      GREATEST(activity_floor,(metadata->>'activity')::bigint) AS activity
+      `SELECT entry_key,kind,
+      CASE WHEN kind='agent' AND metadata->>'agent_id'=resource_id
+        THEN 'agent-thread:' || (metadata->>'thread_id') ELSE COALESCE(resource_id,metadata->>'resource_id') END AS resource_id,
+      CASE WHEN kind='agent' AND metadata->>'agent_id'=resource_id THEN agent_source_activity
+        ELSE GREATEST(activity_floor,(metadata->>'activity')::bigint) END AS activity
       FROM collaboration_catalog WHERE source_id=$1 AND entry_key>$2
       AND COALESCE(resource_id,metadata->>'resource_id') IS NOT NULL ORDER BY entry_key LIMIT 51`,
       [source_id, key],

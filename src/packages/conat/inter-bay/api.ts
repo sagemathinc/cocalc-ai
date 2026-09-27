@@ -8,6 +8,11 @@ import type {
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type {
+  ProjectCollaborationRehomeHeader,
+  ProjectCollaborationRehomePage,
+  ProjectCollaborationRehomeAck,
+} from "@cocalc/util/project-collaboration-rehome";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
 import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
 import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
@@ -509,6 +514,15 @@ export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
 }
 
+export type ProjectControlCollaborationRehomeRequest = {
+  header: ProjectCollaborationRehomeHeader;
+} & (
+  | { action: "prepare" }
+  | { action: "page"; page: ProjectCollaborationRehomePage }
+  | { action: "activate"; project: Record<string, unknown> }
+  | { action: "log"; project_log: ProjectLogRow[] }
+);
+
 export interface ProjectControlRehomeResponse {
   op_id?: string;
   project_id: string;
@@ -980,6 +994,27 @@ export interface AccountRehomeAcceptRequest {
   dest_bay_id: string;
   account: Record<string, unknown>;
   financial_handoff?: AccountFinancialHandoff;
+  collaboration_handoff?: AccountCollaborationHandoff;
+}
+
+/** Immutable, account-fenced collaboration snapshot. Pages travel separately. */
+export interface AccountCollaborationHandoff {
+  version: 1;
+  op_id: string;
+  account_id: string;
+  source_bay_id: string;
+  dest_bay_id: string;
+  page_count: number;
+  row_count: number;
+  byte_count: number;
+  snapshot_hash: string;
+  notifications: boolean;
+}
+
+export interface AccountCollaborationPage {
+  page: number;
+  body: string;
+  hash: string;
 }
 
 export interface AccountPersistFileV1 {
@@ -995,6 +1030,10 @@ export interface AccountRehomeStateCopyRequest {
   source_bay_id: string;
   dest_bay_id: string;
   financial_handoff?: AccountFinancialHandoff;
+  collaboration_handoff?: AccountCollaborationHandoff;
+  // Page and activation requests do not run the legacy portable-state copy.
+  collaboration_page?: AccountCollaborationPage;
+  collaboration_activate?: boolean;
   account_persist_files?: AccountPersistFileV1[];
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
@@ -2079,6 +2118,7 @@ export type AccountRehomeOperationStage =
 export type AccountRehomeOperationStatus = "running" | "succeeded" | "failed";
 
 export interface AccountRehomeOperationSummary {
+  collaboration_handoff?: AccountCollaborationHandoff;
   op_id: string;
   account_id: string;
   source_bay_id: string;
@@ -2775,6 +2815,7 @@ export type ProjectControlMethod =
   | "move"
   | "rehome"
   | "accept-rehome"
+  | "collaboration-rehome"
   | "active-op"
   | "get-project-entitlement-override"
   | "set-project-entitlement-override"
@@ -3339,6 +3380,9 @@ export interface InterBayProjectControlApi {
   acceptRehome: (
     opts: ProjectControlAcceptRehomeRequest,
   ) => Promise<ProjectControlRehomeResponse>;
+  collaborationRehome: (
+    opts: ProjectControlCollaborationRehomeRequest,
+  ) => Promise<ProjectCollaborationRehomeAck>;
   activeOp: (
     opts: ProjectControlActiveOperationRequest,
   ) => Promise<ProjectActiveOperationSummary | null>;
@@ -6157,6 +6201,15 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "accept-rehome" }),
   });
+  const collaborationRehomeClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "collaborationRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "collaboration-rehome",
+    }),
+  });
   const activeOpClient = createServiceClient<
     Pick<InterBayProjectControlApi, "activeOp">
   >({
@@ -6213,6 +6266,8 @@ export function createInterBayProjectControlClient({
     move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
+    collaborationRehome: async (opts) =>
+      await collaborationRehomeClient.collaborationRehome(opts),
     activeOp: async (opts) => await activeOpClient.activeOp(opts),
     getProjectEntitlementOverride: async (opts) =>
       await getProjectEntitlementOverrideClient.getProjectEntitlementOverride(
@@ -13570,6 +13625,29 @@ export function createInterBayProjectControlAcceptRehomeHandler({
     }),
     impl: {
       acceptRehome: async (opts) => await impl.acceptRehome(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlCollaborationRehomeHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "collaborationRehome">
+  >({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "collaboration-rehome",
+    }),
+    impl: {
+      collaborationRehome: async (opts) => await impl.collaborationRehome(opts),
     },
   });
 }

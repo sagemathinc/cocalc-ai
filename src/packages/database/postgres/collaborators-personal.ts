@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import { collaborationAgentPersonalResource } from "./collaborators-agent-personal";
 import type { PoolClient } from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "./account-rehome-fence";
 import { entryKey, hash, MAX_ARTIFACT_ENTRY_IDS } from "./collaborators-common";
@@ -274,7 +275,7 @@ export async function clearCollaborationAgentFallback(
     account_id,
     action: "replace unnamed agent personal state",
     fn: async (db) => {
-      const key = entryKey(resource);
+      const key = entryKey(collaborationAgentPersonalResource(resource));
       await db.query(
         `UPDATE collaboration_personal SET alias=CASE WHEN $3 THEN NULL ELSE alias END,
       collected=CASE WHEN $4 THEN FALSE ELSE collected END WHERE account_id=$1 AND entry_key=$2`,

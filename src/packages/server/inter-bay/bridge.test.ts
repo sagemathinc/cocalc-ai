@@ -256,6 +256,38 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("uses a distinct collaboration rehome subject rather than legacy accept", async () => {
+    const header = {
+      version: 1 as const,
+      op_id: "11111111-1111-4111-8111-111111111111",
+      project_id: "22222222-2222-4222-8222-222222222222",
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-1",
+      schema_hash: "a".repeat(64),
+    };
+    const ack = {
+      version: 1,
+      op_id: header.op_id,
+      schema_hash: header.schema_hash,
+      next: "0",
+      complete: false,
+      activated: false,
+    };
+    requestMock.mockResolvedValue({ data: ack });
+    const { getInterBayBridge } = await import("./bridge");
+    await expect(
+      getInterBayBridge().projectControl("bay-1").collaborationRehome({
+        action: "prepare",
+        header,
+      }),
+    ).resolves.toEqual(ack);
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-1.rpc.project-control.collaboration-rehome",
+      { name: "collaborationRehome", args: [{ action: "prepare", header }] },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("dispatches typed project active-op requests through the fabric client", async () => {
     requestMock.mockResolvedValue({
       data: {

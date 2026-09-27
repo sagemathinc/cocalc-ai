@@ -73,6 +73,8 @@ class DraftSession {
   private generation = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly localKey: string;
+  private loadFailed = false;
+  private edited = false;
 
   constructor(
     private readonly id: string,
@@ -100,7 +102,23 @@ class DraftSession {
     });
     this.controller = new DraftController({
       key,
-      adapter: this.adapter,
+      adapter: {
+        load: async (key) => {
+          try {
+            return await this.adapter.load(key);
+          } catch (error) {
+            this.loadFailed = true;
+            throw error;
+          }
+        },
+        save: async (key, snapshot, options) => {
+          // A canceled share must not overwrite an unread remote draft with
+          // an empty or stale local snapshot after hydration failed.
+          if (this.loadFailed && !this.edited) return;
+          await this.adapter.save(key, snapshot, options);
+        },
+        clear: (key) => this.adapter.clear(key),
+      },
       debounceMs: opts.debounceMs,
       initialText: shadow?.text ?? (typeof local === "string" ? local : ""),
       initialUpdatedAt: shadow?.updatedAt ?? 0,
@@ -147,14 +165,21 @@ class DraftSession {
   }
 
   setText(text: string) {
+    this.edited = true;
     this.controller.setText(text);
     this.controller.setComposing(!!text.trim());
   }
 
   async clear() {
+    this.edited = true;
     // Persist a tombstone, not a deletion, so a stale remote load cannot
     // resurrect a sent draft. All writes use the controller's ordered chain.
     await this.controller.clear({ persistEmpty: true });
+  }
+
+  assertLoaded() {
+    if (this.loadFailed)
+      throw Error("The destination draft could not be loaded.");
   }
 }
 
@@ -171,19 +196,29 @@ function acquire(opts: UseChatComposerDraftOptions): DraftSession | undefined {
 }
 
 export async function writeChatComposerDraft(
-  opts: UseChatComposerDraftOptions & { text: string; append?: boolean },
+  opts: UseChatComposerDraftOptions & {
+    text: string;
+    append?: boolean;
+    /** Recheck after remote hydration, before modifying the shared draft. */
+    isCurrent?: () => boolean;
+  },
 ): Promise<string> {
+  const assertCurrent = () => {
+    if (opts.isCurrent && !opts.isCurrent())
+      throw Error("The draft destination or account changed.");
+  };
+  assertCurrent();
   const text = `${opts.text ?? ""}`.trim();
   if (!text) return "";
   const session = acquire(opts);
   if (!session) return "";
   try {
     await session.ready;
+    assertCurrent();
+    if (opts.isCurrent) session.assertLoaded();
     const existing = session.controller.getSnapshot().text;
     const next =
-      opts.append && existing.trim()
-        ? `${existing.replace(/\s+$/g, "")}\n\n${text}`
-        : text;
+      opts.append && existing.length > 0 ? `${existing}\n\n${text}` : text;
     session.setText(next);
     await session.controller.flush();
     return next;

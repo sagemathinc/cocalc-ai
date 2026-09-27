@@ -5,6 +5,7 @@ import { Map } from "immutable";
 let mockAccountId = "viewer";
 const mockListResources = jest.fn();
 const mockGetResource = jest.fn();
+const mockWriteDraft = jest.fn();
 const computedStyle = window.getComputedStyle;
 beforeAll(() => {
   jest
@@ -14,7 +15,13 @@ beforeAll(() => {
 afterAll(() => jest.restoreAllMocks());
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store) => (store === "account" ? mockAccountId : Map()),
-  redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
+  redux: {
+    getActions: () => ({ erase_active_key_handler: jest.fn() }),
+    getStore: () => ({ get: () => mockAccountId }),
+  },
+}));
+jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
+  writeChatComposerDraft: (...args) => mockWriteDraft(...args),
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -51,6 +58,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ items, coverage: "complete" });
   mockGetResource.mockReset();
+  mockWriteDraft.mockReset().mockResolvedValue("draft plus reference");
 });
 
 test("keyboard opens picker, exposes type/project disambiguation, selects stable target and restores focus", async () => {
@@ -281,16 +289,31 @@ test("composer inserts a bound reference at the saved cursor without invoking an
   expect(mockGetResource).not.toHaveBeenCalled();
 });
 
-test("Share to conversation inserts the original artifact into the current human draft without publishing or sending", async () => {
+test("Share to conversation chooses another destination rather than changing the current composer", async () => {
   const control = {
     captureSelection: jest.fn(() => ({ line: 0, ch: 2 })),
     insertText: jest.fn(() => true),
     focus: jest.fn(() => true),
   };
-  mockListResources.mockResolvedValue({
-    items: [{ ...base, kind: "artifact" }],
-    coverage: "complete",
-  });
+  const destination = {
+    ...base,
+    kind: "conversation",
+    resource_id: "other-conversation",
+    project_id: "22222222-2222-4222-8222-222222222222",
+    project_title: "Topology",
+    title: "Other discussion",
+    chat_path: "/other.chat",
+    thread_id: "other-thread",
+  };
+  mockListResources
+    .mockResolvedValueOnce({
+      items: [{ ...base, kind: "artifact" }],
+      coverage: "complete",
+    })
+    .mockResolvedValue({ items: [destination], coverage: "complete" });
+  mockGetResource.mockImplementation(async ({ kind }) =>
+    kind === "artifact" ? { ...base, kind } : destination,
+  );
   render(
     <ReferencePickerComposer
       projectId={project_id}
@@ -304,7 +327,7 @@ test("Share to conversation inserts the original artifact into the current human
   );
   expect(
     await screen.findByRole("dialog", { name: "Share to conversation" }),
-  ).toHaveTextContent("Geometry discussion");
+  ).toHaveTextContent("choose a destination human conversation");
   expect(screen.getByText(/does not publish a copy/)).toBeInTheDocument();
   await userEvent.click(
     await screen.findByRole("button", {
@@ -314,12 +337,66 @@ test("Share to conversation inserts the original artifact into the current human
   expect(mockListResources).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "artifact", limit: 25 }),
   );
-  const [markup] = control.insertText.mock.calls[0] as unknown as [string];
+  expect(control.insertText).not.toHaveBeenCalled();
+  const search = await screen.findByRole("textbox", {
+    name: "Search conversations",
+  });
+  await waitFor(() => expect(search).toHaveFocus());
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "@same: Other discussion Human conversation / Topology",
+    }),
+  );
+  expect(screen.getByText(/all collaborators in Topology/)).toBeInTheDocument();
+  expect(mockWriteDraft).not.toHaveBeenCalled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Add reference to draft" }),
+  );
+  await screen.findByRole("heading", { name: "Reference added to draft" });
+  expect(mockWriteDraft).toHaveBeenCalledTimes(1);
+  const opts = mockWriteDraft.mock.calls[0][0];
+  const markup = opts.text;
   expect(parseCollaborationReference(markup.trim())?.target).toEqual({
     project_id,
     kind: "artifact",
     resource_id: "target-1",
   });
+  expect(opts).toMatchObject({
+    account_id: "viewer",
+    project_id: destination.project_id,
+    path: "/other.chat",
+    append: true,
+  });
+  expect(control.insertText).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Done" }));
   await waitFor(() => expect(control.focus).toHaveBeenCalled());
-  expect(mockGetResource).not.toHaveBeenCalled();
 });
+
+test.each(["account", "composer"])(
+  "a changed %s cannot receive a late reference selection",
+  async (changed) => {
+    const control = {
+      captureSelection: jest.fn(() => null),
+      insertText: jest.fn(() => true),
+      focus: jest.fn(),
+    };
+    const inputControlRef = { current: control };
+    render(
+      <ReferencePickerComposer
+        projectId={project_id}
+        inputControlRef={inputControlRef}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Insert reference" }),
+    );
+    const choice = await screen.findByRole("button", {
+      name: /Shared work Agent/,
+    });
+    if (changed === "account") mockAccountId = "other";
+    else inputControlRef.current = { ...control };
+    await userEvent.click(choice);
+    expect(control.insertText).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("conversation changed");
+  },
+);

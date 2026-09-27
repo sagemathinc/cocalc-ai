@@ -4,6 +4,7 @@ let mockAccount = "alice";
 const mockList = jest.fn();
 const mockWrite = jest.fn();
 const mockProjectList = jest.fn();
+const mockPin = jest.fn();
 const mockRefreshAgents = jest.fn();
 const mockRefreshLibrary = jest.fn();
 let mockClient = {
@@ -12,6 +13,7 @@ let mockClient = {
       listResources: mockList,
       listProjectResources: mockProjectList,
       setPersonalState: mockWrite,
+      setProjectPinned: mockPin,
     },
   },
 };
@@ -41,6 +43,28 @@ test("binds requests to the signed-in account, never a caller-supplied account",
   mockList.mockResolvedValue({ items: [], coverage: "complete" });
   await boundCollaboratorsApi("alice").listResources({ account_id: "bob" });
   expect(mockList).toHaveBeenCalledWith({ account_id: "alice" });
+});
+
+test("project pin mutations are account-bound and reject late responses from a previous account", async () => {
+  let resolve!: (value: unknown) => void;
+  mockPin.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const pending = boundCollaboratorsApi("alice").setProjectPinned({
+    account_id: "bob",
+    project_id: "p",
+    pinned: true,
+  });
+  expect(mockPin).toHaveBeenCalledWith({
+    account_id: "alice",
+    project_id: "p",
+    pinned: true,
+  });
+  mockAccount = "bob";
+  resolve({ pinned: true });
+  await expect(pending).rejects.toThrow("session changed");
 });
 
 test("owner fallback remains account-bound and rejects a late account-switch response", async () => {

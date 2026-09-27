@@ -7,6 +7,11 @@ import { uuidsha1 } from "@cocalc/util/misc";
 import getPool from "../pool";
 import type { PoolClient } from "../pool";
 import { withAccountRehomeWriteFence } from "./account-rehome-fence";
+import { lockCollaborationMaintenanceAccounts } from "./collaborators-account-maintenance";
+import {
+  assertProjectNotRehoming,
+  ProjectRehomeInProgressError,
+} from "./project-rehome-fence";
 import { bumpCollaborationRevision } from "./collaborators-changes";
 import { rememberCollaborationArtifactBindings } from "./collaborators-personal";
 import { syncSchema } from "./schema";
@@ -95,6 +100,11 @@ export async function appendCollaborationNotificationEvents(
     throw Error("collaboration notification ingest exceeds capacity");
   if (!input.length) return;
   const events = input.map(validateCollaborationMessageEvent);
+  await assertProjectNotRehoming({
+    db,
+    project_id: snapshot.project_id,
+    action: "append collaboration notifications",
+  });
   // Per-project serialization prevents a later committed position from overtaking
   // an earlier uncommitted one and creating a gap in recipient event cursors.
   const project = (
@@ -188,8 +198,13 @@ export async function appendCollaborationNotificationEvents(
       throw Error(
         "collaboration notification event log capacity reached; retry after maintenance",
       );
+    // Positions are project-local cursors. A rehomed project's retained positions
+    // may be ahead of this bay's sequence; never place new intent behind them.
     await db.query(
-      "INSERT INTO collaboration_notification_events(event_id,project_id,generation,event_json,event_hash) VALUES($1,$2,$3,$4::jsonb,$5)",
+      `INSERT INTO collaboration_notification_events(event_id,project_id,generation,event_json,event_hash,position)
+       VALUES($1,$2,$3,$4::jsonb,$5,GREATEST(
+         COALESCE((SELECT max(position) FROM collaboration_notification_events WHERE project_id=$2),0),
+         COALESCE((SELECT position FROM collaboration_notification_floors WHERE project_id=$2),0))+1)`,
       [id, event.project_id, project.generation, event_json, event_hash],
     );
   }
@@ -292,6 +307,11 @@ export async function readCollaborationNotificationPage(
     throw Error("invalid notification page limit");
   position(job.cursor);
   return transaction(async (db) => {
+    await assertProjectNotRehoming({
+      db,
+      project_id: job.project_id,
+      action: "read collaboration notifications",
+    });
     const project = (
       await db.query(
         `SELECT p.users,p.deleted,c.generation FROM projects p
@@ -634,14 +654,56 @@ export function collaborationNotificationStore(
       transaction(async (db) => {
         if (!Number.isInteger(limit) || limit < 1 || limit > 8)
           throw Error("invalid notification claim limit");
-        const { rows } = await db.query(
-          `SELECT c.*,x.grant_request_id FROM collaboration_notification_cursors c JOIN accounts a USING(account_id)
+        const cursor = await notificationMaintenanceCursor(
+          db,
+          "notification-claim",
+        );
+        if (!cursor) return [];
+        // Scan a bounded slice even if every account in it is frozen. Persisting
+        // the last visited key prevents a frozen prefix from starving later jobs.
+        const scan = async (after: Record<string, string>) =>
+          (
+            await db.query(
+              `SELECT c.account_id,c.project_id,c.due_at::text AS due_at_key
+         FROM collaboration_notification_cursors c JOIN accounts a USING(account_id)
          JOIN collaboration_access x ON x.account_id=c.account_id AND x.project_id=c.project_id
          WHERE c.due_at<=now() AND (c.claim_until IS NULL OR c.claim_until<now())
          AND COALESCE(NULLIF(a.home_bay_id,''),'bay-0')=$1 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
-         ORDER BY c.due_at,c.account_id,c.project_id LIMIT $2 FOR UPDATE OF c SKIP LOCKED`,
-          [bay_id, limit],
+         AND (c.due_at,c.account_id,c.project_id)>($2::timestamptz,$3::uuid,$4::uuid)
+         ORDER BY c.due_at,c.account_id,c.project_id LIMIT 64`,
+              [
+                bay_id,
+                after.due_at_key ?? "-infinity",
+                after.account_id ?? ZERO_UUID,
+                after.project_id ?? ZERO_UUID,
+              ],
+            )
+          ).rows;
+        let candidates = await scan(cursor);
+        if (!candidates.length && cursor.account_id)
+          candidates = await scan({});
+        const eligible = await lockCollaborationMaintenanceAccounts(
+          db,
+          candidates.map((row) => row.account_id),
         );
+        const selected = candidates.filter((row) =>
+          eligible.has(row.account_id),
+        );
+        const rows = selected.length
+          ? (
+              await db.query(
+                `SELECT c.*,x.grant_request_id FROM collaboration_notification_cursors c
+           JOIN jsonb_to_recordset($2::jsonb) AS s(account_id uuid,project_id uuid)
+             ON s.account_id=c.account_id AND s.project_id=c.project_id
+           JOIN accounts a ON a.account_id=c.account_id
+           JOIN collaboration_access x ON x.account_id=c.account_id AND x.project_id=c.project_id
+           WHERE c.due_at<=now() AND (c.claim_until IS NULL OR c.claim_until<now())
+           AND COALESCE(NULLIF(a.home_bay_id,''),'bay-0')=$1 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+           ORDER BY c.due_at,c.account_id,c.project_id LIMIT $3 FOR UPDATE OF c SKIP LOCKED`,
+                [bay_id, JSON.stringify(selected), limit],
+              )
+            ).rows
+          : [];
         const jobs: CollaborationNotificationJob[] = [];
         for (const row of rows) {
           const claim_id = randomUUID();
@@ -658,6 +720,19 @@ export function collaborationNotificationStore(
             grant_request_id: row.grant_request_id,
           });
         }
+        const lastJob = jobs[jobs.length - 1];
+        const last =
+          jobs.length === limit
+            ? candidates.find(
+                (row) =>
+                  row.account_id === lastJob.account_id &&
+                  row.project_id === lastJob.project_id,
+              )
+            : candidates[candidates.length - 1];
+        await db.query(
+          "UPDATE collaboration_maintenance SET cursor=$1::jsonb WHERE id='notification-claim'",
+          [JSON.stringify(last ?? {})],
+        );
         return jobs;
       }),
     acknowledge: async (job, page) =>
@@ -713,16 +788,84 @@ export function collaborationNotificationStore(
           return rows.length === 1;
         },
       }),
-    fail: async (job) => {
-      await getPool().query(
-        `UPDATE collaboration_notification_cursors SET failures=LEAST(failures+1,10),
+    fail: async (job) =>
+      transaction(async (db) => {
+        if (
+          !(
+            await lockCollaborationMaintenanceAccounts(db, [job.account_id])
+          ).has(job.account_id)
+        )
+          return;
+        await db.query(
+          `UPDATE collaboration_notification_cursors SET failures=LEAST(failures+1,10),
          due_at=now()+(LEAST(60,power(2,LEAST(failures,6)))*interval '1 second'),
          claim_id=NULL,claim_until=NULL,last_error='notification delivery unavailable; retrying'
-         WHERE account_id=$1 AND project_id=$2 AND claim_id=$3`,
-        [job.account_id, job.project_id, job.claim_id],
-      );
-    },
+         WHERE account_id=$1 AND project_id=$2 AND claim_id=$3
+         AND EXISTS(SELECT 1 FROM accounts a WHERE a.account_id=$1
+           AND COALESCE(NULLIF(a.home_bay_id,''),'bay-0')=$4 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE)`,
+          [job.account_id, job.project_id, job.claim_id, bay_id],
+        );
+      }),
   };
+}
+
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+
+async function notificationMaintenanceCursor(
+  db: PoolClient,
+  id: string,
+): Promise<Record<string, string> | undefined> {
+  await db.query(
+    "INSERT INTO collaboration_maintenance(id,cursor) VALUES($1,'{}') ON CONFLICT DO NOTHING",
+    [id],
+  );
+  return (
+    await db.query(
+      "SELECT cursor FROM collaboration_maintenance WHERE id=$1 FOR UPDATE SKIP LOCKED",
+      [id],
+    )
+  ).rows[0]?.cursor;
+}
+
+async function pruneNotificationCursors(db: PoolClient) {
+  const cursor = await notificationMaintenanceCursor(
+    db,
+    "notification-cursor-prune",
+  );
+  if (!cursor) return;
+  const { rows } = await db.query(
+    `SELECT c.*,NOT EXISTS(SELECT 1 FROM collaboration_access a
+    WHERE a.account_id=c.account_id AND a.project_id=c.project_id) AS orphan FROM (
+      SELECT account_id,project_id FROM collaboration_notification_cursors
+      WHERE (account_id,project_id)>($1::uuid,$2::uuid) ORDER BY account_id,project_id LIMIT 200
+    ) c ORDER BY c.account_id,c.project_id`,
+    [cursor.account_id ?? ZERO_UUID, cursor.project_id ?? ZERO_UUID],
+  );
+  const orphans = rows.filter((row) => row.orphan);
+  const eligible = await lockCollaborationMaintenanceAccounts(
+    db,
+    orphans.map((row) => row.account_id),
+  );
+  const selected = orphans.filter((row) => eligible.has(row.account_id));
+  if (selected.length)
+    await db.query(
+      `DELETE FROM collaboration_notification_cursors c
+    USING jsonb_to_recordset($1::jsonb) AS s(account_id uuid,project_id uuid)
+    WHERE c.account_id=s.account_id AND c.project_id=s.project_id
+    AND NOT EXISTS(SELECT 1 FROM collaboration_access a WHERE a.account_id=c.account_id AND a.project_id=c.project_id)`,
+      [JSON.stringify(selected)],
+    );
+  const last = rows[rows.length - 1];
+  await db.query(
+    "UPDATE collaboration_maintenance SET cursor=$1::jsonb WHERE id='notification-cursor-prune'",
+    [
+      JSON.stringify(
+        rows.length === 200
+          ? { account_id: last.account_id, project_id: last.project_id }
+          : {},
+      ),
+    ],
+  );
 }
 
 /** Bounded keyset seeding from already authorized, stopped-project-safe projections. */
@@ -749,10 +892,21 @@ export async function seedCollaborationNotificationJobs(
         bay_id,
       ],
     );
+    const eligible = await lockCollaborationMaintenanceAccounts(
+      db,
+      rows.map((row) => row.account_id),
+    );
     await db.query(
       `INSERT INTO collaboration_notification_cursors(account_id,project_id)
-       SELECT x.account_id,x.project_id FROM jsonb_to_recordset($1::jsonb) AS x(account_id uuid,project_id uuid) ON CONFLICT DO NOTHING`,
-      [JSON.stringify(rows)],
+       SELECT x.account_id,x.project_id FROM jsonb_to_recordset($1::jsonb) AS x(account_id uuid,project_id uuid)
+       JOIN accounts a ON a.account_id=x.account_id
+       JOIN collaboration_access c ON c.account_id=x.account_id AND c.project_id=x.project_id
+       WHERE c.generation IS NOT NULL AND COALESCE(NULLIF(a.home_bay_id,''),'bay-0')=$2
+         AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE ON CONFLICT DO NOTHING`,
+      [
+        JSON.stringify(rows.filter((row) => eligible.has(row.account_id))),
+        bay_id,
+      ],
     );
     await db.query(
       "UPDATE collaboration_maintenance SET cursor=$1::jsonb WHERE id='notification-seed'",
@@ -780,6 +934,16 @@ export async function pruneCollaborationNotificationEvents(
     let removed = 0;
     for (const { project_id } of projects) {
       if (removed >= 200) break;
+      try {
+        await assertProjectNotRehoming({
+          db,
+          project_id,
+          action: "prune collaboration notifications",
+        });
+      } catch (err) {
+        if (err instanceof ProjectRehomeInProgressError) continue;
+        throw err;
+      }
       // Same owner lock as append/read; a page cannot observe pruning halfway.
       await db.query(
         "SELECT project_id FROM projects WHERE project_id=$1 FOR UPDATE",
@@ -803,12 +967,7 @@ export async function pruneCollaborationNotificationEvents(
       );
       removed += expired.length;
     }
-    await db.query(
-      `DELETE FROM collaboration_notification_cursors WHERE (account_id,project_id) IN (
-       SELECT c.account_id,c.project_id FROM collaboration_notification_cursors c
-       WHERE NOT EXISTS(SELECT 1 FROM collaboration_access a WHERE a.account_id=c.account_id AND a.project_id=c.project_id)
-       LIMIT 200)`,
-    );
+    await pruneNotificationCursors(db);
     return removed;
   });
 }

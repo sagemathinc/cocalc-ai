@@ -10,6 +10,7 @@ import { drainAccountProjectIndexProjection } from "@cocalc/database/postgres/ac
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { lockProjectRehomeFence } from "@cocalc/database/postgres/project-rehome-fence";
 import {
+  type ProjectControlCollaborationRehomeRequest,
   type ProjectControlPortableProjectState,
   type ProjectControlRehomeResponse,
 } from "@cocalc/conat/inter-bay/api";
@@ -31,6 +32,22 @@ import {
   type ProjectRehomeSqlSideTablePreflight,
 } from "@cocalc/server/projects/rehome-side-tables";
 import { isValidUUID } from "@cocalc/util/misc";
+import type {
+  ProjectCollaborationRehomeHeader,
+  ProjectCollaborationRehomeAck,
+} from "@cocalc/util/project-collaboration-rehome";
+import {
+  ensureProjectCollaborationRehomeSchema,
+  freezeProjectCollaborationExport,
+  readProjectCollaborationExportHeader,
+  readProjectCollaborationExportPage,
+  readFrozenProjectCollaborationExport,
+  prepareProjectCollaborationImport,
+  receiveProjectCollaborationPage,
+  activateProjectCollaborationImport,
+  assertProjectCollaborationImportActive,
+  retireProjectCollaborationExport,
+} from "./collaboration-project-rehome";
 
 const log = getLogger("server:projects:rehome");
 const ACCEPT_REHOME_TIMEOUT_MS = 60_000;
@@ -289,10 +306,29 @@ async function createProjectRehomeOperation({
   campaign_id?: string | null;
 }): Promise<ProjectRehomeOperationRow> {
   await ensureProjectRehomeSchema();
+  await ensureProjectCollaborationRehomeSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     await lockProjectRehomeFence({ db: client, project_id });
+    const frozen = await readFrozenProjectCollaborationExport(project_id);
+    if (frozen) {
+      if (
+        frozen.source_bay_id !== source_bay_id ||
+        frozen.dest_bay_id !== dest_bay_id
+      )
+        throw Error(
+          `project ${project_id} has a frozen collaboration handoff ${frozen.op_id}; retry that operation`,
+        );
+      const prior = await client.query<ProjectRehomeOperationRow>(
+        `SELECT * FROM ${PROJECT_REHOME_OPERATIONS_TABLE} WHERE op_id=$1`,
+        [frozen.op_id],
+      );
+      if (!prior.rows[0])
+        throw Error("Frozen collaboration handoff has no source operation");
+      await client.query("COMMIT");
+      return prior.rows[0];
+    }
     const active = await client.query<ProjectRehomeOperationRow>(
       `
         SELECT *
@@ -451,11 +487,19 @@ async function updateProjectRehomeOperation({
       UPDATE ${PROJECT_REHOME_OPERATIONS_TABLE}
          SET ${sets.join(", ")}
        WHERE op_id = $1
+         AND stage <> 'complete'
        RETURNING *
     `,
     values,
   );
-  const row = rows[0];
+  const row =
+    rows[0] ??
+    (
+      await getPool().query<ProjectRehomeOperationRow>(
+        `SELECT * FROM ${PROJECT_REHOME_OPERATIONS_TABLE} WHERE op_id=$1 AND stage='complete'`,
+        [op_id],
+      )
+    ).rows[0];
   if (!row) {
     throw new Error(`project rehome operation ${op_id} not found`);
   }
@@ -475,11 +519,19 @@ async function startProjectRehomeAttempt(
              finished_at = NULL,
              updated_at = NOW()
        WHERE op_id = $1
+         AND stage <> 'complete'
        RETURNING *
     `,
     [op_id],
   );
-  const row = rows[0];
+  const row =
+    rows[0] ??
+    (
+      await getPool().query<ProjectRehomeOperationRow>(
+        `SELECT * FROM ${PROJECT_REHOME_OPERATIONS_TABLE} WHERE op_id=$1 AND stage='complete'`,
+        [op_id],
+      )
+    ).rows[0];
   if (!row) {
     throw new Error(`project rehome operation ${op_id} not found`);
   }
@@ -658,6 +710,11 @@ async function appendProjectRehomeLogEntry({
     dest_bay_id: op.dest_bay_id,
     duration_ms: (row.event as Record<string, unknown>).duration_ms,
   });
+  const collaboration = await readProjectCollaborationExportHeader(op.op_id);
+  if (collaboration) {
+    await sendProjectCollaborationLog(collaboration, [row]);
+    return;
+  }
   await getInterBayBridge()
     .projectControl(op.dest_bay_id, {
       timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
@@ -680,17 +737,27 @@ async function appendProjectRehomeLogEntry({
 }
 
 async function copyPortableProjectStateToDestination({
+  op_id,
   project_id,
   source_bay_id,
   dest_bay_id,
   project,
 }: {
+  op_id: string;
   project_id: string;
   source_bay_id: string;
   dest_bay_id: string;
   project: Record<string, unknown>;
 }): Promise<void> {
   const portable_state = await readPortableProjectState(project_id);
+  const collaboration = await readProjectCollaborationExportHeader(op_id);
+  if (collaboration) {
+    await sendProjectCollaborationLog(
+      collaboration,
+      portable_state.project_log ?? [],
+    );
+    return;
+  }
   await getInterBayBridge()
     .projectControl(dest_bay_id, {
       timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
@@ -702,6 +769,189 @@ async function copyPortableProjectStateToDestination({
       project,
       portable_state,
     });
+}
+
+function assertCollaborationAck(
+  header: ProjectCollaborationRehomeHeader,
+  ack: ProjectCollaborationRehomeAck,
+): void {
+  if (
+    ack?.version !== header.version ||
+    ack.op_id !== header.op_id ||
+    ack.schema_hash !== header.schema_hash ||
+    typeof ack.complete !== "boolean" ||
+    typeof ack.activated !== "boolean" ||
+    (ack.next !== null &&
+      (typeof ack.next !== "string" ||
+        !/^(0|[1-9][0-9]{0,8})$/.test(ack.next))) ||
+    ack.complete !== (ack.next === null) ||
+    (ack.activated && !ack.complete)
+  )
+    throw Error(
+      "Destination did not acknowledge the collaboration handoff protocol",
+    );
+}
+
+async function sendProjectCollaborationLog(
+  header: ProjectCollaborationRehomeHeader,
+  rows: ProjectLogRow[],
+): Promise<void> {
+  const remote = getInterBayBridge().projectControl(header.dest_bay_id, {
+    timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
+  });
+  let page: ProjectLogRow[] = [];
+  const send = async () => {
+    const ack = await remote.collaborationRehome({
+      action: "log",
+      header,
+      project_log: page,
+    });
+    assertCollaborationAck(header, ack);
+    if (!ack.activated) throw Error("Collaboration destination is not active");
+    page = [];
+  };
+  for (const row of rows) {
+    if (Buffer.byteLength(JSON.stringify([row])) > 256 * 1024)
+      throw Error("Project log row exceeds collaboration handoff page size");
+    if (
+      page.length >= 100 ||
+      Buffer.byteLength(JSON.stringify([...page, row])) > 256 * 1024
+    )
+      await send();
+    page.push(row);
+  }
+  if (page.length) await send();
+}
+
+async function copyProjectCollaborationToDestination(
+  header: ProjectCollaborationRehomeHeader,
+  project: Record<string, unknown>,
+): Promise<void> {
+  const remote = getInterBayBridge().projectControl(header.dest_bay_id, {
+    timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
+  });
+  let ack = await remote.collaborationRehome({ action: "prepare", header });
+  assertCollaborationAck(header, ack);
+  while (!ack.complete) {
+    const cursor = ack.next!;
+    const page = await readProjectCollaborationExportPage(header, cursor);
+    ack = await remote.collaborationRehome({ action: "page", header, page });
+    assertCollaborationAck(header, ack);
+    if (!ack.complete && Number(ack.next) <= Number(cursor))
+      throw Error("Collaboration destination did not advance its checkpoint");
+  }
+  const activated = await remote.collaborationRehome({
+    action: "activate",
+    header,
+    project,
+  });
+  assertCollaborationAck(header, activated);
+  if (!activated.activated)
+    throw Error("Collaboration destination activation is incomplete");
+}
+
+/** Dedicated protocol: older destinations cannot silently ignore transfer fields. */
+export async function acceptProjectCollaborationRehome(
+  request: ProjectControlCollaborationRehomeRequest,
+): Promise<ProjectCollaborationRehomeAck> {
+  const { header } = request;
+  const project_id = normalizeProjectId(header.project_id);
+  normalizeProjectId(header.op_id);
+  const sourceBay = normalizeExplicitBayId(
+    "source_bay_id",
+    header.source_bay_id,
+  );
+  const destBay = normalizeExplicitBayId("dest_bay_id", header.dest_bay_id);
+  if (
+    header.version !== 1 ||
+    !/^[0-9a-f]{64}$/.test(header.schema_hash) ||
+    sourceBay === destBay ||
+    destBay !== getConfiguredBayId()
+  )
+    throw Error("Invalid collaboration handoff destination or version");
+  // A first-time destination has no local row. Check the exporting bay's
+  // directory rather than treating absence here as absence of the project.
+  // Keep a local forwarding row authoritative for rejecting an older handoff.
+  const localOwner = await resolveProjectBayDirect(project_id);
+  if (
+    localOwner &&
+    localOwner.bay_id !== sourceBay &&
+    localOwner.bay_id !== destBay
+  )
+    throw Error(
+      "Collaboration handoff does not match current project ownership",
+    );
+  const owner = await getInterBayBridge()
+    .directory(sourceBay, { timeout_ms: ACCEPT_REHOME_TIMEOUT_MS })
+    .resolveProjectBay({ project_id });
+  if (!owner || (owner.bay_id !== sourceBay && owner.bay_id !== destBay))
+    throw Error(
+      "Collaboration handoff does not match current project ownership",
+    );
+  await ensureProjectCollaborationRehomeSchema();
+  if (request.action === "prepare") {
+    // After cutover only an identical, already-activated receipt can be retried.
+    if (owner.bay_id === destBay)
+      return assertProjectCollaborationImportActive(getPool(), header);
+    return prepareProjectCollaborationImport(header);
+  }
+  if (request.action === "page")
+    return receiveProjectCollaborationPage(header, request.page);
+  if (request.action === "log") {
+    if (
+      !Array.isArray(request.project_log) ||
+      request.project_log.length > 100 ||
+      Buffer.byteLength(JSON.stringify(request.project_log)) > 256 * 1024
+    )
+      throw Error("Collaboration project log handoff exceeds page limits");
+    const ack = await assertProjectCollaborationImportActive(getPool(), header);
+    await mergeLocalProjectLogRows({ project_id, rows: request.project_log });
+    return ack;
+  }
+  if (
+    request.action !== "activate" ||
+    request.project?.project_id !== project_id
+  )
+    throw Error("Invalid collaboration handoff activation");
+  const db = await getPool().connect();
+  let ack: ProjectCollaborationRehomeAck;
+  try {
+    await db.query("BEGIN");
+    ack = await activateProjectCollaborationImport(db, header, async () => {
+      await upsertProjectRowForRehome({
+        db,
+        project: request.project,
+        dest_bay_id: destBay,
+      });
+      await appendProjectOutboxEventForProject({
+        db,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: destBay,
+      });
+    });
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  } finally {
+    db.release();
+  }
+  await drainAccountProjectIndexProjection({
+    bay_id: destBay,
+    dry_run: false,
+    limit: 100,
+  }).catch((err) => {
+    log.warn("collaboration rehome destination projection drain failed", {
+      project_id,
+      err: `${err}`,
+    });
+  });
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: destBay,
+  });
+  return ack;
 }
 
 export async function acceptProjectRehome({
@@ -840,6 +1090,18 @@ export async function runProjectRehomeOperation(
     );
   }
 
+  if (op.stage === "complete") {
+    return {
+      op_id,
+      project_id: op.project_id,
+      previous_bay_id: op.source_bay_id,
+      owning_bay_id: op.dest_bay_id,
+      operation_stage: op.stage,
+      operation_status: op.status,
+      status: op.source_bay_id === op.dest_bay_id ? "already-home" : "rehomed",
+    };
+  }
+
   try {
     if (op.dest_bay_id === op.source_bay_id) {
       op = await updateProjectRehomeOperation({
@@ -887,17 +1149,24 @@ export async function runProjectRehomeOperation(
     }
 
     if (op.stage === "requested") {
-      await getInterBayBridge()
-        .projectControl(op.dest_bay_id, {
-          timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
-        })
-        .acceptRehome({
-          project_id: op.project_id,
-          account_id: op.requested_by ?? undefined,
-          source_bay_id: op.source_bay_id,
-          dest_bay_id: op.dest_bay_id,
-          project: project ?? op.project ?? {},
-        });
+      const collaboration = await freezeProjectCollaborationExport(op);
+      if (collaboration) {
+        await copyProjectCollaborationToDestination(
+          collaboration,
+          project ?? op.project ?? {},
+        );
+      } else
+        await getInterBayBridge()
+          .projectControl(op.dest_bay_id, {
+            timeout_ms: ACCEPT_REHOME_TIMEOUT_MS,
+          })
+          .acceptRehome({
+            project_id: op.project_id,
+            account_id: op.requested_by ?? undefined,
+            source_bay_id: op.source_bay_id,
+            dest_bay_id: op.dest_bay_id,
+            project: project ?? op.project ?? {},
+          });
       op = await updateProjectRehomeOperation({
         op_id,
         stage: "destination_accepted",
@@ -919,6 +1188,7 @@ export async function runProjectRehomeOperation(
       project =
         project ?? op.project ?? (await loadProjectRowForRehome(op.project_id));
       await copyPortableProjectStateToDestination({
+        op_id,
         project_id: op.project_id,
         source_bay_id: op.source_bay_id,
         dest_bay_id: op.dest_bay_id,
@@ -942,6 +1212,8 @@ export async function runProjectRehomeOperation(
     }
 
     if (op.stage === "projected") {
+      const collaboration = await readProjectCollaborationExportHeader(op_id);
+      if (collaboration) await retireProjectCollaborationExport(collaboration);
       op = await updateProjectRehomeOperation({
         op_id,
         status: "succeeded",

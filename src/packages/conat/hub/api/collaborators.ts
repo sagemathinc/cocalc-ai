@@ -8,6 +8,7 @@ import type {
   CollaborationPerson,
   CollaborationPersonalState,
   CollaborationProject,
+  CollaborationProjectQuery,
   CollaborationQuery,
   CollaborationResource,
   CollaborationResourceQuery,
@@ -27,8 +28,14 @@ export interface CollaboratorsApi {
     opts: CollaborationQuery,
   ): Promise<CollaborationPage<CollaborationPerson>>;
   listProjects(
-    opts: CollaborationQuery,
+    opts: CollaborationProjectQuery,
   ): Promise<CollaborationPage<CollaborationProject>>;
+  /** Account-home personal bookmark only; never changes project access. */
+  setProjectPinned(opts: {
+    account_id?: string;
+    project_id: string;
+    pinned: boolean;
+  }): Promise<{ pinned: boolean }>;
   listResources(
     opts: CollaborationResourceQuery,
   ): Promise<CollaborationPage<CollaborationResource>>;
@@ -128,6 +135,7 @@ export const collaborators = {
   check: authFirstRequireAccount,
   listPeople: authFirstRequireAccount,
   listProjects: authFirstRequireAccount,
+  setProjectPinned: authFirstRequireAccount,
   listResources: authFirstRequireAccount,
   listProjectResources: authFirstRequireAccount,
   requestSource: authFirstRequireAccount,

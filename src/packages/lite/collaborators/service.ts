@@ -25,6 +25,7 @@ import { attachLegacyAttention } from "./legacy-attention";
 import { LiteArtifactRelocation } from "./artifact-relocation";
 import type { LiteArtifactRelocationOptions } from "./artifact-relocation";
 import { flushLiteCanonicalRoom } from "./flush";
+import { accountProjectPins } from "@cocalc/backend/collaborators/project-pins";
 
 const logger = getLogger("lite:collaborators");
 
@@ -69,6 +70,11 @@ export function createLiteCollaborators(
         }
       : undefined,
     agentPins: options.agentPins ?? liteAgentPins(options.account_id),
+    projectPins:
+      options.projectPins ??
+      (options.client
+        ? accountProjectPins(options.client, options.account_id)
+        : undefined),
     clearArtifactAlias:
       options.clearArtifactAlias ??
       (options.personalLibraryFilename

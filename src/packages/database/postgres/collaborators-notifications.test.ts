@@ -4,6 +4,10 @@ import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { SCHEMA } from "@cocalc/util/schema";
 import { syncSchema } from "./schema";
 import {
+  assertProjectNotRehoming,
+  ProjectRehomeInProgressError,
+} from "./project-rehome-fence";
+import {
   appendCollaborationNotificationEvents,
   ensureCollaborationNotificationSchema,
   initializeCollaborationProjectionAttention,
@@ -11,6 +15,7 @@ import {
   lockCollaborationNotificationAttention,
   readCollaborationNotificationPage,
   readCollaborationNotificationAttention,
+  pruneCollaborationNotificationEvents,
 } from "./collaborators-notifications";
 
 const mockQuery = jest.fn();
@@ -25,6 +30,13 @@ jest.mock("../pool", () => ({
 }));
 jest.mock("./account-rehome-fence", () => ({
   withAccountRehomeWriteFence: async ({ fn }) => fn(mockDb),
+}));
+jest.mock("./collaborators-account-maintenance", () => ({
+  lockCollaborationMaintenanceAccounts: async (_db, ids) => new Set(ids),
+}));
+jest.mock("./project-rehome-fence", () => ({
+  assertProjectNotRehoming: jest.fn(),
+  ProjectRehomeInProgressError: class extends Error {},
 }));
 jest.mock("./schema", () => ({ syncSchema: jest.fn() }));
 
@@ -200,11 +212,27 @@ it("bounds claims before database access and keeps the explicit home bay in the 
     ),
   ).toBe(false);
   mockQuery.mockClear();
+  mockQuery.mockImplementation(async (sql) => ({
+    rows: sql.includes("SELECT cursor FROM collaboration_maintenance")
+      ? [{ cursor: {} }]
+      : sql.includes("due_at::text AS due_at_key")
+        ? [
+            {
+              account_id,
+              project_id,
+              due_at_key: "2026-01-01 00:00:00.123456+00",
+            },
+          ]
+        : [],
+  }));
   await store.claim(8);
   const claim = mockQuery.mock.calls.find(([sql]) =>
     sql.includes("FOR UPDATE OF c SKIP LOCKED"),
   );
-  expect(claim?.[1]).toEqual(["home-bay", 8]);
+  expect(claim?.[1]).toEqual(["home-bay", expect.any(String), 8]);
+  expect(
+    mockQuery.mock.calls.find(([sql]) => sql.includes("LIMIT 64"))?.[1]?.[0],
+  ).toBe("home-bay");
   expect(mockRelease).toHaveBeenCalled();
 });
 
@@ -213,7 +241,7 @@ it("sanitizes durable retry errors and fences retry updates with the claim id", 
   await store.fail(job, Error("private message body or credential"));
   expect(mockQuery).toHaveBeenCalledWith(
     expect.stringContaining("claim_id=$3"),
-    [account_id, project_id, job.claim_id],
+    [account_id, project_id, job.claim_id, "home-bay"],
   );
   expect(JSON.stringify(mockQuery.mock.calls)).not.toContain("credential");
 });
@@ -293,6 +321,60 @@ it("owner page reads fail closed on the wrong authority and reject malformed cur
       { owning_bay_id: "owner" },
     ),
   ).rejects.toThrow("cursor");
+});
+
+it("does not advance owner notification state during a project handoff", async () => {
+  jest
+    .mocked(assertProjectNotRehoming)
+    .mockRejectedValueOnce(new ProjectRehomeInProgressError("handoff frozen"));
+  await expect(
+    readCollaborationNotificationPage(job, { owning_bay_id: "owner" }),
+  ).rejects.toThrow("handoff frozen");
+  expect(mockQuery.mock.calls.map(([sql]) => sql)).toEqual([
+    "BEGIN",
+    "ROLLBACK",
+  ]);
+});
+
+it("does not append notification intent behind the source handoff fence", async () => {
+  jest
+    .mocked(assertProjectNotRehoming)
+    .mockRejectedValueOnce(new ProjectRehomeInProgressError("handoff frozen"));
+  await expect(
+    appendCollaborationNotificationEvents(
+      mockDb,
+      {
+        project_id,
+        chat_path: "/home/user/room.chat",
+        epoch: generation,
+        sequence: 1,
+        resources: [resource],
+        notification_events: [delivery.event],
+      },
+      { owning_bay_id: "owner", host_id: account_id },
+    ),
+  ).rejects.toThrow("handoff frozen");
+  expect(mockQuery).not.toHaveBeenCalled();
+});
+
+it("skips retained events of a frozen project during bounded pruning", async () => {
+  mockQuery.mockImplementation(async (sql) => ({
+    rows: sql.includes("GROUP BY e.project_id") ? [{ project_id }] : [],
+  }));
+  jest
+    .mocked(assertProjectNotRehoming)
+    .mockRejectedValueOnce(new ProjectRehomeInProgressError("handoff frozen"));
+  await expect(pruneCollaborationNotificationEvents("owner")).resolves.toBe(0);
+  expect(
+    mockQuery.mock.calls.some(([sql]) =>
+      sql.includes("DELETE FROM collaboration_notification_events"),
+    ),
+  ).toBe(false);
+  expect(
+    mockQuery.mock.calls.some(([sql]) =>
+      sql.includes("INSERT INTO collaboration_notification_floors"),
+    ),
+  ).toBe(false);
 });
 
 it("attention locks access before any personal write and rejects a removed generation", async () => {

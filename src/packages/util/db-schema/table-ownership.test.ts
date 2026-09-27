@@ -276,7 +276,7 @@ describe("table ownership manifest", () => {
         ownership: table.endsWith("cursors")
           ? "account-home"
           : "project-owning",
-        portability: "unsupported",
+        portability: "portable",
       });
     }
   });

@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import { assertProjectNotRehoming } from "./project-rehome-fence";
 import type { CatalogEntry } from "@cocalc/conat/hub/api/artifact-catalog";
 import {
   ARTIFACT_CATALOG_MAX_PROJECT_BYTES,
@@ -52,6 +53,11 @@ async function assertOwner(
   project_id: string,
   authority: CatalogWriterAuthority,
 ) {
+  await assertProjectNotRehoming({
+    db,
+    project_id,
+    action: "access artifact catalog writer state",
+  });
   const { rows } = await db.query(
     `SELECT project_id FROM projects
     WHERE project_id=$1 AND owning_bay_id=$2 AND host_id IS NOT DISTINCT FROM $3::uuid

@@ -12,6 +12,7 @@ export type DirectoryApi = Pick<
   CollaboratorsApi,
   | "listPeople"
   | "listProjects"
+  | "setProjectPinned"
   | "listResources"
   | "listProjectResources"
   | "getResource"
@@ -48,6 +49,10 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     listProjects: (opts) =>
       call((service) =>
         service.listProjects({ ...opts, account_id: accountId }),
+      ),
+    setProjectPinned: (opts) =>
+      call((service) =>
+        service.setProjectPinned({ ...opts, account_id: accountId }),
       ),
     listResources: (opts) =>
       call((service) =>

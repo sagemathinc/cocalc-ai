@@ -20,6 +20,7 @@ import {
   recordAttentionChoice,
 } from "./legacy-attention";
 import type { LiteAgentPins } from "./agent-pins";
+import type { ProjectPins } from "@cocalc/backend/collaborators/project-pins";
 import {
   COLLABORATION_PAGE_LIMIT,
   COLLABORATION_ROOM_PATH,
@@ -31,6 +32,7 @@ import type {
   CollaborationPersonalState,
   CollaborationPerson,
   CollaborationProject,
+  CollaborationProjectQuery,
   CollaborationQuery,
   CollaborationResource,
   CollaborationResourceQuery,
@@ -38,6 +40,13 @@ import type {
   CollaborationTarget,
 } from "@cocalc/util/collaborators";
 import * as validate from "./validation";
+import {
+  adaptLiteAgents,
+  initializeAgentReferences,
+  resolveAgentReference,
+  saveLiteAgentBindings,
+} from "./agent-identity";
+import type { CollaborationAgentIdentity } from "@cocalc/util/collaboration-agent-identity";
 
 export interface LiteCollaboratorsOptions {
   /** Service-private file, outside the user-editable project tree. */
@@ -49,6 +58,9 @@ export interface LiteCollaboratorsOptions {
   clearArtifactAlias?: ClearArtifactAlias;
   artifactRelocator?: ArtifactRelocator;
   agentPins?: LiteAgentPins;
+  /** Optional existing local registry; never enroll sessions on discovery. */
+  agentIdentities?: () => readonly CollaborationAgentIdentity[];
+  projectPins?: ProjectPins;
   project_title?: string;
   project_description?: string;
   display_name?: string;
@@ -199,6 +211,7 @@ export class LiteCollaborators {
       `);
       initializeRelocations(this.db);
       initializeLegacyAttention(this.db);
+      initializeAgentReferences(this.db);
       this.transaction(() => {
         this.db
           .prepare(
@@ -246,6 +259,7 @@ export class LiteCollaborators {
       check: (opts) => this.check(opts),
       listPeople: (opts) => this.listPeople(opts),
       listProjects: (opts) => this.listProjects(opts),
+      setProjectPinned: (opts) => this.setProjectPinned(opts),
       listResources: (opts) => this.listResources(opts),
       listProjectResources: (opts) => this.listProjectResources(opts),
       requestSource: (opts) => this.requestSource(opts),
@@ -315,7 +329,8 @@ export class LiteCollaborators {
     this.assertProject(target.project_id);
     validate.kind(target.kind);
     validate.text(target.resource_id, "resource", 256);
-    return collaborationTargetKey(target);
+    const key = collaborationTargetKey(target);
+    return target.kind === "agent" ? resolveAgentReference(this.db, key) : key;
   }
 
   private source(chat_path: string): SourceRow | undefined {
@@ -340,13 +355,14 @@ export class LiteCollaborators {
       .run(revision);
   }
 
-  private revisionToken(revision = this.revision()): string {
+  private revisionToken(revision = this.revision(), projectPins = ""): string {
     return Buffer.from(
       JSON.stringify({
         v: 1,
         account_id: this.options.account_id,
         project_id: this.options.project_id,
         revision: String(revision),
+        projectPins,
         expires: Date.now() + 30_000,
       }),
     ).toString("base64url");
@@ -359,6 +375,8 @@ export class LiteCollaborators {
     await this.library.refresh();
     await this.assertHuman(opts.account_id);
     this.agentPins.refresh();
+    const projectPins = (await this.options.projectPins?.revision()) ?? "";
+    await this.assertHuman(opts.account_id);
     const revision = this.revision();
     let reset = true;
     if (typeof opts.since === "string" && opts.since.length <= 1024) {
@@ -369,6 +387,7 @@ export class LiteCollaborators {
           old.account_id !== this.options.account_id ||
           old.project_id !== this.options.project_id ||
           old.revision !== String(revision) ||
+          (old.projectPins ?? "") !== projectPins ||
           !Number.isFinite(old.expires) ||
           old.expires <= Date.now() ||
           old.expires > Date.now() + 30_000;
@@ -377,7 +396,7 @@ export class LiteCollaborators {
       }
     }
     return {
-      revision: this.revisionToken(revision),
+      revision: this.revisionToken(revision, projectPins),
       reset,
       poll_after_ms: 5000,
     };
@@ -502,7 +521,11 @@ export class LiteCollaborators {
       }
       const rows = this.db
         .prepare(
-          "SELECT resource_key,kind,resource_id,json_extract(metadata,'$.activity') AS activity FROM collaboration_resources WHERE chat_path=? AND resource_key>? ORDER BY resource_key LIMIT 101",
+          `SELECT r.resource_key,r.kind,
+          CASE WHEN a.resource_key IS NOT NULL THEN 'agent-thread:' || json_extract(r.metadata,'$.thread_id') ELSE r.resource_id END AS resource_id,
+          CASE WHEN a.resource_key IS NOT NULL THEN a.source_activity ELSE json_extract(r.metadata,'$.activity') END AS activity
+          FROM collaboration_resources r LEFT JOIN collaboration_agent_activity a USING(resource_key)
+          WHERE r.chat_path=? AND r.resource_key>? ORDER BY r.resource_key LIMIT 101`,
         )
         .all(opts.chat_path, key);
       return {
@@ -596,11 +619,6 @@ export class LiteCollaborators {
     // Local queue hints only initialize new identities. Replay remains bound to
     // the frozen source payload, even after its event queue has been acknowledged.
     const payload_hash = hash(snapshot);
-    const metadata_hash = hash([
-      snapshot.resources,
-      snapshot.coverage ?? "complete",
-      snapshot.coverage_message ?? null,
-    ]);
     return this.transaction(() => {
       this.assertActiveSource(snapshot.chat_path);
       const current = this.source(snapshot.chat_path);
@@ -613,6 +631,17 @@ export class LiteCollaborators {
           throw Error("collaborators sequence reused with different metadata");
         return { revision: current.revision, replayed: true };
       }
+      const { resources, bindings } = adaptLiteAgents(
+        this.db,
+        snapshot.resources,
+        this.options.agentIdentities?.() ?? [],
+      );
+      const metadata_hash = hash([
+        resources,
+        bindings,
+        snapshot.coverage ?? "complete",
+        snapshot.coverage_message ?? null,
+      ]);
       if (snapshot.notification_events?.length) {
         const room = this.db
           .prepare(
@@ -686,7 +715,7 @@ export class LiteCollaborators {
         const participant = this.db.prepare(
           "INSERT INTO collaboration_participants VALUES(?,?)",
         );
-        for (const item of snapshot.resources) {
+        for (const item of resources) {
           const key = collaborationTargetKey(item);
           const row = existing.get(key);
           if (row && row.chat_path !== snapshot.chat_path)
@@ -730,6 +759,9 @@ export class LiteCollaborators {
           );
           this.indexSearch(key, resource.title);
         }
+        saveLiteAgentBindings(this.db, bindings);
+        for (const { resource } of bindings)
+          this.indexSearch(collaborationTargetKey(resource), resource.title);
         const size = this.db
           .prepare(
             "SELECT count(*) AS n,coalesce(sum(length(CAST(metadata AS BLOB))),0) AS bytes FROM collaboration_resources",
@@ -944,31 +976,60 @@ export class LiteCollaborators {
     if (opts.after) throw Error("invalid collaborators people cursor");
     // Lite has no other human collaborators. Resource attribution, imported
     // participant IDs and agent identities do not create account membership.
-    return { items: [], coverage: "complete", revision: this.revisionToken() };
+    const projectPins = (await this.options.projectPins?.revision()) ?? "";
+    await this.assertHuman(opts.account_id);
+    return {
+      items: [],
+      coverage: "complete",
+      revision: this.revisionToken(undefined, projectPins),
+    };
   }
 
   async listProjects(
-    opts: CollaborationQuery,
+    opts: CollaborationProjectQuery,
   ): Promise<CollaborationPage<CollaborationProject>> {
     await this.assertHuman(opts.account_id);
-    const revision = this.revisionToken();
     const { terms } = this.query(opts);
+    if (opts.view != null && opts.view !== "recent" && opts.view !== "pinned")
+      throw Error("invalid project view");
     if (opts.after) throw Error("invalid collaborators projects cursor");
+    if (opts.view === "pinned" && !this.options.projectPins)
+      throw Error("project favorites are unavailable");
+    const projectPins = (await this.options.projectPins?.revision()) ?? "";
+    const revision = this.revisionToken(undefined, projectPins);
+    const pins = await this.options.projectPins?.read();
+    await this.assertHuman(opts.account_id);
     const project: CollaborationProject = {
       project_id: this.options.project_id,
       title: this.options.project_title ?? "Local project",
       description: this.options.project_description ?? "",
       role: "owner",
+      ...(pins ? { pinned: pins.includes(this.options.project_id) } : {}),
     };
     const tokens: string[] =
       `${project.title} ${project.description}`
         .toLowerCase()
         .match(/[\p{L}\p{N}]+/gu) ?? [];
     const matches =
+      (opts.view !== "pinned" || project.pinned === true) &&
       (!opts.search?.trim() || terms.length > 0) &&
       (!opts.person_id || opts.person_id === this.options.account_id) &&
       terms.every((term) => tokens.some((token) => token.startsWith(term)));
     return { items: matches ? [project] : [], coverage: "complete", revision };
+  }
+
+  async setProjectPinned(
+    opts: Parameters<CollaboratorsApi["setProjectPinned"]>[0],
+  ) {
+    await this.assertHuman(opts.account_id);
+    this.assertProject(opts.project_id);
+    if (typeof opts.pinned !== "boolean") throw Error("invalid project pin");
+    if (!this.options.projectPins)
+      throw Error("project favorites are unavailable");
+    await this.options.projectPins.set(opts.project_id, opts.pinned);
+    await this.assertHuman(opts.account_id);
+    this.changed();
+    return { pinned: opts.pinned };
   }
 
   private personal(row: ResourceRow): CollaborationPersonalState {
@@ -1005,7 +1066,26 @@ export class LiteCollaborators {
     const row = this.db
       .prepare(`${RESOURCE_SELECT} WHERE resource_key=? AND r.deleted=0`)
       .get(key) as unknown as ResourceRow | undefined;
-    return row ? this.resource(row) : null;
+    if (!row) return null;
+    const resource = this.resource(row);
+    if (
+      resource.kind === "agent" &&
+      resource.agent_id &&
+      this.options.agentIdentities
+    ) {
+      const identity = this.options
+        .agentIdentities()
+        .find(
+          (identity) =>
+            identity.project_id === resource.project_id &&
+            identity.agent_id === resource.agent_id,
+        );
+      if (!identity) return null;
+      if (resource.thread_id !== identity.thread_id) resource.archived = false;
+      resource.chat_path = identity.path;
+      resource.thread_id = identity.thread_id;
+    }
+    return { ...resource, resource_id: opts.resource_id };
   }
 
   async listResources(
@@ -1037,10 +1117,12 @@ export class LiteCollaborators {
       limit,
       sharedTitlesOnly,
     ]);
+    const projectPins = (await this.options.projectPins?.revision()) ?? "";
+    await this.assertHuman(opts.account_id);
     return this.transaction(() => {
       const revision = this.revision();
       // Capture before querying: later commits must invalidate this page.
-      const token = this.revisionToken(revision);
+      const token = this.revisionToken(revision, projectPins);
       const clauses = ["r.deleted=0"];
       const args: SQLInputValue[] = [];
       if (!opts.include_archived) clauses.push("r.archived=0");
@@ -1201,6 +1283,12 @@ export class LiteCollaborators {
       if (state.alias) {
         this.assertAliasAvailable(opts.kind, state.alias, key);
       }
+      if (opts.kind === "agent" && patch.collected !== undefined)
+        this.db
+          .prepare(
+            "UPDATE collaboration_agent_activity SET collected_fallback=0 WHERE resource_key=?",
+          )
+          .run(key);
       recordAttentionChoice(this.db, key, patch);
       if (
         previous.alias === state.alias &&

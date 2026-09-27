@@ -107,6 +107,14 @@ export class AgentPinCompatibility {
           throw Error("Agent identity has too many indexed conversations");
         for (const row of rows) desired.add(row.resource_key as string);
       }
+      // Discovery may attach an existing identity after an unnamed thread was
+      // collected. Keep that fallback until an explicit collection edit, like hub.
+      for (const row of db
+        .prepare(
+          "SELECT a.resource_key FROM collaboration_agent_activity a JOIN collaboration_resources r USING(resource_key) WHERE a.collected_fallback=1 AND r.deleted=0",
+        )
+        .all())
+        desired.add(row.resource_key as string);
       const current = db
         .prepare(
           "SELECT p.resource_key FROM collaboration_personal p JOIN collaboration_resources r USING(resource_key) WHERE p.kind='agent' AND p.collected=1 AND json_extract(r.metadata,'$.agent_id') IS NOT NULL",
@@ -145,6 +153,14 @@ export class AgentPinCompatibility {
         "Agent has no verified identity; register it through Agents first",
       );
     this.options.pins.set(agent_id, collected);
+    this.options.transaction(() => {
+      this.options.db
+        .prepare(
+          "UPDATE collaboration_agent_activity SET collected_fallback=0 WHERE resource_key IN (SELECT resource_key FROM collaboration_resources WHERE kind='agent' AND json_extract(metadata,'$.agent_id')=?)",
+        )
+        .run(agent_id);
+    });
+    this.revision = -1;
     this.refresh();
   }
 }

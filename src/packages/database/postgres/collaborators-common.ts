@@ -235,6 +235,12 @@ export async function transaction<T>(
 export async function syncCollaboratorsSchema(
   db: Pick<PoolClient, "query"> = getPool(),
 ) {
+  await db.query(
+    "ALTER TABLE collaboration_catalog ADD COLUMN IF NOT EXISTS agent_resource_ids TEXT[], ADD COLUMN IF NOT EXISTS agent_source_activity BIGINT NOT NULL DEFAULT 0",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS collaboration_catalog_agent_references ON collaboration_catalog USING GIN(agent_resource_ids)",
+  );
   await db.query(`CREATE OR REPLACE FUNCTION collaboration_account_changed() RETURNS trigger AS $$
   DECLARE target uuid;
   BEGIN

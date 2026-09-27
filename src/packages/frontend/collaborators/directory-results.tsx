@@ -11,11 +11,13 @@ export function DirectoryResults<T>({
   label,
   children,
   empty = "No matches. Try another search or clear a filter.",
+  onRestart,
 }: {
   result: DirectoryPage<T>;
   label: string;
   children: (items: T[]) => ReactNode;
   empty?: ReactNode;
+  onRestart?: () => void;
 }) {
   const { page, loading, error } = result;
   return (
@@ -27,7 +29,14 @@ export function DirectoryResults<T>({
           type="error"
           title={`Unable to load ${label.toLowerCase()}`}
           description={error}
-          action={<Button onClick={result.refresh}>Retry</Button>}
+          action={
+            <>
+              <Button onClick={result.refresh}>Retry</Button>
+              {result.pageNumber > 1 && onRestart && (
+                <Button onClick={onRestart}>Restart results</Button>
+              )}
+            </>
+          }
         />
       )}
       {page && (

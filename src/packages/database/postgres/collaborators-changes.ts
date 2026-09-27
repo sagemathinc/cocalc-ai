@@ -21,6 +21,7 @@ export async function bumpCollaborationRevision(
 export async function checkCollaborationRevision(
   account_id: string,
   since?: string,
+  personalRevision = "",
 ) {
   uuid(account_id, "account_id");
   const row = (
@@ -34,7 +35,13 @@ export async function checkCollaborationRevision(
     Date.now() + 30000,
     row.expires ? new Date(row.expires).getTime() : Infinity,
   );
-  const current = { v: 1, account_id, revision: row.revision, expires };
+  const current = {
+    v: 1,
+    account_id,
+    revision: row.revision,
+    personalRevision,
+    expires,
+  };
   let reset = true;
   if (typeof since === "string" && since.length <= 1024) {
     try {
@@ -43,6 +50,7 @@ export async function checkCollaborationRevision(
         old.v !== 1 ||
         old.account_id !== account_id ||
         old.revision !== row.revision ||
+        (old.personalRevision ?? "") !== personalRevision ||
         !Number.isFinite(old.expires) ||
         old.expires <= Date.now();
     } catch {

@@ -52,11 +52,23 @@ Operational contracts and bounds are documented in the backend, server, and Lite
 - Supported mediated same-project moves preserve typed identity; copies receive
   a separate persisted namespace. Cross-project relocation remains excluded.
 - Existing personal agent names and Library aliases/pins are compatibility
-  adapters. Naming an unnamed agent thread does not enroll an execution identity.
-- Project/account rehome with retained collaboration state is explicitly fenced
-  where the existing rehome machinery cannot yet transfer that state atomically.
-  It must not silently discard journals, room pointers, aliases, or notification
-  state. Full retained-state rehome remains a rollout gate.
+  adapters. Registered agents use their stable agent identity independently of
+  their current conversation; old thread references retain identity bindings.
+  Naming an unnamed agent thread does not enroll an execution identity.
+- Account rehome transfers personal collaboration state, artifact bindings,
+  notification cursors and delivery/deduplication state through a frozen,
+  bounded, retryable handoff. Destination access leases are rebuilt, never copied
+  as grants. Project rehome transfers collaboration room/catalog/source state
+  through a distinct versioned protocol, renews writer generations, and retains
+  retry receipts. Existing non-portable registered-agent/artifact authority must
+  not be bypassed by copying only its discovery projection. Unsupported retained
+  state fails closed instead of silently losing identities or authority.
+- Recent and pinned project views reuse account project bookmarks. Share to
+  conversation offers bounded accessible destinations, shows the audience, and
+  inserts a reference without sending or replacing an existing private draft.
+- Explicit CLI human-thread creation and human sends use the canonical room
+  service and stable request IDs. Shared chat send preparation rejects human
+  rooms before agent dispatch, even when stale agent configuration is present.
 
 Validation is recorded as checks complete below; live multiuser/multibay staging
 acceptance and a human UX review remain required before broad enablement.
@@ -137,6 +149,27 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   contents and indexed activity converged and the retry journal cleared.
   A fresh abrupt-exit run on the corrected runtime recovered the acknowledged,
   disk-dirty message in about 16 seconds, again without a browser reopen.
+- The follow-up completion checkpoint adds pinned projects, cross-conversation
+  sharing, explicit CLI human operations, stable registered-agent reference
+  migration, and retained-state account/project handoff protocols. Shared server
+  builds, frontend/Lite typechecks, test-inclusive CLI compilation, and frontend
+  lint pass. Focused runs include 144 frontend tests, 77 database tests against
+  private PostgreSQL, 42 CLI tests using the native Node test runner, 31 chat
+  tests and 7 real-Conat project-bookmark tests. A broad Lite run passes 636
+  tests; the final identity fixes pass a separate 49-test focused rerun.
+- New handoff tests exercise all nine portable project tables, immutable page
+  hashes, rollback/retry, completed-operation replay, fresh destination bays,
+  legacy NULL ownership, durable access fencing, and unsupported authority
+  preflight. The initial three project suites pass 23 tests in isolated PGlite;
+  the expanded preflight and identity-routing suites pass another focused
+  50-case run, plus 13 transaction-boundary identity race regressions. Artifact
+  writer fences pass 19 PostgreSQL cases. The seven core transfer cases also
+  pass on PostgreSQL. Account handoff and
+  maintenance integrations pass 23 PGlite cases, with the lock-contention case
+  verified separately on private PostgreSQL. No existing registered identity or
+  credential is copied by the collaboration protocol. Browser acceptance for
+  the new sharing/pinning controls and independent-bay transport acceptance are
+  not claimed by these database/component checks.
 
 ### Remaining acceptance and UX iteration
 
@@ -148,17 +181,21 @@ two-human, multiple-bay deployment.
 - Exercise two real accounts, multiple devices, remote bays, stopped compute,
   network interruptions, and large collaborator fanout in controlled staging.
   Measure sustained projection lag and memory in addition to indexed query tests.
-- Implement atomic retained-state project/account rehome before relaxing the
-  explicit rehome guards. This is not a silently supported migration today.
-- Human review should refine discoverability, wording, and navigation. Project
-  browsing currently provides ordered/searchable results rather than a new
-  dedicated pinned-project view; optional person pins are not introduced.
-- Share to conversation inserts a reference into the currently selected human
-  draft. A cross-conversation destination chooser is a follow-up UX improvement;
-  sharing never sends automatically or changes the target's permissions.
+- Exercise the retained-state account/project handoff through independent bay
+  processes. It must preserve retry checkpoints and fail closed on unsupported
+  authority, mixed-version destinations and unavailable directory verification.
+- Human review should refine discoverability, wording, and navigation, including
+  the new pinned-project view and cross-conversation sharing chooser. Optional
+  person pins are not introduced. Sharing never sends automatically or changes
+  the target's permissions.
 - Historical coverage remains partial until bounded source adoption/reconciliation
   has run. Legacy path-encoded artifact URLs are not redirected; new typed
   references use stable identity. Ambiguous shell copies/moves are not guessed.
+- Complete path-free historical source census and additive legacy-ID
+  reconciliation, explicit canonical-room replacement, and separate complete
+  participant/reference relations remain implementation requirements. A bounded
+  participant preview alone does not satisfy person/For you filtering for large
+  conversations. These are not exclusions from the original plan below.
 
 ## Goal and model
 

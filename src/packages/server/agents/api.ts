@@ -7,6 +7,7 @@ import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
 import { assertLocalAgentProject, assertActor, assertAgent } from "./access";
 import { withAgentChat } from "./chat";
 import { withAgentIdentityOwner } from "./identity-routing";
+import { assertAgentIdentityProjectWritable } from "./project-write-fence";
 import { controlAcp } from "@cocalc/conat/ai/acp/client";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 
@@ -82,6 +83,7 @@ export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
     requireUuid(prepared.successor_thread_id, "successor_thread_id");
     await assertActor(opts.account_id, opts.project_id);
     return db.transaction(async (sql) => {
+      await assertAgentIdentityProjectWritable(sql, opts.project_id);
       await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `agent-identities:${opts.project_id}`,
       ]);
@@ -177,6 +179,7 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
       // Loading the live chat may wait on routing or synchronization.
       await assertActor(account_id, opts.project_id);
       return db.transaction(async (sql) => {
+        await assertAgentIdentityProjectWritable(sql, opts.project_id);
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],
@@ -306,10 +309,16 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
   await assertActor(account_id, agent.project_id);
   if (agent.created_by !== account_id)
     throw new Error("only the registrant may disable this agent");
-  await db.query(
-    "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
-    [opts.agent_id, account_id],
-  );
+  await db.transaction(async (sql) => {
+    await assertAgentIdentityProjectWritable(sql, agent.project_id);
+    await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+      `agent-identities:${agent.project_id}`,
+    ]);
+    await sql.query(
+      "UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),disabled_by=$2 WHERE agent_id=$1",
+      [opts.agent_id, account_id],
+    );
+  });
 };
 
 async function assertIdentityRecoveryOwner(
@@ -367,6 +376,7 @@ export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
     async (_chat, thread) => {
       await assertIdentityRecoveryOwner(opts.account_id!, opts.project_id);
       return db.transaction(async (sql) => {
+        await assertAgentIdentityProjectWritable(sql, opts.project_id);
         await sql.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
           [`agent-identities:${opts.project_id}`],

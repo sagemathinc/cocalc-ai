@@ -11,6 +11,14 @@ const generic = jest.fn();
 const legacy = jest.fn();
 const libraryClear = jest.fn();
 const clearFallback = jest.fn();
+const reconcileAgent = jest.fn();
+jest.mock("@cocalc/database/postgres/collaborators-agent-personal", () => ({
+  ...jest.requireActual(
+    "@cocalc/database/postgres/collaborators-agent-personal",
+  ),
+  reconcileCollaborationAgentPersonalState: (...args) =>
+    reconcileAgent(...args),
+}));
 jest.mock("@cocalc/server/agents/personal", () => ({
   nameAgent: (...a) => name(...a),
   retireNamedAgent: (...a) => retire(...a),
@@ -73,8 +81,30 @@ test("unnamed sessions retain a thread-local name and shortcut without agent enr
   );
   expect(identity).not.toHaveBeenCalled();
 });
+
+test("owner-verified legacy catalog keys stay authoritative for attention until canonical publication", async () => {
+  const agent_id = randomUUID();
+  const legacy = {
+    ...resource,
+    agent_id,
+    resource_id: agent_id,
+    agent_catalog_resource_id: resource.resource_id,
+  };
+  await updateCollaborationPersonalState(account_id, legacy, {
+    following: true,
+  });
+  expect(generic).toHaveBeenCalledWith(
+    account_id,
+    { ...legacy, resource_id: resource.resource_id },
+    { following: true },
+    { ...legacy, resource_id: resource.resource_id },
+  );
+  expect(name).not.toHaveBeenCalled();
+  expect(identity).not.toHaveBeenCalled();
+});
 test("known endpoint naming and removal use the existing namespace without touching attention choices", async () => {
   const known = { ...resource, agent_id: randomUUID() };
+  const canonical = { ...known, resource_id: known.agent_id };
   await updateCollaborationPersonalState(account_id, known, {
     alias: "alice",
     following: true,
@@ -87,11 +117,11 @@ test("known endpoint naming and removal use the existing namespace without touch
   });
   expect(generic).toHaveBeenCalledWith(
     account_id,
-    known,
+    canonical,
     { following: true },
-    known,
+    canonical,
   );
-  expect(clearFallback).toHaveBeenCalledWith(account_id, known, {
+  expect(clearFallback).toHaveBeenCalledWith(account_id, canonical, {
     alias: true,
     collected: false,
   });
@@ -100,6 +130,26 @@ test("known endpoint naming and removal use the existing namespace without touch
     account_id,
     endpoint: { project_id: known.project_id, agent_id: known.agent_id },
   });
+});
+
+test("legacy point-target writes reconcile personal state before using the canonical agent key", async () => {
+  const known = {
+    ...resource,
+    agent_id: randomUUID(),
+    agent_resource_ids: [resource.resource_id],
+  };
+  await updateCollaborationPersonalState(account_id, known, {
+    following: false,
+  });
+  expect(reconcileAgent).toHaveBeenCalledWith(account_id, [known]);
+  expect(generic).toHaveBeenCalledWith(
+    account_id,
+    { ...known, resource_id: known.agent_id },
+    { following: false },
+    { ...known, resource_id: known.agent_id },
+  );
+  expect(name).not.toHaveBeenCalled();
+  expect(identity).not.toHaveBeenCalled();
 });
 test("moved or mismatched identities fail before mutation", async () => {
   identity.mockResolvedValue({

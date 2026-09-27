@@ -53,6 +53,11 @@ async function fixture(initialized = true) {
     isEnabled: () => enabled,
     sourcePage: async () => ({ paths: [] }),
     agentPins: { read: () => [], set: () => {} },
+    projectPins: {
+      read: async () => [],
+      set: async () => {},
+      revision: async () => "0",
+    },
   };
   let runtime = createLiteCollaborators(options);
   const createFilesystem = () =>

@@ -14,6 +14,11 @@ import {
   syncCollaboratorsSchema,
 } from "./collaborators-common";
 import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
+import { adaptCollaborationAgents } from "./collaborators-agent-identity";
+import {
+  collaborationAgentPersonalResource,
+  reconcileCollaborationAgentPersonalState,
+} from "./collaborators-agent-personal";
 import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
@@ -578,8 +583,426 @@ test("unnamed agent shortcuts survive enrichment without competing with existing
       .items,
   ).toHaveLength(0);
   expect(
-    (await getCollaborationPersonalState(account_id, item)).following,
+    (
+      await getCollaborationPersonalState(account_id, {
+        ...item,
+        resource_id: agent_id,
+      })
+    ).following,
   ).toBe(true);
+});
+
+test.each([false, true])(
+  "canonical agent identity, legacy refs and personal choices survive successor ingestion (%s)",
+  async (reverse) => {
+    const old = {
+      ...resource("agent-thread:old"),
+      kind: "agent" as const,
+      thread_id: "old",
+    };
+    await ingestCollaborationSnapshot(snapshot(1, [old]), authority);
+    await deliver();
+    await setCollaborationPersonalState(
+      account_id,
+      old,
+      {
+        alias: "personal-label",
+        collected: true,
+        following: true,
+        muted: true,
+      },
+      old,
+    );
+    const agent_id = randomUUID();
+    await getPool().query(
+      "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,$3,'old','Registered',$4)",
+      [agent_id, project_id, source.chat_path, account_id],
+    );
+    await ingestCollaborationSnapshot(snapshot(2, [old]), authority);
+    await deliver();
+    const canonical = {
+      project_id,
+      kind: "agent" as const,
+      resource_id: agent_id,
+    };
+    expect(
+      await getCollaborationPersonalState(account_id, canonical),
+    ).toMatchObject({
+      alias: "personal-label",
+      collected: true,
+      following: true,
+      muted: true,
+    });
+    await getPool().query(
+      "INSERT INTO agent_personal_names(account_id,name,project_id,agent_id,metadata) VALUES($1,'registered-name',$2,$3,'{}')",
+      [account_id, project_id, agent_id],
+    );
+    await getPool().query(
+      "UPDATE agent_identities SET thread_id='new',conversation_history=$2::jsonb WHERE agent_id=$1",
+      [agent_id, JSON.stringify([{ thread_id: "old" }])],
+    );
+    // Point lookup follows the authoritative endpoint before maintenance or source publication.
+    expect(
+      await getOwnedCollaborationResource(old, account_id, authority),
+    ).toMatchObject({
+      resource_id: old.resource_id,
+      agent_id,
+      thread_id: "new",
+    });
+    await reconcileCollaborationAgents(project_id, authority);
+    const next = {
+      ...old,
+      resource_id: "agent-thread:new",
+      thread_id: "new",
+      title: "Successor",
+      activity: 1,
+    };
+    let sequence = 2;
+    const order = reverse
+      ? [[next], [{ ...old, archived: true }]]
+      : [[{ ...old, archived: true }], [next]];
+    for (const resources of [...order, reverse ? [next, old] : [old, next]]) {
+      await ingestCollaborationSnapshot(
+        snapshot(++sequence, resources),
+        authority,
+      );
+      await deliver();
+      const page = await listCollaborationResources({
+        account_id,
+        kind: "agent",
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({
+        resource_id: agent_id,
+        thread_id: "new",
+        personal: {
+          alias: "registered-name",
+          collected: true,
+          following: true,
+          muted: true,
+        },
+      });
+      for (const target of [old, next, canonical])
+        expect(
+          await getOwnedCollaborationResource(target, account_id, authority),
+        ).toMatchObject({
+          resource_id: target.resource_id,
+          agent_id,
+          thread_id: "new",
+        });
+    }
+    expect(
+      (
+        await getPool().query(
+          "SELECT count(*) AS n FROM agent_identities WHERE project_id=$1",
+          [project_id],
+        )
+      ).rows[0].n,
+    ).toBe("1");
+    const checkpoint = await collaborationCheckpointPage(source, authority);
+    expect(checkpoint.items).toContainEqual({
+      kind: "agent",
+      resource_id: next.resource_id,
+      activity: 1,
+    });
+    expect(checkpoint.items.some((r) => r.resource_id === agent_id)).toBe(
+      false,
+    );
+    await ingestCollaborationSnapshot(
+      snapshot(++sequence, [{ ...next, activity: 2 }]),
+      authority,
+    );
+    expect(
+      await getOwnedCollaborationResource(canonical, account_id, authority),
+    ).toMatchObject({ activity: 5 });
+    await getPool().query(
+      "UPDATE agent_identities SET disabled_at=now() WHERE agent_id=$1",
+      [agent_id],
+    );
+    expect(
+      await getOwnedCollaborationResource(old, account_id, authority),
+    ).toBeNull();
+    await reconcileCollaborationAgents(project_id, authority);
+    await ingestCollaborationSnapshot(
+      snapshot(++sequence, [old, next]),
+      authority,
+    );
+    expect(
+      await getOwnedCollaborationResource(canonical, account_id, authority),
+    ).toBeNull();
+  },
+);
+
+test("deleted canonical agents retain legacy identity claims after compaction", async () => {
+  const agent_id = randomUUID();
+  const old = {
+    ...resource("agent-thread:old"),
+    kind: "agent" as const,
+    thread_id: "old",
+  };
+  await getPool().query(
+    "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,$3,'old','Registered',$4)",
+    [agent_id, project_id, source.chat_path, account_id],
+  );
+  await ingestCollaborationSnapshot(snapshot(1, [old]), authority);
+  await ingestCollaborationSnapshot(snapshot(2, []), authority);
+  await getPool().query(
+    "UPDATE collaboration_catalog SET deleted_at=now()-interval '8 days' WHERE project_id=$1",
+    [project_id],
+  );
+  await compactCollaborationProject(project_id, authority);
+  await getPool().query(
+    "UPDATE agent_identities SET disabled_at=now() WHERE agent_id=$1",
+    [agent_id],
+  );
+  const replacement = randomUUID();
+  await getPool().query(
+    "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,conversation_history) VALUES($1,$2,$3,'replacement','Replacement',$4,$5::jsonb)",
+    [
+      replacement,
+      project_id,
+      source.chat_path,
+      account_id,
+      JSON.stringify([{ thread_id: "old" }]),
+    ],
+  );
+  await expect(
+    ingestCollaborationSnapshot(
+      snapshot(3, [
+        {
+          ...old,
+          resource_id: "agent-thread:replacement",
+          thread_id: "replacement",
+        },
+      ]),
+      authority,
+    ),
+  ).rejects.toThrow("another identity");
+  expect(
+    await getOwnedCollaborationResource(old, account_id, authority),
+  ).toBeNull();
+});
+
+test("namespaced copies cannot inherit a registered identity or its personal state", async () => {
+  const agent_id = randomUUID();
+  const old = {
+    ...resource("agent-thread:thread"),
+    kind: "agent" as const,
+    thread_id: "thread",
+  };
+  await getPool().query(
+    "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by) VALUES($1,$2,$3,'thread','Registered',$4)",
+    [agent_id, project_id, source.chat_path, account_id],
+  );
+  const copy = { ...old, resource_id: `copy:${randomUUID()}`, agent_id };
+  await ingestCollaborationSnapshot(snapshot(1, [old, copy]), authority);
+  await deliver();
+  const resolved = await getOwnedCollaborationResource(
+    copy,
+    account_id,
+    authority,
+  );
+  expect(resolved).toMatchObject({
+    resource_id: copy.resource_id,
+    thread_id: "thread",
+  });
+  expect(resolved?.agent_id).toBeUndefined();
+  await setCollaborationPersonalState(
+    account_id,
+    copy,
+    { alias: "copy-only", collected: true },
+    resolved!,
+  );
+  expect(
+    (
+      await listCollaborationResources({ account_id, scope: "collected" })
+    ).items.map((r) => r.resource_id),
+  ).toEqual([copy.resource_id]);
+  expect(
+    (
+      await getPool().query(
+        "SELECT count(*) AS n FROM agent_personal_names WHERE account_id=$1",
+        [account_id],
+      )
+    ).rows[0].n,
+  ).toBe("0");
+});
+
+test("owner legacy successor rows migrate past the 50-row maintenance boundary without trusting host assertions", async () => {
+  const legacy = Array.from({ length: 51 }, (_, i) => ({
+    ...resource(`agent-thread:old-${i}`),
+    kind: "agent" as const,
+    thread_id: `old-${i}`,
+  }));
+  await ingestCollaborationSnapshot(snapshot(1, legacy), authority);
+  const identities = legacy.map((r, i) => ({
+    agent_id: randomUUID(),
+    old: r.thread_id,
+    current: `new-${i}`,
+  }));
+  await getPool().query(
+    `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,conversation_history)
+    SELECT agent_id,$1,$2,current,'Registered',$3,jsonb_build_array(jsonb_build_object('thread_id',old))
+    FROM jsonb_to_recordset($4::jsonb) AS e(agent_id uuid,old text,current text)`,
+    [project_id, source.chat_path, account_id, JSON.stringify(identities)],
+  );
+  const asserted = {
+    ...legacy[0],
+    thread_id: identities[0].current,
+    agent_id: identities[0].agent_id,
+  };
+  expect(
+    await adaptCollaborationAgents(getPool(), source, [asserted]),
+  ).toMatchObject({
+    bindings: [],
+    resources: [
+      { resource_id: asserted.resource_id, thread_id: asserted.thread_id },
+    ],
+  });
+  expect(
+    (await adaptCollaborationAgents(getPool(), source, [asserted])).resources[0]
+      .agent_id,
+  ).toBeUndefined();
+  // This is the persisted shape produced by the previous owner reconciler.
+  await getPool().query(
+    `UPDATE collaboration_catalog c SET metadata=c.metadata || jsonb_build_object('agent_id',e.agent_id,'thread_id',e.current)
+    FROM jsonb_to_recordset($2::jsonb) AS e(agent_id uuid,old text,current text)
+    WHERE c.project_id=$1 AND c.resource_id='agent-thread:' || e.old`,
+    [project_id, JSON.stringify(identities)],
+  );
+  expect(await reconcileCollaborationAgents(project_id, authority)).toBe(50);
+  expect(await reconcileCollaborationAgents(project_id, authority)).toBe(1);
+  expect(await reconcileCollaborationAgents(project_id, authority)).toBe(0);
+  expect(
+    (
+      await getPool().query(
+        "SELECT count(*) AS n FROM collaboration_catalog WHERE project_id=$1 AND deleted_at IS NULL AND resource_id=metadata->>'agent_id'",
+        [project_id],
+      )
+    ).rows[0].n,
+  ).toBe("51");
+  const owned = await getOwnedCollaborationResource(
+    legacy[0],
+    account_id,
+    authority,
+  );
+  expect(owned).toMatchObject({
+    resource_id: legacy[0].resource_id,
+    agent_id: identities[0].agent_id,
+    thread_id: identities[0].current,
+  });
+});
+
+test("point reads retain legacy personal keys until publication and preserve the shortcut before projection catches up", async () => {
+  const old = {
+    ...resource("agent-thread:old"),
+    kind: "agent" as const,
+    thread_id: "old",
+  };
+  await ingestCollaborationSnapshot(snapshot(1, [old]), authority);
+  await deliver();
+  await setCollaborationPersonalState(
+    account_id,
+    old,
+    { alias: "kept-label", collected: true, following: true },
+    old,
+  );
+  const agent_id = randomUUID();
+  await getPool().query(
+    "INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by,conversation_history) VALUES($1,$2,$3,'new','Registered',$4,'[{\"thread_id\":\"old\"}]')",
+    [agent_id, project_id, source.chat_path, account_id],
+  );
+  await getPool().query(
+    "UPDATE collaboration_catalog SET metadata=metadata || jsonb_build_object('agent_id',$2::text,'thread_id','new'),revision=revision+1 WHERE entry_key=$1",
+    [entryKey(old), agent_id],
+  );
+  await getPool().query(
+    "UPDATE collaboration_projects SET revision=revision+1 WHERE project_id=$1",
+    [project_id],
+  );
+  const canonical = { ...old, resource_id: agent_id };
+  for (const target of [old, canonical]) {
+    const owned = (await getOwnedCollaborationResource(
+      target,
+      account_id,
+      authority,
+    ))!;
+    expect(owned.agent_catalog_resource_id).toBe(old.resource_id);
+    await reconcileCollaborationAgentPersonalState(account_id, [owned]);
+    expect(
+      await getCollaborationPersonalState(
+        account_id,
+        collaborationAgentPersonalResource(owned),
+      ),
+    ).toMatchObject({ alias: "kept-label", collected: true, following: true });
+  }
+  const list = async () =>
+    (await listCollaborationResources({ account_id, scope: "collected" }))
+      .items;
+  expect(await list()).toHaveLength(1);
+  const pageBefore = await overlayCollaborationProjectPage(
+    account_id,
+    await readCollaborationProjectPage({ account_id, project_id }, authority),
+  );
+  expect(pageBefore.items[0].personal).toMatchObject({
+    alias: "kept-label",
+    collected: true,
+  });
+  // A reply fetched before canonical publication must not resurrect the old index row.
+  const staleJob = await job();
+  const stalePage = await readCollaborationProjection(staleJob, authority);
+  expect(stalePage).toMatchObject({
+    items: [{ resource: { resource_id: old.resource_id, agent_id } }],
+  });
+  await reconcileCollaborationAgents(project_id, authority);
+  const published = (await getOwnedCollaborationResource(
+    old,
+    account_id,
+    authority,
+  ))!;
+  expect(published.agent_catalog_resource_id).toBe(agent_id);
+  await reconcileCollaborationAgentPersonalState(account_id, [published]);
+  expect(await list()).toMatchObject([
+    {
+      resource_id: agent_id,
+      thread_id: "new",
+      personal: { alias: "kept-label", collected: true, following: true },
+    },
+  ]);
+  expect(
+    await applyCollaborationProjection(staleJob, stalePage, Date.now()),
+  ).toBe(false);
+  const pageAfter = await overlayCollaborationProjectPage(
+    account_id,
+    await readCollaborationProjectPage({ account_id, project_id }, authority),
+  );
+  expect(pageAfter.items[0]).toMatchObject({
+    resource_id: agent_id,
+    personal: { alias: "kept-label", collected: true },
+  });
+  await deliver();
+  expect(await list()).toMatchObject([
+    {
+      resource_id: agent_id,
+      personal: { alias: "kept-label", collected: true },
+    },
+  ]);
+  await ingestCollaborationSnapshot(
+    snapshot(2, [
+      {
+        ...old,
+        resource_id: "agent-thread:new",
+        thread_id: "new",
+        activity: 1,
+        archived: true,
+      },
+    ]),
+    authority,
+  );
+  await ingestCollaborationSnapshot(snapshot(3, [old]), authority);
+  expect(
+    await getOwnedCollaborationResource(old, account_id, authority),
+  ).toMatchObject({ thread_id: "new", activity: 4, archived: true });
 });
 
 test.each(["ready", "unpolled", "historical"])(

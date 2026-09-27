@@ -52,14 +52,22 @@ export async function readCollaborationAccess(
       FROM (SELECT unnest($1::uuid[]) AS id ORDER BY id) p`,
       [projects],
     );
-    const exists = (
+    const tables = (
       await db.query(
-        "SELECT to_regclass('public.project_rehome_operations') AS name",
+        `SELECT to_regclass('public.project_rehome_operations') AS operations,
+          to_regclass('public.project_collaboration_rehome_transfers') AS transfers`,
       )
-    ).rows[0]?.name;
+    ).rows[0];
     const { rows } = await db.query(
       `SELECT project_id FROM projects p WHERE project_id=ANY($1::uuid[])
-      AND owning_bay_id=$2 ${exists ? "AND NOT EXISTS(SELECT 1 FROM project_rehome_operations o WHERE o.project_id=p.project_id AND o.status='running')" : ""}
+      AND owning_bay_id=$2 ${tables?.operations ? "AND NOT EXISTS(SELECT 1 FROM project_rehome_operations o WHERE o.project_id=p.project_id AND o.status='running')" : ""}
+      ${
+        tables?.transfers
+          ? `AND NOT EXISTS(SELECT 1 FROM project_collaboration_rehome_transfers t WHERE t.project_id=p.project_id
+        AND ((t.direction='export' AND t.state IN ('exporting','exported'))
+          OR (t.direction='import' AND t.state IN ('staging','ready'))))`
+          : ""
+      }
       ORDER BY project_id FOR SHARE`,
       [projects, owning_bay_id],
     );

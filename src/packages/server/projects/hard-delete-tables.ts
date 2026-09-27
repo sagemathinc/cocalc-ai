@@ -28,6 +28,8 @@ export const PROJECT_HARD_DELETE_PROJECT_ID_TABLES = [
   "project_collab_invite_inbox",
   "project_moves",
   "project_rehome_operations",
+  "project_collaboration_rehome_pages",
+  "project_collaboration_rehome_transfers",
   "project_active_operations",
   "project_runtime_slots",
   "project_rootfs_states",

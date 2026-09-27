@@ -29,11 +29,17 @@ import { clearPersonalLibraryAlias } from "@cocalc/server/artifacts/personal-lib
 import { nameAgent, retireNamedAgent } from "@cocalc/server/agents/personal";
 import { getIdentity } from "@cocalc/server/agents/api";
 import { assertPersonalAccountAuthority } from "@cocalc/server/agents/personal-rehome";
+import {
+  collaborationAgentPersonalResource,
+  reconcileCollaborationAgentPersonalState,
+} from "@cocalc/database/postgres/collaborators-agent-personal";
 
 export async function collaborationPersonalState(
   account_id: string,
   resource: CollaborationResource,
 ) {
+  await reconcileCollaborationAgentPersonalState(account_id, [resource]);
+  resource = collaborationAgentPersonalResource(resource);
   return legacyCollaborationPersonalState(
     account_id,
     resource,
@@ -64,6 +70,8 @@ export async function updateCollaborationPersonalState(
     integer(patch.read_through, "read_through") > resource.activity
   )
     throw Error("read marker exceeds current source activity");
+  await reconcileCollaborationAgentPersonalState(account_id, [resource]);
+  resource = collaborationAgentPersonalResource(resource);
   if (
     resource.kind === "conversation" ||
     (resource.kind === "agent" && !resource.agent_id)
