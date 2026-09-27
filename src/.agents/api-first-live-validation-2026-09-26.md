@@ -580,6 +580,33 @@ multi-lease output-recovery pass and an active-output revocation pass. This
 does not establish interactive stdin recovery, managed-key parity, or the
 remaining cross-bay and session-family acceptance cases.
 
+### Interactive input after renewal: live failure
+
+The same installed CLI was tested with key 99 and a real Python cell that
+requests a synthetic answer immediately, sleeps 35 seconds, then requests a
+second answer. The CLI scripting callback returns `42` for either prompt.
+Run `cli-mujcervw-1n6n9s` delivered the first prompt at 4,603 ms and produced
+`before=42`. The second prompt never reached the callback, and `after=42` was
+absent when the test's 65-second deadline fired (observed at 65,294 ms).
+The probe failed as expected for missing recovery, then completed project
+restart/private-directory cleanup and deleted key 99. No cell was resubmitted.
+
+Inspection explains the gap: `jupyter/control.ts` sends stdin requests through
+the original run socket. The CLI's replay reader opens another Jupyter socket
+for retained output but does not rebind pending input. Existing scoped transport
+tests request input before disconnecting, so their input assertions do not cover
+this scenario. The output-only live successes above remain valid, but do not
+establish interactive notebook parity.
+
+The next implementation needs an ordinary authenticated run-input recovery
+contract, bound to the existing notebook/run and a unique pending request. It
+must allow a newly authorized client to answer without executing the cell again,
+deduplicate answers across uncertain acknowledgments, bound pending state and
+lifetimes, and keep answers (especially password input) out of replay storage
+and diagnostics. Revoked or out-of-scope clients must not acquire this channel.
+Validation must cover prompts both before and after renewal, a reply crossing
+renewal, duplicate/stale answers, cancellation, and revocation while waiting.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
