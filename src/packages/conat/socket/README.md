@@ -143,3 +143,12 @@ await s.waitUntilReady(5000);
 await c.waitUntilReady(5000);
 c.write("hi");
 ```
+# Request Recovery and Replay
+
+Socket `request` and `requestMany` may recover connection readiness before
+publishing, but do not automatically republish after an execution attempt.
+A response timeout, lost publish acknowledgment, or service-side `503` can occur
+after an operation has already executed. Such errors are returned to the caller;
+they are not evidence of rejection. Applications that retry must provide their
+own idempotency or reconciliation contract. Ordered socket data retransmission
+within the same logical connection is separate and remains unchanged.

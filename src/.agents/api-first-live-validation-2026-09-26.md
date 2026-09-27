@@ -603,6 +603,18 @@ The 20 terminal/socket regression tests pass. This establishes an attach-only
 primitive for recovery; automatic transport replacement and frontend/daemon
 session recovery are not yet implemented or claimed.
 
+### Socket requests do not replay uncertain operations (not deployed)
+
+Recovery inspection reproduced duplicate application execution: the socket
+client retried already-admitted requests after response timeouts and service
+`503` errors. Both regression cases executed their handler twice before the fix.
+The shared socket client now recovers readiness only before publication and
+propagates request/stream-setup failures without resubmitting the operation.
+Applications retain responsibility for explicit idempotency or reconciliation.
+Ordered data retransmission inside an existing logical socket is unchanged.
+Tests cover response timeout, an admitted service-side `503`, and a stream setup
+whose publication acknowledgment is deliberately lost after admission.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

@@ -13,7 +13,7 @@ jest.mock("@cocalc/conat/logger", () => ({
   }),
 }));
 
-import { Client, connect, messageData } from "../core/client";
+import { Client, ConatError, connect, messageData } from "../core/client";
 import { ConatServer, init } from "../core/server";
 import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 import { isProjectHostApiKeySubjectAllowed } from "../auth/project-host-api-key-policy";
@@ -132,6 +132,85 @@ describe("socket inbox-return protocol", () => {
     socket.close();
     listener.close();
   }, 15000);
+
+  it.each(["timeout", "service-unavailable"])(
+    "does not replay an admitted request after %s",
+    async (failure) => {
+      const { client, listener } = await fixture();
+      const accepted = new Promise<ServerSocket>((resolve) =>
+        listener.once("connection", resolve),
+      );
+      const socket = client.socket.connect(subject, {
+        keepAlive: 0,
+        reconnection: true,
+      });
+      const serverSocket = await accepted;
+      let executions = 0;
+      serverSocket.on("request", (message) => {
+        executions++;
+        if (failure === "service-unavailable") {
+          message.respondSync(null, {
+            headers: { error: "unavailable after admission", code: 503 },
+          });
+        }
+      });
+      try {
+        await socket.waitUntilReady(5000);
+        await expect(
+          socket.request({ mutation: true }, { timeout: 100 }),
+        ).rejects.toMatchObject({
+          code: failure === "timeout" ? 408 : 503,
+        });
+        expect(executions).toBe(1);
+      } finally {
+        socket.close();
+        listener.close();
+      }
+    },
+  );
+
+  it("does not replay stream setup after an uncertain publish acknowledgment", async () => {
+    const { client, listener } = await fixture();
+    const accepted = new Promise<ServerSocket>((resolve) =>
+      listener.once("connection", resolve),
+    );
+    const socket = client.socket.connect(subject, {
+      keepAlive: 0,
+      reconnection: true,
+    });
+    const serverSocket = await accepted;
+    let executions = 0;
+    let admitted = () => {};
+    const admission = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    serverSocket.on("request", () => {
+      executions++;
+      admitted();
+    });
+    await socket.waitUntilReady(5000);
+    const publish = client.publish.bind(client);
+    const fault = jest
+      .spyOn(client, "publish")
+      .mockImplementation(async (...args) => {
+        const result = await publish(...args);
+        if (args[1]?.startStream) {
+          await admission;
+          throw new ConatError("acknowledgment lost", { code: 408 });
+        }
+        return result;
+      });
+    try {
+      await expect(
+        socket.requestMany({ startStream: true }, { timeout: 500 }),
+      ).rejects.toMatchObject({ code: 408 });
+      expect(executions).toBe(1);
+    } finally {
+      fault.mockRestore();
+      socket.close();
+      listener.close();
+    }
+  });
 
   it("reuses an authorized return route when the logical socket reconnects", async () => {
     const { client, listener } = await fixture();

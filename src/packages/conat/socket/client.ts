@@ -494,70 +494,37 @@ export class ConatSocketClient extends ConatSocketBase {
   };
 
   request = async (data, options?) => {
-    const timeout = options?.timeout;
-    const doRequest = async () => {
-      try {
-        await this.waitUntilReady(timeout);
-      } catch {
-        throw Error("request timed out");
-      }
-      if (this.state == "closed") {
-        throw Error("closed");
-      }
-      // console.log("sending request from client ", { subject, data, options });
-      return await this.client.request(this.serverSubject(), data, {
-        waitForInterest: options?.waitForInterest ?? true,
-        ...options,
-        headers: { ...options?.headers, ...this.returnHeaders() },
-      });
-    };
-
-    try {
-      return await doRequest();
-    } catch (err) {
-      if (!this.shouldRetrySocketRequest(err)) {
-        throw err;
-      }
-      await this.reconnectAndWait(timeout);
-      return await doRequest();
-    }
+    await this.waitForRequestReady(options?.timeout);
+    // Once published, a timeout or service error does not prove non-execution.
+    // Application protocols must explicitly decide whether replay is safe.
+    return await this.client.request(this.serverSubject(), data, {
+      waitForInterest: options?.waitForInterest ?? true,
+      ...options,
+      headers: { ...options?.headers, ...this.returnHeaders() },
+    });
   };
 
   requestMany = async (data, options?): Promise<Subscription> => {
-    const timeout = options?.timeout;
-    const doRequestMany = async () => {
-      await this.waitUntilReady(timeout);
-      return await this.client.requestMany(this.serverSubject(), data, {
-        waitForInterest: options?.waitForInterest ?? true,
-        ...options,
-        headers: { ...options?.headers, ...this.returnHeaders() },
-      });
-    };
+    await this.waitForRequestReady(options?.timeout);
+    return await this.client.requestMany(this.serverSubject(), data, {
+      waitForInterest: options?.waitForInterest ?? true,
+      ...options,
+      headers: { ...options?.headers, ...this.returnHeaders() },
+    });
+  };
+
+  private waitForRequestReady = async (timeout?: number): Promise<void> => {
     try {
-      return await doRequestMany();
+      await this.waitUntilReady(timeout);
     } catch (err) {
-      if (!this.shouldRetrySocketRequest(err)) {
+      if (this.state === "closed" || !this.reconnection) {
         throw err;
       }
       await this.reconnectAndWait(timeout);
-      return await doRequestMany();
     }
-  };
-
-  private shouldRetrySocketRequest = (err: unknown): boolean => {
-    if (this.state == "closed") {
-      return false;
+    if (this.state === "closed") {
+      throw Error("closed");
     }
-    const msg = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-    const code = `${(err as any)?.code ?? ""}`.toLowerCase();
-    if (code === "503" || code === "408") {
-      return true;
-    }
-    return (
-      msg.includes("no subscribers matching") ||
-      msg.includes("request timed out") ||
-      msg === "timeout"
-    );
   };
 
   private reconnectAndWait = async (timeout?: number): Promise<void> => {
