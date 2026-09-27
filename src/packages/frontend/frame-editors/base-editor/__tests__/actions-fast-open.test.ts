@@ -11,6 +11,8 @@ const PATH = "/root/test.txt";
 const FAST_OPEN_LOADING_STATUS = "Loading live collaboration...";
 const FAST_OPEN_HANDOFF_DIFF_STATUS =
   "Updated to the latest live collaboration state.";
+const FAST_OPEN_HANDOFF_READ_ONLY_STATUS =
+  "This file is read-only, so edits made while it was loading were not kept.";
 
 async function flushPromises(): Promise<void> {
   for (let i = 0; i < 5; i += 1) {
@@ -167,7 +169,7 @@ describe("fast-open optimistic state machine", () => {
     expect(logOpenedTime).toHaveBeenCalledWith(PROJECT_ID, PATH);
   });
 
-  it("read-only is enforced before live sync is ready", async () => {
+  it("the preview is editable before live sync is ready", async () => {
     const actions = new FastOpenHarness();
     actions.setFastOpenEnabled(true);
     actions.setReadFileResult("draft");
@@ -177,7 +179,8 @@ describe("fast-open optimistic state machine", () => {
 
     await actions.startOptimistic();
 
-    expect(actions.getState("read_only")).toBe(true);
+    expect(actions.getState("read_only")).toBe(false);
+    expect(actions.getState("rtc_status")).toBe("loading");
     expect(actions.getState("status")).toBe(FAST_OPEN_LOADING_STATUS);
   });
 
@@ -333,5 +336,150 @@ describe("fast-open optimistic state machine", () => {
       "read_only_reload",
       { bytes: "second".length, read_only: true },
     );
+  });
+});
+
+// Minimal CodeMirror buffer: the preview's edits live here until handoff.
+class FakeCM {
+  constructor(private value: string = "") {}
+  getValue = () => this.value;
+  setValue = (value: string) => {
+    this.value = value;
+  };
+  setValueNoJump = (value: string) => {
+    this.value = value;
+  };
+  operation = (f: () => void) => f();
+}
+
+// A syncstring that is loading until ready() is called, then holds the live
+// value and records local commits like the real one.
+class LoadingSyncString extends EventEmitter {
+  private state = "loading";
+  commits: string[] = [];
+  constructor(
+    private live: string,
+    private readOnly = false,
+  ) {
+    super();
+  }
+  ready = () => {
+    this.state = "ready";
+  };
+  get_state = () => this.state;
+  is_read_only = () => this.readOnly;
+  to_str = () => this.live;
+  from_str = (value: string) => {
+    this.live = value;
+  };
+  commit = () => {
+    this.commits.push(this.live);
+  };
+  save = jest.fn();
+  exit_undo_mode = jest.fn();
+  versions = () => [];
+}
+
+describe("fast-open edits made before live sync is ready", () => {
+  beforeEach(() => {
+    jest.spyOn(openFile, "mark_open_phase").mockImplementation(() => {});
+    jest.spyOn(openFile, "log_opened_time").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  async function open(
+    disk: string,
+    sync: LoadingSyncString,
+    cm?: FakeCM,
+  ): Promise<FastOpenHarness> {
+    const actions = new FastOpenHarness();
+    actions.setFastOpenEnabled(true);
+    actions.setReadFileResult(disk);
+    actions.setSyncString(sync as unknown as SyncString);
+    (actions as any)._get_cm = () => cm;
+    (actions as any)._get_doc = () => {
+      throw Error("no doc");
+    };
+    await actions.startOptimistic();
+    cm?.setValue(actions.getState("value"));
+    return actions;
+  }
+
+  it("commits edits to the live document when it matches the disk", async () => {
+    const sync = new LoadingSyncString("hello\n");
+    const cm = new FakeCM();
+    const actions = await open("hello\n", sync, cm);
+
+    cm.setValue("hello world\n");
+    sync.ready();
+    actions.completeOptimistic();
+
+    expect(sync.commits).toEqual(["hello world\n"]);
+    expect(cm.getValue()).toBe("hello world\n");
+    expect(actions.getState("value")).toBe("hello world\n");
+    expect(actions.getState("rtc_status")).toBe("live");
+  });
+
+  it("merges edits into a live document that differs from the disk", async () => {
+    jest.useFakeTimers();
+    const sync = new LoadingSyncString("one\ntwo\nthree\nfour\n");
+    const cm = new FakeCM();
+    const actions = await open("one\ntwo\nthree\n", sync, cm);
+
+    cm.setValue("one!\ntwo\nthree\n");
+    sync.ready();
+    actions.completeOptimistic();
+
+    const merged = "one!\ntwo\nthree\nfour\n";
+    expect(sync.commits).toEqual([merged]);
+    expect(cm.getValue()).toBe(merged);
+    expect(actions.getState("value")).toBe(merged);
+    expect(actions.getState("status")).toBe(FAST_OPEN_HANDOFF_DIFF_STATUS);
+  });
+
+  it("uses edits from a non-CodeMirror frame made through set_value", async () => {
+    const sync = new LoadingSyncString("abc");
+    const actions = await open("abc", sync);
+
+    actions.set_value("abcd");
+    expect(sync.commits).toEqual([]);
+    sync.ready();
+    actions.completeOptimistic();
+
+    expect(sync.commits).toEqual(["abcd"]);
+    expect(actions.getState("value")).toBe("abcd");
+  });
+
+  it("shows the live value when nothing was typed, without committing", async () => {
+    const sync = new LoadingSyncString("live");
+    const cm = new FakeCM();
+    const actions = await open("disk", sync, cm);
+
+    sync.ready();
+    actions.completeOptimistic();
+
+    expect(sync.commits).toEqual([]);
+    expect(cm.getValue()).toBe("live");
+    expect(actions.getState("value")).toBe("live");
+  });
+
+  it("discards edits with a notice when the file turns out to be read-only", async () => {
+    jest.useFakeTimers();
+    const sync = new LoadingSyncString("text", true);
+    const cm = new FakeCM();
+    const actions = await open("text", sync, cm);
+
+    cm.setValue("text typed");
+    sync.ready();
+    actions.completeOptimistic();
+
+    expect(sync.commits).toEqual([]);
+    expect(cm.getValue()).toBe("text");
+    expect(actions.getState("read_only")).toBe(true);
+    expect(actions.getState("status")).toBe(FAST_OPEN_HANDOFF_READ_ONLY_STATUS);
   });
 });

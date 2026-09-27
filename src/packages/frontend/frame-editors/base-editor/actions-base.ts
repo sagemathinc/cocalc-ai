@@ -30,6 +30,8 @@ const FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY =
 const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
 const FAST_OPEN_HANDOFF_DIFF_STATUS =
   "Updated to the latest live collaboration state.";
+const FAST_OPEN_HANDOFF_READ_ONLY_STATUS =
+  "This file is read-only, so edits made while it was loading were not kept.";
 const ANCHOR_CHAT_READY_TIMEOUT_MS = 8000;
 const RUN_CODE_TERMINAL = "run_code_terminal";
 
@@ -162,7 +164,7 @@ import {
 } from "@cocalc/frontend/project/open-file";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
-import { type SyncOpts, type PatchId } from "@cocalc/sync";
+import { threeWayMerge, type SyncOpts, type PatchId } from "@cocalc/sync";
 import { SyncDB } from "@cocalc/sync/editor/db";
 import { from_str as syncdbFromString } from "@cocalc/sync/editor/db/doc";
 import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
@@ -430,6 +432,9 @@ export class BaseEditorActions<
   private optimisticFastOpenEnabled: boolean = isFastOpenSyncstringEnabled();
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenValue?: string;
+  // Latest buffer value set through set_value while the preview is editable,
+  // used at handoff when no CodeMirror editor holds the local edits.
+  private optimisticFastOpenLocalValue?: string;
   private optimisticFastOpenApplied: boolean = false;
   private optimisticFastOpenStatusToken: number = 0;
   private optimisticFastOpenNavigation?: ProgrammaticLineNavigation;
@@ -544,10 +549,13 @@ export class BaseEditorActions<
             : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
         this.optimisticFastOpenValue = value;
         this.optimisticFastOpenApplied = true;
+        // The preview is editable: edits made before live sync is ready
+        // stay in the editor buffer and are merged into the live document
+        // at handoff (see completeOptimisticFastOpen).
         this.setState({
           value,
           is_loaded: true,
-          read_only: true,
+          read_only: false,
           status: FAST_OPEN_SYNCSTRING_STATUS,
           rtc_status: "loading",
         });
@@ -599,33 +607,72 @@ export class BaseEditorActions<
     this.optimisticFastOpenApplied = false;
     let liveValue: string | undefined;
     let differs = false;
+    let readOnlyDiscarded = false;
     try {
       liveValue = this._syncstring?.to_str();
     } catch {
       liveValue = undefined;
     }
-    if (this.optimisticFastOpenValue != null && liveValue != null) {
-      if (this.optimisticFastOpenValue !== liveValue) {
+    const base = this.optimisticFastOpenValue;
+    if (base != null && liveValue != null) {
+      if (base !== liveValue) {
         differs = true;
         mark_open_phase(this.project_id, this.path, "handoff_differs", {
-          optimistic_bytes: this.optimisticFastOpenValue.length,
+          optimistic_bytes: base.length,
           live_bytes: liveValue.length,
         });
       }
-      this.setState({ value: liveValue });
+      const local = this.getOptimisticFastOpenLocalValue() ?? base;
+      if (local === base) {
+        // No edits during the preview: just show the live value.
+        if (differs) this.applyMergedBuffer(liveValue);
+        this.setState({ value: liveValue });
+      } else if (this._syncstring.is_read_only?.()) {
+        readOnlyDiscarded = true;
+        this.applyMergedBuffer(liveValue);
+      } else {
+        // Edits made during the preview are relative to the disk value.
+        // Rebase them onto the live value and commit the result as an
+        // ordinary edit, so TimeTravel keeps the live version before it.
+        const merged = differs
+          ? threeWayMerge({ base, local, remote: liveValue })
+          : local;
+        this.applyMergedBuffer(merged);
+        this.set_syncstring(merged, false, "cm");
+        this.getMergeCoordinator().recordLocalCommit(
+          merged,
+          this.getLatestVersion(),
+        );
+      }
     }
+    this.optimisticFastOpenLocalValue = undefined;
     this.optimisticFastOpenValue = undefined;
     if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
       this.setState({ status: "" });
     }
     this._syncstring_metadata();
-    if (differs) {
+    if (readOnlyDiscarded) {
+      this.setTransientOptimisticFastOpenStatus(
+        FAST_OPEN_HANDOFF_READ_ONLY_STATUS,
+        10000,
+      );
+    } else if (differs) {
       this.setTransientOptimisticFastOpenStatus(FAST_OPEN_HANDOFF_DIFF_STATUS);
     }
     this.setState({ rtc_status: "live" });
     mark_open_phase(this.project_id, this.path, "handoff_done");
     if (navigation != null && (differs || !navigationApplied)) {
       void this.applyProgrammaticLineNavigation(navigation);
+    }
+  }
+
+  private getOptimisticFastOpenLocalValue(): string | undefined {
+    const cm = this._get_cm(undefined, true);
+    if (cm != null) return cm.getValue();
+    try {
+      return this._get_doc().getValue();
+    } catch {
+      return this.optimisticFastOpenLocalValue;
     }
   }
 
@@ -2799,6 +2846,9 @@ export class BaseEditorActions<
     const cm = this._get_cm();
     if (cm != null) {
       cm.setValueNoJump(value);
+    }
+    if (this.optimisticFastOpenApplied) {
+      this.optimisticFastOpenLocalValue = value;
     }
     this.set_syncstring(value, do_not_exit_undo_mode, localSource);
   }
