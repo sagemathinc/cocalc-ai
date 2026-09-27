@@ -1,5 +1,8 @@
 export {};
 
+import { randomUUID } from "node:crypto";
+import { Pool } from "pg";
+
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
 let verifyPasswordMock: jest.Mock;
@@ -862,3 +865,121 @@ describe("manageApiKeys local bay access", () => {
     });
   });
 });
+
+const migrationDatabase = process.env.COCALC_TEST_MANAGED_POSTGRES_DB;
+(migrationDatabase ? describe : describe.skip)(
+  "historical API key schema upgrade",
+  () => {
+    let pool: Pool;
+    let schema: string;
+    beforeEach(async () => {
+      if (!process.env.PGHOST?.startsWith("/"))
+        throw Error("local PostgreSQL socket required");
+      schema = `key_upgrade_${randomUUID().replaceAll("-", "")}`;
+      const admin = new Pool({ database: migrationDatabase });
+      try {
+        await admin.query(`CREATE SCHEMA ${schema}`);
+      } finally {
+        await admin.end();
+      }
+      pool = new Pool({
+        database: migrationDatabase,
+        options: `-c search_path=${schema} -c statement_timeout=15000`,
+      });
+      await pool.query("CREATE TABLE accounts(account_id UUID PRIMARY KEY)");
+      await pool.query(
+        "CREATE TABLE api_keys(id INTEGER PRIMARY KEY, account_id UUID, hash TEXT, expire TIMESTAMPTZ)",
+      );
+      queryMock = jest.fn((sql, args) => pool.query(sql, args));
+      jest.resetModules();
+    });
+    afterEach(async () => {
+      if (!pool) return;
+      try {
+        await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+      } finally {
+        await pool.end();
+      }
+    });
+    it.each(["pre-scope", "nullable-revision"])(
+      "upgrades %s rows without changing stored credentials or grants",
+      async (version) => {
+        const owner = randomUUID();
+        const project = randomUUID();
+        await pool.query("INSERT INTO accounts VALUES($1)", [owner]);
+        await pool.query(
+          "INSERT INTO api_keys VALUES(1,$1,'synthetic-hash',NULL),(2,$1,'second-hash',now()+interval '1 day')",
+          [owner],
+        );
+        const before = (
+          await pool.query(
+            "SELECT id,account_id,hash,expire FROM api_keys ORDER BY id",
+          )
+        ).rows;
+        if (version === "nullable-revision") {
+          await pool.query(
+            "ALTER TABLE api_keys ADD COLUMN scope_revision INTEGER, ADD COLUMN capabilities TEXT[] NOT NULL DEFAULT '{}', ADD COLUMN allowed_project_ids UUID[] NOT NULL DEFAULT '{}', ADD COLUMN scope JSONB",
+          );
+          await pool.query(
+            "UPDATE api_keys SET capabilities=ARRAY['file:read'],allowed_project_ids=ARRAY[$1::UUID] WHERE id=1",
+            [project],
+          );
+          await pool.query(
+            "UPDATE api_keys SET scope_revision=7,scope=$1::JSONB WHERE id=2",
+            [
+              JSON.stringify({
+                version: 1,
+                account: ["project:list"],
+                projects: [],
+              }),
+            ],
+          );
+        }
+        const { ensureApiKeysV2Schema } = await import("./manage");
+        await ensureApiKeysV2Schema();
+        expect(
+          (
+            await pool.query(
+              "SELECT id,account_id,hash,expire FROM api_keys ORDER BY id",
+            )
+          ).rows,
+        ).toEqual(before);
+        const rows = (await pool.query("SELECT * FROM api_keys ORDER BY id"))
+          .rows;
+        expect(rows.map((row) => row.scope_revision)).toEqual(
+          version === "nullable-revision" ? [1, 7] : [1, 1],
+        );
+        expect(rows[0].capabilities).toEqual(
+          version === "nullable-revision" ? ["file:read"] : [],
+        );
+        expect(rows[0].allowed_project_ids).toEqual(
+          version === "nullable-revision" ? [project] : [],
+        );
+        expect(rows[0].scope).toBeNull();
+        expect(rows[1].scope).toEqual(
+          version === "nullable-revision"
+            ? { version: 1, account: ["project:list"], projects: [] }
+            : null,
+        );
+        await pool.query(
+          "INSERT INTO api_keys(id,account_id,hash) VALUES(3,$1,'new-hash')",
+          [owner],
+        );
+        expect(
+          (await pool.query("SELECT scope_revision FROM api_keys WHERE id=3"))
+            .rows[0].scope_revision,
+        ).toBe(1);
+        await expect(
+          pool.query("UPDATE api_keys SET scope_revision=NULL WHERE id=1"),
+        ).rejects.toMatchObject({ code: "23502" });
+        // Replay the DDL through a fresh module, as another process would after restart.
+        jest.resetModules();
+        await (await import("./manage")).ensureApiKeysV2Schema();
+        expect(
+          (await pool.query("SELECT * FROM api_keys WHERE id<3 ORDER BY id"))
+            .rows,
+        ).toEqual(rows);
+      },
+    );
+  },
+);

@@ -124,6 +124,23 @@ host or public repository was changed. Combined private review was requested
 with correlation `api-first-lifecycle-6ebd423e08`, accepted as attempt
 `6106e6c7-afdb-4bd0-8097-79450a96d0fc`; no disposition has been received here.
 
+## Historical API key schema upgrades, 2026-09-27
+
+The opt-in PostgreSQL cases in `api/manage.test.ts` now run the real
+`ensureApiKeysV2Schema` DDL over two disposable historical schemas: one without
+scope columns and one with nullable revisions and populated legacy/versioned
+grants. Both preserve hashes, expiry values, account ownership, and stored
+grants. Existing revision 7 stays 7; null revisions become 1. New inserts receive
+revision 1, explicit null revision writes fail, and a fresh module's migration
+replay leaves existing rows unchanged. Each random schema is dropped in cleanup;
+no live account data is altered.
+
+All 28 management tests pass, including the two real-PostgreSQL cases, and the
+server TypeScript build passes. This verifies local DDL and data preservation.
+It does not establish cross-bay directory resynchronization for historical keys,
+authorization after an account migration, or upgrade behavior under concurrent
+old-version writers.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend
