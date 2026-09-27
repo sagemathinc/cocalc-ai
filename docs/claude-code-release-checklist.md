@@ -1,8 +1,9 @@
-# Claude Code General Release Checklist
+# Claude Code Subscription Release Checklist
 
 Date: 2026-09-27
 PR: [#663](https://github.com/sagemathinc/cocalc-ai/pull/663)
 Target: a supported, self-service release, not an operator-only or experimental preview.
+Supported scope: Claude Code with a personal Claude Pro/Max subscription only.
 
 This supersedes the **release target**, not the historical evidence, in the
 [alpha checklist](../src/.agents/claude-code-alpha-release-checklist-2026-09-25.md).
@@ -13,17 +14,18 @@ editing labels or qualification metadata.
 
 ## Scope And Exit Rule
 
-- [ ] **R1: Approve the supported product matrix.** Recommended first release:
-      Claude Code on supported managed Linux project hosts, using project API keys,
-      account API-key relay, and personal Claude Pro/Max subscriptions. List supported
-      host architectures, browser versions, and deployment modes. Qualify every
-      offered row; explicitly exclude unsupported rows from customer-facing choices.
-- [ ] **R2: Decide generic ACP scope separately.** Releasing Claude does not certify
-      Pi, OpenCode, arbitrary adapters, or air-gapped deployments. If these are also
-      offered as supported features in #663, run the applicable gates for each pinned
-      adapter and resolve its known provider-error/cancellation limitations. Otherwise
-      keep them outside the supported catalog and clearly separate their advanced
-      configuration from the released Claude experience.
+- [ ] **R1: Document the supported deployment matrix.** Product scope is decided:
+      qualify only Claude Code with personal Claude Pro/Max subscriptions on supported
+      managed Linux project hosts. List supported host architectures, browser versions,
+      and deployment modes. Project API keys and account API-key relay are not release
+      targets; do not spend qualification effort certifying them for this release.
+- [ ] **R2: Gate the unqualified UI.** Hide Claude API-key payment choices, generic
+      ACP, Pi, OpenCode, and custom adapter setup behind a separate default-off feature
+      flag. Verify New Agent, existing-thread settings, and other entry points offer
+      only subscription-backed Claude alongside the existing Codex experience by
+      default. Do not silently convert existing API-key/custom profiles or payment
+      sources; explain unavailable configurations and require an explicit supported
+      selection. A UI flag does not replace backend authorization or capability checks.
 - [ ] **R3: Establish one evidence ledger.** Every gate below needs an owner, exact
       candidate SHA/artifact digest, environment, test procedure, expected/actual result,
       and evidence link. Record automated, live, user-reported, failed, and skipped
@@ -37,10 +39,10 @@ for a feature that remains available.
 
 ## 1. Candidate And Reproducible Installation
 
-- [ ] **B1: Reconcile branch and PR.** Include local reconnect fix `4c88dbdb53`,
-      resolve current main conflicts, and update the PR description to the final head.
-      At checklist creation GitHub reports head `194338f81f8c` and `CONFLICTING`; the
-      PR body still describes older checkpoints. Recheck before acting.
+- [ ] **B1: Reconcile branch and PR.** Include reconnect fix `4c88dbdb53` and
+      model/copy recovery fix `efb5ea096d`, merge current main, and update the PR
+      description to the final head and subscription-only scope. Recheck remote
+      mergeability after pushing; local merge validation is not deployment evidence.
 - [ ] **B2: Build one coherent release candidate.** Run the full release build,
       dependency consistency, affected package tests/typechecks, frontend lint, and
       docs checks. Pin adapter, Claude SDK, Node, helper, tools, bootstrap, host, and
@@ -58,7 +60,7 @@ for a feature that remains available.
 
 ## 2. Credentials, Billing, And Reconnection
 
-- [ ] **A1: Qualify all three payment paths independently.** Connect, discover,
+- [ ] **A1: Qualify subscription payment.** Connect, discover,
       first turn, follow-up, reload, reconnect, disconnect, and revoke. Verify the
       displayed selection is the credential actually bound to admitted work. Test
       conflicting project environment/settings and confirm no silent payment fallback.
@@ -73,17 +75,17 @@ for a feature that remains available.
       changes, or implement an explicit, safe recovery path. Never silently start a
       blank native session while displaying the old conversation. Different provider
       identities must not inherit each other's private context accidentally.
-- [ ] **A4: Verify costs using provider-side evidence.** For each offered mode,
+- [ ] **A4: Verify subscription costs using provider-side evidence.**
       run bounded canaries and check the actual account usage/billing surfaces, not
       model assertions. Cover subscription extra usage and fast mode where available.
       Confirm plan eligibility and current provider terms before publishing claims;
       give a clear unsupported-plan error for Team/Enterprise or unknown plans.
 - [ ] **A5: Exercise auth failures.** Expired tokens, refresh failure, revoked
-      access, invalid API key, quota/rate limits, provider outage, and lost auth-status
+      access, quota/rate limits, provider outage, and lost auth-status
       notification must yield actionable, sanitized errors. No empty successful
       answer, duplicate paid retry, or exposure of keys/auth bundles.
 - [ ] **A6: Complete independent boundary review.** Qualify controller/project
-      separation, API-key relay use versus key confidentiality, scoped CLI identity,
+      separation, subscription credential confidentiality, scoped CLI identity,
       collaborators, shared-chat tampering, queued work, and authorization loss.
       Verify routing by account/project ownership across bays where supported.
       Maintainers must close applicable private findings through the private workflow;
@@ -117,7 +119,7 @@ for a feature that remains available.
 
 ## 4. Conversation And Environment Workflows
 
-- [ ] **W1: Run a complete real task per payment mode.** Create an agent, set the
+- [ ] **W1: Run a complete real subscription task.** Create an agent, set the
       first model/effort, inspect and edit files, run focused tests and a long build,
       publish a file/commit artifact, then continue the same native context. Verify
       working directory, project CLAUDE.md, installed CoCalc guidance, and scoped CLI.
@@ -178,8 +180,9 @@ for a feature that remains available.
 
 - [ ] **O1: Replace preview-era metadata deliberately.** Reconcile
       `src/packages/util/ai/qualified-harnesses.ts` with the separately isolated
-      subscription path. Keep the API-key path's auth-hiding protection. Verify
-      catalog status changes do not accidentally bypass runtime admission checks.
+      subscription path. Do not promote the excluded API-key/custom paths to
+      supported status or remove their protections. Verify catalog status changes
+      do not accidentally bypass runtime admission checks or the R2 feature flag.
 - [ ] **O2: Ship self-service availability.** Supported hosts advertise readiness
       and enable the released integration through normal provisioning, not per-user
       operator allowlists. Preserve site policy controls, capability checks, and an
@@ -197,7 +200,7 @@ for a feature that remains available.
       final independent review, rerun impacted gates after fixes, and record release
       approval. Use a staged operational rollout with monitored canaries, then normal
       availability; staged deployment does not make the product an indefinite preview.
-      Run post-deployment turns for all offered payment modes before announcing release.
+      Run post-deployment subscription turns before announcing release.
 
 ## Existing Evidence And Remaining Distinctions
 
@@ -214,6 +217,12 @@ for a feature that remains available.
   and Medium through the live New Agent UI. The stale-selection fix `4c88dbdb53`
   passed 37 focused tests, frontend typecheck, and lint, but was not deployed at
   that checkpoint. No full post-fix inference/resume qualification was performed.
+- On 2026-09-27, after the model/copy recovery changes, the user reported that
+  Claude works well on lite4b.cocalc.ai and that Copy Agent works and preserves
+  context correctly. This supersedes the earlier broken-model/copy observations
+  for that tested deployment. The deployed artifact digest was not recorded with
+  the report. Retain W4's busy-source, restart, reconnect, missing-transcript, and
+  uncertain-outcome cases, and rerun the happy path on the merged candidate.
 - The historical [ACP progress log](../src/.agents/acp-harness-progress-2026-09-21.md)
   and [Claude qualification record](../src/.agents/claude-code-acp-qualification-2026-09-22.md)
   contain earlier evidence. Reuse applicable evidence with its exact scope and
@@ -221,6 +230,9 @@ for a feature that remains available.
 
 ## Not Required For This Release
 
+- Qualifying Claude project API keys, account API-key relay, or generic/custom ACP
+  harnesses. Their ordinary release UI must remain hidden under R2; existing code
+  and safety checks are not to be deleted or weakened just to narrow the matrix.
 - Controller outbound endpoint allowlisting, unless a concrete release-blocking
   finding establishes a need. Do not add it merely as speculative hardening.
 - Disabling account connectors by default; the intended default remains enabled.
@@ -233,7 +245,8 @@ for a feature that remains available.
 
 ## Recommended Execution Order
 
-1. Reconcile candidate and scope (R1-R3, B1-B2); deploy the reconnect correction.
+1. Merge main, gate the excluded UI, and build a coherent subscription-only candidate
+   (R1-R3, B1-B2); deploy the reconnect/model/copy corrections together.
 2. Close clean-install/upgrade and credential/context recovery failures (B3-B4,
    A1-A5), using bounded real-provider canaries.
 3. Run privileged lifecycle fixtures and independent boundary review (J1-J5, A6).
