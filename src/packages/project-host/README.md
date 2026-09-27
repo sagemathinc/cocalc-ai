@@ -28,7 +28,11 @@ This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @
 
 Ordinary memory eviction is **idle-first across compute tiers**. Among eligible
 projects, older authoritative edit activity always sorts before newer activity;
-tier and deprioritization are only tie breakers. Eligibility requires at least
+tier and deprioritization are only tie breakers for exactly equal timestamps.
+The normal-candidate ordering invariant is: if eligible ordinary candidates A
+and B have `last_edited(A) < last_edited(B)`, A must precede B, regardless of tier,
+even for a one-millisecond difference. Do not group activity into buckets and
+then sort by tier within a bucket. Eligibility requires at least
 one hour of known edit inactivity by default, configurable with
 `COCALC_PROJECT_HOST_MEMORY_PRESSURE_MIN_IDLE_MS`. Startup, explicit protection,
 and cooldown guards still apply. Missing, non-finite, zero, negative, or future
@@ -41,6 +45,11 @@ Directly attributed resource offenders retain their safety bypass and first
 rank. Missing or invalid tier information stays unknown: it is neither priority
 zero nor a paid entitlement, breaks otherwise equal ties after known tiers, and
 does not produce the free-tier stop label.
+
+Admission decisions and enforcement of a project's own quota/resource limits
+are separate from ordinary memory victim selection. Those safety paths, direct
+offender precedence, and emergency protection relaxation are explicit
+exceptions, not reasons to let tier outrank idleness in the ordinary comparator.
 
 The ordering signal is `authoritative_last_edited_ms` from the owning bay's
 existing policy mirror, not browser presence. `last_browser_activity_ms` records

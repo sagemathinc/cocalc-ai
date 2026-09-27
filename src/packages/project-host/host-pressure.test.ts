@@ -598,6 +598,56 @@ describe("host pressure controller helpers", () => {
     ]);
   });
 
+  it.each(
+    [0, 1, 5, 100].flatMap((olderTier) =>
+      [0, 1, 5, 100].map((newerTier) => [olderTier, newerTier]),
+    ),
+  )(
+    "always ranks the more idle ordinary candidate first: tiers %i vs %i",
+    (olderTier, newerTier) => {
+      const now = 10 * 60 * 60_000;
+      const minimumIdleMs = 60 * 60_000;
+      const policies = new Map(
+        ["older", "newer"].map((project_id) => [
+          project_id,
+          {
+            project_id,
+            owner_account_id: "owner",
+            shared_compute_priority:
+              project_id === "older" ? olderTier : newerTier,
+            authoritative_last_edited_ms:
+              now - minimumIdleMs - (project_id === "older" ? 1 : 0),
+            policy_updated_ms: now,
+            stop_override:
+              project_id === "older"
+                ? ("default" as const)
+                : ("deprioritize" as const),
+          },
+        ]),
+      );
+      for (const order of [
+        ["newer", "older"],
+        ["older", "newer"],
+      ]) {
+        const candidates = buildStopCandidates({
+          zone: "pressure",
+          now,
+          minimumIdleMs,
+          projects: order.map((project_id) => ({
+            project_id,
+            state: "running",
+          })),
+          policies,
+          getStopState: () => undefined,
+        });
+        expect(candidates.map(({ project_id }) => project_id)).toEqual([
+          "older",
+          "newer",
+        ]);
+      }
+    },
+  );
+
   it.each(["pressure", "emergency"] as const)(
     "uses tier and deprioritize only after idleness in %s",
     (zone) => {

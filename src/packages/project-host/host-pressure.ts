@@ -1032,6 +1032,7 @@ export function buildStopCandidates({
       return right.direct_resource_score - left.direct_resource_score;
     }
     // Ordinary eviction is idle-first across tiers and deprioritize overrides.
+    // Compare exact timestamps: activity buckets must never let tier outrank idle.
     // Direct offenders still rank first. Unknown activity is not ancient
     // activity: emergency fallback candidates follow known activity.
     if (
