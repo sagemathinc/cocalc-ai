@@ -626,7 +626,13 @@ describe("initCodexProjectRunner", () => {
             failRenewal = reject;
           }),
       );
-      hubApi.agent.endCocalcConnectorTurn.mockResolvedValue(undefined);
+      let notifyRevocation!: () => void;
+      const revocationObserved = new Promise<void>((resolve) => {
+        notifyRevocation = resolve;
+      });
+      hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+        notifyRevocation();
+      });
       const intervalSpy = jest.spyOn(global, "setInterval");
       const { initCodexProjectRunner } = await import("./codex/codex-project");
       initCodexProjectRunner();
@@ -682,12 +688,21 @@ describe("initCodexProjectRunner", () => {
           failRenewal(new Error("source access revoked"));
         }
         await new Promise<void>((resolve) => setImmediate(resolve));
-        for (
-          let i = 0;
-          i < 10 && !hubApi.agent.endCocalcConnectorTurn.mock.calls.length;
-          i++
-        ) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
+        // Revocation follows real asynchronous credential-file removal. Event
+        // loop iterations do not establish that the filesystem work has ended.
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            revocationObserved,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(Error("connector revocation was not observed")),
+                2000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
         }
         expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
         const containerFile = spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE;
