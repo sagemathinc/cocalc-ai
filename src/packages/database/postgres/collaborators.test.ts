@@ -1550,6 +1550,24 @@ test("latest-message author survives owner/home projection independently of crea
     (await listCollaborationResources({ account_id })).items[0],
   ).not.toHaveProperty("latest_message_author_id");
 });
+test("shared resource discovery excludes solo projects without changing general discovery", async () => {
+  await ingestCollaborationSnapshot(snapshot(), authority);
+  await deliver();
+  expect(
+    (await listCollaborationResources({ account_id, shared_only: true })).items,
+  ).toHaveLength(1);
+  await getPool().query(
+    "UPDATE account_project_index SET users_summary=$2 WHERE account_id=$1",
+    [account_id, JSON.stringify({ [account_id]: { group: "owner" } })],
+  );
+  expect(
+    (await listCollaborationResources({ account_id, shared_only: true })).items,
+  ).toEqual([]);
+  expect((await listCollaborationResources({ account_id })).items).toHaveLength(
+    1,
+  );
+});
+
 test("title/alias search and cursor filter binding are deterministic and bounded", async () => {
   await ingestCollaborationSnapshot(
     snapshot(1, [resource("one"), resource("two")]),

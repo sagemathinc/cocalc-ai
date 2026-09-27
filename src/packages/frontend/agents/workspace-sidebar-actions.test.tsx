@@ -3,6 +3,11 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 
+jest.mock("@cocalc/frontend/art", () => ({ APP_ICON: "/logo.svg" }));
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/",
+}));
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: () => false,
 }));
@@ -19,6 +24,15 @@ test("Projects navigation works from the keyboard", async () => {
     <WorkspaceSidebarActions
       firstNavigationItem={<button onClick={onProjects}>Projects</button>}
     />,
+  );
+  await user.tab();
+  expect(screen.getByRole("link", { name: "CoCalc home" })).toHaveFocus();
+  expect(
+    screen.getByRole("link", { name: "CoCalc home" }).style.outline,
+  ).toContain("2px solid");
+  expect(screen.getByRole("link", { name: "CoCalc home" })).toHaveAttribute(
+    "href",
+    "/",
   );
   await user.tab();
   expect(
@@ -75,7 +89,7 @@ test("does not render a duplicate New Agent button above navigation", () => {
 });
 
 test.each(["Projects", "Artifacts"])(
-  "sidebar hide control shares the %s row without a spacer and is keyboard operable",
+  "branding and hide control precede %s without an empty spacer and are keyboard accessible",
   async (name) => {
     const user = userEvent.setup();
     const onHideSidebar = jest.fn();
@@ -90,18 +104,21 @@ test.each(["Projects", "Artifacts"])(
     });
     const first = screen.getByRole("button", { name });
     const hide = screen.getByRole("button", { name: "Hide Agents sidebar" });
-    expect(first.parentElement?.parentElement).toBe(hide.parentElement);
-    expect(scroll).toContainElement(hide);
-    expect(scroll.previousElementSibling).toBeNull();
+    const home = screen.getByRole("link", { name: "CoCalc home" });
+    expect(home.parentElement).toBe(hide.parentElement);
+    expect(scroll).not.toContainElement(hide);
+    expect(scroll.previousElementSibling).toBe(home.parentElement);
     expect(scroll.style.marginTop).toBe("");
     expect(hide).toHaveAttribute("aria-expanded", "true");
     await user.tab();
-    expect(scroll).toHaveFocus();
-    await user.tab();
-    expect(first).toHaveFocus();
+    expect(home).toHaveFocus();
     await user.tab();
     expect(hide).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(onHideSidebar).toHaveBeenCalledTimes(1);
+    await user.tab();
+    expect(scroll).toHaveFocus();
+    await user.tab();
+    expect(first).toHaveFocus();
   },
 );

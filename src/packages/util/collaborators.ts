@@ -67,6 +67,8 @@ export interface CollaborationQuery {
   project_id?: string;
   person_id?: string;
   search?: string;
+  /** Restrict discovery to projects with another human owner/collaborator. */
+  shared_only?: boolean;
   after?: string;
   limit?: number;
 }

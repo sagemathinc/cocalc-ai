@@ -206,7 +206,7 @@ function ShareContents({
             type="primary"
             onClick={() => {
               if (!current()) {
-                setError("Your session changed. Reopen Collaborators.");
+                setError("Your session changed. Reopen People.");
                 return;
               }
               openCollaborators({

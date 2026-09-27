@@ -512,9 +512,9 @@ export const Page: React.FC = () => {
             : "Your home for agents, conversations, artifacts, and shared work"
         }
         icon={aiDisabled ? "users" : "home"}
-        label={aiDisabled ? "Collaborators" : "Home"}
+        label={aiDisabled ? "People" : "Home"}
         hide_label={isNarrow}
-        ariaLabel={aiDisabled ? "Collaborators" : "Home"}
+        ariaLabel={aiDisabled ? "People" : "Home"}
       />
     );
   }

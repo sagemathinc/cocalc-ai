@@ -114,6 +114,39 @@ beforeAll(() => {
 });
 afterAll(() => jest.restoreAllMocks());
 
+test("People navigation uses shared projects, but inviting allows the first collaborator", async () => {
+  const user = userEvent.setup();
+  render(<Workspace />);
+  expect(
+    screen.getByRole("heading", { name: "People", level: 1 }),
+  ).toBeVisible();
+  const views = screen.getByRole("navigation", { name: "People views" });
+  await user.click(within(views).getByRole("button", { name: "Address Book" }));
+  await user.click(
+    within(views).getByRole("button", { name: "Shared projects" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shared_only: true }),
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Filter by project" }));
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shared_only: true, limit: 25 }),
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+  await user.click(
+    screen.getByRole("button", { name: "Invite collaborator", exact: true }),
+  );
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shared_only: false, limit: 25 }),
+    ),
+  );
+});
+
 test.each(["New conversation", "Invite collaborator"])(
   "%s uses the reduced-motion modal portal",
   async (name) => {
@@ -131,6 +164,26 @@ test.each(["New conversation", "Invite collaborator"])(
     );
   },
 );
+
+test("inviting from a person's overview also offers projects not yet shared with that person", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "people", personId: "bob" }} />);
+  await user.click(
+    screen.getAllByRole("button", {
+      name: "Invite collaborator",
+      exact: true,
+    })[0],
+  );
+  await waitFor(() =>
+    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        shared_only: false,
+        person_id: undefined,
+        limit: 25,
+      }),
+    ),
+  );
+});
 
 test("keyboard opens a conversation and restores focus and search on back", async () => {
   const user = userEvent.setup();
@@ -464,7 +517,7 @@ test("keyboard pin and unpin refresh bounded results and restore focus after rem
   await user.keyboard(" ");
   await screen.findByText(/No pinned projects match/);
   await waitFor(() =>
-    expect(screen.getByLabelText("Collaborators results")).toHaveFocus(),
+    expect(screen.getByLabelText("People results")).toHaveFocus(),
   );
   expect(mockApi.setPersonalState).not.toHaveBeenCalled();
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
@@ -492,7 +545,7 @@ test("changed-favorites cursor errors offer a keyboard-operable restart without 
       expect.objectContaining({ view: "recent", after: undefined }),
     ),
   );
-  expect(screen.getByLabelText("Collaborators results")).toHaveFocus();
+  expect(screen.getByLabelText("People results")).toHaveFocus();
 });
 
 test("participant totals do not treat a bounded preview as the full audience", async () => {

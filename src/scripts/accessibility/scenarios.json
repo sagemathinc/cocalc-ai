@@ -3,12 +3,12 @@
   "pages": [
     {
       "id": "collaborators-project-filter",
-      "title": "Collaborators project selector keyboard and focus",
+      "title": "People project selector keyboard and focus",
       "path": "/collaborators",
       "authentication": "account",
       "engine": "axe",
       "minimumScore": 1,
-      "readySelector": "[aria-label='Collaborators views']",
+      "readySelector": "[aria-label='People views']",
       "settleMs": 500,
       "actions": [
         {

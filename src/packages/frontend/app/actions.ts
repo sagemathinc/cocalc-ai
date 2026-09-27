@@ -285,7 +285,7 @@ export class PageActions extends Actions<PageState> {
         }
         set_window_title(
           page.get("collaborators_open")
-            ? "Collaborators"
+            ? "People"
             : page.get("library_open")
               ? "Artifacts"
               : "Home",

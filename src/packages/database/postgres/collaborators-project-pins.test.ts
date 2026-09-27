@@ -86,6 +86,7 @@ test("project cursor binds view, account, filters and favorites but not array or
     { search: "Geometry" },
     { person_id },
     { project_id: pins[0] },
+    { shared_only: true },
   ])
     await expect(
       listCollaborationProjects(
@@ -108,6 +109,61 @@ test("project cursor binds view, account, filters and favorites but not array or
     ).items,
   ).toHaveLength(2);
 });
+test("shared projects exclude solo and viewer-only projects before pagination; invitation queries retain them", async () => {
+  const solo = ids[2999];
+  const viewerOnly = ids[2998];
+  const sharedUsers = {
+    [account_id]: { group: "owner" },
+    [person_id]: { group: "collaborator" },
+  };
+  try {
+    for (const [id, users] of [
+      [solo, { [account_id]: { group: "owner" } }],
+      [
+        viewerOnly,
+        { [account_id]: { group: "owner" }, [person_id]: { group: "viewer" } },
+      ],
+    ]) {
+      await getPool().query(
+        "UPDATE account_project_index SET users_summary=$2 WHERE project_id=$1",
+        [id, JSON.stringify(users)],
+      );
+    }
+    expect(
+      (await listCollaborationProjects({ account_id, limit: 2 })).items.map(
+        (p) => p.project_id,
+      ),
+    ).toEqual([solo, viewerOnly]);
+    const first = await listCollaborationProjects({
+      account_id,
+      shared_only: true,
+      limit: 2,
+    });
+    expect(first.items.map((p) => p.project_id)).toEqual([
+      ids[2997],
+      ids[2996],
+    ]);
+    const second = await listCollaborationProjects({
+      account_id,
+      shared_only: true,
+      limit: 2,
+      after: first.next,
+    });
+    expect(second.items.map((p) => p.project_id)).toEqual([
+      ids[2995],
+      ids[2994],
+    ]);
+    await expect(
+      listCollaborationProjects({ account_id, shared_only: "true" as any }),
+    ).rejects.toThrow("shared_only");
+  } finally {
+    await getPool().query(
+      "UPDATE account_project_index SET users_summary=$2 WHERE project_id=ANY($1::uuid[])",
+      [[solo, viewerOnly], JSON.stringify(sharedUsers)],
+    );
+  }
+});
+
 test("pins cannot bypass access, lease, search or person filters", async () => {
   expect(
     (

@@ -55,8 +55,8 @@ const NewProjectCreator = lazy(async () => ({
 }));
 const VIEWS: [CollaboratorsView, string][] = [
   ["conversations", "Conversations"],
-  ["people", "People"],
-  ["projects", "Projects"],
+  ["people", "Address Book"],
+  ["projects", "Shared projects"],
 ];
 
 export function CollaboratorsPage(props: CollaboratorsPageProps) {
@@ -90,11 +90,11 @@ export function CollaboratorsPage(props: CollaboratorsPageProps) {
         <Alert
           role="alert"
           type="error"
-          title="Invalid Collaborators link"
+          title="Invalid People link"
           description={props.routeError}
         />
         <Button onClick={() => props.onNavigate({ view: "conversations" })}>
-          Open Collaborators
+          Open People
         </Button>
       </section>
     );
@@ -195,6 +195,7 @@ function CollaboratorsWorkspace({
     queryKey,
     (after) => {
       const opts = {
+        shared_only: true,
         search,
         project_id: listProjectId,
         person_id: listPersonId,
@@ -331,9 +332,9 @@ function CollaboratorsWorkspace({
         style={{ borderBottom: `1px solid ${UI_COLORS.border}` }}
       >
         {navigation}
-        <h1>Collaborators</h1>
+        <h1>People</h1>
         <p>People, conversations, and work in your shared projects.</p>
-        <nav aria-label="Collaborators views" className="collaborators-actions">
+        <nav aria-label="People views" className="collaborators-actions">
           {VIEWS.map(([key, label]) => (
             <Button
               key={key}
@@ -460,7 +461,7 @@ function CollaboratorsWorkspace({
           className="collaborators-results"
           ref={listRef}
           tabIndex={-1}
-          aria-label="Collaborators results"
+          aria-label="People results"
         >
           <DirectoryResults
             result={result}
@@ -479,7 +480,7 @@ function CollaboratorsWorkspace({
                 : view === "projects"
                   ? projectView === "pinned"
                     ? "No pinned projects match. Pin a project from Recent projects or clear your filters."
-                    : "No accessible projects match. Create a project or clear your filters."
+                    : "No shared projects match. Invite a collaborator or clear your filters."
                   : "No indexed conversations match. Start a discussion in a project, or try All accessible."
             }
           >
@@ -612,6 +613,7 @@ function CollaboratorsWorkspace({
         <DirectoryPicker
           api={api}
           kind={picker === "person" ? "person" : "project"}
+          sharedOnly={picker !== "invite"}
           title={
             picker === "invite"
               ? "Choose a project to invite to"
@@ -620,7 +622,7 @@ function CollaboratorsWorkspace({
                 : `Filter by ${picker}`
           }
           projectId={projectId}
-          personId={personId}
+          personId={picker === "invite" ? undefined : personId}
           onClose={() => setPicker(undefined)}
           onSelect={(item) => {
             if (picker === "invite") setInviteProject(item.id);

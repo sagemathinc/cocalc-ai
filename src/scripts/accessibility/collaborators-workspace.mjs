@@ -98,10 +98,10 @@ export async function checkCollectionViews(page, label, pinnedTitle) {
 // Use an isolated fixture. The pin is toggled and then restored; no access or
 // project settings are changed. Caller selects the account/theme/viewport.
 export async function checkCollaboratorsProjectPins(page, projectTitle) {
-  const views = page.getByRole("navigation", { name: "Collaborators views" });
+  const views = page.getByRole("navigation", { name: "People views" });
   await keyboardActivate(
     page,
-    views.getByRole("button", { name: "Projects", exact: true }),
+    views.getByRole("button", { name: "Shared projects", exact: true }),
   );
   await keyboardActivate(
     page,
@@ -131,7 +131,7 @@ export async function checkCollaboratorsProjectPins(page, projectTitle) {
     await withinViewport(page, unpin);
     await keyboardActivate(page, unpin);
     await unpin.waitFor({ state: "hidden" });
-    await focused(page.getByLabel("Collaborators results", { exact: true }));
+    await focused(page.getByLabel("People results", { exact: true }));
     await keyboardActivate(
       page,
       page.getByRole("button", { name: "Recent projects", exact: true }),

@@ -46,6 +46,7 @@ export function Overview({
     JSON.stringify(["overview-projects", projectId, personId]),
     (after) =>
       api.listProjects({
+        shared_only: true,
         project_id: projectId,
         person_id: personId,
         after,

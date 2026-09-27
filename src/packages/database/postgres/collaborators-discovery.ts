@@ -42,12 +42,16 @@ import {
 const ACCESS = `JOIN account_project_index p ON p.account_id=x.account_id AND p.project_id=x.project_id`;
 const VISIBLE = `x.lease_until>now() AND COALESCE(x.granted_generation,x.generation) IS NOT NULL
   AND p.users_summary #>> ARRAY[x.account_id::text,'group'] IN ('owner','collaborator')`;
+const SHARED = `EXISTS(SELECT 1 FROM jsonb_each(p.users_summary) member
+  WHERE member.key<>p.account_id::text AND member.value->>'group' IN ('owner','collaborator'))`;
 
 function query(input: CollaborationResourceQuery, mode: string) {
   uuid(input.account_id, "account_id");
   if (input.project_id != null) uuid(input.project_id, "project_id");
   if (input.person_id != null) uuid(input.person_id, "person_id");
   const search = boundedText(input.search ?? "", "search", 128, true).trim();
+  if (input.shared_only != null && typeof input.shared_only !== "boolean")
+    throw Error("invalid shared_only");
   const limit = input.limit ?? COLLABORATION_PAGE_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > COLLABORATION_PAGE_LIMIT)
     throw Error("invalid page limit");
@@ -76,6 +80,7 @@ function query(input: CollaborationResourceQuery, mode: string) {
       input.kind ?? null,
       input.scope ?? "all",
       !!input.include_archived,
+      !!input.shared_only,
     ]),
   );
   let after: { order: number; key: string } | undefined;
@@ -218,6 +223,7 @@ export async function listCollaborationResources(
     "r.generation=x.generation",
     "r.generation=COALESCE(x.granted_generation,x.generation)",
   ];
+  if (q.shared_only) access.push(SHARED);
   const where = ["r.account_id=$1"];
   if (q.project_id) where.push(`r.project_id=${param(q.project_id)}::uuid`);
   if (q.kind) where.push(`r.kind=${param(q.kind)}`);
@@ -338,6 +344,7 @@ export async function listCollaborationProjects(
     floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint AS activity,
     p.project_id=ANY($8::uuid[]) AS pinned
     FROM collaboration_access x ${ACCESS} WHERE x.account_id=$1::uuid AND ${VISIBLE}
+    ${q.shared_only ? `AND ${SHARED}` : ""}
     AND ($2::uuid IS NULL OR p.project_id=$2)
     AND ($3::uuid IS NULL OR p.users_summary #>> ARRAY[$3::text,'group'] IN ('owner','collaborator'))
     AND ($4='' OR to_tsvector('simple',COALESCE(p.title,'')) @@ plainto_tsquery('simple',$4))

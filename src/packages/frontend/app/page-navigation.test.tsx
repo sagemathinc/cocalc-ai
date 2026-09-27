@@ -243,7 +243,7 @@ test.each([false, true])(
     collaboratorsEnabled = true;
     const mounted = render(view());
     expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
-    const entry = screen.getByRole("button", { name: "Collaborators" });
+    const entry = screen.getByRole("button", { name: "People" });
     entry.focus();
     await userEvent.keyboard("{Enter}");
     expect(openCollaborators).toHaveBeenCalledTimes(1);
@@ -251,10 +251,10 @@ test.each([false, true])(
     expect(actions.set_active_tab).not.toHaveBeenCalled();
     collaboratorsEnabled = false;
     mounted.rerender(view());
-    expect(screen.queryByRole("button", { name: "Collaborators" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "People" })).toBeNull();
     collaboratorsEnabled = true;
     loggedIn = false;
     mounted.rerender(view());
-    expect(screen.queryByRole("button", { name: "Collaborators" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "People" })).toBeNull();
   },
 );

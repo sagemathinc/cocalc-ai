@@ -31,7 +31,7 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
       webapp_client.conat_client !== client
     )
       throw Error(
-        "Your session changed. Reopen Collaborators in the current account.",
+        "Your session changed. Reopen People in the current account.",
       );
     return client.hub.collaborators;
   }

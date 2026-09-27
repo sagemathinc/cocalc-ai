@@ -20,6 +20,7 @@ export function DirectoryPicker({
   title,
   projectId,
   personId,
+  sharedOnly = false,
   onSelect,
   onClose,
 }: {
@@ -28,6 +29,7 @@ export function DirectoryPicker({
   title: string;
   projectId?: string;
   personId?: string;
+  sharedOnly?: boolean;
   onSelect: (item: { id: string; title: string }) => void;
   onClose: () => void;
 }) {
@@ -40,10 +42,16 @@ export function DirectoryPicker({
   const [input, setInput] = useState("");
   const search = useDirectorySearch(input);
   const result = useDirectory<CollaborationProject | CollaborationPerson>(
-    JSON.stringify([kind, search, projectId, personId]),
+    JSON.stringify([kind, search, projectId, personId, sharedOnly]),
     (after) =>
       kind === "project"
-        ? api.listProjects({ search, person_id: personId, after, limit: 25 })
+        ? api.listProjects({
+            search,
+            person_id: personId,
+            shared_only: sharedOnly,
+            after,
+            limit: 25,
+          })
         : api.listPeople({ search, project_id: projectId, after, limit: 25 }),
   );
   function restoreFocus() {

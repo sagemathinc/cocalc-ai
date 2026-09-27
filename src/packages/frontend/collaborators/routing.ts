@@ -12,7 +12,7 @@ export function parseCollaboratorsRoute(
   }
   const [view, ...rest] = parts;
   if (!["conversations", "people", "projects"].includes(view)) {
-    return { routeError: "This Collaborators address is not valid." };
+    return { routeError: "This People address is not valid." };
   }
   const result: ParsedCollaboratorsRoute = {
     view: view as CollaboratorsRoute["view"],
@@ -46,7 +46,7 @@ export function parseCollaboratorsRoute(
     if (result.resourceId && !result.projectId) throw Error();
     return result;
   } catch {
-    return { routeError: "This Collaborators address is not valid." };
+    return { routeError: "This People address is not valid." };
   }
 }
 

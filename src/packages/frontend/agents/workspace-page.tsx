@@ -3001,7 +3001,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     if (!active) return;
     set_window_title(
       collaboratorsOpen
-        ? "Collaborators"
+        ? "People"
         : libraryOpen
           ? "Artifacts"
           : creating
@@ -3815,7 +3815,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                         setMobileList(false);
                       }}
                     >
-                      Collaborators
+                      People
                     </Button>
                   )}
                   <AgentOrganizationControls
@@ -4130,7 +4130,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         tabIndex={-1}
         aria-label={
           collaboratorsOpen
-            ? "Collaborators"
+            ? "People"
             : libraryOpen
               ? "Artifacts"
               : selected
@@ -4164,7 +4164,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ) : collaboratorsOpen ? (
             <div style={{ padding: 24 }} role="status">
               {libraryNavigationControl()}
-              The Collaborators workspace is not enabled on this site.
+              The People workspace is not enabled on this site.
             </div>
           ) : null)}
         {accountId && (
