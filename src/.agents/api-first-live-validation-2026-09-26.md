@@ -6,6 +6,33 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Live synchronized-text interruption gap, 2026-09-27
+
+The installed CLI on the same isolated validation project was run with a
+private key file and an empty environment. A disposable `probe.txt` was opened
+through `api.text.open(...).withSession(...)`. One live session repeatedly
+replaced its synthetic content, awaited `save()` and `save_to_disk()`, and
+logged each completed write. After at least three writes, its parent manual
+key was deleted.
+
+The trace contained 39 completed writes; the final acknowledgment arrived
+20,757ms after deletion returned. However, no interruption or completion event
+arrived during the subsequent bounded polling window. The probe therefore
+failed its interruption assertion. This is not evidence of successful writes
+past the revocation bound, nor sufficient proof of server-side write denial:
+the client was left awaiting an operation instead of reporting transport loss.
+
+Inspection of `cli/src/api/text.ts` shows that the session binder awaits the
+callback without a transport-loss race, and the save path awaits sync save
+promises directly. The next step is to reproduce cancellation behavior in
+focused tests, ensure pending writes cannot be silently replayed under a later
+credential, and rerun the installed CLI fixture with independent post-revocation
+document inspection. Do not count this synchronized-editing case as passed.
+
+The fixture key was deleted before the assertion failure. Cleanup restarted
+only the dedicated validation project and removed its temporary provider and
+document directory. No user document was used or changed.
+
 ## Live terminal revocation and reattachment, 2026-09-27
 
 Validation project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535` remained on host3.
