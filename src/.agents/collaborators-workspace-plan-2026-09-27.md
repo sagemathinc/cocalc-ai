@@ -76,8 +76,10 @@ acceptance and a human UX review remain required before broad enablement.
 ### Validation record
 
 The implementation was checked in an isolated worktree, a private PostgreSQL 18
-cluster, and a private standalone Lite instance. No live user project was
-migrated, enabled, or restarted. The PR remains a draft for review.
+cluster, and a private standalone Lite instance. The agent did not migrate,
+enable, or restart a live user project. The developer separately enabled snapshot
+`0dafc341a7` on lite1b for review; subsequent validation remains isolated and does
+not update that running checkout. The PR remains a draft for review.
 
 - Full `pnpm -C src build:dev` completed, followed by package-local builds and a
   fresh static development bundle for the final UI integration.
@@ -167,9 +169,39 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   pass on PostgreSQL. Account handoff and
   maintenance integrations pass 23 PGlite cases, with the lock-contention case
   verified separately on private PostgreSQL. No existing registered identity or
-  credential is copied by the collaboration protocol. Browser acceptance for
-  the new sharing/pinning controls and independent-bay transport acceptance are
-  not claimed by these database/component checks.
+  credential is copied by the collaboration protocol. The database/component
+  checks do not themselves establish browser or independent-bay transport
+  acceptance; the subsequent checks below cover those boundaries separately.
+- The `b7d379adf5` checkpoint passes eight real-browser pin/share scenarios in
+  light/dark themes at 1440px and 320px, including keyboard access, Escape and
+  focus restoration, with no page errors or horizontal overflow. Reduced-motion
+  dialogs now disable Ant Design transitions instead of relying on zero-duration
+  CSS animation events. The three focused component suites pass 23 tests;
+  frontend typechecking, lint and a fresh static bundle also pass.
+- The `2da447aca7` checkpoint passes five isolated transport acceptance cases
+  using independent owner/account-home processes and PostgreSQL databases plus
+  host-local SQLite/persist storage. These exercise concurrent idempotent human
+  sends, revocation/rejoin, a lost successful send acknowledgment, abrupt host
+  termination/restart, interrupted account rehome, and project-owner rehome.
+  See `packages/server/collaborators/acceptance/README.md` for exact isolation,
+  cleanup and limits. This is not a full deployment boot, browser login, actual
+  host/volume move, or account Favorites persist relocation test. The parent
+  rerun passed all five cases in 74 seconds.
+- Browser testing then reproduced a private draft lost by immediate full-page
+  navigation before the normal debounce. Checkpoint `dc306a7786` persists bounded,
+  versioned local drafts synchronously on page lifecycle transitions, including
+  empty tombstones, and reconciles their timestamps with account draft state.
+  The failing browser sequence now preserves the typed draft, appends a shared
+  conversation reference, survives reload, and does not send a message. The
+  parent focused rerun passes 36 tests in two suites; frontend typechecking,
+  lint and the rebuilt static bundle also pass.
+- Full CI is not yet claimed green. Its SQL-only integration fixture previously
+  opened an unowned disconnected Favorites client; the fixture now supplies an
+  explicit empty adapter and both PostgreSQL cases exit cleanly. A subsequent
+  dependency check identified the acceptance worker's undeclared test-only
+  `@cocalc/sync` import. Checkpoint `f4ee43cac0` declares it; server depcheck,
+  version consistency and frozen workspace lockfile verification pass locally.
+  The replacement GitHub Actions run remains pending at this checkpoint.
 
 ### Remaining acceptance and UX iteration
 
@@ -181,9 +213,10 @@ two-human, multiple-bay deployment.
 - Exercise two real accounts, multiple devices, remote bays, stopped compute,
   network interruptions, and large collaborator fanout in controlled staging.
   Measure sustained projection lag and memory in addition to indexed query tests.
-- Exercise the retained-state account/project handoff through independent bay
-  processes. It must preserve retry checkpoints and fail closed on unsupported
-  authority, mixed-version destinations and unavailable directory verification.
+- Extend the isolated independent-process handoff checks to full service startup,
+  operator fresh-auth entry points, account persist relocation and actual host/
+  volume moves. Preserve retry checkpoints and verify unsupported authority,
+  mixed-version destinations and unavailable directory verification fail closed.
 - Human review should refine discoverability, wording, and navigation, including
   the new pinned-project view and cross-conversation sharing chooser. Optional
   person pins are not introduced. Sharing never sends automatically or changes
