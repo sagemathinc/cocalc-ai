@@ -194,9 +194,14 @@ export const AccountPage: React.FC = () => {
   }
 
   function renderActiveContent() {
+    // Match the keyed content path across layouts so drafts and dialogs survive resize.
     const ActiveContent =
       contentComponents[active_page] ?? contentComponents["index"];
-    return ActiveContent == null ? undefined : <ActiveContent />;
+    return ActiveContent == null ? undefined : (
+      <React.Fragment key="active-content">
+        <ActiveContent />
+      </React.Fragment>
+    );
   }
 
   function renderMobileLoggedInView(): React.JSX.Element {
@@ -209,42 +214,45 @@ export const AccountPage: React.FC = () => {
     }
 
     return (
-      <div
-        className="smc-vfill"
-        data-cocalc-mobile-account-settings
-        style={{
-          overflow: "auto",
-          padding: "8px 10px 0 10px",
-          minWidth: 0,
-        }}
-      >
-        {lite && (
-          <Button
-            block
+      <div className="smc-vfill">
+        <div
+          key="settings-content"
+          className="smc-vfill"
+          data-cocalc-mobile-account-settings
+          style={{
+            overflow: "auto",
+            padding: "8px 10px 0 10px",
+            minWidth: 0,
+          }}
+        >
+          {lite && (
+            <Button
+              block
+              size="large"
+              style={{ marginBottom: "8px" }}
+              onClick={() => {
+                redux.getActions("page").set_active_tab(project_id);
+              }}
+            >
+              Close
+            </Button>
+          )}
+          <label htmlFor={`${navigationId}-select`}>Settings menu</label>
+          <Select
+            id={`${navigationId}-select`}
+            aria-label="Settings menu"
             size="large"
-            style={{ marginBottom: "8px" }}
-            onClick={() => {
-              redux.getActions("page").set_active_tab(project_id);
-            }}
-          >
-            Close
-          </Button>
-        )}
-        <label htmlFor={`${navigationId}-select`}>Settings menu</label>
-        <Select
-          id={`${navigationId}-select`}
-          aria-label="Settings menu"
-          size="large"
-          value={active_page}
-          options={mobileNavigationOptions}
-          onChange={(key) => handle_select(key)}
-          style={{ width: "100%" }}
-        />
-        <Flex style={{ marginTop: "8px", gap: "8px" }} align="center" wrap>
-          {renderTitle()}
-          {renderExtraContent()}
-        </Flex>
-        {renderActiveContent()}
+            value={active_page}
+            options={mobileNavigationOptions}
+            onChange={(key) => handle_select(key)}
+            style={{ width: "100%" }}
+          />
+          <Flex style={{ marginTop: "8px", gap: "8px" }} align="center" wrap>
+            {renderTitle()}
+            {renderExtraContent()}
+          </Flex>
+          {renderActiveContent()}
+        </div>
       </div>
     );
   }
@@ -343,6 +351,7 @@ export const AccountPage: React.FC = () => {
           </Button>
         </div>
         <div
+          key="settings-content"
           className="smc-vfill"
           style={{
             overflow: "auto",
