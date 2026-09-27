@@ -73,6 +73,10 @@ const STARTUP_PROTECTION_MS = Math.max(
       10 * 60_000,
   ),
 );
+const MEMORY_PRESSURE_MIN_IDLE_MS = clampNonNegativeInteger(
+  process.env.COCALC_PROJECT_HOST_MEMORY_PRESSURE_MIN_IDLE_MS,
+  10 * 60_000,
+);
 const PRESSURE_PROJECT_COOLDOWN_MS = Math.max(
   0,
   Number(
@@ -986,6 +990,14 @@ export function buildStopCandidates({
       `priority:${Math.max(0, policy?.shared_compute_priority ?? 0)}`,
     );
     explanation.push(`state:${state}`);
+    explanation.push(
+      `idle_ms:${policy?.authoritative_last_edited_ms != null ? Math.max(0, now - policy.authoritative_last_edited_ms) : "unknown"}`,
+    );
+    // This is open-page presence, not a keystroke/focus timestamp. Keep it
+    // separate from edit idleness so an unattended tab cannot pin a project.
+    explanation.push(
+      `browser_presence_age_ms:${stopState?.last_browser_activity_ms != null ? Math.max(0, now - stopState.last_browser_activity_ms) : "unknown"}`,
+    );
     candidates.push({
       project_id,
       state,
@@ -1013,6 +1025,15 @@ export function buildStopCandidates({
     if (left.direct_resource_score !== right.direct_resource_score) {
       return right.direct_resource_score - left.direct_resource_score;
     }
+    // Ordinary eviction is idle-first across tiers and deprioritize overrides.
+    // Direct offenders still rank first; emergency eligibility is unchanged.
+    if (
+      left.authoritative_last_edited_ms !== right.authoritative_last_edited_ms
+    ) {
+      return (
+        left.authoritative_last_edited_ms - right.authoritative_last_edited_ms
+      );
+    }
     if (left.override_rank !== right.override_rank) {
       return left.override_rank - right.override_rank;
     }
@@ -1021,13 +1042,6 @@ export function buildStopCandidates({
     }
     if (left.startup_protected !== right.startup_protected) {
       return Number(left.startup_protected) - Number(right.startup_protected);
-    }
-    if (
-      left.authoritative_last_edited_ms !== right.authoritative_last_edited_ms
-    ) {
-      return (
-        left.authoritative_last_edited_ms - right.authoritative_last_edited_ms
-      );
     }
     if (left.last_started_ms !== right.last_started_ms) {
       return left.last_started_ms - right.last_started_ms;
@@ -1255,6 +1269,9 @@ export function startHostPressureController({
       zone: classified.zone,
       now,
       directResourceOffenders: stopOffenders,
+      // Ordinary memory pressure needs evidence of idleness too. A true
+      // emergency can still stop recent/unknown activity; direct offenders
+      // bypass the idle guard inside buildStopCandidates.
       ...(ioOnlyPressure
         ? {
             minimumIdleMs:
@@ -1265,7 +1282,10 @@ export function startHostPressureController({
             preserveEmergencyProtections: true,
             workloadProtectedProjects,
           }
-        : {}),
+        : hasMemoryPressureReason(classified.reason) &&
+            classified.zone !== "emergency"
+          ? { minimumIdleMs: MEMORY_PRESSURE_MIN_IDLE_MS }
+          : {}),
     });
     for (const candidate of candidates) {
       upsertProjectStopState({
