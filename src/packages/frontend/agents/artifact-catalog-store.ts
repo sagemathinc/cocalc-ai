@@ -342,7 +342,7 @@ export function catalogResults(
     if (ai != null || bi != null) {
       if (ai == null) return 1;
       if (bi == null) return -1;
-      if (sort === "custom") return ai - bi;
+      return ai - bi;
     }
     const order =
       sort === "title"

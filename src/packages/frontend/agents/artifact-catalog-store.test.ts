@@ -269,6 +269,6 @@ test("local mapping uses project/path/thread, target search, deterministic sort 
       catalogResults([b, a], [agent], { sort, pins }).map(
         (r) => r.hit.artifact_id,
       ),
-    ).toEqual(["a", "b"]);
+    ).toEqual(["b", "a"]);
   }
 });

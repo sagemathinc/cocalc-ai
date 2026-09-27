@@ -416,7 +416,7 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   expect(
     screen
       .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+      .closest("[role=listitem]")?.firstElementChild,
   ).toHaveStyle({
     border: "1px solid #123456",
     minHeight: "116px",
@@ -433,7 +433,7 @@ test("grid tiles use catalog appearance and open the real appearance action", as
   expect(
     screen
       .getByRole("button", { name: "Open Result one from one" })
-      .closest("[role=listitem]"),
+      .closest("[role=listitem]")?.firstElementChild,
   ).toHaveStyle({ borderLeft: "3px solid #123456" });
   expect(
     screen
@@ -789,73 +789,72 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
   expect(listProject).toHaveBeenCalledTimes(2);
 });
 
-test("Custom exposes pinned drag handles and keyboard move menus scoped to groups", async () => {
-  const ids = agents.map((agent) =>
-    JSON.stringify([
-      agent.endpoint.project_id,
-      agent.path,
-      agent.thread_id,
-      "same-id",
-    ]),
-  );
-  pinned = [...ids];
-  const props = {
-    accountId: "library-custom",
-    agents,
-    active: true,
-    onSelect: async () => {},
-  };
-  const view = render(<AgentArtifactBrowser {...props} />);
-  await screen.findByRole("button", { name: "Open Result two from two" });
-  const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Filters & organization" }),
-  );
-  const sort = screen.getByRole("combobox", {
-    name: "Sort",
-  });
-  act(() => sort.focus());
-  key(sort, "ArrowDown", 40);
-  await waitFor(() => expect(sort).toHaveAttribute("aria-expanded", "true"));
-  key(sort, "ArrowDown", 40);
-  key(sort, "ArrowDown", 40);
-  key(sort, "Enter", 13);
-  const handle = await screen.findByRole("button", {
-    name: "Drag Result one to reorder",
-  });
-  expect(handle).toHaveAttribute("tabindex", "0");
-  const trigger = screen.getByRole("button", { name: "Reorder Result one" });
-  act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const down = await screen.findByRole("menuitem", { name: "Move down" });
-  expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  act(() => down.focus());
-  key(down, "Enter", 13);
-  expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
-  pinned = [...ids].reverse();
-  view.rerender(<AgentArtifactBrowser {...props} />);
-  expect(
-    screen.getAllByRole("button", { name: /^Open Result/ })[0],
-  ).toHaveAccessibleName("Open Result two from two");
-  expect(trigger).toHaveFocus();
-  await user.click(screen.getByRole("checkbox", { name: "Group by project" }));
-  await user.click(screen.getByRole("button", { name: "Reorder Result one" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Move up" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  await user.keyboard("{Escape}");
-  expect(
-    screen.getByRole("button", { name: "Reorder Result one" }),
-  ).toHaveFocus();
-  expect(listProject).toHaveBeenCalledTimes(2);
-});
+test.each(["List", "Grid"])(
+  "%s exposes pinned drag handles and keyboard move menus without selecting Custom",
+  async (mode) => {
+    const ids = agents.map((agent) =>
+      JSON.stringify([
+        agent.endpoint.project_id,
+        agent.path,
+        agent.thread_id,
+        "same-id",
+      ]),
+    );
+    pinned = [...ids];
+    const props = {
+      accountId: "library-custom",
+      agents,
+      active: true,
+      onSelect: async () => {},
+    };
+    const view = render(<AgentArtifactBrowser {...props} />);
+    await screen.findByRole("button", { name: "Open Result two from two" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: `${mode} view` }));
+    await user.click(
+      screen.getByRole("button", { name: "Filters & organization" }),
+    );
+    const handle = await screen.findByRole("button", {
+      name: "Drag Result one to reorder",
+    });
+    expect(handle).toHaveAttribute("tabindex", "0");
+    const trigger = screen.getByRole("button", { name: "Reorder Result one" });
+    act(() => trigger.focus());
+    await user.keyboard("{Enter}");
+    const down = await screen.findByRole("menuitem", { name: "Move down" });
+    expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    act(() => down.focus());
+    key(down, "Enter", 13);
+    expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
+    pinned = [...ids].reverse();
+    view.rerender(<AgentArtifactBrowser {...props} />);
+    expect(
+      screen.getAllByRole("button", { name: /^Open Result/ })[0],
+    ).toHaveAccessibleName("Open Result two from two");
+    expect(trigger).toHaveFocus();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Group by project" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Reorder Result one" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "Reorder Result one" }),
+    ).toHaveFocus();
+    expect(listProject).toHaveBeenCalledTimes(2);
+  },
+);
 
 test("account switch clears the old view and rejects late loads", async () => {
   let resolve!: (value: unknown) => void;

@@ -35,6 +35,47 @@ async function withinViewport(page, locator) {
   );
 }
 
+// Shared by Artifacts and all populated Collaborators collections. This only
+// changes the view preference and restores it; pin order is not modified.
+export async function checkCollectionViews(page, label, pinnedTitle) {
+  const controls = page.getByRole("group", {
+    name: `${label} view`,
+    exact: true,
+  });
+  const grid = controls.getByRole("button", { name: "Grid view", exact: true });
+  const list = controls.getByRole("button", { name: "List view", exact: true });
+  await controls.waitFor();
+  const wasGrid = (await grid.getAttribute("aria-pressed")) === "true";
+  try {
+    for (const mode of [grid, list]) {
+      await keyboardActivate(page, mode);
+      await focused(mode);
+      assert.equal(await mode.getAttribute("aria-pressed"), "true");
+      await withinViewport(page, mode);
+      if (pinnedTitle) {
+        const reorder = page.getByRole("button", {
+          name: `Reorder ${pinnedTitle}`,
+          exact: true,
+        });
+        await keyboardActivate(page, reorder);
+        await page.getByRole("menu").waitFor();
+        await page.keyboard.press("Escape");
+        await focused(reorder);
+        await withinViewport(
+          page,
+          page.getByRole("button", {
+            name: `Drag ${pinnedTitle} to reorder`,
+            exact: true,
+          }),
+        );
+      }
+    }
+  } finally {
+    await keyboardActivate(page, wasGrid ? grid : list);
+    await focused(wasGrid ? grid : list);
+  }
+}
+
 // Use an isolated fixture. The pin is toggled and then restored; no access or
 // project settings are changed. Caller selects the account/theme/viewport.
 export async function checkCollaboratorsProjectPins(page, projectTitle) {

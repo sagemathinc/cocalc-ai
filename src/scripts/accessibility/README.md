@@ -81,3 +81,9 @@ accessible button name. Its optional `addReference: true` changes a private draf
 only, so use a disposable fixture; neither check sends messages or runs agents.
 Run at desktop and 320px widths, light/dark themes and 200% browser zoom. These
 helpers supplement, not replace, the automated component and axe audits.
+
+`checkCollectionViews(page, label, pinnedTitle?)` exercises the shared collection
+controls on Artifacts or populated Collaborators People/Projects/Conversations.
+It switches list/grid using the keyboard, checks reachable controls and the
+optional pinned-item reorder menu, then restores the original view. Run against
+isolated fixtures at the same widths/themes above; it does not alter pin order.

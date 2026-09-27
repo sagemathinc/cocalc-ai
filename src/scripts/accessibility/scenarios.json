@@ -43,31 +43,31 @@
     },
     {
       "id": "agent-artifact-library",
-      "title": "Agent artifact Library navigation",
+      "title": "Agent artifact navigation",
       "path": "/agents",
       "authentication": "account",
       "engine": "axe",
       "minimumScore": 1,
-      "readySelector": "button:has-text('Library')",
+      "readySelector": "button:has-text('Artifacts')",
       "settleMs": 500,
       "actions": [
         {
           "type": "remember",
           "key": "trigger",
-          "selector": "button:has-text('Library')"
+          "selector": "button:has-text('Artifacts')"
         },
         {
           "type": "focus",
-          "selector": "button:has-text('Library')"
+          "selector": "button:has-text('Artifacts')"
         },
         { "type": "press", "key": "Enter" },
         {
           "type": "wait",
-          "selector": "[aria-label='Search library']"
+          "selector": "[aria-label='Search artifacts']"
         },
         {
           "type": "assertFocusWithin",
-          "selector": "[aria-label='Artifact Library']"
+          "selector": "[aria-label='Artifacts'][role='region']"
         },
         {
           "type": "focus",

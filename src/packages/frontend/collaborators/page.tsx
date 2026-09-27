@@ -27,6 +27,7 @@ import { DirectoryResults } from "./directory-results";
 import { ProjectList, ProjectViewControls } from "./project-pins";
 import { DirectoryPicker } from "./directory-picker";
 import { ResourceList } from "./resource-list";
+import { DirectoryCollection } from "./directory-collection";
 import { Overview } from "./overview";
 import { ResourceDetail } from "./resource-detail";
 import { NewConversation } from "./new-conversation";
@@ -223,9 +224,9 @@ function CollaboratorsWorkspace({
       return;
     }
     const button = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>("[data-project-pin]") ??
+      listRef.current?.querySelectorAll<HTMLElement>("[data-collection-pin]") ??
         [],
-    ).find((item) => item.dataset.projectPin === pinFocus.current);
+    ).find((item) => item.dataset.collectionPin === pinFocus.current);
     (button ?? listRef.current)?.focus({ preventScroll: true });
     pinFocus.current = undefined;
   }, [result.loading, result.page, active, selection, view]);
@@ -487,6 +488,7 @@ function CollaboratorsWorkspace({
                 <ResourceList
                   items={items as CollaborationResource[]}
                   onOpen={openResource}
+                  api={api}
                 />
               ) : view === "projects" ? (
                 <ProjectList
@@ -505,7 +507,7 @@ function CollaboratorsWorkspace({
                   onPinChange={(id) => {
                     pinFocus.current =
                       document.activeElement?.getAttribute(
-                        "data-project-pin",
+                        "data-collection-pin",
                       ) === id
                         ? id
                         : undefined;
@@ -514,35 +516,39 @@ function CollaboratorsWorkspace({
                   }}
                 />
               ) : (
-                <ul className="collaborators-list">
-                  {items.map((item) =>
-                    "account_id" in item ? (
-                      <li key={item.account_id}>
-                        <Button
-                          type="text"
-                          className="collaborators-row"
-                          onClick={(event) =>
-                            navigate(
-                              {
-                                view: "people",
-                                projectId,
-                                personId: item.account_id,
-                              },
-                              event,
-                            )
-                          }
-                        >
-                          <span className="collaborators-row-title">
-                            {item.display_name || "Collaborator"}
-                          </span>
-                          <span>
-                            {item.common_project_count} shared projects
-                          </span>
-                        </Button>
-                      </li>
-                    ) : null,
+                <DirectoryCollection
+                  items={items as CollaborationPerson[]}
+                  collection="people"
+                  label="People"
+                  itemId={(item) => item.account_id}
+                  itemTitle={(item) => item.display_name || "Collaborator"}
+                  renderItem={(item) => (
+                    <Button
+                      type="text"
+                      className="collaborators-row"
+                      onClick={(event) =>
+                        navigate(
+                          {
+                            view: "people",
+                            projectId,
+                            personId: item.account_id,
+                          },
+                          event,
+                        )
+                      }
+                    >
+                      <span className="collaborators-row-title">
+                        {item.display_name || "Collaborator"}
+                      </span>
+                      <span>
+                        {item.common_project_count} shared{" "}
+                        {item.common_project_count === 1
+                          ? "project"
+                          : "projects"}
+                      </span>
+                    </Button>
                   )}
-                </ul>
+                />
               )
             }
           </DirectoryResults>

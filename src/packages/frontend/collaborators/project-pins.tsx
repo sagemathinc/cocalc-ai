@@ -8,6 +8,7 @@ import { Alert, Button } from "antd";
 import type { CollaborationProject } from "@cocalc/util/collaborators";
 import type { DirectoryApi } from "./workspace-api";
 import type { ProjectView } from "./workspace-types";
+import { DirectoryCollection } from "./directory-collection";
 
 export function ProjectViewControls({
   view,
@@ -35,8 +36,7 @@ export function ProjectViewControls({
         Pinned projects
       </Button>
       <small>
-        Ordered by recent activity. Pins are your existing project favorites,
-        not access grants.
+        Pins are your existing project favorites, not access grants.
       </small>
     </div>
   );
@@ -57,33 +57,37 @@ export function ProjectList({
   onPinChange: (project_id: string) => void;
 }) {
   return (
-    <ul className="collaborators-list">
-      {items.map((project) => (
-        <li key={project.project_id}>
-          <Button
-            type="text"
-            className="collaborators-row"
-            onClick={(event) => onOpen(project, event)}
-          >
-            <span className="collaborators-row-title">
-              {project.title || "Untitled project"}
-            </span>
-            <span>{project.description}</span>
-            <span>
-              {project.role === "owner" ? "Owner" : "Collaborator"}
-              {project.last_activity_at
-                ? ` · Active ${new Date(project.last_activity_at).toLocaleDateString()}`
-                : ""}
-            </span>
-          </Button>
-          <ProjectPinControl
-            project={project}
-            api={api}
-            onChange={onPinChange}
-          />
-        </li>
-      ))}
-    </ul>
+    <DirectoryCollection
+      items={items}
+      collection="projects"
+      label="Projects"
+      itemId={(project) => project.project_id}
+      itemTitle={(project) => project.title || "Untitled project"}
+      pinLabel={(project) => `project ${project.title || "Untitled project"}`}
+      isPinned={(project) => !!project.pinned}
+      onPin={async (project, pinned) => {
+        await api.setProjectPinned({ project_id: project.project_id, pinned });
+        onPinChange(project.project_id);
+      }}
+      renderItem={(project) => (
+        <Button
+          type="text"
+          className="collaborators-row"
+          onClick={(event) => onOpen(project, event)}
+        >
+          <span className="collaborators-row-title">
+            {project.title || "Untitled project"}
+          </span>
+          <span>{project.description}</span>
+          <span>
+            {project.role === "owner" ? "Owner" : "Collaborator"}
+            {project.last_activity_at
+              ? ` · Active ${new Date(project.last_activity_at).toLocaleDateString()}`
+              : ""}
+          </span>
+        </Button>
+      )}
+    />
   );
 }
 
