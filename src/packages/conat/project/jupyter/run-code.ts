@@ -719,8 +719,19 @@ async function handleRequest({
   }
 }
 
+export class JupyterRunTransportError extends Error {
+  readonly code = "JUPYTER_RUN_TRANSPORT_LOST";
+  constructor(readonly run_id: string) {
+    super(
+      "Jupyter output connection closed before completion; the run may still be executing",
+    );
+    this.name = "JupyterRunTransportError";
+  }
+}
+
 export class JupyterClient {
   private iter?: EventIterator<OutputMessage[]>;
+  private activeRunId?: string;
   public readonly socket;
   constructor(
     private client: ConatClient,
@@ -733,7 +744,11 @@ export class JupyterClient {
     }) => Promise<string>,
   ) {
     this.socket = this.client.socket.connect(this.subject);
-    const endIterator = () => this.iter?.end();
+    const endIterator = () => {
+      if (this.iter != null && !this.iter.ended && this.activeRunId != null) {
+        this.iter.cancel(new JupyterRunTransportError(this.activeRunId));
+      }
+    };
     this.socket.once("closed", endIterator);
     this.socket.once("close", endIterator);
     this.socket.on("request", async (mesg) => {
@@ -820,6 +835,7 @@ export class JupyterClient {
       },
     });
     this.iter = iter;
+    this.activeRunId = effectiveRunId;
     // get rid of any fields except id and input from the cells, since, e.g.,
     // if there is a lot of output in a cell, there is no need to send that to the backend.
     const cells1 = cells.map(({ id, input }) => {

@@ -647,6 +647,23 @@ and no early input delivery. This is supervisor/component evidence combined
 with the separate real-PTY transport tests, not a rendered/deployed browser
 end-to-end test. CLI daemon and Jupyter/sync recovery remain separate work.
 
+### Explicit Jupyter stream interruption (not deployed)
+
+An unexpected socket close during a direct Jupyter run now cancels the output
+iterator with `JupyterRunTransportError`, code `JUPYTER_RUN_TRANSPORT_LOST`, and
+the affected `run_id`. The error explicitly leaves execution outcome uncertain;
+no cell is resubmitted. Intentional client close and normal completion retain
+their graceful end behavior. The frontend already drops closed cached clients
+and classifies loss of the run transport separately from completion.
+
+The scoped broker test interrupts an admitted run after its first output,
+checks the typed error, lets the server finish, and queries kernel status through
+a fresh client with only one runner invocation. Its kernel and replay store are
+test doubles. Both scoped cases, 51 backend Jupyter tests, 15 frontend reconnect
+tests, and the separate real Python-kernel test pass (69 total); Conat and project
+builds pass. Resumption of the interrupted stream and deployed notebook
+persistence are not established by this test.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
