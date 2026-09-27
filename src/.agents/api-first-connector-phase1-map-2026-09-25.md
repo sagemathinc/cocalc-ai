@@ -46,6 +46,38 @@ Test all changes against source A, full B, viewer C, and absent D on different h
 
 ## Open Completion Gates
 
+### Confirmed HTTP proxy implementation gap
+
+Source audit at `1c715ca290` confirms that full-runtime proxy/preview parity is
+not implemented. `project-host/http-proxy-auth.ts` explicitly rejects API-key
+child tokens; its regression test preserves that boundary. CLI
+`project proxy curl` uses `resolveProxyUrl` in `cli/src/bin/main.ts`, which still
+resolves hosts through account-level Hub calls, then uses cookie-based HTTP
+requests. Private-app bootstrap similarly calls the ordinary host-token issuer.
+These are not supported scoped-key transports and cannot count as passing the
+full-runtime acceptance matrix.
+
+The existing 29 `http-proxy-auth.test.ts` cases pass at this audit. They prove
+the current HTTP boundary, not successful scoped proxy use or live revocation.
+
+The next implementation must provide a distinct, explicitly scoped HTTP
+exchange/admission path, not remove the existing child-token rejection. Bind
+the parent key/revision, account, exact project/placement/host, requested HTTP
+service target, and short expiry through the same authoritative key policy.
+Executable app access requires runtime authority; a viewer grant must not gain
+access to an arbitrary app merely because its responses are HTTP reads. Any
+static preview support must enforce the viewer filesystem policy independently.
+
+HTTP requests, indefinite responses, and upgraded sockets must all lose access
+within the documented revocation bound, with no promotion into an ordinary
+account session. CLI target resolution and authentication must use the selected
+scoped credential without account-cookie or host-lookup fallback. Test isolated
+manual-key clients first, including negative audience/target cases and continuous
+stream revocation, then replay with managed keys. Existing rejection stays in
+place until that end-to-end path is implemented and verified.
+
+### Remaining Gates
+
 - Replay the full acceptance matrix with managed keys, including source loss, cancellation, process reuse, and crash expiry.
 - Complete long-lived command-family parity and authority-outage validation; passing notebook cases cover only the recorded scenarios.
 - Extend manual HTTP regrant and Hub subscription evidence to managed keys and project-host session families. At `a97d99800a`, explicit manual scope consent allocates a new issuance sequence; uncached authentication avoids stale revision mismatches. Disposable bay-0/bay-1 project tests through all three bays prove renewed scope access while restoration, name-only edits, and expiry edits retain denial. Automatic renewal must not revive revoked project authority.
