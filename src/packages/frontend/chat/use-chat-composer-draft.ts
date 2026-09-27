@@ -57,11 +57,36 @@ function remember(key: string, snapshot: Shadow) {
   }
 }
 
-function storeLocal(key: string, text: string) {
-  if (!text.trim() || text.length > MAX_LOCAL_DRAFT_CHARS) {
+function readLocal(value: unknown): Shadow | undefined {
+  // Older releases saved plain text without a comparable edit timestamp.
+  if (typeof value === "string")
+    return value.length <= MAX_LOCAL_DRAFT_CHARS
+      ? { text: value, updatedAt: 0 }
+      : undefined;
+  if (value == null || typeof value !== "object") return;
+  const snapshot = value as Partial<Shadow> & { version?: unknown };
+  if (
+    snapshot.version !== 1 ||
+    typeof snapshot.text !== "string" ||
+    snapshot.text.length > MAX_LOCAL_DRAFT_CHARS ||
+    typeof snapshot.updatedAt !== "number" ||
+    !Number.isSafeInteger(snapshot.updatedAt) ||
+    snapshot.updatedAt < 0
+  )
+    return;
+  return { text: snapshot.text, updatedAt: snapshot.updatedAt };
+}
+
+function storeLocal(key: string, { text, updatedAt }: Shadow) {
+  if (
+    (!text && updatedAt === 0) ||
+    !readLocal({ version: 1, text, updatedAt })
+  ) {
     delete_local_storage(key);
   } else {
-    set_local_storage(key, text);
+    // Empty snapshots are durable tombstones: deleting the key would let an
+    // older remote save resurrect a draft after a send followed by reload.
+    set_local_storage(key, { version: 1, text, updatedAt });
   }
 }
 
@@ -75,6 +100,10 @@ class DraftSession {
   private readonly localKey: string;
   private loadFailed = false;
   private edited = false;
+  private readonly onPageHide = () => this.saveLocal();
+  private readonly onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") this.saveLocal();
+  };
 
   constructor(
     private readonly id: string,
@@ -85,14 +114,19 @@ class DraftSession {
     // old browser-local snapshot once, so upgrading does not discard a draft
     // whose debounced remote save had not completed.
     this.localKey = `chat-composer-draft:${id}`;
-    let local = get_local_storage(this.localKey);
+    const stored = get_local_storage(this.localKey);
+    let local = readLocal(stored);
     const legacyKey = `chat-composer-draft:${key}`;
-    if (local == null && !shadows.has(id)) {
-      local = get_local_storage(legacyKey);
-      if (typeof local === "string") storeLocal(this.localKey, local);
+    if (stored == null && !shadows.has(id)) {
+      local = readLocal(get_local_storage(legacyKey));
+      if (local) storeLocal(this.localKey, local);
     }
     delete_local_storage(legacyKey);
     const shadow = shadows.get(id);
+    const initial =
+      shadow && (!local || shadow.updatedAt >= local.updatedAt)
+        ? shadow
+        : local;
     this.adapter = new AkvDraftAdapter({
       kv: webapp_client.conat_client.conat().sync.akv<any>({
         account_id: opts.account_id!,
@@ -120,14 +154,18 @@ class DraftSession {
         clear: (key) => this.adapter.clear(key),
       },
       debounceMs: opts.debounceMs,
-      initialText: shadow?.text ?? (typeof local === "string" ? local : ""),
-      initialUpdatedAt: shadow?.updatedAt ?? 0,
+      initialText: initial?.text ?? "",
+      initialUpdatedAt: initial?.updatedAt ?? 0,
+      // A local clear/edit must sort after a hydrated snapshot even when both
+      // occur in the same millisecond (or the browser clock moved backwards).
+      now: () =>
+        Math.max(Date.now(), this.controller.getSnapshot().updatedAt + 1),
       onError: (error) => logger.warn("draft persistence failed", error),
     });
     this.controller.subscribe((snapshot) => {
       remember(id, snapshot);
       clearTimeout(this.timer);
-      if (!snapshot.text.trim()) storeLocal(this.localKey, "");
+      if (!snapshot.text.trim()) this.saveLocal();
       else
         this.timer = setTimeout(
           () => this.saveLocal(),
@@ -138,13 +176,24 @@ class DraftSession {
   }
 
   retain() {
-    this.refs++;
+    if (this.refs++ === 0) {
+      // Page lifecycle events do not unmount React or await asynchronous saves.
+      // One listener pair per shared session writes the latest snapshot inline.
+      if (typeof window !== "undefined")
+        window.addEventListener("pagehide", this.onPageHide);
+      if (typeof document !== "undefined")
+        document.addEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.generation++;
   }
 
   release() {
     this.refs--;
     if (this.refs) return;
+    if (typeof window !== "undefined")
+      window.removeEventListener("pagehide", this.onPageHide);
+    if (typeof document !== "undefined")
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.saveLocal();
     const generation = ++this.generation;
     // Keep the session available during flushing. Rapid remounts, StrictMode,
@@ -161,7 +210,7 @@ class DraftSession {
 
   private saveLocal() {
     clearTimeout(this.timer);
-    storeLocal(this.localKey, this.controller.getSnapshot().text);
+    storeLocal(this.localKey, this.controller.getSnapshot());
   }
 
   setText(text: string) {
