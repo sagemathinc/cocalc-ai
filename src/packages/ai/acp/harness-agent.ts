@@ -168,6 +168,7 @@ export class HarnessAgent implements AcpAgent {
         threadId: client.sessionId,
       });
       await publishControls();
+      let activityText = "";
       let finalResponse = "";
       let lastMessageId: string | undefined;
       let toolBoundary = false;
@@ -189,8 +190,8 @@ export class HarnessAgent implements AcpAgent {
                 ? messageId !== lastMessageId
                 : toolBoundary;
             let text = event.text;
-            if (newMessage && finalResponse) {
-              const trailing = finalResponse.match(/\n*$/)![0].length;
+            if (newMessage && activityText) {
+              const trailing = activityText.match(/\n*$/)![0].length;
               const leading = text.match(/^\n*/)![0].length;
               text = "\n".repeat(Math.max(0, 2 - trailing - leading)) + text;
             }
@@ -198,11 +199,15 @@ export class HarnessAgent implements AcpAgent {
               messageId ?? (newMessage ? undefined : lastMessageId);
             toolBoundary = false;
             if (
-              Buffer.byteLength(finalResponse) + Buffer.byteLength(text) >
+              Buffer.byteLength(activityText) + Buffer.byteLength(text) >
               4 * 1024 * 1024
             )
               throw Error("ACP response exceeds persistence limit");
-            finalResponse += text;
+            activityText += text;
+            // Activity keeps all commentary; the summary is the last assistant
+            // message, not the whole turn. Do not copy activity-only separators.
+            if (newMessage) finalResponse = "";
+            finalResponse += event.text;
             await request.stream({
               type: "event",
               event: { type: "message", text, delta: true },

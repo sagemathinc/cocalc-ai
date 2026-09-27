@@ -708,7 +708,7 @@ const textToolDone = {
   status: "completed",
 };
 
-for (const [name, updates, expected] of [
+for (const [name, updates, expected, expectedFinal = expected] of [
   [
     "Claude messages around tools",
     [
@@ -723,11 +723,13 @@ for (const [name, updates, expected] of [
       textChunk("Writing the new module:", "three"),
     ],
     "I'll restart it detached.\n\nNow the implementation. First, check utilities:\n\nWriting the new module:",
+    "Writing the new module:",
   ],
   [
     "distinct IDs without tools",
     [textChunk("First.", "one"), textChunk("Second.", "two")],
     "First.\n\nSecond.",
+    "Second.",
   ],
   [
     "same-ID tokens and markdown with interleaved tool updates",
@@ -753,6 +755,7 @@ for (const [name, updates, expected] of [
       textChunk("tests:"),
     ],
     "First:\n\nNow tests:",
+    "Now tests:",
   ],
   [
     "tools before the first message do not add leading space",
@@ -770,6 +773,7 @@ for (const [name, updates, expected] of [
       textChunk("Next."),
     ],
     "First. Still first.\n\nNext.",
+    "Next.",
   ],
   [
     "thinking does not split message tokens",
@@ -797,11 +801,13 @@ for (const [name, updates, expected] of [
     "existing paragraph breaks are not doubled",
     [textChunk("First.\n", "one"), textTool, textChunk("\nNext.", "two")],
     "First.\n\nNext.",
+    "\nNext.",
   ],
   [
     "only missing newlines are inserted and indentation survives",
     [textChunk("First.\n", "one"), textChunk("    code", "two")],
     "First.\n\n    code",
+    "    code",
   ],
   [
     "trailing tool events add no trailing whitespace",
@@ -827,10 +833,43 @@ for (const [name, updates, expected] of [
         })
         .join("");
       assert.equal(streamed, expected);
-      assert.equal(events.at(-1).finalResponse, expected);
+      assert.equal(events.at(-1).finalResponse, expectedFinal);
     }
   });
 }
+
+test("final response excludes intermediate commentary without losing the activity transcript", async (t) => {
+  const { agent, request, events } = adapter(t);
+  const updates = [
+    textChunk("I'll inspect the code.", "inspect-commentary"),
+    textTool,
+    textToolDone,
+    textChunk("The build is still running.", "build-commentary"),
+    textTool,
+    textToolDone,
+    textChunk("All tests pass.", "test-commentary"),
+    textTool,
+    textToolDone,
+    textChunk("Implemented the fix.\n\n", "final"),
+    textChunk("- Preserves unsaved text.\n", "final"),
+    textChunk("- Verified with 159 tests.", "final"),
+  ];
+  await agent.evaluate({
+    ...request,
+    prompt: `text-sequence:${JSON.stringify(updates)}`,
+  });
+  const final =
+    "Implemented the fix.\n\n- Preserves unsaved text.\n- Verified with 159 tests.";
+  assert.equal(events.at(-1).finalResponse, final);
+  const activity = events
+    .filter((event) => event.event?.type === "message")
+    .map((event) => event.event.text)
+    .join("");
+  assert.equal(
+    activity,
+    `I'll inspect the code.\n\nThe build is still running.\n\nAll tests pass.\n\n${final}`,
+  );
+});
 
 test("harness sends pasted images as ACP image blocks", async (t) => {
   const { agent, request, events } = adapter(t);
