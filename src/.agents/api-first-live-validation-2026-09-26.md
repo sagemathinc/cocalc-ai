@@ -55,6 +55,31 @@ Extracting `bin/cocalc-cli.js` from each tools archive produced that same hash.
 These identities support subsequent installed-version checks; archive integrity
 and byte equality do not establish live API authorization or workflow parity.
 
+## Limited dev-host rollout, 2026-09-27
+
+The primary dev hub was recovered with `pnpm dev:hub:start` after its existing
+billing-authority lease-timeout fail-stop. No lease safeguards were changed.
+The two attached bays were already running and were not restarted.
+
+Only `host3` (`a3c4c6d0-2d08-4a01-9f9a-a5b544bfba31`) was upgraded from
+the site's software endpoint, selecting project-host, project, tools, and
+bootstrap-environment with managed-runtime alignment. Operation
+`a2e179a5-bcc8-406e-83f4-609e86745831` reached `succeeded`. Its bootstrap
+status reported zero drift and these installed versions:
+
+- Project-host: `20260927T012318Z-e4082b57bfd7`.
+- Project bundle: `1790472232510`.
+- Tools bundle: `1790472290885`.
+
+The existing validation project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535` was
+started (operation `3829bca9-e9af-44bd-99f5-3221263b3d4d`) and subsequently
+reported `running`. Its `/opt/cocalc/bin2/cocalc-cli.js` SHA-256 is
+`997caa25f222e04a26a6d8e706d366a93be5f7700336b95cf47c8b3d7018ba0c`, exactly
+matching the recorded build. Delta's host was not upgraded or restarted.
+This verifies installation, not scoped-key terminal/Jupyter workflows or
+independent review of the new transport code. The validation project remains
+running for the next disposable fixture.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
