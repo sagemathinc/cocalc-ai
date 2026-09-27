@@ -209,7 +209,13 @@ export async function decideApiKeyActionLocal({
     decision,
     authorize: async (db, review) => {
       await fresh();
-      await validateLocked(db, review);
+      if (decision === "execute") {
+        await validateLocked(db, review);
+      } else {
+        // Dismissing an obsolete request grants no key authority. Preserve the
+        // human/home checks without requiring its referenced keys to survive.
+        await assertHome(review.binding.account_id);
+      }
     },
     execute: async (db, review) => {
       await db.query(

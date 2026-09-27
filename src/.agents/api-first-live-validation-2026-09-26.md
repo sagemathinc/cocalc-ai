@@ -6,6 +6,22 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Dismissing obsolete approval requests, 2026-09-27 (not deployed)
+
+Human rejection no longer requires the requesting and target API keys to remain
+at their reviewed revisions or even exist. Dismissal grants no key authority;
+account-home ownership, transaction fencing, fresh human authentication, and
+the exact stored review remain required. Execution still validates both keys
+against current authority before changing anything.
+
+The focused PGlite suites for action authority, storage, and routing pass all
+30 tests. New cases cover changed/deleted requester and target keys, blocked
+execution, idempotent rejection, unchanged key rows, and no directory tombstone
+on rejection. Wrong owner, missing fresh authentication, and modified review
+remain rejected. The server TypeScript build passes. These are backend tests;
+the stale-request rejection flow has not yet been deployed or exercised in the
+rendered UI.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend

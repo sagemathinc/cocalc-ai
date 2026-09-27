@@ -253,6 +253,69 @@ describeDb("manual-key revocation action authority", () => {
     ).rejects.toThrow("unavailable");
   });
 
+  it.each(
+    ["requester-key", "target-key"].flatMap((key) =>
+      ["changed", "deleted"].map((state) => [key, state]),
+    ),
+  )(
+    "allows human rejection after %s is %s, but not execution",
+    async (key, state) => {
+      const reviewed = await requestApiKeyActionLocal(principal, input());
+      await pool.query(
+        state === "deleted"
+          ? "DELETE FROM api_keys WHERE key_id=$1"
+          : "UPDATE api_keys SET scope_revision=scope_revision+1 WHERE key_id=$1",
+        [key],
+      );
+      const options = { account_id, session_hash: "human-session", reviewed };
+      await expect(
+        decideApiKeyActionLocal({ ...options, decision: "execute" }),
+      ).rejects.toThrow(/changed|unavailable/);
+      const before = (
+        await pool.query("SELECT * FROM api_keys ORDER BY key_id")
+      ).rows;
+      for (let i = 0; i < 2; i++) {
+        expect(
+          (await decideApiKeyActionLocal({ ...options, decision: "reject" }))
+            .status,
+        ).toBe("rejected");
+      }
+      expect(
+        (await pool.query("SELECT * FROM api_keys ORDER BY key_id")).rows,
+      ).toEqual(before);
+      expect(tombstoneMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still binds rejection to the human owner, fresh auth, and exact review", async () => {
+    const reviewed = await requestApiKeyActionLocal(principal, input());
+    const options = {
+      account_id,
+      session_hash: "human-session",
+      reviewed,
+      decision: "reject" as const,
+    };
+    await expect(
+      decideApiKeyActionLocal({ ...options, account_id: randomUUID() }),
+    ).rejects.toThrow("owner mismatch");
+    freshMock.mockRejectedValueOnce(new Error("fresh auth required"));
+    await expect(decideApiKeyActionLocal(options)).rejects.toThrow(
+      "fresh auth required",
+    );
+    await expect(
+      decideApiKeyActionLocal({
+        ...options,
+        reviewed: { ...reviewed, target_name: "Different" },
+      }),
+    ).rejects.toThrow("review changed");
+    expect((await decideApiKeyActionLocal(options)).status).toBe("rejected");
+    expect(
+      (await pool.query("SELECT * FROM api_keys WHERE key_id='target-key'"))
+        .rows,
+    ).toHaveLength(1);
+    expect(tombstoneMock).not.toHaveBeenCalled();
+  });
+
   it("does not repeat execution when directory cleanup fails after commit", async () => {
     const reviewed = await requestApiKeyActionLocal(principal, input());
     const options = {
