@@ -95,11 +95,18 @@ cookies; URLs contain no credential, paths stay within the selected target, and
 redirects are not followed. Focused endpoint, command, host, and build checks
 pass. This is implementation evidence, not the live acceptance matrix.
 
-The first candidate deployment hit host3's rootless namespace contract guard
-and rolled back artifacts, with component convergence still unproven at the
-recorded observation. See the live validation report. Installed CLI HTTP use,
-continuous stream revocation, managed replay, event-loop-stall forwarding,
+Subsequent deployment and private review reached `b4f85a382a41`. The installed
+ordinary CLI's scoped HTTP request and raw HTTP negative checks now pass on
+the public test route. Independent review passed the buffered-body deadline,
+mixed-credential stripping, and pre/post-header abort fixes. Live probes show
+no-header requests terminate with a 502 and continuous streams terminate in
+about 25 seconds, without waiting for the client's safety timeout. See the
+validation report for exact builds, timings, and the earlier failed probes.
+A further manual-key WebSocket upgrade/continuous-egress probe terminated
+within 25 seconds, including app-side closure, after deletion during traffic.
+Managed replay, bidirectional application recovery, authority outages,
 private-app hostname bootstrap, and viewer static preview remain open gates.
+Loopback deadline and late-timer regressions are not a production load bound.
 
 ### Remaining Gates
 

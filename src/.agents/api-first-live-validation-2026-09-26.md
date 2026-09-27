@@ -10,6 +10,35 @@ This is development evidence, not production approval or completion of phases 1-
 
 ### Reviewed deployed HTTP probe
 
+Independent review passed the pre-header follow-up at
+`b4f85a382a418020a51520c2045586355fa92611`, including the reviewer's separate
+loopback reproduction. Build `20260927T184823Z-b4f85a382a41` was promoted
+healthy at 18:49:48 UTC via operation
+`cfeccbd4-42c6-45ea-b2ff-626cee4acdcc`.
+
+The expanded public-route probe passed on that build. An app deliberately sent
+no headers: its connection closed after 24716 ms, and the client received a
+terminal 502 after 24817 ms without reaching its 35-second safety timeout.
+The subsequent continuous stream delivered 247 chunks before interruption at
+24915 ms; app closure was at 24889 ms. Key deletion took 494 ms and client
+termination followed deletion by 23815 ms. The installed CLI, viewer denial,
+wrong-port denial, credential stripping, and revoked-key exchange checks passed
+again. Cleanup completed. These are manual-key HTTP observations, not proof
+of managed-turn, WebSocket, outage, or load behavior.
+
+A further run added a real WebSocket upgrade on the same public project/port
+route, with a verified handshake and continuous server-to-client text frames.
+A separate manual key was deleted after five received chunks. The connection
+delivered 246 chunks and closed after 24962 ms, 23799 ms after deletion;
+the app-side socket closed after 24940 ms. The client did not hit its timeout,
+and the app observed no scoped, authorization, cookie, or query credentials.
+The subsequent no-header request terminated with 502 after 24890 ms (app close
+after 24683 ms); the streamed HTTP repeat terminated after 24889 ms, 23795 ms
+after deletion. All prior CLI and denial checks passed again, and cleanup
+completed. This adds one manual-key WebSocket upgrade/egress revocation case;
+it does not establish bidirectional application recovery, managed-key replay,
+authority-outage behavior, or the full session-family acceptance matrix.
+
 Build `20260927T184112Z-0844025c1997` was promoted healthy at
 18:44:03 UTC via explicit-version operation
 `cb031c1e-d2c8-4d71-97c6-668df4df173e`. The same public-route probe now
@@ -26,8 +55,8 @@ upstream close before any headers emits the proxy error event without a
 `proxyRes`, and both error handlers only logged it. Real-socket tests for both
 entry points reproduced the hang before the follow-up. Both handlers now
 destroy the downstream response/socket unless already destroyed or ended.
-The existing post-header tests remain in the same matrix. This pre-header
-follow-up still needs independent review and deployment.
+The existing post-header tests remain in the same matrix. The pre-header
+follow-up's review and deployment evidence is recorded above.
 
 Local follow-up reproduced the client hang in both shared proxy entry points:
 an upstream response wrote data and destroyed its socket, but the downstream
