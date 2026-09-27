@@ -16,6 +16,18 @@ const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
 const { harnessPrompt } = require("../../dist/acp/harness-context.js");
 const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
+const { PassThrough, Writable } = require("node:stream");
+const {
+  harnessTransport,
+  ACP_MAX_FRAME_BYTES,
+} = require("../../dist/acp/harness-transport.js");
+const {
+  ACP_MAX_IMAGE_BYTES,
+  ACP_MAX_TOTAL_IMAGE_BYTES,
+  ACP_MAX_IMAGES,
+  ACP_MAX_PROMPT_BYTES,
+  ACP_MAX_OUTBOUND_FRAME_BYTES,
+} = require("@cocalc/util/ai/harness-limits");
 
 const claudeAgentAcpBin = process.env.CLAUDE_AGENT_ACP_BIN;
 
@@ -836,6 +848,112 @@ test("harness sends pasted images as ACP image blocks", async (t) => {
     events.at(-1).finalResponse,
     JSON.stringify([{ type: "image", mimeType: "image/png", bytes: 7 }]),
   );
+});
+
+for (const sizes of [
+  [1024 * 1024],
+  [ACP_MAX_IMAGE_BYTES],
+  [ACP_MAX_IMAGE_BYTES, ACP_MAX_IMAGE_BYTES],
+  Array(ACP_MAX_IMAGES).fill(ACP_MAX_TOTAL_IMAGE_BYTES / ACP_MAX_IMAGES),
+]) {
+  test(`real ACP stdio delivers supported image sizes ${sizes}`, async (t) => {
+    const client = await start(t);
+    await client.open();
+    const events = [];
+    await client.prompt(
+      "images",
+      async (event) => events.push(event),
+      sizes.map((size) => ({
+        mimeType: "image/png",
+        data: Buffer.alloc(size).toString("base64"),
+      })),
+    );
+    const text = events
+      .filter((event) => event.type === "message")
+      .map((event) => event.text)
+      .join("");
+    assert.deepEqual(
+      JSON.parse(text).map((image) => image.bytes),
+      sizes,
+    );
+    await client.prompt("hello", async () => {});
+  });
+}
+
+test("oversized images are rejected before tool execution and leave the session usable", async (t) => {
+  let resumes = 0;
+  const client = await start(t, [], undefined, [], undefined, undefined, {
+    resumeTools: () => resumes++,
+  });
+  await client.open();
+  const image = (size) => ({
+    mimeType: "image/png",
+    data: Buffer.alloc(size).toString("base64"),
+  });
+  for (const images of [
+    [image(ACP_MAX_IMAGE_BYTES + 1)],
+    [image(ACP_MAX_IMAGE_BYTES), image(ACP_MAX_IMAGE_BYTES), image(1)],
+    Array(ACP_MAX_IMAGES + 1).fill(image(1)),
+    [{ mimeType: "image/png", data: "not base64" }],
+  ]) {
+    await assert.rejects(
+      client.prompt("images", async () => {}, images),
+      (error) => error.code === "rejected",
+    );
+    assert.equal(resumes, 0);
+  }
+  await client.prompt("hello", async () => {});
+  assert.equal(resumes, 1);
+});
+
+test("outbound bound fits maximum images and JSON-escaped text without raising the inbound bound", async () => {
+  const input = new PassThrough();
+  let written = 0;
+  const output = new Writable({
+    write(chunk, _encoding, done) {
+      written += chunk.length;
+      done();
+    },
+  });
+  const failures = [];
+  const transport = harnessTransport(input, output, (error) =>
+    failures.push(error),
+  );
+  const writer = transport.writable.getWriter();
+  try {
+    const data = Buffer.alloc(ACP_MAX_IMAGE_BYTES).toString("base64");
+    await writer.write({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "session/prompt",
+      params: {
+        sessionId: "fixture-session",
+        prompt: [
+          { type: "text", text: "\0".repeat(ACP_MAX_PROMPT_BYTES) },
+          { type: "image", mimeType: "image/png", data },
+          { type: "image", mimeType: "image/png", data },
+        ],
+      },
+    });
+    assert.ok(written > 16 * 1024 * 1024);
+    assert.ok(written <= ACP_MAX_OUTBOUND_FRAME_BYTES);
+    assert.equal(ACP_MAX_FRAME_BYTES, 1024 * 1024);
+    assert.equal(failures.length, 0);
+    const before = written;
+    await assert.rejects(
+      writer.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "fixture",
+        params: { text: "x".repeat(ACP_MAX_OUTBOUND_FRAME_BYTES) },
+      }),
+      /Outgoing ACP frame exceeds/,
+    );
+    assert.equal(written, before);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
 });
 
 test("harness guidance injects into a running turn and never starts an idle one", async (t) => {

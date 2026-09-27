@@ -1,11 +1,14 @@
 import type { Readable, Writable } from "node:stream";
 import { ReadableStream, WritableStream } from "node:stream/web";
 import type { Stream } from "@agentclientprotocol/sdk-v1";
+import { ACP_MAX_OUTBOUND_FRAME_BYTES } from "@cocalc/util/ai/harness-limits";
 
 type Message = Stream extends { readable: globalThis.ReadableStream<infer T> }
   ? T
   : never;
 
+// Incoming provider messages retain their tighter bound. Large outgoing image
+// prompts do not justify increasing the untrusted partial-line buffer.
 export const ACP_MAX_FRAME_BYTES = 1024 * 1024;
 
 /** Pull-based framing avoids the SDK's unbounded partial-line accumulator. */
@@ -82,7 +85,7 @@ export function harnessTransport(
     writable: new WritableStream<Message>({
       async write(message) {
         const frame = JSON.stringify(message) + "\n";
-        if (Buffer.byteLength(frame) > ACP_MAX_FRAME_BYTES)
+        if (Buffer.byteLength(frame) > ACP_MAX_OUTBOUND_FRAME_BYTES)
           throw fail("Outgoing ACP frame exceeds size limit");
         await new Promise<void>((resolve, reject) => {
           output.write(frame, (error) => (error ? reject(error) : resolve()));

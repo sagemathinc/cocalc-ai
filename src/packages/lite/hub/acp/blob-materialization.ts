@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AcpImageAttachment } from "@cocalc/ai/acp/types";
+import { ACP_MAX_IMAGE_BYTES } from "@cocalc/util/ai/harness-limits";
 
 const CHAT_BLOB_TEMP_RELATIVE_PATH = ".local/share/cocalc/tmp";
 
@@ -28,7 +29,7 @@ export function acpImageAttachment(data: Buffer): AcpImageAttachment {
             data.subarray(8, 12).toString("ascii") === "WEBP"
           ? "image/webp"
           : undefined;
-  if (!mimeType || data.byteLength > 5 * 1024 * 1024)
+  if (!mimeType || data.byteLength > ACP_MAX_IMAGE_BYTES)
     throw Error(
       "ACP attachment must be a PNG, JPEG, GIF or WebP image up to 5 MiB",
     );

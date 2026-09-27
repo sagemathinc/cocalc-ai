@@ -12,6 +12,10 @@ import { data } from "@cocalc/backend/data";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import {
+  ACP_MAX_IMAGES,
+  ACP_MAX_TOTAL_IMAGE_BYTES,
+} from "@cocalc/util/ai/harness-limits";
+import {
   CODEX_ACP_RECOVERY_ERROR_CODE,
   CodexAppServerAgent,
   EchoAgent,
@@ -12560,8 +12564,8 @@ async function materializeBlobs(
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
         if (forHarness) {
           if (
-            imageAttachments.length >= 8 ||
-            bytes + buffer.byteLength > 10 * 1024 * 1024
+            imageAttachments.length >= ACP_MAX_IMAGES ||
+            bytes + buffer.byteLength > ACP_MAX_TOTAL_IMAGE_BYTES
           )
             throw Error("ACP image attachment limit exceeded");
           imageAttachments.push(acpImageAttachment(buffer));

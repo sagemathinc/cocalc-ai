@@ -26,6 +26,13 @@ import type {
 } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
 import {
+  ACP_MAX_IMAGE_BYTES,
+  ACP_MAX_TOTAL_IMAGE_BYTES,
+  ACP_MAX_IMAGES,
+  ACP_MAX_PROMPT_BYTES,
+  ACP_MAX_OUTBOUND_FRAME_BYTES,
+} from "@cocalc/util/ai/harness-limits";
+import {
   harnessSessionControls,
   parseHarnessSessionSettings,
   resolveClaudeConfigValue,
@@ -579,40 +586,64 @@ export class AcpHarnessClient {
     if (
       typeof text !== "string" ||
       !text.trim() ||
-      Buffer.byteLength(text) > 512 * 1024
+      Buffer.byteLength(text) > ACP_MAX_PROMPT_BYTES
     )
       throw Error("Invalid ACP prompt size");
     if (
-      images.length > 8 ||
+      images.length > ACP_MAX_IMAGES ||
       images.some(
         ({ data, mimeType }) =>
           !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
             mimeType,
           ) ||
           typeof data !== "string" ||
-          data.length > 7 * 1024 * 1024,
+          data.length > Math.ceil(ACP_MAX_IMAGE_BYTES / 3) * 4 ||
+          data.length % 4 !== 0 ||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(data) ||
+          Buffer.byteLength(data, "base64") > ACP_MAX_IMAGE_BYTES,
       )
     )
-      throw Error("Invalid ACP image attachment");
+      throw new HarnessError(
+        "rejected",
+        "ACP accepts up to 8 PNG, JPEG, GIF or WebP images, at most 5 MiB each",
+      );
+    if (
+      images.reduce(
+        (bytes, { data }) => bytes + Buffer.byteLength(data, "base64"),
+        0,
+      ) > ACP_MAX_TOTAL_IMAGE_BYTES
+    )
+      throw new HarnessError(
+        "rejected",
+        "ACP images exceed the 10 MiB total limit",
+      );
+    const params = {
+      sessionId: this.session.sessionId,
+      prompt: [
+        { type: "text" as const, text },
+        ...images.map(({ data, mimeType }) => ({
+          type: "image" as const,
+          data,
+          mimeType,
+        })),
+      ],
+    };
+    // Reject before handing the request to the SDK or granting tool execution.
+    // Reserve space for the SDK's JSON-RPC method, ID and envelope.
+    if (
+      Buffer.byteLength(JSON.stringify(params)) >
+      ACP_MAX_OUTBOUND_FRAME_BYTES - 1024
+    )
+      throw new HarnessError(
+        "rejected",
+        "ACP prompt exceeds the outgoing message limit",
+      );
     this.process.resumeTools?.();
     this.active = true;
     this.canceled = false;
     this.listener = listener;
     try {
-      const result = await this.request(
-        this.connection.prompt({
-          sessionId: this.session.sessionId,
-          prompt: [
-            { type: "text", text },
-            ...images.map(({ data, mimeType }) => ({
-              type: "image" as const,
-              data,
-              mimeType,
-            })),
-          ],
-        }),
-        true,
-      );
+      const result = await this.request(this.connection.prompt(params), true);
       await this.request(this.output, true);
       if (this.failure)
         throw new HarnessError(
