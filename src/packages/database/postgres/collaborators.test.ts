@@ -560,6 +560,63 @@ test("unread survives unrelated membership changes but actual rejoin advances it
   expect(Number((await attention()).read_through)).toBe(9);
 });
 
+test.each(["resnapshot", "incremental"])(
+  "prunes deleted baselines only after a complete %s without losing unread state",
+  async (mode) => {
+    const resources = Array.from({ length: 61 }, (_, i) =>
+      resource(`paged-thread-${i}`),
+    ).sort((a, b) => entryKey(a).localeCompare(entryKey(b)));
+    const deleted = resources[0];
+    const survivor = resources[60];
+    const attention = async (item: CollaborationResource) =>
+      (
+        await getPool().query(
+          "SELECT attention_generation,read_through,notify_after FROM collaboration_personal WHERE account_id=$1 AND entry_key=$2",
+          [account_id, entryKey(item)],
+        )
+      ).rows[0];
+    await ingestCollaborationSnapshot(snapshot(1, resources), authority);
+    expect(await deliver()).toMatchObject({ complete: false });
+    expect(await deliver()).toMatchObject({ complete: true });
+    const before = await attention(survivor);
+    expect(Number(before.read_through)).toBe(3);
+    await ingestCollaborationSnapshot(
+      snapshot(
+        2,
+        resources.slice(1).map((item) => ({ ...item, activity: 9 })),
+      ),
+      authority,
+    );
+    if (mode === "resnapshot")
+      await getPool().query(
+        "UPDATE projects SET users=users || jsonb_build_object($2::text,jsonb_build_object('group','collaborator')) WHERE project_id=$1",
+        [project_id, randomUUID()],
+      );
+    const first = await deliver();
+    expect(first).toMatchObject({
+      allowed: true,
+      reset: mode === "resnapshot",
+      complete: false,
+      items: expect.arrayContaining([
+        { entry_key: entryKey(deleted), resource: null, revision: 2 },
+      ]),
+    });
+    expect(await attention(survivor)).toEqual(before);
+    expect(await attention(deleted)).toBeDefined();
+    expect(await deliver()).toMatchObject({ reset: false, complete: true });
+    expect(await attention(survivor)).toEqual(before);
+    expect(
+      (
+        await getPool().query(
+          "SELECT (metadata->>'activity')::integer AS activity FROM collaboration_index WHERE account_id=$1 AND entry_key=$2",
+          [account_id, entryKey(survivor)],
+        )
+      ).rows[0],
+    ).toEqual({ activity: 9 });
+    expect(await attention(deleted)).toBeUndefined();
+  },
+);
+
 test("attention baseline rows do not consume explicit personal-choice quota", async () => {
   await ingestCollaborationSnapshot(snapshot(), authority);
   await deliver();

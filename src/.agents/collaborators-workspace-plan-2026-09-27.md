@@ -115,6 +115,10 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   schema/RPC registration raises notifications to about 502 KiB Brotli; its
   allowance is explicitly adjusted from 500 to 505 KiB, with other budgets
   unchanged. The Collaborators UI itself is not loaded by that route.
+- Independent review found a partial-resnapshot attention cleanup bug. Pruning
+  now waits for the final page, preserving unread positions for live threads
+  that appear on later pages. Multi-page reset and incremental regressions pass
+  with the existing rejoin cases in the isolated PGlite suite (40 tests).
 
 ### Remaining acceptance and UX iteration
 

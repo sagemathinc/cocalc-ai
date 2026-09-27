@@ -268,7 +268,8 @@ export async function applyCollaborationProjection(
         activity: entry.initial_activity,
       })),
     });
-    if (deleted.length || page.complete)
+    // Missing rows may belong to later resnapshot pages, not deleted resources.
+    if (page.complete)
       await pruneCollaborationAttentionBaselines(
         db,
         job.account_id,
