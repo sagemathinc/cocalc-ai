@@ -119,6 +119,11 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   now waits for the final page, preserving unread positions for live threads
   that appear on later pages. Multi-page reset and incremental regressions pass
   with the existing rejoin cases in the isolated PGlite suite (40 tests).
+- Chat teardown now drains the captured document's pending disk write before
+  closing, detaches UI listeners immediately, and bounds retries/timeouts. A
+  browser regression sends twice inside the debounce interval, leaves while the
+  second message is dirty, and observes disk/index advancement without reopening.
+  A rapid same-path reopen also retains its separate live document and messages.
 
 ### Remaining acceptance and UX iteration
 

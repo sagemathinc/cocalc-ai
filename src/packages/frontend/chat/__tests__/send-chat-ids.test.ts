@@ -4,6 +4,7 @@ import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
 import { EventEmitter } from "node:events";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import { ChatActions } from "../actions";
+import { closeChatSyncdb } from "../close-syncdb";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -921,6 +922,34 @@ describe("chat autosave", () => {
     expect(db.save_to_disk).toHaveBeenCalledTimes(1);
     expect(db.listenerCount("ready")).toBe(0);
     expect(db.listenerCount("change")).toBe(0);
+  });
+
+  it("persists a second change on teardown before its trailing autosave fires", async () => {
+    const { actions, db } = attachSyncdb("ready", false);
+    let current = 0;
+    let disk = 0;
+    Object.assign(db, { close: jest.fn(async () => {}) });
+    db.has_unsaved_changes.mockImplementation(() => disk !== current);
+    db.save_to_disk.mockImplementation(async () => {
+      disk = current;
+    });
+    current = 1;
+    db.emit("change", new Set([{ event: "chat", message_id: "first" }]));
+    await Promise.resolve();
+    expect(disk).toBe(1);
+    jest.advanceTimersByTime(1000);
+    current = 2;
+    db.emit("change", new Set([{ event: "chat", message_id: "second" }]));
+    expect(db.save_to_disk).toHaveBeenCalledTimes(1);
+    expect(disk).toBe(1);
+
+    actions.dispose();
+    expect(actions.syncdb).toBeUndefined();
+    await closeChatSyncdb(db as any);
+    expect(disk).toBe(2);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(2);
+    jest.advanceTimersByTime(30_000);
+    expect(db.save_to_disk).toHaveBeenCalledTimes(2);
   });
 
   it("does not recover another writer's unsaved state from a read-only chat", () => {
