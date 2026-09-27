@@ -69,7 +69,7 @@ migrated, enabled, or restarted. The PR remains a draft for review.
 
 - Full `pnpm -C src build:dev` completed, followed by package-local builds and a
   fresh static development bundle for the final UI integration.
-- Consolidated focused runs passed 892 tests across frontend, database, server,
+- Consolidated focused runs passed 975 tests across frontend, database, server,
   project-host, backend, Lite, chat, chat-client, Conat, and util. The three
   PGlite-only rehome tests are included in that count from their separate run;
   they are intentionally skipped by the PostgreSQL run.
@@ -124,6 +124,19 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   browser regression sends twice inside the debounce interval, leaves while the
   second message is dirty, and observes disk/index advancement without reopening.
   A rapid same-path reopen also retains its separate live document and messages.
+- A bounded background flush recovers accepted canonical human-room history when
+  the browser cannot run teardown. It uses the existing local filesystem and
+  normal SyncDB save APIs, with current-owner, writer, lifecycle, and room-marker
+  checks. Missing/replaced rooms are not recreated. The supported persistence
+  inventory API checks history size; general SQLite RPC is not used. Real-Conat
+  tests cover accepted history after disconnect and the production RPC boundary,
+  alongside timeout, copy/delete, retry, and host-migration regressions. Limits
+  and deferred recovery behavior are documented in the producer README.
+  The isolated browser-kill test also recovered its previously accepted message
+  after a daemon restart without reopening a browser or forcing a save: disk
+  contents and indexed activity converged and the retry journal cleared.
+  A fresh abrupt-exit run on the corrected runtime recovered the acknowledged,
+  disk-dirty message in about 16 seconds, again without a browser reopen.
 
 ### Remaining acceptance and UX iteration
 

@@ -5,6 +5,9 @@ import {
   readCollaborationSource,
 } from "./filesystem";
 import { Readable } from "node:stream";
+import { ArtifactCatalogJournal } from "@cocalc/backend/artifacts/journal";
+import { journalArtifactFilesystem } from "@cocalc/backend/artifacts/filesystem";
+import { withCollaborationCopyLock } from "./copy-locks";
 const project_id = "11111111-1111-4111-8111-111111111111";
 let journal: CollaborationJournal;
 beforeEach(() => {
@@ -44,6 +47,47 @@ test("write intent exists before a filesystem mutation and dirty work survives f
   );
   expect(journal.scans()).toHaveLength(1);
 });
+test.each(["writeFile", "writeFileDelta"])(
+  "%s atomic rename shares one intent while retaining artifact observers",
+  async (method) => {
+    const fs = fixture();
+    const source = { project_id, chat_path: "/home/user/a.chat" };
+    const artifacts = new ArtifactCatalogJournal(":memory:");
+    journal.touch(source);
+    journal.registered(journal.registrations()[0], "epoch");
+    const begin = jest.spyOn(journal, "beginWrite");
+    const artifactBegin = jest.spyOn(artifacts, "beginWrite");
+    const artifactFinish = jest.spyOn(artifacts, "finishWrite");
+    const rename = fs.rename;
+    fs.writeFile.mockImplementation(async (path) => {
+      expect(journal.scans()).toEqual([]);
+      await fs.rename(`${path}.tmp`, path);
+      expect(journal.scans()).toEqual([]);
+    });
+    fs.writeFileDelta = async (...args) => fs.writeFile(...args);
+    try {
+      journalArtifactFilesystem(fs, project_id, artifacts);
+      journalCollaborationFilesystem(fs, project_id, journal);
+      await withCollaborationCopyLock([source], async () => {
+        await fs[method](source.chat_path, "content");
+        await expect(fs.unlink(source.chat_path)).rejects.toThrow(/busy/);
+      });
+      expect(rename).toHaveBeenCalledWith(
+        `${source.chat_path}.tmp`,
+        source.chat_path,
+      );
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(artifactBegin).toHaveBeenCalled();
+      expect(artifactFinish).toHaveBeenCalledTimes(
+        artifactBegin.mock.calls.length,
+      );
+      expect(journal.relocations()).toEqual([]);
+      expect(journal.scans()).toHaveLength(1);
+    } finally {
+      artifacts.close();
+    }
+  },
+);
 test("directory rename persists bounded relocation intents before touching filesystem", async () => {
   const fs = fixture();
   journal.touch({ project_id, chat_path: "/home/user/old/a.chat" });

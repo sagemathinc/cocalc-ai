@@ -21,6 +21,7 @@ import { getMasterConatClient } from "./master-conat-client";
 import { getLocalHostId } from "./sqlite/hosts";
 import { getProject, listProjects } from "./sqlite/projects";
 import { initializeCopiedCollaboration } from "./collaborators-copy";
+import { flushHostedCanonicalRoom } from "./collaborators-flush";
 import {
   assertProjectVolumeLifecycleGeneration,
   currentProjectVolumeLifecycleGeneration,
@@ -75,6 +76,13 @@ export function startCollaborators(
     refreshEnabledAt = 0;
   service = new CollaboratorsService({
     filename: join(directory, "journal.sqlite"),
+    beforeRead: (source) =>
+      flushHostedCanonicalRoom(source, {
+        journal: service!.journal,
+        getFilesystem,
+        writerState: (source) =>
+          request(source.project_id, "collaborators.writerState", source),
+      }),
     initializeCopy: (copy) =>
       initializeCopiedCollaboration(copy, getFilesystem),
     sourceActivity: async ({ project_id, chat_path, epoch, after }) => {

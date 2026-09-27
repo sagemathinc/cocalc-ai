@@ -11,6 +11,7 @@ import {
   readCollaborationSource,
 } from "@cocalc/backend/collaborators/filesystem";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { journalArtifactFilesystem } from "@cocalc/backend/artifacts/filesystem";
 import getLogger from "@cocalc/backend/logger";
 import { extractCollaborationMetadata } from "@cocalc/chat";
 import { LiteCollaborators } from "./index";
@@ -23,6 +24,7 @@ import { initializeLiteCollaborationCopy } from "./copy";
 import { attachLegacyAttention } from "./legacy-attention";
 import { LiteArtifactRelocation } from "./artifact-relocation";
 import type { LiteArtifactRelocationOptions } from "./artifact-relocation";
+import { flushLiteCanonicalRoom } from "./flush";
 
 const logger = getLogger("lite:collaborators");
 
@@ -87,12 +89,14 @@ export function createLiteCollaborators(
           }
         : undefined),
   });
-  const reader = new SandboxedFilesystem(options.path, {
-    unsafeMode: true,
-    host: options.project_id,
-    rootfs: process.platform === "win32" ? options.path : "/",
-    homeAliases: process.platform === "win32" ? ["/home/user"] : undefined,
-  });
+  const createFilesystem = () =>
+    new SandboxedFilesystem(options.path, {
+      unsafeMode: true,
+      host: options.project_id,
+      rootfs: process.platform === "win32" ? options.path : "/",
+      homeAliases: process.platform === "win32" ? ["/home/user"] : undefined,
+    });
+  const reader = createFilesystem();
   let after: string | undefined;
   let ownerAfter: string | undefined;
   let ownerRound = false;
@@ -109,6 +113,32 @@ export function createLiteCollaborators(
     service = new CollaboratorsService({
       filename: join(options.directory, "journal.sqlite"),
       enabled,
+      beforeRead: options.client
+        ? (source) =>
+            flushLiteCanonicalRoom(source, {
+              project_id: options.project_id,
+              account_id: options.account_id,
+              client: options.client!,
+              store,
+              journal: service.journal,
+              createFilesystem: () => {
+                const fs = createFilesystem();
+                if (options.artifactCatalog)
+                  journalArtifactFilesystem(
+                    fs,
+                    options.project_id,
+                    options.artifactCatalog.journal,
+                    home,
+                  );
+                return journalCollaborationFilesystem(
+                  fs,
+                  options.project_id,
+                  service.journal,
+                  home,
+                );
+              },
+            })
+        : undefined,
       relocate: async (request) => {
         await assertEnabled();
         return store.relocateSource(request);

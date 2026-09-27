@@ -64,6 +64,70 @@ test("source parse failure does not publish an empty replacement", async () => {
   expect(opts.send).not.toHaveBeenCalled();
   expect(opts.onError).toHaveBeenCalled();
 });
+test("beforeRead flush refreshes generation before extraction instead of starving publication", async () => {
+  const beforeRead = jest.fn(async () => {
+    service.journal.touch(source);
+  });
+  const { service, opts } = setup({ beforeRead });
+  service.journal.touch(source);
+  await service.runOnce();
+  expect(beforeRead).toHaveBeenCalledTimes(1);
+  expect(opts.read).toHaveBeenCalledWith(
+    expect.objectContaining({ generation: 2 }),
+  );
+  expect(opts.send).toHaveBeenCalledTimes(1);
+  expect(service.journal.scans()).toEqual([]);
+});
+test.each(["copy", "relocation", "epoch", "write"])(
+  "post-flush refresh preserves %s fencing",
+  async (kind) => {
+    const beforeRead = jest.fn(async () => {
+      if (kind === "copy")
+        service.journal.beginCopy(source, "/home/user/copied.chat", false);
+      else if (kind === "relocation")
+        service.journal.beginRelocation(source, "/home/user/moved.chat");
+      else if (kind === "epoch")
+        service.journal.reassign(source, "other-epoch");
+      else service.journal.beginWrite(source);
+    });
+    const { service, opts } = setup({ beforeRead });
+    service.journal.touch(source);
+    await service.runOnce();
+    expect(opts.read).not.toHaveBeenCalled();
+    expect(opts.send).not.toHaveBeenCalled();
+  },
+);
+test("failed browser-history flush remains durable dirty work across worker restart", async () => {
+  const beforeRead = jest.fn(async () => {
+    throw Error("disk ACK lost");
+  });
+  const { service, opts } = setup({ beforeRead });
+  service.journal.touch(source);
+  await service.runOnce();
+  expect(opts.read).not.toHaveBeenCalled();
+  expect(opts.send).not.toHaveBeenCalled();
+  await service.close();
+  instances = [];
+  const afterRestart = jest.fn(async () => {});
+  const next = setup({ beforeRead: afterRestart, now: () => 2000 });
+  await next.service.runOnce();
+  expect(afterRestart).toHaveBeenCalledTimes(1);
+  expect(next.opts.send).toHaveBeenCalledTimes(1);
+});
+test("disabled gate skips beforeRead and a flag change during flush skips extraction", async () => {
+  const enabled = jest.fn(async () => false);
+  const beforeRead = jest.fn(async () => {
+    enabled.mockResolvedValue(false);
+  });
+  const { service, opts } = setup({ enabled, beforeRead });
+  service.journal.touch(source);
+  await service.runOnce();
+  expect(beforeRead).not.toHaveBeenCalled();
+  enabled.mockResolvedValue(true);
+  await service.runOnce();
+  expect(beforeRead).toHaveBeenCalledTimes(1);
+  expect(opts.read).not.toHaveBeenCalled();
+});
 test("new host freezes owner epoch before registration and does not refresh it on ordinary retry", async () => {
   let now = 0;
   const { service, opts } = setup({ now: () => now });

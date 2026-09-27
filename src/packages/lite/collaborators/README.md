@@ -109,6 +109,25 @@ Only explicit `ensureRoom` and `requestSource` enqueue their specific paths.
 Their durable inventory records participate in bounded owner-source discovery;
 neither API creates chat content, rewrites files, or starts compute.
 
+With the local data-plane client configured, the producer's `beforeRead` hook
+also recovers accepted Conat history for the already initialized canonical room.
+It runs from the durable source inventory, including after daemon restart, without
+a browser save or filesystem scan. A short-lived SyncDB uses the journaled local
+filesystem and no backend file watcher; readiness is bounded to 30 seconds.
+The same canonical sync identity is checked for at most 10,000 history patches
+and 64 MiB of uncompressed history, before acquisition and after readiness.
+The shared flush helper compares bounded, validated live and disk rows and saves
+to disk only when different, before metadata extraction. Clean rooms are not
+rewritten. The same save updates the artifact journal when configured.
+
+The worker rechecks the local account/project, feature flag, room pointer and
+writer epoch while holding the mediated copy/move/delete exclusion. Both disk
+and live documents must have the registered human-room marker and no copy
+namespace. It never registers, initializes, adopts, creates a parent directory,
+or opens arbitrary indexed chats as SyncDB. A missing initialized room remains
+missing and is indexed as deleted; failures during acquisition or publication
+retain the last valid metadata and retry through the durable source journal.
+
 ## Query And Persistence Semantics
 
 - Reads query SQLite only. They never scan directories, open source chats, start

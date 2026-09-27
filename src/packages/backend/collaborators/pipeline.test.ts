@@ -6,6 +6,7 @@ import { extractCollaborationMetadata } from "@cocalc/chat";
 import { CollaboratorsService } from "./service";
 import { readCollaborationSource } from "./filesystem";
 import type { CollaborationRead } from "./journal";
+import { flushExistingCanonicalRoom } from "./flush";
 const source = {
   project_id: "11111111-1111-4111-8111-111111111111",
   chat_path: "/home/user/.cocalc/collaborators.chat",
@@ -23,6 +24,7 @@ function setup() {
   const opts = {
     filename: join(directory, "journal.sqlite"),
     enabled: jest.fn(async () => true),
+    beforeRead: jest.fn(async () => {}),
     read: jest.fn(
       async (): Promise<CollaborationRead> => ({
         resources: [
@@ -115,6 +117,7 @@ test("browser-shaped human messages enter participation and live activity only a
       project_id: source.project_id,
       room_id,
       mode: "human",
+      schema_version: 1,
     },
     { event: "chat-thread", thread_id: "thread", created_by: account_id },
     { event: "chat-thread-config", thread_id: "thread", agent_kind: "none" },
@@ -153,9 +156,46 @@ test("browser-shaped human messages enter participation and live activity only a
   await service.runOnce();
   expect((opts.send.mock.calls as any)[1][0].resources[0].activity).toBe(0);
 
-  disk = serialize();
+  let lostAck = true;
+  const saveDisk = jest.fn(async () => {
+    const token = service.journal.beginWrite(source);
+    try {
+      disk = serialize();
+      if (lostAck) {
+        lostAck = false;
+        throw Error("disk ACK lost");
+      }
+    } finally {
+      service.journal.finishWrite(token);
+    }
+  });
+  opts.beforeRead.mockImplementation(async () => {
+    await flushExistingCanonicalRoom({
+      room: { ...source, room_id, initialized: true },
+      assertCurrent: async () => {},
+      read: () => readCollaborationSource(fs as any, source.chat_path),
+      acquire: async () => ({
+        get: () => rows,
+        save: async () => {},
+        save_to_disk: saveDisk,
+      }),
+      release: async () => {},
+    });
+  });
   service.journal.touch(source);
   await service.runOnce();
+  expect(opts.send).toHaveBeenCalledTimes(2);
+  expect(opts.onError).toHaveBeenCalledWith(
+    expect.objectContaining(source),
+    expect.objectContaining({ message: "disk ACK lost" }),
+  );
+  opts.onError.mockClear();
+  // No browser, manual disk write or new source touch after worker restart.
+  await service.close();
+  service = new CollaboratorsService(opts);
+  opts.now.mockReturnValue(2000);
+  await service.runOnce();
+  expect(saveDisk).toHaveBeenCalledTimes(1);
   const delivery = (opts.send.mock.calls as any)[2][0];
   expect(delivery.resources[0]).toMatchObject({
     kind: "conversation",

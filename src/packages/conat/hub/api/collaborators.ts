@@ -110,6 +110,8 @@ export interface CollaboratorsApi {
     registration_id: string | null;
     source_sequence: number;
     writer_host_id: string;
+    /** Existing canonical pointer only, while enabled and assigned to this writer. */
+    canonical_room?: CollaborationRoom;
   } | null>;
   sourcePage(opts: {
     project_id: string;

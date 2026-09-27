@@ -74,6 +74,58 @@ by discovery. Shell-only sources absent from that inventory need a separate
 bounded backfill. Timestamp-only legacy threads/messages fail the entire source
 until explicit identity migration; no path-based fake durable IDs are assigned.
 
+## Canonical room background flush
+
+The worker's optional `beforeRead(scan)` flushes only an owner-confirmed,
+initialized canonical human room before disk extraction. Hosted `writerState`
+returns `canonical_room?: CollaborationRoom` only for the enabled current host's
+active source at the owning bay. It neither creates a room nor selects or
+impersonates a human account. Account-home attention delivery is unchanged.
+Lite resolves the same pointer and writer epoch in its local owner store.
+
+Adapters hold copy/deletion/relocation and volume lifecycle fences, require the
+existing disk and live markers, reject copy namespace markers, and create a
+short-lived standalone normal SyncDB with the existing local sandbox injected.
+Only normal `save()` / `save_to_disk()` APIs write chat data. Post-save disk content
+must match the captured live snapshot; a silent no-op or concurrent different
+snapshot defers the source instead of claiming success. Missing files return to
+normal tombstone extraction without opening history. Flush never creates parent
+directories, arms historical notifications, or resurrects an initialized room.
+Service-mediated writes retain their normal journals: an atomic `writeFileDelta`
+or `writeFile` is one collaboration write intent, not a temporary-file relocation.
+Nested artifact-catalog observers still execute. Unmediated shell deletion or
+replacement races remain outside these service fences, as before.
+
+This runs from the bounded registered-source worker inventory, not browsing,
+file scanning, a global watcher, or project startup. Host data uses the already
+running host Conat router/persist service and existing project volume; injected
+filesystem access does not invoke project filesystem RPC, provision storage or
+start stopped compute. Persist resolves project SQLite paths from host storage
+and rejects missing project roots. Unavailable storage/history defers with the
+journal's durable backoff, and inventory retry needs no browser reopening.
+After flushing, the worker reacquires the scan generation while retaining the
+original epoch and all transition/checkpoint fences, so the flush's own journal
+write cannot cause an endless stale-generation loop.
+
+Admission checks the canonical project's patch-stream metadata before acquisition
+and after readiness: at most 10,000 patches / 64 MiB uncompressed history. It uses
+the existing authorized persistence `inventory()` RPC (count and uncompressed
+bytes only), with a 10-second request timeout and a 30-second SyncDB readiness
+timeout. General SQLite RPC is disabled on production persistence servers and
+is not used. Inventory aggregates the stream without downloading its messages;
+it does not impose a separate server-side SQL scan-work limit. The conservative
+whole-stream ceiling covers checkpoint fallback; over-limit rooms defer rather
+than truncate. This is admission control, not an atomic streaming memory limit
+against concurrent appends during replay. Disk and live snapshots also retain
+the 16 MiB / 100,000-row ceiling. There are at most 16 serial source scans per pass.
+The standalone session's network-save phase has a shared 30-second deadline,
+including the save inside `save_to_disk`; expiry rejects before its disk-write
+continuation. Native Conat close only tears down local subscriptions/tables, not
+network saves. Already-started local filesystem writes are awaited under the
+lock, never abandoned by a timeout; OS-level blocked I/O can therefore delay that
+source. Failed attempts retain dirty work across worker restart, including a
+successful disk write whose acknowledgement was lost.
+
 ## Identity and lifecycle handoffs
 
 Thread resource IDs use durable native thread IDs. Unnamed agents are discoverable

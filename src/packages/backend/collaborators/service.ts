@@ -9,6 +9,7 @@ import type { CollaborationDelivery } from "./notifications";
 import type { ActivitySource, CollaborationActivityPage } from "./activity";
 import type {
   CollaborationRead,
+  CollaborationScan,
   CollaborationRegistration,
   CollaborationSource,
   CollaborationCopy,
@@ -26,6 +27,8 @@ export class CollaboratorsService {
     private readonly options: {
       filename: string;
       enabled?(): Promise<boolean>;
+      /** Bounded canonical-room durability work, before capturing the final read fence. */
+      beforeRead?(source: CollaborationScan): Promise<void>;
       initializeCopy?(copy: CollaborationCopy): Promise<void>;
       sourceActivity?(
         source: ActivitySource & { after?: string },
@@ -216,10 +219,19 @@ export class CollaboratorsService {
     for (const source of this.journal.scans(16, now())) {
       if (this.stopped) return;
       try {
-        const read = await this.options.read(source);
+        let scan = this.journal.currentScan(source, now());
+        if (!scan) continue;
+        if (this.options.beforeRead) {
+          await this.options.beforeRead(scan);
+          if (this.stopped || !(await this.journal.isEnabled())) return;
+          scan = this.journal.currentScan(source, now());
+          if (!scan) continue;
+        }
+        const read = await this.options.read(scan);
         if (this.stopped) return;
-        this.journal.prepare(source, read);
+        this.journal.prepare(scan, read);
       } catch (err) {
+        if (this.options.beforeRead) await this.recover(source, source.epoch);
         this.journal.defer(source, now());
         this.options.onError(source, err);
       }

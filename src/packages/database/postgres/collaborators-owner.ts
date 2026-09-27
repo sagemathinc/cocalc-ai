@@ -182,14 +182,19 @@ export async function registerCollaborationSource(
 export async function collaborationWriterState(
   source: { project_id: string; chat_path: string },
   authority: CollaborationWriterAuthority,
+  includeCanonicalRoom = false,
 ) {
   validateSource(source);
   return transaction(async (db) => {
     await project(db, source.project_id, authority, authority.host_id, false);
     const row = (
       await db.query(
-        "SELECT epoch,registration_id,source_sequence,writer_host_id FROM collaboration_sources WHERE source_id=$1",
-        [sourceKey(source)],
+        `SELECT s.epoch,s.registration_id,s.source_sequence,s.writer_host_id,r.room_id,r.initialized
+        FROM collaboration_sources s LEFT JOIN collaboration_rooms r
+        ON $3::boolean AND r.project_id=s.project_id AND r.chat_path=s.chat_path
+          AND s.relocated_to IS NULL AND s.writer_host_id=$2
+        WHERE s.source_id=$1`,
+        [sourceKey(source), authority.host_id, includeCanonicalRoom],
       )
     ).rows[0];
     return row
@@ -198,6 +203,16 @@ export async function collaborationWriterState(
           registration_id: row.registration_id as string | null,
           source_sequence: Number(row.source_sequence),
           writer_host_id: row.writer_host_id as string,
+          ...(row.room_id
+            ? {
+                canonical_room: {
+                  project_id: source.project_id,
+                  chat_path: source.chat_path,
+                  room_id: row.room_id as string,
+                  initialized: !!row.initialized,
+                },
+              }
+            : {}),
         }
       : null;
   });

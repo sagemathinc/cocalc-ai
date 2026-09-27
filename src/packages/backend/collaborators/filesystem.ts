@@ -125,17 +125,25 @@ export function journalCollaborationFilesystem(
   };
   for (const name of [
     "writeFile",
+    "writeFileDelta",
     "appendFile",
     "unlink",
     "rm",
     "rmdir",
   ] as const) {
+    if (typeof fs[name] !== "function") continue;
     const original = fs[name].bind(fs) as (...args: any[]) => Promise<any>;
     (fs as any)[name] = (...args: any[]) =>
       guarded(original, args, () =>
         mutation(
           args[0],
-          () => original(...args),
+          () =>
+            // Atomic saves rename a temporary file internally. Those nested
+            // calls share this write intent, not a relocation/copy operation.
+            // Other filesystem decorators (including artifacts) still run.
+            name === "writeFile" || name === "writeFileDelta"
+              ? bypassing.run(true, () => original(...args))
+              : original(...args),
           undefined,
           ["unlink", "rm", "rmdir"].includes(name),
         ),

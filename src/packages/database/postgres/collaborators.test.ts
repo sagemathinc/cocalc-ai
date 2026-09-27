@@ -87,6 +87,139 @@ const snapshot = (
   sequence = 1,
   resources = [resource()],
 ): CollaborationSourceSnapshot => ({ ...source, epoch, sequence, resources });
+test("writer metadata exposes only the enabled current-writer canonical pointer without creating or initializing rooms", async () => {
+  expect(
+    (await collaborationWriterState(source, authority, true))?.canonical_room,
+  ).toBeUndefined();
+  expect(
+    (await getPool().query("SELECT count(*) AS n FROM collaboration_rooms"))
+      .rows[0].n,
+  ).toBe("0");
+  const room = await ensureCollaborationRoom(
+    project_id,
+    account_id,
+    randomUUID(),
+    authority,
+  );
+  const canonical = { project_id, chat_path: room.chat_path };
+  const canonicalEpoch = await registerCollaborationSource(
+    canonical,
+    authority,
+    null,
+    randomUUID(),
+  );
+  expect(
+    (await collaborationWriterState(canonical, authority, true))
+      ?.canonical_room,
+  ).toEqual({ ...room, initialized: false });
+  await markCollaborationRoomInitialized(
+    { ...room, requesting_account_id: account_id },
+    authority,
+  );
+  expect(
+    (await collaborationWriterState(canonical, authority, true))
+      ?.canonical_room,
+  ).toEqual({ ...room, initialized: true });
+  expect(
+    (await collaborationWriterState(canonical, authority, false))
+      ?.canonical_room,
+  ).toBeUndefined();
+  expect(
+    (await collaborationWriterState(source, authority, true))?.canonical_room,
+  ).toBeUndefined();
+  const moved = { project_id, chat_path: "/home/user/renamed.chat" };
+  await relocateCollaborationSource(
+    {
+      project_id,
+      from_chat_path: canonical.chat_path,
+      to_chat_path: moved.chat_path,
+      operation_id: randomUUID(),
+      expected_epoch: canonicalEpoch,
+      expected_destination_epoch: null,
+    },
+    authority,
+  );
+  expect(
+    (await collaborationWriterState(canonical, authority, true))
+      ?.canonical_room,
+  ).toBeUndefined();
+  expect(
+    (await collaborationWriterState(moved, authority, true))?.canonical_room,
+  ).toMatchObject({ ...moved, room_id: room.room_id, initialized: true });
+  await expect(
+    collaborationWriterState(
+      moved,
+      { ...authority, host_id: randomUUID() },
+      true,
+    ),
+  ).rejects.toThrow();
+});
+test("host migration withholds the canonical pointer until the assigned host registers against the current epoch", async () => {
+  const room = await ensureCollaborationRoom(
+    project_id,
+    account_id,
+    randomUUID(),
+    authority,
+  );
+  const canonical = { project_id, chat_path: room.chat_path };
+  const oldEpoch = await registerCollaborationSource(
+    canonical,
+    authority,
+    null,
+    randomUUID(),
+  );
+  await markCollaborationRoomInitialized(
+    { ...room, requesting_account_id: account_id },
+    authority,
+  );
+  const assigned = { ...authority, host_id: randomUUID() };
+  await getPool().query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+    project_id,
+    assigned.host_id,
+  ]);
+  await expect(
+    collaborationWriterState(canonical, authority, true),
+  ).rejects.toThrow("owner/host");
+  const before = await collaborationWriterState(canonical, assigned, true);
+  expect(before).toMatchObject({
+    writer_host_id: host_id,
+    registration_id: null,
+    source_sequence: 0,
+  });
+  expect(before?.epoch).not.toBe(oldEpoch);
+  expect(before).not.toHaveProperty("canonical_room");
+  await expect(
+    collaborationWriterState(canonical, assigned, false),
+  ).resolves.toEqual(before);
+  await expect(
+    registerCollaborationSource(canonical, assigned, oldEpoch, randomUUID()),
+  ).rejects.toThrow("epoch");
+  const registration_id = randomUUID();
+  const currentEpoch = await registerCollaborationSource(
+    canonical,
+    assigned,
+    before!.epoch,
+    registration_id,
+  );
+  const current = await collaborationWriterState(canonical, assigned, true);
+  expect(current).toEqual({
+    epoch: currentEpoch,
+    registration_id,
+    source_sequence: 0,
+    writer_host_id: assigned.host_id,
+    canonical_room: { ...room, initialized: true },
+  });
+  const { canonical_room: _room, ...metadata } = current!;
+  await expect(
+    collaborationWriterState(canonical, assigned, false),
+  ).resolves.toEqual(metadata);
+  await expect(
+    ingestCollaborationSnapshot(
+      { ...canonical, epoch: oldEpoch, sequence: 1, resources: [] },
+      assigned,
+    ),
+  ).rejects.toThrow("writer epoch");
+});
 async function projectIndex(role = "collaborator") {
   const users = {
     [account_id]: { group: role },

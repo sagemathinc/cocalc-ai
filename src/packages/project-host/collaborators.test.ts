@@ -14,6 +14,9 @@ jest.mock("node:fs", () => ({ mkdirSync: jest.fn() }));
 jest.mock("./collaborators-copy", () => ({
   initializeCopiedCollaboration: jest.fn(),
 }));
+jest.mock("./collaborators-flush", () => ({
+  flushHostedCanonicalRoom: jest.fn(),
+}));
 jest.mock("@cocalc/backend/data", () => ({ data: "/unused" }));
 jest.mock("@cocalc/backend/logger", () => () => ({ warn: jest.fn() }));
 jest.mock("@cocalc/conat/hub/call-hub", () => ({

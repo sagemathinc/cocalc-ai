@@ -22,6 +22,7 @@ const dbQuery = jest.fn();
 const settings = jest.fn();
 const ingest = jest.fn();
 const room = jest.fn();
+const writerState = jest.fn();
 const list = jest.fn();
 const seed = jest.fn();
 const ownedResource = jest.fn();
@@ -67,6 +68,7 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/database/postgres/collaborators-owner", () => ({
   ingestCollaborationSnapshot: (...a) => ingest(...a),
   collaborationRoomForHost: (...a) => room(...a),
+  collaborationWriterState: (...a) => writerState(...a),
   getOwnedCollaborationResource: (...a) => ownedResource(...a),
   registerCollaborationSource: (...a) => register(...a),
 }));
@@ -326,6 +328,28 @@ test("owner routing checks epoch and hosting principal before canonical host loo
       requesting_account_id: account_id,
     }),
   ).rejects.toThrow("host_id");
+});
+test("background writer metadata stays owner-routed and canonical flush authority fails closed with the flag", async () => {
+  const request = { project_id, chat_path: snapshot.chat_path, host_id };
+  await collaboratorsApi.writerState(request);
+  expect(remote.writerState).toHaveBeenCalledWith({ ...request, route });
+  bay = "owner";
+  await collaboratorsControl.writerState({ ...request, route });
+  expect(writerState).toHaveBeenLastCalledWith(
+    expect.objectContaining(request),
+    { owning_bay_id: "owner", host_id },
+    true,
+  );
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await collaboratorsControl.writerState({ ...request, route });
+  expect(writerState).toHaveBeenLastCalledWith(
+    expect.objectContaining(request),
+    { owning_bay_id: "owner", host_id },
+    false,
+  );
+  await expect(
+    collaboratorsApi.writerState({ ...request, host_id: undefined }),
+  ).rejects.toThrow(/host_id/);
 });
 test("point lookup goes from account home to resource owner, not the alias owner", async () => {
   remote.ownedResource.mockResolvedValue({ ...target, title: "shared" });

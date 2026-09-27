@@ -563,6 +563,20 @@ export class CollaborationJournal {
     return true;
   }
   scans(count = 16, now = Date.now()): CollaborationScan[] {
+    return this.eligibleScans(count, now);
+  }
+  /** Refresh after a service flush without bypassing epoch, write, or identity fences. */
+  currentScan(
+    source: CollaborationScan,
+    now = Date.now(),
+  ): CollaborationScan | undefined {
+    return this.eligibleScans(1, now, source)[0];
+  }
+  private eligibleScans(
+    count: number,
+    now: number,
+    source?: CollaborationScan,
+  ): CollaborationScan[] {
     limit(count);
     return this.db
       .prepare(
@@ -573,9 +587,14 @@ export class CollaborationJournal {
       AND NOT EXISTS (SELECT 1 FROM copies c WHERE c.project_id=s.project_id AND c.chat_path=s.chat_path)
       AND NOT EXISTS (SELECT 1 FROM source_redirects d WHERE d.project_id=s.project_id AND d.chat_path=s.chat_path)
       ${this.requireActivityRecovery ? "AND EXISTS (SELECT 1 FROM activity_imports a WHERE a.project_id=s.project_id AND a.chat_path=s.chat_path AND a.epoch=s.epoch AND a.complete=1)" : ""}
+      ${source ? "AND s.project_id=? AND s.chat_path=? AND s.epoch=?" : ""}
       ORDER BY retry_at,project_id,chat_path LIMIT ?`,
       )
-      .all(now, count) as unknown as CollaborationScan[];
+      .all(
+        now,
+        ...(source ? [source.project_id, source.chat_path, source.epoch] : []),
+        count,
+      ) as unknown as CollaborationScan[];
   }
   prepare(scan: CollaborationScan, read: CollaborationRead): boolean {
     return this.transaction(() => {

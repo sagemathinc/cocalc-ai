@@ -131,6 +131,7 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     registration_id: string | null;
     source_sequence: number;
     writer_host_id: string;
+    canonical_room?: Awaited<ReturnType<CollaboratorsApi["roomForHost"]>>;
   } | null>;
   sourcePage(opts: {
     project_id: string;

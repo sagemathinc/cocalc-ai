@@ -427,7 +427,13 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
       ingestCollaborationSnapshot(opts.snapshot, authority),
     ),
   writerState: (opts) =>
-    writer(opts, (authority) => collaborationWriterState(opts, authority)),
+    writer(opts, async (authority) =>
+      collaborationWriterState(
+        opts,
+        authority,
+        Boolean((await getServerSettings()).collaborators_enabled),
+      ),
+    ),
   sourcePage: (opts) =>
     writer(opts, (authority) =>
       collaborationSourcePage(opts.project_id, authority, opts.after),
