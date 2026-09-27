@@ -12,19 +12,10 @@ jest.mock("@cocalc/frontend/components", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-test("quiet New Agent and Projects navigation work from the keyboard", async () => {
+test("Projects navigation works from the keyboard", async () => {
   const user = userEvent.setup();
-  const onNewAgent = jest.fn();
   const onProjects = jest.fn();
-  render(
-    <WorkspaceSidebarActions onNewAgent={onNewAgent} onProjects={onProjects} />,
-  );
-  await user.tab();
-  expect(document.activeElement).toBe(
-    screen.getByRole("button", { name: "New Agent" }),
-  );
-  await user.keyboard("{Enter}");
-  expect(onNewAgent).toHaveBeenCalledTimes(1);
+  render(<WorkspaceSidebarActions onProjects={onProjects} />);
   await user.tab();
   expect(
     screen.getByRole("region", { name: "Agent navigation and list" }),
@@ -40,11 +31,10 @@ test("quiet New Agent and Projects navigation work from the keyboard", async () 
   ).toBeNull();
 });
 
-test("New Agent and account footer stay outside the keyboard-accessible scroll area", async () => {
+test("account footer stays outside the keyboard-accessible navigation scroll area", async () => {
   const user = userEvent.setup();
   render(
     <WorkspaceSidebarActions
-      onNewAgent={() => {}}
       onProjects={() => {}}
       footer={<button>Account menu</button>}
     >
@@ -73,26 +63,17 @@ test("New Agent and account footer stay outside the keyboard-accessible scroll a
   expect(screen.getByRole("button", { name: "Account menu" })).toHaveFocus();
 });
 
-test("renders only New Agent in the sidebar action strip", () => {
-  render(<WorkspaceSidebarActions onNewAgent={() => {}} />);
-  expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-  expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
-  expect(screen.getAllByRole("button")).toHaveLength(1);
+test("does not render a duplicate New Agent button above navigation", () => {
+  render(<WorkspaceSidebarActions />);
+  expect(screen.queryByRole("button")).toBeNull();
 });
 
 test("sidebar hide control is inside the sidebar and keyboard operable", async () => {
   const user = userEvent.setup();
   const onHideSidebar = jest.fn();
-  render(
-    <WorkspaceSidebarActions
-      onNewAgent={() => {}}
-      onHideSidebar={onHideSidebar}
-    />,
-  );
+  render(<WorkspaceSidebarActions onHideSidebar={onHideSidebar} />);
   const hide = screen.getByRole("button", { name: "Hide Agents sidebar" });
   expect(hide).toHaveAttribute("aria-expanded", "true");
-  await user.tab();
-  expect(screen.getByRole("button", { name: "New Agent" })).toHaveFocus();
   await user.tab();
   expect(hide).toHaveFocus();
   await user.keyboard("{Enter}");

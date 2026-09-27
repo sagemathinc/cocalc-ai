@@ -5,32 +5,28 @@ import { AgentsSidebarToggle } from "./workspace-sidebar-toggle";
 
 export function WorkspaceSidebarActions({
   onProjects,
-  onNewAgent,
   children,
   footer,
   onHideSidebar,
 }: {
   onProjects?: () => void;
-  onNewAgent: () => void;
   children?: ReactNode;
   footer?: ReactNode;
   onHideSidebar?: () => void;
 }) {
   return (
     <>
-      <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center" }}>
-        <Button
-          type="text"
-          icon={<Icon name="plus" />}
-          onClick={onNewAgent}
-          style={{ justifyContent: "flex-start", flex: 1 }}
+      {onHideSidebar && (
+        <div
+          style={{
+            flex: "0 0 auto",
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
         >
-          New Agent
-        </Button>
-        {onHideSidebar && (
           <AgentsSidebarToggle hidden={false} onToggle={onHideSidebar} />
-        )}
-      </div>
+        </div>
+      )}
       <div
         role="region"
         aria-label="Agent navigation and list"

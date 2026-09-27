@@ -3730,23 +3730,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 void redux.getActions("page").set_active_tab("projects");
               }
         }
-        onNewAgent={() => {
-          searchNavigation.current++;
-          setCreatingSourceAgentId(selected?.endpoint.agent_id);
-          setCreating(true);
-          redux.getActions("page").setState({
-            ...closedLibraryState,
-            active_agent_id: "new",
-            active_agent_name: undefined,
-          });
-          set_url(
-            getPageUrlPath({
-              page: "agents",
-              agent_id: "new",
-            }),
-          );
-          setMobileList(false);
-        }}
       >
         <AgentSidebarFilter
           render={(search, input) => {
@@ -3839,6 +3822,23 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     }
                     onMode={agentOrganization.setMode}
                     onGroupByProject={agentOrganization.setGroupByProject}
+                    onNewAgent={() => {
+                      searchNavigation.current++;
+                      setCreatingSourceAgentId(selected?.endpoint.agent_id);
+                      setCreating(true);
+                      redux.getActions("page").setState({
+                        ...closedLibraryState,
+                        active_agent_id: "new",
+                        active_agent_name: undefined,
+                      });
+                      set_url(
+                        getPageUrlPath({
+                          page: "agents",
+                          agent_id: "new",
+                        }),
+                      );
+                      setMobileList(false);
+                    }}
                   />
                   {input}
                   {networkError && (
