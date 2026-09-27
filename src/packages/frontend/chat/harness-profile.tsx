@@ -28,10 +28,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
-import {
-  ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY,
-  CLAUDE_SUBSCRIPTION_KIND,
-} from "@cocalc/util/ai/external-credential-profiles";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
 import { ClaudeProjectSecretModal } from "./claude-project-secret-modal";
 import {
   FreshAuthModal,
@@ -47,6 +44,8 @@ import { DocsLink } from "@cocalc/frontend/docs/link";
 import { ClaudePaymentStatus } from "./claude-payment-status";
 import { ClaudeConnectorPreference } from "./claude-connector-preference";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { AgentSpeedControl } from "./agent-speed-control";
+import { newAgentClaudeCredentialOptions } from "@cocalc/frontend/agents/claude-credential-options";
 
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
@@ -175,21 +174,21 @@ function ClaudeCredentialControl({
           row.id === value.slice("account-subscription:".length),
       )
     : undefined;
+  const credentialOptions = newAgentClaudeCredentialOptions(credentials);
+  if (!credentialOptions.some((option) => option.value === value)) {
+    credentialOptions.push({
+      value,
+      label: !credentialsLoaded
+        ? "Loading..."
+        : "Selected connection unavailable",
+    });
+  }
   return (
-    <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+    <Space orientation="vertical" size={12} style={{ width: "100%" }}>
       <Select
         aria-label="Claude credential"
         value={value}
-        options={[
-          {
-            value: "project-secret",
-            label: "Project secret: ANTHROPIC_API_KEY",
-          },
-          ...credentials.map((row) => ({
-            value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
-            label: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? `${row.metadata?.plan || "Claude Pro/Max"} - ${row.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY] || "unknown account"}` : row.metadata?.label || "Anthropic API key"} (${row.id.slice(0, 8)})`,
-          })),
-        ]}
+        options={credentialOptions}
         onChange={(next) => {
           const credential = next.startsWith("account-subscription:")
             ? {
@@ -294,6 +293,7 @@ function ClaudeCredentialControl({
       )}
       <ClaudeSubscriptionConnect
         compact
+        reconnectCredentialId={selectedSubscription?.id}
         hasConnection={credentials.some(
           (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
         )}
@@ -326,16 +326,6 @@ function ClaudeCredentialControl({
           );
         }}
       />
-      {selectedSubscription && (
-        <Typography.Text role="status">
-          Billing: Claude {selectedSubscription.metadata?.plan || "Pro/Max"}{" "}
-          plan for{" "}
-          {selectedSubscription.metadata?.[
-            ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY
-          ] || "unknown account"}
-          .
-        </Typography.Text>
-      )}
       {credentialsLoaded &&
         value.startsWith("account-subscription:") &&
         !selectedSubscription && (
@@ -637,13 +627,15 @@ function HarnessRuntimeSummaryContent({
           {claude ? "Runtime details" : `${name} · Full project access`}
         </summary>
         <dl style={{ overflowWrap: "anywhere", margin: 8 }}>
-          <dt>Credentials</dt>
-          <dd>
-            {profile.id === "claude-code"
-              ? "Billing and access depend on the selected payment method"
-              : "Project-managed (not CoCalc billing)"}
-          </dd>
-          <dt>Revision</dt>
+          {!claude && (
+            <>
+              <dt>Credentials</dt>
+              <dd>Project-managed (not CoCalc billing)</dd>
+            </>
+          )}
+          <dt>
+            {claude ? "Claude integration version (ACP adapter)" : "Revision"}
+          </dt>
           <dd>{profile.revision}</dd>
           {profile.version === 1 ? (
             <>
@@ -652,12 +644,7 @@ function HarnessRuntimeSummaryContent({
               <dt>Arguments</dt>
               <dd>{JSON.stringify(profile.args)}</dd>
             </>
-          ) : (
-            <>
-              <dt>Launch policy</dt>
-              <dd>CoCalc qualified and pinned</dd>
-            </>
-          )}
+          ) : null}
           <dt>Working directory</dt>
           <dd>{profile.cwd}</dd>
         </dl>
@@ -672,6 +659,20 @@ function HarnessRuntimeSummaryContent({
     >
       <Tag>Experimental preview</Tag>
       {configuration}
+      {onDiscover && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Button
+            type={claude ? "text" : "default"}
+            size={claude ? "small" : undefined}
+            loading={loading}
+            disabled={disabled}
+            onClick={() => void discover()}
+          >
+            {claude ? "Refresh" : "Load model and mode options"}
+          </Button>
+          <span role="status">{loading ? "Loading..." : ""}</span>
+        </div>
+      )}
       {onSettings && controls && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
           {[
@@ -680,6 +681,15 @@ function HarnessRuntimeSummaryContent({
           ].map((control) => {
             if (claude && (control.id === "mode" || control === controls.mode))
               return null;
+            const speed =
+              claude &&
+              ["fast", "fastMode", "fast_mode"].includes(control.id) &&
+              control.options.length === 2 &&
+              control.options.some(({ value }) => value === "on") &&
+              control.options.some(({ value }) => value === "off");
+            const speedValue =
+              settings.configOptions?.find(({ id }) => id === control.id)
+                ?.value ?? control.currentValue;
             return (
               <div
                 key={control.id}
@@ -689,9 +699,31 @@ function HarnessRuntimeSummaryContent({
                   htmlFor={`${id}-${control.id}`}
                   style={{ display: "block", overflowWrap: "anywhere" }}
                 >
-                  {control.name}
+                  {speed ? "Speed" : control.name}
                 </label>
-                {select(control)}
+                {speed && ["on", "off"].includes(speedValue) ? (
+                  <AgentSpeedControl
+                    id={`${id}-${control.id}`}
+                    value={speedValue === "on" ? "fast" : "standard"}
+                    disabled={disabled || !onSettings}
+                    onChange={(value) =>
+                      change({
+                        ...settings,
+                        configOptions: [
+                          ...(settings.configOptions ?? []).filter(
+                            ({ id }) => id !== control.id,
+                          ),
+                          {
+                            id: control.id,
+                            value: value === "fast" ? "on" : "off",
+                          },
+                        ],
+                      })
+                    }
+                  />
+                ) : (
+                  select(control)
+                )}
               </div>
             );
           })}
@@ -726,32 +758,18 @@ function HarnessRuntimeSummaryContent({
         projectId &&
         threadKey && (
           <section aria-label="Payment">
-            <Typography.Text strong>Payment</Typography.Text>
+            <Typography.Text
+              strong
+              style={{ display: "block", marginBottom: 8 }}
+            >
+              Payment
+            </Typography.Text>
             <ClaudeCredentialControl
               projectId={projectId}
               threadKey={threadKey}
             />
           </section>
         )}
-      {onDiscover && (
-        <Button
-          type={claude ? "text" : "default"}
-          size={claude ? "small" : undefined}
-          loading={loading}
-          disabled={disabled}
-          style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
-          onClick={() => void discover()}
-        >
-          {claude ? "Refresh model options" : "Load model and mode options"}
-        </Button>
-      )}
-      <span role="status">
-        {loading
-          ? "Loading harness options"
-          : discovered
-            ? "Harness options loaded"
-            : ""}
-      </span>
       {onSettings && (
         <Typography.Text type="secondary">
           {controls && (controls.mode || controls.configOptions.length)

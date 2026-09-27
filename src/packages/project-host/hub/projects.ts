@@ -3040,14 +3040,16 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   async function claudeSubscriptionLoginStart({
     account_id,
     project_id,
+    credential_id,
   }: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
   }) {
     assertHostedProjectAccess({ account_id, project_id });
     return await (
       await getClaudeSubscriptionLoginService()
-    ).start(project_id, account_id!);
+    ).start(project_id, account_id!, credential_id);
   }
 
   async function claudeSubscriptionLoginStatus({

@@ -7,7 +7,10 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { CLAUDE_CODE_QUALIFICATION } from "@cocalc/util/ai/qualified-harnesses";
 import { ClaudeSubscriptionLoginService } from "./claude-subscription-login";
-import { publishClaudeSubscriptionCredential } from "./claude-subscription-registry";
+import {
+  getClaudeSubscriptionCredential,
+  publishClaudeSubscriptionCredential,
+} from "./claude-subscription-registry";
 import { reapAbandonedClaudeLogins } from "./claude-login-cleanup";
 import getLogger from "@cocalc/backend/logger";
 
@@ -59,5 +62,6 @@ export async function getClaudeSubscriptionLoginService(): Promise<ClaudeSubscri
   return (service ??= new ClaudeSubscriptionLoginService({
     cliPath,
     publish: publishClaudeSubscriptionCredential,
+    validateReconnect: getClaudeSubscriptionCredential,
   }));
 }

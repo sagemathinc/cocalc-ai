@@ -29,6 +29,76 @@ async function waitFor(
   throw Error(`Claude login did not reach ${state}`);
 }
 
+test.each([false, true])(
+  "reconnect retains the credential ID and does not replace a different Claude account (mismatch=%s)",
+  async (mismatch) => {
+    const publish = jest.fn(async () => {
+      if (mismatch) throw Error("Reconnect must use the same Claude account");
+      return credentialId;
+    });
+    const validateReconnect = jest.fn(async () => ({}));
+    const service = new ClaudeSubscriptionLoginService({
+      cliPath: process.execPath,
+      argsPrefix: [fixture],
+      publish,
+      validateReconnect,
+    });
+    try {
+      const started = await service.start(projectId, accountId, credentialId);
+      expect(validateReconnect).toHaveBeenCalledWith({
+        projectId,
+        accountId,
+        credentialId,
+      });
+      for (
+        let i = 0;
+        i < 100 &&
+        !service.status(started.id, projectId, accountId).verificationUrl;
+        i++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      service.submitCode(started.id, projectId, accountId, "fixture-code");
+      const status = await waitFor(
+        service,
+        started.id,
+        mismatch ? "failed" : "completed",
+      );
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credentialId,
+          identity: "subscriber@example.com",
+        }),
+      );
+      if (mismatch) {
+        expect(status.error).toContain("same Claude account");
+        expect(status.credentialId).toBeUndefined();
+      } else expect(status.credentialId).toBe(credentialId);
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+test("reconnect rejects unavailable credentials before starting sign-in", async () => {
+  const publish = jest.fn();
+  const service = new ClaudeSubscriptionLoginService({
+    cliPath: process.execPath,
+    argsPrefix: [fixture],
+    publish,
+    validateReconnect: async () => {
+      throw Error("unavailable");
+    },
+  });
+  try {
+    await expect(
+      service.start(projectId, accountId, credentialId),
+    ).rejects.toThrow("unavailable");
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+  }
+});
+
 test("login stages outside projects, accepts one code, verifies and cleans up", async () => {
   let publishedHome: string | undefined;
   const service = new ClaudeSubscriptionLoginService({

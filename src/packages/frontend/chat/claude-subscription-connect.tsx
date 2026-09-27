@@ -21,11 +21,13 @@ export function ClaudeSubscriptionConnect({
   onConnected,
   hasConnection = false,
   compact = false,
+  reconnectCredentialId,
 }: {
   projectId: string;
   disabled?: boolean;
   hasConnection?: boolean;
   compact?: boolean;
+  reconnectCredentialId?: string;
   onConnected: (credentialId: string) => Promise<void> | void;
 }) {
   const [login, setLogin] = useState<LoginStatus>();
@@ -33,6 +35,27 @@ export function ClaudeSubscriptionConnect({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const connected = useEffectEvent(onConnected);
+  const start = async (credentialId?: string) => {
+    setBusy(true);
+    setError("");
+    setCode("");
+    try {
+      setLogin(
+        await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
+          {
+            project_id: projectId,
+            ...(credentialId ? { credential_id: credentialId } : {}),
+          },
+        ),
+      );
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const signingIn =
+    busy || login?.state === "pending" || login?.state === "verifying";
 
   useEffect(() => {
     if (!login || (login.state !== "pending" && login.state !== "verifying"))
@@ -63,7 +86,7 @@ export function ClaudeSubscriptionConnect({
   return (
     <Space
       orientation="vertical"
-      size={4}
+      size={12}
       style={{ width: "100%", minWidth: 0 }}
     >
       {hasConnection && !compact && (
@@ -72,27 +95,19 @@ export function ClaudeSubscriptionConnect({
           credential selector; you do not need to sign in for each agent.
         </Typography.Text>
       )}
+      {reconnectCredentialId && (
+        <Button
+          disabled={disabled || signingIn}
+          onClick={() => void start(reconnectCredentialId)}
+        >
+          Reconnect Claude
+        </Button>
+      )}
       <Button
         style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
-        disabled={
-          disabled || login?.state === "pending" || login?.state === "verifying"
-        }
+        disabled={disabled || signingIn}
         loading={busy}
-        onClick={async () => {
-          setBusy(true);
-          setError("");
-          try {
-            setLogin(
-              await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
-                { project_id: projectId },
-              ),
-            );
-          } catch (err) {
-            setError(`${err}`);
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onClick={() => void start()}
       >
         {hasConnection
           ? compact

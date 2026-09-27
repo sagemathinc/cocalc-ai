@@ -201,6 +201,7 @@ export class AcpHarnessClient {
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
   private authStatus?: unknown;
+  private finishAuthWait?: () => void;
 
   private constructor(
     binding: HarnessBinding,
@@ -228,8 +229,10 @@ export class AcpHarnessClient {
         requestPermission: (request) => this.permission(request),
         createElicitation: (request) => this.question(request),
         extNotification: (method, params) => {
-          if (method === CLAUDE_AUTH_STATUS_METHOD)
+          if (method === CLAUDE_AUTH_STATUS_METHOD) {
             this.authStatus = params.authStatus;
+            if (this.authStatus != null) this.finishAuthWait?.();
+          }
         },
         // The SDK's legacy adapter otherwise reports empty success for absent
         // optional callbacks, even though we do not advertise these capabilities.
@@ -638,14 +641,6 @@ export class AcpHarnessClient {
     if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
     if (
-      this.sessionPolicy === "claude-subscription-controller" &&
-      !isClaudeSubscriptionStatus(this.authStatus)
-    )
-      throw new HarnessError(
-        "rejected",
-        `Claude subscription billing identity was not verified. ${CLAUDE_SUBSCRIPTION_PLAN_ERROR}`,
-      );
-    if (
       typeof text !== "string" ||
       !text.trim() ||
       Buffer.byteLength(text) > ACP_MAX_PROMPT_BYTES
@@ -700,11 +695,13 @@ export class AcpHarnessClient {
         "rejected",
         "ACP prompt exceeds the outgoing message limit",
       );
-    this.process.resumeTools?.();
     this.active = true;
     this.canceled = false;
     this.listener = listener;
     try {
+      if (this.sessionPolicy === "claude-subscription-controller")
+        await this.verifySubscriptionIdentity();
+      this.process.resumeTools?.();
       const result = await this.request(
         this.connection.prompt(params),
         "session/prompt",
@@ -726,9 +723,60 @@ export class AcpHarnessClient {
     }
   }
 
+  private async verifySubscriptionIdentity(): Promise<void> {
+    // The adapter's initial identity probe is asynchronous and can finish
+    // after session/new. Reserve the turn, but do not send it or enable tools.
+    if (this.authStatus == null) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => done(), Math.min(this.timeoutMs, 6_000));
+        const done = () => {
+          clearTimeout(timer);
+          this.finishAuthWait = undefined;
+          resolve();
+        };
+        this.finishAuthWait = done;
+      });
+    }
+    if (this.canceled || this.disposed || this.failure)
+      throw new HarnessError(
+        "unavailable",
+        "Claude startup was interrupted. No message was sent.",
+      );
+    if (isClaudeSubscriptionStatus(this.authStatus)) return;
+    const status = this.authStatus as
+      | { kind?: string; account?: { plan?: unknown } }
+      | undefined;
+    let message: string;
+    if (status?.kind === "none")
+      message =
+        "Claude is not signed in. Open Claude settings and choose Reconnect Claude. Your conversation is preserved.";
+    else if (
+      status?.kind === "account" &&
+      typeof status.account?.plan === "string" &&
+      status.account.plan.trim()
+    )
+      message = CLAUDE_SUBSCRIPTION_PLAN_ERROR;
+    else if (["api_key", "gateway", "external"].includes(status?.kind ?? ""))
+      message =
+        "Claude reported a different billing method instead of your subscription. Open Claude settings and reconnect the selected subscription. No message was sent or billed.";
+    else
+      message =
+        "Claude has not reported a verifiable subscription identity yet. No message was sent or billed. Retry; if this persists, reconnect in Claude settings or contact the site administrator.";
+    throw new HarnessError(
+      status == null ? "unavailable" : "rejected",
+      message,
+    );
+  }
+
   /** Only inject into a running prompt; never let an idle steer start a detached turn. */
   async steer(text: string): Promise<"injected" | "idle"> {
-    if (!this.supportsSteering || !this.active || !this.session) return "idle";
+    if (
+      !this.supportsSteering ||
+      !this.active ||
+      !this.session ||
+      this.finishAuthWait
+    )
+      return "idle";
     if (
       typeof text !== "string" ||
       !text.trim() ||
@@ -878,6 +926,7 @@ export class AcpHarnessClient {
   async cancel(): Promise<void> {
     if (!this.active || !this.session) return;
     this.canceled = true;
+    this.finishAuthWait?.();
     this.questionAbort?.abort();
     this.cancelTimer ??= setTimeout(
       () => this.fail(Error("ACP cancellation was not confirmed")),
@@ -895,6 +944,7 @@ export class AcpHarnessClient {
   dispose(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.disposed = true;
+    this.finishAuthWait?.();
     this.questionAbort?.abort();
     if (this.cancelTimer) clearTimeout(this.cancelTimer);
     this.process.stdin.destroy();

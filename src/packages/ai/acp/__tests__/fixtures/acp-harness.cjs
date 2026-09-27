@@ -215,6 +215,24 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
             id: message.id,
             error: { code: -32602, message: "subscription policy missing" },
           });
+        if (process.argv.includes("--delayed-status"))
+          setTimeout(
+            () =>
+              send({
+                method: "_auth/status_update",
+                params: {
+                  authStatus: { kind: "account", account: { plan: "pro" } },
+                },
+              }),
+            100,
+          );
+        for (const [flag, authStatus] of [
+          ["--none-status", { kind: "none" }],
+          ["--unknown-plan", { kind: "account", account: { plan: "team" } }],
+          ["--missing-plan", { kind: "account" }],
+        ])
+          if (process.argv.includes(flag))
+            send({ method: "_auth/status_update", params: { authStatus } });
         if (process.argv.includes("--subscription-status"))
           send({
             method: "_auth/status_update",

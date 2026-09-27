@@ -36,6 +36,7 @@ export type ClaudeSubscriptionLoginStatus = {
 };
 
 type LoginSession = ClaudeSubscriptionLoginStatus & {
+  reconnectCredentialId?: string;
   projectId: string;
   accountId: string;
   home: string;
@@ -135,17 +136,24 @@ export class ClaudeSubscriptionLoginService {
         home: string;
         identity: string;
         plan: string;
+        credentialId?: string;
       }) => Promise<string>;
+      validateReconnect?: (options: {
+        projectId: string;
+        accountId: string;
+        credentialId: string;
+      }) => Promise<unknown>;
     },
   ) {}
 
   start(
     projectId: string,
     accountId: string,
+    credentialId?: string,
   ): Promise<ClaudeSubscriptionLoginStatus> {
     if (this.closed)
       return Promise.reject(Error("Claude sign-in service is closed"));
-    const started = this.startSession(projectId, accountId);
+    const started = this.startSession(projectId, accountId, credentialId);
     this.starting.add(started);
     void started.finally(() => this.starting.delete(started)).catch(() => {});
     return started;
@@ -154,9 +162,19 @@ export class ClaudeSubscriptionLoginService {
   private async startSession(
     projectId: string,
     accountId: string,
+    credentialId?: string,
   ): Promise<ClaudeSubscriptionLoginStatus> {
     if (!isValidUUID(projectId) || !isValidUUID(accountId))
       throw Error("Invalid Claude sign-in principal");
+    if (credentialId != null) {
+      if (!isValidUUID(credentialId) || !this.options.validateReconnect)
+        throw Error("Invalid Claude reconnect request");
+      await this.options.validateReconnect({
+        projectId,
+        accountId,
+        credentialId,
+      });
+    }
     if (
       [...this.sessions.values()].some(
         (session) =>
@@ -193,6 +211,7 @@ export class ClaudeSubscriptionLoginService {
     timer.unref();
     const session: LoginSession = {
       id,
+      reconnectCredentialId: credentialId,
       projectId,
       accountId,
       home,
@@ -297,14 +316,24 @@ export class ClaudeSubscriptionLoginService {
         home: session.home,
         identity,
         plan,
+        ...(session.reconnectCredentialId
+          ? { credentialId: session.reconnectCredentialId }
+          : {}),
       });
       if (!isValidUUID(credentialId))
         throw Error("Published Claude credential ID is invalid");
       session.credentialId = credentialId;
       session.state = "completed";
       this.retire(session);
-    } catch {
-      this.fail(session, "Claude subscription verification failed");
+    } catch (error) {
+      this.fail(
+        session,
+        session.reconnectCredentialId &&
+          error instanceof Error &&
+          error.message === "Reconnect must use the same Claude account"
+          ? "Sign in with the same Claude account to reconnect. Your existing connection was not changed."
+          : "Claude subscription verification failed",
+      );
     } finally {
       await rm(session.home, { recursive: true, force: true });
     }

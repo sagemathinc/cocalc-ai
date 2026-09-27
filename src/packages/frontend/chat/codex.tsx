@@ -16,6 +16,7 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import { HarnessRuntimeControl } from "./harness-profile";
+import { AgentSpeedControl } from "./agent-speed-control";
 import { ComposerWorkingDirectory } from "./composer-working-directory";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import {
@@ -2075,12 +2076,7 @@ function NativeCodexConfigButton({
                   name="serviceTier"
                   style={formItemStyle}
                 >
-                  <Radio.Group optionType="button" buttonStyle="solid">
-                    <Radio.Button value="standard">Standard</Radio.Button>
-                    <Radio.Button value="fast" disabled={!fastModeSupported}>
-                      Fast
-                    </Radio.Button>
-                  </Radio.Group>
+                  <AgentSpeedControl fastModeSupported={fastModeSupported} />
                 </Form.Item>
               ) : null}
             </div>

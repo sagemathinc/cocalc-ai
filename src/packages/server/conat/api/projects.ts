@@ -7014,6 +7014,7 @@ export async function claudeSubscriptionLoginStart({
 }: {
   account_id?: string;
   project_id: string;
+  credential_id?: string;
 }): Promise<never> {
   await assertCollab({ account_id, project_id });
   throw Error("Claude subscription login must use the project-host endpoint");

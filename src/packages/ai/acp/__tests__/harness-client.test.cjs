@@ -486,7 +486,7 @@ test("subscription policy exposes only mediated project tools and refuses unknow
     } else {
       await assert.rejects(
         () => client.prompt("hello", async () => {}),
-        /subscription billing identity was not verified/,
+        /different billing method|not reported a verifiable subscription identity/,
       );
     }
     await client.dispose();
@@ -520,6 +520,99 @@ test("subscription policy refuses an unqualified adapter", async () => {
     /qualified Claude adapter/,
   );
 });
+
+test("subscription waits for delayed identity before sending a prompt or enabling tools", async (t) => {
+  let resumed = false;
+  const client = await start(
+    t,
+    ["--claude-adapter", "--delayed-status", "--steering"],
+    undefined,
+    [],
+    undefined,
+    undefined,
+    {
+      resumeTools: () => {
+        resumed = true;
+      },
+    },
+    "claude-subscription-controller",
+  );
+  await client.open();
+  const events = [];
+  const result = client.prompt("hello", async (event) => events.push(event));
+  assert.equal(client.running, true);
+  assert.equal(resumed, false);
+  assert.equal(events.length, 0);
+  assert.equal(await client.steer("wait for verification"), "idle");
+  await assert.rejects(
+    client.prompt("concurrent", async () => {}),
+    /idle and open/,
+  );
+  assert.equal((await result).stopReason, "end_turn");
+  assert.equal(resumed, true);
+  assert.ok(events.some((event) => event.type === "message"));
+});
+
+for (const action of ["cancel", "dispose"]) {
+  test(`${action} interrupts the subscription identity wait without sending or enabling tools`, async (t) => {
+    let resumed = false;
+    const client = await start(
+      t,
+      ["--claude-adapter", "--no-status"],
+      undefined,
+      [],
+      undefined,
+      undefined,
+      {
+        resumeTools: () => {
+          resumed = true;
+        },
+      },
+      "claude-subscription-controller",
+    );
+    await client.open();
+    const events = [];
+    const rejected = assert.rejects(
+      client.prompt("hello", async (e) => events.push(e)),
+      /startup was interrupted/,
+    );
+    await client[action]();
+    await rejected;
+    assert.equal(resumed, false);
+    assert.deepEqual(events, []);
+  });
+}
+
+for (const [flag, message] of [
+  ["--no-status", /not reported a verifiable subscription identity/],
+  ["--none-status", /Reconnect Claude/],
+  ["--missing-plan", /not reported a verifiable subscription identity/],
+  ["--unknown-plan", /Unsupported Claude subscription plan/],
+]) {
+  test(`${flag} gives an accurate subscription error without inference`, async (t) => {
+    let resumed = false;
+    const client = await start(
+      t,
+      ["--claude-adapter", flag],
+      undefined,
+      [],
+      undefined,
+      undefined,
+      {
+        resumeTools: () => {
+          resumed = true;
+        },
+      },
+      "claude-subscription-controller",
+    );
+    await client.open();
+    await assert.rejects(
+      client.prompt("hello", async () => {}),
+      message,
+    );
+    assert.equal(resumed, false);
+  });
+}
 
 function adapter(
   t,

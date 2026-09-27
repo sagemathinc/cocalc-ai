@@ -22,7 +22,7 @@ export function ClaudeConnectorPreference({
       >
         Use my claude.ai connectors
       </Checkbox>
-      <details>
+      <details style={{ marginTop: 8 }}>
         <summary>About connectors</summary>
         <p>
           Enabled by default. Claude can use services connected to your Claude

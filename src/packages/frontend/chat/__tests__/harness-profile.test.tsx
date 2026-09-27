@@ -275,9 +275,7 @@ test("Claude subscription shows the verified billing account and plan", async ()
       />,
     );
     expect(
-      await screen.findByText(
-        /Billing: Claude max plan for subscriber@example.com/,
-      ),
+      await screen.findByText("Claude Max - subscriber@example.com"),
     ).toBeTruthy();
   } finally {
     list.mockRestore();
@@ -429,14 +427,13 @@ test("discovery is explicit, keyboard accessible and does not select a model", a
   expect(onDiscover).not.toHaveBeenCalled();
   const user = userEvent.setup();
   await user.tab();
-  await user.tab();
   const button = screen.getByRole("button", {
     name: "Load model and mode options",
   });
   expect(document.activeElement).toBe(button);
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
+  expect(screen.getByRole("status").textContent).toBe("");
   expect(onSettings).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(button);
   rerender(
@@ -450,7 +447,7 @@ test("discovery is explicit, keyboard accessible and does not select a model", a
     />,
   );
   expect(screen.getByRole("combobox", { name: "Model" })).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
+  expect(screen.getByRole("status").textContent).toBe("");
   expect(document.activeElement).toBe(button);
 });
 
@@ -491,6 +488,40 @@ const claudeControls = {
     },
   ],
 };
+
+test("Claude speed uses compact Standard/Fast buttons and keeps refresh beside models", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const change = jest.fn();
+  render(
+    <HarnessRuntimeSummary
+      runtime={runtime}
+      reported={{ profile: runtime.profile, controls: claudeControls }}
+      onSettings={change}
+      onDiscover={jest.fn(async () => ({
+        profile: runtime.profile,
+        controls: claudeControls,
+      }))}
+    />,
+  );
+  const standard = screen.getByRole("radio", { name: "Standard" });
+  const fast = screen.getByRole("radio", { name: "Fast" });
+  expect(standard).toBeChecked();
+  fast.focus();
+  await userEvent.setup().keyboard(" ");
+  expect(change).toHaveBeenCalledWith(
+    expect.objectContaining({
+      configOptions: expect.arrayContaining([{ id: "fast", value: "on" }]),
+    }),
+  );
+  expect(screen.queryByRole("combobox", { name: "Fast mode" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  expect(screen.queryByText("Harness options loaded")).toBeNull();
+  expect(screen.queryByText("Credentials")).toBeNull();
+  expect(screen.queryByText("Launch policy")).toBeNull();
+  expect(
+    screen.getByText("Claude integration version (ACP adapter)"),
+  ).toBeTruthy();
+});
 
 test("an unavailable saved model remains explicit and can be replaced from the discovered catalog", async () => {
   const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
@@ -776,7 +807,7 @@ test("discovery errors are announced instead of supplying invented controls", as
   await userEvent.setup().keyboard("{Enter}");
   expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
+  expect(screen.getByRole("status").textContent).toBe("");
   expect(onDiscover).toHaveBeenCalledTimes(2);
   expect(onSettings).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(button);
@@ -819,9 +850,7 @@ test.each(["revision", "cwd"])(
       .click(
         screen.getByRole("button", { name: "Load model and mode options" }),
       );
-    expect(screen.getByRole("status").textContent).toBe(
-      "Loading harness options",
-    );
+    expect(screen.getByRole("status").textContent).toBe("Loading...");
     rerender(
       <HarnessRuntimeSummary
         runtime={second}

@@ -2555,6 +2555,7 @@ export interface Projects {
   claudeSubscriptionLoginStart: (opts: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
   }) => Promise<{
     id: string;
     state: "pending" | "verifying" | "completed" | "failed" | "canceled";

@@ -37,16 +37,18 @@ export function newAgentClaudeCredentialOptions(
           row.metadata?.[ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY] ||
             "unknown account",
         );
-        const plan = String(row.metadata?.plan || "Pro/Max").replace(
-          /^(pro|max)$/i,
-          (value) => value[0].toUpperCase() + value.slice(1).toLowerCase(),
-        );
+        const plan = String(row.metadata?.plan || "Pro/Max")
+          .replace(/^claude\s+/i, "")
+          .replace(
+            /^(pro|max)$/i,
+            (value) => value[0].toUpperCase() + value.slice(1).toLowerCase(),
+          );
         return {
           value: `${row.kind === CLAUDE_SUBSCRIPTION_KIND ? "account-subscription" : "account-api-key"}:${row.id}`,
           label:
             row.kind === CLAUDE_SUBSCRIPTION_KIND
               ? `Claude ${plan} - ${compact ? identity.split("@")[0] : identity}`
-              : row.metadata?.label || `Anthropic key ${row.id.slice(0, 8)}`,
+              : row.metadata?.label || "Anthropic API key",
         };
       }),
   ];
