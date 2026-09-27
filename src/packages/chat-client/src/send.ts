@@ -14,6 +14,10 @@ import {
 } from "@cocalc/chat/core";
 import { interruptAcp, steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
 import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
+import {
+  chatIdentityMutation,
+  projectChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
 import type {
   AcpInterruptRequest,
   AcpInterruptResponse,
@@ -64,9 +68,9 @@ type MutableChatMessage = Omit<ChatMessage, "acp_state"> & {
   acp_interrupted_text?: string;
 };
 
-function rows(db: ImmerDB): Record<string, any>[] {
+function rows(db: ImmerDB): readonly Record<string, any>[] {
   const value = db.get();
-  return Array.isArray(value) ? value : [];
+  return projectChatIdentityRows(Array.isArray(value) ? value : []);
 }
 
 function latestThreadMessage(
@@ -276,16 +280,18 @@ export class ChatSendPipeline {
       target &&
       ["interrupted", "repaired", "missing"].includes(result.state)
     ) {
-      this.options.db.set({
-        ...target,
-        generating: false,
-        acp_state: null,
-        acp_interrupted: true,
-        acp_interrupted_text:
-          result.state === "missing"
-            ? "Conversation interrupted locally after the backend confirmed that no running session exists."
-            : "Conversation interrupted.",
-      });
+      this.options.db.set(
+        chatIdentityMutation(this.options.db.get(), {
+          ...target,
+          generating: false,
+          acp_state: null,
+          acp_interrupted: true,
+          acp_interrupted_text:
+            result.state === "missing"
+              ? "Conversation interrupted locally after the backend confirmed that no running session exists."
+              : "Conversation interrupted.",
+        }),
+      );
       this.options.db.delete({
         event: "chat-thread-state",
         thread_id: threadId,
@@ -562,7 +568,12 @@ export class ChatSendPipeline {
     message: MutableChatMessage,
     state: NonNullable<MutableChatMessage["acp_state"]>,
   ): void {
-    this.options.db.set({ ...message, acp_state: state });
+    this.options.db.set(
+      chatIdentityMutation(this.options.db.get(), {
+        ...message,
+        acp_state: state,
+      }),
+    );
     // ACP status streams may repeat the same state.  In that case syncstring's
     // commit returns false because there is no new change to persist, which is
     // successful rather than an error.

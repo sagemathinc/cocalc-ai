@@ -22,13 +22,14 @@ const page = (title: string, next?: string) => ({
   coverage_message: "Account index is incomplete.",
   next,
 });
-function fixture(coverage = "indexing") {
+function fixture(coverage = "indexing", role = "collaborator") {
   const api = {
+    getRoom: jest.fn().mockResolvedValue(null),
     listPeople: jest
       .fn()
       .mockResolvedValue({ items: [], coverage: "complete" }),
     listProjects: jest.fn().mockResolvedValue({
-      items: [{ project_id: "project", title: "Project" }],
+      items: [{ project_id: "project", title: "Project", role }],
       coverage: "complete",
     }),
     listResources: jest.fn(async ({ kind, after }) => ({
@@ -50,6 +51,7 @@ function fixture(coverage = "indexing") {
     })),
   };
   const props = {
+    accountId: "11111111-1111-4111-8111-111111111111",
     api: api as unknown as DirectoryApi,
     projectId: "project",
     personId: "person",
@@ -62,6 +64,20 @@ function fixture(coverage = "indexing") {
   };
   return { api, props };
 }
+
+test.each(["owner", "collaborator", "viewer"])(
+  "room replacement is explicitly owner-only in %s overview",
+  async (role) => {
+    const { api, props } = fixture("complete", role);
+    render(<Overview {...props} personId={undefined} />);
+    await screen.findByRole("button", { name: /Account first/ });
+    const button = screen.queryByRole("button", {
+      name: "Replace deleted conversation room",
+    });
+    expect(!!button).toBe(role === "owner");
+    expect(api.getRoom).not.toHaveBeenCalled();
+  },
+);
 
 test("incomplete project results offer a keyboard-operated bounded owner fallback with independent cursors", async () => {
   const user = userEvent.setup();

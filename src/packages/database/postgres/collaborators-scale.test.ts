@@ -68,12 +68,12 @@ beforeAll(async () => {
   );
   await pool.query(
     `INSERT INTO collaboration_index(account_id,entry_key,project_id,generation,kind,
-       activity,metadata,participant_ids,search_text)
+       activity,metadata,participant_ids,search_text,relations_complete)
      SELECT $1,md5(n::text) || md5(n::text),project_id,$2,'conversation',n,
        jsonb_build_object('project_id',project_id,'kind','conversation',
          'resource_id','thread-' || n,'thread_id','thread-' || n,
          'chat_path','/home/user/room.chat','title',title,'participant_ids','[]'::jsonb,
-         'created_at',1,'updated_at',n,'activity',1),ARRAY[]::uuid[],title
+         'created_at',1,'updated_at',n,'activity',1),ARRAY[]::uuid[],title,TRUE
      FROM (SELECT n,md5('collaboration-scale-project-' || (1+(n-1)%1000))::uuid AS project_id,
        CASE WHEN n=54321 THEN 'Needle discussion' ELSE 'Discussion ' || n END AS title
        FROM generate_series(1,100000) n) fixture`,
@@ -91,9 +91,15 @@ beforeAll(async () => {
       [account, after, after + 1000],
     );
   await pool.query(
-    "UPDATE collaboration_index SET participant_ids=ARRAY[$1::uuid] WHERE account_id=$1 AND activity=54323",
+    "UPDATE collaboration_index SET relation_set='complete-scale-relation',relation_thread='native-scale-thread',relation_budget=1 WHERE account_id=$1 AND activity=54323",
     [account],
   );
+  await pool.query(
+    `INSERT INTO collaboration_participant_index(account_id,entry_key,project_id,set_key,participant_id)
+    SELECT account_id,entry_key,project_id,relation_set,$1 FROM collaboration_index WHERE account_id=$1 AND activity=54323`,
+    [account],
+  );
+  await pool.query("ANALYZE collaboration_participant_index");
   await pool.query("ANALYZE collaboration_personal");
   await pool.query("ANALYZE collaboration_index");
 }, 120_000);
@@ -106,7 +112,7 @@ afterAll(async () => {
   }
 }, 120_000);
 
-test.each(["following", "for-you", "collected"] as const)(
+test.each(["following", "for-you", "collected", "person"] as const)(
   "sparse %s scope does not scan 100000 resources or baseline personal rows",
   async (scope) => {
     const pool = getPool();
@@ -115,12 +121,14 @@ test.each(["following", "for-you", "collected"] as const)(
     try {
       const page = await listCollaborationResources({
         account_id: account,
-        scope,
+        ...(scope === "person" ? { person_id: account } : { scope }),
       });
       expect(page.items.map((item) => item.resource_id)).toEqual(
         scope === "for-you"
           ? ["thread-54323", "thread-54322", "thread-54321"]
-          : ["thread-54321"],
+          : scope === "person"
+            ? ["thread-54323"]
+            : ["thread-54321"],
       );
       expect(calls.mock.calls.length).toBeLessThanOrEqual(8);
       expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(256 * 1024);
@@ -141,9 +149,11 @@ test.each(["following", "for-you", "collected"] as const)(
     const root = result.rows[0]["QUERY PLAN"][0].Plan;
     const visit = (node: any) => {
       if (
-        ["collaboration_index", "collaboration_personal"].includes(
-          node["Relation Name"],
-        )
+        [
+          "collaboration_index",
+          "collaboration_personal",
+          "collaboration_participant_index",
+        ].includes(node["Relation Name"])
       ) {
         const visited =
           ((node["Actual Rows"] ?? 0) + (node["Rows Removed by Filter"] ?? 0)) *

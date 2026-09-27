@@ -3,6 +3,9 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { createHash } from "node:crypto";
+import { validateCollaborationRelationManifest } from "@cocalc/util/collaboration-relations";
+import { syncCollaborationRelationsSchema } from "./collaborators-relations-schema";
+import { syncCollaborationCensusSchema } from "./collaborators-census-schema";
 import { posix } from "node:path";
 import { validateCollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import type { LegacyCollaborationAttention } from "@cocalc/util/collaboration-attention";
@@ -102,6 +105,11 @@ export function validateResource(
     throw Error("participant summary limit exceeded");
   input.participant_ids.forEach((id) => uuid(id, "participant_id"));
   if (input.created_by != null) uuid(input.created_by, "created_by");
+  if (input.latest_message_author_id != null) {
+    if (target.kind !== "conversation")
+      throw Error("latest message author requires a conversation");
+    uuid(input.latest_message_author_id, "latest_message_author_id");
+  }
   const resource: CollaborationResource & LegacyCollaborationAttention = {
     ...target,
     chat_path: input.chat_path,
@@ -112,6 +120,12 @@ export function validateResource(
     updated_at: integer(input.updated_at, "updated_at"),
     activity: integer(input.activity, "activity"),
     ...(input.created_by == null ? {} : { created_by: input.created_by }),
+    ...(input.latest_message_author_id == null
+      ? {}
+      : {
+          latest_message_author_id:
+            input.latest_message_author_id.toLowerCase(),
+        }),
   };
   for (const field of ["agent_id", "artifact_id", "entry_id"] as const) {
     if (input[field] != null)
@@ -209,6 +223,9 @@ export function validateSnapshot(
     epoch: input.epoch,
     sequence: input.sequence,
     resources,
+    ...(input.relations === undefined
+      ? {}
+      : { relations: validateCollaborationRelationManifest(input.relations) }),
     ...(input.coverage ? { coverage: input.coverage } : {}),
     ...(coverage_message ? { coverage_message } : {}),
     ...(notification_events ? { notification_events } : {}),
@@ -235,6 +252,8 @@ export async function transaction<T>(
 export async function syncCollaboratorsSchema(
   db: Pick<PoolClient, "query"> = getPool(),
 ) {
+  await syncCollaborationCensusSchema(db);
+  await syncCollaborationRelationsSchema(db);
   await db.query(
     "ALTER TABLE collaboration_catalog ADD COLUMN IF NOT EXISTS agent_resource_ids TEXT[], ADD COLUMN IF NOT EXISTS agent_source_activity BIGINT NOT NULL DEFAULT 0",
   );

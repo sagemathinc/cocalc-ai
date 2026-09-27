@@ -18,6 +18,7 @@ import {
   registerCollaborationSource,
   ingestCollaborationSnapshot,
 } from "@cocalc/database/postgres/collaborators-owner";
+import { replaceCollaborationRoom } from "@cocalc/database/postgres/collaborators-room-replacement";
 import { PROJECT_COLLABORATION_REHOME_TABLES as TABLES } from "@cocalc/util/project-collaboration-rehome";
 import type {
   ProjectCollaborationRehomeHeader as Header,
@@ -87,7 +88,7 @@ describeDb(
       await initEphemeralDatabase();
       // Exercise an upgraded, previously feature-disabled database, not only the
       // already-installed development schema. This process owns an ephemeral DB.
-      await getPool().query(`DROP TABLE ${TABLES.join(",")}`);
+      await getPool().query(`DROP TABLE IF EXISTS ${TABLES.join(",")}`);
       await getPool()
         .query(`CREATE TABLE IF NOT EXISTS project_rehome_operations(
       op_id UUID PRIMARY KEY,project_id UUID,source_bay_id TEXT,dest_bay_id TEXT,status TEXT,stage TEXT,created_at TIMESTAMPTZ DEFAULT now())`);
@@ -99,7 +100,7 @@ describeDb(
       await getPool()
         .query(`TRUNCATE project_collaboration_rehome_pages,project_collaboration_rehome_transfers,
       project_rehome_operations,${TABLES.join(",")},collaboration_personal,collaboration_access,
-      collaboration_index,collaboration_notification_cursors,collaboration_artifact_bindings,
+      collaboration_index,collaboration_participant_index,collaboration_relation_pages,collaboration_notification_cursors,collaboration_artifact_bindings,
       agent_personal_names,personal_library_aliases,personal_library_pins`);
     });
     afterAll(async () => {
@@ -285,6 +286,81 @@ describeDb(
           "INSERT INTO collaboration_artifact_bindings(account_id,entry_key,project_id,entry_id,pin_key) VALUES($1,$2,$3,'copy-operation:artifact:native','copied-pin')",
           [account, entryKey(resource), op.project_id],
         );
+        const relation_set = createHash("sha256")
+          .update(`set:${op.project_id}`)
+          .digest("hex");
+        const thread_key = createHash("sha256")
+          .update("native-thread")
+          .digest("hex");
+        const reference = {
+          kind: "reference",
+          source: {
+            kind: resource.kind,
+            resource_id: resource.resource_id,
+            thread_id: resource.thread_id,
+          },
+          message_id: "retained-source-message",
+          reference: {
+            version: 1,
+            target: {
+              project_id: op.project_id,
+              kind: "artifact",
+              resource_id: "copy-operation:artifact:native",
+            },
+          },
+        };
+        await getPool().query(
+          "INSERT INTO collaboration_relation_sets(set_key,project_id,source_id,epoch,sequence,manifest,byte_count,row_count) VALUES($1,$2,$3,$4,97,$5::jsonb,1234,2)",
+          [
+            relation_set,
+            op.project_id,
+            source_id,
+            epoch,
+            JSON.stringify({
+              version: 1,
+              snapshot: { ...source, epoch, sequence: 97 },
+              page_count: 1,
+              participant_count: 1,
+              reference_count: 1,
+              byte_count: 1234,
+              digest: "a".repeat(64),
+            }),
+          ],
+        );
+        await getPool().query(
+          "INSERT INTO collaboration_participants(id,project_id,set_key,thread_key,participant_id) VALUES($1,$2,$3,$4,$5)",
+          [
+            `${relation_set}:participant`,
+            op.project_id,
+            relation_set,
+            thread_key,
+            actor,
+          ],
+        );
+        await getPool().query(
+          "INSERT INTO collaboration_references(id,project_id,set_key,thread_key,message_id,payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+          [
+            `${relation_set}:reference`,
+            op.project_id,
+            relation_set,
+            thread_key,
+            reference.message_id,
+            JSON.stringify(reference),
+          ],
+        );
+        await getPool().query(
+          "UPDATE collaboration_sources SET relation_set=$2 WHERE source_id=$1",
+          [source_id, relation_set],
+        );
+        await getPool().query(
+          "UPDATE collaboration_catalog SET relation_set=$2,relation_thread=$3,relation_count=1 WHERE entry_key=$1",
+          [entryKey(resource), relation_set, thread_key],
+        );
+        // Upload envelopes are operation-local, not portable canonical facts.
+        await getPool().query(
+          "INSERT INTO collaboration_relation_pages(id,project_id,set_key,page,payload,digest) VALUES($1,$2,$1,0,'{}'::jsonb,$3)",
+          [relation_set, op.project_id, "b".repeat(64)],
+        );
       }
       await getPool().query(
         "INSERT INTO project_rehome_operations(op_id,project_id,source_bay_id,dest_bay_id,status,stage) VALUES($1,$2,$3,$4,'running','requested')",
@@ -342,6 +418,95 @@ describeDb(
       );
     }
 
+    test("replacement receipts and permanent retirement survive owner handoff and resume initialization", async () => {
+      const f = await fixture();
+      // The replacement precedes the requested handoff; no writes bypass its fence.
+      await getPool().query(
+        "UPDATE project_rehome_operations SET status='failed' WHERE op_id=$1",
+        [f.op.op_id],
+      );
+      const request_id = randomUUID();
+      const opts = {
+        project_id: f.op.project_id,
+        requesting_account_id: f.actor,
+        request: {
+          version: 1 as const,
+          project_id: f.op.project_id,
+          request_id,
+          expected_room_id: f.room_id,
+          expected_chat_path: f.source.chat_path,
+        },
+        absence: {
+          status: "missing" as const,
+          project_id: f.op.project_id,
+          requesting_account_id: f.actor,
+          host_id: f.host,
+          request_id,
+          room_id: f.room_id,
+          chat_path: f.source.chat_path,
+          source_epoch: f.epoch,
+        },
+      };
+      const replaced = await replaceCollaborationRoom(opts, {
+        owning_bay_id: sourceBay,
+        host_id: f.host,
+      });
+      expect(replaced.outcome).toBe("pending");
+      await getPool().query(
+        "UPDATE project_rehome_operations SET status='running' WHERE op_id=$1",
+        [f.op.op_id],
+      );
+      const { header, pages } = await snapshot(f);
+      const receipt = pages.find(
+        (page) => page.table === "collaboration_room_replacements",
+      )!.rows[0];
+      expect(receipt.operation_id).toBe(replaced.operation_id);
+      const oldSource = pages
+        .flatMap((page) =>
+          page.table === "collaboration_sources" ? page.rows : [],
+        )
+        .find((row) => row.source_id === f.source_id)!;
+      expect(oldSource.retired_room_id).toBe(f.room_id);
+      await stage(header, pages);
+      await activateFixture(f, header);
+      process.env.COCALC_BAY_ID = sourceBay;
+      await retire(header);
+      process.env.COCALC_BAY_ID = destBay;
+      await getPool().query(
+        "UPDATE project_rehome_operations SET status='completed' WHERE op_id=$1",
+        [f.op.op_id],
+      );
+      expect(
+        (
+          await getPool().query(
+            "SELECT receipt FROM collaboration_room_replacements WHERE operation_id=$1",
+            [replaced.operation_id],
+          )
+        ).rows[0].receipt,
+      ).toEqual(receipt.receipt);
+      expect(
+        await replaceCollaborationRoom(
+          { ...opts, absence: undefined },
+          { owning_bay_id: destBay, host_id: f.host },
+        ),
+      ).toEqual(replaced);
+      const source = (
+        await getPool().query(
+          "SELECT epoch,retired_room_id FROM collaboration_sources WHERE source_id=$1",
+          [f.source_id],
+        )
+      ).rows[0];
+      expect(source.retired_room_id).toBe(f.room_id);
+      await expect(
+        registerCollaborationSource(
+          f.source,
+          { owning_bay_id: destBay, host_id: f.host },
+          source.epoch,
+          randomUUID(),
+        ),
+      ).rejects.toThrow("retired");
+    });
+
     test("no collaboration state keeps the legacy path without installing a durable export", async () => {
       const f = await fixture(0, false);
       expect(await freeze(f.op)).toBeUndefined();
@@ -370,7 +535,7 @@ describeDb(
             [[...TABLES]],
           )
         ).rows[0].n,
-      ).toBe(9);
+      ).toBe(TABLES.length);
       const f = await fixture();
       const other = await fixture();
       const { header, pages } = await snapshot(f);
@@ -410,7 +575,7 @@ describeDb(
         ).rows[0].n,
       ).toBeGreaterThan(0);
     });
-    test("all nine tables transfer losslessly; staging is invisible and activation retry cannot overwrite live state", async () => {
+    test("all declared tables transfer losslessly; staging is invisible and activation retry cannot overwrite live state", async () => {
       const f = await fixture(61);
       const { header, pages } = await snapshot(f);
       expect(new Set(pages.map((p) => p.table))).toEqual(new Set(TABLES));
@@ -486,6 +651,45 @@ describeDb(
         metadata_hash: "retained-metadata",
       });
       expect(writer.epoch).not.toBe(f.epoch);
+      const expectedSet = createHash("sha256")
+        .update(`set:${f.op.project_id}`)
+        .digest("hex");
+      expect(writer.relation_set).toBe(expectedSet);
+      expect(
+        (
+          await getPool().query(
+            "SELECT participant_id FROM collaboration_participants WHERE set_key=$1",
+            [expectedSet],
+          )
+        ).rows,
+      ).toEqual([{ participant_id: f.actor }]);
+      expect(
+        (
+          await getPool().query(
+            "SELECT payload FROM collaboration_references WHERE set_key=$1",
+            [expectedSet],
+          )
+        ).rows[0].payload,
+      ).toMatchObject({
+        message_id: "retained-source-message",
+        source: { thread_id: f.resource.thread_id },
+        reference: {
+          target: { resource_id: "copy-operation:artifact:native" },
+        },
+      });
+      expect(
+        (
+          await getPool().query(
+            "SELECT relation_set,relation_count FROM collaboration_catalog WHERE entry_key=$1",
+            [entryKey(f.resource)],
+          )
+        ).rows[0],
+      ).toEqual({ relation_set: expectedSet, relation_count: "1" });
+      expect(
+        pages.some(
+          (p) => (p.table as string) === "collaboration_relation_pages",
+        ),
+      ).toBe(false);
       expect(
         (
           await getPool().query(

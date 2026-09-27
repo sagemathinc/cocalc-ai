@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import { homeParticipation } from "./collaborators-relations-projection";
 import { withAccountRehomeWriteFence } from "./account-rehome-fence";
 import {
   collaborationAgentPins,
@@ -130,19 +131,20 @@ async function coverage(
     WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.project_id=$2)
     AND ($3::uuid[] IS NULL OR p.project_id=ANY($3::uuid[]))
     AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator')
-    AND (x.generation IS NULL OR x.lease_until<=now() OR NOT x.complete OR x.last_error IS NOT NULL)) AS pending`,
+    AND (x.generation IS NULL OR x.lease_until<=now() OR NOT x.complete OR x.last_error IS NOT NULL
+      OR EXISTS(SELECT 1 FROM collaboration_index r WHERE r.account_id=p.account_id AND r.project_id=p.project_id AND NOT r.relations_complete))) AS pending`,
     [account_id, project_id ?? null, project_ids ?? null],
   );
   return result.rows[0].pending
     ? {
         coverage: "indexing",
         coverage_message:
-          "Metadata is being indexed or access could not be refreshed. Unverified results are hidden.",
+          "Metadata or complete participant relations are still indexing, or access could not be refreshed. Unverified results are hidden.",
       }
     : {
         coverage: "partial",
         coverage_message:
-          "Indexed sources only; legacy chats may be absent. Participant summaries are bounded, so person filters may omit participants.",
+          "Indexed sources only; undiscovered legacy sources may be absent. Participant filters use complete indexed relations, not summary previews.",
       };
 }
 function personal(row: any): CollaborationPersonalState {
@@ -155,7 +157,7 @@ function personal(row: any): CollaborationPersonalState {
     read_through: Number(row?.read_through ?? 0),
   };
 }
-function resource(row: any, account_id: string): CollaborationResource {
+function resource(row: any): CollaborationResource {
   const state = personal(row);
   return {
     ...row.metadata,
@@ -166,7 +168,7 @@ function resource(row: any, account_id: string): CollaborationResource {
       ? { reason: "mention" as const }
       : state.following
         ? { reason: "following" as const }
-        : row.metadata.participant_ids?.includes(account_id)
+        : row.participated
           ? { reason: "participation" as const }
           : {}),
   };
@@ -218,12 +220,6 @@ export async function listCollaborationResources(
   ];
   const where = ["r.account_id=$1"];
   if (q.project_id) where.push(`r.project_id=${param(q.project_id)}::uuid`);
-  if (q.person_id) {
-    const v = param(q.person_id);
-    where.push(
-      `(r.created_by=${v}::uuid OR r.participant_ids @> ARRAY[${v}::uuid])`,
-    );
-  }
   if (q.kind) where.push(`r.kind=${param(q.kind)}`);
   if (q.search) {
     const search = param(q.search);
@@ -246,13 +242,28 @@ export async function listCollaborationResources(
   }
   if (!q.include_archived)
     where.push("NOT COALESCE((r.metadata->>'archived')::boolean,FALSE)");
+  if (q.person_id) {
+    const person = param(q.person_id);
+    matches = `${matches}${matches ? "," : "WITH"} collaboration_person_matches AS MATERIALIZED (
+      SELECT entry_key FROM collaboration_index WHERE account_id=$1 AND created_by=${person}::uuid
+      UNION SELECT cp.entry_key FROM collaboration_participant_index cp JOIN LATERAL (
+        SELECT relation_set,relations_complete FROM collaboration_index i WHERE i.account_id=cp.account_id AND i.entry_key=cp.entry_key OFFSET 0
+      ) i ON i.relation_set=cp.set_key AND i.relations_complete WHERE cp.account_id=$1 AND cp.participant_id=${person}::uuid),
+      collaboration_person_candidates AS MATERIALIZED (SELECT entry_key FROM collaboration_person_matches
+        ${q.search ? "INTERSECT SELECT entry_key FROM collaboration_matches" : ""})`;
+    from = `collaboration_person_candidates matches JOIN LATERAL (
+      SELECT * FROM collaboration_index candidate WHERE candidate.account_id=$1 AND candidate.entry_key=matches.entry_key OFFSET 0
+    ) r ON TRUE`;
+  }
   if (q.scope && q.scope !== "all") {
     let candidates =
       "SELECT entry_key FROM collaboration_personal WHERE account_id=$1 AND following";
     if (q.scope === "for-you")
       candidates += `
       UNION SELECT entry_key FROM collaboration_personal WHERE account_id=$1 AND last_mention>GREATEST(read_through,notify_after)
-      UNION SELECT entry_key FROM collaboration_index WHERE account_id=$1 AND participant_ids @> ARRAY[$1::uuid]`;
+      UNION SELECT cp.entry_key FROM collaboration_participant_index cp JOIN LATERAL (
+        SELECT relation_set,relations_complete FROM collaboration_index i WHERE i.account_id=cp.account_id AND i.entry_key=cp.entry_key OFFSET 0
+      ) i ON i.relation_set=cp.set_key AND i.relations_complete WHERE cp.account_id=$1 AND cp.participant_id=$1::uuid`;
     if (q.scope === "collected")
       candidates = `
       SELECT s.entry_key FROM collaboration_personal s WHERE s.account_id=$1 AND s.collected
@@ -265,7 +276,8 @@ export async function listCollaborationResources(
       ) i ON TRUE WHERE p.account_id=$1`;
     matches = `${matches}${matches ? "," : "WITH"} collaboration_scope AS MATERIALIZED (${candidates}),
       collaboration_candidates AS MATERIALIZED (SELECT entry_key FROM collaboration_scope
-        ${q.search ? "INTERSECT SELECT entry_key FROM collaboration_matches" : ""})`;
+        ${q.search ? "INTERSECT SELECT entry_key FROM collaboration_matches" : ""}
+        ${q.person_id ? "INTERSECT SELECT entry_key FROM collaboration_person_matches" : ""})`;
     from = `collaboration_candidates matches JOIN LATERAL (
       SELECT * FROM collaboration_index candidate WHERE candidate.account_id=$1 AND candidate.entry_key=matches.entry_key OFFSET 0
     ) r ON TRUE`;
@@ -290,7 +302,7 @@ export async function listCollaborationResources(
     "JOIN account_project_index p ON p.account_id=r.account_id AND p.project_id=r.project_id";
   where.splice(0, where.length, "TRUE");
   const { rows } = await getPool().query(
-    `${matches} SELECT r.entry_key,r.activity,r.metadata,left(p.title,128) AS project_title,
+    `${matches} SELECT r.entry_key,r.activity,r.metadata,left(p.title,128) AS project_title,${homeParticipation("r", "$1")} AS participated,
     ${EFFECTIVE_ALIAS} AS alias,${collected} AS collected,s.following,s.muted,s.read_through,s.last_mention,s.notify_after FROM ${from}
     ${accessJoin}
     LEFT JOIN collaboration_personal s ON s.account_id=r.account_id AND s.entry_key=r.entry_key
@@ -301,7 +313,7 @@ export async function listCollaborationResources(
   return page(
     rows,
     q,
-    (row) => resource(row, q.account_id),
+    (row) => resource(row),
     (row) => Number(row.activity),
     (row) => row.entry_key,
   );

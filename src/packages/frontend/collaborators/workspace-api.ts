@@ -18,6 +18,7 @@ export type DirectoryApi = Pick<
   | "getResource"
   | "setPersonalState"
   | "ensureRoom"
+  | "getRoom"
   | "check"
 >;
 
@@ -82,5 +83,7 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     },
     ensureRoom: (opts) =>
       call((service) => service.ensureRoom({ ...opts, account_id: accountId })),
+    getRoom: (opts) =>
+      call((service) => service.getRoom({ ...opts, account_id: accountId })),
   };
 }

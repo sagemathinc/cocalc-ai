@@ -28,6 +28,42 @@ export interface ProjectRehomeSqlSideTablePreflight {
 }
 
 export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
+  collaboration_relation_sets: {
+    table: "collaboration_relation_sets",
+    status: "portable",
+    reason:
+      "Immutable relation manifests and active catalog bindings transfer with owner metadata; renewed source epochs fence uncommitted work.",
+  },
+  collaboration_participants: {
+    table: "collaboration_participants",
+    status: "portable",
+    reason:
+      "Complete native-thread participation edges transfer with their immutable set identity, without granting project membership.",
+  },
+  collaboration_references: {
+    table: "collaboration_references",
+    status: "portable",
+    reason:
+      "Typed source-message edges transfer with the source catalog; targets remain independently authorized.",
+  },
+  collaboration_relation_pages: {
+    table: "collaboration_relation_pages",
+    status: "operation-local",
+    reason:
+      "Host upload pages are staged work, not catalog authority. Destination writer epochs require fresh uploads; committed normalized edges transfer separately.",
+  },
+  collaboration_participant_index: {
+    table: "collaboration_participant_index",
+    status: "projection",
+    reason:
+      "Account-home participant projections rebuild under fresh owner access generations, never transfer as grants.",
+  },
+  collaboration_discovery: {
+    table: "collaboration_discovery",
+    status: "projection",
+    reason:
+      "Host census telemetry is rebuilt under current owner/host authorization; absence after rehome is pending, never complete. Resource identities remain in the portable catalog.",
+  },
   collaboration_memberships: {
     table: "collaboration_memberships",
     status: "portable",
@@ -93,6 +129,12 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     status: "portable",
     reason:
       "Canonical room identity, location and initialization lifecycle transfer unchanged; transfer never opens or creates a chat file.",
+  },
+  collaboration_room_replacements: {
+    table: "collaboration_room_replacements",
+    status: "portable",
+    reason:
+      "Permanent actor-bound room replacement receipts and retired identities transfer with the canonical pointer; rehome never replays file initialization.",
   },
   project_collaboration_rehome_pages: {
     table: "project_collaboration_rehome_pages",

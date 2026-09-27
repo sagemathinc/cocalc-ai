@@ -4,6 +4,10 @@ import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
 import { EventEmitter } from "node:events";
 import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import { ChatActions } from "../actions";
+import {
+  planChatIdentityMigration,
+  resolveChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
 import { closeChatSyncdb } from "../close-syncdb";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -101,6 +105,79 @@ function bindRealDeleteDraft(actions: any): void {
     "x.chat",
   ).deleteDraft.bind(actions);
 }
+
+test("mapped legacy edit, feedback, reparent and delete retain original SyncDB keys", () => {
+  const root = {
+    event: "chat",
+    sender_id: "alice",
+    date: "2026-09-27T02:00:00+02:00",
+    history: [
+      { content: "root", author_id: "alice", date: "2026-09-27T00:00:00Z" },
+    ],
+  };
+  const child = {
+    event: "chat",
+    sender_id: "bob",
+    date: "2026-09-27T00:00:00.001Z",
+    reply_to: root.date,
+    history: [],
+  };
+  const markers = planChatIdentityMigration([root, child], {
+    migration_id: "11111111-1111-4111-8111-111111111111",
+    history_complete: true,
+  });
+  let doc = from_str(
+    "",
+    ["date", "sender_id", "event", "message_id", "thread_id"],
+    ["input"],
+  );
+  for (const row of [root, child, ...markers]) doc = doc.set(row);
+  const messages = new Map<string, any>();
+  const refresh = () => {
+    messages.clear();
+    for (const message of resolveChatIdentityRows(doc.get()).messages)
+      messages.set(`${Date.parse(message.projected.date)}`, {
+        ...message.projected,
+        date: new Date(message.projected.date),
+      });
+  };
+  refresh();
+  const actions = makeActions(messages);
+  actions.syncdb.get_state = () => "ready";
+  actions.syncdb.get = (where) => doc.get(where);
+  actions.syncdb.get_one = (where) => doc.get_one(where);
+  actions.syncdb.set.mockImplementation((patch) => {
+    doc = doc.set(patch);
+  });
+  actions.syncdb.delete.mockImplementation((where) => {
+    doc = doc.delete(where);
+  });
+  const message = messages.get(`${Date.parse(root.date)}`);
+  actions.setEditing(message, true);
+  actions.sendEdit(message, "edited");
+  actions.feedback(message, "positive");
+  expect(doc.get({ event: "chat" })).toHaveLength(2);
+  const saved = doc.get_one({
+    event: "chat",
+    date: root.date,
+    sender_id: "alice",
+  });
+  expect(saved.history[0].content).toBe("edited");
+  expect(saved.message_id).toBeUndefined();
+  expect(saved.thread_id).toBeUndefined();
+  refresh();
+  expect(actions.deleteMessage(messages.get(`${Date.parse(root.date)}`))).toBe(
+    true,
+  );
+  expect(doc.get({ event: "chat" })).toHaveLength(1);
+  const remaining = doc.get({ event: "chat" })[0];
+  expect(remaining.date).toBe(child.date);
+  expect(remaining.message_id).toBeUndefined();
+  expect(remaining.thread_id).toBeUndefined();
+  expect(
+    resolveChatIdentityRows(doc.get()).messages[0].parent_message_id,
+  ).toBeNull();
+});
 
 describe("sendChat identity fields", () => {
   it("canonical human room sends never invoke agents or write legacy follower state", () => {

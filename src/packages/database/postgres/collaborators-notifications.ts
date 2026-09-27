@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { createHash, randomUUID } from "node:crypto";
+import { homeParticipation } from "./collaborators-relations-projection";
 import { uuidsha1 } from "@cocalc/util/misc";
 import getPool from "../pool";
 import type { PoolClient } from "../pool";
@@ -579,7 +580,8 @@ export async function lockCollaborationNotificationAttention({
   const key = entryKey(event.project_id, event.thread_id);
   const indexed = (
     await db.query(
-      "SELECT metadata,participant_ids FROM collaboration_index WHERE account_id=$1 AND entry_key=$2 AND generation=$3 AND kind='conversation'",
+      `SELECT metadata,${homeParticipation("i", "$1")} AS participated FROM collaboration_index i
+      WHERE account_id=$1 AND entry_key=$2 AND generation=$3 AND kind='conversation'`,
       [account_id, key, delivery.access_generation],
     )
   ).rows[0];
@@ -613,7 +615,7 @@ export async function lockCollaborationNotificationAttention({
       notify_after: Number(personal.notify_after),
       last_mention: Number(personal.last_mention),
       legacy_migrated: personal.legacy_migrated,
-      participating: (indexed.participant_ids ?? []).includes(account_id),
+      participating: !!indexed.participated,
     },
     legacy: {
       notification_followers: indexed.metadata.notification_followers,

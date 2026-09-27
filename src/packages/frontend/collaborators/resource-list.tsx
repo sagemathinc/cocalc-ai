@@ -3,9 +3,15 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { MouseEvent } from "react";
+import { useEffect, useRef } from "react";
 import { Button, Tag } from "antd";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
-import { collaborationTargetKey } from "@cocalc/util/collaborators";
+import {
+  COLLABORATION_PAGE_LIMIT,
+  collaborationTargetKey,
+} from "@cocalc/util/collaborators";
 
 const REASONS = {
   mention: "You were mentioned",
@@ -30,6 +36,33 @@ export function ResourceList({
     event: MouseEvent<HTMLElement>,
   ) => void;
 }) {
+  const users = useTypedRedux("users", "user_map");
+  const accountId = useTypedRedux("account", "account_id");
+  const lookups = useRef({ accountId, requested: new Set<string>() });
+  useEffect(() => {
+    if (lookups.current.accountId !== accountId)
+      lookups.current = { accountId, requested: new Set() };
+    const visible = new Set(
+      items
+        .slice(0, COLLABORATION_PAGE_LIMIT)
+        .flatMap((item) =>
+          item.kind === "conversation" &&
+          item.activity > 0 &&
+          item.latest_message_author_id
+            ? [item.latest_message_author_id]
+            : [],
+        ),
+    );
+    // Keep request bookkeeping bounded to this page, not every visited thread.
+    const requested = lookups.current.requested;
+    for (const id of requested) if (!visible.has(id)) requested.delete(id);
+    for (const id of visible) {
+      if (requested.has(id) || displayNameFromUserRecord(users?.get?.(id)))
+        continue;
+      requested.add(id);
+      void redux.getActions("users")?.fetch_non_collaborator(id);
+    }
+  }, [items, users, accountId]);
   return (
     <ul className="collaborators-list">
       {items.map((item) => (
@@ -52,6 +85,14 @@ export function ResourceList({
                 {item.updated_at
                   ? new Date(item.updated_at).toLocaleString()
                   : "No messages yet"}
+              </span>
+            )}
+            {item.kind === "conversation" && item.activity > 0 && (
+              <span>
+                Latest message by{" "}
+                {displayNameFromUserRecord(
+                  users?.get?.(item.latest_message_author_id ?? ""),
+                ) || "Unknown author"}
               </span>
             )}
             {item.kind === "conversation" && item.reason && (

@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import getPool from "@cocalc/database/pool";
+import { ownerParticipation } from "./collaborators-relations-projection";
 import { reconcileCollaborationAgentPersonalState } from "./collaborators-agent-personal";
 import type {
   CollaborationPage,
@@ -59,7 +60,7 @@ export async function readCollaborationProjectPage(
       input,
       `owner-resources:${state?.generation ?? "empty"}`,
     );
-    const values: any[] = [q.project_id];
+    const values: any[] = [q.project_id, q.account_id];
     const param = (value: any) => {
       values.push(value);
       return `$${values.length}`;
@@ -73,7 +74,10 @@ export async function readCollaborationProjectPage(
     if (q.person_id) {
       const v = param(q.person_id);
       where.push(
-        `(c.metadata->>'created_by'=${v} OR c.metadata->'participant_ids' @> jsonb_build_array(${v}::text))`,
+        `c.entry_key IN (SELECT entry_key FROM collaboration_catalog WHERE project_id=$1 AND metadata->>'created_by'=${v}
+          UNION SELECT cc.entry_key FROM collaboration_participants cp JOIN collaboration_catalog cc
+          ON cc.relation_set=cp.set_key AND cc.relation_thread=cp.thread_key
+          WHERE cp.participant_id=${v}::uuid AND cc.project_id=$1 AND cc.deleted_at IS NULL)`,
       );
     }
     if (!q.include_archived)
@@ -83,7 +87,7 @@ export async function readCollaborationProjectPage(
         `(c.activity,c.entry_key)<(${param(q.after.order)}::bigint,${param(q.after.key)}::text)`,
       );
     const { rows } = await db.query(
-      `SELECT c.entry_key,c.activity,c.metadata,c.artifact_entry_ids,c.agent_resource_ids,left(p.title,128) AS project_title
+      `SELECT c.entry_key,c.activity,c.metadata,c.artifact_entry_ids,c.agent_resource_ids,left(p.title,128) AS project_title,${ownerParticipation("c", "$2")} AS participated
       FROM collaboration_catalog c JOIN projects p USING(project_id) WHERE ${where.join(" AND ")}
       ORDER BY c.activity DESC,c.entry_key DESC LIMIT ${param(q.limit + 1)}`,
       values,
@@ -93,6 +97,7 @@ export async function readCollaborationProjectPage(
     for (const row of rows.slice(0, q.limit)) {
       const item = {
         ...row.metadata,
+        ...(row.participated ? { reason: "participation" as const } : {}),
         ...(row.agent_resource_ids?.length
           ? { agent_resource_ids: row.agent_resource_ids }
           : {}),
@@ -121,7 +126,7 @@ export async function readCollaborationProjectPage(
         : {}),
       coverage: "partial",
       coverage_message:
-        "Selected-project owner catalog; search covers shared titles. Unindexed legacy sources and truncated participant relations may be absent.",
+        "Selected-project owner catalog; search covers shared titles. Sources without complete indexed relations may be absent from person filters.",
     };
   });
 }
@@ -184,7 +189,7 @@ export async function overlayCollaborationProjectPage(
             ? { reason: "mention" as const }
             : personal.following
               ? { reason: "following" as const }
-              : item.participant_ids.includes(account_id)
+              : item.reason === "participation"
                 ? { reason: "participation" as const }
                 : {}),
         };

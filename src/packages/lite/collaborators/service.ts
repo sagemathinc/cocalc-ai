@@ -13,19 +13,31 @@ import {
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { journalArtifactFilesystem } from "@cocalc/backend/artifacts/filesystem";
 import getLogger from "@cocalc/backend/logger";
-import { extractCollaborationMetadata } from "@cocalc/chat";
+import {
+  extractCollaborationMetadata,
+  extractCollaborationRelations,
+  nativeCollaborationRelationThreads,
+} from "@cocalc/chat";
+import { readCollaborationRelationSource } from "@cocalc/backend/collaborators/relations-source";
 import { LiteCollaborators } from "./index";
 import { liteAgentPins } from "./agent-pins";
 import { liteArtifactAliasRemover } from "./library-store";
 import type { LiteCollaboratorsOptions } from "./index";
 import type { CollaborationRoom } from "@cocalc/util/collaborators";
+import type { CollaborationRoomReplacementRequest } from "@cocalc/util/collaboration-room-replacement";
+import { replaceCanonicalRoom } from "@cocalc/backend/collaborators/room-replacement";
+import { assertPendingRoomSource } from "@cocalc/backend/collaborators/room-source";
+import { withCollaborationCopyLock } from "@cocalc/backend/collaborators/copy-locks";
 import type { Client } from "@cocalc/conat/core/client";
 import { initializeLiteCollaborationCopy } from "./copy";
 import { attachLegacyAttention } from "./legacy-attention";
 import { LiteArtifactRelocation } from "./artifact-relocation";
 import type { LiteArtifactRelocationOptions } from "./artifact-relocation";
 import { flushLiteCanonicalRoom } from "./flush";
+import { migrateLiteChatIdentity } from "./legacy-identity";
+import { projectChatIdentityRows } from "@cocalc/util/collaboration-chat-identity";
 import { accountProjectPins } from "@cocalc/backend/collaborators/project-pins";
+import { createLiteCollaborationCensus } from "./census";
 
 const logger = getLogger("lite:collaborators");
 
@@ -62,6 +74,7 @@ export function createLiteCollaborators(
   let journalReader: DatabaseSync | undefined;
   const store = new LiteCollaborators({
     ...options,
+    room_home: home,
     personalLibrary: options.personalLibrary
       ? () => {
           const api = options.personalLibrary!();
@@ -114,14 +127,31 @@ export function createLiteCollaborators(
   const assertEnabled = async () => {
     if (!(await enabled())) throw disabled;
   };
+  const census = createLiteCollaborationCensus({
+    filename: join(options.directory, "census.sqlite"),
+    root: home,
+    project_id: options.project_id,
+    account_id: options.account_id,
+    // The private service database may live below the Lite project root.
+    excluded_paths: options.directory.startsWith(home + "/")
+      ? [options.directory]
+      : [],
+    enabled,
+    createFilesystem,
+    current: (project_id) => store.discoveryForProducer(project_id),
+    report: (write) => store.reportDiscovery(write),
+    onError: (error) =>
+      logger.warn("collaboration census deferred", { error: `${error}` }),
+  });
   let service!: CollaboratorsService;
   try {
     service = new CollaboratorsService({
       filename: join(options.directory, "journal.sqlite"),
+      census: census.producer,
       enabled,
       beforeRead: options.client
-        ? (source) =>
-            flushLiteCanonicalRoom(source, {
+        ? async (source) => {
+            const migrationOptions = {
               project_id: options.project_id,
               account_id: options.account_id,
               client: options.client!,
@@ -143,7 +173,10 @@ export function createLiteCollaborators(
                   home,
                 );
               },
-            })
+            };
+            await flushLiteCanonicalRoom(source, migrationOptions);
+            await migrateLiteChatIdentity(source, migrationOptions);
+          }
         : undefined,
       relocate: async (request) => {
         await assertEnabled();
@@ -184,6 +217,10 @@ export function createLiteCollaborators(
         await assertEnabled();
         return store.registerSource(request);
       },
+      stageRelationPage: async (page) => {
+        await assertEnabled();
+        return store.stageRelationPage({ page });
+      },
       send: async (snapshot) => {
         await assertEnabled();
         // A source can have more live threads than fit in one event delivery.
@@ -211,14 +248,25 @@ export function createLiteCollaborators(
           account_id: options.account_id,
           project_id: options.project_id,
         });
-        const rows = await readCollaborationSource(reader, source.chat_path);
-        return attachLegacyAttention(
-          extractCollaborationMetadata(rows, source, {
-            humanRoomPath: room?.chat_path ?? "",
-          }),
-          rows,
-          options.account_id,
-        );
+        return readCollaborationRelationSource({
+          fs: reader,
+          source,
+          journal: service.journal,
+          extract: (rows) =>
+            attachLegacyAttention(
+              extractCollaborationMetadata(rows, source, {
+                humanRoomPath: room?.chat_path ?? "",
+                relationsComplete: true,
+              }),
+              projectChatIdentityRows(rows),
+              options.account_id,
+            ),
+          edges: (rows, metadata) =>
+            extractCollaborationRelations(
+              rows,
+              nativeCollaborationRelationThreads(metadata.resources),
+            ),
+        });
       },
       discover: async () => {
         if (!(await enabled())) return [];
@@ -301,7 +349,7 @@ export function createLiteCollaborators(
     if (service) {
       service.stop();
       void service.close();
-    }
+    } else void census.producer.close();
     artifactRelocation?.close();
     journalReader?.close();
     reader.close();
@@ -332,6 +380,49 @@ export function createLiteCollaborators(
     },
   };
   return {
+    async replaceRoom(
+      request: CollaborationRoomReplacementRequest,
+      identity: { project_id: string; account_id: string },
+    ) {
+      await assertEnabled();
+      const source = {
+        project_id: request.project_id,
+        chat_path: request.expected_chat_path,
+      };
+      return replaceCanonicalRoom({
+        request,
+        identity,
+        host_id: options.project_id,
+        assertCurrent: () => {
+          if (
+            identity.project_id !== options.project_id ||
+            identity.account_id !== options.account_id
+          )
+            throw Error("replacement requires the local Lite owner");
+        },
+        withSourceLock: (run) =>
+          withCollaborationCopyLock([source], () =>
+            service.journal.withRoomReplacementLock(source, run),
+          ),
+        currentRoom: async () => {
+          const room = await store.registeredRoom(identity);
+          if (!room) throw Error("canonical room is not registered");
+          return room;
+        },
+        sourceEpoch: async () =>
+          (await store.writerState(source))?.epoch ?? null,
+        lstat: () => reader.lstat(source.chat_path),
+        commit: (absence) =>
+          store.replaceRoom({
+            project_id: request.project_id,
+            requesting_account_id: identity.account_id,
+            request,
+            absence,
+          }),
+        transition: (previous, next) =>
+          service.journal.replaceRoom(previous, next),
+      });
+    },
     store,
     service,
     api,
@@ -351,6 +442,7 @@ export function createLiteCollaborators(
         service.journal.roomState(room.project_id, room.room_id)
       )
         throw Error("initialized room requires explicit restore");
+      await assertPendingRoomSource(reader, room);
       await reader.mkdir(posix.dirname(room.chat_path), { recursive: true });
     },
     async assertInitializedRoomSource(room: CollaborationRoom): Promise<void> {

@@ -33,6 +33,7 @@ import {
   type LanguageModel,
 } from "@cocalc/util/db-schema/ai-models";
 import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
+import { chatIdentityMutation } from "@cocalc/util/collaboration-chat-identity";
 import {
   normalizeCodexGoalSnapshot,
   validateCodexGoalCommand,
@@ -685,8 +686,16 @@ export class ChatActions extends Actions<ChatState> {
       this.warnSyncdbNotReady();
       return false;
     }
-    this.syncdb?.set(obj);
+    this.syncdb?.set(this.chatStorageWhere(obj));
     return true;
+  };
+
+  private chatStorageWhere = (
+    obj: Record<string, any>,
+  ): Record<string, any> => {
+    if (obj.event !== "chat" || !obj.message_id) return obj;
+    const rows = this.syncdb?.get?.();
+    return chatIdentityMutation(Array.isArray(rows) ? rows : [], obj);
   };
 
   private getSyncdbOne(where: Record<string, unknown>): any | null {
@@ -694,7 +703,7 @@ export class ChatActions extends Actions<ChatState> {
     const state = this.syncdb.get_state?.();
     if (state != null && state !== "ready") return null;
     try {
-      return this.syncdb.get_one(where) ?? null;
+      return this.syncdb.get_one(this.chatStorageWhere(where)) ?? null;
     } catch {
       return null;
     }
@@ -1628,7 +1637,7 @@ export class ChatActions extends Actions<ChatState> {
         thread_id: messageThreadId,
       });
       if (where) {
-        this.syncdb.delete(where);
+        this.syncdb.delete(this.chatStorageWhere(where));
       }
       deleted++;
     }
@@ -1745,7 +1754,7 @@ export class ChatActions extends Actions<ChatState> {
       thread_id: targetThreadId,
     });
     if (targetWhere) {
-      this.syncdb.delete(targetWhere);
+      this.syncdb.delete(this.chatStorageWhere(targetWhere));
     }
 
     if (targetThreadId && remainingInThread === 0) {

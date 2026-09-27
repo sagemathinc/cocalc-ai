@@ -3,6 +3,24 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import { stageCollaborationRelationPage } from "@cocalc/database/postgres/collaborators-relations-owner";
+import {
+  listCollaborationParticipants,
+  listCollaborationReferences,
+} from "@cocalc/database/postgres/collaborators-relations-query";
+import {
+  getCollaborationRoom,
+  replaceCollaborationRoom,
+} from "@cocalc/database/postgres/collaborators-room-replacement";
+import {
+  collaborationDiscoveryForHost,
+  getCollaborationDiscovery,
+  reportCollaborationDiscovery,
+} from "@cocalc/database/postgres/collaborators-census";
+import {
+  discoveryCoverage,
+  validateDiscoveryReport,
+} from "@cocalc/util/collaboration-census";
 import { createInterBayCollaboratorsClient } from "@cocalc/conat/inter-bay/collaborators";
 import type {
   CollaborationRoute,
@@ -164,6 +182,73 @@ async function writer<T>(
 
 /** Public hub calls already have their principal injected by auth-first handlers. */
 export const collaboratorsApi: CollaboratorsApi = {
+  async stageRelationPage(opts) {
+    await enabled();
+    uuid(opts.host_id, "authenticated host_id");
+    return owner(opts.page.snapshot.project_id, (api, route) =>
+      api.stageRelationPage({ ...opts, route }),
+    );
+  },
+  async listParticipants(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    validateTarget(opts);
+    return owner(opts.project_id, (api, route) =>
+      api.listParticipants({ ...opts, route }),
+    );
+  },
+  async listReferences(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    validateTarget(opts);
+    return owner(opts.project_id, (api, route) =>
+      api.listReferences({ ...opts, route }),
+    );
+  },
+  async getRoom(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    return owner(opts.project_id, (api, route) =>
+      api.getRoom({ ...opts, route }),
+    );
+  },
+  async replaceRoomForHost(opts) {
+    await enabled();
+    uuid(opts.host_id, "authenticated host_id");
+    return owner(opts.project_id, (api, route) =>
+      api.replaceRoomForHost({ ...opts, route }),
+    );
+  },
+  async getDiscovery(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    return owner(opts.project_id, (api, route) =>
+      api.getDiscovery({ ...opts, route }),
+    );
+  },
+  async discoveryForHost(opts) {
+    await enabled();
+    uuid(opts.host_id, "authenticated host_id");
+    return owner(opts.project_id, (api, route) =>
+      api.discoveryForHost({ ...opts, route }),
+    );
+  },
+  async reportDiscovery(opts) {
+    await enabled();
+    uuid(opts.host_id, "authenticated host_id");
+    if (opts.expected_run_id !== null)
+      uuid(opts.expected_run_id, "expected_run_id");
+    const report = validateDiscoveryReport(opts.report);
+    return owner(opts.project_id, (api, route) =>
+      api.reportDiscovery({
+        project_id: opts.project_id,
+        host_id: opts.host_id,
+        expected_run_id: opts.expected_run_id,
+        report,
+        route,
+      }),
+    );
+  },
   async checkpointPage(opts) {
     uuid(opts.host_id, "authenticated host_id");
     validateSource(opts);
@@ -297,6 +382,62 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async stageRelationPage(opts) {
+    await enabled();
+    return writer(
+      { ...opts, project_id: opts.page.snapshot.project_id },
+      (authority) => stageCollaborationRelationPage(opts.page, authority),
+    );
+  },
+  async listParticipants(opts) {
+    await enabled();
+    return listCollaborationParticipants(
+      opts,
+      await checkOwner(opts.project_id, opts.route),
+    );
+  },
+  async listReferences(opts) {
+    await enabled();
+    return listCollaborationReferences(
+      opts,
+      await checkOwner(opts.project_id, opts.route),
+    );
+  },
+  async getRoom(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    return getCollaborationRoom(
+      opts.project_id,
+      opts.account_id,
+      await checkOwner(opts.project_id, opts.route),
+    );
+  },
+  async replaceRoomForHost(opts) {
+    await enabled();
+    return writer(opts, (authority) =>
+      replaceCollaborationRoom(opts, authority),
+    );
+  },
+  async getDiscovery(opts) {
+    await enabled();
+    uuid(opts.account_id, "authenticated account_id");
+    return getCollaborationDiscovery(
+      { project_id: opts.project_id, account_id: opts.account_id! },
+      await checkOwner(opts.project_id, opts.route),
+    );
+  },
+  async discoveryForHost(opts) {
+    await enabled();
+    return writer(opts, (authority) =>
+      collaborationDiscoveryForHost(opts.project_id, authority),
+    );
+  },
+  async reportDiscovery(opts) {
+    await enabled();
+    return writer(opts, (authority) =>
+      reportCollaborationDiscovery(opts, authority),
+    );
+  },
   checkpointPage: (opts) =>
     writer(opts, (authority) => collaborationCheckpointPage(opts, authority)),
   async requestSource(opts) {
@@ -320,10 +461,20 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   },
   async ownedProjectResources(opts) {
     await enabled();
-    return readCollaborationProjectPage(
-      opts,
-      await checkOwner(opts.project_id, opts.route),
+    const authority = await checkOwner(opts.project_id, opts.route);
+    const page = await readCollaborationProjectPage(opts, authority);
+    const discovery = discoveryCoverage(
+      await getCollaborationDiscovery(
+        { project_id: opts.project_id, account_id: opts.account_id! },
+        authority,
+      ),
     );
+    return {
+      ...page,
+      coverage: discovery.coverage,
+      coverage_message:
+        `${discovery.coverage_message} ${page.coverage_message ?? ""}`.trim(),
+    };
   },
   async refreshAccess(opts) {
     await enabled();
@@ -401,7 +552,24 @@ export const collaboratorsControl: InterBayCollaboratorsApi = {
   async listResources(opts) {
     await checkHome(opts.account_id, opts.route);
     const { revision } = await accountRevision(opts.account_id!);
-    return { ...(await listCollaborationResources(opts)), revision };
+    const page = await listCollaborationResources(opts);
+    if (!opts.project_id) return { ...page, revision };
+    const discovery = discoveryCoverage(
+      await owner(opts.project_id, (api, route) =>
+        api.getDiscovery({
+          account_id: opts.account_id,
+          project_id: opts.project_id!,
+          route,
+        }),
+      ),
+    );
+    return {
+      ...page,
+      revision,
+      coverage: discovery.coverage,
+      coverage_message:
+        `${discovery.coverage_message} ${page.coverage_message ?? ""}`.trim(),
+    };
   },
   async getResource(opts) {
     await checkHome(opts.account_id, opts.route);

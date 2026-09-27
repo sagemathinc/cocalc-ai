@@ -1380,6 +1380,41 @@ export async function main(
   const collaborators = startCollaborators(artifactCatalogFilesystem);
   const fsServer = await initFsServer({ client: conatClient });
   const collaboratorsService = await initCollaboratorsService(conatClient, {
+    replaceRoom: async ({ project_id, account_id }, request, absence) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const result = await callHub({
+        client,
+        host_id,
+        name: "collaborators.replaceRoomForHost",
+        args: [
+          {
+            project_id,
+            requesting_account_id: account_id,
+            request,
+            ...(absence ? { absence } : {}),
+          },
+        ],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      return result;
+    },
+    sourceEpoch: async (source) => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id)
+        throw Error("collaboration owner connection unavailable");
+      const result = await callHub({
+        client,
+        host_id,
+        name: "collaborators.writerState",
+        args: [source],
+      });
+      if (result?.error) throw Error(`${result.error}`);
+      return result?.epoch ?? null;
+    },
     markInitialized: async (room, { account_id }) => {
       const client = getMasterConatClient();
       const host_id = getLocalHostId();

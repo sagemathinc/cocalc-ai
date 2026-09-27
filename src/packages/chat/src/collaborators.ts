@@ -10,6 +10,7 @@ import {
 } from "@cocalc/util/collaborators";
 import { uuidsha1 } from "@cocalc/util/misc";
 import { agentThreadResourceId } from "@cocalc/util/collaboration-agent-identity";
+import { projectChatIdentityRows } from "@cocalc/util/collaboration-chat-identity";
 import {
   COLLABORATION_MENTION_LIMIT,
   collaborationAccountId,
@@ -67,14 +68,27 @@ function legacyAttention(
 export function extractCollaborationMetadata(
   input: Iterable<unknown>,
   source: { project_id: string; chat_path: string },
-  { humanRoomPath = COLLABORATION_ROOM_PATH }: { humanRoomPath?: string } = {},
+  {
+    humanRoomPath = COLLABORATION_ROOM_PATH,
+    relationsComplete = false,
+  }: {
+    humanRoomPath?: string;
+    /** Only when the same snapshot carries a verified complete relation set. */
+    relationsComplete?: boolean;
+  } = {},
 ): CollaborationExtraction {
   const rows: Record<string, any>[] = [];
   const threads = new Map<string, Record<string, any>>();
   const configs = new Map<string, Record<string, any>>();
   const messages = new Map<string, Map<string, Record<string, any>>>();
   const publications = new Map<string, Record<string, any>[]>();
+  const sourceRows: unknown[] = [];
   for (const value of input) {
+    sourceRows.push(value);
+    if (sourceRows.length > 100_000)
+      throw Error("collaboration source exceeds row capacity");
+  }
+  for (const value of projectChatIdentityRows(sourceRows)) {
     if (!value || typeof value !== "object") throw Error("invalid chat row");
     const row = value as Record<string, any>;
     rows.push(row);
@@ -132,7 +146,7 @@ export function extractCollaborationMetadata(
         config?.agent_kind === "llm" ||
         config?.acp_config != null ||
         !!text(config?.agent_model) ||
-        group.some((row) => !!row.acp_thread_id));
+        group.some((row) => !!row.acp_thread_id || row.acp_config != null));
     const kind = agent ? "agent" : "conversation";
     const resource_id = identity(agent ? agentThreadResourceId(id) : id);
     const participants = [
@@ -144,6 +158,27 @@ export function extractCollaborationMetadata(
       participants.length > COLLABORATION_PARTICIPANT_SUMMARY_LIMIT;
     if (participants_truncated) partialParticipants = true;
     const dates = group.map((row) => time(row.date)).filter(Boolean);
+    const archivedLatestDate =
+      Number.isSafeInteger(config?.latest_chat_date_ms) &&
+      config!.latest_chat_date_ms >= 0
+        ? config!.latest_chat_date_ms
+        : 0;
+    // Message identity breaks equal-time ties; edits and config authors do not count.
+    let latestMessage: Record<string, any> | undefined;
+    let latestDate = 0;
+    for (const row of group) {
+      const date = time(row.date);
+      if (
+        date > 0 &&
+        (date > latestDate ||
+          (date === latestDate &&
+            text(row.message_id) > text(latestMessage?.message_id)))
+      ) {
+        latestMessage = row;
+        latestDate = date;
+      }
+    }
+    const latestAuthor = text(latestMessage?.sender_id);
     const created_at =
       time(thread?.created_at) || (dates.length ? Math.min(...dates) : 0);
     const created_by = text(thread?.created_by);
@@ -157,6 +192,9 @@ export function extractCollaborationMetadata(
         (agent ? "Untitled agent" : "Untitled conversation")
       ).slice(0, 512),
       ...(UUID.test(created_by) ? { created_by } : {}),
+      ...(!agent && latestDate >= archivedLatestDate && UUID.test(latestAuthor)
+        ? { latest_message_author_id: latestAuthor.toLowerCase() }
+        : {}),
       participant_ids: participants.slice(
         0,
         COLLABORATION_PARTICIPANT_SUMMARY_LIMIT,
@@ -167,14 +205,7 @@ export function extractCollaborationMetadata(
       participants_truncated,
       created_at,
       // Metadata changes must not reorder conversations as new activity.
-      updated_at: Math.max(
-        created_at,
-        ...dates,
-        Number.isSafeInteger(config?.latest_chat_date_ms) &&
-          config!.latest_chat_date_ms >= 0
-          ? config!.latest_chat_date_ms
-          : 0,
-      ),
+      updated_at: Math.max(created_at, ...dates, archivedLatestDate),
       activity: 0,
       // Migration hints only. Copies do not inherit another thread's subscriptions.
       ...(!namespace && !agent ? legacyAttention(config) : {}),
@@ -243,7 +274,7 @@ export function extractCollaborationMetadata(
     resources,
     activity_ids,
     ...notifications,
-    ...(partialParticipants || partialArchive
+    ...(!relationsComplete && (partialParticipants || partialArchive)
       ? {
           coverage: "partial" as const,
           coverage_message: [

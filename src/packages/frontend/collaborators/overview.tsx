@@ -13,9 +13,11 @@ import type { DirectoryApi } from "./workspace-api";
 import { useDirectory } from "./use-directory";
 import { DirectoryResults } from "./directory-results";
 import { ResourceList } from "./resource-list";
+import { ReplaceRoomDialog } from "./replace-room-dialog";
 
 export function Overview({
   api,
+  accountId,
   projectId,
   personId,
   onProject,
@@ -26,6 +28,7 @@ export function Overview({
   onManageProject,
 }: {
   api: DirectoryApi;
+  accountId: string;
   projectId?: string;
   personId?: string;
   onProject: (id: string, event: MouseEvent<HTMLElement>) => void;
@@ -38,6 +41,7 @@ export function Overview({
   onInvite: () => void;
   onManageProject: (projectId: string) => void;
 }) {
+  const [replacingRoom, setReplacingRoom] = useState(false);
   const projects = useDirectory(
     JSON.stringify(["overview-projects", projectId, personId]),
     (after) =>
@@ -91,7 +95,26 @@ export function Overview({
             Open project management
           </Button>
         )}
+        {project?.role === "owner" && (
+          <Button onClick={() => setReplacingRoom(true)}>
+            Replace deleted conversation room
+          </Button>
+        )}
       </div>
+      {replacingRoom && project?.role === "owner" && (
+        <ReplaceRoomDialog
+          key={`${accountId}:${project.project_id}`}
+          api={api}
+          accountId={accountId}
+          projectId={project.project_id}
+          projectTitle={project.title}
+          onClose={() => setReplacingRoom(false)}
+          onStart={() => {
+            setReplacingRoom(false);
+            onNewConversation();
+          }}
+        />
+      )}
       {personId ? (
         <>
           <h3>Shared projects</h3>

@@ -4,6 +4,20 @@
  */
 import { authFirstRequireAccount, authFirstRequireHost } from "./util";
 import type {
+  CollaborationRoomReplacementHostRequest,
+  CollaborationRoomReplacementResult,
+  CollaborationRoomServiceState,
+} from "@cocalc/util/collaboration-room-replacement";
+import type {
+  CollaborationRelationPage,
+  CollaborationRelationQuery,
+  CollaborationReferenceRelation,
+} from "@cocalc/util/collaboration-relations";
+import type {
+  CollaborationDiscoveryState,
+  CollaborationDiscoveryWrite,
+} from "@cocalc/util/collaboration-census";
+import type {
   CollaborationPage,
   CollaborationPerson,
   CollaborationPersonalState,
@@ -19,6 +33,37 @@ import type {
 } from "@cocalc/util/collaborators";
 
 export interface CollaboratorsApi {
+  /** Existing pointer only; never creates a room or starts compute. */
+  getRoom(opts: {
+    project_id: string;
+    account_id?: string;
+  }): Promise<CollaborationRoom | null>;
+  /** Current host reports locked absence on behalf of its authenticated human. */
+  replaceRoomForHost(
+    opts: CollaborationRoomReplacementHostRequest & { host_id?: string },
+  ): Promise<CollaborationRoomReplacementResult>;
+  stageRelationPage(opts: {
+    host_id?: string;
+    page: CollaborationRelationPage;
+  }): Promise<{ replayed: boolean }>;
+  listParticipants(
+    opts: CollaborationRelationQuery,
+  ): Promise<CollaborationPage<{ account_id: string }>>;
+  listReferences(
+    opts: CollaborationRelationQuery,
+  ): Promise<CollaborationPage<CollaborationReferenceRelation>>;
+  /** Metadata only; never starts a census, opens project files, or starts compute. */
+  getDiscovery(opts: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<CollaborationDiscoveryState>;
+  discoveryForHost(opts: {
+    host_id?: string;
+    project_id: string;
+  }): Promise<{ run_id: string | null }>;
+  reportDiscovery(
+    opts: CollaborationDiscoveryWrite,
+  ): Promise<{ replayed: boolean }>;
   /** Bounded account-wide invalidation. Reset means discard pages and resnapshot. */
   check(opts: {
     account_id?: string;
@@ -84,7 +129,7 @@ export interface CollaboratorsApi {
     project_id: string;
     host_id?: string;
     requesting_account_id: string;
-  }): Promise<CollaborationRoom>;
+  }): Promise<CollaborationRoomServiceState>;
   markRoomInitialized(opts: {
     project_id: string;
     host_id?: string;
@@ -117,6 +162,8 @@ export interface CollaboratorsApi {
     registration_id: string | null;
     source_sequence: number;
     writer_host_id: string;
+    /** Terminal source fence; never re-register or recover this old room. */
+    retired_room_id?: string;
     /** Existing canonical pointer only, while enabled and assigned to this writer. */
     canonical_room?: CollaborationRoom;
   } | null>;
@@ -132,6 +179,14 @@ export interface CollaboratorsApi {
 }
 
 export const collaborators = {
+  getRoom: authFirstRequireAccount,
+  replaceRoomForHost: authFirstRequireHost,
+  stageRelationPage: authFirstRequireHost,
+  listParticipants: authFirstRequireAccount,
+  listReferences: authFirstRequireAccount,
+  getDiscovery: authFirstRequireAccount,
+  discoveryForHost: authFirstRequireHost,
+  reportDiscovery: authFirstRequireHost,
   check: authFirstRequireAccount,
   listPeople: authFirstRequireAccount,
   listProjects: authFirstRequireAccount,

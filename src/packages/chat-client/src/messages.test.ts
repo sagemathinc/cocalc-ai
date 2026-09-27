@@ -4,6 +4,42 @@
  */
 
 import { projectChatRows } from "./messages";
+import {
+  planChatIdentityMigration,
+  resolveChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
+
+test("persisted legacy root/reply mapping is identical in mobile projection", () => {
+  const rows = [
+    {
+      event: "chat",
+      sender_id: "alice",
+      date: "2026-09-27T00:00:00.000Z",
+      history: [{ content: "root" }],
+    },
+    {
+      event: "chat",
+      sender_id: "bob",
+      date: Date.parse("2026-09-27T00:00:00.001Z"),
+      reply_to: "2026-09-27T00:00:00.000Z",
+      history: [{ content: "reply" }],
+    },
+  ];
+  const saved = [
+    ...rows,
+    ...planChatIdentityMigration(rows, {
+      migration_id: "11111111-1111-4111-8111-111111111111",
+      history_complete: true,
+    }),
+  ];
+  const expected = resolveChatIdentityRows(saved).messages;
+  const projected = projectChatRows(saved);
+  expect(projected.threads).toHaveLength(1);
+  expect(projected.messages.map((m) => m.message_id)).toEqual(
+    expected.map((m) => m.message_id),
+  );
+  expect(projected.messages[1].parent_message_id).toBe(expected[0].message_id);
+});
 
 describe("projectChatRows", () => {
   it("projects current revisions and authoritative thread state", () => {

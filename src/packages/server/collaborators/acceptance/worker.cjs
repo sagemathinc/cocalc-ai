@@ -5,7 +5,8 @@
 // A separate Node process is essential: pool, bay identity and host SQLite are
 // module globals. This fixture loads normal workspace outputs, without mocks.
 const { createServer } = require("node:http");
-const { mkdir } = require("node:fs/promises");
+const { mkdir, readFile, writeFile } = require("node:fs/promises");
+const { createHash } = require("node:crypto");
 const { join } = require("node:path");
 // Server intentionally does not depend on project-host. Resolve the standalone
 // host fixture against that package's own dependency graph, without a new dep.
@@ -554,6 +555,87 @@ async function startHost() {
   return { address, pid: process.pid };
 }
 
+// Parent IPC only: seed one bounded historical fixture in this runner's volume.
+// The production migration/indexing worker, not this helper, assigns identities.
+async function historicalFixture(args) {
+  if (config.role !== "host") throw Error("historical fixture requires host");
+  const source = {
+    project_id: config.project,
+    chat_path: "/home/user/historical-acceptance.chat",
+  };
+  const path = join(config.directory, "volume/historical-acceptance.chat");
+  const archive = require("@cocalc/backend/chat-store/sqlite-offload");
+  const digest = (rows) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify(
+          rows
+            .filter((row) => row.event === "chat")
+            .sort((a, b) => a.date.localeCompare(b.date)),
+        ),
+      )
+      .digest("hex");
+  if (args.create) {
+    const rootDate = "2026-09-01T00:00:00.000Z";
+    const rows = Array.from({ length: 1000 }, (_, i) => {
+      const sender_id =
+        i === 0
+          ? config.accounts[0]
+          : i === 999
+            ? config.accounts[1]
+            : `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
+      const date = new Date(Date.parse(rootDate) + i).toISOString();
+      return {
+        event: "chat",
+        date,
+        sender_id,
+        ...(i ? { reply_to: rootDate } : {}),
+        history: [
+          {
+            author_id: sender_id,
+            date,
+            content: i ? `Historical message ${i}` : args.reference,
+          },
+        ],
+      };
+    });
+    const write = journalService.journal.beginWrite(source);
+    try {
+      await writeFile(
+        path,
+        rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+        { flag: "wx" },
+      );
+      const result = await archive.rotateChatStore({
+        chat_path: path,
+        keep_recent_messages: 1,
+        force: true,
+      });
+      if (!result.rotated) throw Error("historical fixture did not archive");
+      return { ...source, digest: digest(rows), originalMessages: rows.length };
+    } finally {
+      journalService.journal.finishWrite(write);
+    }
+  }
+  const head = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const archived = archive.readChatIdentityArchive({ chat_path: path });
+  const {
+    resolveChatIdentityRows,
+  } = require("@cocalc/util/collaboration-chat-identity");
+  const resolved = resolveChatIdentityRows([...head, ...archived]);
+  return {
+    ...source,
+    digest: digest([...head, ...archived]),
+    headMessages: head.filter((row) => row.event === "chat").length,
+    archivedMessages: archived.filter((row) => row.event === "chat").length,
+    threadIds: [...new Set(resolved.messages.map((row) => row.thread_id))],
+    messageIds: resolved.messages.map((row) => row.message_id).sort(),
+  };
+}
+
 async function command(name, args = {}) {
   switch (name) {
     case "boot":
@@ -590,6 +672,8 @@ async function command(name, args = {}) {
         throw Error("only the host can arm one outstanding reply fault");
       dropSendReply = args.request_id;
       return null;
+    case "historicalFixture":
+      return historicalFixture(args);
     case "resetHostConnection":
       await hostClient?.close();
       hostClient = undefined;

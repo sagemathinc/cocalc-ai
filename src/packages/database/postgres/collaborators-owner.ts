@@ -3,6 +3,12 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import {
+  activateCollaborationRelations,
+  pruneCollaborationRelations,
+  retainedAgentRelations,
+} from "./collaborators-relations-owner";
+import { readOwnerParticipantProjection } from "./collaborators-relations-projection";
 import { agentReferenceIds } from "@cocalc/util/collaboration-agent-identity";
 import {
   adaptCollaborationAgents,
@@ -138,6 +144,8 @@ export async function registerCollaborationSource(
         source_id,
       ])
     ).rows[0];
+    if (previous?.retired_room_id)
+      throw Error("collaboration source is permanently retired");
     if (previous?.relocated_to)
       throw Error(
         "collaboration source was relocated; register its current path",
@@ -195,10 +203,10 @@ export async function collaborationWriterState(
     await project(db, source.project_id, authority, authority.host_id, false);
     const row = (
       await db.query(
-        `SELECT s.epoch,s.registration_id,s.source_sequence,s.writer_host_id,r.room_id,r.initialized
+        `SELECT s.epoch,s.registration_id,s.source_sequence,s.writer_host_id,s.retired_room_id,r.room_id,r.initialized
         FROM collaboration_sources s LEFT JOIN collaboration_rooms r
         ON $3::boolean AND r.project_id=s.project_id AND r.chat_path=s.chat_path
-          AND s.relocated_to IS NULL AND s.writer_host_id=$2
+          AND s.relocated_to IS NULL AND s.retired_room_id IS NULL AND s.writer_host_id=$2
         WHERE s.source_id=$1`,
         [sourceKey(source), authority.host_id, includeCanonicalRoom],
       )
@@ -209,6 +217,9 @@ export async function collaborationWriterState(
           registration_id: row.registration_id as string | null,
           source_sequence: Number(row.source_sequence),
           writer_host_id: row.writer_host_id as string,
+          ...(row.retired_room_id
+            ? { retired_room_id: row.retired_room_id as string }
+            : {}),
           ...(row.room_id
             ? {
                 canonical_room: {
@@ -239,7 +250,10 @@ export async function collaborationSourcePage(
       UNION SELECT path FROM agent_identities WHERE project_id=$1 AND disabled_at IS NULL
       UNION SELECT chat_path AS path FROM collaboration_rooms WHERE project_id=$1
       UNION SELECT chat_path AS path FROM collaboration_source_requests WHERE project_id=$1
-    ) sources WHERE path>$2 ORDER BY path LIMIT 101`,
+    ) sources WHERE path>$2 AND NOT EXISTS (
+      SELECT 1 FROM collaboration_sources retired WHERE retired.project_id=$1
+        AND retired.chat_path=sources.path AND retired.retired_room_id IS NOT NULL
+    ) ORDER BY path LIMIT 101`,
       [project_id, after],
     );
     const paths = rows.slice(0, 100).map((row) => row.path as string);
@@ -263,6 +277,7 @@ export async function ingestCollaborationSnapshot(
     ).rows[0];
     if (
       !current ||
+      current.retired_room_id ||
       current.relocated_to ||
       current.epoch !== snapshot.epoch ||
       current.writer_host_id !== authority.host_id ||
@@ -277,11 +292,18 @@ export async function ingestCollaborationSnapshot(
       return { revision: Number(current.revision), replayed: true };
     }
     await appendCollaborationNotificationEvents(db, snapshot, authority);
-    const { resources, bindings } = await adaptCollaborationAgents(
+    const { resources: adapted, bindings } = await adaptCollaborationAgents(
       db,
       snapshot,
       snapshot.resources,
     );
+    const relations = await activateCollaborationRelations(
+      db,
+      snapshot,
+      adapted,
+      current,
+    );
+    const resources = relations.resources;
     const existing = (
       await db.query(
         `SELECT c.entry_key,c.source_id,c.metadata->>'agent_id' AS previous_agent_id,a.path AS agent_path
@@ -300,6 +322,7 @@ export async function ingestCollaborationSnapshot(
         ]),
         snapshot.coverage ?? "complete",
         snapshot.coverage_message ?? "",
+        snapshot.relations?.digest ?? null,
       ]),
     );
     if (current.metadata_hash === metadata_hash) {
@@ -375,6 +398,16 @@ export async function ingestCollaborationSnapshot(
       [source_id, snapshot.project_id, revision, JSON.stringify(entries)],
     );
     await saveCollaborationAgentBindings(db, bindings, revision);
+    await db.query(
+      "UPDATE collaboration_catalog SET relation_set=NULL,relation_thread=NULL,relation_count=0 WHERE source_id=$1",
+      [source_id],
+    );
+    if (relations.set_key)
+      await db.query(
+        `UPDATE collaboration_catalog c SET relation_set=$1,relation_thread=e.thread_key,relation_count=e.count
+      FROM jsonb_to_recordset($2::jsonb) AS e(entry_key text,thread_key text,count bigint) WHERE c.entry_key=e.entry_key AND c.deleted_at IS NULL`,
+        [relations.set_key, JSON.stringify(relations.bindings)],
+      );
     const size = (
       await db.query(
         "SELECT count(*) AS n,COALESCE(sum(COALESCE(octet_length(metadata::text),0)+COALESCE(octet_length(artifact_entry_ids::text),0)+COALESCE(octet_length(agent_resource_ids::text),0)),0) AS bytes FROM collaboration_catalog WHERE project_id=$1",
@@ -387,17 +420,22 @@ export async function ingestCollaborationSnapshot(
     )
       throw Error("collaboration project catalog quota exceeded");
     await db.query(
-      `UPDATE collaboration_sources SET source_sequence=$2,revision=$3,payload_hash=$4,metadata_hash=$5,coverage=$6,coverage_message=$7 WHERE source_id=$1`,
+      `UPDATE collaboration_sources SET source_sequence=$2,revision=$3,payload_hash=$4,metadata_hash=$5,coverage=$6,coverage_message=$7,relation_set=$8 WHERE source_id=$1`,
       [
         source_id,
         snapshot.sequence,
         revision,
         payload_hash,
         metadata_hash,
-        snapshot.coverage ?? "complete",
-        snapshot.coverage_message ?? null,
+        snapshot.relations ? (snapshot.coverage ?? "complete") : "partial",
+        snapshot.relations
+          ? (snapshot.coverage_message ?? null)
+          : (snapshot.coverage_message ??
+            "Complete participant/reference relations are not indexed yet."),
+        relations.set_key,
       ],
     );
+    await pruneCollaborationRelations(db, snapshot.project_id);
     return { revision, replayed: false };
   });
 }
@@ -447,11 +485,23 @@ export async function collaborationRoomForHost(
       )
     ).rows[0];
     if (!row) throw Error("canonical collaboration room is not registered");
+    // A lost replacement ACK must not require its original actor to come back.
+    // Current-host lookup carries all permanent fences, bounded by the operation cap.
+    const retired_rooms = (
+      await db.query(
+        `SELECT previous_room_id AS room_id,receipt->'request'->>'expected_chat_path' AS chat_path
+       FROM collaboration_room_replacements WHERE project_id=$1 ORDER BY operation_id LIMIT 33`,
+        [project_id],
+      )
+    ).rows as Array<{ room_id: string; chat_path: string }>;
+    if (retired_rooms.length > 32)
+      throw Error("canonical room retirement capacity exceeded");
     return {
       project_id: row.project_id as string,
       room_id: row.room_id as string,
       chat_path: row.chat_path as string,
       initialized: !!row.initialized,
+      ...(retired_rooms.length ? { retired_rooms } : {}),
     };
   });
 }
@@ -538,6 +588,8 @@ export async function relocateCollaborationSource(
     ).rows;
     const source = rows.find((row) => row.source_id === from_id),
       destination = rows.find((row) => row.source_id === to_id);
+    if (source?.retired_room_id || destination?.retired_room_id)
+      throw Error("collaboration source is permanently retired");
     if (
       !source ||
       source.epoch !== opts.expected_epoch ||
@@ -583,10 +635,10 @@ export async function relocateCollaborationSource(
     );
     const epoch = randomUUID();
     await db.query(
-      `INSERT INTO collaboration_sources(source_id,project_id,chat_path,owning_bay_id,writer_host_id,epoch,registration_id,revision,coverage,coverage_message)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(source_id) DO UPDATE SET owning_bay_id=excluded.owning_bay_id,
+      `INSERT INTO collaboration_sources(source_id,project_id,chat_path,owning_bay_id,writer_host_id,epoch,registration_id,revision,coverage,coverage_message,relation_set)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(source_id) DO UPDATE SET owning_bay_id=excluded.owning_bay_id,
       writer_host_id=excluded.writer_host_id,epoch=excluded.epoch,registration_id=excluded.registration_id,revision=excluded.revision,
-      source_sequence=0,payload_hash=NULL,metadata_hash=NULL,relocated_to=NULL,coverage=excluded.coverage,coverage_message=excluded.coverage_message`,
+      source_sequence=0,payload_hash=NULL,metadata_hash=NULL,relocated_to=NULL,coverage=excluded.coverage,coverage_message=excluded.coverage_message,relation_set=excluded.relation_set`,
       [
         to_id,
         opts.project_id,
@@ -598,10 +650,11 @@ export async function relocateCollaborationSource(
         revision,
         source.coverage,
         source.coverage_message,
+        source.relation_set,
       ],
     );
     await db.query(
-      `UPDATE collaboration_sources SET relocated_to=$2,epoch=$3,registration_id=NULL,source_sequence=0,payload_hash=NULL,metadata_hash=NULL WHERE source_id=$1`,
+      `UPDATE collaboration_sources SET relocated_to=$2,epoch=$3,registration_id=NULL,source_sequence=0,payload_hash=NULL,metadata_hash=NULL,relation_set=NULL WHERE source_id=$1`,
       [from_id, to.chat_path, randomUUID()],
     );
     const moved = records.map((row) => {
@@ -799,7 +852,7 @@ export async function readCollaborationProjection(
     const revision = reset ? 0 : opts.revision;
     const after_key = reset ? "" : opts.after_key;
     const { rows } = await db.query(
-      `SELECT entry_key,metadata,revision,artifact_entry_ids,agent_resource_ids FROM collaboration_catalog
+      `SELECT entry_key,metadata,revision,artifact_entry_ids,agent_resource_ids,relation_set,relation_thread,relation_count FROM collaboration_catalog
       WHERE project_id=$1 AND ${after_key ? "(revision,entry_key)>($2::bigint,$3::text)" : "revision>$2::bigint"}
       ORDER BY revision,entry_key LIMIT 51`,
       after_key
@@ -811,6 +864,7 @@ export async function readCollaborationProjection(
       Extract<CollaborationProjectionPage, { allowed: true }>["items"]
     > = [];
     for (const row of rows.slice(0, 50)) {
+      if (items.length && row.relation_set) break;
       const item = {
         entry_key: row.entry_key as string,
         revision: Number(row.revision),
@@ -830,8 +884,15 @@ export async function readCollaborationProjection(
       if (bytes + size > PAGE_BYTES) break;
       items.push(item);
       bytes += size;
+      if (row.relation_set) break;
     }
-    const complete = items.length === rows.length;
+    const relation = await readOwnerParticipantProjection(
+      db,
+      items[0],
+      rows[0],
+      reset ? undefined : opts.relation_after,
+    );
+    const complete = !relation.next && items.length === rows.length;
     const last = items[items.length - 1];
     const attention = await readCollaborationNotificationAttention(db, {
       project_id: opts.project_id,
@@ -850,8 +911,13 @@ export async function readCollaborationProjection(
       reset,
       items,
       complete,
-      revision: complete ? Number(state.revision) : last.revision,
-      after_key: complete ? "" : last.entry_key,
+      revision: relation.next
+        ? revision
+        : complete
+          ? Number(state.revision)
+          : last.revision,
+      after_key: relation.next ? after_key : complete ? "" : last.entry_key,
+      ...(relation.next ? { relation_after: relation.next } : {}),
     };
   });
 }
@@ -863,8 +929,10 @@ export async function compactCollaborationProject(
 ) {
   return transaction(async (db) => {
     await project(db, project_id, authority);
+    await pruneCollaborationRelations(db, project_id);
     const result = await db.query(
-      "DELETE FROM collaboration_catalog WHERE project_id=$1 AND deleted_at < now()-interval '7 days' AND agent_resource_ids IS NULL",
+      `DELETE FROM collaboration_catalog c WHERE project_id=$1 AND deleted_at < now()-interval '7 days' AND agent_resource_ids IS NULL
+       AND NOT EXISTS(SELECT 1 FROM collaboration_sources s WHERE s.source_id=c.source_id AND s.retired_room_id IS NOT NULL)`,
       [project_id],
     );
     if (result.rowCount)
@@ -962,13 +1030,28 @@ export async function reconcileCollaborationAgents(
           ),
         ],
       );
-      for (const binding of bindings)
+      for (const binding of bindings) {
+        const retained = await retainedAgentRelations(
+          db,
+          binding.resource,
+          row.entry_key,
+        );
         await upsertCollaborationAgent(
           db,
           binding,
           row.source_id,
           Number(revision),
         );
+        await db.query(
+          `UPDATE collaboration_catalog SET relation_set=$2,relation_thread=$3,relation_count=$4 WHERE entry_key=$1`,
+          [
+            entryKey(binding.resource),
+            retained?.relation_set ?? null,
+            retained?.relation_thread ?? null,
+            Number(retained?.relation_count ?? 0),
+          ],
+        );
+      }
     }
     await db.query(
       "UPDATE collaboration_sources SET metadata_hash=NULL WHERE source_id=ANY($1::text[])",

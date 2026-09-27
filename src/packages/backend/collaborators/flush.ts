@@ -20,7 +20,10 @@ export const ROOM_SAVE_TIMEOUT_MS = 30_000;
  * therefore rejects its continuation BEFORE a filesystem write can start; we
  * never race the disk save itself against a timer or unlock an in-flight write.
  */
-function boundNetworkSave(db: CanonicalRoomSyncDB, timeoutMs: number): void {
+export function boundNetworkSave(
+  db: CanonicalRoomSyncDB,
+  timeoutMs: number,
+): void {
   const save = db.save.bind(db);
   const deadline = Date.now() + timeoutMs;
   let expired = false;

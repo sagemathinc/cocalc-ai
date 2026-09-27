@@ -12,6 +12,7 @@ import { steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest, AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import { isHumanOnlyChat } from "@cocalc/util/collaboration-human-room";
+import { projectChatIdentityRows } from "@cocalc/util/collaboration-chat-identity";
 import {
   isCodexModelName,
   normalizeCodexSessionId,
@@ -60,6 +61,7 @@ export function prepareChatSend({
 }) {
   // The room marker and explicit human mode override stale model/config fields.
   assertAgentChat(rows, thread);
+  rows = [...projectChatIdentityRows(rows)];
   if (!prompt.trim()) throw new Error("message must not be empty");
   if (!accountId) throw new Error("an authenticated account is required");
   if (thread.archived) throw new Error("cannot send to an archived thread");

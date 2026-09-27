@@ -9,12 +9,14 @@ import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import {
   assertInitializedRoomSource,
   ensureUninitializedRoomParent,
+  withRoomReplacementFilesystem,
 } from "./collaborators";
 import {
   collaborationServiceIdentity,
   humanOperationId,
   initCollaboratorsService,
 } from "./collaborators-service";
+import { collaborationRoomReplacementOperationId } from "@cocalc/util/collaboration-room-replacement";
 
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(),
@@ -32,17 +34,23 @@ jest.mock("@cocalc/lite/hub/sqlite/database", () => ({ getRow: jest.fn() }), {
 jest.mock("./sqlite/projects", () => ({
   getProject: jest.fn(() => ({ local_only: false })),
 }));
+jest.mock("./sqlite/hosts", () => ({
+  getLocalHostId: () => "55555555-5555-4555-8555-555555555555",
+}));
 const journal = {
   roomState: jest.fn(),
   initializedRoom: jest.fn(),
   armNotifications: jest.fn(),
   beginRoomInitialization: jest.fn(),
   pendingRoomInitialization: jest.fn(),
+  replaceRoom: jest.fn(),
+  reconcileRoom: jest.fn(),
 };
 jest.mock("./collaborators", () => ({
   getCollaboratorsService: () => ({ journal }),
   assertInitializedRoomSource: jest.fn(),
   ensureUninitializedRoomParent: jest.fn(),
+  withRoomReplacementFilesystem: jest.fn(),
 }));
 const identity = {
   account_id: "11111111-1111-4111-8111-111111111111",
@@ -95,12 +103,227 @@ async function setup() {
     ...value,
     initialized: true,
   }));
+  const replaceRoom = jest.fn();
+  const sourceEpoch = jest.fn(async () => null);
   const service = await initCollaboratorsService(client as any, {
     resolveRoom,
     markInitialized,
+    replaceRoom,
+    sourceEpoch,
   });
-  return { handlers, resolveRoom, markInitialized, service };
+  return {
+    handlers,
+    resolveRoom,
+    markInitialized,
+    replaceRoom,
+    sourceEpoch,
+    service,
+  };
 }
+
+const replacementRequest = {
+  version: 1 as const,
+  project_id: room.project_id,
+  request_id,
+  expected_room_id: room.room_id,
+  expected_chat_path: room.chat_path,
+};
+const replacement = {
+  ...room,
+  room_id: "66666666-6666-4666-8666-666666666666",
+  chat_path: "/home/user/.cocalc/conversations/new.chat",
+  initialized: false,
+};
+const operation_id = collaborationRoomReplacementOperationId(
+  room.project_id,
+  identity.account_id,
+  request_id,
+);
+function replacementFixture() {
+  (getRow as jest.Mock).mockReturnValue({
+    users: { [identity.account_id]: { group: "owner" } },
+  });
+  const lstat = jest.fn(async () => {
+    throw Object.assign(Error("missing"), { code: "ENOENT" });
+  });
+  (withRoomReplacementFilesystem as jest.Mock).mockImplementation(
+    async (_request, run) => run({ lstat }, () => {}),
+  );
+  return { lstat };
+}
+
+test("replacement is owner-only and stale ordinary operations fail before opening SyncDB", async () => {
+  const { handlers, replaceRoom, service } = await setup();
+  await expect(
+    handlers.replaceRoom.call({ subject }, replacementRequest),
+  ).rejects.toThrow("owner");
+  expect(withRoomReplacementFilesystem).not.toHaveBeenCalled();
+  expect(replaceRoom).not.toHaveBeenCalled();
+  for (const method of ["initialize", "createThread", "send"])
+    await expect(
+      handlers[method].call(
+        { subject },
+        {
+          request_id,
+          expected_room_id: replacement.room_id,
+          thread_id: request_id,
+          text: "stale",
+        },
+      ),
+    ).rejects.toThrow("stale");
+  expect(acquireChatSyncDB).not.toHaveBeenCalled();
+  await service.close();
+});
+
+test("confirmed absence commits before normal SyncDB initialization and does not create a thread", async () => {
+  const { handlers, resolveRoom, replaceRoom, service } = await setup();
+  const { lstat } = replacementFixture();
+  resolveRoom
+    .mockResolvedValueOnce({ ...room, initialized: true })
+    .mockResolvedValue(replacement);
+  replaceRoom.mockResolvedValue({
+    outcome: "pending",
+    operation_id,
+    room: replacement,
+  });
+  const result = await handlers.replaceRoom.call(
+    { subject },
+    replacementRequest,
+  );
+  expect(result).toEqual({
+    outcome: "ready",
+    operation_id,
+    room: { ...replacement, initialized: true },
+  });
+  expect(lstat).toHaveBeenCalledTimes(1);
+  expect(replaceRoom).toHaveBeenCalledWith(
+    identity,
+    replacementRequest,
+    expect.objectContaining({
+      status: "missing",
+      requesting_account_id: identity.account_id,
+      host_id: "55555555-5555-4555-8555-555555555555",
+      source_epoch: null,
+    }),
+  );
+  expect(journal.replaceRoom).toHaveBeenCalledWith(
+    { ...room, initialized: true },
+    replacement,
+  );
+  expect(replaceRoom.mock.invocationCallOrder[0]).toBeLessThan(
+    (acquireChatSyncDB as jest.Mock).mock.invocationCallOrder[0],
+  );
+  expect(createHumanThread).not.toHaveBeenCalled();
+  expect(sendHumanMessage).not.toHaveBeenCalled();
+  await service.close();
+});
+
+test.each(["EACCES", "EIO", "exists"])(
+  "replacement never interprets %s as absence",
+  async (failure) => {
+    const { handlers, resolveRoom, replaceRoom, service } = await setup();
+    const { lstat } = replacementFixture();
+    resolveRoom.mockResolvedValue({ ...room, initialized: true });
+    if (failure === "exists") lstat.mockResolvedValue(undefined as never);
+    else
+      lstat.mockRejectedValue(Object.assign(Error(failure), { code: failure }));
+    await expect(
+      handlers.replaceRoom.call({ subject }, replacementRequest),
+    ).rejects.toThrow(failure === "exists" ? "still exists" : failure);
+    expect(replaceRoom).not.toHaveBeenCalled();
+    expect(acquireChatSyncDB).not.toHaveBeenCalled();
+    await service.close();
+  },
+);
+
+test("lost owner acknowledgement replays without inspecting or initializing the retired path", async () => {
+  const { handlers, resolveRoom, replaceRoom, service } = await setup();
+  const { lstat } = replacementFixture();
+  resolveRoom.mockResolvedValue({ ...room, initialized: true });
+  replaceRoom
+    .mockImplementationOnce(async () => {
+      resolveRoom.mockResolvedValue(replacement);
+      throw Error("owner acknowledgement lost");
+    })
+    .mockResolvedValue({ outcome: "pending", operation_id, room: replacement });
+  await expect(
+    handlers.replaceRoom.call({ subject }, replacementRequest),
+  ).rejects.toThrow("acknowledgement lost");
+  expect(acquireChatSyncDB).not.toHaveBeenCalled();
+  await expect(
+    handlers.replaceRoom.call({ subject }, replacementRequest),
+  ).resolves.toMatchObject({ outcome: "ready" });
+  expect(lstat).toHaveBeenCalledTimes(1);
+  expect(replaceRoom.mock.calls[1][2]).toBeUndefined();
+  expect(acquireChatSyncDB).toHaveBeenCalledWith(
+    expect.objectContaining({ path: replacement.chat_path }),
+  );
+  await service.close();
+});
+
+test("a superseded receipt never initializes or mutates a room", async () => {
+  const { handlers, resolveRoom, replaceRoom, service } = await setup();
+  const { lstat } = replacementFixture();
+  resolveRoom.mockResolvedValue(replacement);
+  const result = {
+    outcome: "superseded",
+    operation_id,
+    replacement_room_id: replacement.room_id,
+  };
+  replaceRoom.mockResolvedValue(result);
+  await expect(
+    handlers.replaceRoom.call({ subject }, replacementRequest),
+  ).resolves.toEqual(result);
+  expect(lstat).not.toHaveBeenCalled();
+  expect(journal.replaceRoom).not.toHaveBeenCalled();
+  expect(acquireChatSyncDB).not.toHaveBeenCalled();
+  await service.close();
+});
+
+test("pending replacement retries reject a corrupt destination before opening SyncDB", async () => {
+  const { handlers, resolveRoom, replaceRoom, markInitialized, service } =
+    await setup();
+  replacementFixture();
+  resolveRoom.mockResolvedValue(replacement);
+  replaceRoom.mockResolvedValue({
+    outcome: "pending",
+    operation_id,
+    room: replacement,
+  });
+  (ensureUninitializedRoomParent as jest.Mock).mockRejectedValue(
+    SyntaxError("invalid JSONL"),
+  );
+  for (let attempt = 0; attempt < 2; attempt++)
+    await expect(
+      handlers.replaceRoom.call({ subject }, replacementRequest),
+    ).rejects.toThrow("invalid JSONL");
+  expect(ensureUninitializedRoomParent).toHaveBeenCalledWith(replacement);
+  expect(acquireChatSyncDB).not.toHaveBeenCalled();
+  expect(initializeHumanRoom).not.toHaveBeenCalled();
+  expect(markInitialized).not.toHaveBeenCalled();
+  expect(journal.armNotifications).not.toHaveBeenCalled();
+  await service.close();
+});
+
+test("replacement reserves non-waiting admission before filesystem work", async () => {
+  const { handlers, service } = await setup();
+  replacementFixture();
+  (withRoomReplacementFilesystem as jest.Mock).mockRejectedValue(
+    Error("filesystem unavailable"),
+  );
+  const first = handlers.replaceRoom.call({ subject }, replacementRequest);
+  await expect(
+    handlers.initialize.call(
+      { subject },
+      { request_id, expected_room_id: room.room_id },
+    ),
+  ).rejects.toThrow("busy");
+  await expect(
+    handlers.replaceRoom.call({ subject }, replacementRequest),
+  ).rejects.toThrow("busy");
+  await expect(first).rejects.toThrow("filesystem unavailable");
+  await service.close();
+});
 
 test("subject requires an account identity and cannot substitute an account in the payload", () => {
   expect(collaborationServiceIdentity(subject)).toEqual(identity);
@@ -120,7 +343,10 @@ test("file-only viewer is rejected before owner lookup or any chat creation", as
     users: { [identity.account_id]: { group: "viewer" } },
   });
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow(/collaborator/);
   expect(resolveRoom).not.toHaveBeenCalled();
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
@@ -130,7 +356,10 @@ test("missing registered room fails without touching SyncDB and never calls ensu
   const { handlers, resolveRoom, service } = await setup();
   resolveRoom.mockResolvedValueOnce(null as any);
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow(/existing canonical/);
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   await service.close();
@@ -139,7 +368,12 @@ test("create and send use human-only helpers with bound actor and stable operati
   const { handlers, resolveRoom, service } = await setup();
   await handlers.createThread.call(
     { subject },
-    { request_id, title: "Discussion", account_id: "spoofed" },
+    {
+      expected_room_id: room.room_id,
+      request_id,
+      title: "Discussion",
+      account_id: "spoofed",
+    },
   );
   expect(resolveRoom).toHaveBeenCalledWith(identity, request_id);
   expect(createHumanThread).toHaveBeenCalledWith(db, {
@@ -150,7 +384,12 @@ test("create and send use human-only helpers with bound actor and stable operati
   });
   await handlers.send.call(
     { subject },
-    { request_id, thread_id: request_id, text: "@codex is a reference" },
+    {
+      expected_room_id: room.room_id,
+      request_id,
+      thread_id: request_id,
+      text: "@codex is a reference",
+    },
   );
   expect(sendHumanMessage).toHaveBeenCalledWith(
     db,
@@ -175,7 +414,10 @@ test("deleted initialized room is not opened or recreated", async () => {
     Error("deleted room"),
   );
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow(/deleted/);
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   expect(initializeHumanRoom).not.toHaveBeenCalled();
@@ -191,7 +433,10 @@ test("owner initialization guard survives losing the host-private journal", asyn
     Error("deleted room"),
   );
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("deleted");
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   expect(ensureUninitializedRoomParent).not.toHaveBeenCalled();
@@ -204,7 +449,7 @@ test("thread creation waits for durable owner initialization acknowledgment", as
   await expect(
     handlers.createThread.call(
       { subject },
-      { request_id, title: "Discussion" },
+      { expected_room_id: room.room_id, request_id, title: "Discussion" },
     ),
   ).rejects.toThrow("acknowledgment lost");
   expect(createHumanThread).not.toHaveBeenCalled();
@@ -214,21 +459,30 @@ test("thread creation waits for durable owner initialization acknowledgment", as
 test("only a newly created empty room arms first-message notifications", async () => {
   const { handlers, service } = await setup();
   (humanRoomMarker as jest.Mock).mockReturnValueOnce(false);
-  await handlers.createThread.call({ subject }, { request_id });
+  await handlers.createThread.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(journal.armNotifications).toHaveBeenCalledWith(
     { project_id: room.project_id, chat_path: room.chat_path },
     room.room_id,
     0,
   );
   journal.armNotifications.mockClear();
-  await handlers.createThread.call({ subject }, { request_id });
+  await handlers.createThread.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(journal.armNotifications).not.toHaveBeenCalled();
   await service.close();
 });
 
 test("parent directory is prepared before the first SyncDB acquisition", async () => {
   const { handlers, service } = await setup();
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(ensureUninitializedRoomParent).toHaveBeenCalledWith({
     ...room,
     initialized: false,
@@ -245,7 +499,10 @@ test("parent creation failure does not open or initialize a chat", async () => {
     Error("mkdir unavailable"),
   );
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("mkdir unavailable");
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   expect(initializeHumanRoom).not.toHaveBeenCalled();
@@ -259,16 +516,27 @@ test("lost source-save ACK retries a persisted marker and arms before the first 
     Error("source save ACK lost"),
   );
   await expect(
-    handlers.createThread.call({ subject }, { request_id }),
+    handlers.createThread.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("source save ACK lost");
   expect(journal.beginRoomInitialization).toHaveBeenCalledTimes(1);
   expect(journal.armNotifications).not.toHaveBeenCalled();
   expect(createHumanThread).not.toHaveBeenCalled();
 
-  await handlers.createThread.call({ subject }, { request_id });
+  await handlers.createThread.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   await handlers.send.call(
     { subject },
-    { request_id, thread_id: request_id, text: "First message" },
+    {
+      expected_room_id: room.room_id,
+      request_id,
+      thread_id: request_id,
+      text: "First message",
+    },
   );
   expect(journal.armNotifications).toHaveBeenCalledTimes(1);
   expect(journal.beginRoomInitialization).toHaveBeenCalledTimes(1);
@@ -286,9 +554,15 @@ test("lost owner ACK does not rearm an already initialized room on retry", async
   (humanRoomMarker as jest.Mock).mockReturnValueOnce(false);
   markInitialized.mockRejectedValueOnce(Error("owner ACK lost"));
   await expect(
-    handlers.createThread.call({ subject }, { request_id }),
+    handlers.createThread.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("owner ACK lost");
-  await handlers.createThread.call({ subject }, { request_id });
+  await handlers.createThread.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(journal.armNotifications).toHaveBeenCalledTimes(1);
   expect(createHumanThread).toHaveBeenCalledTimes(1);
   await service.close();
@@ -299,7 +573,10 @@ test.each([false, true])(
   async (initialized) => {
     const { handlers, resolveRoom, service } = await setup();
     resolveRoom.mockResolvedValueOnce({ ...room, initialized });
-    await handlers.createThread.call({ subject }, { request_id });
+    await handlers.createThread.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    );
     expect(journal.beginRoomInitialization).not.toHaveBeenCalled();
     expect(journal.armNotifications).not.toHaveBeenCalled();
     await service.close();
@@ -313,9 +590,30 @@ test("owner-confirmed same-project room moves use the current locator", async ()
     initialized: true,
     chat_path: "/home/user/discussions/seminar.chat",
   });
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(acquireChatSyncDB).toHaveBeenCalledWith(
     expect.objectContaining({ path: "/home/user/discussions/seminar.chat" }),
+  );
+  await service.close();
+});
+
+test("normal service use reconciles owner-confirmed retirement before local initialization", async () => {
+  const { handlers, resolveRoom, service } = await setup();
+  const resolved = {
+    ...replacement,
+    retired_rooms: [{ room_id: room.room_id, chat_path: room.chat_path }],
+  };
+  resolveRoom.mockResolvedValue(resolved);
+  await handlers.initialize.call(
+    { subject },
+    { request_id, expected_room_id: replacement.room_id },
+  );
+  expect(journal.reconcileRoom).toHaveBeenCalledWith(resolved);
+  expect(journal.reconcileRoom.mock.invocationCallOrder[0]).toBeLessThan(
+    (acquireChatSyncDB as jest.Mock).mock.invocationCallOrder[0],
   );
   await service.close();
 });
@@ -326,7 +624,10 @@ test("revocation during owner lookup is rechecked before opening the source", as
     return room;
   });
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow(/collaborator/);
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   await service.close();

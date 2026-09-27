@@ -3,6 +3,7 @@ import { getProject } from "./sqlite/projects";
 import { assertProjectVolumeLifecycleGeneration } from "./project-volume-lifecycle";
 import { readCollaborationSource } from "@cocalc/backend/collaborators/filesystem";
 import { extractCollaborationMetadata } from "@cocalc/chat";
+import { readCollaborationRelationSource } from "@cocalc/backend/collaborators/relations-source";
 import {
   assertArtifactCollaborationSourceReady,
   ensureUninitializedRoomParent,
@@ -11,11 +12,23 @@ import {
 } from "./collaborators";
 
 jest.mock("node:fs", () => ({ mkdirSync: jest.fn() }));
+jest.mock("./collaborators-census", () => ({
+  createHostedCollaborationCensus: () => ({
+    store: {},
+    producer: { step: jest.fn(), pause: jest.fn(), close: jest.fn() },
+  }),
+}));
 jest.mock("./collaborators-copy", () => ({
   initializeCopiedCollaboration: jest.fn(),
 }));
 jest.mock("./collaborators-flush", () => ({
   flushHostedCanonicalRoom: jest.fn(),
+}));
+jest.mock("./collaborators-legacy-identity", () => ({
+  migrateHostedChatIdentity: jest.fn(),
+}));
+jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
+  readChatIdentityArchive: jest.fn(() => []),
 }));
 jest.mock("@cocalc/backend/data", () => ({ data: "/unused" }));
 jest.mock("@cocalc/backend/logger", () => () => ({ warn: jest.fn() }));
@@ -29,6 +42,8 @@ jest.mock("./master-conat-client", () => ({
 jest.mock("./sqlite/hosts", () => ({ getLocalHostId: () => "current-host" }));
 jest.mock("./sqlite/projects", () => ({
   getProject: jest.fn(),
+  nextCollaborationCensusProject: (after: string) =>
+    after ? undefined : "11111111-1111-4111-8111-111111111111",
   listProjects: () => [
     {
       project_id: "11111111-1111-4111-8111-111111111111",
@@ -43,6 +58,20 @@ jest.mock("./project-volume-lifecycle", () => ({
   assertProjectVolumeLifecycleGeneration: jest.fn(),
 }));
 jest.mock("@cocalc/chat", () => ({ extractCollaborationMetadata: jest.fn() }));
+jest.mock(
+  "@cocalc/backend/collaborators/relations-source",
+  () => ({
+    readCollaborationRelationSource: jest.fn(async (options) =>
+      options.extract(
+        await require("@cocalc/backend/collaborators/filesystem").readCollaborationSource(
+          options.fs,
+          options.source.chat_path,
+        ),
+      ),
+    ),
+  }),
+  { virtual: true },
+);
 jest.mock(
   "@cocalc/backend/collaborators/filesystem",
   () => ({
@@ -104,7 +133,16 @@ test("metadata reads work on stopped projects through a lifecycle-locked sandbox
   expect(readCollaborationSource).toHaveBeenCalledWith(fs, source.chat_path);
   expect(extractCollaborationMetadata).toHaveBeenCalledWith([], source, {
     humanRoomPath: source.chat_path,
+    relationsComplete: true,
   });
+  expect(readCollaborationRelationSource).toHaveBeenCalledWith(
+    expect.objectContaining({
+      fs,
+      source,
+      journal: expect.anything(),
+      edges: expect.any(Function),
+    }),
+  );
   expect(assertProjectVolumeLifecycleGeneration).toHaveBeenCalledWith(
     source.project_id,
     1,
@@ -112,7 +150,13 @@ test("metadata reads work on stopped projects through a lifecycle-locked sandbox
   expect(fs.close).toHaveBeenCalledTimes(1);
 });
 test("first room creation makes only its sandboxed parent and closes the reader", async () => {
-  const fs = { mkdir: jest.fn(), close: jest.fn() };
+  const fs = {
+    mkdir: jest.fn(),
+    close: jest.fn(),
+    lstat: jest.fn(async () => {
+      throw Object.assign(Error("missing"), { code: "ENOENT" });
+    }),
+  };
   startCollaborators(jest.fn(async () => fs as any));
   await ensureUninitializedRoomParent({
     ...source,
@@ -133,6 +177,22 @@ test("first room creation makes only its sandboxed parent and closes the reader"
     ensureUninitializedRoomParent({ ...source, room_id: "room" }),
   ).rejects.toThrow("mkdir failed");
   expect(fs.close).toHaveBeenCalledTimes(2);
+});
+test("pending destination validation rejects corrupt disk content before any write", async () => {
+  const fs = {
+    mkdir: jest.fn(),
+    close: jest.fn(),
+    lstat: jest.fn(async () => ({ isFile: () => true })),
+  };
+  startCollaborators(jest.fn(async () => fs as any));
+  (readCollaborationSource as jest.Mock).mockRejectedValueOnce(
+    SyntaxError("invalid JSONL"),
+  );
+  await expect(
+    ensureUninitializedRoomParent({ ...source, room_id: "room" }),
+  ).rejects.toThrow("invalid JSONL");
+  expect(fs.mkdir).not.toHaveBeenCalled();
+  expect(fs.close).toHaveBeenCalledTimes(1);
 });
 test("artifact producer guard uses the retained journal fence only when enabled", async () => {
   await expect(

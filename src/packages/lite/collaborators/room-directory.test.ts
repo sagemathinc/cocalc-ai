@@ -79,7 +79,10 @@ test("explicit room creation prepares its parent before atomic save, but never r
     jest.mocked(releaseChatSyncDB).mockResolvedValue(undefined);
     enabled = false;
     await expect(
-      handlers.createThread.call({ subject }, { request_id }),
+      handlers.createThread.call(
+        { subject },
+        { request_id, expected_room_id: room.room_id },
+      ),
     ).rejects.toThrow("disabled");
     expect(existsSync(parent)).toBe(false);
     enabled = true;
@@ -92,14 +95,17 @@ test("explicit room creation prepares its parent before atomic save, but never r
     expect(existsSync(join(directory, "foreign"))).toBe(false);
     await handlers.createThread.call(
       { subject },
-      { request_id, title: "First discussion" },
+      { request_id, expected_room_id: room.room_id, title: "First discussion" },
     );
     expect(existsSync(room.chat_path)).toBe(true);
     expect(rows.filter((row) => row.event === "chat-thread")).toHaveLength(1);
     rmSync(parent, { recursive: true });
     jest.mocked(acquireChatSyncDB).mockClear();
     await expect(
-      handlers.createThread.call({ subject }, { request_id }),
+      handlers.createThread.call(
+        { subject },
+        { request_id, expected_room_id: room.room_id },
+      ),
     ).rejects.toThrow();
     await expect(runtime.ensureRoomDirectory(room)).rejects.toThrow(
       "explicit restore",

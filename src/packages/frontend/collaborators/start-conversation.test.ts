@@ -59,7 +59,10 @@ test("registers metadata then calls the authorized host service, never a file wr
   });
   expect(mockRequest).toHaveBeenCalledWith(
     `services.account-${accountId}._.${projectId}._.collaborators`,
-    ["createThread", [{ request_id: requestId, title: "Seminar" }]],
+    [
+      "createThread",
+      [{ request_id: requestId, expected_room_id: "room", title: "Seminar" }],
+    ],
     { timeout: 60_000, waitForInterest: true },
   );
 });

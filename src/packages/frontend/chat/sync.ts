@@ -1,5 +1,10 @@
 import { Map as iMap, fromJS } from "immutable";
 import { normalizeChatMessage } from "./normalize";
+import {
+  CHAT_IDENTITY_EVENT,
+  ChatIdentityError,
+  projectChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
 
 const THREAD_STATE_EVENT = "chat-thread-state";
 const CHAT_EVENT = "chat";
@@ -117,7 +122,11 @@ function hasExplicitChatRowAcpState(record: any): boolean {
 function getThreadChatRows(syncdb: any, threadId?: string): any[] {
   const normalized = `${threadId ?? ""}`.trim();
   if (!normalized || typeof syncdb?.get !== "function") return [];
-  const rows = syncdb.get({ event: CHAT_EVENT, thread_id: normalized });
+  const all = syncdb.get();
+  const rows =
+    Array.isArray(all) && all.some((row) => row?.event === CHAT_IDENTITY_EVENT)
+      ? projectChatIdentityRows(all)
+      : syncdb.get({ event: CHAT_EVENT, thread_id: normalized });
   if (!Array.isArray(rows)) return [];
   return rows.filter(
     (row) =>
@@ -159,8 +168,15 @@ function applyChatRowAcpState(
 
 export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
   if (!syncdb || !store || typeof syncdb.get !== "function") return;
-  const rows = syncdb.get();
-  if (!Array.isArray(rows)) return;
+  const rawRows = syncdb.get();
+  if (!Array.isArray(rawRows)) return;
+  let rows: any[];
+  try {
+    rows = [...projectChatIdentityRows(rawRows)];
+  } catch (error) {
+    if (error instanceof ChatIdentityError) return;
+    throw error;
+  }
   const threadStateLookup = threadStateRecordLookupFromRows(rows);
   let acpState = iMap();
   for (const row of rows) {
@@ -234,7 +250,11 @@ function getChangedRecord(syncdb: any, change: Record<string, unknown>): any {
     where.message_id = (change as any).message_id;
   if ((change as any).thread_id != null)
     where.thread_id = (change as any).thread_id;
-  return syncdb.get_one(where);
+  const row = syncdb.get_one(where);
+  if (!row || row.event !== CHAT_EVENT) return row;
+  const markers = syncdb.get?.({ event: CHAT_IDENTITY_EVENT });
+  if (!Array.isArray(markers) || !markers.length) return row;
+  return projectChatIdentityRows([...markers, row]).at(-1);
 }
 
 function reconcileThreadChatRowAcpState({
@@ -377,7 +397,11 @@ function clearStaleRunningThreadAcpState({
   return next;
 }
 
-const ignoredChatEvents = new Set(["chat-thread", "chat-thread-config"]);
+const ignoredChatEvents = new Set([
+  "chat-thread",
+  "chat-thread-config",
+  CHAT_IDENTITY_EVENT,
+]);
 const warnedUnknownEvents = new Set<string>();
 
 export function handleSyncDBChange({
@@ -399,7 +423,13 @@ export function handleSyncDBChange({
 
   for (const obj of rows) {
     const event = (obj as any)?.event;
-    const record = getChangedRecord(syncdb, obj);
+    let record: any;
+    try {
+      record = getChangedRecord(syncdb, obj);
+    } catch (error) {
+      if (error instanceof ChatIdentityError) return;
+      throw error;
+    }
 
     if (event === "draft") {
       let drafts = store.get("drafts") ?? (fromJS({}) as any);

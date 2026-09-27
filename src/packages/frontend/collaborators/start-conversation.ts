@@ -55,7 +55,10 @@ export async function createConversation({
   // guard. A timeout has an unknown outcome; retry this same request_id.
   const response = await client.request(
     `services.account-${accountId}._.${projectId}._.collaborators`,
-    ["createThread", [{ request_id: requestId, title }]],
+    [
+      "createThread",
+      [{ request_id: requestId, expected_room_id: room.room_id, title }],
+    ],
     { timeout: 60_000, waitForInterest: true },
   );
   check();

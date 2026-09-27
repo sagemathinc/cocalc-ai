@@ -15,7 +15,105 @@ const bigint: FieldSpec = {
 };
 const time: FieldSpec = { type: "timestamp" };
 
+Table({
+  name: "collaboration_relation_sets",
+  rules: {
+    primary_key: "set_key",
+    pg_indexes: ["project_id, created_at", "source_id, created_at"],
+  },
+  fields: {
+    set_key: text,
+    project_id: uuid,
+    source_id: text,
+    epoch: uuid,
+    sequence: bigint,
+    manifest: { type: "map" },
+    byte_count: bigint,
+    row_count: bigint,
+    created_at: { ...time, pg_default: "now()", not_null: true },
+  },
+});
+Table({
+  name: "collaboration_relation_pages",
+  rules: { primary_key: "id", pg_indexes: ["project_id", "set_key, page"] },
+  fields: {
+    id: text,
+    project_id: uuid,
+    set_key: text,
+    page: bigint,
+    payload: { type: "map" },
+    digest: text,
+  },
+});
+Table({
+  name: "collaboration_participants",
+  rules: {
+    primary_key: "id",
+    pg_indexes: [
+      "project_id",
+      "set_key, thread_key, participant_id",
+      "participant_id, set_key, thread_key",
+    ],
+  },
+  fields: {
+    id: text,
+    project_id: uuid,
+    set_key: text,
+    thread_key: text,
+    participant_id: uuid,
+  },
+});
+Table({
+  name: "collaboration_references",
+  rules: {
+    primary_key: "id",
+    pg_indexes: [
+      "project_id",
+      "set_key, thread_key, id",
+      "set_key, thread_key, message_id, id",
+    ],
+  },
+  fields: {
+    id: text,
+    project_id: uuid,
+    set_key: text,
+    thread_key: text,
+    message_id: text,
+    payload: { type: "map" },
+  },
+});
+Table({
+  name: "collaboration_participant_index",
+  rules: {
+    primary_key: ["account_id", "entry_key", "set_key", "participant_id"],
+    pg_indexes: [
+      "account_id, project_id",
+      "account_id, participant_id, entry_key",
+      "account_id, entry_key, set_key",
+    ],
+  },
+  fields: {
+    account_id: uuid,
+    entry_key: text,
+    project_id: uuid,
+    set_key: text,
+    participant_id: uuid,
+  },
+});
+
 // Internal metadata only. No generic browser or project queries are authorized.
+Table({
+  name: "collaboration_discovery",
+  rules: { primary_key: "project_id" },
+  fields: {
+    project_id: uuid,
+    writer_host_id: uuid,
+    run_id: uuid,
+    sequence: bigint,
+    report: { type: "map", pg_type: "JSONB" },
+    updated_at: time,
+  },
+});
 Table({
   name: "collaboration_memberships",
   rules: { primary_key: ["project_id", "account_id"] },
@@ -58,6 +156,8 @@ Table({
     coverage: text,
     coverage_message: text,
     relocated_to: text,
+    retired_room_id: uuid,
+    relation_set: text,
   },
 });
 Table({
@@ -75,6 +175,7 @@ Table({
   rules: {
     primary_key: "entry_key",
     pg_indexes: [
+      "relation_set, relation_thread",
       "source_id",
       "source_id, entry_key",
       "project_id, revision, entry_key",
@@ -114,6 +215,9 @@ Table({
     artifact_entry_ids: { type: "array", pg_type: "TEXT[]" },
     agent_resource_ids: { type: "array", pg_type: "TEXT[]" },
     agent_source_activity: bigint,
+    relation_set: text,
+    relation_thread: text,
+    relation_count: bigint,
     revision: bigint,
     activity: bigint,
     deleted_at: time,
@@ -128,6 +232,26 @@ Table({
     chat_path: text,
     request_id: uuid,
     initialized: { type: "boolean", pg_default: "FALSE", not_null: true },
+  },
+});
+Table({
+  name: "collaboration_room_replacements",
+  rules: {
+    primary_key: "operation_id",
+    pg_indexes: [
+      "project_id",
+      "project_id, previous_room_id",
+      "previous_source_id",
+    ],
+  },
+  fields: {
+    operation_id: uuid,
+    project_id: uuid,
+    requesting_account_id: uuid,
+    request_id: uuid,
+    previous_room_id: uuid,
+    previous_source_id: text,
+    receipt: { type: "map", pg_type: "JSONB", not_null: true },
   },
 });
 Table({
@@ -147,6 +271,7 @@ Table({
     generation: uuid,
     revision: bigint,
     after_key: { ...text, pg_default: "''", not_null: true },
+    relation_after: { type: "map" },
     lease_until: time,
     granted_generation: uuid,
     grant_request_id: uuid,
@@ -166,6 +291,7 @@ Table({
   rules: {
     primary_key: ["account_id", "entry_key"],
     pg_indexes: [
+      "account_id, relation_set, relation_thread",
       "account_id, activity, entry_key",
       "account_id, kind, activity, entry_key",
       "account_id, project_id, kind, activity, entry_key",
@@ -173,6 +299,10 @@ Table({
       "account_id, created_by, activity, entry_key",
     ],
     pg_custom_indexes: [
+      {
+        name: "collaboration_index_relations_pending",
+        query: "(account_id,project_id) WHERE NOT relations_complete",
+      },
       {
         name: "collaboration_index_agent_pin",
         query:
@@ -214,6 +344,14 @@ Table({
     created_by: uuid,
     participant_ids: { type: "array", pg_type: "UUID[]" },
     search_text: text,
+    relation_set: text,
+    relation_thread: text,
+    relations_complete: {
+      type: "boolean",
+      pg_default: "FALSE",
+      not_null: true,
+    },
+    relation_budget: bigint,
   },
 });
 Table({

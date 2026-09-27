@@ -3,7 +3,7 @@
 Run from `src/packages/server`, after the coordinated workspace build:
 
 ```sh
-COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath collaborators/multibay.acceptance.test.ts
+COCALC_COLLABORATORS_ACCEPTANCE=1 pnpm exec jest --runInBand --runTestsByPath collaborators/multibay.acceptance.test.ts collaborators/historical.acceptance.test.ts
 ```
 
 The suite is opt-in, requires PostgreSQL binaries (`pg_config --bindir`, or
@@ -66,6 +66,21 @@ test checks the canonical initialized pointer, catalog identity/activity,
 personal overlays, stale-owner fencing, notification deduplication and new sends
 after cutover. This is an owning-bay metadata rehome: the host and its volume stay
 in place, and compute is never started. It is not a host/volume move test.
+
+The historical scenario seeds 1,000 timestamp-only messages in the owned fixture
+volume and archives 999 of them using the real chat store. It explicitly requests
+that known source, then runs the production legacy identity migration and full
+relation producer. Another account's home must discover its participation outside
+the summary preview, page all participants and resolve an archived typed reference.
+The raw message digest must remain unchanged; assigned identities and relations
+must survive host restart. Backfill must not generate notifications or start
+compute. This is not a path-free census test; streaming traversal and durable
+census recovery have separate backend and host/Lite adapter tests.
+
+The human client fixture pins the first registered room identity before sending.
+All retries carry that expected identity, including after host restart. It never
+silently refreshes the room target after a failed operation; replacement scenarios
+must explicitly supply a successor identity.
 
 This is not a full deployment boot. It registers only required API subscriptions
 and directory handlers instead of starting the entire hub and host main programs.

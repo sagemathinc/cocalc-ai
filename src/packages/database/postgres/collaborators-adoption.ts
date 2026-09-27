@@ -30,10 +30,12 @@ export async function requestCollaborationSource(
     );
     const existing = (
       await db.query(
-        "SELECT relocated_to FROM collaboration_sources WHERE source_id=$1",
+        "SELECT relocated_to,retired_room_id FROM collaboration_sources WHERE source_id=$1",
         [sourceKey(source)],
       )
     ).rows[0];
+    if (existing?.retired_room_id)
+      throw Error("collaboration source is permanently retired");
     if (existing?.relocated_to)
       throw Error("source has moved; request its current location");
     if (existing) return { requested: true };

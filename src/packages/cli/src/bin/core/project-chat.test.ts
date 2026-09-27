@@ -365,10 +365,26 @@ test("explicit human create/send route through the canonical service without ope
     });
     assert.equal(sent.message_id, accountId);
     assert.deepEqual(requests, [
-      ["createThread", [{ request_id: requestId, title: "Discussion" }]],
+      [
+        "createThread",
+        [
+          {
+            request_id: requestId,
+            expected_room_id: room.room_id,
+            title: "Discussion",
+          },
+        ],
+      ],
       [
         "send",
-        [{ request_id: requestId, thread_id: threadId, text: "@agent" }],
+        [
+          {
+            request_id: requestId,
+            expected_room_id: room.room_id,
+            thread_id: threadId,
+            text: "@agent",
+          },
+        ],
       ],
     ]);
     assert.deepEqual(f.calls, []);

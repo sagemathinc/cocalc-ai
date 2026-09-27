@@ -66,13 +66,28 @@ function entries(
 }
 
 export const TABLE_OWNERSHIP = {
+  ...entries(["collaboration_relation_pages"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      project_id:
+        "Authenticated source writer's project; staging never grants metadata access.",
+    },
+    notes:
+      "Immutable bounded host upload pages are local staging. Project handoff transfers committed normalized relations and renews writer epochs; interrupted producers republish under the destination fence.",
+  }),
   ...entries(
     [
       "collaboration_projects",
+      "collaboration_relation_sets",
+      "collaboration_participants",
+      "collaboration_references",
       "collaboration_sources",
       "collaboration_source_requests",
       "collaboration_catalog",
       "collaboration_rooms",
+      "collaboration_room_replacements",
       "collaboration_relocations",
       "collaboration_notification_events",
       "collaboration_notification_floors",
@@ -107,17 +122,33 @@ export const TABLE_OWNERSHIP = {
     notes:
       "Private names, collection, attention and Library compatibility bindings move via the fenced account collaboration handoff. Project membership and metadata leases are rebuilt, never copied as grants.",
   }),
-  ...entries(["collaboration_access", "collaboration_index"], {
-    ownership: "projection",
-    authority: "account_id",
-    portability: "rebuildable",
-    secondary_reference_fields: {
-      project_id: "Project owner provides fresh membership and metadata.",
+  ...entries(
+    [
+      "collaboration_access",
+      "collaboration_index",
+      "collaboration_participant_index",
+    ],
+    {
+      ownership: "projection",
+      authority: "account_id",
+      portability: "rebuildable",
+      secondary_reference_fields: {
+        project_id: "Project owner provides fresh membership and metadata.",
+      },
+      notes:
+        "Account-home discovery metadata with expiring owner membership leases. Invalidate on rehome or removal; never copy as an access grant.",
+      rebuild:
+        "Collaborators maintenance refreshes bounded project metadata pages from current owners.",
     },
+  ),
+  ...entries(["collaboration_discovery"], {
+    ownership: "projection",
+    authority: "project_id",
+    portability: "rebuildable",
     notes:
-      "Account-home discovery metadata with expiring owner membership leases. Invalidate on rehome or removal; never copy as an access grant.",
+      "Bounded metadata-only census telemetry from the current authorized project host; never an access grant or source identity.",
     rebuild:
-      "Collaborators maintenance refreshes bounded project metadata pages from current owners.",
+      "The current host republishes its persisted census under the new project owner; missing or stale reports remain pending/unavailable.",
   }),
   ...entries(["collaboration_notification_cursors"], {
     ownership: "account-home",

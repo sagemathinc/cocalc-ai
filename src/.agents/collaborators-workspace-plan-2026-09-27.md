@@ -44,11 +44,21 @@ Operational contracts and bounds are documented in the backend, server, and Lite
   60-second access lease plus client polling delay; expired leases fail closed.
   Already downloaded metadata cannot be remotely erased. Opens and mutations
   revalidate the authoritative membership rather than treating an alias as access.
-- Coverage is deliberately partial for unindexed historical sources. Explicit
-  `requestSource` requests one known absolute chat path for background indexing;
-  it neither scans the filesystem nor adopts that file as the canonical room.
-  Timestamp-only identities and ambiguous shell copies/moves require explicit
-  reconciliation, not guessed durable identities.
+- Historical discovery uses a persisted, bounded background census of eligible
+  existing project volumes, never a scan during browsing or a compute start.
+  Coverage remains partial while traversal, identity migration, or metadata
+  delivery is pending or capacity-blocked. Explicit `requestSource` also accepts
+  one known chat path without adopting it as the canonical room. Timestamp-only
+  identities are reconciled through additive saved mapping records; original
+  message payloads are preserved. Ambiguous shell copies/moves are not guessed.
+- Complete participant/reference relations are separately paginated, validated,
+  staged, and atomically activated with source metadata. Person and For you
+  queries do not treat the bounded participant preview as a complete inventory.
+  Missing relation manifests preserve prior matching evidence with partial
+  coverage; only an explicit complete replacement can remove old edges.
+- A deleted canonical room requires explicit owner-confirmed replacement. Durable
+  receipts retain retired room identities through retries and rehome. Sends bind
+  the expected room identity, so old requests cannot silently target its successor.
 - Supported mediated same-project moves preserve typed identity; copies receive
   a separate persisted namespace. Cross-project relocation remains excluded.
 - Existing personal agent names and Library aliases/pins are compatibility
@@ -205,6 +215,33 @@ not update that running checkout. The PR remains a draft for review.
   dependency checks plus frontend, both server shards, backend/database and the
   remaining package lane. This validates that pushed checkpoint, not subsequent
   uncommitted historical-source and lifecycle integration.
+- Checkpoint `760e8937c4` fixes late editor initialization stealing dialog focus
+  and removes the eagerly mounted hidden Chat tools portal. Parent validation
+  passed 53 focused tests, frontend typechecking/lint, and real-browser sharing,
+  pinning, early-modal, and mobile tools scenarios in light/dark at 1440px/320px.
+  Follow-up `a175de963f` declares the test's rc-component dependency explicitly.
+- The historical-source/lifecycle integration passes the full development build,
+  frontend lint, formatting, dependency audit, frozen installation and version
+  consistency checks. Focused runs pass 278 backend, 179 Lite, 74 project-host,
+  206 shared-contract, 24 chat, 3 chat-client, 219 frontend and 38 CLI tests.
+  PostgreSQL passes 120 catalog/discovery tests and 14 server integration tests;
+  separate PGlite runs pass 9 access tests and 85 server tests. Engine-specific
+  skips are not counted as passing tests; some server coverage overlaps between
+  engines. Test-inclusive CLI compilation also passes.
+- Six independent-process acceptance cases pass against the refreshed compiled
+  packages. The added historical fixture archives 999 of 1,000 timestamp-only
+  messages, then uses the production migration and relation producer. Another
+  account discovers its participation outside the 64-person preview, pages all
+  1,000 participants, and resolves the archived reference. Original raw message
+  digests and assigned identities survive host restart, with no historical
+  notification flood or compute start. This fixture explicitly requests a known
+  source; path-free census has separate streaming filesystem and host/Lite tests.
+- Census validation includes 1,000-project scheduling, an explicit 11,000-source
+  journal budget, bounded pages, restart with reduced quotas without eviction,
+  operator-selected rescan revisions, interrupted handoff, and report replay.
+  Room replacement tests cover actor-bound receipts, strict destination checks,
+  lost acknowledgments, stale requests, retired identities and rehome. The new
+  owner-side state expands the portable project inventory to thirteen tables.
 
 ### Remaining acceptance and UX iteration
 
@@ -227,11 +264,11 @@ two-human, multiple-bay deployment.
 - Historical coverage remains partial until bounded source adoption/reconciliation
   has run. Legacy path-encoded artifact URLs are not redirected; new typed
   references use stable identity. Ambiguous shell copies/moves are not guessed.
-- Complete path-free historical source census and additive legacy-ID
-  reconciliation, explicit canonical-room replacement, and separate complete
-  participant/reference relations remain implementation requirements. A bounded
-  participant preview alone does not satisfy person/For you filtering for large
-  conversations. These are not exclusions from the original plan below.
+- Historical census, additive identity reconciliation, explicit room replacement,
+  and complete participant/reference relations are now implemented and tested.
+  Validate operator quota settings, projection lag and recovery on realistic
+  volumes before broad enablement; partial coverage must remain visible rather
+  than being represented as a complete empty result.
 
 ## Goal and model
 

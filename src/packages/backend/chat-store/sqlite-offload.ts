@@ -40,6 +40,15 @@ import { Worker } from "node:worker_threads";
 import { searchAdmission } from "./search-admission";
 import getLogger from "@cocalc/backend/logger";
 import { chatSearchIndex, searchableChatText } from "@cocalc/util/chat-search";
+import {
+  projectChatIdentityRows,
+  resolveChatIdentityRows,
+} from "@cocalc/util/collaboration-chat-identity";
+import {
+  chatIdentityKey,
+  chatIdentityStorageKey,
+} from "@cocalc/util/collaboration-chat-identity-markers";
+import type { ChatIdentityMarker } from "@cocalc/util/collaboration-chat-identity-markers";
 
 const logger = getLogger("lite:hub:sqlite:chat-offload");
 
@@ -409,6 +418,13 @@ function openDb(dbPath: string): DatabaseSync {
       ON archived_rows(chat_id, thread_id, date_ms DESC, row_id DESC);
     CREATE INDEX IF NOT EXISTS archived_rows_message_id_idx
       ON archived_rows(message_id);
+    CREATE TABLE IF NOT EXISTS legacy_identity_migrations (
+      chat_id TEXT PRIMARY KEY REFERENCES chat_registry(chat_id) ON DELETE CASCADE,
+      migration_id TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0,
+      completed INTEGER NOT NULL DEFAULT 0,
+      markers_json TEXT
+    );
     CREATE VIRTUAL TABLE IF NOT EXISTS archived_rows_fts
       USING fts5(body, tokenize='unicode61');
   `);
@@ -422,6 +438,195 @@ function openDb(dbPath: string): DatabaseSync {
   }
   dbCache.set(resolved, db);
   return db;
+}
+
+function assertChatIdentityIdle(db: DatabaseSync, chat_id: string): void {
+  const row = db
+    .prepare(
+      "SELECT active,completed,markers_json FROM legacy_identity_migrations WHERE chat_id=?",
+    )
+    .get(chat_id);
+  if (row && (row.active || (!row.completed && row.markers_json != null)))
+    throw Error(
+      "chat identity migration requires completion before archive access",
+    );
+}
+
+function identityArchiveRows(db: DatabaseSync, chat_id: string) {
+  const bounds = db
+    .prepare(
+      "SELECT COUNT(*) AS n, COALESCE(SUM(length(CAST(row_json AS BLOB))),0) AS bytes FROM archived_rows WHERE chat_id=?",
+    )
+    .get(chat_id)!;
+  if (Number(bounds.n) > 100_000 || Number(bounds.bytes) > 32 * 1024 * 1024)
+    throw Error("chat identity archive exceeds reconciliation capacity");
+  return db
+    .prepare(
+      "SELECT row_id,row_json FROM archived_rows WHERE chat_id=? ORDER BY row_id",
+    )
+    .all(chat_id) as Array<{ row_id: number; row_json: string }>;
+}
+
+/** Bounded archive evidence for background extraction, never a directory request. */
+export function readChatIdentityArchive(opts: EnsureChatStoreOptions): Json[] {
+  const db = openDb(resolveDbPath(opts.db_path));
+  const { chat_id } = getOrCreateChatId(db, normalizeChatPath(opts.chat_path));
+  assertChatIdentityIdle(db, chat_id);
+  if (getPendingRotateOp(db, chat_id))
+    throw Error("chat archive rotation requires recovery");
+  return identityArchiveRows(db, chat_id).map(({ row_json }) =>
+    JSON.parse(row_json),
+  );
+}
+
+/** Complete bounded evidence for the relation producer; never creates an archive. */
+export function readChatRelationArchive(opts: EnsureChatStoreOptions): {
+  registered: boolean;
+  rows: Json[];
+} {
+  const filename = resolveDbPath(opts.db_path);
+  if (!existsSync(filename)) return { registered: false, rows: [] };
+  const db = new DatabaseSync(filename, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout=1000; BEGIN");
+    const tables = new Set(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('chat_registry','archived_rows','maintenance_ops','legacy_identity_migrations')",
+        )
+        .all()
+        .map((row) => String(row.name)),
+    );
+    if (!tables.has("chat_registry") || !tables.has("archived_rows"))
+      throw Error("chat relation archive schema is unavailable");
+    const source = db
+      .prepare("SELECT chat_id FROM chat_registry WHERE chat_path=?")
+      .get(normalizeChatPath(opts.chat_path));
+    if (!source) return { registered: false, rows: [] };
+    const chat_id = String(source.chat_id);
+    if (tables.has("legacy_identity_migrations"))
+      assertChatIdentityIdle(db, chat_id);
+    if (tables.has("maintenance_ops") && getPendingRotateOp(db, chat_id))
+      throw Error("chat archive rotation requires recovery");
+    // The bounds and row read share one SQLite snapshot, including across writers
+    // in another process. No unbounded all() follows a racy preflight count.
+    return {
+      registered: true,
+      rows: identityArchiveRows(db, chat_id).map(({ row_json }) =>
+        JSON.parse(row_json),
+      ),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+const identityLeases = new Set<string>();
+/**
+ * Internal producer only: caller also holds its durable producer lease and
+ * source/volume locks. The persisted operation survives crashes; other archive
+ * mutations are fenced, including rotations already awaiting a file read.
+ */
+export async function withChatIdentityArchive<T>(
+  opts: EnsureChatStoreOptions,
+  run: (archive: {
+    migration_id: string;
+    rows: Json[];
+    project(markers: readonly ChatIdentityMarker[]): Promise<void>;
+  }) => Promise<T>,
+): Promise<T> {
+  const dbPath = resolveDbPath(opts.db_path);
+  const db = openDb(dbPath);
+  const { chat_id } = getOrCreateChatId(db, normalizeChatPath(opts.chat_path));
+  const lease = `${dbPath}:${chat_id}`;
+  if (identityLeases.has(lease))
+    throw Error("chat identity migration is already running");
+  if (getPendingRotateOp(db, chat_id))
+    throw Error("chat archive rotation requires recovery");
+  const previous = db
+    .prepare(
+      "SELECT migration_id,active,completed,markers_json FROM legacy_identity_migrations WHERE chat_id=?",
+    )
+    .get(chat_id) as
+    | {
+        migration_id: string;
+        active: number;
+        completed: number;
+        markers_json: string | null;
+      }
+    | undefined;
+  const migration_id =
+    previous && !previous.completed ? previous.migration_id : randomUUID();
+  let succeeded = false;
+  identityLeases.add(lease);
+  try {
+    db.prepare(
+      `INSERT INTO legacy_identity_migrations(chat_id,migration_id,active,completed,markers_json) VALUES(?,?,1,0,?)
+      ON CONFLICT(chat_id) DO UPDATE SET migration_id=excluded.migration_id,active=1,completed=0`,
+    ).run(chat_id, migration_id, previous?.markers_json ?? null);
+    const saved = identityArchiveRows(db, chat_id);
+    const rows = saved.map(({ row_json }) => JSON.parse(row_json));
+    const result = await run({
+      migration_id,
+      rows,
+      project: async (markers) => {
+        const resolved = resolveChatIdentityRows([
+          ...markers,
+          ...rows,
+        ]).messages;
+        const identities = new Map(
+          resolved.map((row) => [chatIdentityKey(row.storage_key), row]),
+        );
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          if (
+            JSON.stringify(identityArchiveRows(db, chat_id)) !==
+            JSON.stringify(saved)
+          )
+            throw Error("chat identity archive changed during reconciliation");
+          const update = db.prepare(
+            "UPDATE archived_rows SET message_id=?,thread_id=?,date_ms=? WHERE chat_id=? AND row_id=? AND row_json=?",
+          );
+          for (let i = 0; i < saved.length; i++) {
+            const identity = identities.get(
+              chatIdentityKey(chatIdentityStorageKey(rows[i])),
+            );
+            if (!identity) throw Error("unresolved archived chat identity");
+            update.run(
+              identity.message_id,
+              identity.thread_id,
+              Date.parse(identity.projected.date),
+              chat_id,
+              saved[i].row_id,
+              saved[i].row_json,
+            );
+          }
+          db.prepare(
+            "UPDATE legacy_identity_migrations SET markers_json=? WHERE chat_id=?",
+          ).run(JSON.stringify(markers), chat_id);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      },
+    });
+    succeeded = true;
+    return result;
+  } finally {
+    try {
+      if (succeeded)
+        db.prepare(
+          "UPDATE legacy_identity_migrations SET active=0,completed=1 WHERE chat_id=?",
+        ).run(chat_id);
+      else
+        db.prepare(
+          "UPDATE legacy_identity_migrations SET active=0 WHERE chat_id=?",
+        ).run(chat_id);
+    } finally {
+      identityLeases.delete(lease);
+    }
+  }
 }
 
 function normalizeChatPath(chatPath: string): string {
@@ -486,6 +691,18 @@ function parseChatFile(text: string): ParsedLine[] {
       sender_id: typeof obj.sender_id === "string" ? obj.sender_id : undefined,
       excerpt: extractExcerpt(obj),
     });
+  }
+  const rows = out.filter((row) => row.obj).map((row) => row.obj!);
+  const projected = projectChatIdentityRows(rows);
+  let index = 0;
+  for (const row of out) {
+    if (!row.obj) continue;
+    const identity = projected[index++];
+    if (row.is_chat) {
+      row.message_id = identity.message_id;
+      row.thread_id = identity.thread_id;
+      row.date_ms = parseDateMs(identity.date);
+    }
   }
   return out;
 }
@@ -625,6 +842,7 @@ async function applyPendingRotateOp({
   status: RotateOpStatus;
   warning?: string;
 }> {
+  assertChatIdentityIdle(db, chat_id);
   const now = Date.now();
   if (!op.head_after_jsonl) {
     const warning = `pending rotate op ${op.op_id} has no head_after_jsonl`;
@@ -1132,6 +1350,7 @@ export async function rotateChatStore({
   const segmentSeq = Number(nextSeqRow?.seq ?? 1);
   const maintenanceOpId = randomUUID();
 
+  assertChatIdentityIdle(db, chat_id);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(
@@ -1296,6 +1515,7 @@ export function readChatStoreArchived({
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
+  assertChatIdentityIdle(db, chat_id);
   const where = ["chat_id = ?"];
   const params: any[] = [chat_id];
   if (Number.isFinite(before_date_ms)) {
@@ -1357,6 +1577,7 @@ export function readChatStoreArchivedHit({
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
+  assertChatIdentityIdle(db, chat_id);
   const normalizedMessageId = `${message_id ?? ""}`.trim();
   const normalizedThreadId = `${thread_id ?? ""}`.trim();
   let raw: (Omit<ArchivedRow, "row"> & { row_json: string }) | undefined;
@@ -1695,6 +1916,7 @@ export function searchChatStoreArchived({
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
   const where = ["ar.chat_id = ?"];
+  assertChatIdentityIdle(db, chat_id);
   const params: any[] = [chat_id];
   if (thread_id) {
     where.push("ar.thread_id = ?");
@@ -1866,6 +2088,7 @@ export function deleteChatStoreData({
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
+  assertChatIdentityIdle(db, chat_id);
   const { where, params } = deleteScopeWhere({
     scope,
     before_date_ms,

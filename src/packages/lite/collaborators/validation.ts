@@ -6,6 +6,7 @@ import { posix } from "node:path";
 import { validateCollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import type { CollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import type { LocalResource } from "./legacy-attention";
+import { validateCollaborationRelationManifest } from "@cocalc/util/collaboration-relations";
 import {
   COLLABORATION_MAX_SOURCE_BYTES,
   COLLABORATION_MAX_SOURCE_RESOURCES,
@@ -116,6 +117,18 @@ export function snapshot(
       updated_at: position(item.updated_at, "updated time"),
       activity: position(item.activity, "activity"),
     };
+    if (item.latest_message_author_id != null) {
+      if (
+        type !== "conversation" ||
+        typeof item.latest_message_author_id !== "string" ||
+        !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(
+          item.latest_message_author_id,
+        )
+      )
+        throw Error("invalid latest_message_author_id");
+      result.latest_message_author_id =
+        item.latest_message_author_id.toLowerCase();
+    }
     if (item.lite_legacy_attention !== undefined) {
       const legacy = item.lite_legacy_attention;
       if (
@@ -216,6 +229,9 @@ export function snapshot(
     epoch,
     sequence,
     resources,
+    ...(input.relations !== undefined
+      ? { relations: validateCollaborationRelationManifest(input.relations) }
+      : {}),
     ...(notification_events ? { notification_events } : {}),
     ...(coverage ? { coverage } : {}),
     ...(input.coverage_message !== undefined

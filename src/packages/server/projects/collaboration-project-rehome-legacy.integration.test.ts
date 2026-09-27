@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { PROJECT_COLLABORATION_REHOME_TABLES } from "@cocalc/util/project-collaboration-rehome";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import {
   ensureProjectCollaborationRehomeSchema,
@@ -91,7 +92,10 @@ describeDb("legacy project ownership during collaboration rehome", () => {
           [op.op_id],
         )
       ).rows[0],
-    ).toEqual({ state: "exported", next_page: 9 });
+    ).toEqual({
+      state: "exported",
+      next_page: PROJECT_COLLABORATION_REHOME_TABLES.length,
+    });
     expect(await freezeProjectCollaborationExport(op)).toEqual(header);
   });
   test.each([undefined, "another-owner"])(

@@ -337,10 +337,16 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
     const db = this.db;
     if (!db?.isReady()) return;
     const rows = db.get();
-    const projected = projectChatRows(
-      Array.isArray(rows) ? rows : [],
-      this.selectedThreadId,
-    );
+    let projected: ReturnType<typeof projectChatRows>;
+    try {
+      projected = projectChatRows(
+        Array.isArray(rows) ? rows : [],
+        this.selectedThreadId,
+      );
+    } catch (error) {
+      this.updateConnection("error", `${error}`);
+      return;
+    }
     if (
       !this.selectedThreadId ||
       !projected.threads.some(

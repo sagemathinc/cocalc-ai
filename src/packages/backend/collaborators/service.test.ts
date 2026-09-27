@@ -136,6 +136,10 @@ test("new host freezes owner epoch before registration and does not refresh it o
     epoch: "old-host-epoch",
     registration_id: "old-host-registration",
   });
+  opts.writerState.mockResolvedValue({
+    epoch: "observed-after-lost-reply",
+    registration_id: "other-registration",
+  });
   opts.register.mockRejectedValueOnce(Error("lost ack"));
   await service.runOnce();
   expect(opts.register).toHaveBeenCalledWith(
@@ -143,7 +147,8 @@ test("new host freezes owner epoch before registration and does not refresh it o
   );
   now = 2000;
   await service.runOnce();
-  expect(opts.writerState).toHaveBeenCalledTimes(1);
+  // Recovery may probe retired-room state, but must not refresh the CAS base.
+  expect(opts.writerState).toHaveBeenCalledTimes(2);
   expect(opts.register.mock.calls[1]).toEqual(opts.register.mock.calls[0]);
 });
 test("authoritative reassignment recovery replaces stale epoch and discards old delivery", async () => {

@@ -1510,11 +1510,45 @@ test("projection delivery resumes at stable revision/key checkpoints and exposes
       ),
     ).size,
   ).toBe(105);
-  expect(first.coverage).toBe("partial");
+  // This legacy fixture contains previews but no complete relation manifest.
+  expect(first.coverage).toBe("indexing");
   expect(JSON.stringify(first).length).toBeLessThan(256 * 1024);
   expect((await listCollaborationProjects({ account_id })).items).toHaveLength(
     1,
   );
+});
+
+test("latest-message author survives owner/home projection independently of creator and optional legacy omission", async () => {
+  const authored = { ...resource(), latest_message_author_id: account_id };
+  await ingestCollaborationSnapshot(snapshot(1, [authored]), authority);
+  const first = await deliver();
+  expect(first.items[0].resource).toMatchObject({
+    created_by: other_id,
+    latest_message_author_id: account_id,
+  });
+  expect(
+    (await listCollaborationResources({ account_id })).items[0],
+  ).toMatchObject({
+    created_by: other_id,
+    latest_message_author_id: account_id,
+  });
+  await ingestCollaborationSnapshot(
+    snapshot(2, [{ ...authored, title: "Renamed" }]),
+    authority,
+  );
+  await deliver();
+  expect(
+    (await listCollaborationResources({ account_id })).items[0],
+  ).toMatchObject({
+    title: "Renamed",
+    latest_message_author_id: account_id,
+    activity: authored.activity,
+  });
+  await ingestCollaborationSnapshot(snapshot(3), authority);
+  await deliver();
+  expect(
+    (await listCollaborationResources({ account_id })).items[0],
+  ).not.toHaveProperty("latest_message_author_id");
 });
 test("title/alias search and cursor filter binding are deterministic and bounded", async () => {
   await ingestCollaborationSnapshot(
@@ -1863,7 +1897,8 @@ test("bounded participant previews preserve large-room metadata and explicitly d
     participants_truncated: true,
   });
   expect(result.items[0].participant_ids).toHaveLength(64);
-  expect(result.coverage_message).toContain("person filters");
+  expect(result.coverage).toBe("indexing");
+  expect(result.coverage_message).toContain("participant relations");
   expect(
     (
       await getPool().query(

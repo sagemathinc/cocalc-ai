@@ -9,6 +9,7 @@ import {
   type CodexPaymentSourcePreference,
 } from "@cocalc/util/ai/codex";
 import { uuid } from "@cocalc/util/misc";
+import { chatIdentityMutation } from "@cocalc/util/collaboration-chat-identity";
 import type { ChatMessage } from "./types";
 import {
   buildAcpChatContext,
@@ -441,7 +442,7 @@ export async function processAcpLLM({
         } else {
           delete nextMessage.acp_state;
         }
-        syncdb.set(nextMessage);
+        syncdb.set(chatIdentityMutation(syncdb.get?.() ?? [], nextMessage));
         syncdb.commit?.();
       } catch {}
     }

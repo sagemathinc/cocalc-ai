@@ -10,6 +10,10 @@ import {
 import type { Options } from "@cocalc/conat/service/service";
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
 import type {
+  CollaborationParticipantContinuation,
+  CollaborationParticipantProjection,
+} from "@cocalc/util/collaboration-relations";
+import type {
   CollaborationResource,
   CollaborationResourceQuery,
   CollaborationPage,
@@ -44,6 +48,7 @@ export interface CollaborationInitializeRequest {
   requesting_account_id: string;
 }
 export interface CollaborationProjectionRequest {
+  relation_after?: CollaborationParticipantContinuation;
   account_id: string;
   project_id: string;
   generation: string | null;
@@ -79,7 +84,9 @@ export type CollaborationProjectionPage =
       complete: boolean;
       revision: number;
       after_key: string;
+      relation_after?: CollaborationParticipantContinuation;
       items: {
+        participants?: CollaborationParticipantProjection;
         entry_key: string;
         revision: number;
         resource: CollaborationOwnedResource | null;
@@ -135,6 +142,7 @@ export type InterBayCollaboratorsApi = RoutedApi & {
     registration_id: string | null;
     source_sequence: number;
     writer_host_id: string;
+    retired_room_id?: string;
     canonical_room?: Awaited<ReturnType<CollaboratorsApi["roomForHost"]>>;
   } | null>;
   sourcePage(opts: {

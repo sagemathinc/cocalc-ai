@@ -1,0 +1,211 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { CollaborationCensusStore } from "./census-store";
+import { CollaborationJournal } from "./journal";
+import { censusReporter } from "./census-report";
+const project_id = randomUUID();
+let store: CollaborationCensusStore,
+  journal: CollaborationJournal,
+  directory: string;
+beforeEach(() => {
+  directory = mkdtempSync(join(tmpdir(), "census-report-"));
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  journal = new CollaborationJournal(join(directory, "journal.sqlite"));
+  const run = store.begin({
+    project_id,
+    run_id: randomUUID(),
+    root: "/home/user",
+    authority: "host",
+    volume_id: "volume",
+    policy_version: "v1",
+  });
+  store.record({ run, path: run.root, depth: 0 }, [], true);
+});
+afterEach(() => {
+  store.close();
+  journal.close();
+  rmSync(directory, { recursive: true, force: true });
+});
+test("empty completed census reports no paths and bounded heartbeat sequence", async () => {
+  let now = 0;
+  const send = jest.fn(async () => {}),
+    current = jest.fn(async () => ({ run_id: null }));
+  const report = censusReporter({ store, send, current, now: () => now });
+  await report(journal);
+  expect(send.mock.calls[0][0]).toMatchObject({
+    project_id,
+    expected_run_id: null,
+    report: { coverage: "complete", sequence: 1, source_pending: 0 },
+  });
+  expect(JSON.stringify(send.mock.calls)).not.toContain("/home");
+  await report(journal);
+  expect(send).toHaveBeenCalledTimes(1);
+  now = 30_000;
+  await report(journal);
+  expect(send.mock.calls[1][0]).toMatchObject({ report: { sequence: 2 } });
+});
+test("lost ACK survives restart with exact original report despite newer work", async () => {
+  const send = jest.fn(async (_write) => {
+    throw Error("lost ACK");
+  });
+  const current = jest.fn(async () => ({ run_id: null }));
+  await expect(
+    censusReporter({ store, send, current, now: () => 0 })(journal),
+  ).rejects.toThrow("lost ACK");
+  const original = send.mock.calls[0][0];
+  store.close();
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  journal.touch({ project_id, chat_path: "/home/user/new.chat" });
+  send.mockImplementation(async () => {});
+  await censusReporter({ store, send, current, now: () => 30_000 })(journal);
+  expect(send.mock.calls[1][0]).toEqual(original);
+  await censusReporter({ store, send, current, now: () => 60_000 })(journal);
+  expect(send.mock.calls[2][0]).toMatchObject({
+    report: { coverage: "indexing", source_pending: 1, sequence: 2 },
+  });
+});
+test("registration and extraction failures cannot be called a complete census", async () => {
+  journal.touch({ project_id, chat_path: "/home/user/missing.chat" });
+  journal.defer(journal.registrations()[0], 0);
+  const send = jest.fn(async (_write) => {});
+  await censusReporter({
+    store,
+    send,
+    current: async () => ({ run_id: null }),
+  })(journal);
+  expect(send.mock.calls[0][0]).toMatchObject({
+    report: { coverage: "partial", source_pending: 1, source_errors: 1 },
+  });
+});
+test("empty new owner can reanchor telemetry but another live run cannot be stolen", async () => {
+  const old = randomUUID();
+  const current = jest
+    .fn()
+    .mockResolvedValueOnce({ run_id: old })
+    .mockResolvedValue({ run_id: null });
+  const send = jest
+    .fn()
+    .mockRejectedValueOnce(Error("owner moved"))
+    .mockResolvedValue({});
+  const report = censusReporter({ store, current, send, now: () => 0 });
+  await expect(report(journal)).rejects.toThrow("owner moved");
+  await censusReporter({ store, current, send, now: () => 30_000 })(journal);
+  expect(send.mock.calls[1][0].expected_run_id).toBeNull();
+});
+
+test("compacted runs preserve exact lost-ACK retry and still report later source failures", async () => {
+  let now = 0;
+  const send = jest.fn(async (_write) => {
+    throw Error("lost ACK");
+  });
+  const options = {
+    store,
+    send,
+    current: async () => ({ run_id: null }),
+    now: () => now,
+  };
+  await expect(censusReporter(options)(journal)).rejects.toThrow("lost ACK");
+  const original = send.mock.calls[0][0];
+  expect(store.compactCompleted()).toBe(1);
+  store.close();
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  journal.touch({ project_id, chat_path: "/home/user/failure.chat" });
+  journal.defer(journal.registrations()[0], now);
+  send.mockImplementation(async () => {});
+  now = 30_000;
+  await censusReporter({ ...options, store })(journal);
+  expect(send.mock.calls[1][0]).toEqual(original);
+  now = 60_000;
+  await censusReporter({ ...options, store })(journal);
+  expect(send.mock.calls[2][0].report).toMatchObject({
+    coverage: "partial",
+    traversal_complete: true,
+    source_errors: 1,
+    source_pending: 1,
+  });
+});
+
+test("failed owner does not abort the bounded report batch or pin its persistent cursor", async () => {
+  const ids = [
+    project_id,
+    ...Array.from({ length: 20 }, () => randomUUID()),
+  ].sort();
+  for (const id of ids.filter((id) => id !== project_id)) {
+    const run = store.begin({
+      project_id: id,
+      run_id: randomUUID(),
+      root: "/home/user",
+      authority: "host",
+      volume_id: "volume",
+      policy_version: "v1",
+    });
+    store.record({ run, path: run.root, depth: 0 }, [], true);
+  }
+  const delivered: string[] = [];
+  const current = async (id: string) => {
+    if (id === ids[0]) throw Error("owner unavailable");
+    return { run_id: null };
+  };
+  const report = censusReporter({
+    store,
+    current,
+    now: () => 0,
+    send: async (write) => {
+      delivered.push(write.project_id);
+    },
+  });
+  await expect(report(journal)).rejects.toThrow("owner unavailable");
+  expect(delivered).toEqual(ids.slice(1, 16));
+  expect(store.checkpoint("report-project")).toBe(ids[15]);
+  store.close();
+  store = new CollaborationCensusStore(join(directory, "census.sqlite"));
+  await expect(
+    censusReporter({
+      store,
+      current,
+      now: () => 0,
+      send: async (write) => {
+        delivered.push(write.project_id);
+      },
+    })(journal),
+  ).rejects.toThrow("owner unavailable");
+  expect(delivered).toEqual(ids.slice(1));
+});
+
+test("report batch stops at its cooperative budget or feature disable", async () => {
+  for (let i = 0; i < 5; i++) {
+    const run = store.begin({
+      project_id: randomUUID(),
+      run_id: randomUUID(),
+      root: "/home/user",
+      authority: "host",
+      volume_id: "volume",
+      policy_version: "v1",
+    });
+    store.record({ run, path: run.root, depth: 0 }, [], true);
+  }
+  let now = 0;
+  const send = jest.fn(async () => {
+    now += 600;
+  });
+  await censusReporter({
+    store,
+    current: async () => ({ run_id: null }),
+    send,
+    now: () => now,
+  })(journal);
+  expect(send).toHaveBeenCalledTimes(1);
+  await censusReporter({
+    store,
+    current: async () => ({ run_id: null }),
+    send,
+    enabled: () => false,
+  })(journal);
+  expect(send).toHaveBeenCalledTimes(1);
+});

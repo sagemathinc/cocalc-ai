@@ -104,7 +104,12 @@ test("subject and operation IDs match the host protocol", () => {
 });
 
 test("create/send retries retain a single human thread/message and ignore spoofed payload actors", async () => {
-  const create = { request_id, title: "Seminar", account_id: "spoofed" };
+  const create = {
+    expected_room_id: room.room_id,
+    request_id,
+    title: "Seminar",
+    account_id: "spoofed",
+  };
   const a = await handlers.createThread.call({ subject }, create);
   const b = await handlers.createThread.call({ subject }, create);
   expect(a).toEqual(b);
@@ -117,6 +122,7 @@ test("create/send retries retain a single human thread/message and ignore spoofe
   );
   const send = {
     request_id,
+    expected_room_id: room.room_id,
     thread_id: a.thread_id,
     text: "@codex is a reference, not an invocation",
     account_id: "spoofed",
@@ -142,7 +148,7 @@ test.each([
     await expect(
       handlers.initialize.call(
         { subject: foreign },
-        { request_id, ...identity },
+        { expected_room_id: room.room_id, request_id, ...identity },
       ),
     ).rejects.toThrow();
     expect(acquireChatSyncDB).not.toHaveBeenCalled();
@@ -153,16 +159,32 @@ test.each([
 test("every operation observes the current feature flag", async () => {
   enabled = false;
   for (const [method, opts] of [
-    ["initialize", { request_id }],
-    ["createThread", { request_id, title: "No" }],
-    ["send", { request_id, thread_id: request_id, text: "No" }],
+    ["initialize", { expected_room_id: room.room_id, request_id }],
+    [
+      "createThread",
+      { expected_room_id: room.room_id, request_id, title: "No" },
+    ],
+    [
+      "send",
+      {
+        expected_room_id: room.room_id,
+        request_id,
+        thread_id: request_id,
+        text: "No",
+      },
+    ],
   ] as const)
     await expect(handlers[method].call({ subject }, opts)).rejects.toThrow(
       "disabled",
     );
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
   enabled = true;
-  expect(await handlers.initialize.call({ subject }, { request_id })).toEqual({
+  expect(
+    await handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
+  ).toEqual({
     ...room,
     initialized: true,
   });
@@ -174,7 +196,10 @@ test("disabled during acquisition releases the source before initialization or m
     return db as any;
   });
   await expect(
-    handlers.createThread.call({ subject }, { request_id }),
+    handlers.createThread.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("disabled");
   expect(rows).toEqual([]);
   expect(releaseChatSyncDB).toHaveBeenCalledTimes(1);
@@ -186,7 +211,10 @@ test("missing registration cannot allocate a room", async () => {
     .mockResolvedValueOnce(null);
   const ensure = jest.spyOn(store, "ensureRoom");
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("existing canonical room");
   expect(ensure).not.toHaveBeenCalled();
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
@@ -194,32 +222,50 @@ test("missing registration cannot allocate a room", async () => {
 });
 
 test("initialized source deletion is checked before opening a cached SyncDB", async () => {
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   diskExists = false;
   jest.mocked(acquireChatSyncDB).mockClear();
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("deleted");
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
 });
 
 test("owner initialized guard survives losing the worker journal", async () => {
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect((await store.registeredRoom(identity))?.initialized).toBe(true);
   jest.spyOn(journal, "roomState").mockReturnValue(false);
   diskExists = false;
   jest.mocked(acquireChatSyncDB).mockClear();
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("deleted");
   expect(acquireChatSyncDB).not.toHaveBeenCalled();
 });
 
 test("missing live marker in an initialized room cannot silently recreate it", async () => {
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   rows = [];
   await expect(
-    handlers.createThread.call({ subject }, { request_id }),
+    handlers.createThread.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("deleted");
   expect(rows).toEqual([]);
 });
@@ -228,11 +274,17 @@ test("failed disk acknowledgment retries initialization rather than claiming com
   const arm = jest.spyOn(journal, "armNotifications");
   db.save_to_disk.mockRejectedValueOnce(Error("lost disk acknowledgment"));
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("disk acknowledgment");
   expect(journal.roomState(identity.project_id, room.room_id)).toBe(false);
   expect(arm).not.toHaveBeenCalled();
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(arm).toHaveBeenCalledWith(
     { project_id: room.project_id, chat_path: room.chat_path },
     room.room_id,
@@ -244,20 +296,35 @@ test("failed disk acknowledgment retries initialization rather than claiming com
 });
 
 test("arming does not reinterpret an existing thread's history as live", async () => {
-  await handlers.createThread.call({ subject }, { request_id });
+  await handlers.createThread.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   const arm = jest.spyOn(journal, "armNotifications");
-  await handlers.initialize.call({ subject }, { request_id });
+  await handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   expect(arm).not.toHaveBeenCalled();
 });
 
 test("non-waiting admission rejects concurrent operations before any I/O", async () => {
-  const first = handlers.initialize.call({ subject }, { request_id });
+  const first = handlers.initialize.call(
+    { subject },
+    { expected_room_id: room.room_id, request_id },
+  );
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("busy");
   await first;
   await service.close();
   await expect(
-    handlers.initialize.call({ subject }, { request_id }),
+    handlers.initialize.call(
+      { subject },
+      { expected_room_id: room.room_id, request_id },
+    ),
   ).rejects.toThrow("busy");
 });

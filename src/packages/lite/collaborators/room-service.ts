@@ -13,6 +13,9 @@ import {
 import type { HumanRoomSyncDB } from "@cocalc/chat";
 import type { Client } from "@cocalc/conat/core/client";
 import type { CollaborationRoom } from "@cocalc/util/collaborators";
+import { validateCollaborationRoomReplacementRequest } from "@cocalc/util/collaboration-room-replacement";
+import type { CollaborationRoomReplacementRequest } from "@cocalc/util/collaboration-room-replacement";
+import type { CollaborationRoomServiceState } from "@cocalc/util/collaboration-room-replacement";
 import type { createLiteCollaborators } from "./service";
 
 // Same wire protocol as project-host/collaborators-service, without depending on
@@ -25,7 +28,10 @@ interface Identity {
 }
 type Runtime = Pick<
   ReturnType<typeof createLiteCollaborators>,
-  "store" | "assertInitializedRoomSource" | "ensureRoomDirectory"
+  | "store"
+  | "assertInitializedRoomSource"
+  | "ensureRoomDirectory"
+  | "replaceRoom"
 > & {
   service: Pick<
     ReturnType<typeof createLiteCollaborators>["service"],
@@ -81,9 +87,9 @@ export async function initLiteCollaboratorsRoomService(
   async function authorize(
     identity: Identity,
     expected?: CollaborationRoom,
-  ): Promise<CollaborationRoom> {
+  ): Promise<CollaborationRoomServiceState> {
     // The store checks both local identities and the current feature flag.
-    const room = await runtime.store.registeredRoom(identity);
+    const room = await runtime.store.roomForService(identity);
     if (
       !room ||
       !UUID.test(room.room_id) ||
@@ -102,20 +108,27 @@ export async function initLiteCollaboratorsRoomService(
   async function run<T>(
     subject: string | undefined,
     request_id: string,
+    expected_room_id: string,
     mutate: (
       db: HumanRoomSyncDB,
       room: CollaborationRoom,
       identity: Identity,
     ) => Promise<T>,
+    reserved = false,
   ): Promise<T> {
     const identity = collaborationServiceIdentity(subject);
     if (!UUID.test(request_id)) throw Error("valid request_id required");
-    if (closed || active)
+    if (!UUID.test(expected_room_id ?? ""))
+      throw Error("valid expected_room_id required");
+    if (!reserved && (closed || active))
       throw Error("human room service busy; retry the same request_id");
     // Reserve before the first async authorization, with no queued requests.
     const task = Promise.resolve().then(async () => {
       const room = await authorize(identity);
+      if (room.room_id !== expected_room_id)
+        throw Error("canonical room changed; stale human operation rejected");
       const journal = runtime.service.journal;
+      if (room.retired_rooms?.length) journal.reconcileRoom(room);
       const initialized =
         room.initialized || journal.roomState(room.project_id, room.room_id);
       if (initialized) await runtime.assertInitializedRoomSource(room);
@@ -154,7 +167,7 @@ export async function initLiteCollaboratorsRoomService(
         await releaseChatSyncDB(room.project_id, room.chat_path);
       }
     });
-    active = task;
+    if (!reserved) active = task;
     try {
       return await task;
     } finally {
@@ -163,35 +176,87 @@ export async function initLiteCollaboratorsRoomService(
   }
 
   const service = await client.service(COLLABORATORS_SUBJECT, {
-    initialize(this: { subject?: string }, opts: { request_id: string }) {
-      return run(this.subject, opts?.request_id, async (_db, room) => room);
+    async replaceRoom(
+      this: { subject?: string },
+      value: CollaborationRoomReplacementRequest,
+    ) {
+      const request = validateCollaborationRoomReplacementRequest(value);
+      const identity = collaborationServiceIdentity(this.subject);
+      if (request.project_id !== identity.project_id)
+        throw Error("replacement project identity mismatch");
+      if (closed || active)
+        throw Error("human room service busy; retry the same request_id");
+      const subject = this.subject;
+      const task = Promise.resolve().then(async () => {
+        await authorize(identity);
+        const result = await runtime.replaceRoom(request, identity);
+        if (result.outcome === "superseded") return result;
+        const room = await run(
+          subject,
+          request.request_id,
+          result.room.room_id,
+          async (_db, room) => room,
+          true,
+        );
+        return {
+          outcome: "ready" as const,
+          operation_id: result.operation_id,
+          room: { ...room, initialized: true },
+        };
+      });
+      active = task;
+      try {
+        return await task;
+      } finally {
+        if (active === task) active = undefined;
+      }
+    },
+    initialize(
+      this: { subject?: string },
+      opts: { request_id: string; expected_room_id: string },
+    ) {
+      return run(
+        this.subject,
+        opts?.request_id,
+        opts?.expected_room_id,
+        async (_db, room) => room,
+      );
     },
     createThread(
       this: { subject?: string },
-      opts: { request_id: string; title?: string },
+      opts: { request_id: string; expected_room_id: string; title?: string },
     ) {
       if (
         opts?.title != null &&
         (typeof opts.title !== "string" || opts.title.length > 512)
       )
         throw Error("invalid human thread title");
-      return run(this.subject, opts?.request_id, async (db, room, identity) =>
-        createHumanThread(db, {
-          room,
-          account_id: identity.account_id,
-          thread_id: humanOperationId(
-            identity,
-            room.room_id,
-            "thread",
-            opts.request_id,
-          ),
-          title: opts.title,
-        }),
+      return run(
+        this.subject,
+        opts?.request_id,
+        opts?.expected_room_id,
+        async (db, room, identity) =>
+          createHumanThread(db, {
+            room,
+            account_id: identity.account_id,
+            thread_id: humanOperationId(
+              identity,
+              room.room_id,
+              "thread",
+              opts.request_id,
+            ),
+            title: opts.title,
+          }),
       );
     },
     send(
       this: { subject?: string },
-      opts: { request_id: string; thread_id: string; text: string },
+      opts: {
+        request_id: string;
+        expected_room_id: string;
+        thread_id: string;
+        text: string;
+      },
     ) {
       if (!UUID.test(opts?.thread_id ?? ""))
         throw Error("valid thread_id required");
@@ -201,19 +266,23 @@ export async function initLiteCollaboratorsRoomService(
         opts.text.length > 32768
       )
         throw Error("human message must contain 1 to 32768 characters");
-      return run(this.subject, opts?.request_id, async (db, room, identity) =>
-        sendHumanMessage(db, {
-          room,
-          account_id: identity.account_id,
-          thread_id: opts.thread_id,
-          message_id: humanOperationId(
-            identity,
-            room.room_id,
-            "message",
-            opts.request_id,
-          ),
-          text: opts.text,
-        }),
+      return run(
+        this.subject,
+        opts?.request_id,
+        opts?.expected_room_id,
+        async (db, room, identity) =>
+          sendHumanMessage(db, {
+            room,
+            account_id: identity.account_id,
+            thread_id: opts.thread_id,
+            message_id: humanOperationId(
+              identity,
+              room.room_id,
+              "message",
+              opts.request_id,
+            ),
+            text: opts.text,
+          }),
       );
     },
   });

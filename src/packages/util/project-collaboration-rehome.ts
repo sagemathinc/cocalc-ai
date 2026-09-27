@@ -11,11 +11,15 @@ export const PROJECT_COLLABORATION_REHOME_TABLES = [
   "collaboration_sources",
   "collaboration_catalog",
   "collaboration_rooms",
+  "collaboration_room_replacements",
   "collaboration_memberships",
   "collaboration_notification_events",
   "collaboration_notification_floors",
   "collaboration_source_requests",
   "collaboration_relocations",
+  "collaboration_relation_sets",
+  "collaboration_participants",
+  "collaboration_references",
 ] as const;
 export type ProjectCollaborationRehomeTable =
   (typeof PROJECT_COLLABORATION_REHOME_TABLES)[number];
@@ -45,7 +49,7 @@ export interface ProjectCollaborationRehomePage {
   table: ProjectCollaborationRehomeTable;
   rows: Record<string, unknown>[];
   table_complete: boolean;
-  /** Decimal page ordinal; null only after all nine tables were exported. */
+  /** Decimal page ordinal; null only after all declared tables were exported. */
   next: string | null;
   /** Present only on the final page; covers every page including this one. */
   manifest?: ProjectCollaborationRehomeManifest;

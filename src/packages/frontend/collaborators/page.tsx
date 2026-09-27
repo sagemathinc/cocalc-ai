@@ -579,6 +579,7 @@ function CollaboratorsWorkspace({
                 />
               ) : (
                 <Overview
+                  accountId={accountId}
                   key={JSON.stringify([projectId, personId])}
                   api={api}
                   projectId={projectId}

@@ -33,6 +33,34 @@ const readPins = jest.fn();
 const pinsRevision = jest.fn();
 const setPin = jest.fn();
 const pinFence = jest.fn();
+const discovery = jest.fn();
+const discoveryWriter = jest.fn();
+const discoveryReport = jest.fn();
+const stageRelations = jest.fn();
+const participants = jest.fn();
+const references = jest.fn();
+const getRoom = jest.fn();
+const replaceRoom = jest.fn();
+jest.mock(
+  "@cocalc/database/postgres/collaborators-room-replacement",
+  () => ({
+    getCollaborationRoom: (...args) => getRoom(...args),
+    replaceCollaborationRoom: (...args) => replaceRoom(...args),
+  }),
+  { virtual: true },
+);
+jest.mock("@cocalc/database/postgres/collaborators-relations-owner", () => ({
+  stageCollaborationRelationPage: (...args) => stageRelations(...args),
+}));
+jest.mock("@cocalc/database/postgres/collaborators-relations-query", () => ({
+  listCollaborationParticipants: (...args) => participants(...args),
+  listCollaborationReferences: (...args) => references(...args),
+}));
+jest.mock("@cocalc/database/postgres/collaborators-census", () => ({
+  getCollaborationDiscovery: (...args) => discovery(...args),
+  collaborationDiscoveryForHost: (...args) => discoveryWriter(...args),
+  reportCollaborationDiscovery: (...args) => discoveryReport(...args),
+}));
 jest.mock("@cocalc/backend/conat", () => ({ conat: () => "local-client" }));
 jest.mock("@cocalc/backend/collaborators/project-pins", () => ({
   accountProjectPins: () => ({
@@ -45,6 +73,14 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   withAccountRehomeWriteFence: (...args) => pinFence(...args),
 }));
 const remote = {
+  getRoom: jest.fn(),
+  replaceRoomForHost: jest.fn(),
+  stageRelationPage: jest.fn(),
+  listParticipants: jest.fn(),
+  listReferences: jest.fn(),
+  getDiscovery: jest.fn(),
+  discoveryForHost: jest.fn(),
+  reportDiscovery: jest.fn(),
   listResources: jest.fn(),
   listPeople: jest.fn(),
   listProjects: jest.fn(),
@@ -137,6 +173,8 @@ beforeEach(() => {
   owner.mockResolvedValue(route);
   home.mockResolvedValue({ home_bay_id: "home" });
   settings.mockResolvedValue({ collaborators_enabled: true });
+  discovery.mockResolvedValue({ status: "pending" });
+  remote.getDiscovery.mockResolvedValue({ status: "pending" });
   dbQuery.mockResolvedValue({ rows: [{ deleted: false, banned: false }] });
   list.mockResolvedValue({ items: [], coverage: "partial" });
   readPins.mockResolvedValue([project_id]);
@@ -149,6 +187,111 @@ beforeEach(() => {
     chat_path: "/home/user/.cocalc/collaborators.chat",
   });
   ingest.mockResolvedValue({ revision: 1, replayed: false });
+});
+
+test("room inspection and replacement use explicit project ownership, not account-home authority", async () => {
+  await collaboratorsApi.getRoom({ project_id, account_id });
+  expect(remote.getRoom).toHaveBeenCalledWith({
+    project_id,
+    account_id,
+    route,
+  });
+  const write = {
+    project_id,
+    host_id,
+    requesting_account_id: account_id,
+    request: {
+      version: 1 as const,
+      project_id,
+      request_id: randomUUID(),
+      expected_room_id: randomUUID(),
+      expected_chat_path: snapshot.chat_path,
+    },
+  };
+  await collaboratorsApi.replaceRoomForHost(write);
+  expect(remote.replaceRoomForHost).toHaveBeenCalledWith({ ...write, route });
+  expect(getRoom).not.toHaveBeenCalled();
+  expect(replaceRoom).not.toHaveBeenCalled();
+  expect(home).not.toHaveBeenCalled();
+  await expect(
+    collaboratorsApi.replaceRoomForHost({ ...write, host_id: undefined }),
+  ).rejects.toThrow("host_id");
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await expect(
+    collaboratorsApi.getRoom({ project_id, account_id }),
+  ).rejects.toThrow("not enabled");
+  await expect(collaboratorsApi.replaceRoomForHost(write)).rejects.toThrow(
+    "not enabled",
+  );
+});
+
+test("census status and host reports route to explicit owner without initiating source work", async () => {
+  await collaboratorsApi.getDiscovery({ project_id, account_id });
+  expect(remote.getDiscovery).toHaveBeenCalledWith({
+    project_id,
+    account_id,
+    route,
+  });
+  await collaboratorsApi.discoveryForHost({ project_id, host_id });
+  expect(remote.discoveryForHost).toHaveBeenCalledWith({
+    project_id,
+    host_id,
+    route,
+  });
+  const write = {
+    project_id,
+    host_id,
+    expected_run_id: null,
+    report: {
+      run_id: randomUUID(),
+      sequence: 1,
+      coverage: "indexing" as const,
+      traversal_complete: false,
+      directories: 1,
+      completed_directories: 0,
+      entries: 0,
+      candidates: 0,
+      pending_candidates: 0,
+      excluded_entries: 0,
+      skipped_symlinks: 0,
+      blocked_directories: 0,
+      errors: 0,
+      source_pending: 0,
+      source_errors: 0,
+    },
+  };
+  await collaboratorsApi.reportDiscovery(write);
+  expect(remote.reportDiscovery).toHaveBeenCalledWith({ ...write, route });
+  expect(register).not.toHaveBeenCalled();
+  expect(ingest).not.toHaveBeenCalled();
+  expect(room).not.toHaveBeenCalled();
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await expect(
+    collaboratorsApi.getDiscovery({ project_id, account_id }),
+  ).rejects.toThrow("not enabled");
+});
+test("selected project coverage reads one owner status and retains existing limitations", async () => {
+  list.mockResolvedValue({
+    items: [],
+    coverage: "partial",
+    coverage_message: "Quota fallback remains available.",
+  });
+  remote.getDiscovery.mockResolvedValue({ status: "unavailable" });
+  const page = await collaboratorsControl.listResources({
+    account_id,
+    project_id,
+    route: { bay_id: "home" },
+  });
+  expect(page.coverage).toBe("partial");
+  expect(page.coverage_message).toContain("unavailable");
+  expect(page.coverage_message).toContain("Quota fallback");
+  expect(remote.getDiscovery).toHaveBeenCalledTimes(1);
+  remote.getDiscovery.mockClear();
+  await collaboratorsControl.listResources({
+    account_id,
+    route: { bay_id: "home" },
+  });
+  expect(remote.getDiscovery).not.toHaveBeenCalled();
 });
 
 test("project pin API routes only to the account home and forwards bounded filters", async () => {
@@ -556,4 +699,109 @@ test("unknown owners, stale homes and disabled accounts never fall back to local
     "owner unavailable",
   );
   expect(ingest).not.toHaveBeenCalled();
+});
+
+describe("complete source relations routing", () => {
+  const page = {
+    version: 1 as const,
+    snapshot,
+    page: 0,
+    rows: [],
+    digest: "a".repeat(64),
+  };
+  test("uploads and read pages route to the explicit project owner, never account-home metadata", async () => {
+    remote.stageRelationPage.mockResolvedValue({ replayed: false });
+    remote.listParticipants.mockResolvedValue({
+      items: [{ account_id }],
+      coverage: "complete",
+    });
+    remote.listReferences.mockResolvedValue({
+      items: [],
+      coverage: "indexing",
+    });
+    await collaboratorsApi.stageRelationPage({ host_id, page });
+    expect(remote.stageRelationPage).toHaveBeenCalledWith({
+      host_id,
+      page,
+      route,
+    });
+    await collaboratorsApi.listParticipants({
+      ...target,
+      account_id,
+      limit: 3,
+    });
+    expect(remote.listParticipants).toHaveBeenCalledWith({
+      ...target,
+      account_id,
+      limit: 3,
+      route,
+    });
+    await collaboratorsApi.listReferences({
+      ...target,
+      account_id,
+      message_id: "native-message",
+    });
+    expect(remote.listReferences).toHaveBeenCalledWith({
+      ...target,
+      account_id,
+      message_id: "native-message",
+      route,
+    });
+    expect(home).not.toHaveBeenCalled();
+    expect(stageRelations).not.toHaveBeenCalled();
+  });
+  test("owner control preserves writer/account fences and rejects stale destinations", async () => {
+    bay = "owner";
+    await collaboratorsControl.stageRelationPage({ host_id, page, route });
+    expect(stageRelations).toHaveBeenCalledWith(page, {
+      owning_bay_id: "owner",
+      host_id,
+    });
+    await collaboratorsControl.listParticipants({
+      ...target,
+      account_id,
+      route,
+    });
+    expect(participants).toHaveBeenCalledWith(
+      { ...target, account_id, route },
+      { owning_bay_id: "owner" },
+    );
+    await collaboratorsControl.listReferences({ ...target, account_id, route });
+    expect(references).toHaveBeenCalledWith(
+      { ...target, account_id, route },
+      { owning_bay_id: "owner" },
+    );
+    participants.mockClear();
+    await expect(
+      collaboratorsControl.listParticipants({
+        ...target,
+        account_id,
+        route: { ...route, epoch: 3 },
+      }),
+    ).rejects.toThrow("stale");
+    expect(participants).not.toHaveBeenCalled();
+    await expect(
+      collaboratorsControl.stageRelationPage({ page, route }),
+    ).rejects.toThrow("host_id");
+  });
+  test("feature-disabled and missing-principal calls do not discover owners or stage metadata", async () => {
+    settings.mockResolvedValue({ collaborators_enabled: false });
+    await expect(
+      collaboratorsApi.stageRelationPage({ host_id, page }),
+    ).rejects.toThrow("not enabled");
+    await expect(
+      collaboratorsApi.listParticipants({ ...target, account_id }),
+    ).rejects.toThrow("not enabled");
+    await expect(
+      collaboratorsApi.listReferences({ ...target, account_id }),
+    ).rejects.toThrow("not enabled");
+    expect(owner).not.toHaveBeenCalled();
+    settings.mockResolvedValue({ collaborators_enabled: true });
+    await expect(collaboratorsApi.listParticipants(target)).rejects.toThrow(
+      "account_id",
+    );
+    await expect(collaboratorsApi.stageRelationPage({ page })).rejects.toThrow(
+      "host_id",
+    );
+  });
 });

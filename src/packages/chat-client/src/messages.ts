@@ -12,9 +12,13 @@ import type {
 } from "@cocalc/chat/core";
 
 import type { ProjectedChatMessage, ProjectedChatThread } from "./types";
+import { projectChatIdentityRows } from "@cocalc/util/collaboration-chat-identity";
 
 function isoDate(value: unknown): string | undefined {
-  const date = value instanceof Date ? value : new Date(`${value ?? ""}`);
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(typeof value === "number" ? value : `${value ?? ""}`);
   return Number.isFinite(date.valueOf()) ? date.toISOString() : undefined;
 }
 
@@ -64,7 +68,7 @@ function projectMessage(row: ChatMessage): ProjectedChatMessage | undefined {
     id(row.message_id) ?? `legacy-message-${Date.parse(date)}-${row.sender_id}`;
   const thread_id = id(row.thread_id) ?? `legacy-thread-${Date.parse(date)}`;
   const history = Array.isArray(row.history) ? row.history : [];
-  const latest = history[0];
+  const latest = history[0] ?? (row as any).payload ?? (row as any).mesg;
   return {
     message_id,
     thread_id,
@@ -99,7 +103,7 @@ export function projectChatRows(
   const states = new Map<string, ChatThreadStateRecord>();
   const messages = new Map<string, ProjectedChatMessage>();
 
-  for (const row of rows) {
+  for (const row of projectChatIdentityRows(rows)) {
     const threadId = id(row.thread_id);
     if (row.event === "chat-thread" && threadId) {
       threadRows.set(threadId, row as ChatThreadRecord);

@@ -79,7 +79,8 @@ local authenticated account and a current `isEnabled()` result of exactly true.
 The hub's existing auth transform must bind the account from the principal,
 never trust an arbitrary payload account. Foreign project operations fail closed.
 Network `registerSource`, `ingest`, `writerState`, `sourcePage`, `roomForHost`,
-`markRoomInitialized`, `checkpointPage` and `relocateSource`
+`markRoomInitialized`, `checkpointPage`, `discoveryForHost`, `reportDiscovery`
+and `relocateSource`
 always reject, even when the flag is enabled. Local ingestion is independent of
 the flag when explicitly called by trusted maintenance code. The background
 producer checks the dynamic flag before discovery, reads, registration and
@@ -119,6 +120,22 @@ Only explicit `ensureRoom` and `requestSource` enqueue their specific paths.
 Their durable inventory records participate in bounded owner-source discovery;
 neither API creates chat content, rewrites files, or starts compute.
 
+Explicit room replacement uses the same human-bound `replaceRoom` service
+contract as hosted projects. Only the sole configured account may confirm it.
+Under the copy and journal write locks, ENOENT is required before the local owner
+transaction switches the expected identity/path, retains its retry receipt, and
+tombstones the old catalog/source. The new path stays inside Lite's configured
+home and is initialized through the normal human chat service. Read/corruption
+errors never trigger replacement, and retired paths cannot be adopted, moved,
+or written back into the catalog. Receipts and journal retirement survive restart;
+the 32-operation project cap includes superseded receipts. Every ordinary room
+mutation requires `expected_room_id` and rejects stale callers.
+
+The service-local room lookup carries bounded retirement metadata so an ordinary
+human operation can finish a replacement whose acknowledgement was lost. The
+owner transaction releases retired-source active/staged relation sets and derived
+participant rows; it retains personal state, identity floors, and retry receipts.
+
 With the local data-plane client configured, the producer's `beforeRead` hook
 also recovers accepted Conat history for the already initialized canonical room.
 It runs from the durable source inventory, including after daemon restart, without
@@ -142,7 +159,8 @@ retain the last valid metadata and retry through the durable source journal.
 
 - Reads query SQLite and existing personal stores. They never scan directories, open source chats, start
   compute or start a producer. The background worker discovers from the existing
-  service-side source index and its own journal, in pages of at most 100 sources.
+  service-side source index and its own journal, in pages of at most 100 sources,
+  plus the separately persisted census below.
 - Metadata search uses SQLite FTS5 literal token prefixes over titles and this
   account's aliases, not message bodies or leading-wildcard table scans.
   `listProjectResources` is the selected-project fallback: shared-title search
@@ -234,10 +252,113 @@ Unknown or overwritten copy/move outcomes require reconciliation rather than
 guessing that they were successful; fresh same-project service-mediated copies
 and confirmed renames/moves use the ordinary supported pipeline.
 
-Backfill uses bounded service indexes only and cannot claim an exhaustive legacy
-file census. Discovery resumes from the beginning of the index paging loop after
-restart; journaled writes/deliveries remain durable. None of these exclusions is
-silently presented as complete coverage.
+## Historical Source Census
+
+The explicitly started producer also walks Lite's already configured project
+home, including regular `.chat` files absent from the artifact catalog, owner
+source inventory, and journal. It uses the shared persisted census engine in
+[`backend/collaborators`](../../backend/collaborators/README.md#historical-source-census).
+Neither factory construction nor a list/status request starts this walk; the
+dynamic default-off flag must be enabled when the background worker runs.
+Discovery never starts compute, creates a room, changes permissions, or enrolls
+an agent. Found paths use ordinary journal registration and extraction, including
+existing identity and copy/relocation fences.
+
+`census.sqlite` and its process lock live in the configured private service
+directory. The run scope includes the local account/project, configured root,
+root device/inode identity, and policy version. `.snapshots`, `.trash`, and the
+private service directory when it lies below the project root are excluded.
+Other ordinary directories are eligible, including hidden folders and
+`node_modules`; symlinks are skipped, not followed. The Linux sandbox adapter
+uses no-follow directory descriptors and mount-ID checks, rejecting renamed or
+mutated directories, replaced roots, and cross-mount traversal. It is not exposed
+through filesystem RPC. Non-Linux traversal is explicitly unsupported and leaves
+partial coverage, rather than silently scanning through a weaker fallback.
+
+The shared defaults are 10,000 directories, 100,000 entries, 10,000 entries per
+directory, 10,000 chat candidates, and depth 32 per run. The store allows 4,096
+retained project runs/summaries and 64 MiB of charged metadata; standalone Lite uses one
+project. Each step streams at most 100 Dirents from one directory under a
+cooperative 100 ms budget, with at most four retained directory handles and
+16 journal candidate handoffs per pass. Stream operations have five-second
+deadlines and a process-wide 32-stream admission limit; timed-out kernel work
+retains its slot until cleanup. This is not a deadline for every OS or lifecycle
+wait. Non-chat entries and replay reads also consume traversal budgets.
+
+Completed frontiers compact only after all candidates have durable journal
+receipts. Run scope, counts, partial reasons and pending report retries survive;
+unfinished frontiers and unacknowledged candidates are never compacted. Reserved
+summary/report space is included in the byte budget. Per-project reports do not
+consume generic scheduler checkpoint slots. The backend section documents the
+shared operator capacity settings, migration, and byte-pressure retry path; Lite
+honors the same `COCALC_COLLABORATORS_CENSUS_PROJECTS` and
+`COCALC_COLLABORATORS_CENSUS_BYTES` settings without requiring a chat path.
+
+Lite also honors the backend's validated per-run policy limits and
+`COCALC_COLLABORATORS_CENSUS_RESCAN_REVISION`. After cleanup or a limit increase,
+a new stable operator revision requests a bounded path-free rescan of the existing
+root, including a previously quota-blocked unfinished walk. Keep the revision
+configured across restarts. The reset first drains candidate handoffs and exact
+unacknowledged report retries, then preserves one prior aggregate summary while
+installing a new fenced run. It never drops journal intent or changes access,
+starts compute, or runs from a list call. A blocked handoff/report keeps the old
+partial run intact. The shared source service independently honors
+`COCALC_COLLABORATORS_JOURNAL_SOURCES` (default 10000, maximum 1000000) and
+`COCALC_COLLABORATORS_JOURNAL_BYTES` (default 268435456, maximum 4294967296);
+invalid settings fail construction and lower budgets never evict durable state.
+These do not enlarge Lite's independent registered-source or catalog quotas.
+
+Progress, candidates, handoff receipts, errors, and report retries persist across
+restart. Unfinished directories replay from the beginning with durable
+deduplication; completed directory state or its compact summary is retained. Disabling closes cursors
+without discarding progress. Errors retry with backoff capped at 60 seconds.
+A completed run with no pending candidate handoffs becomes eligible for a fresh
+walk one hour after its start, after any unacknowledged report retry drains.
+Root identity or scope changes replace the run; quota-blocked runs remain partial
+until an explicit policy rescan. External changes after a visit are not an
+atomic filesystem snapshot and may require the normal journal or next census.
+The older registered-inventory paging loop may restart from its beginning;
+the new census frontier and journal deliveries do not.
+
+`api.getDiscovery({account_id,project_id})` reads only local metadata. Internal
+`store.discoveryForProducer` / `store.reportDiscovery` use run-CAS and monotone
+sequence checks; browser/remote-host telemetry writes are rejected. Reports are
+throttled to at least 30 seconds per project, preserve source pending/error counts,
+and contain no paths or transcripts. No report means pending; a report older than
+30 minutes is unavailable. Resource-list coverage includes census status and
+retains source-specific warnings. Encountered exclusions, symlinks, I/O failures,
+and quotas are partial coverage. A completed scoped walk and source handoff never
+claims all archived content or relationships are complete.
+
+## Complete Participant And Reference Relations
+
+`store.stageRelationPage({page})` is service-local, not a browser writer API.
+It stages immutable source-epoch/sequence pages of at most 200 rows and 256 KiB.
+`store.ingest({snapshot: {...metadata, relations: manifest}})` verifies the entire
+set and activates relations with metadata in one SQLite transaction. A stage
+prefix is never visible; missing pages, stale epochs, changed immutable bytes,
+or invalid native provenance cannot partially replace the previous graph.
+
+`api.listParticipants(target)` and `api.listReferences(target)` return keyset pages
+of at most 50 rows with explicit complete/partial coverage and `check`-compatible
+revision tokens. A live registered-agent locator change returns indexing until
+the current thread is indexed, never its predecessor's complete relations.
+Person filters and For You
+participation query full committed relation rows, never the 64-person preview.
+A verified set derives the preview and exact participant count, not vice versa.
+Metadata-only or incomplete-history updates retain known edges with partial
+coverage; only a verified complete replacement can remove absent edges. Current
+registered-agent threads bind after identity adaptation, without lending an old
+thread's participation to a replacement thread. Authored reference targets and
+copy namespaces are not remapped.
+
+Staging is limited to two pending sets per source, 20,000 retained sets and
+256 MiB of charged local storage, with the shared per-set limits. Old-epoch or
+superseded nonactive staging is removed in batches of eight. Activation discards
+duplicate page payloads but retains hashes for conflicting-retry checks, and
+removes the preceding active set. Cursor revision changes require pagination to
+restart. These APIs report relation coverage independently of the filesystem
+census; neither a preview nor a completed directory walk proves complete history.
 
 ## Focused Checks
 

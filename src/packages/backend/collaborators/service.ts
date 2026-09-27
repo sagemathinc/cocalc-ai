@@ -4,9 +4,16 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import type { CollaborationSourceSnapshot } from "@cocalc/util/collaborators";
+import type { CollaborationRelationPage } from "@cocalc/util/collaboration-relations";
 import { CollaborationJournal } from "./journal";
 import type { CollaborationDelivery } from "./notifications";
 import type { ActivitySource, CollaborationActivityPage } from "./activity";
+import type { CollaborationCensusProducer } from "./census-producer";
+import {
+  journalCapacityFromEnvironment,
+  validateJournalCapacity,
+} from "./capacity";
+import type { CollaborationJournalCapacity } from "./capacity";
 import type {
   CollaborationRead,
   CollaborationScan,
@@ -26,6 +33,8 @@ export class CollaboratorsService {
   constructor(
     private readonly options: {
       filename: string;
+      journalCapacity?: CollaborationJournalCapacity;
+      census?: CollaborationCensusProducer;
       enabled?(): Promise<boolean>;
       /** Bounded canonical-room durability work, before capturing the final read fence. */
       beforeRead?(source: CollaborationScan): Promise<void>;
@@ -36,10 +45,13 @@ export class CollaboratorsService {
       relocate?(
         request: CollaborationRelocationRequest,
       ): Promise<{ epoch: string; revision: number }>;
-      read(source: CollaborationSource): Promise<CollaborationRead>;
-      writerState(
-        source: CollaborationSource,
-      ): Promise<{ epoch: string; registration_id: string | null } | null>;
+      read(source: CollaborationScan): Promise<CollaborationRead>;
+      stageRelationPage?(page: CollaborationRelationPage): Promise<unknown>;
+      writerState(source: CollaborationSource): Promise<{
+        epoch: string;
+        registration_id: string | null;
+        retired_room_id?: string;
+      } | null>;
       register(request: CollaborationRegistration): Promise<{ epoch: string }>;
       send(
         snapshot: CollaborationDelivery,
@@ -53,6 +65,9 @@ export class CollaboratorsService {
       now?: () => number;
     },
   ) {
+    const journalCapacity = options.journalCapacity
+      ? validateJournalCapacity(options.journalCapacity)
+      : journalCapacityFromEnvironment();
     this.lock = new DatabaseSync(options.filename + ".lock");
     try {
       this.lock.exec(
@@ -60,7 +75,7 @@ export class CollaboratorsService {
       );
       this.journal = new CollaborationJournal(
         options.filename,
-        undefined,
+        journalCapacity,
         !!options.sourceActivity,
         options.enabled,
       );
@@ -94,8 +109,12 @@ export class CollaboratorsService {
     return this.pending;
   }
   private async run() {
-    if (!(await this.journal.isEnabled()) || this.stopped) return;
+    if (!(await this.journal.isEnabled()) || this.stopped) {
+      await this.options.census?.pause();
+      return;
+    }
     const now = this.options.now ?? Date.now;
+    this.journal.relations.recover();
     if (this.options.initializeCopy) {
       for (const copy of this.journal.copies(16, now())) {
         if (this.stopped) return;
@@ -120,6 +139,13 @@ export class CollaboratorsService {
       } catch (err) {
         this.options.onError(undefined, err);
       }
+      if (this.options.census && !this.stopped) {
+        try {
+          await this.options.census.step(this.journal);
+        } catch (err) {
+          this.options.onError(undefined, err);
+        }
+      }
     }
     for (const source of this.journal.registrations(16, now())) {
       if (this.stopped) return;
@@ -130,6 +156,10 @@ export class CollaboratorsService {
         if (!base) {
           const current = await this.options.writerState(source);
           if (this.stopped) return;
+          if (current?.retired_room_id) {
+            this.journal.retireRoomSource(source, current.retired_room_id);
+            continue;
+          }
           if (!this.journal.registrationIsCurrent(source)) continue;
           if (current?.registration_id === source.registration_id) {
             this.journal.registered(source, current.epoch);
@@ -240,18 +270,51 @@ export class CollaboratorsService {
       if (this.stopped) return;
       if (!this.journal.deliveryIsCurrent(snapshot)) continue;
       try {
-        const result = await this.options.send(snapshot);
-        if (
-          !Number.isSafeInteger(result.revision) ||
-          result.revision < 0 ||
-          typeof result.replayed !== "boolean"
-        )
-          throw Error("invalid collaboration ingest acknowledgement");
+        const send = async (payload: CollaborationDelivery) => {
+          const result = await this.options.send(payload);
+          if (
+            !Number.isSafeInteger(result.revision) ||
+            result.revision < 0 ||
+            typeof result.replayed !== "boolean"
+          )
+            throw Error("invalid collaboration ingest acknowledgement");
+          return result;
+        };
+        if (this.journal.relations.has(snapshot)) {
+          if (!this.options.stageRelationPage)
+            throw Error("relation page transport is unavailable");
+          const done = await this.journal.relations.deliver(
+            snapshot,
+            {
+              stage: async (page) => {
+                const result = await this.options.stageRelationPage!(page);
+                if (
+                  !result ||
+                  typeof (result as { replayed?: unknown }).replayed !==
+                    "boolean"
+                )
+                  throw Error(
+                    "invalid collaboration relation page acknowledgement",
+                  );
+              },
+              commit: (relations) => send({ ...snapshot, relations }),
+            },
+            () => !this.stopped && this.journal.deliveryIsCurrent(snapshot),
+          );
+          if (!done) continue;
+        } else await send(snapshot);
         this.journal.acknowledge(snapshot);
       } catch (err) {
         await this.recover(snapshot, snapshot.epoch);
         this.journal.defer(snapshot, now());
         this.options.onError(snapshot, err);
+      }
+    }
+    if (!this.stopped) {
+      try {
+        await this.options.census?.report?.(this.journal);
+      } catch (err) {
+        this.options.onError(undefined, err);
       }
     }
   }
@@ -262,8 +325,15 @@ export class CollaboratorsService {
       | ActivitySource,
     expectedEpoch: string | null,
   ) {
-    if (this.stopped || !this.options.recoverWriter) return;
+    if (this.stopped) return;
     try {
+      const writer = await this.options.writerState(source);
+      if (this.stopped) return;
+      if (writer?.retired_room_id) {
+        this.journal.retireRoomSource(source, writer.retired_room_id);
+        return;
+      }
+      if (!this.options.recoverWriter) return;
       const current = await this.options.recoverWriter(source, expectedEpoch);
       if (!this.stopped && current && current.epoch !== expectedEpoch)
         this.journal.requeueRegistration(source, current.epoch);
@@ -279,6 +349,7 @@ export class CollaboratorsService {
   async close() {
     this.stop();
     await this.pending;
+    await this.options.census?.close();
     this.journal.close();
     this.lock.close();
   }

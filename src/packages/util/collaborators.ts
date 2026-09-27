@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { CollaborationMessageEvent } from "./collaboration-attention";
+import type { CollaborationRelationManifest } from "./collaboration-relations";
 
 /** Discovery metadata is never an authorization capability. */
 export type CollaborationResourceKind = "conversation" | "agent" | "artifact";
@@ -27,6 +28,8 @@ export interface CollaborationResource extends CollaborationTarget {
   chat_path: string;
   thread_id: string;
   created_by?: string;
+  /** Conversation's latest message sender, never its creator or most recent editor. */
+  latest_message_author_id?: string;
   participant_ids: string[];
   /** A bounded preview, not necessarily the full participation relation. */
   participant_count?: number;
@@ -104,6 +107,8 @@ export interface CollaborationSourceSnapshot {
   sequence: number;
   /** Complete replacement of one source; partial scans must not be submitted. */
   resources: CollaborationResource[];
+  /** Complete, staged native-thread relations; absence never means an empty set. */
+  relations?: CollaborationRelationManifest;
   /** Immutable service-produced message intent, acknowledged with this snapshot. */
   notification_events?: CollaborationMessageEvent[];
   /** Resource coverage remains complete; this flags bounded relationship summaries. */

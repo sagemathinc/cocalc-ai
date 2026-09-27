@@ -505,6 +505,7 @@ export async function importAccountCollaborationState(
     await internal(db, h);
     for (const table of [
       "collaboration_access",
+      "collaboration_participant_index",
       "collaboration_index",
       ...Object.keys(PERSONAL_TABLES).filter(
         (t) => t !== "collaboration_account_state",
@@ -645,6 +646,7 @@ export async function retireAccountCollaborationState(
     await internal(db, h);
     for (const table of [
       "collaboration_access",
+      "collaboration_participant_index",
       "collaboration_index",
       ...Object.keys(PERSONAL_TABLES).filter(
         (t) => t !== "collaboration_account_state",

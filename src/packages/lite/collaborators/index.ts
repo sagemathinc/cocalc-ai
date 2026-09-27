@@ -47,6 +47,21 @@ import {
   saveLiteAgentBindings,
 } from "./agent-identity";
 import type { CollaborationAgentIdentity } from "@cocalc/util/collaboration-agent-identity";
+import { LiteCollaborationRelations } from "./relations";
+import {
+  initializeLiteRoomReplacementSchema,
+  replaceLiteRoom,
+  retiredLiteRoomSource,
+} from "./room-replacement";
+import type { CollaborationRoomReplacementHostRequest } from "@cocalc/util/collaboration-room-replacement";
+import {
+  discoveryCoverage,
+  validateDiscoveryReport,
+} from "@cocalc/util/collaboration-census";
+import type {
+  CollaborationDiscoveryState,
+  CollaborationDiscoveryWrite,
+} from "@cocalc/util/collaboration-census";
 
 export interface LiteCollaboratorsOptions {
   /** Service-private file, outside the user-editable project tree. */
@@ -65,6 +80,7 @@ export interface LiteCollaboratorsOptions {
   project_description?: string;
   display_name?: string;
   room_path?: string;
+  room_home?: string;
 }
 
 interface SourceRow {
@@ -113,6 +129,7 @@ export class LiteCollaborators {
   private readonly db: DatabaseSync;
   private readonly library: LibraryCompatibility;
   private readonly agentPins: AgentPinCompatibility;
+  private readonly relations: LiteCollaborationRelations;
   readonly api: CollaboratorsApi;
 
   constructor(private readonly options: LiteCollaboratorsOptions) {
@@ -131,6 +148,7 @@ export class LiteCollaborators {
       chmodSync(options.filename, 0o600);
     }
     this.db = new DatabaseSync(options.filename);
+    initializeLiteRoomReplacementSchema(this.db);
     try {
       this.db.exec(`
         PRAGMA busy_timeout=5000;
@@ -146,6 +164,9 @@ export class LiteCollaborators {
         CREATE TABLE IF NOT EXISTS collaboration_room (
           singleton INTEGER PRIMARY KEY CHECK(singleton=1), room_id TEXT NOT NULL,
           chat_path TEXT NOT NULL, request_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS collaboration_discovery (
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1), report TEXT NOT NULL, updated_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS collaboration_initialized_rooms (
           room_id TEXT PRIMARY KEY
@@ -255,7 +276,32 @@ export class LiteCollaborators {
       changed: () => this.changed(),
       transaction: (run) => this.transaction(run),
     });
+    this.relations = new LiteCollaborationRelations({
+      db: this.db,
+      project_id: options.project_id,
+      transaction: (run) => this.transaction(run),
+      revision: () => this.revision(),
+      changed: () => this.changed(),
+      writer: (snapshot) => {
+        this.assertProject(snapshot.project_id);
+        this.assertActiveSource(snapshot.chat_path);
+        const source = this.source(snapshot.chat_path);
+        if (!source || source.epoch !== snapshot.epoch)
+          throw Error("stale collaborators relation writer epoch");
+        return { ...snapshot, sequence: source.sequence };
+      },
+    });
     this.api = {
+      stageRelationPage: localOnly,
+      listParticipants: (opts) => this.listParticipants(opts),
+      listReferences: (opts) => this.listReferences(opts),
+      getDiscovery: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        this.assertProject(opts.project_id);
+        return this.discoveryState();
+      },
+      discoveryForHost: localOnly,
+      reportDiscovery: localOnly,
       check: (opts) => this.check(opts),
       listPeople: (opts) => this.listPeople(opts),
       listProjects: (opts) => this.listProjects(opts),
@@ -267,6 +313,9 @@ export class LiteCollaborators {
       getResource: (opts) => this.getResource(opts),
       setPersonalState: (opts) => this.setPersonalState(opts),
       ensureRoom: (opts) => this.ensureRoom(opts),
+      getRoom: (opts) =>
+        this.registeredRoom({ ...opts, account_id: opts.account_id ?? "" }),
+      replaceRoomForHost: localOnly,
       roomForHost: (opts) => this.roomForHost(opts),
       markRoomInitialized: localOnly,
       relocateSource: localOnly,
@@ -423,10 +472,28 @@ export class LiteCollaborators {
   async writerState(
     opts: Parameters<CollaboratorsApi["writerState"]>[0],
   ): Promise<
-    (SourceRow & { source_sequence: number; writer_host_id: null }) | null
+    | (SourceRow & {
+        source_sequence: number;
+        writer_host_id: null;
+        retired_room_id?: string;
+      })
+    | null
   > {
     this.assertProject(opts.project_id);
     validate.chatPath(opts.chat_path);
+    const retired = retiredLiteRoomSource(this.db, opts.chat_path);
+    if (retired)
+      return {
+        epoch: String(retired.retired_epoch),
+        registration_id: "",
+        sequence: 0,
+        source_sequence: 0,
+        revision: 0,
+        payload_hash: null,
+        metadata_hash: null,
+        writer_host_id: null,
+        retired_room_id: String(retired.previous_room_id),
+      };
     const source = this.source(opts.chat_path);
     return source
       ? { ...source, source_sequence: source.sequence, writer_host_id: null }
@@ -448,7 +515,8 @@ export class LiteCollaborators {
           UNION SELECT chat_path FROM collaboration_room WHERE chat_path>?
           UNION SELECT chat_path FROM collaboration_requested_sources q WHERE chat_path>?
             AND NOT EXISTS(SELECT 1 FROM collaboration_relocated_sources r WHERE r.chat_path=q.chat_path)
-        ) ORDER BY chat_path LIMIT 101`,
+        ) known WHERE NOT EXISTS(SELECT 1 FROM collaboration_room_replacements r WHERE r.previous_chat_path=known.chat_path)
+        ORDER BY chat_path LIMIT 101`,
       )
       .all(after, after, after);
     const paths = rows.slice(0, 100).map((row) => row.chat_path as string);
@@ -595,6 +663,10 @@ export class LiteCollaborators {
   ): Promise<{ revision: number; replayed: boolean }> {
     this.assertProject(opts.snapshot.project_id);
     const snapshot = validate.snapshot(opts.snapshot);
+    if (snapshot.relations) await this.assertHuman(this.options.account_id);
+    const relations = snapshot.relations
+      ? await this.relations.prepare(snapshot.relations)
+      : undefined;
     const liveFloors = new Map(opts.initialReadFloors);
     if (liveFloors.size > 5000)
       throw Error("initial read boundary capacity exceeded");
@@ -631,11 +703,14 @@ export class LiteCollaborators {
           throw Error("collaborators sequence reused with different metadata");
         return { revision: current.revision, replayed: true };
       }
-      const { resources, bindings } = adaptLiteAgents(
+      const { resources: adapted, bindings } = adaptLiteAgents(
         this.db,
         snapshot.resources,
         this.options.agentIdentities?.() ?? [],
       );
+      const resources = relations
+        ? this.relations.summarize(snapshot, relations, adapted)
+        : adapted;
       const metadata_hash = hash([
         resources,
         bindings,
@@ -663,7 +738,7 @@ export class LiteCollaborators {
         // Hence there is no authorized non-self notification recipient in Lite.
       }
       const replayed = current.metadata_hash === metadata_hash;
-      const revision = current.revision + (replayed ? 0 : 1);
+      const revision = current.revision + (replayed && !relations ? 0 : 1);
       validate.position(revision, "source revision");
       if (!replayed) {
         this.db
@@ -774,6 +849,7 @@ export class LiteCollaborators {
           throw Error("collaborators metadata retention limit exceeded");
         this.changed();
       }
+      if (relations) this.relations.activate(snapshot, relations, resources);
       this.db
         .prepare(
           "UPDATE collaboration_sources SET sequence=?,revision=?,payload_hash=?,metadata_hash=? WHERE chat_path=?",
@@ -785,8 +861,95 @@ export class LiteCollaborators {
           metadata_hash,
           snapshot.chat_path,
         );
-      return { revision, replayed };
+      this.relations.prune(snapshot);
+      return { revision, replayed: replayed && !relations };
     });
+  }
+
+  /** Service-local page writer; the public API explicitly rejects this method. */
+  async stageRelationPage(
+    opts: Parameters<CollaboratorsApi["stageRelationPage"]>[0],
+  ) {
+    await this.assertHuman(this.options.account_id);
+    this.assertProject(opts.page.snapshot.project_id);
+    return this.relations.stage(opts.page);
+  }
+
+  async listParticipants(
+    opts: Parameters<CollaboratorsApi["listParticipants"]>[0],
+  ) {
+    if (opts.message_id !== undefined)
+      throw Error("participants do not accept a message filter");
+    const context = await this.relationReadContext(opts);
+    if (!context.key)
+      return {
+        items: [],
+        coverage: context.coverage,
+        revision: context.revision,
+      };
+    const page = this.relations.participants(
+      context.key,
+      opts,
+      context.thread_id,
+    );
+    return {
+      ...page,
+      revision: context.revision,
+      items: page.items.map((account_id) => ({ account_id })),
+    };
+  }
+
+  async listReferences(
+    opts: Parameters<CollaboratorsApi["listReferences"]>[0],
+  ) {
+    const context = await this.relationReadContext(opts);
+    if (!context.key)
+      return {
+        items: [],
+        coverage: context.coverage,
+        revision: context.revision,
+      };
+    return {
+      ...this.relations.references(context.key, opts, context.thread_id),
+      revision: context.revision,
+    };
+  }
+
+  private async relationReadContext(
+    opts: Parameters<CollaboratorsApi["listReferences"]>[0],
+  ) {
+    await this.assertHuman(opts.account_id);
+    this.query(opts);
+    const resource = await this.getResource(opts);
+    const projectPins = (await this.options.projectPins?.revision()) ?? "";
+    await this.assertHuman(opts.account_id);
+    const revision = this.revisionToken(undefined, projectPins);
+    if (!resource) return { revision, coverage: "partial" as const };
+    // Recheck live identity after every await. A fresh conversation can change
+    // its locator before the background catalog has indexed the new thread.
+    const identity =
+      resource.agent_id && this.options.agentIdentities
+        ? this.options
+            .agentIdentities()
+            .find(
+              (identity) =>
+                identity.project_id === resource.project_id &&
+                identity.agent_id === resource.agent_id,
+            )
+        : undefined;
+    const chat_path = identity?.path ?? resource.chat_path;
+    const thread_id = identity?.thread_id ?? resource.thread_id;
+    const key = this.target(opts);
+    if (
+      (resource.agent_id && this.options.agentIdentities && !identity) ||
+      !this.db
+        .prepare(
+          "SELECT 1 FROM collaboration_resources WHERE resource_key=? AND deleted=0 AND chat_path=? AND json_extract(metadata,'$.thread_id')=?",
+        )
+        .get(key, chat_path, thread_id)
+    )
+      return { revision, coverage: "indexing" as const };
+    return { key, thread_id, revision, coverage: "complete" as const };
   }
 
   private indexSearch(key: string, title: string): void {
@@ -806,6 +969,8 @@ export class LiteCollaborators {
   }
 
   private assertActiveSource(chat_path: string): void {
+    if (retiredLiteRoomSource(this.db, chat_path))
+      throw Error("canonical room source is permanently retired");
     if (this.isRelocating(chat_path))
       throw Error("collaborators source relocation pending");
     if (
@@ -826,6 +991,11 @@ export class LiteCollaborators {
     validate.chatPath(opts.from_chat_path);
     validate.chatPath(opts.to_chat_path);
     validate.text(opts.operation_id, "relocation operation");
+    if (
+      retiredLiteRoomSource(this.db, opts.from_chat_path) ||
+      retiredLiteRoomSource(this.db, opts.to_chat_path)
+    )
+      throw Error("canonical room source is permanently retired");
     const request = JSON.stringify({
       project_id: opts.project_id,
       from_chat_path: opts.from_chat_path,
@@ -915,7 +1085,66 @@ export class LiteCollaborators {
       await this.relocateSource(JSON.parse(row.request as string));
   }
 
-  /** Service status only. No source census exists yet, so complete is forbidden. */
+  private discoveryState(): CollaborationDiscoveryState {
+    const row = this.db
+      .prepare(
+        "SELECT report,updated_at FROM collaboration_discovery WHERE singleton=1",
+      )
+      .get();
+    if (!row) return { status: "pending" };
+    const report = validateDiscoveryReport(JSON.parse(String(row.report)));
+    return {
+      status:
+        Number(row.updated_at) < Date.now() - 30 * 60_000
+          ? "unavailable"
+          : report.coverage,
+      report,
+      updated_at: Number(row.updated_at),
+    };
+  }
+
+  /** Service-local metadata only, not exposed as a browser writer. */
+  async discoveryForProducer(
+    project_id: string,
+  ): Promise<{ run_id: string | null }> {
+    await this.assertHuman(this.options.account_id);
+    this.assertProject(project_id);
+    return { run_id: this.discoveryState().report?.run_id ?? null };
+  }
+
+  async reportDiscovery(
+    write: CollaborationDiscoveryWrite,
+  ): Promise<{ replayed: boolean }> {
+    await this.assertHuman(this.options.account_id);
+    this.assertProject(write.project_id);
+    const report = validateDiscoveryReport(write.report);
+    return this.transaction(() => {
+      const previous = this.discoveryState().report;
+      if (previous?.run_id === report.run_id) {
+        if (previous.sequence > report.sequence)
+          throw Error("stale discovery sequence");
+        if (previous.sequence === report.sequence) {
+          if (JSON.stringify(previous) !== JSON.stringify(report))
+            throw Error("discovery sequence reused with different report");
+          return { replayed: true };
+        }
+      } else if ((previous?.run_id ?? null) !== write.expected_run_id)
+        throw Error("stale discovery run");
+      this.db
+        .prepare(
+          "INSERT INTO collaboration_discovery VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET report=excluded.report,updated_at=excluded.updated_at",
+        )
+        .run(JSON.stringify(report), Date.now());
+      if (
+        JSON.stringify({ ...previous, sequence: 0 }) !==
+        JSON.stringify({ ...report, sequence: 0 })
+      )
+        this.changed();
+      return { replayed: false };
+    });
+  }
+
+  /** Overall metadata coverage is never claimed complete by the source census. */
   setCoverage(
     coverage: "partial" | "indexing",
     message = DEFAULT_COVERAGE,
@@ -945,11 +1174,18 @@ export class LiteCollaborators {
     const source = this.db
       .prepare("SELECT message FROM collaboration_source_coverage LIMIT 1")
       .get();
+    const discovery = this.discoveryState();
+    const base = discovery.report
+      ? discoveryCoverage(discovery)
+      : {
+          coverage: row.coverage as "partial" | "indexing",
+          coverage_message: `${row.coverage_message} Historical chat discovery is pending.`,
+        };
     return {
-      coverage: row.coverage as "partial" | "indexing",
+      coverage: source ? "partial" : base.coverage,
       coverage_message: source
-        ? `${row.coverage_message} ${source.message}`.slice(0, 1024)
-        : (row.coverage_message as string),
+        ? `${base.coverage_message} ${source.message}`.slice(0, 1024)
+        : base.coverage_message,
     };
   }
 
@@ -1132,7 +1368,7 @@ export class LiteCollaborators {
       }
       if (opts.person_id) {
         clauses.push(
-          "(r.created_by=? OR r.resource_key IN (SELECT resource_key FROM collaboration_participants WHERE account_id=?))",
+          "(r.created_by=? OR r.resource_key IN (SELECT resource_key FROM collaboration_full_participants WHERE account_id=?))",
         );
         args.push(opts.person_id, opts.person_id);
       }
@@ -1140,7 +1376,7 @@ export class LiteCollaborators {
         clauses.push(`p.${scope}=1`);
       if (scope === "for-you") {
         clauses.push(
-          "(p.following=1 OR r.resource_key IN (SELECT resource_key FROM collaboration_participants WHERE account_id=?))",
+          "(p.following=1 OR r.resource_key IN (SELECT resource_key FROM collaboration_full_participants WHERE account_id=?))",
         );
         args.push(this.options.account_id);
       }
@@ -1379,6 +1615,32 @@ export class LiteCollaborators {
           initialized: row.initialized === 1,
         }
       : null;
+  }
+
+  async replaceRoom(opts: CollaborationRoomReplacementHostRequest) {
+    await this.assertHuman(opts.requesting_account_id);
+    this.assertProject(opts.project_id);
+    return this.transaction(() =>
+      replaceLiteRoom(
+        this.db,
+        opts,
+        this.options.room_home ?? "/home/user",
+        (chat_path) => this.relations.retireSource(chat_path),
+      ),
+    );
+  }
+
+  async roomForService(opts: { account_id: string; project_id: string }) {
+    const room = await this.registeredRoom(opts);
+    if (!room) return null;
+    const retired_rooms = this.db
+      .prepare(
+        "SELECT previous_room_id AS room_id,previous_chat_path AS chat_path FROM collaboration_room_replacements ORDER BY operation_id LIMIT 33",
+      )
+      .all() as unknown as Array<{ room_id: string; chat_path: string }>;
+    if (retired_rooms.length > 32)
+      throw Error("canonical room retirement capacity exceeded");
+    return { ...room, ...(retired_rooms.length ? { retired_rooms } : {}) };
   }
 
   /** Persist only after the local human-room service acknowledges the disk marker. */

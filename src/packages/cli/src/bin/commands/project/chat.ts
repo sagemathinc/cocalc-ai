@@ -12,6 +12,7 @@ import {
 import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
+import { registerChatRoomCommands } from "./chat-room";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type {
   AgentRpcOutcome,
@@ -73,6 +74,7 @@ export function registerProjectChatCommands(
 
   const chat = project.command("chat").description("project chat operations");
   registerChatAgentCommands(chat, deps);
+  registerChatRoomCommands(chat, deps);
 
   const artifact = chat
     .command("artifact")

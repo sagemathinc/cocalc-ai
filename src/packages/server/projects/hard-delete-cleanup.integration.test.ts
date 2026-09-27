@@ -18,7 +18,12 @@ const collaborationProjectTables = Object.entries(SCHEMA)
     ([table, schema]) =>
       table.startsWith("collaboration_") && schema.fields.project_id != null,
   )
-  .map(([table]) => table);
+  .map(([table]) => table)
+  .sort(
+    (a, b) =>
+      Number(a === "collaboration_participant_index") -
+      Number(b === "collaboration_participant_index"),
+  );
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const stopProjectOnHostMock = jest.fn();
@@ -416,6 +421,10 @@ describe("hard delete project cleanup", () => {
         chat_path: "/home/user/room.chat",
         operation_id: uuid(),
         event_id: uuid(),
+        id: `relation-${project_id}`,
+        set_key: `set-${project_id}`,
+        participant_id: ACCOUNT_ID,
+        receipt: {},
       };
       for (const table of collaborationProjectTables) {
         const schema = SCHEMA[table];
@@ -424,8 +433,9 @@ describe("hard delete project cleanup", () => {
           ...new Set([
             "project_id",
             ...(Array.isArray(primary) ? primary : [primary]),
+            ...(table === "collaboration_room_replacements" ? ["receipt"] : []),
           ]),
-        ];
+        ].filter((column): column is string => typeof column === "string");
         for (const column of columns) expect(fields[column]).toBeDefined();
         await getPool().query(
           `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(",")})`,

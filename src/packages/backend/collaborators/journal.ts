@@ -6,6 +6,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { artifactCatalogKey } from "@cocalc/util/artifact-catalog";
 import { posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { RoomReplacementJournal } from "./room-replacement-journal";
+import type { CollaborationRoom } from "@cocalc/util/collaborators";
+import { SourceRelations } from "./relations";
+import { COLLABORATION_RELATION_MANIFEST_BYTES } from "@cocalc/util/collaboration-relations";
 import type { CollaborationMessageEvent } from "@cocalc/util/collaboration-attention";
 import {
   SourceActivity,
@@ -37,6 +41,8 @@ export interface CollaborationRegistration extends CollaborationSource {
 export interface CollaborationRead {
   resources: CollaborationSourceSnapshot["resources"];
   activity_ids: Record<string, string[]>;
+  /** A sealed complete-history relation draft; never inferred from preview arrays. */
+  relation_draft?: string;
   /** Summary/relation coverage only; resources must always be a complete scan. */
   coverage?: "complete" | "partial";
   coverage_message?: string;
@@ -93,6 +99,8 @@ export class CollaborationJournal {
   private readonly db: DatabaseSync;
   private readonly notifications: SourceNotifications;
   private readonly activity: SourceActivity;
+  private readonly roomReplacements: RoomReplacementJournal;
+  readonly relations: SourceRelations;
   private closed = false;
   private disabledObserved = false;
   constructor(
@@ -104,6 +112,10 @@ export class CollaborationJournal {
     this.db = new DatabaseSync(filename);
     this.notifications = new SourceNotifications(this.db);
     this.activity = new SourceActivity(this.db);
+    this.relations = new SourceRelations(this.db);
+    this.roomReplacements = new RoomReplacementJournal(this.db, (source) =>
+      this.relations.retireSource(source),
+    );
     this.db.exec(`
       PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS sources (
@@ -114,6 +126,9 @@ export class CollaborationJournal {
         failures INTEGER NOT NULL DEFAULT 0, activity TEXT NOT NULL DEFAULT '{}',
         PRIMARY KEY(project_id,chat_path));
       CREATE INDEX IF NOT EXISTS sources_ready ON sources(dirty,retry_at);
+      CREATE TABLE IF NOT EXISTS census_receipts (
+        project_id TEXT NOT NULL, chat_path TEXT NOT NULL, run_id TEXT NOT NULL,
+        PRIMARY KEY(project_id,chat_path));
       CREATE TABLE IF NOT EXISTS writes (token TEXT PRIMARY KEY, project_id TEXT NOT NULL, chat_path TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS writes_source ON writes(project_id,chat_path);
       CREATE TABLE IF NOT EXISTS deliveries (
@@ -232,41 +247,67 @@ export class CollaborationJournal {
   }
   beginWrite(source: CollaborationSource): string {
     validateSource(source);
-    return this.transaction(() => {
-      if (!this.source(source)) {
-        if (
-          Number(
-            this.db.prepare("SELECT count(*) AS n FROM sources").get()!.n,
-          ) >= this.capacity.sources
-        )
-          throw Error("collaboration source journal capacity reached");
-        this.db
-          .prepare(
-            "INSERT INTO sources(project_id,chat_path,registration_id) VALUES(?,?,?)",
-          )
-          .run(source.project_id, source.chat_path, randomUUID());
-      }
+    return this.transaction(() => this.beginWriteInTransaction(source));
+  }
+  private beginWriteInTransaction(source: CollaborationSource): string {
+    this.roomReplacements.assertWritable(source);
+    if (!this.source(source)) {
       if (
-        Number(this.db.prepare("SELECT count(*) AS n FROM writes").get()!.n) >=
-        1000
+        Number(this.db.prepare("SELECT count(*) AS n FROM sources").get()!.n) >=
+        this.capacity.sources
       )
-        throw Error("collaboration write capacity reached");
+        throw Error("collaboration source journal capacity reached");
       this.db
         .prepare(
-          "UPDATE sources SET generation=generation+1,dirty=1 WHERE project_id=? AND chat_path=?",
+          "INSERT INTO sources(project_id,chat_path,registration_id) VALUES(?,?,?)",
         )
-        .run(source.project_id, source.chat_path);
-      const token = randomUUID();
+        .run(source.project_id, source.chat_path, randomUUID());
+    }
+    if (
+      Number(this.db.prepare("SELECT count(*) AS n FROM writes").get()!.n) >=
+      1000
+    )
+      throw Error("collaboration write capacity reached");
+    this.db
+      .prepare(
+        "UPDATE sources SET generation=generation+1,dirty=1 WHERE project_id=? AND chat_path=?",
+      )
+      .run(source.project_id, source.chat_path);
+    const token = randomUUID();
+    this.db
+      .prepare("INSERT INTO writes VALUES(?,?,?)")
+      .run(token, source.project_id, source.chat_path);
+    return token;
+  }
+  /** Receipt and dirty intent are atomic; a lost census ACK does not re-dirty it. */
+  acceptCensusCandidate(
+    source: CollaborationSource & { run_id: string },
+  ): boolean {
+    validateSource(source);
+    if (!source.run_id || source.run_id.length > 200)
+      throw Error("invalid census run id");
+    if (this.roomReplacements.isRetired(source)) return false;
+    return this.transaction(() => {
+      const prior = this.db
+        .prepare(
+          "SELECT run_id FROM census_receipts WHERE project_id=? AND chat_path=?",
+        )
+        .get(source.project_id, source.chat_path);
+      if (prior?.run_id === source.run_id) return false;
+      this.finishWrite(this.beginWriteInTransaction(source));
       this.db
-        .prepare("INSERT INTO writes VALUES(?,?,?)")
-        .run(token, source.project_id, source.chat_path);
-      return token;
+        .prepare(
+          "INSERT INTO census_receipts VALUES(?,?,?) ON CONFLICT(project_id,chat_path) DO UPDATE SET run_id=excluded.run_id",
+        )
+        .run(source.project_id, source.chat_path, source.run_id);
+      return true;
     });
   }
   finishWrite(token: string) {
     this.db.prepare("DELETE FROM writes WHERE token=?").run(token);
   }
   touch(source: CollaborationSource) {
+    if (this.roomReplacements.isRetired(source)) return;
     this.finishWrite(this.beginWrite(source));
   }
   armNotifications(
@@ -355,6 +396,24 @@ export class CollaborationJournal {
       return this.activity.recovery(source).complete;
     });
   }
+  censusProgress(project_id: string): {
+    source_pending: number;
+    source_errors: number;
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT
+      COALESCE(SUM(s.dirty<>0 OR s.epoch='' OR EXISTS(SELECT 1 FROM deliveries d WHERE d.project_id=s.project_id AND d.chat_path=s.chat_path)),0) pending,
+      COALESCE(SUM(s.failures>0),0) errors FROM sources s WHERE s.project_id=?
+      AND NOT EXISTS(SELECT 1 FROM source_redirects r WHERE r.project_id=s.project_id AND r.chat_path=s.chat_path)`,
+      )
+      .get(project_id)!;
+    return {
+      source_pending: Number(row.pending),
+      source_errors: Number(row.errors),
+    };
+  }
+
   sources(after = "", count = 100): CollaborationSource[] {
     limit(count);
     return this.db
@@ -476,11 +535,13 @@ export class CollaborationJournal {
         .get(source.project_id, source.chat_path, epoch);
       if (delivery) {
         // Preserve immutable facts and frozen resources when only the writer fence changes.
+        const previous = JSON.parse(String(delivery.payload));
         const snapshot = {
-          ...JSON.parse(String(delivery.payload)),
+          ...previous,
           epoch,
           sequence: 1,
         };
+        this.relations.rebind(previous, snapshot);
         this.db
           .prepare(
             "UPDATE deliveries SET epoch=?,sequence=1,payload=? WHERE project_id=? AND chat_path=?",
@@ -597,6 +658,12 @@ export class CollaborationJournal {
       ) as unknown as CollaborationScan[];
   }
   prepare(scan: CollaborationScan, read: CollaborationRead): boolean {
+    if (this.roomReplacements.isRetired(scan)) return false;
+    if (read.notification_room_id)
+      this.roomReplacements.assertRoom(
+        scan.project_id,
+        read.notification_room_id,
+      );
     return this.transaction(() => {
       const current = this.source(scan);
       if (
@@ -704,10 +771,19 @@ export class CollaborationJournal {
             }
           : {}),
       };
+      const relationBytes = read.relation_draft
+        ? COLLABORATION_RELATION_MANIFEST_BYTES +
+          Buffer.byteLength(',"relations":')
+        : 0;
       this.notifications.prepare(scan, read, positions);
-      this.notifications.assertFits(snapshot);
-      const payload = JSON.stringify(this.notifications.batch(snapshot));
-      if (Buffer.byteLength(payload) > COLLABORATION_MAX_SOURCE_BYTES)
+      this.notifications.assertFits(snapshot, relationBytes);
+      const payload = JSON.stringify(
+        this.notifications.batch(snapshot, relationBytes),
+      );
+      if (
+        Buffer.byteLength(payload) + relationBytes >
+        COLLABORATION_MAX_SOURCE_BYTES
+      )
         throw Error("collaboration snapshot byte capacity exceeded");
       const bytes =
         Number(
@@ -744,6 +820,7 @@ export class CollaborationJournal {
           scan.generation,
           payload,
         );
+      this.relations.bind(scan, read.relation_draft, snapshot);
       this.db
         .prepare(
           "UPDATE sources SET sequence=?,activity=? WHERE project_id=? AND chat_path=?",
@@ -971,6 +1048,7 @@ export class CollaborationJournal {
               : {}),
           })),
         };
+        this.relations.rebind(old, snapshot);
         this.db
           .prepare("INSERT INTO deliveries VALUES(?,?,?,?,?,?)")
           .run(project_id, to_path, nextEpoch, 1, -1, JSON.stringify(snapshot));
@@ -1118,13 +1196,20 @@ export class CollaborationJournal {
         String(delivery.payload),
       );
       this.notifications.acknowledge(frozen);
-      const next = this.notifications.batch({
-        ...frozen,
-        sequence: frozen.sequence + 1,
-      });
+      const next = this.notifications.batch(
+        {
+          ...frozen,
+          sequence: frozen.sequence + 1,
+        },
+        this.relations.has(snapshot)
+          ? COLLABORATION_RELATION_MANIFEST_BYTES +
+              Buffer.byteLength(',"relations":')
+          : 0,
+      );
       if (next.notification_events?.length) {
         if (!Number.isSafeInteger(next.sequence))
           throw Error("collaboration sequence exhausted");
+        this.relations.acknowledge(snapshot, next);
         this.db
           .prepare(
             "UPDATE deliveries SET sequence=?,payload=? WHERE project_id=? AND chat_path=?",
@@ -1142,6 +1227,7 @@ export class CollaborationJournal {
           .run(next.sequence, snapshot.project_id, snapshot.chat_path);
         return;
       }
+      this.relations.acknowledge(snapshot);
       this.db
         .prepare(
           "UPDATE sources SET dirty=CASE WHEN generation=? THEN 0 ELSE 1 END,retry_at=0,failures=0 WHERE project_id=? AND chat_path=? AND epoch=? AND sequence=?",
@@ -1175,6 +1261,7 @@ export class CollaborationJournal {
       );
   }
   roomState(project_id: string, room_id: string): boolean {
+    this.roomReplacements.assertRoom(project_id, room_id);
     const row = this.db
       .prepare("SELECT room_id,initialized FROM rooms WHERE project_id=?")
       .get(project_id);
@@ -1204,6 +1291,43 @@ export class CollaborationJournal {
         .prepare("DELETE FROM room_initializations WHERE project_id=?")
         .run(project_id);
     });
+  }
+  withRoomReplacementLock<T>(
+    source: CollaborationSource,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    validateSource(source);
+    return this.roomReplacements.lock(source, run);
+  }
+  replaceRoom(previous: CollaborationRoom, next: CollaborationRoom) {
+    validateSource(previous);
+    validateSource(next);
+    this.transaction(() => this.roomReplacements.replace(previous, next));
+  }
+  reconcileRoom(
+    room: CollaborationRoom & {
+      retired_rooms?: Array<Pick<CollaborationRoom, "room_id" | "chat_path">>;
+    },
+  ) {
+    validateSource(room);
+    if (!Array.isArray(room.retired_rooms) || room.retired_rooms.length > 32)
+      throw Error("invalid canonical room retirement metadata");
+    for (const retired of room.retired_rooms) {
+      validateSource({
+        project_id: room.project_id,
+        chat_path: retired.chat_path,
+      });
+      if (
+        !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(retired.room_id)
+      )
+        throw Error("invalid retired room identity");
+    }
+    this.transaction(() => this.roomReplacements.reconcile(room));
+  }
+  /** Current owner writerState supplies this terminal identity, not file metadata. */
+  retireRoomSource(source: CollaborationSource, room_id: string) {
+    validateSource(source);
+    this.transaction(() => this.roomReplacements.retire(source, room_id));
   }
   /** Persist before writing the first marker; existing/restored markers are not proof of freshness. */
   beginRoomInitialization(

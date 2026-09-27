@@ -13,9 +13,12 @@ import type {
 import { LiteCollaborators } from "./index";
 import type { LiteCollaboratorsOptions } from "./index";
 import * as limits from "./validation";
+import { createCollaborationRelationSet } from "@cocalc/util/collaboration-relations-codec";
+import { collaborationRelationKey } from "@cocalc/util/collaboration-relations";
+import type { CollaborationRelation } from "@cocalc/util/collaboration-relations";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
-const account_id = "local-human";
+const account_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const chat_path = "/home/user/discussion.chat";
 const local = { account_id, project_id };
 let directory: string;
@@ -52,6 +55,40 @@ function snapshot(
 
 async function ingest(sequence = 1, resources = [resource()]) {
   return store.ingest({ snapshot: snapshot(sequence, resources) });
+}
+
+// These small fixtures explicitly describe the whole participant set. Runtime
+// producers must derive it from full history, never from the preview array.
+async function ingestCompleteRelations(
+  sequence: number,
+  resources: CollaborationResource[],
+) {
+  const rows: CollaborationRelation[] = resources.flatMap((resource) =>
+    resource.kind === "artifact"
+      ? []
+      : resource.participant_ids.map((account_id) => ({
+          kind: "participant" as const,
+          source: {
+            kind: resource.kind as "agent" | "conversation",
+            resource_id: resource.resource_id,
+            thread_id: resource.thread_id,
+          },
+          account_id,
+        })),
+  );
+  rows.sort((a, b) =>
+    collaborationRelationKey(a) < collaborationRelationKey(b) ? -1 : 1,
+  );
+  const relations = await createCollaborationRelationSet(
+    { project_id, chat_path, epoch, sequence },
+    rows,
+    async (page) => {
+      await store.stageRelationPage({ page });
+    },
+  );
+  return store.ingest({
+    snapshot: { ...snapshot(sequence, resources), relations },
+  });
 }
 
 function reopen(): void {
@@ -136,6 +173,50 @@ test("browsing uses only the durable service index; no room, file or invented hu
     coverage: "complete",
     revision: expect.any(String),
   });
+});
+
+test("latest-message author survives Lite validation and restart without replacing creator", async () => {
+  const created_by = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const authored = resource("thread-a", {
+    created_by,
+    latest_message_author_id: account_id.toUpperCase(),
+  });
+  await ingest(1, [authored]);
+  reopen();
+  expect((await store.api.listResources(local)).items[0]).toMatchObject({
+    created_by,
+    latest_message_author_id: account_id,
+  });
+  await ingest(2, [{ ...authored, title: "Renamed" }]);
+  expect((await store.api.listResources(local)).items[0]).toMatchObject({
+    title: "Renamed",
+    latest_message_author_id: account_id,
+    activity: authored.activity,
+  });
+  await ingest(3, [resource()]);
+  expect((await store.api.listResources(local)).items[0]).not.toHaveProperty(
+    "latest_message_author_id",
+  );
+  for (const latest_message_author_id of ["invalid", "", 42]) {
+    expect(() =>
+      limits.snapshot(
+        snapshot(4, [
+          resource("thread-a", {
+            latest_message_author_id: latest_message_author_id as any,
+          }),
+        ]),
+      ),
+    ).toThrow("latest_message_author_id");
+  }
+  for (const kind of ["agent", "artifact"] as const) {
+    expect(() =>
+      limits.snapshot(
+        snapshot(4, [
+          resource("thread-a", { kind, latest_message_author_id: account_id }),
+        ]),
+      ),
+    ).toThrow("latest_message_author_id");
+  }
 });
 
 test.each([undefined, "stranger", "project-principal"])(
@@ -395,7 +476,7 @@ test("per-kind aliases collide only within their own type and never create disco
 });
 
 test("following and participation explain For you without collection or mute changing membership", async () => {
-  await ingest(1, [
+  await ingestCompleteRelations(1, [
     resource(),
     resource("participated", { participant_ids: [account_id] }),
     resource("unrelated"),
@@ -562,7 +643,7 @@ test("page byte limit provides a continuation without truncating source ingestio
 });
 
 test("kind/person/archive filtering and service-only coverage are honest", async () => {
-  await ingest(1, [
+  await ingestCompleteRelations(1, [
     resource("a", { kind: "artifact", created_by: account_id }),
     resource("b", { participant_ids: [account_id] }),
     resource("c", { archived: true }),
@@ -583,7 +664,9 @@ test("kind/person/archive filtering and service-only coverage are honest", async
   reopen();
   expect(await store.api.listResources(local)).toMatchObject({
     coverage: "indexing",
-    coverage_message: "A bounded service backfill is running.",
+    coverage_message: expect.stringContaining(
+      "A bounded service backfill is running.",
+    ),
   });
   expect(() => store.setCoverage("complete" as "partial")).toThrow("coverage");
   await expect(

@@ -59,7 +59,7 @@ describeDb("collaboration account-home transfer (isolated PGlite)", () => {
     await getPool()
       .query(`TRUNCATE account_collaboration_handoffs,account_collaboration_rehome_pages,
       account_rehome_operations,collaboration_personal,collaboration_artifact_bindings,
-      collaboration_notification_cursors,collaboration_account_state,collaboration_index,
+      collaboration_notification_cursors,collaboration_account_state,collaboration_participant_index,collaboration_index,
       collaboration_access,notification_events,notification_targets,notification_target_outbox`);
   });
   afterAll(async () => {
@@ -132,6 +132,19 @@ describeDb("collaboration account-home transfer (isolated PGlite)", () => {
       account,
       "mention",
     ]);
+    const entry_key = digest(
+      JSON.stringify([project, "conversation", "resource-1"]),
+    );
+    await getPool().query(
+      `INSERT INTO collaboration_index(account_id,entry_key,project_id,relation_set,relation_thread,relations_complete,relation_budget)
+      VALUES($1,$2,$3,'active-set','native-thread',TRUE,2)`,
+      [account, entry_key, project],
+    );
+    await getPool().query(
+      `INSERT INTO collaboration_participant_index(account_id,entry_key,project_id,set_key,participant_id)
+      VALUES($1,$2,$3,'active-set',$1),($1,$2,$3,'staged-set',$1)`,
+      [account, entry_key, project],
+    );
     await getPool().query(
       `INSERT INTO notification_events(event_id,kind,source_bay_id,source_project_id,payload_json)
       VALUES($1,'mention',$2,$3,$4)`,
@@ -187,14 +200,32 @@ describeDb("collaboration account-home transfer (isolated PGlite)", () => {
     );
     expect(
       s.pages.some((p) =>
-        ["collaboration_access", "collaboration_index"].includes(
-          JSON.parse(p.body).table,
-        ),
+        [
+          "collaboration_access",
+          "collaboration_index",
+          "collaboration_participant_index",
+        ].includes(JSON.parse(p.body).table),
       ),
     ).toBe(false);
     await destinationDb(s);
     for (const p of s.pages) await receive(s.h, p);
     await importState(s.h);
+    expect(
+      (
+        await getPool().query(
+          "SELECT * FROM collaboration_participant_index WHERE account_id=$1",
+          [s.account],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await getPool().query(
+          "SELECT * FROM collaboration_index WHERE account_id=$1",
+          [s.account],
+        )
+      ).rows,
+    ).toEqual([]);
     const personal = (
       await getPool().query(
         "SELECT * FROM collaboration_personal WHERE account_id=$1 ORDER BY entry_key",

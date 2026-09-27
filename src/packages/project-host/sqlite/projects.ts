@@ -589,6 +589,20 @@ export function listProjects(): ProjectRow[] {
   })) as ProjectRow[];
 }
 
+/** Background catalog scheduling must not materialize the host's whole inventory. */
+export function nextCollaborationCensusProject(after = ""): string | undefined {
+  if (after.length > 200) throw Error("invalid collaboration project cursor");
+  ensureProjectsTable();
+  const row = getDatabase()
+    .prepare(
+      `SELECT project_id FROM projects
+    WHERE project_id>? AND COALESCE(local_only,0)=0 AND exam_run_id IS NULL
+    ORDER BY project_id LIMIT 1`,
+    )
+    .get(after) as { project_id: string } | undefined;
+  return row?.project_id;
+}
+
 export function listProjectsByStates(states: string[]): ProjectRow[] {
   ensureProjectsTable();
   const normalized = Array.from(

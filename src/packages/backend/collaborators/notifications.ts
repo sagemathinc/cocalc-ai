@@ -108,7 +108,10 @@ export class SourceNotifications {
     )
       throw Error("notification journal event capacity exceeded");
   }
-  batch(snapshot: CollaborationSourceSnapshot): CollaborationDelivery {
+  batch(
+    snapshot: CollaborationSourceSnapshot,
+    reservedBytes = 0,
+  ): CollaborationDelivery {
     const rows = this.db
       .prepare(
         "SELECT payload FROM notification_events WHERE project_id=? AND chat_path=? ORDER BY rowid LIMIT ?",
@@ -128,7 +131,9 @@ export class SourceNotifications {
       if (
         Buffer.byteLength(
           JSON.stringify({ ...base, notification_events: [...events, event] }),
-        ) > COLLABORATION_MAX_SOURCE_BYTES
+        ) +
+          reservedBytes >
+        COLLABORATION_MAX_SOURCE_BYTES
       ) {
         if (!events.length)
           throw Error("notification snapshot byte capacity exceeded");
@@ -140,7 +145,7 @@ export class SourceNotifications {
     return result;
   }
   /** Validate even later batches now so acknowledgement can always make progress. */
-  assertFits(snapshot: CollaborationSourceSnapshot) {
+  assertFits(snapshot: CollaborationSourceSnapshot, reservedBytes = 0) {
     const max = Number(
       this.db
         .prepare(
@@ -150,7 +155,7 @@ export class SourceNotifications {
     );
     if (
       max &&
-      Buffer.byteLength(JSON.stringify(snapshot)) + max + 32 >
+      Buffer.byteLength(JSON.stringify(snapshot)) + max + 32 + reservedBytes >
         COLLABORATION_MAX_SOURCE_BYTES
     )
       throw Error("notification snapshot byte capacity exceeded");

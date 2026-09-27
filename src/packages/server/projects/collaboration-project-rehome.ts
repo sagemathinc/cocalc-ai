@@ -31,10 +31,37 @@ const PAGES = "project_collaboration_rehome_pages";
 export const PAGE_ROWS = 50;
 export const PAGE_BYTES = 256 * 1024;
 export const ROW_BYTES = 64 * 1024;
-export const MAX_ROWS = 500_000;
-export const MAX_BYTES = 256 * 1024 * 1024;
-export const MAX_PAGES = 20_000;
+// Include the bounded two-million-edge relation catalog in the durable handoff.
+export const MAX_ROWS = 2_500_000;
+export const MAX_BYTES = 1024 * 1024 * 1024;
+export const MAX_PAGES = 60_000;
 const columns: Record<Table, string[]> = {
+  collaboration_relation_sets: [
+    "set_key",
+    "project_id",
+    "source_id",
+    "epoch",
+    "sequence",
+    "manifest",
+    "byte_count",
+    "row_count",
+    "created_at",
+  ],
+  collaboration_participants: [
+    "id",
+    "project_id",
+    "set_key",
+    "thread_key",
+    "participant_id",
+  ],
+  collaboration_references: [
+    "id",
+    "project_id",
+    "set_key",
+    "thread_key",
+    "message_id",
+    "payload",
+  ],
   collaboration_projects: [
     "project_id",
     "generation",
@@ -57,6 +84,8 @@ const columns: Record<Table, string[]> = {
     "coverage",
     "coverage_message",
     "relocated_to",
+    "retired_room_id",
+    "relation_set",
   ],
   collaboration_catalog: [
     "entry_key",
@@ -69,6 +98,9 @@ const columns: Record<Table, string[]> = {
     "artifact_entry_ids",
     "agent_resource_ids",
     "agent_source_activity",
+    "relation_set",
+    "relation_thread",
+    "relation_count",
     "revision",
     "activity",
     "deleted_at",
@@ -79,6 +111,15 @@ const columns: Record<Table, string[]> = {
     "chat_path",
     "request_id",
     "initialized",
+  ],
+  collaboration_room_replacements: [
+    "operation_id",
+    "project_id",
+    "requesting_account_id",
+    "request_id",
+    "previous_room_id",
+    "previous_source_id",
+    "receipt",
   ],
   collaboration_memberships: [
     "project_id",
@@ -112,10 +153,14 @@ const columns: Record<Table, string[]> = {
   ],
 };
 const keys: Record<Table, { column: string; type: "text" | "uuid" }> = {
+  collaboration_relation_sets: { column: "set_key", type: "text" },
+  collaboration_participants: { column: "id", type: "text" },
+  collaboration_references: { column: "id", type: "text" },
   collaboration_projects: { column: "project_id", type: "uuid" },
   collaboration_sources: { column: "source_id", type: "text" },
   collaboration_catalog: { column: "entry_key", type: "text" },
   collaboration_rooms: { column: "project_id", type: "uuid" },
+  collaboration_room_replacements: { column: "operation_id", type: "uuid" },
   collaboration_memberships: { column: "account_id", type: "uuid" },
   collaboration_notification_events: { column: "event_id", type: "uuid" },
   collaboration_notification_floors: { column: "project_id", type: "uuid" },
@@ -123,6 +168,10 @@ const keys: Record<Table, { column: string; type: "text" | "uuid" }> = {
   collaboration_relocations: { column: "operation_id", type: "uuid" },
 };
 const bigints = new Set([
+  "sequence",
+  "byte_count",
+  "row_count",
+  "relation_count",
   "revision",
   "work_units",
   "source_sequence",

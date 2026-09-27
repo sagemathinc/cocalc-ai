@@ -449,6 +449,56 @@ it("unknown access is retryable, not a success that consumes the message", async
   ).rejects.toThrow("not ready");
 });
 
+it.each([true, false])(
+  "attention uses complete indexed participation (%s), never the preview",
+  async (participated) => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            generation,
+            granted_generation: generation,
+            grant_request_id: account_id,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            metadata: resource,
+            participant_ids: participated ? [] : [account_id],
+            participated,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            legacy_migrated: true,
+            following: false,
+            muted: false,
+            read_through: 0,
+            notify_after: 0,
+            last_mention: 0,
+          },
+        ],
+      });
+    const result = await lockCollaborationNotificationAttention({
+      db: mockDb,
+      delivery,
+    });
+    expect(result?.state.participating).toBe(participated);
+    const sql = mockQuery.mock.calls.find(([sql]) =>
+      sql.includes("FROM collaboration_index i"),
+    )?.[0];
+    expect(sql).toContain("collaboration_participant_index");
+    expect(sql).toContain("relations_complete");
+  },
+);
+
 it("does not open or commit a second transaction inside source ingest", async () => {
   await appendCollaborationNotificationEvents(
     mockDb,

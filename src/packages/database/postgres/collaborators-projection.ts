@@ -3,6 +3,10 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import {
+  applyHomeParticipantProjection,
+  sameParticipantContinuation,
+} from "./collaborators-relations-projection";
 import { moveCollaborationAgentPersonalState } from "./collaborators-agent-personal";
 import {
   assertAccountNotRehoming,
@@ -78,7 +82,7 @@ export async function claimCollaborationProjectionJobs(
 ): Promise<CollaborationProjectionJob[]> {
   return transaction(async (db) => {
     const { rows } = await db.query(
-      `SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key
+      `SELECT x.account_id,x.project_id,x.generation,x.revision,x.after_key,x.relation_after
       FROM collaboration_access x JOIN accounts a USING(account_id)
       WHERE x.due_at<=now() AND (x.claim_until IS NULL OR x.claim_until<now())
       AND (x.lease_claim_until IS NULL OR x.lease_claim_until<now())
@@ -100,6 +104,7 @@ export async function claimCollaborationProjectionJobs(
         revision: Number(row.revision),
         after_key: row.after_key,
         claim_id,
+        ...(row.relation_after ? { relation_after: row.relation_after } : {}),
       });
     }
     return result;
@@ -149,7 +154,11 @@ export async function applyCollaborationProjection(
       access.grant_request_id !== job.claim_id ||
       access.generation !== job.generation ||
       Number(access.revision) !== job.revision ||
-      access.after_key !== job.after_key
+      access.after_key !== job.after_key ||
+      !sameParticipantContinuation(
+        access.relation_after ?? undefined,
+        job.relation_after,
+      )
     )
       return false;
     if (!page.allowed || page.reset || page.items.length)
@@ -174,7 +183,7 @@ export async function applyCollaborationProjection(
         job.project_id,
       );
       await db.query(
-        `UPDATE collaboration_access SET generation=NULL,granted_generation=NULL,revision=0,after_key='',lease_until=NULL,complete=FALSE,
+        `UPDATE collaboration_access SET generation=NULL,granted_generation=NULL,revision=0,after_key='',relation_after=NULL,lease_until=NULL,complete=FALSE,
         claim_id=NULL,claim_until=NULL,due_at=now()+interval '30 seconds',last_error=NULL,failures=0 WHERE account_id=$1 AND project_id=$2`,
         [job.account_id, job.project_id],
       );
@@ -256,6 +265,7 @@ export async function applyCollaborationProjection(
           JSON.stringify(entries),
         ],
       );
+    await applyHomeParticipantProjection(db, job, page);
     const count = entries.length
       ? await db.query(
           "SELECT count(*) AS n FROM collaboration_index WHERE account_id=$1",
@@ -291,7 +301,7 @@ export async function applyCollaborationProjection(
     await db.query(
       `UPDATE collaboration_access SET generation=$3,granted_generation=$3,revision=$4,after_key=$5,lease_until=$6,
       lease_due_at=now()+interval '20 seconds',lease_claim_until=NULL,
-      complete=$7,attention_generation=$9,due_at=now()+($8::integer*interval '1 millisecond'),claim_id=NULL,claim_until=NULL,failures=0,last_error=NULL
+      complete=$7,attention_generation=$9,relation_after=$10::jsonb,due_at=now()+($8::integer*interval '1 millisecond'),claim_id=NULL,claim_until=NULL,failures=0,last_error=NULL
       WHERE account_id=$1 AND project_id=$2`,
       [
         job.account_id,
@@ -303,6 +313,7 @@ export async function applyCollaborationProjection(
         page.complete,
         page.complete ? 20000 : 0,
         attention_generation,
+        page.relation_after ? JSON.stringify(page.relation_after) : null,
       ],
     );
     if (

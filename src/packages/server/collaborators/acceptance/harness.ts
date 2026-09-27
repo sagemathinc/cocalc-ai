@@ -130,6 +130,7 @@ export class MultibayAcceptance {
   private pgAttempted = false;
   private pgPid?: number;
   private address = "";
+  private expectedRoomId?: string;
   hostAddress = "";
   private credentials: string[] = [];
 
@@ -284,17 +285,22 @@ export class MultibayAcceptance {
       opts,
     });
   }
-  send(
+  async send(
     role: "a" | "b",
     method: string,
     opts: object,
     account_id?: string,
     timeout?: number,
   ) {
+    // Bind the client's intent once, never retarget a retry after replacement.
+    this.expectedRoomId ??= (
+      await this.hub(role, "getRoom", { project_id: this.project })
+    )?.room_id;
+    if (!this.expectedRoomId) throw Error("fixture has no registered room");
     return this.worker(role).call("host", {
       address: this.hostAddress,
       method,
-      opts,
+      opts: { expected_room_id: this.expectedRoomId, ...opts },
       account_id,
       timeout,
       token: issueProjectHostAuthToken({

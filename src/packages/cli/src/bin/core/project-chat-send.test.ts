@@ -423,10 +423,15 @@ test("human creation and send use owner registration and the account-authenticat
               action === "send"
                 ? {
                     request_id: f.requestId,
+                    expected_room_id: f.room.room_id,
                     thread_id: f.threadId,
                     text: "@agent is a reference\n",
                   }
-                : { request_id: f.requestId, title: "Discussion" },
+                : {
+                    request_id: f.requestId,
+                    expected_room_id: f.room.room_id,
+                    title: "Discussion",
+                  },
             ],
           ],
           { timeout: 12345, waitForInterest: true },

@@ -109,6 +109,7 @@ import {
 import { SyncFsWatchStore } from "./sync-fs-watch";
 export { SyncFsWatchStore };
 import { SyncFsService } from "./sync-fs-service";
+import { openSandboxDirectoryStream } from "./directory-stream";
 
 const logger = getLogger("sandbox:fs");
 const OPENAT2_SETTING = (process.env.COCALC_SANDBOX_OPENAT2 ?? "")
@@ -359,6 +360,7 @@ const INTERNAL_METHODS = new Set([
   "canonicalIdentityForOpenedHandle",
   "openVerifiedHandle",
   "openReadOnlySubtree",
+  "openDirectoryStream",
   "createAuthorizedReadStream",
   "cpDirectoryRequiresRecursiveError",
   "cpUnsupportedTypeError",
@@ -2414,6 +2416,24 @@ export class SandboxedFilesystem {
     }
 
     return x;
+  };
+
+  /** Service-local census capability, intentionally excluded from filesystem RPC. */
+  openDirectoryStream = async (path: string, root: string) => {
+    const scope = await this.resolvePathInSandbox(root);
+    const target = await this.resolvePathInSandbox(path);
+    // Only the existing home volume is eligible, never rootfs, scratch or aliases
+    // into another mount. The descriptor walker enforces no links/mount crossings.
+    if (
+      scope.sandboxBasePath !== this.path ||
+      scope.pathInSandbox !== this.path ||
+      target.sandboxBasePath !== this.path
+    )
+      throw Error("directory census requires the existing project home scope");
+    return openSandboxDirectoryStream(
+      scope.pathInSandbox,
+      target.pathInSandbox,
+    );
   };
 
   readlink = async (path: string): Promise<string> => {

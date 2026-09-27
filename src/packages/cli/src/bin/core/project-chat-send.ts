@@ -54,10 +54,15 @@ export async function submitHumanChatOperation({
           operation.action === "send"
             ? {
                 request_id: requestId,
+                expected_room_id: room.room_id,
                 thread_id: operation.threadId,
                 text: operation.text,
               }
-            : { request_id: requestId, title: operation.title },
+            : {
+                request_id: requestId,
+                expected_room_id: room.room_id,
+                title: operation.title,
+              },
         ],
       ],
       { timeout: ctx.timeoutMs ?? 60_000, waitForInterest: true },
