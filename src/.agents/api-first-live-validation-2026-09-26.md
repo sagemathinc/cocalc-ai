@@ -331,6 +331,30 @@ no running containers. Project start
 private probe directory was removed. Key 89 was already deleted before that
 failure. This restart failure is not treated as a successful lifecycle test.
 
+### Installed notebook revocation retest
+
+The CLI and both tools archives built successfully at
+`b99e13f67ed33321008323b5e53397922f83cc6e`; both archives passed `xz --test`.
+Host3 tools upgrade `9762975d-2aef-4452-84bb-156579995707` succeeded. The running
+project initially retained the old CLI, so disposable-project restart
+`e64550a6-d140-43aa-929e-023a2e9d6cd7` was performed and succeeded. Its installed
+`/opt/cocalc/bin2/cocalc-cli.js` then matched the new bundle SHA256
+`17036f8418377d91c9cfb5dd5ac895e135425403edaca6d7c5150091b8d6913f`.
+Host authorization remains at the previously deployed `9cc0f888885d` build.
+
+The same continuous-output notebook probe used key 90. After observable Python
+output, key deletion completed at `1790479259690` ms UTC. The last delivered
+batch was at `1790479277711` (18,021 ms later); the client reported
+`JUPYTER_RUN_TRANSPORT_LOST` at `1790479278120` (18,430 ms after deletion).
+It did not report normal completion or resubmit the run. Both observed times
+are within the 30-second retained-session bound. The probe exited successfully;
+its cleanup restart and private provider/notebook-directory removal succeeded.
+
+This verifies live interruption reporting for this manual-key notebook stream.
+It is not proof of other transport families, managed-turn finalization,
+membership loss, authority outage, or uninterrupted long-run recovery across
+healthy credential renewal. Those remain separate acceptance cases.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
