@@ -291,9 +291,10 @@ export function createProxyHandlers({
     ws: true,
   });
 
-  proxy.on("error", (err, req) => {
+  proxy.on("error", (err, req, res) => {
     const url = (req as http.IncomingMessage).url;
     logger.warn("proxy error", { err: `${err}`, url });
+    if (!res.destroyed && !res.writableEnded) res.destroy();
   });
 
   proxy.on("proxyReq", (proxyReq, req) => {
@@ -449,8 +450,9 @@ export function attachProjectProxy({
     assertForwardAllowed?.(req);
   };
 
-  proxy.on("error", (err, req) => {
+  proxy.on("error", (err, req, res) => {
     logger.debug("proxy error", { err: `${err}`, url: req?.url });
+    if (!res.destroyed && !res.writableEnded) res.destroy();
   });
 
   proxy.on("proxyReq", (proxyReq, req, res) => {

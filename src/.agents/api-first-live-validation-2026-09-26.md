@@ -10,6 +10,25 @@ This is development evidence, not production approval or completion of phases 1-
 
 ### Reviewed deployed HTTP probe
 
+Build `20260927T184112Z-0844025c1997` was promoted healthy at
+18:44:03 UTC via explicit-version operation
+`cb031c1e-d2c8-4d71-97c6-668df4df173e`. The same public-route probe now
+passes its unchanged completion bound: 246 chunks, client interruption after
+24873 ms, and app-side close after 24847 ms. Deletion took 472 ms; client
+termination was 23802 ms after deletion, with last data at 23703 ms. Installed
+scoped CLI access, viewer denial, wrong-port denial, mixed-credential stripping,
+and denial of a new exchange after revocation all passed. Fixture cleanup
+completed. This establishes post-header HTTP termination in this live run,
+not the full long-lived-session acceptance matrix.
+
+Independent review of `0844025c19` found a remaining pre-header case: an
+upstream close before any headers emits the proxy error event without a
+`proxyRes`, and both error handlers only logged it. Real-socket tests for both
+entry points reproduced the hang before the follow-up. Both handlers now
+destroy the downstream response/socket unless already destroyed or ended.
+The existing post-header tests remain in the same matrix. This pre-header
+follow-up still needs independent review and deployment.
+
 Local follow-up reproduced the client hang in both shared proxy entry points:
 an upstream response wrote data and destroyed its socket, but the downstream
 client timed out instead of receiving an aborted response. The ingress fallback
@@ -17,7 +36,7 @@ uses `createProxyHandlers` from this same module. Both entry points now destroy
 the downstream response on upstream abort/error or incomplete close, without
 reporting a successful end. The two regressions failed before the fix and pass
 afterward; 14 proxy tests, 73 host HTTP/router tests, and the project-host build
-pass. This fix is not yet deployed or verified on the public route.
+pass. Deployment evidence for this post-header fix is recorded above.
 
 Follow-up repeats used asynchronous CLI deletion so the response reader was not
 blocked by the test harness. Both repeats received data only within the signed

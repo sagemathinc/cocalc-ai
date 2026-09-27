@@ -19,12 +19,19 @@ async function closeServer(server: Server | http.Server): Promise<void> {
 }
 
 describe("project proxy upstream boundary metering", () => {
-  it.each(["ingress", "project"])(
-    "propagates an upstream stream abort through the %s proxy",
-    async (mode) => {
+  it.each([
+    ["ingress", true],
+    ["project", true],
+    ["ingress", false],
+    ["project", false],
+  ])(
+    "propagates an upstream abort through the %s proxy (headers sent: %s)",
+    async (mode, sendHeaders) => {
       const upstream = http.createServer((_req, res) => {
-        res.writeHead(200, { "content-type": "text/plain" });
-        res.write("before-expiry");
+        if (sendHeaders) {
+          res.writeHead(200, { "content-type": "text/plain" });
+          res.write("before-expiry");
+        }
         const timer = setTimeout(() => res.destroy(), 50);
         res.once("close", () => clearTimeout(timer));
       });
@@ -73,7 +80,11 @@ describe("project proxy upstream boundary metering", () => {
             });
           },
         );
-        expect(result).toEqual({ state: "aborted", body: "before-expiry" });
+        expect(result).toEqual(
+          sendHeaders
+            ? { state: "aborted", body: "before-expiry" }
+            : { state: "request-error", body: "" },
+        );
       } finally {
         server.closeAllConnections();
         upstream.closeAllConnections();
