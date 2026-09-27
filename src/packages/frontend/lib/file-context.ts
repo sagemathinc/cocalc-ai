@@ -68,6 +68,8 @@ export interface IFileContext {
 
   project_id?: string;
   path?: string;
+  // Optional directory for Markdown links when content lives outside its source file.
+  relativeLinkBasePath?: string;
 
   // The webapp_client -- get this in the app, but not when rendered from nextjs, obviously.
   client?;

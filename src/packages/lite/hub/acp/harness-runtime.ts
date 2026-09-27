@@ -228,7 +228,16 @@ export function queuedAgentSession(
       session_id: admitted.session_id ?? current.session_id,
     };
   }
-  return { config: current.config, session_id: current.session_id };
+  // Refresh native execution settings, but retain admitted funding (including
+  // implicit auto) so execution and durable Q&A guidance agree.
+  return {
+    config: {
+      ...current.config,
+      paymentSource: admitted.config?.paymentSource,
+      credentialId: admitted.config?.credentialId,
+    },
+    session_id: current.session_id,
+  };
 }
 
 // Validate shared configuration, but never let it replace an explicitly

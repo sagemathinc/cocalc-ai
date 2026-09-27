@@ -66,6 +66,8 @@ import { movePostedMessageToAgent } from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
+import { agentMessageDirectory } from "./activity-path-context";
+import { AgentMessageFileContext } from "./message-file-context";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
@@ -1305,12 +1307,25 @@ export default function Message({
       ? "acp"
       : "codex";
 
-  const activityBasePath = useMemo(
-    () =>
+  const activityBasePath = agentMessageDirectory({
+    workingDirectory: field<string>(message, "acp_working_directory"),
+    events: codexPreviewLog.events,
+    fallback:
       (threadCodexConfig as any)?.get?.("workingDirectory") ??
       threadCodexConfig?.workingDirectory,
-    [threadCodexConfig],
-  );
+  });
+
+  function withMessageFileContext(children: ReactNode) {
+    return (
+      <AgentMessageFileContext
+        projectId={project_id}
+        path={path}
+        directory={isCodexAgentMessage ? activityBasePath : undefined}
+      >
+        {children}
+      </AgentMessageFileContext>
+    );
+  }
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
@@ -2383,6 +2398,8 @@ export default function Message({
         return;
       }
       if (!embeddingOptions.openFilesInWorkbench || !actions) return;
+      // Human guidance keeps chat-relative navigation, including in activity.
+      if (anchor?.closest(".cocalc-slate-guidance")) return;
       const file = projectFileTargetFromHref({
         href,
         projectId: project_id,
@@ -2801,7 +2818,7 @@ export default function Message({
           {renderMessageHeader(lighten)}
           {messageBodyMode === "edit"
             ? renderEditMessage()
-            : renderMessageBody({ message_class })}
+            : withMessageFileContext(renderMessageBody({ message_class }))}
           {renderEditingMeta()}
           <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
           <ArtifactCards
@@ -3209,7 +3226,7 @@ export default function Message({
   return (
     <Row ref={messageRowRef} tabIndex={-1} style={getStyle()}>
       {renderCols()}
-      {renderZenMessageDrawer()}
+      {withMessageFileContext(renderZenMessageDrawer())}
       <AcpPromptModal
         open={showAcpPromptModal}
         title="Full agent prompt for this message"

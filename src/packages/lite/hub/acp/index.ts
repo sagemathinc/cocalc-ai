@@ -258,6 +258,7 @@ import {
 import {
   claimAcpSteer,
   decodeAcpSteerCandidateIds,
+  decodeAcpSteerFallbackRequest,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
@@ -2065,6 +2066,8 @@ export class ChatStreamWriter {
   private metadata: AcpChatContext;
   private readonly chatKey: string;
   private readonly workspaceRoot?: string;
+  private workingDirectory?: string;
+  private lastCommittedWorkingDirectory?: string;
   private readonly hostWorkspaceRoot?: string;
   private readonly hostProjectRoot?: string;
   private inlineCodeLinksCache?: {
@@ -2732,6 +2735,7 @@ export class ChatStreamWriter {
     this.client = client;
     this.chatKey = chatKey(metadata);
     this.workspaceRoot = workspaceRoot;
+    this.workingDirectory = workspaceRoot;
     this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
     this.hostProjectRoot = hostProjectRoot;
     this.usePool = syncdbOverride == null;
@@ -2869,6 +2873,7 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
+        acp_working_directory: this.workingDirectory,
         acp_account_id: this.approverAccountId,
         acp_runtime_kind: this.runtimeKind,
         acp_started_at_ms:
@@ -2902,6 +2907,9 @@ export class ChatStreamWriter {
       this.observePatchflowVersions("init:placeholder");
       current = this.findChatRow();
     }
+    this.workingDirectory =
+      this.recordField<string>(current, "acp_working_directory") ??
+      this.workingDirectory;
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
     if (arr.length > 0) {
@@ -3091,6 +3099,9 @@ export class ChatStreamWriter {
         return;
       }
       if (event.type === "config") {
+        if (event.workingDirectory) {
+          this.workingDirectory = event.workingDirectory;
+        }
         const paymentSource = paymentSourceFromAuthSource({
           authSource: event.authSource,
           accountId: this.approverAccountId,
@@ -3289,6 +3300,7 @@ export class ChatStreamWriter {
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3342,6 +3354,7 @@ export class ChatStreamWriter {
       sender_id: rowSender,
       date: rowDate,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3445,6 +3458,10 @@ export class ChatStreamWriter {
 
   private primeCommittedStateFromRow(row: any): void {
     if (row == null) return;
+    this.lastCommittedWorkingDirectory = this.recordField<string>(
+      row,
+      "acp_working_directory",
+    );
     this.lastCommittedThreadId =
       this.recordField<string>(row, "acp_thread_id") ?? null;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
@@ -3468,6 +3485,7 @@ export class ChatStreamWriter {
     const startedAtMs = this.normalizeStartedAtMs(this.metadata.started_at_ms);
     return (
       this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedWorkingDirectory !== this.workingDirectory ||
       this.lastCommittedStartedAtMs !== startedAtMs ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
       this.lastCommittedGenerating !== generating ||
@@ -3488,6 +3506,7 @@ export class ChatStreamWriter {
   }
 
   private markCommitted(generating: boolean): void {
+    this.lastCommittedWorkingDirectory = this.workingDirectory;
     this.lastCommittedThreadId = this.threadId;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
       this.metadata.started_at_ms,
@@ -3523,6 +3542,8 @@ export class ChatStreamWriter {
       }
       return (
         currentContent === (this.content ?? "") &&
+        this.recordField<string>(current, "acp_working_directory") ===
+          this.workingDirectory &&
         currentThreadId === this.threadId &&
         currentStartedAtMs ===
           this.normalizeStartedAtMs(this.metadata.started_at_ms) &&
@@ -10933,13 +10954,16 @@ function enqueueInterruptRequestForExecution({
 function enqueueSteerRequestForExecution({
   request,
   candidateIds,
+  fallbackConfig,
 }: {
   request: AcpSteerRequest;
   candidateIds?: string[];
+  fallbackConfig?: AcpSteerRequest["config"];
 }) {
   return enqueueAcpSteer({
     request,
     candidate_ids: candidateIds,
+    fallback_config: fallbackConfig,
   });
 }
 
@@ -11109,7 +11133,7 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
           continue;
         }
-        await fallbackAcpSteerToQueuedTurn(request);
+        await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
         markAcpSteerError({
@@ -11415,6 +11439,25 @@ async function deliverAsyncAttentionAnswer(
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
+  const fallbackConfig = config;
+  const activeJob = listRunningAcpJobs().find(
+    (job) =>
+      job.project_id === record.project_id &&
+      job.path === record.path &&
+      job.thread_id === record.thread_id &&
+      job.account_id === record.account_id,
+  );
+  const activeRequest = activeJob ? decodeAcpJobRequest(activeJob) : undefined;
+  if (activeRequest && activeRequest.request_kind !== "command") {
+    // An answer is guidance, not a request to change the active turn's funding.
+    // Thread preferences are for the next turn and lack its admission-time pin.
+    const activeConfig = activeRequest.config;
+    config = {
+      ...config,
+      paymentSource: activeConfig?.paymentSource,
+      credentialId: activeConfig?.credentialId,
+    };
+  }
   const request: AcpSteerRequest = {
     project_id: record.project_id,
     account_id: record.account_id,
@@ -11458,7 +11501,7 @@ async function deliverAsyncAttentionAnswer(
   if (existingSteer?.state === "error" && !retryFailed) {
     throw new Error(existingSteer.error ?? "queued Codex guidance failed");
   }
-  enqueueSteerRequestForExecution({ request });
+  enqueueSteerRequestForExecution({ request, fallbackConfig });
   if (liteUseDetachedAcpWorker()) {
     try {
       await ensureDetachedWorkerRunning({ force: true });

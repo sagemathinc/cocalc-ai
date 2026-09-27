@@ -298,6 +298,40 @@ test("queued ACP delivery preserves admitted settings and exact existing session
   ).toThrow();
 });
 
+test.each([
+  undefined,
+  { paymentSource: "auto" as const },
+  { paymentSource: "site-api-key" as const },
+  {
+    paymentSource: "subscription-credential" as const,
+    credentialId: randomUUID(),
+  },
+])(
+  "queued Codex delivery refreshes settings but retains admitted funding (%j)",
+  (funding) => {
+    const admitted = { ...request(), runtime: undefined, config: funding };
+    const current = {
+      ...request(),
+      runtime: undefined,
+      session_id: "current-session",
+      config: {
+        model: "current-model",
+        paymentSource: "subscription-credential" as const,
+        credentialId: randomUUID(),
+      },
+    };
+    expect(queuedAgentSession(admitted, current)).toEqual({
+      config: {
+        model: "current-model",
+        paymentSource: funding?.paymentSource,
+        credentialId: funding?.credentialId,
+      },
+      session_id: "current-session",
+    });
+    expect(current.config.credentialId).toBeDefined();
+  },
+);
+
 test("generic RPC delivery permits guidance under the execution principal", () => {
   const value = request();
   value.chat!.agent_message = true;
