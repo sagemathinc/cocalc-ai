@@ -46,13 +46,13 @@ Test all changes against source A, full B, viewer C, and absent D on different h
 
 ## Open Completion Gates
 
-### Confirmed HTTP proxy implementation gap
+### HTTP proxy implementation and remaining validation
 
-Source audit at `1c715ca290` confirms that full-runtime proxy/preview parity is
-not implemented. `project-host/http-proxy-auth.ts` explicitly rejects API-key
+Source audit at `1c715ca290` confirmed that full-runtime proxy/preview parity was
+not implemented. `project-host/http-proxy-auth.ts` explicitly rejected API-key
 child tokens; its regression test preserves that boundary. CLI
-`project proxy curl` uses `resolveProxyUrl` in `cli/src/bin/main.ts`, which still
-resolves hosts through account-level Hub calls, then uses cookie-based HTTP
+`project proxy curl` used `resolveProxyUrl` in `cli/src/bin/main.ts`, which
+resolved hosts through account-level Hub calls, then used cookie-based HTTP
 requests. Private-app bootstrap similarly calls the ordinary host-token issuer.
 These are not supported scoped-key transports and cannot count as passing the
 full-runtime acceptance matrix.
@@ -60,7 +60,7 @@ full-runtime acceptance matrix.
 The existing 29 `http-proxy-auth.test.ts` cases pass at this audit. They prove
 the current HTTP boundary, not successful scoped proxy use or live revocation.
 
-The next implementation must provide a distinct, explicitly scoped HTTP
+The implementation must provide a distinct, explicitly scoped HTTP
 exchange/admission path, not remove the existing child-token rejection. Bind
 the parent key/revision, account, exact project/placement/host, requested HTTP
 service target, and short expiry through the same authoritative key policy.
@@ -82,9 +82,24 @@ verifier in `conat/auth/project-host-token.ts`: `phat-http-v1`, audience
 placement binding, and the same 25-second parent-clamped lifetime. It requires
 `project:exec`, not merely file read. Neither verifier accepts the other
 transport's credential. Nineteen token tests and 64 existing host HTTP/Conat
-tests pass; the Conat build passes. No issuer endpoint, HTTP admission path, or
-CLI command uses the new type yet. Therefore the proxy parity gap remains open;
-these token primitives alone do not grant usable proxy access.
+tests passed; the Conat build passed. Those token primitives alone did not grant
+usable proxy access.
+
+At `84ff8908f2`, the public exchange accepts a validated exact HTTP port, checks
+runtime authority before placement lookup, and uses the same account-home and
+host-bay issuer. Host admission consumes a dedicated per-request header before
+browser-cookie handling, verifies current local membership/placement, and does
+not create cookies. Response/socket timers enforce signed expiry. CLI proxy URL
+and curl use the selected manual/managed key, not broad host lookup or operator
+cookies; URLs contain no credential, paths stay within the selected target, and
+redirects are not followed. Focused endpoint, command, host, and build checks
+pass. This is implementation evidence, not the live acceptance matrix.
+
+The first candidate deployment hit host3's rootless namespace contract guard
+and rolled back artifacts, with component convergence still unproven at the
+recorded observation. See the live validation report. Installed CLI HTTP use,
+continuous stream revocation, managed replay, event-loop-stall forwarding,
+private-app hostname bootstrap, and viewer static preview remain open gates.
 
 ### Remaining Gates
 

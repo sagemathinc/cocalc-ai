@@ -6,6 +6,43 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Scoped HTTP deployment attempt, 2026-09-27
+
+Candidate: `84ff8908f2f4d0d0f5feea9e3a9b29f5309293e9`. The distinct HTTP
+token, authoritative issuer, host admission, and CLI proxy routing are now
+connected in source. Focused checks passed: 32 CLI tests, 10 HTTP endpoint tests,
+47 host HTTP tests, 35 host Conat tests, and CLI/HTTP API/project-host TypeScript
+builds. These are not live proxy acceptance results.
+
+Built host bundle `20260927T103106Z-84ff8908f2f4` and fresh amd64/arm64 tools.
+The primary dev hub was authoritatively stopped before the attempt; the supported
+restart brought up all three bays (primary PID 1636540, attached PIDs 1642936
+and 1647499). Requested host3 project-host/tools upgrade with runtime alignment:
+operation `74380069-9505-48f1-b589-f042c74076b1`.
+
+The host bootstrap guard reported `runtime userns contract mismatch`, with
+observed UID/GID maps and fingerprint absent. A subsequent `host get` reported
+the previous host build `20260927T095543Z-6ebd423e0833` and tools version
+`1790497614068` installed again; the candidate was listed as the previous
+artifact. The ACP worker still reported the candidate running, while the other
+components reported the old build. At this observation the operation remained
+running in managed-component verification, so neither upgrade success nor
+complete rollback convergence was established. No reset/reprovisioning was
+attempted and no HTTP fixture app or key had been created.
+
+The CLI's 600-second observation ended with `last_status=running`. A subsequent
+`op get` still returned this same running operation with an updated heartbeat
+at `2026-09-27T10:43:18.531Z`, no error, and no finished timestamp. This timeout
+is not evidence that the job stopped. No duplicate upgrade was submitted;
+continue by inspecting this operation, not starting another one.
+
+The prepared live probe remains unexecuted. It must test the installed CLI in
+an isolated credential environment, absence of forwarded credential headers,
+viewer and wrong-port denial, no cookie promotion, and continuous response
+expiry after key deletion. Managed-turn replay and event-loop-stall forwarding
+checks also remain required. Independent private review of the candidate was
+accepted (correlation `api-first-http-84ff8908f2`); no disposition is claimed.
+
 ## Dismissing obsolete approval requests, 2026-09-27
 
 Human rejection no longer requires the requesting and target API keys to remain
