@@ -548,6 +548,38 @@ No duplicate restart or new credential probe was submitted after this incident.
 The new deadline is built and installed on the host, but is not yet verified
 inside the running project or by the live revocation probe.
 
+### Deadline build deployed and revocation verified
+
+After confirming the old restart was canceled and the project was running,
+restart `7775473f-4d53-4cb4-903b-7e1d086e4c19` succeeded. The running project's
+CLI SHA256 now matches the deadline build:
+`4b555bf93fcf93299db0811436f7b855124bbcfa756cf32e864d07ec8c8486fb`.
+This supersedes the interrupted-rollout checkpoint above.
+
+The active-notebook probe used key 96. Deletion completed at `1790484064926`
+ms UTC; the last delivered output was at `1790484083715` (18,789 ms later).
+The CLI reported `JUPYTER_RUN_RECOVERY_FAILED` at `1790484089009` (24,083 ms
+later). Both assertions passed the 30-second bound. The fixture's restart and
+private-directory cleanup completed successfully. This demonstrates one live
+revocation case, not all timing phases, load conditions, or session families.
+
+The subsequent healthy-run attempt failed during provider upload, before
+notebook execution. Primary hub PID 1306528 exited at
+`2026-09-27T04:41:59.183Z` with a billing-authority lease query timeout. Normal
+hub startup restored PID 1330503; attached bays remained running. Key 97 was
+explicitly deleted, and its private fixture directory was removed. This setup
+failure is not evidence about notebook replay correctness.
+
+After restoring the hub, a fresh attempt with key 98 passed the healthy
+80-second execution probe. Cell `929126`, run `cli-mujc9qj2-m11nsz`, completed
+in 82,934 ms with all 80 ticks in order and exactly one execution-counter
+message. The CLI saved the notebook and a second CLI process verified the
+same cell's persisted output. Key deletion and private-directory cleanup
+completed successfully. Thus the installed deadline build has both a healthy
+multi-lease output-recovery pass and an active-output revocation pass. This
+does not establish interactive stdin recovery, managed-key parity, or the
+remaining cross-bay and session-family acceptance cases.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
