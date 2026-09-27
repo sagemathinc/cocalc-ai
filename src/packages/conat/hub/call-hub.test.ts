@@ -4,6 +4,7 @@
  */
 
 import type { Client } from "@cocalc/conat/core/client";
+import { ConatError } from "@cocalc/conat/util";
 import { withTimeout } from "@cocalc/util/async-utils";
 import callHub, { annotateCallHubError, requestHub } from "./call-hub";
 
@@ -111,11 +112,12 @@ describe("host resolver single-flight at the outbound RPC boundary", () => {
         });
       const underlying = resolve().catch((err) => err.message);
       for (let i = 0; i < 2; i++) {
-        const outer = withTimeout(resolve(5_000), 5_000).catch(
-          () => "outer timeout",
-        );
+        const shortWaiter = resolve(5_000).catch((err) => err);
         await jest.advanceTimersByTimeAsync(5_000);
-        expect(await outer).toBe("outer timeout");
+        const err = await shortWaiter;
+        expect(err).toBeInstanceOf(ConatError);
+        expect(err).toMatchObject({ code: 408, subject });
+        expect(err.message.match(/callHub:/g)).toHaveLength(1);
         expect(request).toHaveBeenCalledTimes(1);
       }
       await jest.advanceTimersByTimeAsync(5_000);
@@ -124,6 +126,72 @@ describe("host resolver single-flight at the outbound RPC boundary", () => {
       expect(request).toHaveBeenCalledTimes(2);
       await jest.advanceTimersByTimeAsync(15_000);
       await retry;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("bounds a late direct waiter independently while later callers still join the underlying flight", async () => {
+    jest.useFakeTimers();
+    try {
+      const { client, request, requests, resolve } = setup();
+      const ordinary = resolve();
+      await jest.advanceTimersByTimeAsync(2_000);
+      let timedOut = false;
+      const direct = requestHub(client, subject, data, {
+        timeout: 5_000,
+      }).catch((err) => {
+        timedOut = true;
+        return err;
+      });
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(timedOut).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      const error = await direct;
+      expect(error).toBeInstanceOf(ConatError);
+      expect(error).toMatchObject({ code: 408, subject });
+      // The RPC boundary does not annotate errors; each callHub adapter does.
+      expect(error.message).toBe("timeout");
+      const later = resolve();
+      expect(request).toHaveBeenCalledTimes(1);
+      requests[0].resolve({ data: "shared result" });
+      await expect(ordinary).resolves.toBe("shared result");
+      await expect(later).resolves.toBe("shared result");
+      expect(jest.getTimerCount()).toBe(0);
+
+      const next = resolve();
+      expect(request).toHaveBeenCalledTimes(2);
+      requests[1].resolve({ data: "fresh result" });
+      await next;
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("retains the RPC after every waiter times out, then evicts its late rejection for retry", async () => {
+    jest.useFakeTimers();
+    try {
+      const { request, requests, resolve } = setup();
+      const first = resolve(undefined, { timeout: 5_000 }).catch((err) => err);
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(await first).toMatchObject({ code: 408 });
+      const nextWaiter = resolve(undefined, { timeout: 5_000 }).catch(
+        (err) => err,
+      );
+      expect(request).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(await nextWaiter).toMatchObject({ code: 408 });
+      requests[0].reject(
+        new ConatError("late transport failure", { code: 503 }),
+      );
+      await jest.advanceTimersByTimeAsync(0);
+      expect(jest.getTimerCount()).toBe(0);
+      const retry = resolve();
+      expect(request).toHaveBeenCalledTimes(2);
+      requests[1].resolve({ data: "retried" });
+      await expect(retry).resolves.toBe("retried");
+      expect(jest.getTimerCount()).toBe(0);
     } finally {
       jest.useRealTimers();
     }

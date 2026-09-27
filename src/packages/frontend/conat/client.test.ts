@@ -2552,6 +2552,8 @@ describe("ConatClient routed project-host reconnect", () => {
     client.conat().info = {
       user: { account_id: "acct-1", auth_session_hash: "auth-session-1" },
     };
+    // Keep stale-transport probe traffic separate from resolver RPC counts.
+    client.maybeProbeStaleHubTransport = jest.fn();
     const ordinary = Promise.all(
       Array.from({ length: 300 }, () =>
         client.callHubApi({
@@ -2572,6 +2574,11 @@ describe("ConatClient routed project-host reconnect", () => {
       client.refreshHostRoutingInfo("host-1"),
       client.refreshHostRoutingInfo("host-1"),
     ]);
+    let fallbackError: any;
+    const timedRefreshes = refreshes.catch((err) => {
+      fallbackError = err;
+      return err;
+    });
     await jest.advanceTimersByTimeAsync(5_000);
 
     expect(ensureHostInfo).toHaveBeenCalledTimes(1);
@@ -2585,33 +2592,28 @@ describe("ConatClient routed project-host reconnect", () => {
       },
       expect.objectContaining({ timeout: 15_000 }),
     );
+    // The direct fallback starts after the outer host-info wait at t=5s. Its
+    // own 5s deadline must expire at t=10s, not the ordinary RPC's t=15s.
+    await jest.advanceTimersByTimeAsync(4_999);
+    expect(fallbackError).toBeUndefined();
+    await jest.advanceTimersByTimeAsync(1);
+    const err = await timedRefreshes;
+    expect(err).toBeInstanceOf(require("@cocalc/conat/util").ConatError);
+    expect(err).toMatchObject({ code: 408 });
+    expect(err.message.match(/callHub:/g)).toHaveLength(1);
+    const later = client.callHubApi({
+      name: "hosts.resolveHostConnection",
+      args: [{ host_id: "host-1" }],
+    });
+    expect(hubRequest).toHaveBeenCalledTimes(1);
     finishRequest(response);
-    const results = await refreshes;
     expect(await ordinary).toEqual(Array(300).fill(response.data));
     expect(await sdk).toEqual(response.data);
-    expect(results).toEqual([
-      {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
-      },
-      {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
-      },
-      {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
-      },
-    ]);
+    expect(await later).toEqual(response.data);
 
     // An account change must not join an old refresh even above callHub.
     const oldRefresh = client.refreshHostRoutingInfo("host-1");
+    const oldTimeout = expect(oldRefresh).rejects.toMatchObject({ code: 408 });
     await jest.advanceTimersByTimeAsync(5_000);
     const finishOld = finishRequest;
     client.client.account_id = "acct-2";
@@ -2633,10 +2635,20 @@ describe("ConatClient routed project-host reconnect", () => {
       expect.anything(),
     );
     finishOld(response);
-    await oldRefresh;
+    await oldTimeout;
     const joinedRefresh = client.refreshHostRoutingInfo("host-1");
     finishRequest(response);
-    await Promise.all([newRefresh, joinedRefresh]);
+    const [routing, joinedRouting] = await Promise.all([
+      newRefresh,
+      joinedRefresh,
+    ]);
+    expect(routing).toEqual({
+      host_id: "host-1",
+      routing_key: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+    });
+    expect(joinedRouting).toEqual(routing);
     expect(hubRequest).toHaveBeenCalledTimes(3);
     expect(ensureHostInfo).toHaveBeenCalledTimes(3);
 

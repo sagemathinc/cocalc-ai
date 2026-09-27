@@ -1,4 +1,5 @@
 import { type Client } from "@cocalc/conat/core/client";
+import { ConatError } from "@cocalc/conat/util";
 import { resolveHostConnectionSingleFlight } from "./resolve-host-singleflight";
 const DEFAULT_TIMEOUT = 15000;
 
@@ -12,7 +13,7 @@ export function requestHub(
 ) {
   const request = () => client.request(subject, data, options);
   if (data.name !== "hosts.resolveHostConnection") return request();
-  return resolveHostConnectionSingleFlight(
+  const flight = resolveHostConnectionSingleFlight(
     client,
     [
       subject,
@@ -22,6 +23,17 @@ export function requestHub(
     data.args,
     request,
   );
+  // A joiner has its own deadline, but timing out its wait must not evict or
+  // cancel the underlying RPC. Only the single-flight helper owns that entry.
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    flight,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new ConatError("timeout", { code: 408, subject }));
+      }, options.timeout);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function errorField(
