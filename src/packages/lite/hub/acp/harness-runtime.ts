@@ -151,7 +151,9 @@ async function withTemporaryHarness<T>(
       (binding) => factory(binding, conversation),
       30_000,
       undefined,
-      fork && prepared.harness_credential?.mode === "account-subscription"
+      // Discovery also opens a session inside the isolated controller, where
+      // the project's cwd does not exist. Use the same policy as real turns.
+      prepared.harness_credential?.mode === "account-subscription"
         ? "claude-subscription-controller"
         : "default",
     );

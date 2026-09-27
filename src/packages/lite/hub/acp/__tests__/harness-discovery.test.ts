@@ -179,7 +179,7 @@ test.each(["account-api-key", "account-subscription"] as const)(
           kind: "acp",
           id: "claude-code",
           revision: CLAUDE_CODE_QUALIFICATION.package.version,
-          cwd: "/home/user",
+          cwd: "/home/user/project-only-worktree",
           executionPolicy: "full-access",
           credentialMode: "project-managed",
         },
@@ -188,6 +188,20 @@ test.each(["account-api-key", "account-subscription"] as const)(
     expect(launch).toHaveBeenCalledWith(
       expect.objectContaining({ credential }),
       { path: "a.chat", threadId: "thread" },
+    );
+    expect(AcpHarnessClient.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        credential,
+        profile: expect.objectContaining({
+          cwd: "/home/user/project-only-worktree",
+        }),
+      }),
+      expect.any(Function),
+      30_000,
+      undefined,
+      mode === "account-subscription"
+        ? "claude-subscription-controller"
+        : "default",
     );
     expect(client.prompt).not.toHaveBeenCalled();
     expect(client.dispose).toHaveBeenCalledTimes(1);

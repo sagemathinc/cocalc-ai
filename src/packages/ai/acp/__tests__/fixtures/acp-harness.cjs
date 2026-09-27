@@ -155,6 +155,32 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "session/new":
     case "session/load":
       if (
+        process.argv.includes("--reject-auth") ||
+        process.argv.includes("--reject-params")
+      )
+        return send({
+          id: message.id,
+          error: {
+            code: process.argv.includes("--reject-auth") ? -32000 : -32602,
+            message: "private startup secret",
+            data: { private: "secret" },
+          },
+        });
+      if (process.argv.includes("--reject-cwd"))
+        return send({
+          id: message.id,
+          error: {
+            code: -32602,
+            message: "private cwd diagnostic secret",
+            data: { cwd: "/private-secret-path" },
+          },
+        });
+      if (process.argv.includes("--reject-session"))
+        return send({
+          id: message.id,
+          error: { code: -32603, message: "private startup secret" },
+        });
+      if (
         process.argv.includes("--expect-skill") &&
         message.params._meta?.systemPrompt?.append !==
           "CoCalc skill fixture: use project_exec for CLI commands."
@@ -166,6 +192,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (process.argv.includes("--claude-adapter")) {
         const options = message.params._meta?.claudeCode?.options;
         if (
+          message.params.cwd !== "/workspace" ||
           !options ||
           !Array.isArray(options.tools) ||
           options.tools.length ||

@@ -94,6 +94,19 @@ export type HarnessEvent =
 
 export type HarnessSessionPolicy = "default" | "claude-subscription-controller";
 
+const REQUEST_ACTIONS = {
+  initialize: "start the agent runtime",
+  "session/new": "open a session to load models and settings",
+  "session/load": "resume this conversation",
+  "session/fork": "copy this conversation",
+  "session/set_mode": "apply the selected mode",
+  "session/set_config_option": "apply the selected model or thinking level",
+  "session/prompt": "process this message",
+  "session/steering": "deliver guidance to the running agent",
+  "session/cancel": "interrupt the running agent",
+} as const;
+type RequestMethod = keyof typeof REQUEST_ACTIONS;
+
 const CLAUDE_AUTH_STATUS_METHOD = "_auth/status_update";
 
 export function claudeAccountApiKeySessionMeta(): Record<string, unknown> {
@@ -277,6 +290,7 @@ export class AcpHarnessClient {
               : {}),
           },
         }),
+        "initialize",
       );
       if (client.info.protocolVersion !== 1)
         throw new HarnessError(
@@ -339,6 +353,7 @@ export class AcpHarnessClient {
               ? "/workspace"
               : this.binding.profile.cwd,
         }),
+        "session/fork",
         false,
         true,
       );
@@ -382,6 +397,7 @@ export class AcpHarnessClient {
               sessionId: this.session.sessionId,
               modeId: selected.modeId,
             }),
+            "session/set_mode",
           );
           this.session.modes!.currentModeId = selected.modeId;
         }
@@ -408,6 +424,7 @@ export class AcpHarnessClient {
             configId: choice.id,
             value: choice.value,
           }),
+          "session/set_config_option",
         );
         this.session.configOptions = response.configOptions;
         // Changing a model can change the other controls. Use the returned
@@ -449,6 +466,7 @@ export class AcpHarnessClient {
 
   private async request<T>(
     operation: Promise<T>,
+    method: RequestMethod,
     prompt = false,
     mutation = false,
   ): Promise<T> {
@@ -487,7 +505,7 @@ export class AcpHarnessClient {
             ? "outcome_unknown"
             : "unavailable",
         protocolRejection
-          ? "Harness rejected the ACP request; check its project configuration"
+          ? this.rejectionMessage(error, method)
           : mutation
             ? "ACP copy outcome is uncertain; do not automatically retry"
             : prompt
@@ -497,6 +515,46 @@ export class AcpHarnessClient {
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  private rejectionMessage(error: unknown, method: RequestMethod): string {
+    const { code, data } = error as { code: number; data?: { cwd?: unknown } };
+    const subscription =
+      this.sessionPolicy === "claude-subscription-controller";
+    const agent =
+      this.binding.profile.id === "claude-code" || subscription
+        ? "Claude"
+        : "The agent";
+    let recovery: string;
+    if (code === -32000) {
+      recovery = subscription
+        ? "Sign-in is required. Open agent settings and reconnect your Claude subscription."
+        : "Authentication is required. Open agent settings and check the selected connection.";
+    } else if (
+      code === -32602 &&
+      (method === "session/new" || method === "session/load") &&
+      typeof data?.cwd === "string"
+    ) {
+      recovery = subscription
+        ? "The isolated Claude workspace is unavailable. Ask the site administrator to update or repair the Claude runtime; changing your project directory will not fix this."
+        : "The working directory is unavailable. Use the folder control to select an existing project directory, then retry.";
+    } else if (
+      method === "session/set_mode" ||
+      method === "session/set_config_option"
+    ) {
+      recovery =
+        "Open agent settings, reload the available choices, and select a supported value.";
+    } else {
+      recovery =
+        code === -32602 || code === -32601
+          ? "The installed integration rejected the request. Ask the site administrator to update the agent runtime and include the diagnostic code below."
+          : method === "session/prompt" || method === "session/fork"
+            ? "Check the agent activity before trying again. If this persists, report this error to the site administrator with the diagnostic code below."
+            : "Retry once; if this persists, report this error to the site administrator with the diagnostic code below.";
+    }
+    // Protocol messages/data may contain credentials or arbitrary process output.
+    // Only expose our operation name, numeric code, and fixed recovery guidance.
+    return `${agent} could not ${REQUEST_ACTIONS[method]}. ${recovery} (ACP ${method}, code ${code})`;
   }
 
   async open(sessionId?: string): Promise<NewSessionResponse> {
@@ -542,6 +600,7 @@ export class AcpHarnessClient {
         try {
           const loaded = await this.request(
             this.connection.loadSession({ ...params, sessionId }),
+            "session/load",
           );
           this.session = { ...loaded, sessionId };
         } catch (error) {
@@ -552,13 +611,16 @@ export class AcpHarnessClient {
           ) {
             throw new HarnessError(
               "rejected",
-              "Claude could not resume this session. Its native transcript may be missing or incompatible; start a new agent conversation.",
+              `${error.message} The saved conversation has not been replaced.`,
             );
           }
           throw error;
         }
       } else {
-        this.session = await this.request(this.connection.newSession(params));
+        this.session = await this.request(
+          this.connection.newSession(params),
+          "session/new",
+        );
       }
       return structuredClone(this.session);
     } finally {
@@ -643,8 +705,12 @@ export class AcpHarnessClient {
     this.canceled = false;
     this.listener = listener;
     try {
-      const result = await this.request(this.connection.prompt(params), true);
-      await this.request(this.output, true);
+      const result = await this.request(
+        this.connection.prompt(params),
+        "session/prompt",
+        true,
+      );
+      await this.request(this.output, "session/prompt", true);
       if (this.failure)
         throw new HarnessError(
           "outcome_unknown",
@@ -675,6 +741,7 @@ export class AcpHarnessClient {
         prompt: [{ type: "text", text }],
         _meta: { steering: { idleBehavior: "promptRequired" } },
       }),
+      "session/steering",
       true,
     )) as { outcome?: string };
     if (response.outcome === "injected") return "injected";
@@ -820,6 +887,7 @@ export class AcpHarnessClient {
       this.process.cancelTools?.(),
       this.request(
         this.connection.cancel({ sessionId: this.session.sessionId }),
+        "session/cancel",
       ),
     ]);
   }

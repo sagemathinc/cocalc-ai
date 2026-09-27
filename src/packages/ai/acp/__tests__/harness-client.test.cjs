@@ -458,7 +458,7 @@ test("subscription policy exposes only mediated project tools and refuses unknow
       {
         projectId: "project-a",
         accountId: "account-a",
-        profile,
+        profile: { ...profile, cwd: "/home/user/project-only-worktree" },
       },
       async () => ({
         projectToolServerName: "cocalc_project_fixture_v2",
@@ -1549,6 +1549,7 @@ async function start(
   onExit,
   beforeStop,
   toolHooks = {},
+  sessionPolicy = "default",
 ) {
   let child;
   const client = await AcpHarnessClient.start(
@@ -1588,6 +1589,7 @@ async function start(
     },
     1500,
     questionHandler,
+    sessionPolicy,
   );
   t.after(() => client.dispose());
   return client;
@@ -2300,9 +2302,66 @@ test("provider rejection is distinct from ambiguous delivery and is redacted", a
   await client.open();
   await assert.rejects(
     client.prompt("reject", async () => {}),
-    (e) => e.code === "rejected" && !e.message.includes("secret"),
+    (e) => {
+      assert.equal(e.code, "rejected");
+      assert.match(e.message, /Authentication is required/);
+      assert.match(e.message, /Open agent settings/);
+      assert.match(e.message, /ACP session\/prompt, code -32000/);
+      assert.ok(!e.message.includes("secret"));
+      return true;
+    },
   );
 });
+test("session rejection identifies the failed operation without exposing process output", async (t) => {
+  const client = await start(t, ["--reject-session"]);
+  await assert.rejects(client.open(), (error) => {
+    assert.equal(error.code, "rejected");
+    assert.match(error.message, /load models and settings/);
+    assert.match(error.message, /site administrator/);
+    assert.match(error.message, /ACP session\/new, code -32603/);
+    assert.ok(!error.message.includes("secret"));
+    return true;
+  });
+});
+test("invalid project directory has actionable guidance without exposing the returned path", async (t) => {
+  const client = await start(t, ["--reject-cwd"]);
+  await assert.rejects(client.open(), (error) => {
+    assert.equal(error.code, "rejected");
+    assert.match(error.message, /folder control/);
+    assert.match(error.message, /existing project directory/);
+    assert.match(error.message, /ACP session\/new, code -32602/);
+    assert.ok(!error.message.includes("secret"));
+    return true;
+  });
+});
+for (const [flag, guidance] of [
+  ["--reject-cwd", /isolated Claude workspace is unavailable/],
+  ["--reject-auth", /reconnect your Claude subscription/],
+  ["--reject-params", /site administrator to update the agent runtime/],
+]) {
+  test(`subscription startup ${flag} gives safe recovery instructions`, async (t) => {
+    const client = await start(
+      t,
+      ["--claude-adapter", flag],
+      undefined,
+      [],
+      undefined,
+      undefined,
+      {},
+      "claude-subscription-controller",
+    );
+    await assert.rejects(client.open(), (error) => {
+      assert.equal(error.code, "rejected");
+      assert.match(error.message, /Claude could not open a session/);
+      assert.match(error.message, guidance);
+      assert.match(error.message, /ACP session\/new, code -/);
+      assert.ok(!error.message.includes("secret"));
+      assert.ok(!error.message.includes("check its project configuration"));
+      return true;
+    });
+    assert.equal(client.sessionId, undefined);
+  });
+}
 test("failed output persistence does not report success", async (t) => {
   const client = await start(t);
   await client.open();
