@@ -289,7 +289,20 @@ function ClaudeCredentialControl({
           (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
         )}
         projectId={projectId}
-        onConnected={async () => {
+        onConnected={async (credentialId) => {
+          writeHarnessCredentialSelection({
+            accountId,
+            projectId,
+            threadKey,
+            credential: {
+              version: 1,
+              provider: "anthropic",
+              mode: "account-subscription",
+              credentialId,
+              ...(connectorsEnabled ? {} : { claudeAiConnectors: false }),
+            },
+          });
+          setValue(`account-subscription:${credentialId}`);
           const rows =
             await webapp_client.conat_client.hub.system.listExternalCredentials(
               { provider: "anthropic", scope: "account" },

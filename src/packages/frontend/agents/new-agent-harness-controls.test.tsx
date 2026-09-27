@@ -77,6 +77,34 @@ beforeEach(() => {
   jest.mocked(discoverNewAgentHarness).mockResolvedValue(result as any);
 });
 
+test("a revoked inherited credential asks for a connection without launching discovery", async () => {
+  render(
+    <NewAgentClaudeControls
+      {...props}
+      credential={{
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "00000000-0000-4000-8000-000000000001",
+      }}
+    />,
+  );
+  expect(await screen.findByText("Choose a Claude connection")).toBeTruthy();
+  expect(discoverNewAgentHarness).not.toHaveBeenCalled();
+  const settings = screen.getByRole("button", {
+    name: "Configure Claude Code",
+  });
+  settings.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /previously selected Claude connection is unavailable/,
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Claude credential" }),
+  ).toBeTruthy();
+  expect(discoverNewAgentHarness).not.toHaveBeenCalled();
+});
+
 test("loading is not missing configuration and the composer keeps emails private", async () => {
   const { rerender } = render(
     <NewAgentClaudeControls {...props} credentialsLoaded={false} />,
@@ -278,6 +306,7 @@ test("credential changes discard in-flight discovery without closing configurati
         mode: "account-api-key",
         credentialId: "key-b",
       }}
+      credentials={[{ id: "key-b", kind: "anthropic-api-key" } as any]}
     />,
   );
   await act(async () =>

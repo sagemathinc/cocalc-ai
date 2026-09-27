@@ -79,6 +79,8 @@ export function NewAgentClaudeControls({
   }, [scope]);
   const options = newAgentClaudeCredentialOptions(credentials);
   const value = newAgentClaudeCredentialValue(credential);
+  const unavailableCredential =
+    credentialsLoaded && !options.some((option) => option.value === value);
   const payment =
     newAgentClaudeCredentialOptions(credentials, true).find(
       (option) => option.value === value,
@@ -90,7 +92,14 @@ export function NewAgentClaudeControls({
         aria-label="Claude credential"
         value={value}
         disabled={disabled || !credentialsLoaded}
-        options={options}
+        options={
+          unavailableCredential
+            ? [
+                { value, label: "Unavailable connection", disabled: true },
+                ...options,
+              ]
+            : options
+        }
         style={{ width: "100%" }}
         popupMatchSelectWidth={false}
         onChange={(next: string) => {
@@ -111,6 +120,12 @@ export function NewAgentClaudeControls({
           );
         }}
       />
+      {unavailableCredential && (
+        <div role="alert">
+          The previously selected Claude connection is unavailable or revoked.
+          Choose an existing connection above or connect a subscription.
+        </div>
+      )}
       {projectId ? (
         <ClaudeSubscriptionConnect
           compact
@@ -178,9 +193,11 @@ export function NewAgentClaudeControls({
         unavailableLabel={
           !projectId
             ? "Select a project to load models"
-            : !validDirectory
-              ? "Choose an absolute working directory"
-              : "Waiting for model options"
+            : unavailableCredential
+              ? "Choose a Claude connection"
+              : !validDirectory
+                ? "Choose an absolute working directory"
+                : "Waiting for model options"
         }
         configuration={configuration}
         runtime={runtime}
@@ -189,6 +206,7 @@ export function NewAgentClaudeControls({
         onDiscover={
           projectId &&
           credentialsLoaded &&
+          !unavailableCredential &&
           !disabled &&
           validDirectory &&
           readyScope === scope

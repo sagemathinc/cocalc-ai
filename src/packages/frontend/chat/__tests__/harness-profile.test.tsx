@@ -12,7 +12,10 @@ import { useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
-import { writeHarnessCredentialSelection } from "../harness-credential-selection";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "../harness-credential-selection";
 import {
   claudeCredentialTrustWarning,
   HarnessProfileFields,
@@ -35,6 +38,73 @@ const accountStore = {
   on: jest.fn(),
   removeListener: jest.fn(),
 };
+
+jest.mock("../claude-subscription-connect", () => ({
+  ClaudeSubscriptionConnect: ({ onConnected }) => (
+    <button onClick={() => onConnected("00000000-0000-4000-8000-000000000002")}>
+      Complete subscription sign-in
+    </button>
+  ),
+}));
+
+test("reconnecting selects the returned subscription and updates new-agent defaults", async () => {
+  const getStore = jest
+    .spyOn(redux, "getStore")
+    .mockReturnValue(accountStore as any);
+  const list = jest
+    .spyOn(webapp_client.conat_client.hub.system, "listExternalCredentials")
+    .mockResolvedValue([]);
+  writeHarnessCredentialSelection({
+    accountId: "account-a",
+    projectId: "project-a",
+    threadKey: "thread-a",
+    credential: {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: "00000000-0000-4000-8000-000000000001",
+      claudeAiConnectors: false,
+    },
+  });
+  try {
+    render(
+      <HarnessRuntimeSummary
+        runtime={qualifiedHarnessRuntime("claude-code", "/home/user")}
+        projectId="project-a"
+        threadKey="thread-a"
+      />,
+    );
+    await screen.findByRole("alert");
+    const button = screen.getByRole("button", {
+      name: "Complete subscription sign-in",
+    });
+    button.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    const expected = {
+      mode: "account-subscription",
+      credentialId: "00000000-0000-4000-8000-000000000002",
+      claudeAiConnectors: false,
+    };
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "account-a",
+        projectId: "project-a",
+        threadKey: "thread-a",
+      }),
+    ).toMatchObject(expected);
+    expect(
+      readHarnessCredentialSelection({
+        accountId: "account-a",
+        forNewAgent: true,
+      }),
+    ).toMatchObject(expected);
+    expect(document.activeElement).toBe(button);
+  } finally {
+    list.mockRestore();
+    getStore.mockRestore();
+    localStorage.clear();
+  }
+});
 
 test("qualified Claude profiles contain only trusted catalog identity", () => {
   const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
