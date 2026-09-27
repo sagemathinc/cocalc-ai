@@ -60,6 +60,22 @@ expiry/locking behavior, not a genuine ACP crash or the managed CLI matrix.
 Agent Network discovery still does not expose the disposable managed-fixture
 agent. No account-credential fallback or alternative send was attempted.
 
+## Worker-owned lease heartbeats, 2026-09-27 (not deployed)
+
+A SQLite regression test reproduced a stale worker refreshing a replacement
+worker's lease: heartbeat updated `owner_instance_id` rather than matching the
+stored owner. Heartbeats now update only a running lease owned by that worker;
+explicit lease start remains the ownership-transfer operation. The regression
+uses the same PID for both worker identities, so PID reuse cannot defeat the
+owner check. It also verifies that the current owner can still heartbeat and
+that completed, error, and aborted leases cannot be revived by late heartbeats.
+
+The six connector lease tests and six adjacent worker SQLite/drain tests pass;
+52 worker-manager, detached-worker, and worker-launch tests also pass (64 total);
+the Lite TypeScript build passes. This is private, local SQLite evidence, not
+deployed ACP crash/recovery evidence. Finalization and recovery ownership races
+need a separate caller-aware audit; this change only fences heartbeat mutation.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend

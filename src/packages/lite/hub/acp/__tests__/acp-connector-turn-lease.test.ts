@@ -5,6 +5,7 @@ import {
 } from "../../sqlite/acp-database";
 import {
   finalizeAcpTurnLease,
+  getAcpTurnLease,
   heartbeatAcpTurnLease,
   startAcpTurnLease,
   verifyActiveAcpConnectorTurn,
@@ -92,3 +93,72 @@ test("rejects stale and finalized leases", () => {
     "active authenticated ACP turn unavailable",
   );
 });
+
+test("an obsolete worker cannot refresh a replacement lease, even with a reused PID", () => {
+  const context = {
+    ...key,
+    message_id: request.message_id,
+    thread_id: request.thread_id,
+    sender_id: request.account_id,
+  } as any;
+  for (const owner_instance_id of ["worker-a", "worker-b"]) {
+    startAcpTurnLease({
+      context,
+      approver_account_id: request.account_id,
+      owner_instance_id,
+      pid: process.pid,
+    });
+  }
+  const replacement = getAcpTurnLease(key)!;
+  const clock = jest
+    .spyOn(Date, "now")
+    .mockReturnValue(replacement.heartbeat_at + 30_001);
+  try {
+    heartbeatAcpTurnLease({
+      key,
+      owner_instance_id: "worker-a",
+      pid: process.pid,
+    });
+    expect(getAcpTurnLease(key)).toEqual(replacement);
+    expect(() => verifyActiveAcpConnectorTurn(request)).toThrow(
+      "active authenticated ACP turn unavailable",
+    );
+    heartbeatAcpTurnLease({
+      key,
+      owner_instance_id: "worker-b",
+      pid: process.pid,
+    });
+    expect(verifyActiveAcpConnectorTurn(request).owner_instance_id).toBe(
+      "worker-b",
+    );
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test.each(["completed", "error", "aborted"] as const)(
+  "%s cannot be revived by a late worker heartbeat",
+  (state) => {
+    startAcpTurnLease({
+      context: {
+        ...key,
+        message_id: request.message_id,
+        thread_id: request.thread_id,
+      } as any,
+      approver_account_id: request.account_id,
+      owner_instance_id: "worker-a",
+      pid: process.pid,
+    });
+    finalizeAcpTurnLease({ key, state, owner_instance_id: "worker-a" });
+    const finalized = getAcpTurnLease(key);
+    heartbeatAcpTurnLease({
+      key,
+      owner_instance_id: "worker-a",
+      pid: process.pid,
+    });
+    expect(getAcpTurnLease(key)).toEqual(finalized);
+    expect(() => verifyActiveAcpConnectorTurn(request)).toThrow(
+      "active authenticated ACP turn unavailable",
+    );
+  },
+);

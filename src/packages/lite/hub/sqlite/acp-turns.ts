@@ -160,21 +160,21 @@ export function heartbeatAcpTurnLease({
   db.prepare(
     `UPDATE ${TABLE}
       SET heartbeat_at = ?,
-          owner_instance_id = ?,
           pid = ?,
           session_id = COALESCE(?, session_id)
       WHERE project_id = ?
         AND path = ?
         AND message_date = ?
+        AND owner_instance_id = ?
         AND state = 'running'`,
   ).run(
     Date.now(),
-    owner_instance_id,
     pid,
     session_id ?? null,
     key.project_id,
     key.path,
     key.message_date,
+    owner_instance_id,
   );
 }
 
