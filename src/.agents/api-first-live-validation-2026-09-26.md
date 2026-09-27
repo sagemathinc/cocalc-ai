@@ -538,6 +538,26 @@ All 15 selected Jupyter/inbox/socket tests and the Conat build pass. This does
 not establish real-kernel execution, notebook persistence, recovery mid-run,
 or live CLI/managed-agent behavior.
 
+### Real Python kernel over scoped transport (isolated)
+
+The project-package opt-in integration test uses CoCalc's production kernel API
+to launch local `python3`, then connects it to the actual Jupyter client/service
+over a broker enforcing the existing project-host API-key subject policy. Python
+`input()` receives `17` through the reverse-request path; the first cell prints
+`51`, and the next prints `18` from retained kernel state. A subsequent Python
+exception is delivered as an error output and the next run still prints `17`.
+Broad terminal-style client-subject subscription remains denied. The test closes
+and awaits kernel cleanup and removes its temporary directory.
+
+Run from `src/packages/project` with
+`COCALC_REAL_KERNEL_TEST=1 pnpm exec jest conat/jupyter-scoped-kernel.test.ts --runInBand --forceExit`.
+The real-kernel case plus both real-PTY cases pass (3 tests); project TypeScript
+build passes. Replay storage is still a test double and the runner is a small
+adapter to the production kernel, not the notebook controller. This therefore
+does not prove collaborative notebook persistence, deployed CLI behavior,
+mid-run reconnect, or managed-turn lifecycle. Ordinary CI skips this opt-in test
+unless explicitly enabled in an environment with a local Python kernel.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
