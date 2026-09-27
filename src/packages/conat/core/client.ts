@@ -239,6 +239,7 @@ import {
   isValidSubjectWithoutWildcards,
   ConatError,
   headerToError,
+  serviceErrorAttributes,
 } from "@cocalc/conat/util";
 export { ConatError, headerToError };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -1643,7 +1644,7 @@ export class Client extends EventEmitter {
     } catch (err) {
       respond({
         error: err instanceof Error ? err.message : `${err}`,
-        code: (err as any)?.code,
+        ...serviceErrorAttributes(err),
         serviceHandlerMs: Date.now() - handlerStart,
       });
     }
@@ -2054,7 +2055,10 @@ export class Client extends EventEmitter {
       throw toConatError(err, { subject });
     }
     if (response?.error) {
-      throw new ConatError(response.error, { code: response.code, subject });
+      throw new ConatError(response.error, {
+        ...serviceErrorAttributes(response),
+        subject,
+      });
     }
     return response;
   };

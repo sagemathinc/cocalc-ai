@@ -9,6 +9,62 @@ jest.mock("@cocalc/conat/logger", () => ({
 }));
 
 describe("core client request setup failures", () => {
+  it("round trips fast RPC admission metadata without private fields or replay", async () => {
+    jest.resetModules();
+    let client: any;
+    const emitWithAck = jest.fn(async (_event, request) => {
+      let response;
+      await client.handleFastRpcRequest(
+        { pattern: request.subject, payload: request.payload },
+        (value) => {
+          response = JSON.parse(JSON.stringify(value));
+        },
+      );
+      expect(response).not.toHaveProperty("credential");
+      return response;
+    });
+    const socket = {
+      on: jest.fn(),
+      emit: jest.fn(),
+      timeout: () => ({ emitWithAck }),
+      disconnect: jest.fn(),
+      close: jest.fn(),
+      io: { on: jest.fn(), connect: jest.fn(), disconnect: jest.fn() },
+    };
+    jest.doMock("socket.io-client", () => ({ connect: () => socket }));
+    const { Client } = require("./client");
+    client = new Client({
+      address: "http://example.com",
+      autoConnect: false,
+      noCache: true,
+    });
+    client.state = "connected";
+    client.info = { user: { account_id: "test-account" } };
+    client.fastRpcServiceHandlers["test.summary"] = jest.fn(async () => {
+      throw Object.assign(new Error("search rate exceeded"), {
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+        credential: "must-not-cross-wire",
+      });
+    });
+    try {
+      await expect(
+        client.fastRpcRequest("test.summary", {}),
+      ).rejects.toMatchObject({
+        message: "search rate exceeded",
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+        subject: "test.summary",
+      });
+      expect(emitWithAck).toHaveBeenCalledTimes(1);
+      expect(
+        client.fastRpcServiceHandlers["test.summary"],
+      ).toHaveBeenCalledTimes(1);
+    } finally {
+      client.close();
+    }
+  });
+
   it.each(
     [false, true].flatMap((many) =>
       ["close", "publish-error"].map((end) => [many, end] as const),
