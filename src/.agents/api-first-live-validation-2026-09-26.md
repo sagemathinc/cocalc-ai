@@ -8,6 +8,28 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Scoped HTTP deployment attempt, 2026-09-27
 
+### Follow-up transport evidence and recovery
+
+After `30310adc27`, real loopback Node HTTP tests verify that a signed,
+parent-expiry-clamped streamed response receives data before expiry and aborts
+at the deadline. The server observes response closure and removes its producer
+timer. A second test reuses the same keep-alive connection for a request that
+outlasts the completed first request's deadline; it completes successfully.
+These exercise real HTTP request/response objects and sockets, but not deployed
+host ingress, inter-bay exchange, or managed ACP issuance. The focused host
+HTTP/Conat set passes 86 tests; project-host TypeScript and diff checks pass.
+
+The primary hub had fail-stopped on a billing-authority lease query timeout;
+its PID was absent and daemon status confirmed it stopped. The supported restart
+at the next continuation started primary PID 1683774 and attached PIDs 1688732
+and 1692765. The existing upgrade operation below was automatically reclaimed
+as attempt 2 by the new hub owner. At `2026-09-27T15:30:16.164Z`, authoritative
+state reported running, downloading/installing artifacts, with no terminal
+result. No duplicate upgrade request was submitted. The served candidate bundle
+is still `84ff8908f2`, not the later `30310adc27` deadline follow-up.
+
+### Original attempt
+
 Candidate: `84ff8908f2f4d0d0f5feea9e3a9b29f5309293e9`. The distinct HTTP
 token, authoritative issuer, host admission, and CLI proxy routing are now
 connected in source. Focused checks passed: 32 CLI tests, 10 HTTP endpoint tests,

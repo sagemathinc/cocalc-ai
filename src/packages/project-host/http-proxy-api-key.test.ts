@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { createServer, request as httpRequest, Agent } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   issueProjectHostApiKeyHttpToken,
   issueProjectHostApiKeyAuthToken,
@@ -210,4 +212,112 @@ test("fences incoming data and writes before overdue timers run after a stall", 
   expect(transport.destroy).toHaveBeenCalled();
   transport.emit("close");
   expect(jest.getTimerCount()).toBe(0);
+});
+
+test("real HTTP streaming response is detached at the signed deadline", async () => {
+  const expiry = Math.floor(Date.now() / 1000) + 2;
+  let upstreamClosed = false;
+  const server = createServer((req, res) => {
+    const claims = authorizeScopedHttpProxy(req, host_id, project_id)!;
+    expireScopedHttpTransport(res, claims.exp, true);
+    const stopInput = expireScopedHttpTransport(req, claims.exp);
+    res.once("finish", stopInput);
+    res.once("close", stopInput);
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.write("first\n");
+    const timer = setInterval(() => res.write("tick\n"), 20);
+    res.once("close", () => {
+      upstreamClosed = true;
+      clearInterval(timer);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const token = issueProjectHostApiKeyHttpToken({
+      ...options,
+      port: 8080,
+      parent_exp_s: expiry,
+    }).token;
+    const result = await new Promise<{ bytes: number; aborted: boolean }>(
+      (resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port: (server.address() as AddressInfo).port,
+            path: `/${project_id}/proxy/8080/stream`,
+            headers: { [PROJECT_HOST_API_KEY_HTTP_HEADER]: token },
+          },
+          (res) => {
+            let bytes = 0;
+            expect(res.statusCode).toBe(200);
+            expect(res.headers["set-cookie"]).toBeUndefined();
+            res.on("data", (chunk) => {
+              bytes += chunk.length;
+            });
+            res.on("error", () => {});
+            res.on("close", () => resolve({ bytes, aborted: res.aborted }));
+          },
+        );
+        req.on("error", reject);
+        req.setTimeout(4000, () =>
+          req.destroy(new Error("stream failed to expire")),
+        );
+        req.end();
+      },
+    );
+    expect(result.bytes).toBeGreaterThan(0);
+    expect(result.aborted).toBe(true);
+    expect(Date.now()).toBeGreaterThanOrEqual(expiry * 1000);
+    expect(Date.now()).toBeLessThan(expiry * 1000 + 1000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(upstreamClosed).toBe(true);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("a completed HTTP response does not expire a reused keep-alive connection", async () => {
+  let count = 0;
+  const server = createServer((req, res) => {
+    if (++count === 1) {
+      const deadline = Date.now() / 1000 + 0.1;
+      expireScopedHttpTransport(res, deadline, true);
+      const stopInput = expireScopedHttpTransport(req, deadline);
+      res.once("finish", stopInput);
+      res.once("close", stopInput);
+      res.end("first");
+    } else {
+      setTimeout(() => res.end("second"), 200);
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const get = () =>
+    new Promise<{ body: string; reused: boolean }>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port: (server.address() as AddressInfo).port,
+          agent,
+        },
+        (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("error", reject);
+          res.on("end", () => resolve({ body, reused: req.reusedSocket }));
+        },
+      );
+      req.on("error", reject);
+      req.setTimeout(4000, () => req.destroy(new Error("keep-alive stalled")));
+      req.end();
+    });
+  try {
+    expect((await get()).body).toBe("first");
+    expect(await get()).toEqual({ body: "second", reused: true });
+  } finally {
+    agent.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
