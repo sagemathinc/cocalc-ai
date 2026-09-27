@@ -27,12 +27,21 @@ failed execution, expiry, restart, eviction, malformed fingerprints, and retaine
 capacity for hung work. Together with request/inbox/admission coverage, all 24
 tests passed; the Conat TypeScript build passed.
 
-The primitive is deliberately not exposed through an RPC yet. Integration must
-derive its scope and fingerprint on the server, authorize reservation/execution/
-outcome access under the current credential, reject changed authority, and keep
-result lookup on the direct project-host data plane. Missing outcomes must stay
-unknown; clients must not silently allocate a new mutation and replay it. No
-production default limits or end-to-end receipt recovery are claimed here.
+The writable filesystem service now exposes reservation, execution, and status
+RPCs under its existing direct-host authorization. Scope and payload fingerprints
+are server-derived. Limits are 256 retained receipts per service, 32 per authority
+and subject, and 120 seconds of retention; active mutations keep their slot until
+they settle. Read-only filesystem services expose none of these methods.
+
+The ordinary filesystem client uses receipts for scoped host-key writes. Each
+RPC attempt is capped at 10 seconds (or a smaller caller timeout), with at most
+three attempts and bounded sign-in waits after connection loss or timeout.
+Lost reservation acknowledgments may leave unused expiring slots, not writes.
+After reservation, retries always use the same ID. Changed authority, unknown
+outcomes, authorization failures, and other application errors stop recovery;
+there is no fallback to an unreceipted write. Ordinary non-key filesystem calls
+retain their prior behavior. This source change has not been deployed or proven
+against the installed live editing workload yet.
 
 The Conat router now adds an opaque mutation-authority binding to authenticated
 caller metadata for project-host API-key principals. It binds account, key,
@@ -45,10 +54,20 @@ old receipt.
 
 Focused binding tests cover changed authorization dimensions and healthy reply
 rotation. Real broker publications verify that a client's forged caller slot
-is replaced for scoped keys and removed for ordinary principals. Filesystem
-receipt RPCs and automatic client recovery remain unimplemented and undeployed.
+is replaced for scoped keys and removed for ordinary principals.
 All 34 receipt, authority-binding, and broker caller/revocation tests pass;
 the Conat TypeScript build passes.
+
+Twelve new real-broker filesystem tests cover receipt reuse from a renewed
+connection, successful writes with a simulated lost acknowledgment, lost
+reservation replies, unknown outcomes, authority changes, concurrent duplicate
+requests, changed payloads, revoked transport access, reservation capacity,
+missing authenticated metadata, and retained failed outcomes. Filesystem storage is
+mocked in these tests; actual host filesystem behavior and forced token-lease
+disconnects still require the installed live probe.
+All 18 filesystem suites passed (140 tests before the last three focused cases);
+the final receipt suite passes all 12 cases. Conat, CLI, and project-host
+TypeScript builds passed during integration.
 
 ## Disk-save disconnect reproduction, 2026-09-27
 

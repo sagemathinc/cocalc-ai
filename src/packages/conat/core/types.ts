@@ -1,3 +1,5 @@
+import type { ProjectHostApiKeyBinding } from "../auth/project-host-token";
+
 interface User {
   account_id?: string;
   // Cookie-authenticated session reference supplied by the server for hub RPCs.
@@ -15,6 +17,7 @@ interface User {
   auth_iat_s?: number;
   auth_exp_s?: number;
   auth_api_key_reply_prefix?: string;
+  auth_api_key?: ProjectHostApiKeyBinding;
   error?: string;
 }
 

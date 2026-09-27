@@ -182,6 +182,9 @@ describe("filesystem explicit routing", () => {
 
     expect(handlers.jupyterImportIpynb).toBeUndefined();
     expect(handlers.jupyterSaveIpynb).toBeUndefined();
+    expect(handlers.reserveWrite).toBeUndefined();
+    expect(handlers.writeFileWithReceipt).toBeUndefined();
+    expect(handlers.writeReceiptStatus).toBeUndefined();
     server.close();
   });
 
