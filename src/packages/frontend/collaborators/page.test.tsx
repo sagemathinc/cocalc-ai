@@ -141,7 +141,9 @@ test("People navigation uses shared projects, but inviting allows the first coll
     screen.getByRole("heading", { name: "People", level: 1 }),
   ).toBeVisible();
   const views = screen.getByRole("navigation", { name: "People views" });
-  await user.click(within(views).getByRole("button", { name: "Address Book" }));
+  await user.click(
+    within(views).getByRole("button", { name: "Collaborators" }),
+  );
   await user.click(
     within(views).getByRole("button", { name: "Shared projects" }),
   );
@@ -205,7 +207,7 @@ test("inviting from a person's overview also offers projects not yet shared with
   );
 });
 
-test("Address Book renders existing account avatars", async () => {
+test("Collaborators renders existing account avatars", async () => {
   render(<Workspace initial={{ view: "people" }} />);
   expect(await screen.findByTestId("avatar-bob")).toBeVisible();
 });

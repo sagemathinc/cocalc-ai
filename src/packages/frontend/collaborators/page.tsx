@@ -57,7 +57,7 @@ const NewProjectCreator = lazy(async () => ({
 }));
 const VIEWS: [CollaboratorsView, string][] = [
   ["conversations", "Conversations"],
-  ["people", "Address Book"],
+  ["people", "Collaborators"],
   ["projects", "Shared projects"],
 ];
 
