@@ -80,6 +80,31 @@ This verifies installation, not scoped-key terminal/Jupyter workflows or
 independent review of the new transport code. The validation project remains
 running for the next disposable fixture.
 
+### Installed CLI terminal probe: partial pass, default-write failure
+
+The verified host3 project ran its installed CLI using a manually issued,
+five-minute key granting the full-runtime capability set for only that project.
+The inner CLI ran under `env -i`, an explicit public API URL, a private
+`--api-key-file`, and `--no-daemon`; no ambient account or agent credential was
+available to it. The human-authenticated outer CLI only provisioned and cleaned
+the fixture and launched the installed command.
+
+Terminal spawn returned a real Bash PID. Ordinary `terminal write` returned
+`written: false`, reason `terminal has an active browser leader`, about 2.6
+seconds after spawn despite no browser being attached to this fixture. Repeated
+history reads did not show submitted input. The explicit `--force` option for
+the fixture's own terminal returned successful input and history contained
+`answer-42`, assembled by the shell rather than present literally in its input.
+Thus spawn, forced input, and history are verified; the default CLI workflow
+fails and the leader/close lifecycle requires investigation. No Jupyter or
+managed-turn claim follows from this probe.
+
+Keys 77, 78, and 79 were deleted after the three attempts. Interactive Bash
+ignored the first cleanup's SIGTERM, so a fourth temporary key (80) enumerated
+only the unique `api-probe-*` sessions and hung up their PIDs (45, 89, 181).
+It too was deleted. A subsequent process listing confirmed all three shells
+were gone. Local and remote private credential directories were removed.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
