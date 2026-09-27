@@ -8,6 +8,24 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Live synchronized-text interruption gap, 2026-09-27
 
+The CLI text-session follow-up now guards opening, saving, disk saving, and
+session callbacks against a received authentication denial or explicit client
+closure. It closes the raw sync document, rejects pending callers even if the
+underlying close resolves a save, and rejects subsequent use of that session.
+Ordinary disconnection and a successful lease handshake do not trigger this
+guard. Cached sessions are separated by client instance as well as project/path,
+and closed entries are reopened rather than reused. Failed/timed-out openings
+also close their raw session and remove authorization listeners.
+
+Eight new session tests cover pending saves, disk saves, healthy reconnection,
+client/explicit closure, idle denial, opening cleanup, and cross-client cache
+isolation. Together with the two existing text tests and two lease-reconnect
+tests, all 12 passed; CLI production and test TypeScript builds passed. Most
+session assertions use a synthetic sync document; the lease test uses an actual
+in-process broker. This is not yet deployed/installed-CLI evidence. The live
+interruption gate below stays open until the probe is rerun, including independent
+post-revocation document inspection and healthy editing across lease renewal.
+
 Follow-up source tracing found that `SyncDoc.save()` awaits
 `DStream.save()`, whose retry loop catches save failures indefinitely. Separately,
 `Client.waitUntilSignedIn()` missed an authentication error already received on
