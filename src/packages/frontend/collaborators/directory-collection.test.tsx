@@ -26,7 +26,7 @@ const props = {
   renderItem: (id: string) => <button>Open {id}</button>,
 };
 
-test("People pin, grid and manual order persist, without changing membership", async () => {
+test("People pins and grid persist with drag handles and no redundant reorder menu", async () => {
   const user = userEvent.setup();
   const mount = () =>
     render(
@@ -36,9 +36,11 @@ test("People pin, grid and manual order persist, without changing membership", a
   await user.click(screen.getByRole("button", { name: "Pin Carol" }));
   await user.click(screen.getByRole("button", { name: "Pin Bob" }));
   await user.click(screen.getByRole("button", { name: "Grid view" }));
-  await user.click(screen.getByRole("button", { name: "Reorder Carol" }));
-  await user.click(screen.getByRole("menuitem", { name: "Move down" }));
-  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(4));
+  expect(screen.queryByRole("button", { name: /Reorder/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Drag Carol to reorder" }),
+  ).toBeVisible();
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(3));
   view.unmount();
   mount();
   expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
@@ -50,7 +52,7 @@ test("People pin, grid and manual order persist, without changing membership", a
     pins
       .getAllByRole("button", { name: /^Open/ })
       .map((button) => button.textContent),
-  ).toEqual(["Open Bob", "Open Carol"]);
+  ).toEqual(["Open Carol", "Open Bob"]);
 });
 
 test.each(["projects", "conversations"] as const)(

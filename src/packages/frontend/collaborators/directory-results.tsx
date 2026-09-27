@@ -22,7 +22,9 @@ export function DirectoryResults<T>({
   const { page, loading, error } = result;
   return (
     <section aria-label={label} aria-busy={loading}>
-      {loading && <p role="status">Loading {label.toLowerCase()}...</p>}
+      {loading && !page && (
+        <p role="status">Loading {label.toLowerCase()}...</p>
+      )}
       {error && (
         <Alert
           role="alert"
@@ -42,19 +44,17 @@ export function DirectoryResults<T>({
       {page && (
         <>
           {page.coverage !== "complete" && (
-            <Alert
-              role="status"
-              type="warning"
-              title={
-                page.coverage === "indexing"
-                  ? "Indexing in progress"
-                  : "Partial coverage"
-              }
-              description={
-                page.coverage_message ||
-                "Some accessible work is not indexed yet. Missing results do not mean you have no access."
-              }
-            />
+            <details style={{ marginBottom: 8 }}>
+              <summary>
+                {page.coverage === "indexing"
+                  ? "Some results are still updating"
+                  : "About these results"}
+              </summary>
+              <p>
+                {page.coverage_message ||
+                  "Some accessible work is not indexed yet. Missing results do not mean you have no access."}
+              </p>
+            </details>
           )}
           {page.items.length ? (
             children(page.items)

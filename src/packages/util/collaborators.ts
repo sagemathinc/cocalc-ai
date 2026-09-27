@@ -4,6 +4,7 @@
  */
 import type { CollaborationMessageEvent } from "./collaboration-attention";
 import type { CollaborationRelationManifest } from "./collaboration-relations";
+import type { ProjectTheme } from "./db-schema/projects";
 
 /** Discovery metadata is never an authorization capability. */
 export type CollaborationResourceKind = "conversation" | "agent" | "artifact";
@@ -56,6 +57,7 @@ export interface CollaborationProject {
   project_id: string;
   title: string;
   description: string;
+  theme?: ProjectTheme | null;
   role: "owner" | "collaborator";
   last_activity_at?: number;
   /** Existing account project bookmark; never an access grant. */

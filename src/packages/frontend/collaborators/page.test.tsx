@@ -25,10 +25,30 @@ const mockApi = {
   ensureRoom: jest.fn(),
 };
 jest.mock("./workspace-api", () => ({ boundCollaboratorsApi: () => mockApi }));
+jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
+  Avatar: ({ account_id }) => <span data-testid={`avatar-${account_id}`} />,
+}));
+jest.mock("@cocalc/frontend/projects/theme", () => ({
+  ProjectThemeAvatar: ({ theme }) => (
+    <span data-testid="project-theme" data-theme={JSON.stringify(theme)} />
+  ),
+}));
+jest.mock("@cocalc/frontend/agents/project-settings-drawer", () => ({
+  ProjectSettingsDrawer: ({ open, projectId, onClose }) =>
+    open ? (
+      <div role="dialog" aria-label="Project settings">
+        <span>{projectId}</span>
+        <button onClick={onClose}>Close settings</button>
+      </div>
+    ) : null,
+}));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (store: string) =>
     store === "account" ? mockAccount : mockProjects,
-  redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
+  redux: {
+    getActions: () => ({ erase_active_key_handler: jest.fn() }),
+    getStore: () => ({ get: () => mockAccount }),
+  },
 }));
 jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(),
@@ -185,6 +205,47 @@ test("inviting from a person's overview also offers projects not yet shared with
   );
 });
 
+test("Address Book renders existing account avatars", async () => {
+  render(<Workspace initial={{ view: "people" }} />);
+  expect(await screen.findByTestId("avatar-bob")).toBeVisible();
+});
+
+test("Shared projects uses both theme colors and passes image and icon to the shared avatar", async () => {
+  const theme = {
+    color: "#123456",
+    accent_color: "#abcdef",
+    icon: "rocket",
+    image_blob: "image",
+  };
+  mockApi.listProjects.mockResolvedValue(
+    page([
+      { project_id: "geometry", title: "Geometry Lab", theme, role: "owner" },
+    ]),
+  );
+  render(<Workspace initial={{ view: "projects" }} />);
+  const avatar = await screen.findByTestId("project-theme");
+  expect(JSON.parse(avatar.getAttribute("data-theme")!)).toEqual(theme);
+  const card = avatar.closest("button")?.parentElement?.parentElement;
+  expect(card).toHaveStyle({ borderColor: "#123456" });
+  expect(card?.getAttribute("style")).toContain("#abcdef");
+});
+
+test("project Settings opens the shared drawer without leaving People", async () => {
+  const user = userEvent.setup();
+  render(<Workspace initial={{ view: "projects", projectId: "geometry" }} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Settings", exact: true }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Project settings" }),
+  ).toHaveTextContent("geometry");
+  expect(
+    screen.getByRole("heading", { name: "People", level: 1 }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Close settings" }));
+  expect(screen.queryByRole("dialog", { name: "Project settings" })).toBeNull();
+});
+
 test("keyboard opens a conversation and restores focus and search on back", async () => {
   const user = userEvent.setup();
   render(<Workspace />);
@@ -281,7 +342,7 @@ test("shows indexing coverage, cursor paging, and errors without fabricating emp
     )
     .mockRejectedValueOnce(Error("Directory offline"));
   render(<Workspace />);
-  expect(await screen.findByText("Partial coverage")).toBeInTheDocument();
+  expect(await screen.findByText("About these results")).toBeInTheDocument();
   expect(screen.getByText("Legacy sources pending")).toBeInTheDocument();
   const next = screen.getByRole("button", { name: "Next" });
   next.focus();

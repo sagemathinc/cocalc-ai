@@ -1,5 +1,4 @@
 import { Alert, Button, Collapse, Space, Typography } from "antd";
-import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { browseProjectDirectory } from "@cocalc/frontend/project/browse-directory";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -20,33 +19,32 @@ import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/manag
 import { AgentHostRecovery } from "./host-recovery";
 
 export default function ProjectDetails({
-  agent,
+  projectId,
   onClose,
 }: {
-  agent: NamedAgent;
+  projectId: string;
   onClose: () => void;
 }) {
   const context = useProjectContextProvider({
-    project_id: agent.endpoint.project_id,
+    project_id: projectId,
     is_active: true,
     mainWidthPx: 560,
     manageWorkspaceSelection: false,
   });
   return (
     <ProjectContext.Provider value={context}>
-      <Details agent={agent} onClose={onClose} />
+      <Details projectId={projectId} onClose={onClose} />
     </ProjectContext.Provider>
   );
 }
 
 function Details({
-  agent,
+  projectId,
   onClose,
 }: {
-  agent: NamedAgent;
+  projectId: string;
   onClose: () => void;
 }) {
-  const projectId = agent.endpoint.project_id;
   const accountId = useTypedRedux("account", "account_id");
   const egress = parseManagedEgressBlockedError(
     useTypedRedux("account", "managed_egress_blocked_error"),

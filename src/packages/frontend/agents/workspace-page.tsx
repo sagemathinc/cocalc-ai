@@ -3724,7 +3724,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         boxSizing: "border-box",
         overflow: "hidden",
         minWidth: 0,
-        padding: "12px 0 0 12px",
+        padding: "0 0 0 12px",
         ...(isNarrow && !mobileList ? { display: "none" } : {}),
       }}
     >

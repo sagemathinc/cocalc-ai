@@ -320,7 +320,7 @@ test("batched leases make 1000 cold projects browsable without catalog pages and
   const page = await listCollaborationProjects({ account_id, limit: 50 });
   expect(page.items).toHaveLength(50);
   expect(page.next).toBeDefined();
-  expect(page.coverage).toBe("indexing");
+  expect(page.coverage).toBe("complete");
   expect(
     Number(
       (await getPool().query("SELECT count(*) AS n FROM collaboration_index"))
@@ -1916,7 +1916,7 @@ test("bounded participant previews preserve large-room metadata and explicitly d
   });
   expect(result.items[0].participant_ids).toHaveLength(64);
   expect(result.coverage).toBe("indexing");
-  expect(result.coverage_message).toContain("participant relations");
+  expect(result.coverage_message).toContain("indexed");
   expect(
     (
       await getPool().query(

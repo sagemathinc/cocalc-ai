@@ -109,3 +109,48 @@ test("selected content revalidation preserves the runtime until a definitive acc
   expect(result.current.page).toBeUndefined();
   expect(result.current.error).toContain("access removed");
 });
+
+test("directory refresh keeps the current page mounted, but fails closed on access-check failure", async () => {
+  let generation = 1;
+  let ready = true;
+  const fresh = deferred<CollaborationPage<string>>();
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("Bob"))
+    .mockReturnValueOnce(fresh.promise);
+  const { result, rerender } = renderHook(() => useDirectory("people", load), {
+    wrapper: ({ children }) => (
+      <DirectoryRevisionContext.Provider value={{ generation, ready }}>
+        {children}
+      </DirectoryRevisionContext.Provider>
+    ),
+  });
+  await waitFor(() => expect(result.current.page?.items).toEqual(["Bob"]));
+  const original = result.current.page;
+  generation++;
+  rerender();
+  expect(result.current.loading).toBe(true);
+  expect(result.current.page).toBe(original);
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  await act(async () => fresh.resolve(page("Carol")));
+  expect(result.current.page?.items).toEqual(["Carol"]);
+  ready = false;
+  rerender();
+  expect(result.current.page).toBeUndefined();
+});
+
+test("returning to a previously loaded filter does not resurrect cached metadata", async () => {
+  const load = jest
+    .fn()
+    .mockResolvedValueOnce(page("old"))
+    .mockReturnValue(new Promise(() => {}));
+  const { result, rerender } = renderHook(
+    ({ key }) => useDirectory(key, load),
+    { initialProps: { key: "a" } },
+  );
+  await waitFor(() => expect(result.current.page?.items).toEqual(["old"]));
+  rerender({ key: "b" });
+  expect(result.current.page).toBeUndefined();
+  rerender({ key: "a" });
+  expect(result.current.page).toBeUndefined();
+});

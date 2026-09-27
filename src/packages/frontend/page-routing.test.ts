@@ -7,6 +7,10 @@ import {
 } from "./page-routing";
 
 describe("page-routing", () => {
+  it("opens Home as the agent workspace", () => {
+    expect(parsePageTarget("home")).toEqual(parsePageTarget("agents"));
+    expect(parsePageTarget("home/")).toEqual(parsePageTarget("agents"));
+  });
   it("maps settings routes to the account top tab", () => {
     const parsed = parsePageTarget("settings/payment-methods");
     expect(parsed).toEqual({

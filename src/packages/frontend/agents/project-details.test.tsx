@@ -74,12 +74,7 @@ jest.mock("./open-notification", () => ({
   openAgentNotification: (...args) => navigate(...args),
 }));
 test("project agents are buttons; Browse leaves Agents; settings have one accordion level", async () => {
-  render(
-    <ProjectDetails
-      agent={{ endpoint: { project_id: "p" } } as any}
-      onClose={close}
-    />,
-  );
+  render(<ProjectDetails projectId="p" onClose={close} />);
   expect(screen.getByRole("button", { name: "Restart project" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "@helper" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));

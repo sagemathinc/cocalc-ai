@@ -2,6 +2,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Overview } from "./overview";
 import type { DirectoryApi } from "./workspace-api";
+jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
+  Avatar: () => <span />,
+}));
+jest.mock("@cocalc/frontend/projects/theme", () => ({
+  ProjectThemeAvatar: () => <span />,
+}));
 
 const page = (title: string, next?: string) => ({
   items: [

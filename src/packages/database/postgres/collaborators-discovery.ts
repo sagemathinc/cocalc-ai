@@ -129,27 +129,37 @@ async function coverage(
   account_id: string,
   project_id?: string,
   project_ids?: string[],
+  resources = true,
+  sharedOnly = false,
 ): Promise<Pick<CollaborationPage<never>, "coverage" | "coverage_message">> {
   const result = await getPool().query(
     `SELECT EXISTS(SELECT 1 FROM account_project_index p
     LEFT JOIN collaboration_access x USING(account_id,project_id)
     WHERE p.account_id=$1 AND ($2::uuid IS NULL OR p.project_id=$2)
     AND ($3::uuid[] IS NULL OR p.project_id=ANY($3::uuid[]))
+    ${sharedOnly ? `AND ${SHARED}` : ""}
     AND p.users_summary #>> ARRAY[p.account_id::text,'group'] IN ('owner','collaborator')
-    AND (x.generation IS NULL OR x.lease_until<=now() OR NOT x.complete OR x.last_error IS NOT NULL
-      OR EXISTS(SELECT 1 FROM collaboration_index r WHERE r.account_id=p.account_id AND r.project_id=p.project_id AND NOT r.relations_complete))) AS pending`,
+    AND (COALESCE(x.granted_generation,x.generation) IS NULL OR x.lease_until IS NULL OR x.lease_until<=now()
+      ${
+        resources
+          ? `OR NOT x.complete OR x.last_error IS NOT NULL
+      OR EXISTS(SELECT 1 FROM collaboration_index r WHERE r.account_id=p.account_id AND r.project_id=p.project_id AND NOT r.relations_complete)`
+          : ""
+      })) AS pending`,
     [account_id, project_id ?? null, project_ids ?? null],
   );
   return result.rows[0].pending
     ? {
         coverage: "indexing",
-        coverage_message:
-          "Metadata or complete participant relations are still indexing, or access could not be refreshed. Unverified results are hidden.",
+        coverage_message: resources
+          ? "Some conversations are still being indexed, or project access could not be refreshed. Unverified results are hidden."
+          : "Access to some projects could not yet be refreshed. Those projects and their people are temporarily omitted.",
       }
     : {
-        coverage: "partial",
-        coverage_message:
-          "Indexed sources only; undiscovered legacy sources may be absent. Participant filters use complete indexed relations, not summary previews.",
+        coverage: resources ? "partial" : "complete",
+        coverage_message: resources
+          ? "Search includes indexed conversations. Older chat files may not appear until discovered."
+          : undefined,
       };
 }
 function personal(row: any): CollaborationPersonalState {
@@ -185,6 +195,7 @@ async function page<T>(
   order: (row: any) => number,
   key: (row: any) => string,
   coverageProjects?: string[],
+  resources = true,
 ): Promise<CollaborationPage<T>> {
   const items: T[] = [];
   let bytes = 2048;
@@ -201,7 +212,13 @@ async function page<T>(
     ...(last && rows.length > items.length
       ? { next: next(opts.binding, order(last), key(last)) }
       : {}),
-    ...(await coverage(opts.account_id, opts.project_id, coverageProjects)),
+    ...(await coverage(
+      opts.account_id,
+      opts.project_id,
+      coverageProjects,
+      resources,
+      opts.shared_only,
+    )),
   };
 }
 
@@ -339,7 +356,7 @@ export async function listCollaborationProjects(
   const q = query(input, `projects:${view}:${hash(JSON.stringify(pins))}`);
   if (q.after) uuid(q.after.key, "project cursor");
   const { rows } = await getPool().query(
-    `SELECT p.project_id,left(p.title,512) AS title,left(p.description,1024) AS description,
+    `SELECT p.project_id,left(p.title,512) AS title,left(p.description,1024) AS description,p.theme,
     p.users_summary #>> ARRAY[$1::text,'group'] AS role,
     floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint AS activity,
     p.project_id=ANY($8::uuid[]) AS pinned
@@ -370,6 +387,7 @@ export async function listCollaborationProjects(
       project_id: row.project_id,
       title: row.title ?? "",
       description: row.description ?? "",
+      theme: row.theme,
       role: row.role,
       last_activity_at: Number(row.activity),
       pinned: !!row.pinned,
@@ -377,6 +395,7 @@ export async function listCollaborationProjects(
     (row) => Number(row.activity),
     (row) => row.project_id,
     view === "pinned" ? pins : undefined,
+    false,
   );
 }
 
@@ -417,6 +436,8 @@ export async function listCollaborationPeople(
     }),
     () => 0,
     (row) => row.collaborator_account_id,
+    undefined,
+    false,
   );
 }
 

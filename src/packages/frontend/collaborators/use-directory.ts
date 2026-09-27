@@ -23,19 +23,29 @@ export function useDirectory<T>(
   key: string,
   load: (after?: string, signal?: AbortSignal) => Promise<CollaborationPage<T>>,
   enabled = true,
-  keepAuthorizedWhileRefreshing = false,
+  keepAuthorizedWhileRefreshing = true,
 ): DirectoryPage<T> {
   const epoch = useContext(DirectoryRevisionContext);
   const targetKey = key;
   key = JSON.stringify([key, epoch.generation]);
   enabled = enabled && epoch.ready;
+  const activation = useRef({ enabled, targetKey, sequence: 0 });
+  if (
+    activation.current.enabled !== enabled ||
+    activation.current.targetKey !== targetKey
+  )
+    activation.current = {
+      enabled,
+      targetKey,
+      sequence: activation.current.sequence + 1,
+    };
   const loader = useRef(load);
   loader.current = load;
   const [position, setPosition] = useState<{
     key: string;
     cursors: (string | undefined)[];
-  }>({ key, cursors: [undefined] });
-  const cursors = position.key === key ? position.cursors : [undefined];
+  }>({ key: targetKey, cursors: [undefined] });
+  const cursors = position.key === targetKey ? position.cursors : [undefined];
   const after = cursors[cursors.length - 1];
   const [revision, setRevision] = useState(0);
   const identity = JSON.stringify([key, after, revision, enabled]);
@@ -50,6 +60,8 @@ export function useDirectory<T>(
   const [state, setState] = useState<{
     key: string;
     targetKey: string;
+    after?: string;
+    activation: number;
     page?: CollaborationPage<T>;
     error?: string;
   }>();
@@ -59,15 +71,29 @@ export function useDirectory<T>(
     let cancelled = false;
     const abort = new AbortController();
     const loadPage = loader.current;
+    const activeSequence = activation.current.sequence;
     void Promise.resolve()
       .then(() => loadPage(after, abort.signal))
       .then(
         (page) => {
-          if (!cancelled) setState({ key: requestKey, targetKey, page });
+          if (!cancelled)
+            setState({
+              key: requestKey,
+              targetKey,
+              after,
+              activation: activeSequence,
+              page,
+            });
         },
         (error) => {
           if (!cancelled)
-            setState({ key: requestKey, targetKey, error: String(error) });
+            setState({
+              key: requestKey,
+              targetKey,
+              after,
+              activation: activeSequence,
+              error: String(error),
+            });
         },
       );
     return () => {
@@ -77,10 +103,14 @@ export function useDirectory<T>(
   }, [requestKey]);
 
   const current = enabled && state?.key === requestKey ? state : undefined;
-  // Only a still-selected authorized runtime stays mounted during revalidation.
-  // Errors, inactive state, and new targets discard its previous metadata.
+  // Refresh in place. Never retain across account/filter/page changes, an
+  // inactive interval, failed access checks, or a rejected page read.
   const retained =
-    enabled && keepAuthorizedWhileRefreshing && state?.targetKey === targetKey
+    enabled &&
+    keepAuthorizedWhileRefreshing &&
+    state?.targetKey === targetKey &&
+    state.after === after &&
+    state.activation === activation.current.sequence
       ? state.page
       : undefined;
   return {
@@ -90,12 +120,12 @@ export function useDirectory<T>(
     pageNumber: cursors.length,
     previous: () => {
       if (cursors.length > 1)
-        setPosition({ key, cursors: cursors.slice(0, -1) });
+        setPosition({ key: targetKey, cursors: cursors.slice(0, -1) });
     },
     next: () => {
       const next = current?.page?.next;
       if (next && next !== after)
-        setPosition({ key, cursors: [...cursors, next] });
+        setPosition({ key: targetKey, cursors: [...cursors, next] });
     },
     refresh: () => setRevision((n) => n + 1),
   };

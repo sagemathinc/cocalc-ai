@@ -4,6 +4,8 @@
  */
 import { Button } from "antd";
 import { useState } from "react";
+import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
 import type { MouseEvent } from "react";
 import type {
   CollaborationResource,
@@ -73,6 +75,16 @@ export function Overview({
   return (
     <div>
       <h2>
+        {person ? (
+          <Avatar
+            account_id={person.account_id}
+            display_name={person.display_name}
+            size={40}
+            no_tooltip
+          />
+        ) : project ? (
+          <ProjectThemeAvatar theme={project.theme} size={40} border />
+        ) : null}
         {personId
           ? person?.display_name || "Person overview"
           : project?.title || "Project overview"}
@@ -93,7 +105,7 @@ export function Overview({
         <Button onClick={onInvite}>Invite collaborator</Button>
         {project && (
           <Button onClick={() => onManageProject(project.project_id)}>
-            Open project management
+            Settings
           </Button>
         )}
         {project?.role === "owner" && (
@@ -127,6 +139,7 @@ export function Overview({
                     <Button
                       onClick={(event) => onProject(item.project_id, event)}
                     >
+                      <ProjectThemeAvatar theme={item.theme} size={24} border />{" "}
                       {item.title || "Untitled project"}
                     </Button>
                   </li>
@@ -160,6 +173,12 @@ export function Overview({
                     <Button
                       onClick={(event) => onPerson(item.account_id, event)}
                     >
+                      <Avatar
+                        account_id={item.account_id}
+                        display_name={item.display_name}
+                        size={24}
+                        no_tooltip
+                      />{" "}
                       {item.display_name || "Collaborator"}
                     </Button>
                   </li>

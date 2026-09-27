@@ -108,6 +108,7 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         artifact_entry_id:
           segments.length > 2 ? segments.slice(2).join("/") : undefined,
       };
+    case "home":
     case "agents":
       return {
         page: "agents",

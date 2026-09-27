@@ -44,12 +44,16 @@ export function useDirectoryRevision(api: DirectoryApi, active: boolean) {
             "The collaboration revision service returned an invalid response.",
           );
         since = check.revision;
-        setState((current) => ({
-          ready: true,
-          generation:
-            current.generation + (check.reset || !current.ready ? 1 : 0),
-          error: "",
-        }));
+        setState((current) =>
+          !check.reset && current.ready && !current.error
+            ? current
+            : {
+                ready: true,
+                generation:
+                  current.generation + (check.reset || !current.ready ? 1 : 0),
+                error: "",
+              },
+        );
         timer = setTimeout(
           () => void poll(),
           Math.min(30_000, Math.max(1000, check.poll_after_ms || 5000)),

@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Alert, Button } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -24,6 +24,7 @@ export function DirectoryCollection<T>({
   isPinned,
   onPin,
   pinLabel,
+  itemStyle,
 }: {
   items: T[];
   collection: "people" | "projects" | "conversations";
@@ -34,6 +35,7 @@ export function DirectoryCollection<T>({
   isPinned?: (item: T) => boolean;
   onPin?: (item: T, pinned: boolean) => Promise<void>;
   pinLabel?: (item: T) => string;
+  itemStyle?: (item: T) => CSSProperties;
 }) {
   const prefs = useCollectionPreferences(collection);
   const [error, setError] = useState("");
@@ -88,8 +90,8 @@ export function DirectoryCollection<T>({
           label={label}
         />
         <small>
-          Pins are ordered within this page and filters. Drag or use the reorder
-          menu in either view.
+          Pins are ordered within this page and filters. Drag to reorder, or
+          focus a drag handle and use Space and the arrow keys.
         </small>
       </div>
       {prefs.error && (
@@ -126,6 +128,7 @@ export function DirectoryCollection<T>({
               color: UI_COLORS.text,
               marginBottom: 8,
               minWidth: 0,
+              ...itemStyle?.(item),
             }}
           >
             <div style={{ flex: 1, width: "100%", minWidth: 0 }}>
@@ -134,7 +137,7 @@ export function DirectoryCollection<T>({
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               {controls.dragHandle}
               {controls.pinButton}
-              {controls.orderMenu}
+              {collection !== "people" && controls.orderMenu}
             </div>
           </div>
         )}

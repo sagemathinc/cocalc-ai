@@ -109,6 +109,25 @@ test("project cursor binds view, account, filters and favorites but not array or
     ).items,
   ).toHaveLength(2);
 });
+
+test("project discovery carries the existing appearance theme", async () => {
+  const theme = {
+    color: "#123456",
+    accent_color: "#abcdef",
+    icon: "rocket",
+    image_blob: "project-image",
+  };
+  await getPool().query(
+    "UPDATE account_project_index SET theme=$2 WHERE project_id=$1",
+    [ids[0], JSON.stringify(theme)],
+  );
+  const result = await listCollaborationProjects({
+    account_id,
+    project_id: ids[0],
+  });
+  expect(result.items[0].theme).toEqual(theme);
+  expect(result.coverage).toBe("complete");
+});
 test("shared projects exclude solo and viewer-only projects before pagination; invitation queries retain them", async () => {
   const solo = ids[2999];
   const viewerOnly = ids[2998];

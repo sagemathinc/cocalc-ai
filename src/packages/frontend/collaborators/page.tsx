@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { ProjectSettingsDrawer } from "@cocalc/frontend/agents/project-settings-drawer";
 import type { MouseEvent } from "react";
 import { Map as ImmutableMap } from "immutable";
 import { Alert, Button, Input } from "antd";
@@ -152,6 +154,7 @@ function CollaboratorsWorkspace({
   const [createProject, setCreateProject] = useState(false);
   const [newProject, setNewProject] = useState<{ id: string; title: string }>();
   const [error, setError] = useState("");
+  const [settingsProject, setSettingsProject] = useState<string>();
   const [createdResourceId, setCreatedResourceId] = useState<string>();
   const searchId = useId();
   const scopeId = useId();
@@ -309,8 +312,7 @@ function CollaboratorsWorkspace({
     try {
       await ensureProjectReduxRuntime();
       if (redux.getStore("account")?.get("account_id") !== accountId) return;
-      redux.getProjectActions(id)?.set_active_tab("settings");
-      await redux.getActions("projects").open_project({ project_id: id });
+      setSettingsProject(id);
     } catch (error) {
       setError(String(error));
     }
@@ -538,6 +540,12 @@ function CollaboratorsWorkspace({
                         )
                       }
                     >
+                      <Avatar
+                        account_id={item.account_id}
+                        display_name={item.display_name}
+                        size={40}
+                        no_tooltip
+                      />
                       <span className="collaborators-row-title">
                         {item.display_name || "Collaborator"}
                       </span>
@@ -640,6 +648,11 @@ function CollaboratorsWorkspace({
           }}
         />
       )}
+      <ProjectSettingsDrawer
+        projectId={settingsProject}
+        open={active && !!settingsProject}
+        onClose={() => setSettingsProject(undefined)}
+      />
       {active && inviteProject && (
         <CollaboratorsModal
           open

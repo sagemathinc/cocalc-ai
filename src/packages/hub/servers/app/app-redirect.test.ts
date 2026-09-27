@@ -67,6 +67,8 @@ describe("app redirect routes", () => {
 
   it.each([
     "/collaborators",
+    "/home",
+    "/home/",
     "/collaborators/",
     "/collaborators/conversations",
     "/collaborators/people",

@@ -7,6 +7,7 @@
 export const APP_ROUTES = new Set([
   "admin",
   "agents",
+  "home",
   "artifacts",
   "collaborators",
   "app-docs",

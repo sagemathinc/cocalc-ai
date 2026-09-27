@@ -9,6 +9,8 @@ import type { CollaborationProject } from "@cocalc/util/collaborators";
 import type { DirectoryApi } from "./workspace-api";
 import type { ProjectView } from "./workspace-types";
 import { DirectoryCollection } from "./directory-collection";
+import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function ProjectViewControls({
   view,
@@ -61,6 +63,12 @@ export function ProjectList({
       items={items}
       collection="projects"
       label="Projects"
+      itemStyle={(project) => ({
+        borderColor: project.theme?.color || UI_COLORS.border,
+        background: project.theme?.accent_color
+          ? `linear-gradient(130deg, color-mix(in srgb, ${project.theme.accent_color} 12%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
+          : UI_COLORS.surface,
+      })}
       itemId={(project) => project.project_id}
       itemTitle={(project) => project.title || "Untitled project"}
       pinLabel={(project) => `project ${project.title || "Untitled project"}`}
@@ -75,6 +83,7 @@ export function ProjectList({
           className="collaborators-row"
           onClick={(event) => onOpen(project, event)}
         >
+          <ProjectThemeAvatar theme={project.theme} size={40} border />
           <span className="collaborators-row-title">
             {project.title || "Untitled project"}
           </span>
