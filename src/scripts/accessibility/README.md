@@ -70,3 +70,14 @@ written under `src/.local/accessibility/` by default.
 Lighthouse and axe do not prove WCAG conformance. Manually review keyboard
 operation, focus visibility, responsive reflow, zoom, contrast across affected
 states, and motion behavior for substantial UI changes.
+
+`collaborators-workspace.mjs` exports additional interaction checks for an
+isolated, populated Collaborators fixture. `checkCollaboratorsProjectPins(page,
+projectTitle)` exercises keyboard pinning, the pinned-only view, removal focus,
+and restores the original pin. `checkCollaboratorsSharing(page, options)` starts
+from an open resource overview and checks destination selection, audience,
+Escape, focus restoration and reachable controls. Supply the destination's full
+accessible button name. Its optional `addReference: true` changes a private draft
+only, so use a disposable fixture; neither check sends messages or runs agents.
+Run at desktop and 320px widths, light/dark themes and 200% browser zoom. These
+helpers supplement, not replace, the automated component and axe audits.

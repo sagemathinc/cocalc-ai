@@ -65,7 +65,7 @@ export function ReferencePickerComposer({
       </Button>
       {allowShareToConversation && (
         <Button size="small" onClick={() => showPicker("share-artifact")}>
-          Share to conversation
+          Share artifact to conversation
         </Button>
       )}
       <ReferencePicker

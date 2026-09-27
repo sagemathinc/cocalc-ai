@@ -1,6 +1,11 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { CollaboratorsModal } from "./modal";
 
 test("scopes the real modal portal while preserving caller classes and content", async () => {
@@ -26,23 +31,75 @@ test("scopes the real modal portal while preserving caller classes and content",
   }
 });
 
-test("only overrides motion inside Collaborators portals under reduced motion", () => {
-  const style = document.createElement("style");
-  style.textContent = readFileSync(join(__dirname, "modal.css"), "utf8");
-  document.head.appendChild(style);
-  try {
-    const rules = style.sheet!.cssRules;
-    expect(rules).toHaveLength(1);
-    const media = rules[0] as CSSMediaRule;
-    expect(media.conditionText).toBe("(prefers-reduced-motion: reduce)");
-    expect(media.cssRules).toHaveLength(1);
-    const rule = media.cssRules[0] as CSSStyleRule;
-    expect(rule.selectorText).toBe(".collaborators-modal .ant-modal");
-    for (const property of ["animation-duration", "transition-duration"]) {
-      expect(rule.style.getPropertyValue(property)).toBe("0s");
-      expect(rule.style.getPropertyPriority(property)).toBe("important");
-    }
-  } finally {
-    style.remove();
+test("reduced motion disables transitions and Escape restores trigger focus", async () => {
+  const original = window.matchMedia;
+  const listeners = new Set<() => void>();
+  let matches = true;
+  window.matchMedia = jest.fn((media) => ({
+    media,
+    get matches() {
+      return matches;
+    },
+    onchange: null,
+    addEventListener: (_type: string, listener: () => void) =>
+      listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) =>
+      listeners.delete(listener),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as typeof window.matchMedia;
+  const getComputedStyle = window.getComputedStyle;
+  const spy = jest
+    .spyOn(window, "getComputedStyle")
+    .mockImplementation((element) => getComputedStyle(element));
+  const afterClose = jest.fn();
+  function Example() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Open sharing</button>
+        <CollaboratorsModal
+          open={open}
+          title="Sharing"
+          onCancel={() => setOpen(false)}
+          afterClose={afterClose}
+          transitionName="custom-motion"
+          maskTransitionName="custom-mask-motion"
+        >
+          <input aria-label="Search discussions" />
+        </CollaboratorsModal>
+      </>
+    );
   }
+  let unmount: (() => void) | undefined;
+  try {
+    ({ unmount } = render(<Example />));
+    const trigger = screen.getByRole("button", { name: "Open sharing" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Sharing" });
+    expect(dialog.className).not.toMatch(/custom-motion/);
+    expect(document.querySelector(".ant-modal-mask")?.className).not.toMatch(
+      /custom-mask-motion/,
+    );
+    const input = screen.getByRole("textbox", { name: "Search discussions" });
+    input.focus();
+    fireEvent.keyDown(input, { key: "Escape", code: "Escape", keyCode: 27 });
+    await waitFor(() => expect(afterClose).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "Sharing" })).toBeNull();
+    expect(trigger).toHaveFocus();
+    act(() => {
+      matches = false;
+      for (const listener of listeners) listener();
+    });
+    expect(window.matchMedia).toHaveBeenCalledWith(
+      "(prefers-reduced-motion: reduce)",
+    );
+  } finally {
+    unmount?.();
+    window.matchMedia = original;
+    spy.mockRestore();
+  }
+  expect(listeners.size).toBe(0);
 });

@@ -289,7 +289,7 @@ test("composer inserts a bound reference at the saved cursor without invoking an
   expect(mockGetResource).not.toHaveBeenCalled();
 });
 
-test("Share to conversation chooses another destination rather than changing the current composer", async () => {
+test("Share artifact to conversation chooses another destination rather than changing the current composer", async () => {
   const control = {
     captureSelection: jest.fn(() => ({ line: 0, ch: 2 })),
     insertText: jest.fn(() => true),
@@ -323,7 +323,7 @@ test("Share to conversation chooses another destination rather than changing the
     />,
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Share artifact to conversation" }),
   );
   expect(
     await screen.findByRole("dialog", { name: "Share to conversation" }),

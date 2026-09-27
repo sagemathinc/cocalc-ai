@@ -1,7 +1,0 @@
-@media (prefers-reduced-motion: reduce) {
-  /* Modal portals are outside the workspace; limit this to our own dialogs. */
-  .collaborators-modal .ant-modal {
-    animation-duration: 0s !important;
-    transition-duration: 0s !important;
-  }
-}
