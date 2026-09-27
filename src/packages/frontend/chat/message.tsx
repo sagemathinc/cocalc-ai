@@ -40,7 +40,9 @@ import CopyButton, {
 } from "@cocalc/frontend/components/copy-button";
 import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown, { formatMarkdownPage } from "./bounded-static-markdown";
+import { MAX_RENDERED_TEXT_CHARS, PagedText } from "./paged-text";
+import type { TextSource } from "./text-source";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { resolveGitTurnDirectory } from "./git-turn-context";
@@ -135,12 +137,12 @@ import {
 } from "./git-commit-links";
 import {
   canUseCompletedCachedCodexActivity,
-  codexActivityBlocksToSelectableMarkdown,
+  codexActivityTextSource,
+  codexActivityWindow,
   computeAcpStateToRender,
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getAcpMessageDeliveryLabel,
   getQueuedMessageEditHelpText,
-  limitCodexActivityBlocks,
   resolveCodexOverflowMenuLocation,
   resolveCodexShowActivityButtonState,
   resolveEditedMessageForSave,
@@ -494,9 +496,7 @@ export default function Message({
   const edited_message_ref = useRef(edited_message);
 
   const [show_history, set_show_history] = useState(false);
-  const [codexActivityVisibleLimit, setCodexActivityVisibleLimit] = useState(
-    DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
-  );
+  const [codexActivityPageEnd, setCodexActivityPageEnd] = useState<number>();
 
   const historyEntries = useMemo(() => historyArray(message), [message]);
   const firstHistoryEntry = useMemo(
@@ -1152,7 +1152,7 @@ export default function Message({
     const formattedValue = is_viewers_message
       ? renderedMessageValue
       : formatCodexErrorMarkdown(
-          linkifyCommitHashes(renderedMessageValue),
+          renderedMessageValue,
           lite,
           acpState === "error",
         );
@@ -2152,37 +2152,54 @@ export default function Message({
     value,
     message_class,
     style,
+    followTail = false,
+    pageKey,
   }: {
-    value: string;
+    value: string | TextSource;
     message_class?: string;
     style?: CSSProperties;
+    followTail?: boolean;
+    pageKey?: string | number;
   }) {
     return (
       <div className={message_class} data-chat-selectable-message="true">
-        <EditableMarkdown
+        <PagedText
+          key={pageKey}
           value={value}
-          read_only
-          font_size={font_size}
-          minimal
-          hidePath
-          disableWindowing
-          noVfill
-          showEditBar={false}
-          height="auto"
-          autoMinHeight={0}
-          style={{
-            ...SELECTABLE_MARKDOWN_STYLE,
-            backgroundColor: "transparent",
-            minHeight: 0,
-            ...style,
-          }}
-          pageStyle={{
-            padding: 0,
-            background: "transparent",
-            minWidth: "100%",
-            overflowX: "visible",
-          }}
-        />
+          followTail={followTail}
+          renderRanges
+        >
+          {(part) => (
+            <EditableMarkdown
+              value={formatMarkdownPage(
+                part,
+                is_viewers_message ? undefined : linkifyCommitHashes,
+              )}
+              read_only
+              enableUpload={false}
+              font_size={font_size}
+              minimal
+              hidePath
+              disableWindowing
+              noVfill
+              showEditBar={false}
+              height="auto"
+              autoMinHeight={0}
+              style={{
+                ...SELECTABLE_MARKDOWN_STYLE,
+                backgroundColor: "transparent",
+                minHeight: 0,
+                ...style,
+              }}
+              pageStyle={{
+                padding: 0,
+                background: "transparent",
+                minWidth: "100%",
+                overflowX: "visible",
+              }}
+            />
+          )}
+        </PagedText>
       </div>
     );
   }
@@ -2212,6 +2229,7 @@ export default function Message({
         <div
           style={{
             marginBottom: 10,
+            minHeight: 24,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -2243,7 +2261,6 @@ export default function Message({
     blocks,
     message_class,
     openCommitFromMessage,
-    showHeader = false,
     showQuotaHelp = true,
   }: {
     blocks: Array<{
@@ -2254,23 +2271,13 @@ export default function Message({
     }>;
     message_class?: string;
     openCommitFromMessage: (e: any) => void;
-    showHeader?: boolean;
     showQuotaHelp?: boolean;
   }) {
-    const { visibleBlocks, hiddenCount } = limitCodexActivityBlocks(
+    const { end, hiddenCount, visibleBlocks } = codexActivityWindow(
       blocks,
-      codexActivityVisibleLimit,
+      codexActivityPageEnd,
     );
-    const combinedAgentText = visibleBlocks
-      .filter((block) => block.kind === "agent")
-      .map((block) => block.text)
-      .join("\n\n");
-    const selectableActivityMarkdown = codexActivityBlocksToSelectableMarkdown(
-      visibleBlocks.map((block) => ({
-        ...block,
-        text: linkifyCommitHashes(block.text),
-      })),
-    );
+    const selectableActivityMarkdown = codexActivityTextSource(visibleBlocks);
     const body = (
       <div onClickCapture={openCommitFromMessage}>
         <div
@@ -2280,7 +2287,7 @@ export default function Message({
             gap: 8,
           }}
         >
-          {hiddenCount > 0 ? (
+          {blocks.length > DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT ? (
             <div
               style={{
                 display: "flex",
@@ -2291,25 +2298,44 @@ export default function Message({
             >
               <Button
                 size="small"
+                disabled={hiddenCount === 0}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  setCodexActivityVisibleLimit((current) =>
-                    Math.min(
-                      blocks.length,
-                      current + DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
-                    ),
-                  );
+                  setCodexActivityPageEnd(hiddenCount);
                 }}
               >
                 Show {Math.min(hiddenCount, DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT)}
                 {" earlier activity items"}
               </Button>
+              <Button
+                size="small"
+                disabled={end === blocks.length}
+                onClick={() =>
+                  setCodexActivityPageEnd(
+                    Math.min(
+                      blocks.length,
+                      end + DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
+                    ),
+                  )
+                }
+              >
+                Later activity items
+              </Button>
+              <Button
+                size="small"
+                disabled={codexActivityPageEnd == null}
+                onClick={() => setCodexActivityPageEnd(undefined)}
+              >
+                Latest activity items
+              </Button>
             </div>
           ) : null}
-          {selectableActivityMarkdown
+          {selectableActivityMarkdown.length > 0
             ? renderSelectableMarkdownBody({
                 value: selectableActivityMarkdown,
+                followTail: effectiveGenerating && codexActivityPageEnd == null,
+                pageKey: codexActivityPageEnd ?? "latest",
                 message_class,
                 style: MARKDOWN_STYLE,
               })
@@ -2317,16 +2343,21 @@ export default function Message({
         </div>
         {showQuotaHelp ? (
           <CodexQuotaHelp
-            message={combinedAgentText}
+            message={selectableActivityMarkdown.slice(
+              Math.max(
+                0,
+                selectableActivityMarkdown.length - MAX_RENDERED_TEXT_CHARS,
+              ),
+              selectableActivityMarkdown.length,
+            )}
             projectId={project_id}
             isError={showCodexErrorHelp}
           />
         ) : null}
       </div>
     );
-    if (!showHeader) {
-      return body;
-    }
+    // Keep the same wrapper during and after streaming so completion does not
+    // remount Slate, clear a selection, or insert a heading above the reader.
     return renderCodexSectionChrome({
       label: "Agent activity",
       accentColor: UI_COLORS.secondary,
@@ -2523,7 +2554,6 @@ export default function Message({
               blocks: activityBlocksToRender,
               message_class,
               openCommitFromMessage: openResultFromMessage,
-              showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
             })
           : null}
@@ -2569,6 +2599,9 @@ export default function Message({
                     })
                   ) : (
                     <StaticMarkdown
+                      format={
+                        is_viewers_message ? undefined : linkifyCommitHashes
+                      }
                       style={MARKDOWN_STYLE}
                       value={value}
                       className={message_class}
@@ -2621,6 +2654,7 @@ export default function Message({
                 })
               ) : (
                 <StaticMarkdown
+                  format={is_viewers_message ? undefined : linkifyCommitHashes}
                   style={MARKDOWN_STYLE}
                   value={value}
                   className={message_class}
@@ -2684,6 +2718,7 @@ export default function Message({
               })
             ) : (
               <StaticMarkdown
+                format={is_viewers_message ? undefined : linkifyCommitHashes}
                 style={{ fontSize: `${font_size ?? 14}px` }}
                 value={value}
                 editorTheme={editorTheme}
