@@ -43,6 +43,10 @@ import {
   PRIVATE_APP_HOST_HEADER,
 } from "./private-app-hostname";
 import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
+import {
+  authorizeScopedHttpProxy,
+  expireScopedHttpTransport,
+} from "./http-proxy-api-key";
 
 const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
@@ -117,6 +121,7 @@ export type AuthorizedAccountContext = {
   restricted_exp_s?: number;
   actor: "account";
   revalidate_collaborator?: boolean;
+  scoped_api_key_exp_s?: number;
 };
 
 function setAuthContext(
@@ -767,6 +772,18 @@ export function createProjectHostHttpProxyAuth({
     project_id: string,
   ) => {
     stripLegacyPublicAppRequestMetadata(req);
+    const scoped = authorizeScopedHttpProxy(req, host_id, project_id);
+    if (scoped) {
+      assertNotRevoked({ account_id: scoped.sub, issued_at_s: scoped.iat });
+      setAuthContext(req, {
+        account_id: scoped.sub,
+        issued_at_s: scoped.iat,
+        actor: "account",
+        scoped_api_key_exp_s: scoped.exp,
+      });
+      expireScopedHttpTransport(res, scoped.exp, true);
+      return;
+    }
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
       try {
@@ -863,6 +880,20 @@ export function createProjectHostHttpProxyAuth({
     project_id: string,
   ): Promise<AuthorizedAccountContext> => {
     stripLegacyPublicAppRequestMetadata(req);
+    const scoped = authorizeScopedHttpProxy(req, host_id, project_id);
+    if (scoped) {
+      assertNotRevoked({ account_id: scoped.sub, issued_at_s: scoped.iat });
+      const context: AuthorizedAccountContext = {
+        account_id: scoped.sub,
+        issued_at_s: scoped.iat,
+        actor: "account",
+        scoped_api_key_exp_s: scoped.exp,
+        restricted_exp_s: scoped.exp,
+        revalidate_collaborator: true,
+      };
+      setAuthContext(req, context);
+      return context;
+    }
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
       assertNotRevoked({
@@ -942,6 +973,9 @@ export function createProjectHostHttpProxyAuth({
     const context = getProjectHostHttpAuthContext(req);
     if (!context) {
       return;
+    }
+    if (context.scoped_api_key_exp_s != null) {
+      expireScopedHttpTransport(socket, context.scoped_api_key_exp_s);
     }
     const entry = {
       socket,
