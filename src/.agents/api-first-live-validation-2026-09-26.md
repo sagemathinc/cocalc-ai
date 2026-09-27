@@ -1020,6 +1020,58 @@ accepted and saved under attempt `1bb40e88-7252-4b8b-bb83-e08f7f7836ab`
 (correlation `api-first-input-836ac11985`). This is a new supplemental scope,
 not a retry of previous review requests, and is not a completed review.
 
+### Established Hub sockets after the uncached authorization fix
+
+On 2026-09-27, source `a97d99800a` (checkout `4bd7a62667`, documentation-only
+follow-up) was exercised through live ports 9100, 13114, and 13214. Each fixture
+used an ordinary manual key, disabled client reconnection, established an
+authorized reply subscription, verified distinct per-connection inboxes, and
+verified denial of the account-wide inbox. Sockets remained connected across
+the first 15-second revalidation interval before the mutation or expiry.
+
+| Event             | Bay-0 disconnect | Bay-1 disconnect | Bay-2 disconnect |
+| ----------------- | ---------------: | ---------------: | ---------------: |
+| Scope replacement |        12,886 ms |        12,972 ms |        13,035 ms |
+| Credential expiry |            94 ms |           135 ms |           193 ms |
+| Key deletion      |        12,896 ms |        12,953 ms |        13,008 ms |
+
+Scope/deletion durations start before the human management RPC; expiry durations
+start at the credential expiry timestamp. These are three observed runs, not
+worst-case load guarantees. Fixture keys and connections were cleaned up.
+
+A separate disposable-project fixture exercised established project subscriptions
+while the project belonged to bay-1 and the account/key authority remained on
+bay-0. Project `59041885-b528-4c41-80be-6aa402ecd207` was rehomed successfully
+by operation `4ed25a7d-3af0-4ea9-a708-91d91099557d`. Each bay had its own
+scoped subscriber and publisher on one uniquely named synthetic project subject.
+Initial delivery succeeded on every broker. The fixture removed membership in
+the authoritative project database, confirmed old-key HTTP denial through all
+bays, restored membership, waited for the barrier to settle, and issued a fresh
+publisher key. Publications were attempted every 200 ms while original-key
+subscriptions remained under observation for more than 32 seconds after loss.
+
+| Entry bay | Original socket disconnect after loss | Last original-key delivery after loss |
+| --------- | ------------------------------------: | ------------------------------------: |
+| bay-0     |                             14,449 ms |                             14,328 ms |
+| bay-1     |                             14,587 ms |                             14,527 ms |
+| bay-2     |                             14,731 ms |                             14,534 ms |
+
+The old key stayed denied after membership restoration and barrier settlement;
+a fresh key worked through all bays. All fixture keys were deleted, sockets
+closed, membership restored, and the disposable project hard-delete succeeded.
+
+Fixture setup failures are not passing evidence: the first attempt supplied a
+callback instead of consuming Conat's subscription iterator; subsequent attempts
+assumed arbitrary subjects were delivered across bay brokers or reused the
+primary human cookie on the other bays. The latter was rejected as an expired
+cookie. Each failed attempt cleaned up its disposable project and keys. The
+final fixture used per-bay API-key publishers and consumers instead.
+
+This establishes bounded disconnect and delivery cessation for these live Hub
+subscriptions. It does not inspect distributed RPC-interest tables, prove
+cross-bay message replication, test authority outages, or establish project-host
+terminal/Jupyter/sync/preview/proxy and managed-turn parity.
+
 ### Approval rate and scheduled retention
 
 Built the changed backend with `pnpm exec tsc --build` in `packages/server`,
