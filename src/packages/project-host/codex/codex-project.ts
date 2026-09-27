@@ -677,6 +677,7 @@ export async function createProjectCliTokenLease({
       }
     | undefined;
   let connectorTimer: NodeJS.Timeout | undefined;
+  let connectorGeneration = 0;
   let connectorOperation: Promise<void> = Promise.resolve();
   const queueConnectorOperation = (operation: () => Promise<void>) => {
     const pending = connectorOperation.catch(() => undefined).then(operation);
@@ -708,6 +709,7 @@ export async function createProjectCliTokenLease({
       }
     });
   const endConnectorTurn = async (): Promise<void> => {
+    ++connectorGeneration;
     if (connectorTimer) clearInterval(connectorTimer);
     connectorTimer = undefined;
     const active = connectorTurn;
@@ -723,8 +725,12 @@ export async function createProjectCliTokenLease({
     });
   };
   const beginConnectorTurn = async (chat: AcpChatContext): Promise<void> => {
-    await endConnectorTurn();
+    const ending = endConnectorTurn();
+    const startGeneration = connectorGeneration;
+    const stillCurrent = () => startGeneration === connectorGeneration;
+    await ending;
     if (closed || !identityLease) return;
+    if (!stillCurrent()) throw Error("connector turn was superseded");
     if (!chat.message_id || !chat.thread_id || !chat.message_date) {
       throw Error(
         "native ACP turn is missing its authenticated chat reference",
@@ -757,7 +763,9 @@ export async function createProjectCliTokenLease({
     });
     if (!issued) return;
     try {
-      await setConnectorKey(issued.secret);
+      await setConnectorKey(issued.secret, stillCurrent);
+      if (closed || !stillCurrent())
+        throw Error("connector turn was superseded");
     } catch (error) {
       await hubApi.agent
         .endCocalcConnectorTurn({

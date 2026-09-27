@@ -89,6 +89,23 @@ Lite TypeScript build. This covers lease-row mutation and the recovery call
 contract, not atomicity of every surrounding job/chat recovery side effect or
 deployed worker replacement. The change remains private and undeployed.
 
+## Cancellation during initial connector issuance, 2026-09-27 (not deployed)
+
+A project-runner test reproduced a late successful issuance installing a key
+after `endConnectorTurn` had completed. The host now invalidates pending starts
+with a local connector generation on every end/replacement, checks it before
+issuance and credential-file installation, and requests revocation for an issued
+key that no longer belongs to the current turn. It never installs that late key
+over a replacement turn's credential or starts its renewal timer.
+
+All 41 project-runner tests pass. The new cases delay issuance across end and
+replacement, assert rejected starts, verify file absence or the replacement's
+unchanged credential, and check revocation targets only the obsolete turn.
+Existing delayed-renewal coverage also passes. Project-host TypeScript build
+and diff checks pass. Hub issuance/revocation are mocks; files are real temporary
+files. This is not deployed ACP evidence or proof that remote revocation succeeds
+during an authority outage; server expiry remains necessary in that case.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend
