@@ -946,6 +946,12 @@ export class Client extends EventEmitter {
         this.state != "connected" ||
         this.info?.user?.error
       ) {
+        // A caller may arrive after the failed handshake's info event. Do not
+        // wait for another event on that connection; a disconnected client can
+        // still wait for a new handshake instead of reusing the old failure.
+        if (this.state === "connected" && this.info?.user?.error) {
+          throw Error(`failed to sign in - ${this.info.user.error}`);
+        }
         const remaining = deadline == null ? timeout : deadline - Date.now();
         if (remaining != null && remaining <= 0) {
           throw new TimeoutError(

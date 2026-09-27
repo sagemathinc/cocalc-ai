@@ -301,6 +301,45 @@ describe("core client socket.io reconnect policy", () => {
     client.close();
   });
 
+  it("rejects an already received sign-in failure but permits a later handshake", async () => {
+    jest.resetModules();
+    const socket = {
+      on: jest.fn(),
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+      close: jest.fn(),
+      io: {
+        on: jest.fn(),
+        connect: jest.fn(),
+        disconnect: jest.fn(),
+      },
+    };
+    jest.doMock("socket.io-client", () => ({ connect: () => socket }));
+    const { Client } = require("./client");
+    const client = new Client({
+      address: "http://example.com",
+      autoConnect: false,
+      noCache: true,
+    });
+    try {
+      client.state = "connected";
+      client.info = { user: { error: "test authority revoked" } };
+      await expect(client.waitUntilSignedIn({ timeout: 100 })).rejects.toThrow(
+        "test authority revoked",
+      );
+
+      client.state = "disconnected";
+      const signedIn = client.waitUntilSignedIn({ timeout: 1000 });
+      await Promise.resolve();
+      client.state = "connected";
+      client.info = { user: { account_id: "account-1" } };
+      client.emit("info", client.info);
+      await expect(signedIn).resolves.toBeUndefined();
+    } finally {
+      client.close();
+    }
+  });
+
   it("keeps waiting when sign-in info races a disconnect", async () => {
     jest.resetModules();
 

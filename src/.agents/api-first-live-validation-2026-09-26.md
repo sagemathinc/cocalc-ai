@@ -8,6 +8,22 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Live synchronized-text interruption gap, 2026-09-27
 
+Follow-up source tracing found that `SyncDoc.save()` awaits
+`DStream.save()`, whose retry loop catches save failures indefinitely. Separately,
+`Client.waitUntilSignedIn()` missed an authentication error already received on
+a connected client and awaited another `info` event. A regression test reproduced
+the latter as a timeout rather than the existing denial. The client now rejects
+that known denial immediately, while a disconnected client may still await a
+fresh successful handshake. This does not fix the durable-stream retry policy
+or establish synchronized-text revocation completion.
+
+The three reconnect/inbox/admission suites passed all 18 tests, but Jest retained
+an open handle and was interrupted after reporting success. Separate test-mode
+runs of the two sign-in cases and all 10 inbox/admission cases exited normally.
+The full reconnect suite cannot use that mode unchanged: its existing timing
+assertion assumes the non-test reconnect defaults. Conat TypeScript build and
+`git diff --check` passed. No deployment or live rerun of this follow-up yet.
+
 The installed CLI on the same isolated validation project was run with a
 private key file and an empty environment. A disposable `probe.txt` was opened
 through `api.text.open(...).withSession(...)`. One live session repeatedly
