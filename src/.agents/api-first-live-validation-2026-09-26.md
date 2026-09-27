@@ -6,6 +6,55 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Shared UI round trips and approval decisions, 2026-09-27
+
+Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend
+was built at `8dd6f53d8204`; `git diff 8dd6f53d8204 HEAD -- src/packages/frontend`
+was empty. Its debug build-warning banner was dismissed through its normal
+button after verifying that source boundary. These checks used a disposable
+Playwright Chromium context against the actual local hub, not mocked components.
+
+A freshly issued browser sign-in cookie correctly reached the `Confirm security
+action` dialog when creating a key; no key was created. Positive CRUD and
+approval tests used the existing cookie-backed dev-elevated CLI session in the
+isolated browser context. This is not evidence of completing interactive MFA or
+password step-up through the rendered dialog. Secrets were not logged, captured
+in screenshots, or saved by the browser test.
+
+- Created manual fixture key 134 through API Keys settings with `project:list`,
+  one read-only project grant, roots `assignments` and `feedback`, and a one-hour
+  expiry. Authoritative API state matched the requested scope and expiry; reload
+  and Edit reproduced the values. Narrowing to `feedback` advanced revision to 2,
+  survived another reload, and deletion through the UI removed the key.
+- Repeated the round trip with key 135 and the all-projects read-only default
+  plus that narrower explicit project override. The saved default and override
+  matched the canonical API scope and remained selected after reload. This tests
+  UI persistence, not access to every project or dynamic membership changes.
+- A disposable key scoped only to `api-key:revoke:request` submitted requests
+  through the real HTTP API for a second disposable manual key. The rendered
+  review displayed the exact target lookup ID and name. Keyboard rejection
+  preserved the target; a new request followed by keyboard approval removed it.
+  Authoritative key and pending-request reads confirmed those outcomes. No
+  unrelated request was selected or decided.
+- Cleanup removed the requester key and all remaining fixture keys. A separate
+  ordinary CLI listing confirmed zero names beginning `api-ui-roundtrip-`.
+
+Dark-mode checks exercised both the manual-key editor and the existing connector
+dialog at 1280px, 320px, and 1280px again. The rendered root reported dark theme;
+neither dialog overflowed horizontally, both footers were reachable, and all
+four focused axe rules (`color-contrast`, `label`, `aria-valid-attr-value`,
+`button-name`) reported zero violations. The manual project draft survived
+resizing. Connector keyboard toggle, Escape dismissal, and trigger-focus
+restoration passed. Both 320px screenshots were visually inspected. There were
+no captured page errors. Appearance was restored to `system` and verified after
+reload; no connector settings were saved.
+
+The scratch probes are `/tmp/api-first-ui-roundtrip.cjs` and
+`/tmp/api-first-ui-probe.cjs`; screenshots are under `src/.local/api-first-ui/`.
+These results narrow the earlier UI gaps below. Native 200% browser zoom,
+interactive step-up, stale-review UI races, broader theme/state coverage, and
+the full managed-turn matrix remain unverified.
+
 ## Write-outcome recovery foundation, 2026-09-27
 
 The existing edit-journal service deduplicates collaborative-history commits,
