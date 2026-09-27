@@ -7,6 +7,8 @@ import { generateKeyPairSync } from "node:crypto";
 import {
   issueProjectHostAuthToken,
   issueProjectHostApiKeyAuthToken,
+  issueProjectHostApiKeyHttpToken,
+  verifyProjectHostApiKeyHttpToken,
   verifyProjectHostAuthToken,
 } from "./project-host-token";
 import { isProjectHostApiKeySubjectAllowed } from "./project-host-api-key-policy";
@@ -27,6 +29,100 @@ const publicKeyPem = publicKey
     format: "pem",
   })
   .toString();
+
+describe("scoped HTTP token transport boundary", () => {
+  const project_id = "00000000-0000-4000-8000-000000000004";
+  const options = {
+    host_id: hostId,
+    account_id: accountId,
+    project_id,
+    key_id: "key-id-123",
+    scope_revision: 2,
+    placement_revision: 7,
+    capabilities: ["project:exec"] as const,
+    private_key: privateKeyPem,
+    now_ms: 1_000_000,
+  };
+  const issue = (extra = {}) =>
+    issueProjectHostApiKeyHttpToken({
+      ...options,
+      capabilities: [...options.capabilities],
+      port: 8080,
+      ...extra,
+    });
+  const verify = (token: string, extra = {}) =>
+    verifyProjectHostApiKeyHttpToken({
+      token,
+      host_id: hostId,
+      project_id,
+      port: 8080,
+      public_key: publicKeyPem,
+      now_ms: 1_000_000,
+      ...extra,
+    });
+  it("binds an exact HTTP target and cannot authenticate as a Conat token", () => {
+    const issued = issue();
+    expect(verify(issued.token)).toMatchObject({
+      aud: `project-host-http:${hostId}`,
+      http_proxy_port: 8080,
+      exp: 1025,
+      api_key: { project_id, scope_revision: 2, placement_revision: 7 },
+    });
+    expect(() =>
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: hostId,
+        public_key: publicKeyPem,
+        now_ms: 1_000_000,
+      }),
+    ).toThrow("invalid token version");
+    expect(() => verify(issued.token, { port: 8081 })).toThrow(
+      "target mismatch",
+    );
+    expect(() => verify(issued.token, { project_id: accountId })).toThrow(
+      "target mismatch",
+    );
+    expect(() => verify(issued.token, { host_id: accountId })).toThrow(
+      "audience",
+    );
+    expect(() => verify(issued.token, { now_ms: issued.expires_at })).toThrow(
+      "expired",
+    );
+  });
+  it("rejects ordinary and scoped Conat credentials at the HTTP verifier", () => {
+    const scoped = issueProjectHostApiKeyAuthToken({
+      ...options,
+      capabilities: [...options.capabilities],
+    });
+    const ordinary = issueProjectHostAuthToken({ ...options });
+    for (const { token } of [scoped, ordinary])
+      expect(() => verify(token)).toThrow("invalid token version");
+  });
+  it.each([0, -1, 65536, 1.5, NaN])(
+    "rejects invalid target port %s",
+    (port) => {
+      expect(() => issue({ port })).toThrow("invalid HTTP proxy port");
+    },
+  );
+  it("requires executable-runtime authority and obeys parent expiration", () => {
+    expect(() =>
+      issue({
+        capabilities: ["file:read"],
+        viewer_policy_hash: "a".repeat(64),
+      }),
+    ).toThrow("requires project:exec");
+    const issued = issue({ parent_exp_s: 1003 });
+    expect(issued.expires_at).toBe(1003000);
+    expect(() => verify(issued.token, { now_ms: 1003000 })).toThrow("expired");
+  });
+  it("rejects target tampering", () => {
+    const parts = issue().token.split(".");
+    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    claims.http_proxy_port = 8081;
+    parts[1] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    expect(() => verify(parts.join("."), { port: 8081 })).toThrow("signature");
+  });
+});
 
 describe("project-host agent session tokens", () => {
   it.each(["account", "agent"] as const)(

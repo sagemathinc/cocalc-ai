@@ -38,6 +38,7 @@ const TOKEN_ALG = "EdDSA";
 const TOKEN_VERSION = "phat-v1";
 const RESTRICTED_BROWSER_SESSION_TOKEN_VERSION = "phat-v2";
 const API_KEY_TOKEN_VERSION = "phat-v3";
+const API_KEY_HTTP_TOKEN_VERSION = "phat-http-v1";
 const API_KEY_TOKEN_TTL_SECONDS = 25;
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
@@ -62,6 +63,7 @@ export interface ProjectHostAuthClaims {
   sid?: string;
   browser_session_exp_s?: number;
   api_key?: ProjectHostApiKeyBinding;
+  http_proxy_port?: number;
 }
 
 export interface ProjectHostApiKeyBinding {
@@ -202,20 +204,45 @@ function validateApiKeyBinding(binding: ProjectHostApiKeyBinding): void {
   }
 }
 
-export function issueProjectHostApiKeyAuthToken({
-  host_id,
-  account_id,
-  project_id,
-  key_id,
-  scope_revision,
-  placement_revision,
-  capabilities,
-  viewer_policy_hash,
-  parent_exp_s,
-  private_key,
-  issuer = "cocalc-hub",
-  now_ms = Date.now(),
-}: IssueProjectHostApiKeyTokenOptions): {
+export function issueProjectHostApiKeyAuthToken(
+  options: IssueProjectHostApiKeyTokenOptions,
+) {
+  return issueScopedProjectHostToken(options);
+}
+
+export function issueProjectHostApiKeyHttpToken(
+  options: IssueProjectHostApiKeyTokenOptions & { port: number },
+) {
+  if (
+    !Number.isInteger(options.port) ||
+    options.port < 1 ||
+    options.port > 65535
+  ) {
+    throw Error("invalid HTTP proxy port");
+  }
+  if (!options.capabilities.includes("project:exec")) {
+    throw Error("HTTP app access requires project:exec");
+  }
+  return issueScopedProjectHostToken(options, options.port);
+}
+
+function issueScopedProjectHostToken(
+  {
+    host_id,
+    account_id,
+    project_id,
+    key_id,
+    scope_revision,
+    placement_revision,
+    capabilities,
+    viewer_policy_hash,
+    parent_exp_s,
+    private_key,
+    issuer = "cocalc-hub",
+    now_ms = Date.now(),
+  }: IssueProjectHostApiKeyTokenOptions,
+  httpProxyPort?: number,
+): {
   token: string;
   expires_at: number;
   claims: ProjectHostAuthClaims;
@@ -255,13 +282,20 @@ export function issueProjectHostApiKeyAuthToken({
   const claims: ProjectHostAuthClaims = {
     iss: issuer,
     sub: account_id,
-    aud: `project-host:${host_id}`,
+    aud:
+      httpProxyPort == null
+        ? `project-host:${host_id}`
+        : `project-host-http:${host_id}`,
     iat,
     exp,
     jti,
-    v: API_KEY_TOKEN_VERSION,
+    v:
+      httpProxyPort == null
+        ? API_KEY_TOKEN_VERSION
+        : API_KEY_HTTP_TOKEN_VERSION,
     act: "account",
     api_key: binding,
+    ...(httpProxyPort == null ? {} : { http_proxy_port: httpProxyPort }),
   };
   const token = signClaims(claims, private_key);
   return { token, expires_at: exp * 1000, claims };
@@ -454,13 +488,35 @@ function parseClaims(token: string): {
   return { header, claims, signingInput, signature };
 }
 
-export function verifyProjectHostAuthToken({
-  token,
-  host_id,
-  public_key,
-  issuer = "cocalc-hub",
-  now_ms = Date.now(),
-}: VerifyProjectHostTokenOptions): ProjectHostAuthClaims {
+export function verifyProjectHostAuthToken(
+  options: VerifyProjectHostTokenOptions,
+): ProjectHostAuthClaims {
+  return verifyHostToken(options, false);
+}
+
+export function verifyProjectHostApiKeyHttpToken(
+  options: VerifyProjectHostTokenOptions & { project_id: string; port: number },
+): ProjectHostAuthClaims {
+  const claims = verifyHostToken(options, true);
+  if (
+    claims.api_key?.project_id !== options.project_id ||
+    claims.http_proxy_port !== options.port
+  ) {
+    throw Error("HTTP proxy target mismatch");
+  }
+  return claims;
+}
+
+function verifyHostToken(
+  {
+    token,
+    host_id,
+    public_key,
+    issuer = "cocalc-hub",
+    now_ms = Date.now(),
+  }: VerifyProjectHostTokenOptions,
+  http: boolean,
+): ProjectHostAuthClaims {
   ensureValidHostId(host_id);
   const key = getPublicKey(public_key);
   const { header, claims, signingInput, signature } = parseClaims(token);
@@ -475,9 +531,11 @@ export function verifyProjectHostAuthToken({
   }
 
   if (
-    claims?.v !== TOKEN_VERSION &&
-    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION &&
-    claims?.v !== API_KEY_TOKEN_VERSION
+    http
+      ? claims?.v !== API_KEY_HTTP_TOKEN_VERSION
+      : claims?.v !== TOKEN_VERSION &&
+        claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION &&
+        claims?.v !== API_KEY_TOKEN_VERSION
   ) {
     throw new Error("invalid token version");
   }
@@ -496,7 +554,7 @@ export function verifyProjectHostAuthToken({
   }
   if (
     typeof claims.exp !== "number" ||
-    (claims.v === API_KEY_TOKEN_VERSION
+    (claims.v === API_KEY_TOKEN_VERSION || http
       ? claims.exp <= nowSec ||
         claims.exp > claims.iat + API_KEY_TOKEN_TTL_SECONDS
       : claims.exp < nowSec - CLOCK_TOLERANCE_SECONDS)
@@ -504,7 +562,7 @@ export function verifyProjectHostAuthToken({
     throw new Error("token expired");
   }
 
-  const expectedAud = `project-host:${host_id}`;
+  const expectedAud = `${http ? "project-host-http" : "project-host"}:${host_id}`;
   if (claims.aud !== expectedAud) {
     throw new Error("invalid token audience");
   }
@@ -542,7 +600,7 @@ export function verifyProjectHostAuthToken({
   } else if (claims.browser_session_exp_s != null) {
     throw new Error("invalid browser session token version");
   }
-  if (claims.v === API_KEY_TOKEN_VERSION) {
+  if (claims.v === API_KEY_TOKEN_VERSION || http) {
     if (
       actor !== "account" ||
       claims.auth_actor != null ||
@@ -555,6 +613,19 @@ export function verifyProjectHostAuthToken({
     validateApiKeyBinding(claims.api_key);
   } else if (claims.api_key != null) {
     throw new Error("invalid API key token version");
+  }
+
+  if (http) {
+    if (
+      !Number.isInteger(claims.http_proxy_port) ||
+      claims.http_proxy_port! < 1 ||
+      claims.http_proxy_port! > 65535 ||
+      !claims.api_key?.capabilities.includes("project:exec")
+    ) {
+      throw Error("invalid HTTP proxy authority");
+    }
+  } else if (claims.http_proxy_port != null) {
+    throw Error("invalid HTTP proxy token version");
   }
 
   return claims;

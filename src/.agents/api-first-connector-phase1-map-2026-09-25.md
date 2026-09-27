@@ -76,6 +76,16 @@ manual-key clients first, including negative audience/target cases and continuou
 stream revocation, then replay with managed keys. Existing rejection stays in
 place until that end-to-end path is implemented and verified.
 
+The first implementation step adds an opt-in signed HTTP token and separate
+verifier in `conat/auth/project-host-token.ts`: `phat-http-v1`, audience
+`project-host-http:<host>`, exact project and port, existing parent/revision and
+placement binding, and the same 25-second parent-clamped lifetime. It requires
+`project:exec`, not merely file read. Neither verifier accepts the other
+transport's credential. Nineteen token tests and 64 existing host HTTP/Conat
+tests pass; the Conat build passes. No issuer endpoint, HTTP admission path, or
+CLI command uses the new type yet. Therefore the proxy parity gap remains open;
+these token primitives alone do not grant usable proxy access.
+
 ### Remaining Gates
 
 - Replay the full acceptance matrix with managed keys, including source loss, cancellation, process reuse, and crash expiry.
