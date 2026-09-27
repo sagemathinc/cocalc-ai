@@ -153,6 +153,40 @@ This closes the reproduced installed spawn/default-write/history failure for
 an ordinary manual key. It does not establish daemon recovery, revocation
 during sustained terminal traffic, managed-turn parity, or Jupyter persistence.
 
+### Installed notebook probe: blocked before kernel discovery
+
+On the same installed CLI, three ordinary manual-key attempts (keys 82-84)
+could not complete live notebook initialization. The first combined edit/run/save
+attempt failed; subsequent probes isolated `api.notebook.getKernel()` in a
+new unique notebook path. The final diagnostic confirmed that remote execution
+killed the command at its 45-second limit. No Python result, saved output, or
+fresh-client persistence pass was obtained. All three keys and their private
+credential directories were removed; the second attempt's process inspection
+showed no remaining child process.
+
+The project runtime logs show `jupyter.start` admitted and its server-side
+syncdb becoming ready in roughly one second. They also record `ENOENT` while
+initializing the newly requested notebook from disk. That log alone does not
+explain the client-side stall.
+
+Inspection identifies two concrete transport gaps to address next:
+
+- Full-runtime token issuance includes only the exact
+  `persist.project-<project_id>` subject. The actual persistence client requests
+  `<subject>.id` and uses descendant socket subjects. Executing the built
+  authorization policy confirms the root is allowed while `.id` and
+  `.server.test.client` are denied. Existing full-runtime policy tests do not
+  exercise these ordinary persistence requests.
+- The socket client's custom-load-balancer path assigns only a server ID;
+  unlike ordinary discovery, it does not negotiate `inboxReturn`. Persistence
+  uses that path, so fixing the publication audience alone is insufficient to
+  establish confined reply subscriptions.
+
+These findings require a shared persistence/socket fix with negative confinement
+coverage, not broader account inbox access or an agent-only notebook path.
+The new-notebook initialization case and the full installed workflow must then
+be retested. No production authorization behavior was changed in this probe.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
