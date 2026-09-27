@@ -576,6 +576,16 @@ restoration to verify requests do not leave early. These four cases pass, the
 broader 28-test request/socket/Jupyter selection passes, and Conat builds. This
 fixes shared request/reply readiness, not persistent socket session recovery.
 
+The reconnect regression also holds an acknowledged request at the service,
+reconnects with the same authorized namespace, and then delivers its response
+through the restored inbox. Both stable-prefix provider variants retain the
+pending listener and execute the request exactly once. The harness waits for
+publication acknowledgment as well as service admission: disconnecting before
+the acknowledgment instead produces a disconnected error with an uncertain
+execution outcome, not evidence that the operation was rejected. No automatic
+replay is added. All four inbox-rotation cases and the Conat TypeScript build
+pass. This is local broker evidence, not deployed CLI/session validation.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

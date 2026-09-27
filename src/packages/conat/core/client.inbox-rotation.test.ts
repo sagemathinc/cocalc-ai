@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { delay } from "awaiting";
-import { Client, connect } from "./client";
+import { Client, connect, type Message } from "./client";
 import { ConatServer, init } from "./server";
 
 describe("authenticated reply namespace rotation", () => {
@@ -57,9 +57,21 @@ describe("authenticated reply namespace rotation", () => {
       await client.waitUntilSignedIn({ timeout: 3000 });
       const subscription = await service.subscribe("rotation.echo");
       let receivedAfter = false;
+      let heldRequest: Message | undefined;
+      let heldExecutions = 0;
+      let admitted = () => {};
+      const admission = new Promise<void>((resolve) => {
+        admitted = resolve;
+      });
       let releaseRefresh = () => {};
       const responder = (async () => {
         for await (const message of subscription) {
+          if (message.data === "held") {
+            heldExecutions++;
+            heldRequest = message;
+            admitted();
+            continue;
+          }
           if (message.data === "after") receivedAfter = true;
           message.respondSync(message.data);
         }
@@ -71,6 +83,22 @@ describe("authenticated reply namespace rotation", () => {
         ).toBe("before");
         const previous = client.info!.user.reply_prefix;
         const previousInbox = (client as any).inboxSubject;
+        // A stable authority must preserve pending listeners, not replay work.
+        let acknowledged = () => {};
+        const acknowledgment = new Promise<void>((resolve) => {
+          acknowledged = resolve;
+        });
+        const publish = client.publish.bind(client);
+        jest.spyOn(client, "publish").mockImplementation(async (...args) => {
+          const result = await publish(...args);
+          if (args[1] === "held") acknowledged();
+          return result;
+        });
+        const pending = !rotate
+          ? client.request("rotation.echo", "held", { timeout: 3000 })
+          : undefined;
+        void pending?.catch(() => {});
+        if (pending) await Promise.all([admission, acknowledgment]);
         client.conn.disconnect();
         const refreshGate = new Promise<void>((resolve) => {
           releaseRefresh = resolve;
@@ -96,6 +124,12 @@ describe("authenticated reply namespace rotation", () => {
         expect((await after).data).toBe("after");
         expect((client as any).inboxSubject === previousInbox).toBe(!rotate);
         expect(client.numSubscriptions()).toBe(1);
+        if (pending) {
+          expect(heldRequest).toBeDefined();
+          await heldRequest!.respond("completed-before-reconnect");
+          expect((await pending).data).toBe("completed-before-reconnect");
+          expect(heldExecutions).toBe(1);
+        }
         if (rotate) {
           await expect(
             client.subscribe(previous + ".probe"),
