@@ -95,6 +95,7 @@ describePostgres("managed issuance across PostgreSQL connections", () => {
     pool = new Pool({
       database,
       max: 20,
+      application_name: schema,
       options: `-c search_path=${schema} -c statement_timeout=15000`,
     });
     await pool.query(`
@@ -201,4 +202,88 @@ describePostgres("managed issuance across PostgreSQL connections", () => {
     expect(await counts()).toEqual({ keys: 10, turns: 10, sequence: "10" });
     expect(publish).toHaveBeenCalledTimes(10);
   }, 30000);
+
+  test.each(["renew-first", "end-first"])(
+    "%s lock contention cannot revive a finalized turn",
+    async (order) => {
+      const {
+        beginManagedCocalcConnectorTurn,
+        renewManagedCocalcConnectorTurn,
+        endManagedCocalcConnectorTurn,
+      } = await import("./cocalc-connector-turn");
+      const original = request();
+      const issued = await beginManagedCocalcConnectorTurn(original);
+      const args = { ...original, turn_id: issued!.turn_id };
+      const blocker = await pool.connect();
+      const pending: Promise<PromiseSettledResult<unknown>>[] = [];
+      const observe = (operation: Promise<unknown>) => {
+        const result = operation.then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason) => ({ status: "rejected" as const, reason }),
+        );
+        pending.push(result);
+        return result;
+      };
+      async function waitForLockWaiters(count: number) {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const { rows } = await pool.query(
+            `SELECT count(*)::int AS count FROM pg_stat_activity
+          WHERE application_name=$1 AND wait_event_type='Lock'`,
+            [schema],
+          );
+          if (rows[0].count >= count) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw Error(`did not observe ${count} PostgreSQL lock waiters`);
+      }
+      let renewal: Promise<PromiseSettledResult<unknown>>;
+      let ending: Promise<PromiseSettledResult<unknown>>;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query(
+          "SELECT turn_id FROM agent_cocalc_connector_turns WHERE turn_id=$1 FOR UPDATE",
+          [issued!.turn_id],
+        );
+        if (order === "renew-first") {
+          renewal = observe(renewManagedCocalcConnectorTurn(args));
+          await waitForLockWaiters(1);
+          ending = observe(endManagedCocalcConnectorTurn(args));
+        } else {
+          ending = observe(endManagedCocalcConnectorTurn(args));
+          await waitForLockWaiters(1);
+          renewal = observe(renewManagedCocalcConnectorTurn(args));
+        }
+        await waitForLockWaiters(2);
+      } finally {
+        await blocker.query("ROLLBACK");
+        blocker.release();
+        await Promise.all(pending);
+      }
+      expect((await ending!).status).toBe("fulfilled");
+      expect((await renewal!).status).toBe(
+        order === "renew-first" ? "fulfilled" : "rejected",
+      );
+      const row = (
+        await pool.query(
+          "SELECT ended_at,secret_ciphertext FROM agent_cocalc_connector_turns WHERE turn_id=$1",
+          [issued!.turn_id],
+        )
+      ).rows[0];
+      expect(row.ended_at).toBeInstanceOf(Date);
+      expect(row.secret_ciphertext).toBe("");
+      expect(await counts()).toEqual({ keys: 0, turns: 1, sequence: "1" });
+      await expect(renewManagedCocalcConnectorTurn(args)).rejects.toThrow(
+        "no longer valid",
+      );
+      await expect(beginManagedCocalcConnectorTurn(original)).rejects.toThrow(
+        "no longer valid",
+      );
+      await expect(
+        endManagedCocalcConnectorTurn(args),
+      ).resolves.toBeUndefined();
+      expect(await counts()).toEqual({ keys: 0, turns: 1, sequence: "1" });
+    },
+    30000,
+  );
 });
