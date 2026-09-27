@@ -37,6 +37,7 @@ import {
   type CodexReasoningId,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { agentWorkingDirectory } from "@cocalc/frontend/chat/agent-working-directory";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
@@ -2552,16 +2553,13 @@ function AgentWorkspace({
         threadId: selectedThread,
       })
     : undefined;
-  const selectedThreadConfig = selectedThreadMetadata?.acp_config as
-    | CodexThreadConfig
-    | undefined;
   const executionState =
     chatActions && selectedThread && !unregistered
       ? namedAgentExecutionState(selectedThreadMetadata ?? {})
       : undefined;
   const selectedWorkingDirectory =
-    (selectedThreadConfig as any)?.get?.("workingDirectory") ??
-    selectedThreadConfig?.workingDirectory;
+    agentWorkingDirectory(selectedThreadMetadata) ??
+    getProjectHomeDirectory(agent.endpoint.project_id);
   const workingDirectoryLabel = relativeAgentWorkingDirectory(
     selectedWorkingDirectory,
     getProjectHomeDirectory(agent.endpoint.project_id),
@@ -2674,7 +2672,18 @@ function AgentWorkspace({
     const id =
       editor?._get_most_recent_active_frame_id_of_type("chatroom") ??
       editor?._get_active_id();
-    if (editor && id) void editor[action](id);
+    if (editor && id) {
+      if (action === "terminal") {
+        void editor.terminal(
+          id,
+          false,
+          selectedWorkingDirectory,
+          selectedThread || agent.thread_id,
+        );
+      } else {
+        void editor[action](id);
+      }
+    }
   };
   return (
     <div
@@ -2959,7 +2968,14 @@ function AgentWorkspace({
           project_id={agent.endpoint.project_id}
           startingPath={selectedWorkingDirectory}
           onSelect={(workingDirectory) => {
-            chatActions?.setCodexConfig(selectedThread, { workingDirectory });
+            if (selectedThreadMetadata?.agent_runtime != null) {
+              chatActions?.setHarnessWorkingDirectory(
+                selectedThread,
+                workingDirectory,
+              );
+            } else {
+              chatActions?.setCodexConfig(selectedThread, { workingDirectory });
+            }
             setDirectoryOpen(false);
           }}
         />
