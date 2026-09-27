@@ -514,6 +514,22 @@ five-second end-to-end recovery deadline. Tightening and testing that deadline
 remains work; the observed I/O stop does not justify claiming all long-lived
 session cleanup semantics are complete.
 
+### End-to-end replay deadline (not deployed)
+
+The CLI replay reader now applies a single five-second deadline to each page
+read, including transport readiness and its one safe retry. Timeout, session
+abort, or explicit close disposes the application client and prevents late
+failures from creating another client. A healthy client is still reused for
+subsequent pages. No notebook execution request is retried.
+
+Twenty focused CLI tests pass, with CLI typechecking and test compilation.
+The deterministic deadline test spends 60 ms of a 100 ms budget on the first
+attempt, verifies that the retry receives only 40 ms, and observes timeout and
+client disposal at the original deadline. Other cases cover cancellation,
+late completion, denial without retry, and successful client reuse. The earlier
+live 34,981 ms interruption remains the deployed evidence until this build is
+installed and the probe repeated.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

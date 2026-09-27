@@ -24,6 +24,7 @@ import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { sleep } from "@cocalc/util/async-utils";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
 import type { KernelSpec } from "@cocalc/util/jupyter/types";
+import { createJupyterReplayReader } from "./jupyter-replay";
 
 type ProjectIdentity = {
   project_id: string;
@@ -1689,41 +1690,22 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         },
       );
       const recovery = new AbortController();
-      let replayClient: ReturnType<typeof jupyterClient> | undefined;
+      const replay = createJupyterReplayReader({
+        runId: run_id,
+        signal: recovery.signal,
+        createClient: () =>
+          jupyterClient({
+            path: normalizedPath,
+            project_id: project.project_id,
+            client,
+            stdin,
+          }),
+      });
       const output = recoverRunOutput({
         source: iter,
         runId: run_id,
         signal: recovery.signal,
-        readPage: async (after_seq) => {
-          for (let attempt = 0; ; attempt++) {
-            if (!replayClient || replayClient.socket.state === "closed") {
-              replayClient = jupyterClient({
-                path: normalizedPath,
-                project_id: project.project_id,
-                client,
-                stdin,
-              });
-            }
-            try {
-              return await replayClient.getRun(
-                run_id,
-                { after_seq },
-                { timeout: 5000 },
-              );
-            } catch (error) {
-              if (
-                attempt !== 0 ||
-                recovery.signal.aborted ||
-                ["401", "403"].includes(String((error as any)?.code)) ||
-                !["closed", "disconnected"].includes(replayClient.socket.state)
-              )
-                throw error;
-              // Retrying this bounded read cannot submit another execution.
-              replayClient.close();
-              replayClient = undefined;
-            }
-          }
-        },
+        readPage: replay.readPage,
       });
       return {
         project_id: project.project_id,
@@ -1735,7 +1717,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         iter: output,
         close: async () => {
           recovery.abort();
-          replayClient?.close();
+          replay.close();
           runClient.close();
           await release();
         },
