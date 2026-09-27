@@ -5,7 +5,10 @@
 
 import type { IncomingMessage } from "node:http";
 import type { EventEmitter } from "node:events";
-import { PROJECT_HOST_API_KEY_HTTP_HEADER } from "@cocalc/conat/auth/project-host-http";
+import {
+  PROJECT_HOST_API_KEY_HTTP_HEADER,
+  PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
+} from "@cocalc/conat/auth/project-host-http";
 import { verifyProjectHostApiKeyHttpToken } from "@cocalc/conat/auth/project-host-token";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
@@ -49,14 +52,24 @@ export function authorizeScopedHttpProxy(
       !isProjectCollaboratorGroup(group)
     )
       throw new Error("project binding changed");
-    // Other browser/account credentials must not reach the upstream application.
-    delete req.headers.authorization;
-    delete req.headers.cookie;
     return claims;
   } catch {
     throw Object.assign(new Error("invalid scoped project-host HTTP access"), {
       statusCode: 403,
     });
+  } finally {
+    // Mixed credentials are never forwarded, even when scoped admission fails.
+    delete req.headers.authorization;
+    delete req.headers.cookie;
+    try {
+      const url = new URL(req.url ?? "/", "http://project-host.local");
+      if (url.searchParams.has(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM)) {
+        url.searchParams.delete(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM);
+        req.url = `${url.pathname}${url.search}${url.hash}`;
+      }
+    } catch {
+      // A malformed target is already rejected above.
+    }
   }
 }
 

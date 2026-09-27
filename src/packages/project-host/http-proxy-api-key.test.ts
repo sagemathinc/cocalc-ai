@@ -68,6 +68,27 @@ test("admits only the signed HTTP target and consumes credentials", () => {
   expect(req.headers).toEqual({});
 });
 
+test.each([true, false])(
+  "removes mixed query credentials on scoped admission (valid=%s)",
+  (valid) => {
+    const req = request(
+      valid
+        ? issueProjectHostApiKeyHttpToken({ ...options, port: 8080 }).token
+        : "invalid",
+      `/${project_id}/proxy/8080/path?keep=yes&cocalc_project_host_token=ambient-secret&cocalc_project_host_token=second-secret`,
+    );
+    if (valid) {
+      expect(authorizeScopedHttpProxy(req, host_id, project_id)).toBeDefined();
+    } else {
+      expect(() =>
+        authorizeScopedHttpProxy(req, host_id, project_id),
+      ).toThrow();
+    }
+    expect(req.url).toBe(`/${project_id}/proxy/8080/path?keep=yes`);
+    expect(req.headers).toEqual({});
+  },
+);
+
 test.each([
   "files/x",
   "proxy/8081/",
