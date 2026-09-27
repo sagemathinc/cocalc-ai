@@ -530,6 +530,24 @@ late completion, denial without retry, and successful client reuse. The earlier
 live 34,981 ms interruption remains the deployed evidence until this build is
 installed and the probe repeated.
 
+The tools build at `f619253d673a8f05c0173f3652286fa8e3fd73e0` subsequently
+passed, including archive integrity checks. CLI bundle SHA256 is
+`4b555bf93fcf93299db0811436f7b855124bbcfa756cf32e864d07ec8c8486fb`.
+Host3 tools upgrade `bbbf67c1-10cc-4275-8824-f1008117a8a2` succeeded for
+version `1790483329162`. The primary hub then exited with another billing
+lease query timeout while disposable-project restart
+`0195ea23-b931-4aeb-a602-f2bd9dce2542` was running. Normal hub startup restored
+the primary; attached bays were still running.
+
+After recovery, the project remained reachable with the previous CLI hash
+`874baf80c23dbde45c2c91e0ed7275d749b2ce31b0fc956ffea11ca0ff221e8b`, while
+the operation continued to report `running`. The rollout request was explicitly
+canceled through the operation API; its waiter observed terminal `canceled`.
+Cancellation of the LRO record alone does not prove all underlying work stopped.
+No duplicate restart or new credential probe was submitted after this incident.
+The new deadline is built and installed on the host, but is not yet verified
+inside the running project or by the live revocation probe.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
