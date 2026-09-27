@@ -69,6 +69,33 @@ project-session acceptance gates below remain open.
 
 ## Full-build checkpoint, 2026-09-27 (not deployed)
 
+### Responsive draft-retention follow-up
+
+At `2c618235fa3fa89acd8cbece1aef0a60fe84cc9b`, settings content stays at
+the same keyed React path across desktop/mobile navigation. The new regression
+test checks that the exact input node, keyboard-entered draft, and focus survive
+both transitions. All 21 focused frontend tests passed, as did frontend
+typecheck and lint. After the test fixture's component naming was corrected for
+the hooks lint rule, its four-test suite and typecheck passed again.
+
+`pnpm -C src build:dev` passed. Its incremental scheduler skipped static output,
+so `NODE_ENV=development pnpm rspack build` was also run in `packages/static`;
+the successful bundle identified the exact source revision above.
+
+The actual manual-key dialog then survived 1280 -> 320 -> 1280px without
+closing or repopulating its selected-project draft. Client/scroll widths were
+760/760, 304/304, and 760/760px, respectively. All three focused axe scans
+passed, the Create footer was reachable at every width, and Escape dismissed
+the dialog. No page errors occurred. No key was created. The 320px screenshot
+was visually inspected. This closes the observed responsive-unmount failure
+for this draft flow, not the remaining theme, zoom, or saved-value gates.
+
+The first probe produced no assertions while the primary hub was stopped and
+is not counted as validation. Normal startup recovered the primary; both
+attached bays were already running and were not restarted. The successful
+probe ran after refreshing the dev hub environment and closed its browser and
+Conat connection normally.
+
 At `0d9db0b52ae82e5c9cf2ed48f3f90f20882bd899`, `pnpm -C src build:dev`
 completed with exit status 0 in `/home/user/cocalc-ai`. The tracked checkout
 remained clean. This builds the accumulated transport, terminal recovery, and
