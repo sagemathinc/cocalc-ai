@@ -5,6 +5,20 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
+import { SCHEMA } from "@cocalc/util/db-schema";
+import { syncCollaboratorsSchema } from "@cocalc/database/postgres/collaborators-common";
+
+// Exercise the current source inventory even when linked package outputs predate it.
+jest.mock("@cocalc/server/projects/hard-delete-tables", () =>
+  jest.requireActual("./hard-delete-tables"),
+);
+
+const collaborationProjectTables = Object.entries(SCHEMA)
+  .filter(
+    ([table, schema]) =>
+      table.startsWith("collaboration_") && schema.fields.project_id != null,
+  )
+  .map(([table]) => table);
 
 const publishAccountFeedEventBestEffortMock = jest.fn();
 const stopProjectOnHostMock = jest.fn();
@@ -340,6 +354,7 @@ describe("hard delete project cleanup", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
     await ensureSupplementalSchemas();
+    await syncCollaboratorsSchema();
   }, 15000);
 
   beforeEach(() => {
@@ -358,6 +373,8 @@ describe("hard delete project cleanup", () => {
     jest.clearAllMocks();
     await getPool().query(
       `TRUNCATE
+        ${collaborationProjectTables.join(",")},
+        collaboration_account_state,
         agent_identity_runs,
         agent_identities,
         agent_message_project_fences,
@@ -386,6 +403,70 @@ describe("hard delete project cleanup", () => {
         syncstrings
        CASCADE`,
     );
+  });
+
+  it("purges all project-scoped collaboration state, preserves another project and invalidates account snapshots", async () => {
+    for (const project_id of [PROJECT_ID, OTHER_PROJECT_ID]) {
+      await seedProject(project_id);
+      const fields: Record<string, unknown> = {
+        project_id,
+        account_id: ACCOUNT_ID,
+        entry_key: `entry-${project_id}`,
+        source_id: `source-${project_id}`,
+        chat_path: "/home/user/room.chat",
+        operation_id: uuid(),
+        event_id: uuid(),
+      };
+      for (const table of collaborationProjectTables) {
+        const schema = SCHEMA[table];
+        const primary = schema.primary_key;
+        const columns = [
+          ...new Set([
+            "project_id",
+            ...(Array.isArray(primary) ? primary : [primary]),
+          ]),
+        ];
+        for (const column of columns) expect(fields[column]).toBeDefined();
+        await getPool().query(
+          `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(",")})`,
+          columns.map((column) => fields[column]),
+        );
+      }
+    }
+    const revisionBefore = Number(
+      (
+        await getPool().query(
+          "SELECT revision FROM collaboration_account_state WHERE account_id=$1",
+          [ACCOUNT_ID],
+        )
+      ).rows[0].revision,
+    );
+    const { hardDeleteProject } = await import("./hard-delete");
+    const result = await hardDeleteProject({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+    });
+    expect(result.purged_tables).toEqual(
+      expect.arrayContaining(collaborationProjectTables),
+    );
+    for (const table of collaborationProjectTables) {
+      expect(
+        (await getPool().query(`SELECT project_id FROM ${table}`)).rows,
+      ).toEqual([{ project_id: OTHER_PROJECT_ID }]);
+    }
+    expect(
+      Number(
+        (
+          await getPool().query(
+            "SELECT revision FROM collaboration_account_state WHERE account_id=$1",
+            [ACCOUNT_ID],
+          )
+        ).rows[0].revision,
+      ),
+    ).toBeGreaterThan(revisionBefore);
+    await expect(
+      hardDeleteProject({ project_id: PROJECT_ID, account_id: ACCOUNT_ID }),
+    ).resolves.toBeDefined();
   });
 
   it("purges project-scoped projection, runtime, backup, secret, and TimeTravel rows", async () => {

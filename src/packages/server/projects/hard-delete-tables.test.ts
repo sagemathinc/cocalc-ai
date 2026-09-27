@@ -17,6 +17,29 @@ import {
 const PORTABLE_TABLES = new Set(PROJECT_REHOME_PORTABLE_SQL_TABLES);
 
 describe("project hard-delete table ownership audit", () => {
+  it("cleans every project-scoped collaboration table without deleting account-wide or worker state", () => {
+    const tables = Object.entries(SCHEMA)
+      .filter(
+        ([table, schema]) =>
+          table.startsWith("collaboration_") &&
+          schema.fields.project_id != null,
+      )
+      .map(([table]) => table);
+    expect(tables.length).toBeGreaterThan(0);
+    expect(
+      tables.filter(
+        (table) =>
+          !PROJECT_HARD_DELETE_PROJECT_ID_TABLES.includes(table as any),
+      ),
+    ).toEqual([]);
+    expect(PROJECT_HARD_DELETE_SIDE_TABLES).not.toContain(
+      "collaboration_account_state",
+    );
+    expect(PROJECT_HARD_DELETE_SIDE_TABLES).not.toContain(
+      "collaboration_maintenance",
+    );
+  });
+
   it("covers agent foreign-key dependents of projects and identities", () => {
     const missing = Object.entries(SCHEMA)
       .filter(

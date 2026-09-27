@@ -69,7 +69,7 @@ migrated, enabled, or restarted. The PR remains a draft for review.
 
 - Full `pnpm -C src build:dev` completed, followed by package-local builds and a
   fresh static development bundle for the final UI integration.
-- Consolidated focused runs passed 888 tests across frontend, database, server,
+- Consolidated focused runs passed 892 tests across frontend, database, server,
   project-host, backend, Lite, chat, chat-client, Conat, and util. The three
   PGlite-only rehome tests are included in that count from their separate run;
   they are intentionally skipped by the PostgreSQL run.
@@ -94,15 +94,27 @@ migrated, enabled, or restarted. The PR remains a draft for review.
   alias refresh, and reference insertion/send/reload/open. Account-selected light
   and dark layouts pass at 320px and 1440px with no horizontal overflow.
   Keyboard/filter focus restoration passes the repository accessibility harness
-  with zero reported violations.
+  with zero reported violations. Native 200% zoom preserves reflow and keyboard
+  access; all four Collaborators dialog types respect reduced motion while
+  retaining their normal animation otherwise.
 - Browser testing exposed a save/reload gap between synchronized messages and
   the disk-backed index. Autosave now filters no-op changes before debounce and
   recovers genuinely unsaved state on readiness, with regressions for clean
   reopen, pending saves, read-only access and disposal. Real serialized-chat
   pipeline tests cover disk publication, participation, activity and restart.
-- Frontend lint and dependency version consistency checks passed. Detailed
+- Frontend lint, the full dependency audit, frozen lockfile verification, and
+  dependency version consistency checks passed. Detailed
   machine-local reports are under `src/.local/`; they are test outputs, not
   runtime dependencies or checked-in user data.
+- Full CI identified integration gaps beyond the focused runs. Follow-up checks
+  cover exact navigation-state resets and cleanup of all project-scoped
+  collaboration tables, including isolation, revision invalidation, and retries.
+  The existing rehome and cleanup suites passed together (44 tests), as did the
+  two navigation suites (19 tests).
+- The production bundle measurement and all Essential budgets pass. Shared
+  schema/RPC registration raises notifications to about 502 KiB Brotli; its
+  allowance is explicitly adjusted from 500 to 505 KiB, with other budgets
+  unchanged. The Collaborators UI itself is not loaded by that route.
 
 ### Remaining acceptance and UX iteration
 

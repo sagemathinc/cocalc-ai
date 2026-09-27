@@ -3,11 +3,12 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useId, useRef, useState } from "react";
-import { Alert, Button, Input, Modal } from "antd";
+import { Alert, Button, Input } from "antd";
 import { uuid } from "@cocalc/util/misc";
 import type { CollaborationTarget } from "@cocalc/util/collaborators";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { DirectoryApi } from "./workspace-api";
+import { CollaboratorsModal } from "./modal";
 
 export function NewConversation({
   api,
@@ -65,7 +66,12 @@ export function NewConversation({
     }
   }
   return (
-    <Modal open title="New conversation" onCancel={onClose} footer={null}>
+    <CollaboratorsModal
+      open
+      title="New conversation"
+      onCancel={onClose}
+      footer={null}
+    >
       <KeyboardBoundary boundary="collaborators-new-conversation">
         {!operation.current.title && (
           <Button onClick={onChangeProject}>Change project</Button>
@@ -121,6 +127,6 @@ export function NewConversation({
           />
         )}
       </KeyboardBoundary>
-    </Modal>
+    </CollaboratorsModal>
   );
 }

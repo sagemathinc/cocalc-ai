@@ -28,6 +28,13 @@ beforeEach(() => {
 test("opens the named agent without navigating to its project file", async () => {
   expect(await openAgentNotification("p", "a.chat", "t")).toBe(true);
   expect(setState).toHaveBeenCalledWith({
+    collaborators_open: false,
+    collaborators_view: undefined,
+    collaborators_project_id: undefined,
+    collaborators_person_id: undefined,
+    collaborators_resource_kind: undefined,
+    collaborators_resource_id: undefined,
+    collaborators_route_error: undefined,
     library_open: false,
     library_project_id: undefined,
     library_entry_id: undefined,

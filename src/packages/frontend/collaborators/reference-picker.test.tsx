@@ -60,6 +60,11 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
   const trigger = screen.getByRole("button", { name: "Insert reference" });
   expect(trigger).toHaveFocus();
   await userEvent.keyboard("{Enter}");
+  expect(
+    (await screen.findByRole("dialog", { name: "Insert a reference" })).closest(
+      ".collaborators-modal",
+    ),
+  ).not.toBeNull();
   const search = await screen.findByRole("textbox", {
     name: "Search titles or aliases",
   });

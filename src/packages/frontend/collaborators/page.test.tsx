@@ -113,6 +113,24 @@ beforeAll(() => {
 });
 afterAll(() => jest.restoreAllMocks());
 
+test.each(["New conversation", "Invite collaborator"])(
+  "%s uses the reduced-motion modal portal",
+  async (name) => {
+    const user = userEvent.setup();
+    render(
+      <Workspace initial={{ view: "conversations", projectId: "geometry" }} />,
+    );
+    await user.click(screen.getByRole("button", { name, exact: true }));
+    const dialog = await screen.findByRole("dialog", { name, exact: true });
+    expect(dialog.closest(".collaborators-modal")).not.toBeNull();
+    act(() => dialog.focus());
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name })).not.toBeInTheDocument(),
+    );
+  },
+);
+
 test("keyboard opens a conversation and restores focus and search on back", async () => {
   const user = userEvent.setup();
   render(<Workspace />);
@@ -162,6 +180,7 @@ test.each(["Escape", "Cancel"])(
     const dialog = await screen.findByRole("dialog", {
       name: "Filter by project",
     });
+    expect(dialog.closest(".collaborators-modal")).not.toBeNull();
     const search = within(dialog).getByRole("textbox", {
       name: "Search projects",
     });

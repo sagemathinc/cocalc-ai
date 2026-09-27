@@ -4,7 +4,7 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { Button, Checkbox, Input, Modal, Select } from "antd";
+import { Button, Checkbox, Input, Select } from "antd";
 import type { InputRef } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -20,6 +20,7 @@ import { collaborationReferenceFromResource } from "@cocalc/util/collaboration-r
 import type { CollaborationReference } from "@cocalc/util/collaboration-references";
 import { referencePickerApi } from "./reference-picker-api";
 import type { ReferencePickerApi } from "./reference-picker-api";
+import { CollaboratorsModal } from "./modal";
 
 export interface ReferencePickerProps {
   open: boolean;
@@ -43,7 +44,7 @@ export function ReferencePicker({
   const accountId = useTypedRedux("account", "account_id");
   const searchRef = useRef<InputRef>(null);
   return (
-    <Modal
+    <CollaboratorsModal
       open={open}
       title={
         intent === "share-artifact"
@@ -68,7 +69,7 @@ export function ReferencePicker({
           onClose={onClose}
         />
       )}
-    </Modal>
+    </CollaboratorsModal>
   );
 }
 

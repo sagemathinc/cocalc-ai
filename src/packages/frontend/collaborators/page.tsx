@@ -5,7 +5,7 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { Map as ImmutableMap } from "immutable";
-import { Alert, Button, Input, Modal } from "antd";
+import { Alert, Button, Input } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   CollaborationPerson,
@@ -29,6 +29,7 @@ import { ResourceList } from "./resource-list";
 import { Overview } from "./overview";
 import { ResourceDetail } from "./resource-detail";
 import { NewConversation } from "./new-conversation";
+import { CollaboratorsModal } from "./modal";
 import type {
   CollaboratorsPageProps,
   CollaboratorsRoute,
@@ -599,7 +600,7 @@ function CollaboratorsWorkspace({
         />
       )}
       {active && inviteProject && (
-        <Modal
+        <CollaboratorsModal
           open
           title="Invite collaborator"
           onCancel={() => setInviteProject(undefined)}
@@ -622,7 +623,7 @@ function CollaboratorsWorkspace({
               />
             </Suspense>
           </KeyboardBoundary>
-        </Modal>
+        </CollaboratorsModal>
       )}
       {active && createProject && (
         <Suspense fallback={<p role="status">Loading project creation...</p>}>

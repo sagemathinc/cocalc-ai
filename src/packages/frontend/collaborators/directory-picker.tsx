@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useId, useState } from "react";
-import { Button, Input, Modal } from "antd";
+import { Button, Input } from "antd";
 import type { DirectoryApi } from "./workspace-api";
 import type {
   CollaborationPerson,
@@ -11,6 +11,7 @@ import type {
 } from "@cocalc/util/collaborators";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DirectoryResults } from "./directory-results";
+import { CollaboratorsModal } from "./modal";
 import { useDirectory, useDirectorySearch } from "./use-directory";
 
 export function DirectoryPicker({
@@ -57,7 +58,7 @@ export function DirectoryPicker({
     restoreFocus();
   }
   return (
-    <Modal
+    <CollaboratorsModal
       open
       title={title}
       onCancel={cancel}
@@ -102,6 +103,6 @@ export function DirectoryPicker({
           )}
         </DirectoryResults>
       </KeyboardBoundary>
-    </Modal>
+    </CollaboratorsModal>
   );
 }
