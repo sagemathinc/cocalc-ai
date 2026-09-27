@@ -144,6 +144,7 @@ export const ActiveContent: React.FC = React.memo(() => {
   // initially, we assume a user is signed in – most likely case
   const [notSignedIn, setNotSignedIn] = React.useState<boolean>(false);
   const is_logged_in = useTypedRedux("account", "is_logged_in");
+  const accountId = useTypedRedux("account", "account_id");
   const managed_egress_blocked_error = useTypedRedux(
     "account",
     "managed_egress_blocked_error",
@@ -295,7 +296,11 @@ export const ActiveContent: React.FC = React.memo(() => {
         agentsActive,
         <RouteChunk route="agents">
           <SurfaceReady segment="agents" />
-          <MyAgentsWorkspacePage active={agentsActive} />
+          {/* Account-bound actions must not retain the pre-login workspace. */}
+          <MyAgentsWorkspacePage
+            key={accountId ?? "signed-out"}
+            active={agentsActive}
+          />
         </RouteChunk>,
       ),
     );

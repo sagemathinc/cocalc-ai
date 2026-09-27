@@ -93,7 +93,7 @@ test("discovery opens a temporary session without a prompt or existing session I
     { path: "a.chat", threadId: "thread" },
   );
   expect(client.open).toHaveBeenCalledWith();
-  expect(client.configure).toHaveBeenCalledWith({ modeId: "code" });
+  expect(client.configure).not.toHaveBeenCalled();
   expect(client.prompt).not.toHaveBeenCalled();
   expect(client.dispose).toHaveBeenCalledTimes(1);
 });
@@ -220,17 +220,44 @@ test.each(["account-api-key", "account-subscription"] as const)(
   },
 );
 
-test.each(["open", "configure"])(
-  "%s failure cleans up and releases the discovery slot",
-  async (method) => {
-    client[method].mockRejectedValueOnce(Error("fixture failure"));
-    await expect(discoverHarnessControls(request)).rejects.toThrow(
-      "fixture failure",
-    );
-    expect(client.dispose).toHaveBeenCalledTimes(1);
-    await expect(discoverHarnessControls(request)).resolves.toBeDefined();
-  },
-);
+test("open failure cleans up and releases the discovery slot", async () => {
+  client.open.mockRejectedValueOnce(Error("fixture failure"));
+  await expect(discoverHarnessControls(request)).rejects.toThrow(
+    "fixture failure",
+  );
+  expect(client.dispose).toHaveBeenCalledTimes(1);
+  await expect(discoverHarnessControls(request)).resolves.toBeDefined();
+});
+
+test("discovery returns a fresh catalog even when saved model and effort are unavailable", async () => {
+  const settings = {
+    modeId: "removed-mode",
+    configOptions: [
+      { id: "model", value: "opus[1m]" },
+      { id: "effort", value: "removed-effort" },
+    ],
+  };
+  client.configure.mockRejectedValue(Error("Saved model is not advertised"));
+  client.controls = {
+    configOptions: [
+      {
+        id: "model",
+        currentValue: "opus",
+        options: [{ value: "opus", name: "Opus" }],
+      },
+    ],
+  };
+  const result = await discoverHarnessControls({
+    ...request,
+    runtime: { ...request.runtime!, settings },
+  });
+  expect(result.controls).toEqual(client.controls);
+  expect(settings.configOptions[0].value).toBe("opus[1m]");
+  expect(client.configure).not.toHaveBeenCalled();
+  expect(client.open).toHaveBeenCalledWith();
+  expect(client.prompt).not.toHaveBeenCalled();
+  expect(client.dispose).toHaveBeenCalledTimes(1);
+});
 
 test("setup and cleanup failure use the shared classifier and release the slot", async () => {
   const primary = Error("session rejected");

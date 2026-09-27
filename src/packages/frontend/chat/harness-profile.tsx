@@ -51,6 +51,14 @@ import { Icon } from "@cocalc/frontend/components/icon";
 const HARNESS_LIMITATIONS =
   "Text and image prompts. Live guidance works when the harness advertises it; otherwise messages queue. Automations are not supported yet.";
 
+function harnessErrorMessage(error: unknown): string {
+  // RPC layers can wrap an already stringified Error more than once.
+  return (error instanceof Error ? error.message : String(error)).replace(
+    /^(?:Error:\s*)+/,
+    "",
+  );
+}
+
 export function claudeCredentialTrustWarning(
   mode: "project-secret" | "account-api-key" | "account-subscription",
 ): string {
@@ -151,7 +159,7 @@ function ClaudeCredentialControl({
         }
       })
       .catch((err) => {
-        if (!disposed) setError(`${err}`);
+        if (!disposed) setError(harnessErrorMessage(err));
       });
     window.addEventListener(HARNESS_CREDENTIAL_SELECTION_EVENT, refresh);
     return () => {
@@ -272,7 +280,7 @@ function ClaudeCredentialControl({
               });
               setValue("project-secret");
             } catch (err) {
-              setError(`${err}`);
+              setError(harnessErrorMessage(err));
             } finally {
               setDisconnectBusy(false);
             }
@@ -478,7 +486,7 @@ function HarnessRuntimeSummaryContent({
       onSettings?.(next);
       setError("");
     } catch (err) {
-      setError(`${err}`);
+      setError(harnessErrorMessage(err));
     }
   };
   const discover = async () => {
@@ -499,7 +507,7 @@ function HarnessRuntimeSummaryContent({
         );
       setDiscovered({ ...result, reportedAtLoad: JSON.stringify(reported) });
     } catch (err) {
-      if (started === generation.current) setError(`${err}`);
+      if (started === generation.current) setError(harnessErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -565,20 +573,40 @@ function HarnessRuntimeSummaryContent({
         ? settings.modeId
         : settings.configOptions?.find(({ id }) => id === control.id)?.value) ??
       control.currentValue;
+    const selectedValue = claude
+      ? resolveClaudeConfigValue(control, value)
+      : value;
+    const unavailable = !control.options.some(
+      (option) => option.value === selectedValue,
+    );
     return (
       <Select
         id={`${id}-${inline ? "inline-" : ""}${control.id}`}
         aria-label={inline ? `${name} ${control.name}` : undefined}
-        value={claude ? resolveClaudeConfigValue(control, value) : value}
+        value={selectedValue}
+        status={unavailable ? "error" : undefined}
+        aria-invalid={unavailable || undefined}
         disabled={disabled || !onSettings}
         size={inline ? "small" : undefined}
         variant={inline ? "borderless" : undefined}
         popupMatchSelectWidth={false}
         style={inline ? { minWidth: 90, maxWidth: "100%" } : { width: "100%" }}
-        options={control.options.map((option) => ({
-          value: option.value,
-          label: claude && option.value === "default" ? "Default" : option.name,
-        }))}
+        options={[
+          ...(unavailable
+            ? [
+                {
+                  value: selectedValue,
+                  label: `${selectedValue} (unavailable)`,
+                  disabled: true,
+                },
+              ]
+            : []),
+          ...control.options.map((option) => ({
+            value: option.value,
+            label:
+              claude && option.value === "default" ? "Default" : option.name,
+          })),
+        ]}
         onChange={(value: string) =>
           change(
             legacy

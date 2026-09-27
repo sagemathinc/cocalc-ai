@@ -59,7 +59,8 @@ export function setHarnessAuthorityValidator(
 export async function discoverHarnessControls(request: AcpRequest) {
   return await withTemporaryHarness(request, async (client, prepared) => {
     await client.open();
-    await client.configure(prepared.runtime!.settings ?? {});
+    // Saved settings may belong to a different credential/catalog. Discovery
+    // must remain usable to repair them; only an admitted turn applies them.
     return { profile: prepared.runtime!.profile, controls: client.controls };
   });
 }

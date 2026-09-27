@@ -3542,6 +3542,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     setCopyBusy(true);
     setCopyError("");
     try {
+      boundAccount.assertCurrent();
       const actions = initChat(
         copyingAgent.endpoint.project_id,
         copyingAgent.path,

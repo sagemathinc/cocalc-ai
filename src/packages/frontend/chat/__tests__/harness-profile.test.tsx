@@ -492,6 +492,85 @@ const claudeControls = {
   ],
 };
 
+test("an unavailable saved model remains explicit and can be replaced from the discovered catalog", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onSettings = jest.fn();
+  const onDiscover = jest.fn(async () => ({
+    profile: runtime.profile,
+    controls: claudeControls,
+  }));
+  function Composer() {
+    const [settings, setSettings] = useState({
+      configOptions: [{ id: "model", value: "opus[1m]" }],
+    });
+    return (
+      <HarnessRuntimeControl
+        compact
+        runtime={{ ...runtime, settings }}
+        onDiscover={onDiscover}
+        onSettings={(next) => {
+          onSettings(next);
+          setSettings(next as typeof settings);
+        }}
+      />
+    );
+  }
+  render(<Composer />);
+  const model = await screen.findByRole("combobox", {
+    name: "Claude Code Model",
+  });
+  expect(screen.getByText("opus[1m] (unavailable)")).toBeTruthy();
+  expect(model.getAttribute("aria-invalid")).toBe("true");
+  expect(onSettings).not.toHaveBeenCalled();
+  model.focus();
+  fireEvent.keyDown(model, { key: "ArrowDown", keyCode: 40 });
+  await screen.findByRole("option", { name: "Opus 5.5" });
+  fireEvent.keyDown(model, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(model, { key: "Enter", keyCode: 13 });
+  await waitFor(() =>
+    expect(onSettings).toHaveBeenCalledWith({
+      configOptions: [{ id: "model", value: "opus" }],
+    }),
+  );
+  await waitFor(() =>
+    expect(model.getAttribute("aria-expanded")).toBe("false"),
+  );
+  expect(model.parentElement?.textContent).toBe("Opus 5.5");
+  expect(model.getAttribute("aria-invalid")).not.toBe("true");
+  expect(document.activeElement).toBe(model);
+});
+
+test("discovery errors remove nested Error prefixes and leave retry available", async () => {
+  const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
+  const onDiscover = jest
+    .fn()
+    .mockRejectedValueOnce(Error("Error: Error: Connection unavailable"))
+    .mockResolvedValueOnce({
+      profile: runtime.profile,
+      controls: claudeControls,
+    });
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={runtime}
+      onDiscover={onDiscover}
+      onSettings={jest.fn()}
+    />,
+  );
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "Connection unavailable",
+  );
+  const retry = await screen.findByRole("button", {
+    name: "Model unavailable - retry",
+  });
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(
+    await screen.findByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 test("Claude composer automatically discovers model and effort without selecting a default", async () => {
   const runtime = qualifiedHarnessRuntime("claude-code", "/home/user");
   const onDiscover = jest.fn(async () => ({
@@ -592,7 +671,7 @@ test("failed automatic discovery shows an honest unknown model and permits retry
   );
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
-    "Error: Offline",
+    "Offline",
   );
   expect(onDiscover).toHaveBeenCalledTimes(1);
   await userEvent
