@@ -27,12 +27,69 @@ import {
   type UserFunction,
 } from "./server";
 import { createServiceClient, createServiceHandler } from "../service/typed";
+import { fileMutationAuthority } from "../files/mutation-authority";
+import { DataEncoding } from "./codec";
 
 describe("authenticated Conat caller metadata", () => {
   afterEach(async () => {
     Client.closeAllForTests();
     await ConatServer.closeAllForTests();
   });
+
+  it.each([true, false])(
+    "replaces forged mutation caller metadata (scoped key: %s)",
+    async (key) => {
+      const principal = {
+        account_id: "account",
+        auth_api_key: {
+          account_id: "account",
+          key_id: "key",
+          scope_revision: 1,
+          project_id: "project",
+          placement_revision: 0,
+          capabilities: ["file:write" as const],
+          subjects: ["fs.project-project"],
+          reply_prefix: "_INBOX.first",
+        },
+      };
+      const server = init({
+        port: 0,
+        getUser: async (socket) =>
+          socket.handshake.auth.key ? principal : { hub_id: "service" },
+        isAllowed: async () => true,
+      });
+      const receiver = connect({ address: server.address(), noCache: true });
+      const sender = connect({
+        address: server.address(),
+        noCache: true,
+        auth: { key },
+      });
+      await receiver.waitUntilSignedIn({ timeout: 5_000 });
+      await sender.waitUntilSignedIn({ timeout: 5_000 });
+      const subscription = await receiver.subscribe("fs.project-project");
+      const response = await sender.conn
+        .timeout(5_000)
+        .emitWithAck("publish", [
+          "fs.project-project",
+          "receipt-test",
+          0,
+          1,
+          DataEncoding.JsonCodec,
+          Buffer.from("null"),
+          undefined,
+          undefined,
+          { file_mutation_authority: "forged", bay_id: "forged" },
+        ]);
+      expect(response?.error).toBeUndefined();
+      expect((await subscription.next()).value?.caller ?? undefined).toEqual(
+        key
+          ? {
+              file_mutation_authority: fileMutationAuthority(principal),
+            }
+          : undefined,
+      );
+    },
+  );
 
   it("closes a credential-backed socket when its authorization lease expires", async () => {
     const server = init({

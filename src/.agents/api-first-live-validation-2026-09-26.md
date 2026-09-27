@@ -34,6 +34,22 @@ result lookup on the direct project-host data plane. Missing outcomes must stay
 unknown; clients must not silently allocate a new mutation and replay it. No
 production default limits or end-to-end receipt recovery are claimed here.
 
+The Conat router now adds an opaque mutation-authority binding to authenticated
+caller metadata for project-host API-key principals. It binds account, key,
+scope revision, project, placement revision, capabilities, viewer policy, and
+service subjects. A healthy lease's changing reply namespace is excluded.
+This is a deduplication identity, not an authorization grant; every future
+receipt request must still pass normal service authorization. Receipts remain
+local to the process that admitted them, so a host change cannot resurrect an
+old receipt.
+
+Focused binding tests cover changed authorization dimensions and healthy reply
+rotation. Real broker publications verify that a client's forged caller slot
+is replaced for scoped keys and removed for ordinary principals. Filesystem
+receipt RPCs and automatic client recovery remain unimplemented and undeployed.
+All 34 receipt, authority-binding, and broker caller/revocation tests pass;
+the Conat TypeScript build passes.
+
 ## Disk-save disconnect reproduction, 2026-09-27
 
 Further installed-CLI probes used the same verified `d20be971...` bundle:
@@ -222,12 +238,12 @@ ellipsize inside the selector instead of imposing a minimum content width.
 After rebuilding, direct Playwright checks against the local hub's actual
 signed-in frontend found:
 
-| Dialog and viewport | Client / scroll width | Result |
-| --- | --- | --- |
-| Connector, 1280px | 700 / 700px | No horizontal overflow |
-| Connector, 320px | 304 / 304px | No horizontal overflow |
-| Manual API key, 1280px | 760 / 760px | No horizontal overflow |
-| Manual API key opened directly at 320px | 304 / 304px | No horizontal overflow |
+| Dialog and viewport                     | Client / scroll width | Result                 |
+| --------------------------------------- | --------------------- | ---------------------- |
+| Connector, 1280px                       | 700 / 700px           | No horizontal overflow |
+| Connector, 320px                        | 304 / 304px           | No horizontal overflow |
+| Manual API key, 1280px                  | 760 / 760px           | No horizontal overflow |
+| Manual API key opened directly at 320px | 304 / 304px           | No horizontal overflow |
 
 All four dialog checks passed the focused axe rules for contrast, labels,
 ARIA attribute values, and button names; this is not a complete accessibility

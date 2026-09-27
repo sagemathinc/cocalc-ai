@@ -29,6 +29,7 @@ cd packages/server
 
 import type { ConnectionStats, ServerInfo } from "./types";
 import { stampFileReadPrincipal } from "../files/read-principal";
+import { fileMutationAuthority } from "../files/mutation-authority";
 import {
   validateMessageHeaders,
   SOCKET_RETURN_HEADER,
@@ -1489,6 +1490,8 @@ export class ConatServer extends EventEmitter {
         bay_credential_id: user.bay_credential_id,
       };
     }
+    const file_mutation_authority = fileMutationAuthority(user);
+    if (file_mutation_authority) return { file_mutation_authority };
     return undefined;
   };
 

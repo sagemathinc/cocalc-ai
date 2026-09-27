@@ -3194,6 +3194,9 @@ function concatArrayBuffers(buffers) {
 export type Headers = { [key: string]: JSONValue };
 
 export interface AuthenticatedCaller {
+  // Opaque server-derived binding for project-host API-key mutation receipts.
+  // This is attribution for deduplication, not permission to execute a request.
+  file_mutation_authority?: string;
   cluster_id?: string;
   bay_id?: string;
   bay_credential_id?: string;
