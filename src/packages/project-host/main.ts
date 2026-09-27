@@ -1083,6 +1083,14 @@ export async function main(
     app,
     rewriteRequest: maybeRewriteAppHostnameRequest,
     rewriteResponse: rewritePrivateAppHostnameResponseLocation,
+    assertForwardAllowed: (req) => {
+      const expires = getProjectHostHttpAuthContext(req)?.scoped_api_key_exp_s;
+      if (expires != null && Date.now() >= expires * 1000) {
+        throw Object.assign(new Error("scoped HTTP authorization expired"), {
+          statusCode: 403,
+        });
+      }
+    },
     noteUpstreamHttpBytes: ({ req, bytes }) => {
       noteManagedBoundaryClassifiedBytes({
         req,

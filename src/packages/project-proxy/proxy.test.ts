@@ -19,6 +19,92 @@ async function closeServer(server: Server | http.Server): Promise<void> {
 }
 
 describe("project proxy upstream boundary metering", () => {
+  it.each(["expired", "closed", "serialization"])(
+    "does not forward parsed JSON after delayed resolution (%s)",
+    async (mode) => {
+      let connections = 0;
+      let requests = 0;
+      const upstream = http.createServer((_req, res) => {
+        requests++;
+        res.end("unexpected");
+      });
+      upstream.on("connection", () => connections++);
+      upstream.listen(0, "127.0.0.1");
+      await once(upstream, "listening");
+      const app = express();
+      app.use(express.json());
+      const server = http.createServer(app);
+      let deadline = Infinity;
+      let resolved!: () => void;
+      const resolution = new Promise<void>((resolve) => (resolved = resolve));
+      attachProjectProxy({
+        httpServer: server,
+        app,
+        assertForwardAllowed: () => {
+          if (Date.now() >= deadline) {
+            throw Object.assign(new Error("authorization expired"), {
+              statusCode: 403,
+            });
+          }
+        },
+        resolveTarget: async (req, res) => {
+          expect((req as any).body).toEqual({ mutation: true });
+          deadline = Date.now() + 20;
+          if (mode === "closed") res!.destroy();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          if (mode === "closed") deadline = Infinity;
+          if (mode === "serialization") {
+            deadline = Infinity;
+            (req as any).body.toJSON = () => {
+              deadline = Date.now() - 1;
+              return { mutation: true };
+            };
+          }
+          resolved();
+          return {
+            handled: true,
+            target: {
+              host: "127.0.0.1",
+              port: (upstream.address() as AddressInfo).port,
+            },
+          };
+        },
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const result = await new Promise<number | string>((resolve, reject) => {
+          const req = http.request(
+            {
+              host: "127.0.0.1",
+              port: (server.address() as AddressInfo).port,
+              path: `/${PROJECT_ID}/proxy/8080/`,
+              method: "POST",
+              headers: { "content-type": "application/json" },
+            },
+            (res) => {
+              res.resume();
+              res.on("end", () => resolve(res.statusCode!));
+            },
+          );
+          req.on("error", (err: NodeJS.ErrnoException) => {
+            if (mode !== "expired") resolve(err.code!);
+            else reject(err);
+          });
+          req.end(JSON.stringify({ mutation: true }));
+        });
+        await resolution;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(result).toBe(mode === "expired" ? 403 : "ECONNRESET");
+        expect(requests).toBe(0);
+        if (mode !== "serialization") expect(connections).toBe(0);
+      } finally {
+        await closeServer(server);
+        await closeServer(upstream);
+      }
+    },
+  );
+
   it("supports an early host-first dispatcher for reserved outer paths", async () => {
     const upstream = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });

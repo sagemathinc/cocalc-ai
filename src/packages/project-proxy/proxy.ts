@@ -152,9 +152,11 @@ function serializeParsedBody(body: unknown): Buffer | undefined {
 function restreamParsedBody(
   proxyReq: ClientRequest,
   req: http.IncomingMessage,
+  assertForwardAllowed?: () => void,
 ): void {
   const body = serializeParsedBody((req as any).body);
   if (body == null) return;
+  assertForwardAllowed?.();
   proxyReq.setHeader("content-length", `${body.byteLength}`);
   proxyReq.write(body);
 }
@@ -396,6 +398,7 @@ export function attachProjectProxy({
   onUpgradeAuthorized,
   rewriteRequest,
   rewriteResponse,
+  assertForwardAllowed,
   noteUpstreamHttpBytes,
   noteUpstreamWsBytes,
 }: {
@@ -412,6 +415,7 @@ export function attachProjectProxy({
     proxyRes: http.IncomingMessage,
     req: http.IncomingMessage,
   ) => void;
+  assertForwardAllowed?: (req: http.IncomingMessage) => void;
   noteUpstreamHttpBytes?: NoteProxyBoundaryBytesFn;
   noteUpstreamWsBytes?: NoteProxyBoundaryBytesFn;
 }) {
@@ -424,23 +428,42 @@ export function attachProjectProxy({
     ws: true,
   });
 
+  const assertLive = (req: http.IncomingMessage, res?: http.ServerResponse) => {
+    if (req.aborted || res?.destroyed || res?.writableEnded) {
+      throw new Error("proxy request is no longer live");
+    }
+    assertForwardAllowed?.(req);
+  };
+
   proxy.on("error", (err, req) => {
     logger.debug("proxy error", { err: `${err}`, url: req?.url });
   });
 
-  proxy.on("proxyReq", (proxyReq, req) => {
-    normalizeForwardedHeaders(proxyReq, req);
-    proxyReq.setHeader("X-Proxy-By", "cocalc-proxy");
-    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
-    if (cookie) {
-      proxyReq.setHeader("cookie", cookie);
-    } else {
-      proxyReq.removeHeader("cookie");
+  proxy.on("proxyReq", (proxyReq, req, res) => {
+    try {
+      assertLive(req, res);
+      normalizeForwardedHeaders(proxyReq, req);
+      proxyReq.setHeader("X-Proxy-By", "cocalc-proxy");
+      const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+      if (cookie) {
+        proxyReq.setHeader("cookie", cookie);
+      } else {
+        proxyReq.removeHeader("cookie");
+      }
+      restreamParsedBody(proxyReq, req, () => assertLive(req, res));
+    } catch {
+      proxyReq.destroy();
+      res.destroy();
     }
-    restreamParsedBody(proxyReq, req);
   });
 
   proxy.on("proxyReqWs", (_proxyReq, req) => {
+    try {
+      assertLive(req);
+    } catch {
+      _proxyReq.destroy();
+      return;
+    }
     normalizeForwardedHeaders(_proxyReq, req);
     const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
     if (cookie) {
@@ -484,6 +507,7 @@ export function attachProjectProxy({
       logger.debug("resolveTarget", { url: req.url, handled, target });
       if (handled && !target) return;
       if (!handled || !target) return next();
+      assertLive(req, res);
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy request failed", { err: `${err}`, url: req.url });
@@ -508,6 +532,8 @@ export function attachProjectProxy({
         return;
       }
       onUpgradeAuthorized?.(req, socket);
+      if (socket.destroyed) return;
+      assertLive(req);
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err: any) {
       const statusCode = Number.isInteger(err?.statusCode)

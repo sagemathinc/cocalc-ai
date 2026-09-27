@@ -8,6 +8,32 @@ This is development evidence, not production approval or completion of phases 1-
 
 ## Scoped HTTP deployment attempt, 2026-09-27
 
+### Deployment reconciliation and review follow-up
+
+Operation `74380069-9505-48f1-b589-f042c74076b1` ultimately succeeded, but
+subsequent queued upgrades reinstalled the older host/tools artifacts. Desired
+artifact overrides still named those older builds. The stopped primary hub was
+started with `dev:hub:start`, preserving the running attached bays. Host-specific
+desired state was aligned before a new upgrade; no rootless reset was needed.
+Operation `a8eb9024-cb12-4278-828b-3c175365010e` succeeded at 18:06:47 UTC.
+The host then reported `20260927T180444Z-dda6884d354d` and tools
+`1790505149156`, with router/persistence aligned and an older ACP worker draining.
+
+The disposable manual-key HTTP probe failed at the installed CLI proxy call
+(remote exit 1); its cleanup completed. This is not a passing acceptance result
+and the CLI failure still needs diagnosis. No stream revocation claim follows.
+
+Independent review at `dda6884d354d` requested changes: mixed query credentials
+could reach the app, and buffered JSON could be sent after authorization expired
+while target resolution was pending. `6046424e29` strips mixed query credentials
+on both successful and rejected scoped admission. The forwarding follow-up adds
+a deadline/liveness callback after target resolution and before outgoing requests
+and buffered-body writes. Real HTTP regressions cover delayed resolution past
+expiry, an already closed response, and expiry during JSON serialization; no
+upstream request is accepted in these cases. The proxy suites pass 12 tests,
+host HTTP suites pass 53, and project-host TypeScript passes. These follow-ups
+still need independent re-review and deployment; phases 1-4 remain incomplete.
+
 ### Follow-up transport evidence and recovery
 
 After `30310adc27`, real loopback Node HTTP tests verify that a signed,
