@@ -189,7 +189,16 @@ export interface CodexActivityProps {
 
 function renderSteerStatus(state: AttachedSteerMessage["state"], text: string) {
   const agentDirection = agentMessageDirectionFromMarkdown(text);
-  if (agentDirection === "incoming") {
+  if (state === "saved") {
+    return {
+      label: "Message saved; receipt by Codex unconfirmed",
+      borderColor: UI_COLORS.border,
+      background: UI_COLORS.surface,
+      pillBackground: UI_COLORS.surface,
+      pillColor: UI_COLORS.secondary,
+    };
+  }
+  if (agentDirection === "incoming" && state === "sent") {
     return {
       label: "Agent guidance received",
       borderColor: UI_COLORS.infoBg,
@@ -198,7 +207,7 @@ function renderSteerStatus(state: AttachedSteerMessage["state"], text: string) {
       pillColor: UI_COLORS.info,
     };
   }
-  if (agentDirection === "outgoing") {
+  if (agentDirection === "outgoing" && state === "sent") {
     return {
       label: "Agent guidance sent",
       borderColor: UI_COLORS.successBg,

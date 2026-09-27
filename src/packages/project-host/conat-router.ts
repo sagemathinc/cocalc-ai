@@ -36,6 +36,9 @@ import { createProxyHandlers } from "@cocalc/project-proxy/proxy";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { isValidUUID } from "@cocalc/util/misc";
 import { createProjectHostConatAuth } from "./conat-auth";
+import { attachProjectApiRelay } from "./api-relay";
+import type { Client } from "@cocalc/conat/core/client";
+import { API_RELAY_PATH } from "@cocalc/conat/project-host/api-relay";
 
 const logger = getLogger("project-host:conat-router");
 const LONG_LIVED_HTTP_TIMEOUT_MS = Math.max(
@@ -268,6 +271,7 @@ export async function startProjectHostConatRouterServer({
   systemAccountPassword,
   getUser,
   isAllowed,
+  allowOtherUpgradeHandlers = false,
 }: {
   httpServer: HttpServer;
   ssl: boolean;
@@ -276,6 +280,7 @@ export async function startProjectHostConatRouterServer({
   systemAccountPassword: string;
   getUser?: UserFunction;
   isAllowed?: AllowFunction;
+  allowOtherUpgradeHandlers?: boolean;
 }): Promise<ConatServer> {
   const conatAuth =
     getUser != null && isAllowed != null
@@ -288,6 +293,7 @@ export async function startProjectHostConatRouterServer({
   });
   const conatServer = createConatServer({
     httpServer,
+    allowOtherUpgradeHandlers,
     ssl,
     port,
     getUser: conatAuth.getUser,
@@ -315,11 +321,13 @@ export async function startStandaloneProjectHostConatRouter({
   port,
   hostId,
   systemAccountPassword,
+  masterClient,
 }: {
   host?: string;
   port?: number;
   hostId: string;
   systemAccountPassword: string;
+  masterClient?: Client;
 }): Promise<{
   app: Application;
   host: string;
@@ -332,6 +340,7 @@ export async function startStandaloneProjectHostConatRouter({
   ingressPort?: number;
   directHttpsHost?: string;
   directHttpsPort?: number;
+  closeApiRelay: () => void;
 }> {
   const bindHost =
     host ??
@@ -364,10 +373,17 @@ export async function startStandaloneProjectHostConatRouter({
   await once(httpServer, "listening");
   const conatServer = await startProjectHostConatRouterServer({
     httpServer,
+    allowOtherUpgradeHandlers: true,
     ssl: false,
     port: bindPort,
     hostId,
     systemAccountPassword,
+  });
+  const closeApiRelay = attachProjectApiRelay({
+    app,
+    httpServer,
+    hostId,
+    masterClient,
   });
   const ingressHost = resolveProjectHostConatRouterIngressHost();
   const ingressPort = resolveProjectHostConatRouterIngressPort();
@@ -450,6 +466,7 @@ export async function startStandaloneProjectHostConatRouter({
     port: bindPort,
     httpServer,
     conatServer,
+    closeApiRelay,
     ingressHttpServer,
     directHttpsServer,
     ingressHost,
@@ -471,6 +488,8 @@ export function rewriteProjectHostConatProxyUrl(
 ): string | undefined {
   if (!url) return;
   const parsed = new URL(url, "http://project-host.local");
+  // The local API relay is never exposed by the public ingress proxy.
+  if (parsed.pathname.startsWith(`${API_RELAY_PATH}/`)) return;
   const firstPathSegment = parsed.pathname.split("/").filter(Boolean)[0];
   if (firstPathSegment && isValidUUID(firstPathSegment)) {
     return;

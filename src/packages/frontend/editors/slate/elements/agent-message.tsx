@@ -16,6 +16,7 @@ import { useNamedAgents, sameEndpoint } from "@cocalc/frontend/agents/api";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { readablePeerMessage } from "@cocalc/frontend/chat/readable-peer-message";
+import { PeerAgentLink } from "@cocalc/frontend/agents/peer-agent-link";
 import { markdown_to_slate } from "../markdown-to-slate";
 import {
   register,
@@ -225,7 +226,21 @@ export function AgentMessageElement({
           flex: "0 0 auto",
         }}
       >
-        {outgoing ? "To" : "From"} {sourceLabel}
+        {message.source_project_id && message.source_agent_id ? (
+          <PeerAgentLink
+            target={{
+              project_id: message.source_project_id,
+              agent_id: message.source_agent_id,
+            }}
+            label={sourceLabel}
+          >
+            {outgoing ? "To" : "From"} {sourceLabel}
+          </PeerAgentLink>
+        ) : (
+          <>
+            {outgoing ? "To" : "From"} {sourceLabel}
+          </>
+        )}
       </span>
       {message.source_project_id && (
         <span

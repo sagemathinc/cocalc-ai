@@ -4,7 +4,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   CodexCredentialsPanel,
   CodexUsageMeters,
@@ -24,6 +26,10 @@ const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
 const getCodexCredentialSelectionCapability = jest.fn();
 const mockClipboardWriteText = jest.fn();
+const listExternalCredentials = jest.fn();
+const updateCodexSubscriptionLabel = jest.fn();
+const revokeExternalCredential = jest.fn();
+const codexUploadAuthFileV2 = jest.fn();
 
 describe("Codex subscription credential ordering", () => {
   const older = {
@@ -119,6 +125,15 @@ jest.mock("antd", () => {
     );
   };
   const TextArea = ({ value }: any) => <div>{value}</div>;
+  const Input = ({ size: _size, onPressEnter, ...props }: any) => (
+    <input
+      {...props}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") onPressEnter?.(event);
+      }}
+    />
+  );
+  Input.TextArea = TextArea;
   const Progress = ({ percent }: any) => (
     <div role="progressbar" aria-valuenow={percent} />
   );
@@ -144,12 +159,27 @@ jest.mock("antd", () => {
     Alert: Div,
     Button,
     Collapse,
-    Input: { TextArea },
+    Input,
     Popconfirm: Div,
     Progress,
     Select,
     Space: Div,
-    Table: ({ footer }: any) => <div>{footer?.()}</div>,
+    Table: ({ footer, dataSource, columns }: any) => (
+      <div>
+        <table>
+          <tbody>
+            {dataSource.map((row: any) => (
+              <tr key={row.id}>
+                {columns.map((column: any) => (
+                  <td key={column.key}>{column.render(undefined, row)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {footer?.()}
+      </div>
+    ),
     Tag: Div,
     Typography: {
       Text: ({ children, style }: any) => <span style={style}>{children}</span>,
@@ -209,6 +239,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     conat_client: {
       hub: {
         projects: {
+          codexUploadAuthFileV2: (...args: any[]) =>
+            codexUploadAuthFileV2(...args),
           codexDeviceAuthStart: (...args: any[]) =>
             codexDeviceAuthStart(...args),
           codexDeviceAuthStartV2: (...args: any[]) =>
@@ -219,6 +251,12 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             getCodexCredentialSelectionCapability(...args),
         },
         system: {
+          listExternalCredentials: (...args: any[]) =>
+            listExternalCredentials(...args),
+          updateCodexSubscriptionLabel: (...args: any[]) =>
+            updateCodexSubscriptionLabel(...args),
+          revokeExternalCredential: (...args: any[]) =>
+            revokeExternalCredential(...args),
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
           getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
@@ -241,6 +279,8 @@ describe("CodexCredentialsPanel", () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     window.localStorage.clear();
+    listExternalCredentials.mockResolvedValue([]);
+    updateCodexSubscriptionLabel.mockResolvedValue({ updated: true });
     getCodexCredentialSelectionCapability.mockResolvedValue({
       version: 2,
       credentialLifecycle: true,
@@ -250,6 +290,164 @@ describe("CodexCredentialsPanel", () => {
       value: { writeText: mockClipboardWriteText },
     });
   });
+
+  it("lists Lite subscriptions and supports keyboard Add and targeted reconnect", async () => {
+    const user = userEvent.setup();
+    const rows = ["Personal", "Work"].map((label, i) => ({
+      id: `credential-${i}`,
+      metadata: { label },
+      updated: new Date(),
+    }));
+    listExternalCredentials.mockResolvedValue(rows);
+    getCodexPaymentSource.mockResolvedValue({
+      source: "subscription",
+      credentialId: rows[0].id,
+      subscriptions: rows.map((row) => ({
+        id: row.id,
+        label: row.metadata.label,
+      })),
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      reason: "Not checked",
+    });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "login",
+      state: "failed",
+      output: "",
+    });
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+    const toggle = await screen.findByRole("button", {
+      name: "Codex subscription credentials (2)",
+    });
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const work = screen.getByRole("row", { name: /Work/ });
+    const reconnect = within(work).getByRole("button", { name: "Reconnect" });
+    reconnect.focus();
+    expect(document.activeElement).toBe(reconnect);
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(codexDeviceAuthStart).toHaveBeenLastCalledWith({
+        project_id: "project-1",
+        credential_id: "credential-1",
+      }),
+    );
+    const add = screen.getByRole("button", { name: "Add" });
+    add.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(codexDeviceAuthStart).toHaveBeenLastCalledWith({
+        project_id: "project-1",
+        create: true,
+      }),
+    );
+    expect(listExternalCredentials).toHaveBeenCalledWith({
+      provider: "openai",
+      kind: "codex-subscription-auth-json",
+      scope: "account",
+    });
+  });
+
+  it("saves a Lite subscription label on keyboard blur", async () => {
+    const user = userEvent.setup();
+    listExternalCredentials.mockResolvedValue([
+      {
+        id: "credential-a",
+        metadata: { label: "Personal" },
+        updated: new Date(),
+      },
+    ]);
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+    const toggle = await screen.findByRole("button", {
+      name: "Codex subscription credentials (1)",
+    });
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    const label = screen.getByRole("textbox", {
+      name: "Label for ChatGPT subscription",
+    });
+    label.focus();
+    expect(document.activeElement).toBe(label);
+    await user.clear(label);
+    await user.type(label, "Office");
+    await user.tab();
+    await waitFor(() =>
+      expect(updateCodexSubscriptionLabel).toHaveBeenCalledWith({
+        id: "credential-a",
+        label: "Office",
+      }),
+    );
+    expect(document.activeElement).not.toBe(label);
+  });
+
+  it.each(["Add", "Reconnect"])(
+    "preserves %s intent through the auth-file fallback with an existing default",
+    async (action) => {
+      const user = userEvent.setup();
+      const row = {
+        id: "credential-a",
+        metadata: { label: "Personal" },
+        updated: new Date(),
+      };
+      listExternalCredentials.mockResolvedValue([row]);
+      getCodexPaymentSource.mockResolvedValue({
+        source: "subscription",
+        credentialId: row.id,
+        subscriptions: [{ id: row.id, label: "Personal" }],
+      });
+      getCodexUsageStatus.mockResolvedValue({ available: false });
+      codexDeviceAuthStart.mockRejectedValueOnce(
+        new Error("Device login unavailable; use upload"),
+      );
+      codexUploadAuthFileV2.mockResolvedValue({
+        ok: true,
+        bytes: 100,
+        credentialId: action === "Add" ? "credential-b" : row.id,
+      });
+      render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+      const toggle = await screen.findByRole("button", {
+        name: "Codex subscription credentials (1)",
+      });
+      toggle.focus();
+      await user.keyboard("{Enter}");
+      const mutation = screen.getByRole("button", {
+        name: action,
+        exact: true,
+      });
+      mutation.focus();
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(codexDeviceAuthStart).toHaveBeenCalled());
+      await user.click(
+        screen.getByRole("button", {
+          name: "Advanced ChatGPT sign-in options",
+        }),
+      );
+      const uploadButton = screen.getByRole("button", {
+        name: "Upload local auth.json",
+      });
+      uploadButton.focus();
+      expect(document.activeElement).toBe(uploadButton);
+      const file = new File(['{"tokens":{}}'], "auth.json", {
+        type: "application/json",
+      });
+      Object.defineProperty(file, "text", {
+        value: async () => '{"tokens":{}}',
+      });
+      await user.upload(screen.getByLabelText("ChatGPT auth.json file"), file);
+      await waitFor(() =>
+        expect(codexUploadAuthFileV2).toHaveBeenCalledWith({
+          project_id: "project-1",
+          filename: "auth.json",
+          content: '{"tokens":{}}',
+          ...(action === "Add" ? { create: true } : { credential_id: row.id }),
+        }),
+      );
+      expect(await screen.findByText(/Auth file uploaded/)).toBeTruthy();
+    },
+  );
 
   it("explains the project requirement instead of disabling ChatGPT sign-in", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "none" });

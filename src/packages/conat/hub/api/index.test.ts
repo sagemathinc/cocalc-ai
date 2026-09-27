@@ -82,6 +82,7 @@ describe("hub API argument transforms", () => {
     "artifactCatalog.registerSource",
     "artifactCatalog.ingest",
     "artifactCatalog.sourcePage",
+    "hosts.updateProjectApiRelayUsage",
   ])("binds %s to the authenticated host only", async (name) => {
     expect(
       await transformArgs({

@@ -590,13 +590,13 @@ export function getLiveResponseBlocks(
   guidance?: Array<{
     date: number;
     text: string;
-    state?: "sending" | "sent" | "queued" | "not-sent";
+    state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
   }>,
 ): Array<{
   kind: "agent" | "guidance";
   text: string;
   time?: number;
-  state?: "sending" | "sent" | "queued" | "not-sent";
+  state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
 }> {
   type TimelineItem =
     | {
@@ -617,7 +617,7 @@ export function getLiveResponseBlocks(
         kind: "guidance";
         text: string;
         time?: number;
-        state?: "sending" | "sent" | "queued" | "not-sent";
+        state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
         seq: number;
       };
 
@@ -682,7 +682,7 @@ export function getLiveResponseBlocks(
     kind: "agent" | "guidance";
     text: string;
     time?: number;
-    state?: "sending" | "sent" | "queued" | "not-sent";
+    state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
   }> = [];
   let latestFullText: string | undefined;
   let latestFullHasDelta = false;
@@ -800,13 +800,13 @@ export function getMountedIntermediateResponseBlocks(
   guidance?: Array<{
     date: number;
     text: string;
-    state?: "sending" | "sent" | "queued" | "not-sent";
+    state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
   }>,
 ): Array<{
   kind: "agent" | "guidance";
   text: string;
   time?: number;
-  state?: "sending" | "sent" | "queued" | "not-sent";
+  state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
 }> {
   const blocks = getLiveResponseBlocks(events, guidance);
   const normalizedSummary = normalizeProgressiveCompareText(

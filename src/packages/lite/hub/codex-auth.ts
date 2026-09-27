@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import {
+  resolveLiteCodexHome,
+  resolveLiteCredentialTarget,
+  saveLiteCredential,
+  validateLiteSubscriptionAuth,
+  type LiteCredentialTarget,
+} from "./codex-credentials";
+export { resolveLiteCodexHome } from "./codex-credentials";
 
 const logger = getLogger("lite:hub:codex-auth");
-const MAX_AUTH_UPLOAD_BYTES = 2_000_000;
 const MAX_OUTPUT_CHARS = 50_000;
 const DEVICE_AUTH_MAX_SESSIONS = Math.max(
   10,
@@ -49,6 +56,8 @@ type DeviceAuthSession = {
   syncedToRegistry?: boolean;
   syncError?: string;
   verifyPromise?: Promise<void>;
+  credentialId?: string;
+  create?: boolean;
 };
 
 type DeviceAuthVerifier = (opts: {
@@ -58,14 +67,6 @@ type DeviceAuthVerifier = (opts: {
 }) => Promise<void>;
 
 const sessions = new Map<string, DeviceAuthSession>();
-
-export function resolveLiteCodexHome(): string {
-  const configured = `${process.env.COCALC_CODEX_HOME ?? ""}`.trim();
-  if (configured) return configured;
-  const home = `${process.env.HOME ?? ""}`.trim();
-  if (home) return join(home, ".codex");
-  return join(process.cwd(), ".codex");
-}
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -111,37 +112,30 @@ async function ensureCodexAuthFileExists(codexHome: string): Promise<void> {
   await fs.writeFile(authPath, "{}\n", { mode: 0o600 });
 }
 
-function validateUploadedAuthJson(raw: string): void {
-  if (!raw?.trim()) {
-    throw Error("uploaded file is empty");
-  }
-  if (Buffer.byteLength(raw, "utf8") > MAX_AUTH_UPLOAD_BYTES) {
-    throw Error("uploaded file is too large");
-  }
-  let parsed: any;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw Error("uploaded file is not valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw Error("uploaded file must contain a JSON object");
-  }
+async function createStagingHome(): Promise<string> {
+  const root = join(resolveLiteCodexHome(), "cocalc-subscriptions", "staging");
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  return await fs.mkdtemp(join(root, "login-"));
 }
 
 export async function uploadLiteSubscriptionAuthFile({
   content,
+  accountId,
+  credentialId,
+  create,
 }: {
   content: string;
-}): Promise<{ codexHome: string; bytes: number }> {
-  validateUploadedAuthJson(content);
-  const codexHome = resolveLiteCodexHome();
-  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
-  await fs.writeFile(join(codexHome, "auth.json"), content, { mode: 0o600 });
-  await ensureCodexCredentialsStoreFile(codexHome);
+  accountId: string;
+} & LiteCredentialTarget): Promise<{
+  codexHome: string;
+  bytes: number;
+  credentialId: string;
+}> {
+  const id = saveLiteCredential(accountId, content, { credentialId, create });
   return {
-    codexHome,
+    codexHome: resolveLiteCodexHome(),
     bytes: Buffer.byteLength(content, "utf8"),
+    credentialId: id,
   };
 }
 
@@ -211,9 +205,18 @@ function isTerminal(state: DeviceAuthState): boolean {
 
 function pruneSessions(now: number = Date.now()): void {
   for (const [id, session] of sessions) {
+    if (
+      !isTerminal(session.state) &&
+      now - session.startedAt > DEVICE_AUTH_TERMINAL_RETENTION_MS
+    ) {
+      cancelLiteCodexDeviceAuth(id);
+    }
     if (!isTerminal(session.state)) continue;
     if (now - session.updatedAt > DEVICE_AUTH_TERMINAL_RETENTION_MS) {
       sessions.delete(id);
+      void fs
+        .rm(session.codexHome, { recursive: true, force: true })
+        .catch(() => {});
     }
   }
   if (sessions.size < DEVICE_AUTH_MAX_SESSIONS) return;
@@ -251,6 +254,9 @@ function snapshot(session: DeviceAuthSession) {
     error: session.error,
     syncedToRegistry: session.syncedToRegistry,
     syncError: session.syncError,
+    credentialId: session.credentialId,
+    create: session.create,
+    registryCreated: session.syncedToRegistry ? session.create : undefined,
   };
 }
 
@@ -259,27 +265,31 @@ export type LiteCodexDeviceAuthStatus = ReturnType<typeof snapshot>;
 export async function startLiteCodexDeviceAuth({
   projectId,
   accountId,
+  credentialId,
+  create,
 }: {
   projectId: string;
   accountId: string;
-}): Promise<LiteCodexDeviceAuthStatus> {
+} & LiteCredentialTarget): Promise<LiteCodexDeviceAuthStatus> {
   pruneSessions();
   if (sessions.size >= DEVICE_AUTH_MAX_SESSIONS) {
     throw Error(
       "Too many codex device-auth sessions are active on this host; please retry shortly.",
     );
   }
-  const codexHome = resolveLiteCodexHome();
+  const target = resolveLiteCredentialTarget(accountId, {
+    credentialId,
+    create,
+  });
+  const codexHome = await createStagingHome();
   await ensureCodexCredentialsStoreFile(codexHome);
   await ensureCodexAuthFileExists(codexHome);
   const binary = `${process.env.COCALC_CODEX_BIN ?? "codex"}`.trim() || "codex";
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     COCALC_CODEX_HOME: codexHome,
+    CODEX_HOME: codexHome,
   };
-  if (basename(codexHome) === ".codex") {
-    env.HOME = dirname(codexHome);
-  }
   const proc = spawn(binary, ["login", "--device-auth"], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -295,6 +305,7 @@ export async function startLiteCodexDeviceAuth({
     updatedAt: now,
     state: "pending",
     output: "",
+    ...target,
   };
   sessions.set(session.id, session);
 
@@ -304,6 +315,7 @@ export async function startLiteCodexDeviceAuth({
     session.state = "failed";
     session.error = `${err}`;
     session.updatedAt = Date.now();
+    void fs.rm(codexHome, { recursive: true, force: true }).catch(() => {});
     logger.warn("codex device auth spawn error", {
       id: session.id,
       projectId,
@@ -315,12 +327,16 @@ export async function startLiteCodexDeviceAuth({
     session.exitCode = code;
     session.signal = signal;
     session.updatedAt = Date.now();
-    if (session.state === "canceled") return;
+    if (session.state === "canceled") {
+      void fs.rm(codexHome, { recursive: true, force: true }).catch(() => {});
+      return;
+    }
     if (code === 0) {
       session.state = "syncing";
       return;
     }
     session.state = "failed";
+    void fs.rm(codexHome, { recursive: true, force: true }).catch(() => {});
     if (!session.error) {
       session.error = classifyDeviceAuthFailure(session.output, code ?? null);
       if (session.error.startsWith("codex login exited")) {
@@ -368,6 +384,16 @@ export async function verifyLiteCodexDeviceAuthStatus(
       });
       const current = sessions.get(id);
       if (!current || current.state === "canceled") return;
+      const content = await fs.readFile(
+        join(current.codexHome, "auth.json"),
+        "utf8",
+      );
+      validateLiteSubscriptionAuth(content);
+      if (sessions.get(id)?.state === "canceled") return;
+      current.credentialId = saveLiteCredential(current.accountId, content, {
+        credentialId: current.credentialId,
+        create: current.create,
+      });
       current.state = "completed";
       current.syncedToRegistry = true;
       current.syncError = undefined;
@@ -384,6 +410,9 @@ export async function verifyLiteCodexDeviceAuthStatus(
     } finally {
       const current = sessions.get(id);
       if (current) current.verifyPromise = undefined;
+      await fs
+        .rm(session.codexHome, { recursive: true, force: true })
+        .catch(() => {});
     }
   })();
   if (session.verifyPromise) {
@@ -396,7 +425,12 @@ export async function verifyLiteCodexDeviceAuthStatus(
 export function cancelLiteCodexDeviceAuth(id: string): boolean {
   const session = sessions.get(id);
   if (!session) return false;
-  if (session.state !== "pending") return false;
+  if (session.state !== "pending" && session.state !== "syncing") return false;
+  if (session.state === "syncing" && !session.verifyPromise) {
+    void fs
+      .rm(session.codexHome, { recursive: true, force: true })
+      .catch(() => {});
+  }
   session.state = "canceled";
   session.updatedAt = Date.now();
   try {

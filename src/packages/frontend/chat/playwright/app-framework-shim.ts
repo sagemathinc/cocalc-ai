@@ -4,6 +4,7 @@ export { React };
 export type CSS = React.CSSProperties;
 
 export const redux = {
+  getActions: () => undefined,
   getStore: (name: string) => {
     if (name === "account") {
       return {

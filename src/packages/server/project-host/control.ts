@@ -910,8 +910,12 @@ export async function savePlacement(
   placement: HostPlacement,
 ) {
   const defaultBayId = getConfiguredBayId();
-  if (!(await hostExistsAnywhere(placement.host_id))) {
+  const hostOwner = await resolveHostBayAcrossCluster(placement.host_id);
+  if (!hostOwner) {
     throw Error(`host ${placement.host_id} not found`);
+  }
+  if (hostOwner.bay_id !== defaultBayId) {
+    throw Error("host placement requires project rehome to the host's bay");
   }
   const client = await pool().connect();
   let rows: { owning_bay_id: string }[] = [];
@@ -987,6 +991,10 @@ export async function ensurePlacement(
   const projectBayId = effectiveBayId(meta.owning_bay_id);
   const projectRegion = parseR2Region(meta.region) ?? undefined;
   if (meta.host_id) {
+    const hostOwner = await resolveHostBayAcrossCluster(meta.host_id);
+    if (hostOwner && hostOwner.bay_id !== projectBayId) {
+      throw Error("host placement requires project rehome to the host's bay");
+    }
     const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
       // Project is already placed. In multi-bay mode the assigned host may be
@@ -1018,6 +1026,9 @@ export async function ensurePlacement(
       );
     }
     throw Error(`no running project-host available in bay ${projectBayId}`);
+  }
+  if (effectiveBayId(chosen.bay_id) !== projectBayId) {
+    throw Error("host placement requires project rehome to the host's bay");
   }
 
   await registerProjectOnHost({
