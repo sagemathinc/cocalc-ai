@@ -523,6 +523,21 @@ build and test compilation pass. The CLI README documents the ceiling and
 one-shot/daemon-stop alternatives. This local bound does not prove aggregate
 server or multibay resource budgets.
 
+### Jupyter application transport (isolated, simulated kernel)
+
+The actual Jupyter client/service now has an isolated-broker integration test
+using the existing project-host API-key subject policy. A simulated kernel
+runner requests stdin through the service socket, receives the scoped client's
+answer, and emits tagged output and completion. The test checks the run ack,
+single runner invocation, stdin payload, output ordering/run identity, terminal
+iterator completion, and continued denial of broad client subscriptions and
+inbox publication. Replay storage is a test double, not a real persistence
+service. The initial test failed because its mock targeted a relative import
+rather than the package import; fixing that test setup made the test pass.
+All 15 selected Jupyter/inbox/socket tests and the Conat build pass. This does
+not establish real-kernel execution, notebook persistence, recovery mid-run,
+or live CLI/managed-agent behavior.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
