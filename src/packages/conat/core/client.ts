@@ -3327,7 +3327,9 @@ function toConatError(socketIoError, { subject }: { subject?: string } = {}) {
   // only errors are "disconnected" and a timeout
   const e = `${socketIoError}`;
   if (e.includes("disconnected")) {
-    return e;
+    // A lost acknowledgment does not establish whether the operation executed.
+    // Keep this distinct from admission denial or a safe-to-retry failure.
+    return new ConatError(e, { code: "CONNECTION_LOST", subject });
   } else {
     return new ConatError(
       `timeout - ${e}${subject ? " subject:" + subject : ""}`,

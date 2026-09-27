@@ -6,6 +6,35 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Disk-save disconnect reproduction, 2026-09-27
+
+Further installed-CLI probes used the same verified `d20be971...` bundle:
+
+- A normal-rate run completed 130 writes over 83,745ms before deletion. Its last
+  acknowledgment was 20,358ms after deletion returned. At 20,930ms a disk save
+  rejected with the string `Error: socket has been disconnected`. Independent
+  live reads five seconds apart both returned write 165, although the last
+  acknowledged index was 164. A lost acknowledgment therefore did not mean the
+  last write failed to execute. Cleanup absence was independently verified.
+- A higher-frequency run (1ms inter-write delay, target 1,000 writes) reproduced
+  the same disk-save error after 250 acknowledged writes, before the harness
+  revoked the key. Cleanup deleted key 128 and restarted only the disposable
+  validation project. A subsequent directory listing found no probe directories.
+
+This identifies a real healthy-lease reliability gap, not merely missing error
+logging: forced lease disconnect can interrupt in-flight disk-write admission
+acknowledgments. Do not mask it by blindly replaying mutations. The next recovery
+work must preserve or reconcile operation outcome under current authority.
+
+Source tracing also found that `toConatError` returned a plain string for socket
+disconnects. It now returns `ConatError` with code `CONNECTION_LOST` and the
+subject, preserving the existing message. The code is deliberately distinct
+from admission denial or a safe-to-retry response. Two regression tests failed
+before the change and now verify structured errors and no replay for ordinary
+publish and fast RPC, including an execution followed by a lost acknowledgment.
+All 14 request/inbox/admission tests and the Conat TypeScript build passed.
+This error-typing change is not a reconnect fix and has not been deployed.
+
 ## Installed text-session follow-up, 2026-09-27
 
 Built the tools bundle from `5f314c31e60102000ebe0176394ec843a351c841` and
