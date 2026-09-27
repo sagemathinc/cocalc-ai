@@ -106,6 +106,24 @@ and diff checks pass. Hub issuance/revocation are mocks; files are real temporar
 files. This is not deployed ACP evidence or proof that remote revocation succeeds
 during an authority outage; server expiry remains necessary in that case.
 
+## Worker lifecycle fixes deployed to host3, 2026-09-27
+
+Built the project-host bundle from `6ebd423e083395ff59a2301829dc2be9cee87843`.
+Operation `cc81bfa4-798f-4177-b12b-86edad48b7cd` succeeded for host3
+(`a3c4c6d0-2d08-4a01-9f9a-a5b544bfba31`) using the local hub software source
+and explicit managed runtime alignment. This rolls project-host, Conat router,
+Conat persistence, and ACP worker together. The subsequent host query reported
+running build `20260927T095543Z-6ebd423e0833`. A harmless `printf` through ordinary
+project exec in disposable project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535` returned
+the expected marker with exit 0.
+
+Thus the preceding heartbeat, finalization, and pending-issuance fixes are now
+deployed to this isolated dev host. The smoke command used the operator's dev
+session; it is not scoped-key or managed-turn acceptance evidence. No production
+host or public repository was changed. Combined private review was requested
+with correlation `api-first-lifecycle-6ebd423e08`, accepted as attempt
+`6106e6c7-afdb-4bd0-8097-79450a96d0fc`; no disposition has been received here.
+
 ## Shared UI round trips and approval decisions, 2026-09-27
 
 Source checkout: `6e86d673c772e15dfa61f3cc228c5c565f663929`. The served frontend
