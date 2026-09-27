@@ -28,7 +28,9 @@ that paragraph boundaries were lost in the reported session.
 ## First PR: Bound Rendering Without Deleting Content
 
 - Bound message Markdown and activity Markdown fields to 16,384 UTF-16 code
-  units before parsing and commit-link formatting. Only one excerpt is mounted.
+  units both before and after formatting. Automatic commit links are omitted
+  for an excerpt when adding them would exceed the parser budget; the original
+  text remains visible. Only one excerpt is mounted.
   Next/previous/first/last controls replace the excerpt, rather than growing it.
   Boundaries preserve surrogate pairs.
 - Keep read-only Slate and formatted selection serialization. Full source is
@@ -38,7 +40,13 @@ that paragraph boundaries were lost in the reported session.
   following; "Follow latest" resumes it. Completion keeps the current excerpt
   mounted; it does not navigate back to the beginning. A newly opened completed
   response starts at its beginning. Terminal input/output is fenced after
-  slicing so each excerpt remains a code block.
+  slicing so each excerpt remains a code block. Terminal pages reserve space
+  for the worst-case fence overhead (including long runs of backticks) within
+  that same 16,384-character parser budget.
+- Preserve activity block boundaries when paging mixed agent/guidance output.
+  Reconstruct guidance wrappers around each bounded fragment so human links
+  retain chat-file context rather than inheriting the agent's working directory.
+  These display-only fragments do not alter the full-copy Markdown export.
 - Keep activity in the same labeled container while running and after
   completion, preserving the reader's Slate selection. Final-response
   deduplication removes only a matching trailing response, not a combined
@@ -66,7 +74,8 @@ failure. A fixed-size window keeps parser input bounded after every navigation.
 Unbounded "show all" would defeat that guarantee, so it is intentionally absent.
 
 Fixed excerpts are not a lossless Markdown _layout_. A list, table, math block,
-guidance block, or fence spanning a boundary may look incomplete on that page.
+or fence spanning a boundary may look incomplete on that page. Activity guidance
+wrappers are preserved separately to retain their source context.
 The original source and its full-copy export remain unchanged. Syntax-aware
 windowing can improve this later, but must not parse the entire source first.
 
@@ -78,6 +87,12 @@ and keyboard, and check that Unicode pages reconstruct the source exactly.
 Real static and read-only Slate renderers retain formatted selection
 serialization. Other tests cover live growth, activity jumps, lazy copying,
 view eviction, and cache admission.
+
+Review regressions exercise 16K and 32K runs of backticks in real terminal
+rows, reconstruct their output across keyboard-driven page changes, and check
+every actual parser input against the limit. Commit-heavy responses exercise
+static, live, and completed message rendering after decoration; short commit
+references still get automatic links.
 
 Completion regressions render the real message and read-only Slate components:
 `hello` remains visible and selected when `done` arrives, including when a

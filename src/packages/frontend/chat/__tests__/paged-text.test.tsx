@@ -53,25 +53,26 @@ test.each([
   },
 );
 
-test("paging is lossless at Unicode and source-fragment boundaries", () => {
-  const value =
-    "a".repeat(MAX_RENDERED_TEXT_CHARS - 2) + "\u{1f680}".repeat(20_000);
-  const source = joinedTextSource([
-    value.slice(0, 20),
-    value.slice(20, 16383),
-    value.slice(16383),
-  ]);
-  const pages = Array.from({ length: textPageCount(source) }, (_, i) =>
-    textPage(source, i),
-  );
-  expect(pages.join("")).toBe(value);
-  expect(pages.every((part) => part.length <= MAX_RENDERED_TEXT_CHARS)).toBe(
-    true,
-  );
-  for (const part of pages) {
-    expect(part).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
-  }
-});
+test.each([MAX_RENDERED_TEXT_CHARS, 5_459])(
+  "paging is lossless at Unicode and source-fragment boundaries (%i)",
+  (maxChars) => {
+    const value = "a".repeat(maxChars - 2) + "\u{1f680}".repeat(20_000);
+    const source = joinedTextSource([
+      value.slice(0, 20),
+      value.slice(20, 16383),
+      value.slice(16383),
+    ]);
+    const pages = Array.from(
+      { length: textPageCount(source, maxChars) },
+      (_, i) => textPage(source, i, maxChars),
+    );
+    expect(pages.join("")).toBe(value);
+    expect(pages.every((part) => part.length <= maxChars)).toBe(true);
+    for (const part of pages) {
+      expect(part).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/);
+    }
+  },
+);
 
 test("short output stays intact without navigation", () => {
   render(

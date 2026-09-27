@@ -4,6 +4,20 @@ export interface TextSource {
   length: number;
   slice: (start: number, end: number) => string;
   toString: () => string;
+  // Optional display-only body ranges. Copy/export still use the source above.
+  rendering?: {
+    source: TextSource;
+    ranges: TextSourceRange[];
+    // Each formatted range is at most maxExpansion * body.length + maxOverhead.
+    maxExpansion: number;
+    maxOverhead: number;
+  };
+}
+
+export interface TextSourceRange {
+  start: number;
+  end: number;
+  format?: (part: string) => string;
 }
 
 export function joinedTextSource(parts: string[]): TextSource {

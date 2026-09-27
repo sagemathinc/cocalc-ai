@@ -18,6 +18,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "./bounded-static-markdown";
+import { MAX_RENDERED_TEXT_CHARS } from "./paged-text";
 import { ChatSourceContent } from "./source-file-context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
@@ -42,6 +43,9 @@ import { openProjectFileResult } from "./open-result";
 import { projectFileTargetFromHref } from "./project-file-target";
 
 const { Text } = Typography;
+// A page of backticks needs two fences of length n + 1, two newlines,
+// and at most the two-character "sh" language hint: 3n + 6 characters.
+const MAX_TERMINAL_PAGE_CHARS = Math.floor((MAX_RENDERED_TEXT_CHARS - 6) / 3);
 const OpenActivityFileContext = React.createContext<
   ((target: { path: string; line?: number }) => void) | undefined
 >(undefined);
@@ -1984,6 +1988,7 @@ export function TerminalRow({
           <StaticMarkdown
             value={inputText}
             format={(part) => toFencedCodeBlock(part, "sh")}
+            maxChars={MAX_TERMINAL_PAGE_CHARS}
             style={{ fontSize, marginTop: 0 }}
             editorTheme={editorTheme}
           />
@@ -2009,6 +2014,7 @@ export function TerminalRow({
                 : outputText
             }
             format={toFencedCodeBlock}
+            maxChars={MAX_TERMINAL_PAGE_CHARS}
             style={{ fontSize, marginTop: 0 }}
             editorTheme={editorTheme}
           />
@@ -2140,7 +2146,9 @@ function FileRow({
       </Space>
       {showCommand && commandLine ? (
         <StaticMarkdown
-          value={toFencedCodeBlock(`$ ${commandLine}`, "sh")}
+          value={`$ ${commandLine}`}
+          format={(part) => toFencedCodeBlock(part, "sh")}
+          maxChars={MAX_TERMINAL_PAGE_CHARS}
           style={{ fontSize, marginTop: 2 }}
           editorTheme={editorTheme}
         />

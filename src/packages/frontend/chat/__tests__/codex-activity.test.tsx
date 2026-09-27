@@ -1,6 +1,8 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import * as parser from "@cocalc/frontend/editors/slate/markdown-to-slate";
+import { MAX_RENDERED_TEXT_CHARS } from "../paged-text";
 import { redux } from "@cocalc/frontend/app-framework";
 import CodexActivity, {
   reconcileSubagentEvents,
@@ -16,6 +18,60 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 jest.mock("../activity-diff", () => ({
   ActivityDiff: () => <div>Recorded diff</div>,
 }));
+
+test.each([16_384, 32_768])(
+  "terminal backtick runs of %i characters stay fenced and within the parser budget",
+  async (length) => {
+    const value = "`".repeat(length);
+    const parse = jest.spyOn(parser, "markdown_to_slate");
+    try {
+      const { container } = render(
+        <TerminalRow
+          fontSize={14}
+          entry={{
+            kind: "terminal",
+            id: "fence-budget",
+            seq: 1,
+            terminalId: "fence-budget",
+            command: "echo",
+            args: [],
+            output: value,
+            completed: true,
+          }}
+        />,
+      );
+      const next = screen.getByRole("button", { name: "Next part" });
+      const user = userEvent.setup();
+      let recovered = "";
+      for (;;) {
+        const blocks = container.querySelectorAll(
+          "pre.cocalc-slate-code-block",
+        );
+        expect(blocks).toHaveLength(2);
+        // The CodeMirror test shim abbreviates DOM text. Reconstruct from the
+        // real Markdown parser's input, including its balanced output fence.
+        const fenced = parse.mock.calls
+          .map(([text]) => /^(`{3,})\n([\s\S]*)\n\1$/.exec(text))
+          .filter((match) => match != null)
+          .at(-1);
+        expect(fenced).toBeDefined();
+        recovered += fenced![2];
+        if (next.hasAttribute("disabled")) break;
+        next.focus();
+        await user.keyboard("{Enter}");
+      }
+      expect(recovered).toBe(value);
+      expect(parse).toHaveBeenCalled();
+      expect(
+        parse.mock.calls.every(
+          ([text]) => text.length <= MAX_RENDERED_TEXT_CHARS,
+        ),
+      ).toBe(true);
+    } finally {
+      parse.mockRestore();
+    }
+  },
+);
 
 test("jumping to an older entry does not trap subsequent page navigation", () => {
   const original = HTMLElement.prototype.scrollIntoView;

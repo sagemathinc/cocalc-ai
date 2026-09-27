@@ -38,7 +38,7 @@ import CopyButton, {
 } from "@cocalc/frontend/components/copy-button";
 import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import StaticMarkdown from "./bounded-static-markdown";
+import StaticMarkdown, { formatMarkdownPage } from "./bounded-static-markdown";
 import { MAX_RENDERED_TEXT_CHARS, PagedText } from "./paged-text";
 import type { TextSource } from "./text-source";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
@@ -2143,10 +2143,18 @@ export default function Message({
   }) {
     return (
       <div className={message_class} data-chat-selectable-message="true">
-        <PagedText key={pageKey} value={value} followTail={followTail}>
+        <PagedText
+          key={pageKey}
+          value={value}
+          followTail={followTail}
+          renderRanges
+        >
           {(part) => (
             <EditableMarkdown
-              value={is_viewers_message ? part : linkifyCommitHashes(part)}
+              value={formatMarkdownPage(
+                part,
+                is_viewers_message ? undefined : linkifyCommitHashes,
+              )}
               read_only
               enableUpload={false}
               font_size={font_size}

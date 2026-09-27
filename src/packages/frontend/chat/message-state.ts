@@ -8,7 +8,8 @@ import type {
   CodexPersistedLogLoadState,
 } from "./use-codex-log";
 import { trimFinalResponseFromActivity } from "@cocalc/chat";
-import { joinedTextSource, type TextSource } from "./text-source";
+import { joinedTextSource } from "./text-source";
+import type { TextSource, TextSourceRange } from "./text-source";
 
 const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
@@ -41,20 +42,48 @@ export function codexActivityTextSource(
   blocks: InlineCodexActivityBlock[],
 ): TextSource {
   const parts: string[] = [];
+  const bodies: string[] = [];
+  const ranges: TextSourceRange[] = [];
+  let offset = 0;
+  let hasGuidance = false;
   for (const block of blocks) {
     const text = `${block.text ?? ""}`;
     if (!text.trim()) continue;
-    if (parts.length > 0) parts.push("\n\n");
+    if (parts.length > 0) {
+      parts.push("\n\n");
+      bodies.push("\n\n");
+      offset += 2;
+    }
+    bodies.push(text);
+    const range: TextSourceRange = { start: offset, end: offset + text.length };
+    ranges.push(range);
+    offset = range.end;
     if (block.kind === "agent") {
       parts.push(text);
       continue;
     }
+    hasGuidance = true;
     const fence = guidanceFence(text);
     const state =
       block.state && block.state !== "sent" ? ` ${block.state}` : "";
     parts.push(`${fence}guidance${state}\n`, text, `\n${fence}`);
+    range.format = (part) => {
+      const excerptFence = guidanceFence(part);
+      return `${excerptFence}guidance${state}\n${part}\n${excerptFence}`;
+    };
   }
-  return joinedTextSource(parts);
+  const source = joinedTextSource(parts);
+  if (hasGuidance) {
+    source.rendering = {
+      source: joinedTextSource(bodies),
+      ranges,
+      // A backtick-only body needs two fences of length n + 1. Reserve the
+      // longest state label, newlines, and the minimum three-backtick fences.
+      maxExpansion: 3,
+      maxOverhead: "guidance not-sent".length + 8,
+    };
+  }
+  return source;
 }
 
 export function resolveLiveCodexActivityBlocks({

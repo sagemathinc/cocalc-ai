@@ -1,5 +1,5 @@
 import { Button, Space } from "antd";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { TextSource } from "./text-source";
@@ -7,13 +7,28 @@ import type { TextSource } from "./text-source";
 // Bound the source passed to parsers, syntax highlighting, and DOM layout.
 // Leave one code unit of room so a page boundary never splits a surrogate pair.
 export const MAX_RENDERED_TEXT_CHARS = 16_384;
-const PAGE_STRIDE = MAX_RENDERED_TEXT_CHARS - 1;
 
-export function textPageCount(value: string | TextSource): number {
-  return Math.max(1, Math.ceil(value.length / PAGE_STRIDE));
+export function textPageCount(
+  value: string | TextSource,
+  maxChars = MAX_RENDERED_TEXT_CHARS,
+): number {
+  return Math.max(1, Math.ceil(value.length / (maxChars - 1)));
 }
 
-export function textPage(value: string | TextSource, page: number): string {
+export function textPage(
+  value: string | TextSource,
+  page: number,
+  maxChars = MAX_RENDERED_TEXT_CHARS,
+): string {
+  return value.slice(...textPageRange(value, page, maxChars));
+}
+
+function textPageRange(
+  value: string | TextSource,
+  page: number,
+  maxChars: number,
+): [number, number] {
+  const stride = maxChars - 1;
   const boundary = (offset: number) => {
     if (
       offset > 0 &&
@@ -24,20 +39,26 @@ export function textPage(value: string | TextSource, page: number): string {
     }
     return offset;
   };
-  return value.slice(
-    boundary(page * PAGE_STRIDE),
-    boundary(Math.min(value.length, (page + 1) * PAGE_STRIDE)),
-  );
+  return [
+    boundary(page * stride),
+    boundary(Math.min(value.length, (page + 1) * stride)),
+  ];
 }
 
 export function PagedText({
   value,
   children,
   followTail = false,
+  maxChars = MAX_RENDERED_TEXT_CHARS,
+  renderRanges = false,
 }: {
   value: string | TextSource;
   children: (part: string) => ReactNode;
   followTail?: boolean;
+  // Reserve space for mandatory formatting such as terminal code fences.
+  maxChars?: number;
+  // Parse structured source blocks independently, restoring their wrappers.
+  renderRanges?: boolean;
 }) {
   const [chosenPage, setChosenPage] = useState<number>();
   const [wasFollowingTail, setWasFollowingTail] = useState(followTail);
@@ -46,13 +67,35 @@ export function PagedText({
   useEffect(() => {
     if (followTail) setWasFollowingTail(true);
   }, [followTail]);
-  const pages = textPageCount(value);
+  const rendering =
+    renderRanges && typeof value !== "string" ? value.rendering : undefined;
+  const displayValue = rendering?.source ?? value;
+  const pageChars = rendering
+    ? Math.floor((maxChars - rendering.maxOverhead) / rendering.maxExpansion)
+    : maxChars;
+  if (pageChars < 2)
+    throw Error("Text page budget is too small for formatting");
+  const pages = textPageCount(displayValue, pageChars);
   // Completion is not navigation. Retain the tail excerpt (and its DOM) until
   // the reader chooses a page; a newly opened completed message starts at 0.
   const showingTail = (followTail || wasFollowingTail) && chosenPage == null;
   const page = Math.min(chosenPage ?? (showingTail ? pages - 1 : 0), pages - 1);
-  if (value.length <= MAX_RENDERED_TEXT_CHARS)
-    return <>{children(value.toString())}</>;
+  function renderRange(start: number, end: number) {
+    if (!rendering) return children(displayValue.slice(start, end));
+    return rendering.ranges.map((range, index) => {
+      const from = Math.max(start, range.start);
+      const to = Math.min(end, range.end);
+      if (from >= to) return null;
+      const part = displayValue.slice(from, to);
+      return (
+        <Fragment key={index}>
+          {children(range.format ? range.format(part) : part)}
+        </Fragment>
+      );
+    });
+  }
+  if (displayValue.length <= pageChars && value.length <= maxChars)
+    return <>{renderRange(0, displayValue.length)}</>;
   return (
     <div>
       <Space wrap size="small" style={{ marginBottom: 8 }}>
@@ -99,15 +142,22 @@ export function PagedText({
         </Button>
       </Space>
       <div key={showingTail ? "tail" : page}>
-        {children(showingTail ? textTail(value) : textPage(value, page))}
+        {renderRange(
+          ...(showingTail
+            ? textTailRange(displayValue, pageChars)
+            : textPageRange(displayValue, page, pageChars)),
+        )}
       </div>
     </div>
   );
 }
 
-function textTail(value: string | TextSource): string {
-  let start = Math.max(0, value.length - PAGE_STRIDE);
+function textTailRange(
+  value: string | TextSource,
+  maxChars: number,
+): [number, number] {
+  let start = Math.max(0, value.length - (maxChars - 1));
   if (start > 0 && /[\uDC00-\uDFFF]/.test(value.slice(start, start + 1)))
     start--;
-  return value.slice(start, value.length);
+  return [start, value.length];
 }
