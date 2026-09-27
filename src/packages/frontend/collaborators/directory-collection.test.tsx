@@ -26,34 +26,41 @@ const props = {
   renderItem: (id: string) => <button>Open {id}</button>,
 };
 
-test("People pins and grid persist with drag handles and no redundant reorder menu", async () => {
-  const user = userEvent.setup();
-  const mount = () =>
-    render(
-      <DirectoryCollection {...props} collection="people" label="People" />,
+test.each(["people", "projects", "conversations"] as const)(
+  "%s pins and grid persist with drag handles and no redundant reorder menu",
+  async (collection) => {
+    const user = userEvent.setup();
+    const mount = () =>
+      render(
+        <DirectoryCollection
+          {...props}
+          collection={collection}
+          label={collection}
+        />,
+      );
+    const view = mount();
+    await user.click(screen.getByRole("button", { name: "Pin Carol" }));
+    await user.click(screen.getByRole("button", { name: "Pin Bob" }));
+    await user.click(screen.getByRole("button", { name: "Grid view" }));
+    expect(screen.queryByRole("button", { name: /Reorder/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Drag Carol to reorder" }),
+    ).toBeVisible();
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(3));
+    view.unmount();
+    mount();
+    expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
-  const view = mount();
-  await user.click(screen.getByRole("button", { name: "Pin Carol" }));
-  await user.click(screen.getByRole("button", { name: "Pin Bob" }));
-  await user.click(screen.getByRole("button", { name: "Grid view" }));
-  expect(screen.queryByRole("button", { name: /Reorder/ })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Drag Carol to reorder" }),
-  ).toBeVisible();
-  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(3));
-  view.unmount();
-  mount();
-  expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  const pins = within(screen.getByRole("region", { name: "Pinned" }));
-  expect(
-    pins
-      .getAllByRole("button", { name: /^Open/ })
-      .map((button) => button.textContent),
-  ).toEqual(["Open Carol", "Open Bob"]);
-});
+    const pins = within(screen.getByRole("region", { name: "Pinned" }));
+    expect(
+      pins
+        .getAllByRole("button", { name: /^Open/ })
+        .map((button) => button.textContent),
+    ).toEqual(["Open Carol", "Open Bob"]);
+  },
+);
 
 test.each(["projects", "conversations"] as const)(
   "%s retains its existing pin adapter and handles failed writes",

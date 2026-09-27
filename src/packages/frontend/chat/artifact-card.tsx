@@ -83,7 +83,6 @@ export function ArtifactCard({
   compact = false,
   leading,
   trailing,
-  reorder,
 }: {
   publication: ArtifactPublication;
   current?: ArtifactRecord;
@@ -95,7 +94,6 @@ export function ArtifactCard({
   compact?: boolean;
   leading?: ReactNode;
   trailing?: ReactNode;
-  reorder?: { up?: () => void; down?: () => void };
 }) {
   const [editing, setEditing] = useState(false);
   const [naming, setNaming] = useState(false);
@@ -175,12 +173,6 @@ export function ArtifactCard({
     .filter(Boolean)
     .join("\n");
   const menuItems = [
-    ...(reorder
-      ? [
-          { key: "move-up", label: "Move up", disabled: !reorder.up },
-          { key: "move-down", label: "Move down", disabled: !reorder.down },
-        ]
-      : []),
     {
       key: "message-version",
       label: published.file
@@ -333,7 +325,7 @@ export function ArtifactCard({
             {trailing}
           </span>
         )}
-        {(open || showInConversation || reorder) && (
+        {(open || showInConversation) && (
           <Dropdown
             autoFocus
             trigger={["click"]}
@@ -341,9 +333,7 @@ export function ArtifactCard({
               items: menuItems,
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
-                if (key === "move-up") reorder?.up?.();
-                else if (key === "move-down") reorder?.down?.();
-                else if (key === "appearance") setEditing(true);
+                if (key === "appearance") setEditing(true);
                 else if (key === "name") setNaming(true);
                 else if (key === "conversation") void showInConversation?.();
                 else open?.(publication.operation_id);

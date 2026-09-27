@@ -790,7 +790,7 @@ test("keyboard sorting, grouping, filtering, pins and navigation are local", asy
 });
 
 test.each(["List", "Grid"])(
-  "%s exposes pinned drag handles and keyboard move menus without selecting Custom",
+  "%s exposes pinned drag handles without redundant move menu actions",
   async (mode) => {
     const ids = agents.map((agent) =>
       JSON.stringify([
@@ -807,7 +807,7 @@ test.each(["List", "Grid"])(
       active: true,
       onSelect: async () => {},
     };
-    const view = render(<AgentArtifactBrowser {...props} />);
+    render(<AgentArtifactBrowser {...props} />);
     await screen.findByRole("button", { name: "Open Result two from two" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: `${mode} view` }));
@@ -829,19 +829,15 @@ test.each(["List", "Grid"])(
     });
     act(() => trigger.focus());
     await user.keyboard("{Enter}");
-    const down = await screen.findByRole("menuitem", { name: "Move down" });
-    expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Edit appearance" }),
+      ).toBeVisible(),
     );
-    act(() => down.focus());
-    key(down, "Enter", 13);
-    expect(move).toHaveBeenCalledWith(ids, ids[0], 1);
-    pinned = [...ids].reverse();
-    view.rerender(<AgentArtifactBrowser {...props} />);
     expect(
-      screen.getAllByRole("button", { name: /^Open Result/ })[0],
-    ).toHaveAccessibleName("Open Result two from two");
+      screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
     await user.click(
       screen.getByRole("checkbox", { name: "Group by project" }),
@@ -849,13 +845,14 @@ test.each(["List", "Grid"])(
     await user.click(
       screen.getByRole("button", { name: "More options for Result one" }),
     );
-    expect(
-      await screen.findByRole("menuitem", { name: "Move up" }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Edit appearance" }),
+      ).toBeVisible(),
     );
+    expect(
+      screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+    ).toBeNull();
     await user.keyboard("{Escape}");
     expect(
       screen.getByRole("button", { name: "More options for Result one" }),

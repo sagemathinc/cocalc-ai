@@ -24,56 +24,59 @@ test("layout switches keep the focused button mounted", async () => {
   }
 });
 
-test("grid drag keyboard navigation moves horizontally, not only vertically", async () => {
-  const user = userEvent.setup();
-  const move = jest.fn();
-  const geometry = jest
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockImplementation(function (this: HTMLElement) {
-      const row =
-        this.querySelector("[data-test-item]") ??
-        this.closest("[data-test-item]");
-      const index = Number(row?.getAttribute("data-test-item") ?? 0);
-      const x = (index % 2) * 200;
-      const y = Math.floor(index / 2) * 100;
-      return {
-        x,
-        y,
-        left: x,
-        top: y,
-        right: x + 180,
-        bottom: y + 80,
-        width: 180,
-        height: 80,
-        toJSON: () => ({}),
-      };
-    });
-  try {
-    render(
-      <Collection
-        items={["0", "1", "2", "3"]}
-        itemId={(id) => id}
-        itemTitle={(id) => id}
-        pins={["0", "1", "2", "3"]}
-        view="grid"
-        otherTitle="Other things"
-        onMove={move}
-        renderItem={(id, controls) => (
-          <div data-test-item={id}>{controls.dragHandle}</div>
-        )}
-      />,
-    );
-    act(() =>
-      screen.getByRole("button", { name: "Drag 0 to reorder" }).focus(),
-    );
-    await user.keyboard(" ");
-    await user.keyboard("{ArrowRight}");
-    await user.keyboard(" ");
-    expect(move).toHaveBeenCalledWith(["0", "1", "2", "3"], "0", 1);
-  } finally {
-    geometry.mockRestore();
-  }
-});
+test.each(["list", "grid"] as const)(
+  "%s supports keyboard drag ordering",
+  async (view) => {
+    const user = userEvent.setup();
+    const move = jest.fn();
+    const geometry = jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const row =
+          this.querySelector("[data-test-item]") ??
+          this.closest("[data-test-item]");
+        const index = Number(row?.getAttribute("data-test-item") ?? 0);
+        const x = view === "grid" ? (index % 2) * 200 : 0;
+        const y = (view === "grid" ? Math.floor(index / 2) : index) * 100;
+        return {
+          x,
+          y,
+          left: x,
+          top: y,
+          right: x + 180,
+          bottom: y + 80,
+          width: 180,
+          height: 80,
+          toJSON: () => ({}),
+        };
+      });
+    try {
+      render(
+        <Collection
+          items={["0", "1", "2", "3"]}
+          itemId={(id) => id}
+          itemTitle={(id) => id}
+          pins={["0", "1", "2", "3"]}
+          view={view}
+          otherTitle="Other things"
+          onMove={move}
+          renderItem={(id, controls) => (
+            <div data-test-item={id}>{controls.dragHandle}</div>
+          )}
+        />,
+      );
+      act(() =>
+        screen.getByRole("button", { name: "Drag 0 to reorder" }).focus(),
+      );
+      await user.keyboard(" ");
+      await user.keyboard(view === "grid" ? "{ArrowRight}" : "{ArrowDown}");
+      await user.keyboard(" ");
+      expect(move).toHaveBeenCalledWith(["0", "1", "2", "3"], "0", 1);
+    } finally {
+      geometry.mockRestore();
+    }
+  },
+);
 
 test("moving visible pins preserves hidden slots and ignores invalid moves", () => {
   const pins = ["hidden", "a", "filtered", "b", "c"];
@@ -89,7 +92,7 @@ test("moving visible pins preserves hidden slots and ignores invalid moves", () 
 });
 
 test.each(["list", "grid"] as const)(
-  "%s offers the same pin, keyboard reorder and focus behavior",
+  "%s offers the same pin, action menu and focus behavior without move menus",
   async (view) => {
     const user = userEvent.setup();
     function Example() {
@@ -115,7 +118,10 @@ test.each(["list", "grid"] as const)(
               <button>Open {id}</button>
               {controls.dragHandle}
               {controls.pinButton}
-              {controls.orderMenu}
+              {controls.menu(
+                [{ key: "open", label: "Open item", onClick: () => {} }],
+                `Options for ${id}`,
+              )}
             </div>
           )}
         />
@@ -131,16 +137,15 @@ test.each(["list", "grid"] as const)(
             within(item).getByRole("button", { name: /^Open/ }).textContent,
         ),
     ).toEqual(["Open a", "Open b"]);
-    const trigger = screen.getByRole("button", { name: "Reorder a" });
+    const trigger = screen.getByRole("button", { name: "Options for a" });
     act(() => trigger.focus());
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    const down = screen.getByRole("menuitem", { name: "Move down" });
-    act(() => down.focus());
-    fireEvent.keyDown(down, { key: "Enter", keyCode: 13 });
+    expect(
+      screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+    ).toBeNull();
+    const action = screen.getByRole("menuitem", { name: "Open item" });
+    act(() => action.focus());
+    fireEvent.keyDown(action, { key: "Enter", keyCode: 13 });
     expect(trigger).toHaveFocus();
     expect(
       pinned()
@@ -149,7 +154,7 @@ test.each(["list", "grid"] as const)(
           (item) =>
             within(item).getByRole("button", { name: /^Open/ }).textContent,
         ),
-    ).toEqual(["Open b", "Open a"]);
+    ).toEqual(["Open a", "Open b"]);
     const pin = screen.getByRole("button", { name: "Pin c" });
     act(() => pin.focus());
     await user.keyboard("{Enter}");

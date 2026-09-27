@@ -137,7 +137,6 @@ export function DirectoryCollection<T>({
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               {controls.dragHandle}
               {controls.pinButton}
-              {collection !== "people" && controls.orderMenu}
             </div>
           </div>
         )}

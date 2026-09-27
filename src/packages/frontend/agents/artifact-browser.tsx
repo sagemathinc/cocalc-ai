@@ -402,9 +402,9 @@ function AccountArtifactBrowser({
             </p>
             <p>
               Pinned artifacts always appear in your manual order at the top.
-              Drag pins or use their Move up/down menu in either view to reorder
-              within the current group and filters. Sort applies to other
-              artifacts.
+              Drag pins in either view to reorder within the current group and
+              filters. For keyboard sorting, focus a drag handle and use Space
+              and the arrow keys. Sort applies to other artifacts.
             </p>
             <p>
               {metadata.indexedSources} indexed sources reported; this is not a

@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -108,7 +109,7 @@ test("direct browser hides its portal for an inactive agent workspace", async ()
   );
 });
 
-test("pinning and keyboard menu actions retain custom order independently of sorting", async () => {
+test("pins retain their order and keyboard drag handles without move menus", async () => {
   const rows: any[] = [];
   const syncdb = Object.assign(new EventEmitter(), {
     get_one: () => undefined,
@@ -151,12 +152,17 @@ test("pinning and keyboard menu actions retain custom order independently of sor
   expect(screen.getByRole("button", { name: "Unpin Alpha" })).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Pin Beta" }));
   expect(screen.queryByRole("button", { name: /Move .* up/ })).toBeNull();
-  const menu = screen.getByRole("button", { name: "More options for Beta" });
-  menu.focus();
-  await user.keyboard("{Enter}");
-  const up = await screen.findByRole("menuitem", { name: "Move up" });
-  up.focus();
-  fireEvent.keyDown(up, { key: "Enter", keyCode: 13, which: 13 });
+  const handle = screen.getByRole("button", { name: "Drag Beta to reorder" });
+  act(() => handle.focus());
+  await user.keyboard(" {Escape}");
+  expect(handle).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "More options for Beta" }),
+  );
+  await screen.findByRole("menu");
+  expect(
+    screen.queryByRole("menuitem", { name: /Move up|Move down/ }),
+  ).toBeNull();
   const pinned = within(
     screen.getByRole("region", { name: "Pinned artifacts" }),
   );
@@ -164,7 +170,7 @@ test("pinning and keyboard menu actions retain custom order independently of sor
     pinned
       .getAllByRole("button", { name: /^Unpin / })
       .map((b) => b.getAttribute("aria-label")),
-  ).toEqual(["Unpin Beta", "Unpin Alpha"]);
+  ).toEqual(["Unpin Alpha", "Unpin Beta"]);
   await user.click(pinned.getByRole("button", { name: "Unpin Beta" }));
   expect(screen.getByRole("button", { name: "Pin Beta" })).toHaveFocus();
 });
