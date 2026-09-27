@@ -2244,7 +2244,6 @@ export default function Message({
     message_class,
     openCommitFromMessage,
     showHeader = false,
-    onHideActivity,
     showQuotaHelp = true,
   }: {
     blocks: Array<{
@@ -2256,7 +2255,6 @@ export default function Message({
     message_class?: string;
     openCommitFromMessage: (e: any) => void;
     showHeader?: boolean;
-    onHideActivity?: () => void;
     showQuotaHelp?: boolean;
   }) {
     const { visibleBlocks, hiddenCount } = limitCodexActivityBlocks(
@@ -2333,20 +2331,6 @@ export default function Message({
       label: "Agent activity",
       accentColor: UI_COLORS.secondary,
       borderColor: UI_COLORS.border,
-      action: onHideActivity ? (
-        <Button
-          size="small"
-          type="text"
-          style={{ color: UI_COLORS.muted }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onHideActivity();
-          }}
-        >
-          Hide activity
-        </Button>
-      ) : undefined,
       children: body,
     });
   }
@@ -2541,11 +2525,6 @@ export default function Message({
               openCommitFromMessage: openResultFromMessage,
               showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
-              onHideActivity:
-                inlineCodexActivityMode === "completed" &&
-                onExpandedCodexActivityChange
-                  ? () => onExpandedCodexActivityChange(false)
-                  : undefined,
             })
           : null}
         {shouldRenderCompletedFinalResponse ? (

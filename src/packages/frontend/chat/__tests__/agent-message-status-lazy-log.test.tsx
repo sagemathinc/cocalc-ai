@@ -65,6 +65,8 @@ describe("AgentMessageStatus activity loading", () => {
       />,
     );
     const button = screen.getByRole("button", { name: "Show activity" });
+    expect(button).toHaveClass("ant-btn-text", "ant-btn-sm");
+    expect(button.style.color).toBe(UI_COLORS.muted);
     expect(screen.queryByText("Peer message activity")).toBeNull();
     expect(button.parentElement).toContainElement(
       screen.getByText("Worked for 0:10"),
@@ -87,6 +89,8 @@ describe("AgentMessageStatus activity loading", () => {
       />,
     );
     const hide = screen.getByRole("button", { name: "Hide activity" });
+    expect(hide).toHaveClass("ant-btn-text", "ant-btn-sm");
+    expect(hide.style.color).toBe(UI_COLORS.muted);
     expect(screen.getByText("Peer message activity")).toBeTruthy();
     expect(hide).toHaveAttribute("aria-expanded", "true");
     expect(hide).toHaveFocus();

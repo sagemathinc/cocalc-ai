@@ -821,6 +821,8 @@ export function AgentMessageStatus({
         {activityToggle && (
           <Button
             size="small"
+            type="text"
+            style={{ color: UI_COLORS.muted }}
             aria-expanded={activityToggle.expanded}
             loading={activityToggle.loading}
             disabled={activityToggle.disabled}
