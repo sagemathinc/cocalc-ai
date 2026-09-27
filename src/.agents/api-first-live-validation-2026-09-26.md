@@ -33,8 +33,33 @@ routes pass server-authenticated key identity; public RPC parameters cannot
 nominate admission identity. The current account-home key revision and expiry
 are checked under the transaction lock. Denials charge neither bucket, and
 key migration retains its debt. Other search surfaces and aggregate
-file-read/download concurrency remain unfinished. This follow-up is pending
-independent review and deployment; none of these summary changes is deployed.
+file-read/download concurrency remain unfinished. Independent review passed
+`7d156b67f604d08c22b85de13f9d09c612583304`; deployment is still pending.
+Upgrade account-home receivers first, or update bays synchronously: older
+receivers ignore the optional key identity on the internal wire and would
+enforce only the account bucket. Provision admission columns ahead of traffic
+where possible to avoid first-request schema-lock contention.
+
+### Independent-process PostgreSQL admission probe
+
+At the same pinned code, a disposable database on local PostgreSQL 18.4 tested
+the compiled production admission module through two independent Node worker
+processes, with their own connection pools. No user accounts or live application
+tables were changed. Forty concurrent requests for one fixture key admitted
+10 and rate-limited 30 in the first run. A repeat admitted 10, rate-limited 28,
+and rejected two with the bounded PostgreSQL lock-timeout code `55P03`.
+
+Both runs then rejected eight requests against exhausted account capacity
+without changing its stored debt. In the repeat, holding the fixture account
+row lock rejected both independent workers with `55P03` and completed 120 ms
+after acquiring the lock, below the 1.5-second harness ceiling. Both disposable
+databases were removed successfully. Worker debug-file logging reported an
+unwritable inherited log path; it did not affect the database checks.
+
+This validates actual PostgreSQL transaction contention rather than PGlite's
+serialized connection model. It does not validate deployed HTTP routing,
+multi-bay migration, mixed-version rollout, or sustained load. None of these
+summary changes is deployed yet.
 
 ## Project-list byte budget follow-up, 2026-09-27
 
