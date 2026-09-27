@@ -18,6 +18,7 @@ import {
   type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
 import { projectApiClient } from "@cocalc/conat/project/api";
+import { recoverRunOutput } from "@cocalc/conat/project/jupyter/recover-run";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { sleep } from "@cocalc/util/async-utils";
@@ -1687,6 +1688,43 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           },
         },
       );
+      const recovery = new AbortController();
+      let replayClient: ReturnType<typeof jupyterClient> | undefined;
+      const output = recoverRunOutput({
+        source: iter,
+        runId: run_id,
+        signal: recovery.signal,
+        readPage: async (after_seq) => {
+          for (let attempt = 0; ; attempt++) {
+            if (!replayClient || replayClient.socket.state === "closed") {
+              replayClient = jupyterClient({
+                path: normalizedPath,
+                project_id: project.project_id,
+                client,
+                stdin,
+              });
+            }
+            try {
+              return await replayClient.getRun(
+                run_id,
+                { after_seq },
+                { timeout: 5000 },
+              );
+            } catch (error) {
+              if (
+                attempt !== 0 ||
+                recovery.signal.aborted ||
+                ["401", "403"].includes(String((error as any)?.code)) ||
+                !["closed", "disconnected"].includes(replayClient.socket.state)
+              )
+                throw error;
+              // Retrying this bounded read cannot submit another execution.
+              replayClient.close();
+              replayClient = undefined;
+            }
+          }
+        },
+      });
       return {
         project_id: project.project_id,
         project_title: project.title,
@@ -1694,8 +1732,10 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         run_id,
         ack,
         cells: selected,
-        iter,
+        iter: output,
         close: async () => {
+          recovery.abort();
+          replayClient?.close();
           runClient.close();
           await release();
         },

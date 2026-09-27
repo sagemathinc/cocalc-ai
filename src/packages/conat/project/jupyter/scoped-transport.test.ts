@@ -21,6 +21,7 @@ import { ConatServer, init } from "../../core/server";
 import { isProjectHostApiKeySubjectAllowed } from "../../auth/project-host-api-key-policy";
 import type { ProjectHostApiKeyBinding } from "../../auth/project-host-token";
 import { jupyterClient, jupyterServer, type OutputMessage } from "./run-code";
+import { recoverRunOutput } from "./recover-run";
 
 describe("Jupyter application over scoped transport", () => {
   afterEach(async () => {
@@ -29,7 +30,7 @@ describe("Jupyter application over scoped transport", () => {
     mockSnapshots.clear();
   });
 
-  it.each([false, "close", "disconnect", "lease"] as const)(
+  it.each([false, "close", "disconnect", "lease", "recover"] as const)(
     "delivers output or explicit transport loss without replay (interrupt=%s)",
     async (interrupt) => {
       const project_id = randomUUID();
@@ -118,7 +119,41 @@ describe("Jupyter application over scoped transport", () => {
           [{ id: "cell", input: "simulated input request" }],
           { run_id: "scoped-run", onAck },
         );
-        if (interrupt) {
+        if (interrupt === "recover") {
+          const first = await iterator.next();
+          output.push(...first.value);
+          client.conn.disconnect();
+          let fresh: ReturnType<typeof jupyterClient> | undefined;
+          try {
+            for await (const batch of recoverRunOutput({
+              source: iterator,
+              runId: "scoped-run",
+              signal: new AbortController().signal,
+              pollMs: 10,
+              readPage: async (after_seq) => {
+                if (!fresh) {
+                  client.conn.connect();
+                  await client.waitUntilSignedIn({ timeout: 3000 });
+                  fresh = jupyterClient({
+                    client,
+                    project_id,
+                    path: "transport.ipynb",
+                    stdin,
+                  });
+                  releaseRun();
+                }
+                return await fresh.getRun(
+                  "scoped-run",
+                  { after_seq },
+                  { timeout: 2000 },
+                );
+              },
+            }))
+              output.push(...batch);
+          } finally {
+            fresh?.close();
+          }
+        } else if (interrupt) {
           const first = await iterator.next();
           output.push(...first.value);
           expect(iterator.replayCursor).toBe(1);
@@ -188,7 +223,11 @@ describe("Jupyter application over scoped transport", () => {
             lifecycle: "cell_done",
           },
         ];
-        expect(output).toEqual(interrupt ? expected.slice(0, 1) : expected);
+        expect(output).toEqual(
+          interrupt && interrupt !== "recover"
+            ? expected.slice(0, 1)
+            : expected,
+        );
         for (
           let n = 0;
           n < 100 && ![...mockSnapshots.values()].some((x) => x.done);

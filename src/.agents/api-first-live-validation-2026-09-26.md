@@ -378,6 +378,30 @@ batch and runner invocation stays at one. Automatic CLI consumption of replay
 pages across healthy renewal remains unimplemented; this is prerequisite
 sequence bookkeeping, not a long-running-session completion claim.
 
+### CLI retained-output recovery (not deployed)
+
+The ordinary CLI run session now catches typed transport loss only when its
+stream has a valid consumed-output cursor. It opens a new application client
+through the existing authenticated project connection and reads bounded replay
+pages for the same run ID. It never sends another run request. It polls unfinished
+output once per second, validates contiguous sequences and run IDs, and refuses
+missing/expired replay rather than claiming completion. Read failures carry
+`JUPYTER_RUN_RECOVERY_FAILED`, the run ID, and the underlying cause.
+
+Each replay read has a five-second timeout. One retry is allowed for a closed
+or disconnected application socket, but not for explicit 401/403 denial or
+cancellation. Closing the session aborts polling and closes both clients;
+responses arriving after cancellation are discarded. Legacy unnumbered streams
+still report transport loss rather than guessing a recovery cursor.
+
+Forty-three Conat Jupyter tests and eleven focused CLI tests pass. The CLI
+TypeScript build (including Conat dependencies) and test compilation pass.
+The broker-backed recovery case reconnects with scoped authorization, receives
+the missing output, and verifies exactly one simulated runner invocation.
+This is not a deployed long-run test. Healthy renewal across several token
+lifetimes, notebook save after recovery, and interactive stdin during recovery
+remain to be validated with the real installed CLI/runtime.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

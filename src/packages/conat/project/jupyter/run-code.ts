@@ -876,13 +876,17 @@ export class JupyterClient {
   getRun = async (
     run_id: string,
     options: { after_seq?: number; limit?: number } = {},
+    requestOptions?: { timeout?: number },
   ): Promise<JupyterLiveRunPage | null> => {
-    const { data } = await this.socket.request({
-      cmd: "get-run",
-      path: this.path,
-      run_id,
-      ...options,
-    });
+    const { data } = await this.socket.request(
+      {
+        cmd: "get-run",
+        path: this.path,
+        run_id,
+        ...options,
+      },
+      requestOptions,
+    );
     return data;
   };
 
