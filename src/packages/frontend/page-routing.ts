@@ -97,14 +97,14 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
         page: "agents",
         collaborators: parseCollaboratorsRoute(segments.slice(1)),
       };
-    case "library":
+    case "artifacts":
       return {
         page: "agents",
         library: true,
-        // Keep malformed suffixes intact for the Library's not-found UI.
+        // Keep malformed suffixes intact for the artifact not-found UI.
         // In particular, never truncate extra segments to a valid entry.
         artifact_project_id:
-          cleanTarget === "library/" ? undefined : segments[1],
+          cleanTarget === "artifacts/" ? undefined : segments[1],
         artifact_entry_id:
           segments.length > 2 ? segments.slice(2).join("/") : undefined,
       };
@@ -199,7 +199,7 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       if (parsed.collaborators)
         return collaboratorsTargetPath(parsed.collaborators);
       if (parsed.library) {
-        if (parsed.artifact_project_id == null) return "library";
+        if (parsed.artifact_project_id == null) return "artifacts";
         const suffix =
           parsed.artifact_entry_id == null
             ? [parsed.artifact_project_id]
@@ -207,7 +207,7 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
                 parsed.artifact_project_id,
                 ...parsed.artifact_entry_id.split("/"),
               ];
-        return `library/${suffix.map(encodeURIComponent).join("/")}`;
+        return `artifacts/${suffix.map(encodeURIComponent).join("/")}`;
       }
       return parsed.agent_id
         ? `agents/${encodeURIComponent(parsed.agent_id)}`

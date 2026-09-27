@@ -330,7 +330,7 @@ export default function ArtifactBrowser({
                 onBrowseAllArtifacts();
               }}
             >
-              Open Library
+              Open Artifacts
             </Button>
           )}
           {organization.error && <div role="alert">{organization.error}</div>}

@@ -29,7 +29,7 @@ jest.mock("./library-artifact-view", () => ({
     return (
       <div>
         <span>{props.target.artifactId}</span>
-        <button onClick={props.onBack}>Back to Library</button>
+        <button onClick={props.onBack}>Back to Artifacts</button>
         <button onClick={props.onShowConversation}>
           Open source conversation
         </button>
@@ -105,7 +105,7 @@ test("direct links resolve without an agent; source navigation is explicit", asy
     ...target,
     publicationId: "old-publication",
   });
-  await user.click(screen.getByRole("button", { name: "Back to Library" }));
+  await user.click(screen.getByRole("button", { name: "Back to Artifacts" }));
   expect(props.onBack).toHaveBeenCalled();
 });
 
@@ -154,7 +154,7 @@ test.each(["history", "unmount", "route", "account", "back", "conversation"])(
         break;
       case "back":
         await user.click(
-          screen.getByRole("button", { name: "Back to Library" }),
+          screen.getByRole("button", { name: "Back to Artifacts" }),
         );
         break;
       case "conversation":

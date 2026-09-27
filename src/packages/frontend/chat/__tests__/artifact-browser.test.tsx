@@ -53,7 +53,7 @@ test("Agents scope cannot include unrelated chatroom threads", async () => {
   );
   const { rerender } = render(view("one"));
   expect(screen.queryByRole("combobox")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Open Library" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open Artifacts" })).toBeNull();
   const dialog = screen.getByRole("dialog", { name: "Artifacts" });
   expect(dialog.closest(".ant-drawer")).toHaveClass("ant-drawer-right");
   expect(dialog.closest(".ant-drawer-content-wrapper")).toHaveStyle({
@@ -213,7 +213,7 @@ test.each([false, true])(
   },
 );
 
-test("agent toolbar toggles the panel and Open Library closes it before delegating", async () => {
+test("agent toolbar toggles the panel and Open Artifacts closes it before delegating", async () => {
   const onBrowseAllArtifacts = jest.fn(() => {
     expect(trigger).toHaveFocus();
   });
@@ -244,7 +244,7 @@ test("agent toolbar toggles the panel and Open Library closes it before delegati
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
   await user.keyboard("{Enter}");
-  const library = await screen.findByRole("button", { name: "Open Library" });
+  const library = await screen.findByRole("button", { name: "Open Artifacts" });
   library.focus();
   await user.keyboard("{Enter}");
   expect(onBrowseAllArtifacts).toHaveBeenCalledTimes(1);

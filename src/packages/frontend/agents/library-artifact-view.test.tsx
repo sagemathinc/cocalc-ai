@@ -197,9 +197,9 @@ test("loads the real source without an agent, preserves focus, and delegates exp
   const user = userEvent.setup();
   render(<LibraryArtifactView {...{ target, onBack, onShowConversation }} />);
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await screen.findByRole("heading", { name: "Actual source title", level: 1 });
   expect(back).toHaveFocus();
@@ -271,7 +271,7 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   );
   expect(screen.getByText("Loading artifact source...")).toBeVisible();
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
   const navigation = screen.getByRole("button", { name: "Show sidebar" });
   expect(
@@ -295,7 +295,9 @@ test("parent navigation remains keyboard accessible while loading, updating, and
   expect(screen.getByRole("heading", { name: "Latest title" })).toBeVisible();
   expect(navigation).toHaveFocus();
   await user.tab();
-  expect(screen.getByRole("button", { name: "Back to Library" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Back to Artifacts" }),
+  ).toHaveFocus();
   await user.tab({ shift: true });
   act(() => {
     record = undefined;
@@ -355,7 +357,7 @@ test("Copy link reads the parent's current URL at activation and reports clipboa
     window.history.replaceState(
       null,
       "",
-      "/library/source-project/stable-entry",
+      "/artifacts/source-project/stable-entry",
     );
     const copy = screen.getByRole("button", { name: "Copy link" });
     copy.focus();
@@ -414,7 +416,7 @@ test.each(["throw", "reject"])(
     );
     await screen.findByRole("heading", { name: "Actual source title" });
     const open = within(
-      screen.getByRole("group", { name: "Library artifact navigation" }),
+      screen.getByRole("group", { name: "Artifact navigation" }),
     ).getByRole("button", { name: "Conversation" });
     open.focus();
     await user.keyboard("{Enter}");
@@ -552,7 +554,7 @@ test("missing/deleted records never manufacture an artifact and keep Back availa
   expect(screen.getByRole("alert")).toHaveTextContent("Artifact unavailable");
   expect(screen.queryByRole("document")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Artifact" })).toBeVisible();
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   await userEvent.setup().keyboard("{Enter}");
   expect(onBack).toHaveBeenCalledTimes(1);
@@ -584,7 +586,7 @@ test("late agent discovery does not reload the resource or steal focus", async (
     <LibraryArtifactView target={target} onBack={() => {}} />,
   );
   await screen.findByRole("heading", { name: "Actual source title" });
-  const back = screen.getByRole("button", { name: "Back to Library" });
+  const back = screen.getByRole("button", { name: "Back to Artifacts" });
   back.focus();
   view.rerender(
     <LibraryArtifactView
@@ -620,7 +622,7 @@ test("target change clears prior content while the new source loads", async () =
   });
   view.rerender(<LibraryArtifactView target={next} onBack={() => {}} />);
   expect(
-    screen.getByRole("group", { name: "Library artifact navigation" }),
+    screen.getByRole("group", { name: "Artifact navigation" }),
   ).toHaveFocus();
   expect(screen.queryByText("Actual source title")).not.toBeInTheDocument();
   expect(screen.queryByRole("document")).not.toBeInTheDocument();

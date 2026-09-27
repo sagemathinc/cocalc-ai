@@ -44,6 +44,28 @@ describe("app redirect routes", () => {
   });
 
   it.each([
+    "/artifacts",
+    "/artifacts/",
+    "/artifacts/sphere",
+    "/artifacts/project-1/entry-1?view=grid",
+  ])("redirects direct artifact URL %s into the app shell", async (path) => {
+    const response = await request(path);
+    expect(response.status).toBe(302);
+    const redirected = new URL(
+      `http://host${response.headers.get("location")}`,
+    );
+    expect(redirected.pathname).toBe("/static/app.html");
+    expect(redirected.searchParams.get("target")).toBe(path);
+  });
+
+  it.each(["/library", "/library/sphere", "/library/project-1/entry-1"])(
+    "leaves removed library route %s unregistered",
+    async (path) => {
+      expect((await request(path)).status).toBe(404);
+    },
+  );
+
+  it.each([
     "/collaborators",
     "/collaborators/",
     "/collaborators/conversations",

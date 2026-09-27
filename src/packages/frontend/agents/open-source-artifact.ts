@@ -20,7 +20,7 @@ export function sourceArtifactPublication(
       row.operation_id === result.hit.operation_id,
   );
   if (!publication)
-    throw Error("Artifact publication is unavailable. Refresh the Library.");
+    throw Error("Artifact publication is unavailable. Refresh the Artifacts.");
   return validateArtifactPublication(publication);
 }
 

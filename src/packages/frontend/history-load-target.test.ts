@@ -118,7 +118,7 @@ describe("load_target", () => {
       collaborators_project_id: "project-1",
       collaborators_resource_id: "thread-1",
     });
-    load_target("library");
+    load_target("artifacts");
     expect(state.collaborators_open).toBe(false);
     expect(state.collaborators_resource_id).toBeUndefined();
     load_target("collaborators/people/person/person-1", false, false);
@@ -151,13 +151,13 @@ describe("load_target", () => {
     });
   });
 
-  it("keeps the conversation across Library detail, root, and browser back navigation", () => {
+  it("keeps the conversation across Artifacts detail, root, and browser back navigation", () => {
     const state: Record<string, unknown> = {};
     pageActions.setState.mockImplementation((update) =>
       Object.assign(state, update),
     );
     load_target("agents/reviewer");
-    load_target("library/project-1/entry-1");
+    load_target("artifacts/project-1/entry-1");
     expect(state).toMatchObject({
       active_agent_id: "reviewer",
       active_agent_name: "reviewer",
@@ -165,18 +165,18 @@ describe("load_target", () => {
       library_project_id: "project-1",
       library_entry_id: "entry-1",
     });
-    load_target("library");
+    load_target("artifacts");
     expect(state.library_project_id).toBeUndefined();
     expect(state.library_entry_id).toBeUndefined();
     const pushState = jest.spyOn(window.history, "pushState");
     for (const path of [
-      "/library/project-1/entry-1",
+      "/artifacts/project-1/entry-1",
       "/agents/reviewer",
-      "/library",
+      "/artifacts",
     ]) {
       window.history.replaceState({}, "", path);
       window.onpopstate?.(new PopStateEvent("popstate"));
-      expect(state.library_open).toBe(path.startsWith("/library"));
+      expect(state.library_open).toBe(path.startsWith("/artifacts"));
       expect(state.active_agent_id).toBe("reviewer");
       expect(state.active_agent_name).toBe("reviewer");
       expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
@@ -189,7 +189,7 @@ describe("load_target", () => {
     expect(projectsActions.load_target).not.toHaveBeenCalled();
   });
 
-  it.each(["/library", "/library/project-1/entry-1"])(
+  it.each(["/artifacts", "/artifacts/project-1/entry-1"])(
     "preserves Forward to %s when the workspace rewrites the current agent URL after Back",
     async (libraryPath) => {
       mockRedux.getStore.mockImplementation((name: string) =>
@@ -261,9 +261,9 @@ describe("load_target", () => {
   );
 
   it.each(["agents", "agents/new", "agents/another"])(
-    "clears Library state on %s",
+    "clears Artifacts state on %s",
     (target) => {
-      load_target("library/project-1/entry-1");
+      load_target("artifacts/project-1/entry-1");
       load_target(target);
       expect(pageActions.setState).toHaveBeenLastCalledWith({
         ...closedCollaboratorsState,
@@ -277,10 +277,10 @@ describe("load_target", () => {
   );
 
   it.each([
-    "library/bad-project",
-    "library/project/entry/extra",
-    "library//entry",
-  ])("never opens a project for malformed Library route %s", (target) => {
+    "artifacts/bad-project",
+    "artifacts/project/entry/extra",
+    "artifacts//entry",
+  ])("never opens a project for malformed Artifacts route %s", (target) => {
     load_target(target);
     expect(pageActions.set_active_tab).toHaveBeenLastCalledWith("agents", true);
     expect(projectsActions.load_target).not.toHaveBeenCalled();
@@ -292,8 +292,8 @@ describe("load_target", () => {
     });
   });
 
-  it("keeps the full Library return URL while requiring account login", () => {
-    const target = "/library/project-1/entry-1?view=grid#details";
+  it("keeps the full Artifacts return URL while requiring account login", () => {
+    const target = "/artifacts/project-1/entry-1?view=grid#details";
     window.history.replaceState({}, "", target);
     accountStore.get.mockReturnValue(false);
     load_target(target);
@@ -324,11 +324,11 @@ describe("load_target", () => {
   });
 
   it.each([
-    "library/project/entry",
-    "library//project/entry",
-    "library/project/entry/extra",
+    "artifacts/project/entry",
+    "artifacts//project/entry",
+    "artifacts/project/entry/extra",
   ])(
-    "preserves Library path structure and full URL on history updates: %s",
+    "preserves Artifacts path structure and full URL on history updates: %s",
     (target) => {
       window.history.replaceState({}, "", "/agents/reviewer?view=grid#details");
       mockRedux.getStore.mockImplementation((name: string) =>

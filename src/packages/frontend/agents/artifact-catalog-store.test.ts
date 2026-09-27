@@ -248,4 +248,27 @@ test("local mapping uses project/path/thread, target search, deterministic sort 
   ).toBe("b");
   a.item.created_at = 2;
   expect(catalogResults([b, a], [agent])[0].hit.artifact_id).toBe("a");
+  for (const sort of ["recent", "title", "custom"]) {
+    expect(
+      catalogResults([b, a], [agent], {
+        sort,
+        pins: [artifactIdentity(results[1])],
+      }).map((r) => r.hit.artifact_id),
+    ).toEqual(["b", "a"]);
+  }
+  a.item.title = "A";
+  b.item.title = "B";
+  const pins = [artifactIdentity(results[1]), artifactIdentity(results[0])];
+  expect(
+    catalogResults([b, a], [agent], { sort: "custom", pins }).map(
+      (r) => r.hit.artifact_id,
+    ),
+  ).toEqual(["b", "a"]);
+  for (const sort of ["recent", "title"]) {
+    expect(
+      catalogResults([b, a], [agent], { sort, pins }).map(
+        (r) => r.hit.artifact_id,
+      ),
+    ).toEqual(["a", "b"]);
+  }
 });

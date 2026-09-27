@@ -106,7 +106,7 @@ function LibraryArtifactPage({
   };
   return (
     <section
-      aria-label="Library artifact"
+      aria-label="Artifact"
       className="smc-vfill"
       style={{
         minHeight: 0,
@@ -120,7 +120,7 @@ function LibraryArtifactPage({
       <header
         ref={header}
         role="group"
-        aria-label="Library artifact navigation"
+        aria-label="Artifact navigation"
         tabIndex={-1}
         style={{
           display: "flex",
@@ -144,8 +144,8 @@ function LibraryArtifactPage({
             minWidth: 0,
           }}
         >
-          <Button type="text" onClick={onBack} aria-label="Back to Library">
-            Library
+          <Button type="text" onClick={onBack} aria-label="Back to Artifacts">
+            Artifacts
           </Button>
           <span aria-hidden="true">/</span>
           <h1

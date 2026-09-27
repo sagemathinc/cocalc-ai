@@ -133,9 +133,9 @@ export function set_url_with_search(
   current.search = params();
   const query_params =
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
-  // Empty Library segments are invalid selections, not redundant separators.
-  // path.join would turn /library//project/entry into a different, valid route.
-  const full_url = /^\/?(?:library|collaborators)(?:\/|$)/.test(url)
+  // Empty artifact segments are invalid selections, not redundant separators.
+  // path.join would turn /artifacts//project/entry into a different, valid route.
+  const full_url = /^\/?(?:artifacts|collaborators)(?:\/|$)/.test(url)
     ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
     : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {

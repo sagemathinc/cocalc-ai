@@ -287,7 +287,7 @@ export class PageActions extends Actions<PageState> {
           page.get("collaborators_open")
             ? "Collaborators"
             : page.get("library_open")
-              ? "Library"
+              ? "Artifacts"
               : "Home",
         );
         return;

@@ -87,9 +87,9 @@ function ResolvedLibraryEntry({
 
   if (!entry) {
     return (
-      <section aria-label="Library artifact" style={{ padding: 16 }}>
+      <section aria-label="Artifact" style={{ padding: 16 }}>
         <Button type="text" onClick={back}>
-          Back to Library
+          Back to Artifacts
         </Button>
         {error ? (
           <Alert

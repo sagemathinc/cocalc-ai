@@ -117,7 +117,7 @@ describe("lite init", () => {
   it.each([
     "settings/purchases",
     "agents",
-    "library",
+    "artifacts",
     "collaborators",
     "collaborators/people/project/00000000-1000-4000-8000-000000000000/person/00000000-1000-4000-8000-000000000001",
   ])(

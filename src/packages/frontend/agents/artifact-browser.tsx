@@ -151,6 +151,39 @@ function AccountArtifactBrowser({
     else searchRef.current?.focus({ preventScroll: true });
   }, [active, opening, selectedArtifactIdentity]);
   const pins = useArtifactPins();
+  const pinFocus = useRef<
+    | {
+        id: string;
+        pinned: boolean;
+        button: HTMLElement;
+      }
+    | undefined
+  >(undefined);
+  useLayoutEffect(() => {
+    const pending = pinFocus.current;
+    if (!pending) return;
+    if (pins.error) {
+      pinFocus.current = undefined;
+      return;
+    }
+    if (pins.pins.includes(pending.id) !== pending.pinned) return;
+    pinFocus.current = undefined;
+    // Pinning moves the row between sections. Restore keyboard focus only if
+    // the user has not moved to another control while the write was pending.
+    if (
+      active &&
+      (document.activeElement === document.body ||
+        document.activeElement === pending.button)
+    ) {
+      Array.from(
+        viewportRef.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-artifact-pin-identity]",
+        ) ?? [],
+      )
+        .find((button) => button.dataset.artifactPinIdentity === pending.id)
+        ?.focus({ preventScroll: true });
+    }
+  }, [active, pins.pins, pins.error]);
   const { names: artifactNames } = useArtifactNames();
   const projects = [
     ...new Set(agents.map((agent) => agent.endpoint.project_id)),
@@ -165,7 +198,7 @@ function AccountArtifactBrowser({
     query,
     project,
     sort,
-    pins: sort === "custom" ? pins.pins : [],
+    pins: pins.pins,
     aliases: artifactNames,
   });
   const catalogById = new Map(
@@ -178,13 +211,27 @@ function AccountArtifactBrowser({
     agents.find((agent) => agent.endpoint.project_id === id)?.project_title ||
     id;
   // Bound the total rendered rows, not each project independently.
-  const groups = new Map<string, AgentSearchHit[]>();
+  const pinnedIds = new Set(pins.pins);
+  const sections = [
+    {
+      key: "pinned",
+      title: "Pinned",
+      groups: new Map<string, AgentSearchHit[]>(),
+    },
+    {
+      key: "other",
+      title: "Other artifacts",
+      groups: new Map<string, AgentSearchHit[]>(),
+    },
+  ];
   for (const result of ordered.slice(0, 200)) {
+    const { groups } = sections[pinnedIds.has(identity(result)) ? 0 : 1];
     const key = groupByProject ? result.agent.endpoint.project_id : "";
     const rows = groups.get(key) ?? [];
     rows.push(result);
     groups.set(key, rows);
   }
+  const ProjectHeading = sections[0].groups.size > 0 ? "h3" : "h2";
   async function openResult(result: AgentSearchHit, conversation = false) {
     lastArtifact.current = identity(result);
     setOpening(true);
@@ -204,7 +251,7 @@ function AccountArtifactBrowser({
       ref={viewportRef}
       hidden={!active}
       role="region"
-      aria-label="Library"
+      aria-label="Artifacts"
       onFocusCapture={(event) => {
         lastFocus.current = event.target;
       }}
@@ -256,11 +303,11 @@ function AccountArtifactBrowser({
               flex: "1 1 auto",
             }}
           >
-            Library
+            Artifacts
           </h1>
           <div
             role="group"
-            aria-label="Library view"
+            aria-label="Artifacts view"
             style={{ display: "flex", gap: 4 }}
           >
             <Button
@@ -281,8 +328,8 @@ function AccountArtifactBrowser({
           <Input
             ref={searchRef}
             type="search"
-            aria-label="Search library"
-            placeholder="Search library"
+            aria-label="Search artifacts"
+            placeholder="Search artifacts"
             prefix={<Icon name="search" />}
             style={{ flex: "0 1 320px", minWidth: 0 }}
             maxLength={256}
@@ -315,7 +362,7 @@ function AccountArtifactBrowser({
               {metadata.loading
                 ? ordered.length
                   ? " · Refreshing..."
-                  : " · Loading library..."
+                  : " · Loading artifacts..."
                 : ""}
               {metadata.limited && " · Preview limit reached"}
             </span>
@@ -417,7 +464,7 @@ function AccountArtifactBrowser({
           <details
             style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 16 }}
           >
-            <summary>About this library</summary>
+            <summary>About artifacts</summary>
             <p>
               Metadata from current agent conversations refreshes in the
               background about every 10 seconds, without scanning files or
@@ -425,9 +472,9 @@ function AccountArtifactBrowser({
               may still be indexing.
             </p>
             <p>
-              Pinned artifacts appear first in Custom order. Drag pins or use
-              their Move up/down menu to reorder within the current group and
-              filters.
+              Pinned artifacts always appear in a separate group at the top. In
+              Custom order, drag pins or use their Move up/down menu to reorder
+              within the current group and filters.
             </p>
             <p>
               {metadata.indexedSources} indexed sources reported; this is not a
@@ -444,7 +491,7 @@ function AccountArtifactBrowser({
         {metadata.error && (
           <Alert
             type="warning"
-            title="Library metadata unavailable"
+            title="Artifact metadata unavailable"
             description={metadata.error}
           />
         )}
@@ -460,309 +507,357 @@ function AccountArtifactBrowser({
               }
             />
           )}
-          {[...groups].map(([projectId, results]) => {
-            const visiblePins = results
-              .map(identity)
-              .filter((id) => pins.pins.includes(id));
-            return (
-              <section
-                key={projectId}
-                aria-label={
-                  groupByProject ? projectTitle(projectId) : "Artifacts"
-                }
-              >
-                {groupByProject && (
-                  <h2 style={{ fontSize: 16, margin: "16px 0 4px" }}>
-                    {projectTitle(projectId)}
+          {sections
+            .filter(({ groups }) => groups.size > 0)
+            .map(({ key, title, groups }) => (
+              <section key={key} aria-label={title}>
+                {sections[0].groups.size > 0 && (
+                  <h2 style={{ fontSize: 18, margin: "16px 0 8px" }}>
+                    {title}
                   </h2>
                 )}
-                <div
-                  role="list"
-                  style={
-                    view === "grid"
-                      ? {
-                          display: "grid",
-                          gridTemplateColumns:
-                            "repeat(auto-fill, minmax(min(100%, 190px), 1fr))",
-                          gap: 8,
+                {[...groups].map(([projectId, results]) => {
+                  const visiblePins = results
+                    .map(identity)
+                    .filter((id) => pins.pins.includes(id));
+                  return (
+                    <section
+                      key={projectId}
+                      aria-label={
+                        groupByProject
+                          ? `${title}: ${projectTitle(projectId)}`
+                          : undefined
+                      }
+                    >
+                      {groupByProject && (
+                        <ProjectHeading
+                          style={{ fontSize: 16, margin: "16px 0 4px" }}
+                        >
+                          {projectTitle(projectId)}
+                        </ProjectHeading>
+                      )}
+                      <div
+                        role="list"
+                        style={
+                          view === "grid"
+                            ? {
+                                display: "grid",
+                                gridTemplateColumns:
+                                  "repeat(auto-fill, minmax(min(100%, 190px), 1fr))",
+                                gap: 8,
+                              }
+                            : undefined
                         }
-                      : undefined
-                  }
-                >
-                  <SortableList
-                    items={visiblePins}
-                    disabled={sort !== "custom" || view === "grid"}
-                    onDragStop={(_from, to, id) => {
-                      if (typeof id === "string")
-                        pins.move(visiblePins, id, to);
-                    }}
-                  >
-                    {results.map((result) => {
-                      const id = identity(result);
-                      const alias = artifactNames.find(
-                        (item) =>
-                          item.active &&
-                          item.project_id ===
-                            result.agent.endpoint.project_id &&
-                          item.entry_id === result.catalogEntryId,
-                      )?.name;
-                      const appearance = catalogById.get(
-                        `${result.agent.endpoint.project_id}/${result.catalogEntryId}`,
-                      )?.item.appearance;
-                      const pinnedIndex = visiblePins.indexOf(id);
-                      const reorder = sort === "custom" && pinnedIndex >= 0;
-                      const row = (
-                        <div
-                          role="listitem"
-                          key={identity(result)}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: view === "grid" ? 4 : 8,
-                            flexWrap: view === "grid" ? "nowrap" : "wrap",
-                            flexDirection: view === "grid" ? "column" : "row",
-                            minHeight: view === "grid" ? 116 : undefined,
-                            padding: view === "grid" ? 8 : "12px 8px",
-                            border:
-                              view === "grid"
-                                ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
-                                : undefined,
-                            borderBottom:
-                              view === "grid"
-                                ? undefined
-                                : `1px solid ${UI_COLORS.border}`,
-                            borderLeft:
-                              view === "list" && appearance?.color
-                                ? `3px solid ${appearance.color}`
-                                : undefined,
-                            borderRadius: view === "grid" ? 12 : undefined,
-                            background: appearance?.accent_color
-                              ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} ${view === "grid" ? 12 : 6}%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
-                              : view === "grid"
-                                ? UI_COLORS.surface
-                                : undefined,
+                      >
+                        <SortableList
+                          items={visiblePins}
+                          disabled={sort !== "custom" || view === "grid"}
+                          onDragStop={(_from, to, id) => {
+                            if (typeof id === "string")
+                              pins.move(visiblePins, id, to);
                           }}
                         >
-                          {reorder && view === "list" && (
-                            <DragHandle
-                              id={id}
-                              ariaLabel={`Drag ${result.hit.artifact_title} to reorder`}
-                              style={{ padding: 4 }}
-                            />
-                          )}
-                          <Button
-                            type="text"
-                            disabled={opening}
-                            aria-label={`Open ${result.hit.artifact_title} from ${result.agent.name}`}
-                            data-artifact-identity={id}
-                            style={{
-                              flex: view === "grid" ? "1 1 auto" : "1 1 180px",
-                              minWidth: 0,
-                              width: view === "grid" ? "100%" : undefined,
-                              height: "auto",
-                              whiteSpace: "normal",
-                              justifyContent:
-                                view === "grid" ? "center" : "flex-start",
-                              textAlign: view === "grid" ? "center" : "left",
-                            }}
-                            onClick={() => void openResult(result)}
-                          >
-                            <span
-                              style={{
-                                minWidth: 0,
-                                width: view === "grid" ? "100%" : undefined,
-                                overflow: "hidden",
-                                overflowWrap:
-                                  view === "grid" ? "normal" : "anywhere",
-                                display: view === "list" ? "flex" : undefined,
-                                alignItems: "center",
-                                gap: 12,
-                              }}
-                            >
-                              {appearance?.image_blob ? (
-                                <img
-                                  src={blobImageUrl(appearance.image_blob)}
-                                  alt=""
+                          {results.map((result) => {
+                            const id = identity(result);
+                            const alias = artifactNames.find(
+                              (item) =>
+                                item.active &&
+                                item.project_id ===
+                                  result.agent.endpoint.project_id &&
+                                item.entry_id === result.catalogEntryId,
+                            )?.name;
+                            const appearance = catalogById.get(
+                              `${result.agent.endpoint.project_id}/${result.catalogEntryId}`,
+                            )?.item.appearance;
+                            const pinnedIndex = visiblePins.indexOf(id);
+                            const reorder =
+                              sort === "custom" && pinnedIndex >= 0;
+                            const row = (
+                              <div
+                                role="listitem"
+                                key={identity(result)}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: view === "grid" ? 4 : 8,
+                                  flexWrap: view === "grid" ? "nowrap" : "wrap",
+                                  flexDirection:
+                                    view === "grid" ? "column" : "row",
+                                  minHeight: view === "grid" ? 116 : undefined,
+                                  padding: view === "grid" ? 8 : "12px 8px",
+                                  border:
+                                    view === "grid"
+                                      ? `1px solid ${appearance?.color ?? UI_COLORS.border}`
+                                      : undefined,
+                                  borderBottom:
+                                    view === "grid"
+                                      ? undefined
+                                      : `1px solid ${UI_COLORS.border}`,
+                                  borderLeft:
+                                    view === "list" && appearance?.color
+                                      ? `3px solid ${appearance.color}`
+                                      : undefined,
+                                  borderRadius:
+                                    view === "grid" ? 12 : undefined,
+                                  background: appearance?.accent_color
+                                    ? `linear-gradient(130deg, color-mix(in srgb, ${appearance.accent_color} ${view === "grid" ? 12 : 6}%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
+                                    : view === "grid"
+                                      ? UI_COLORS.surface
+                                      : undefined,
+                                }}
+                              >
+                                {reorder && view === "list" && (
+                                  <DragHandle
+                                    id={id}
+                                    ariaLabel={`Drag ${result.hit.artifact_title} to reorder`}
+                                    style={{ padding: 4 }}
+                                  />
+                                )}
+                                <Button
+                                  type="text"
+                                  disabled={opening}
+                                  aria-label={`Open ${result.hit.artifact_title} from ${result.agent.name}`}
+                                  data-artifact-identity={id}
                                   style={{
-                                    display: "block",
-                                    width: view === "grid" ? 24 : 36,
-                                    height: view === "grid" ? 24 : 36,
-                                    objectFit: "cover",
-                                    borderRadius: 6,
-                                    margin:
+                                    flex:
                                       view === "grid"
-                                        ? "0 auto 4px"
-                                        : undefined,
-                                    flexShrink: 0,
+                                        ? "1 1 auto"
+                                        : "1 1 180px",
+                                    minWidth: 0,
+                                    width: view === "grid" ? "100%" : undefined,
+                                    height: "auto",
+                                    whiteSpace: "normal",
+                                    justifyContent:
+                                      view === "grid" ? "center" : "flex-start",
+                                    textAlign:
+                                      view === "grid" ? "center" : "left",
                                   }}
-                                />
-                              ) : (
-                                <Icon
-                                  name={
-                                    isIconName(appearance?.icon)
-                                      ? appearance.icon
-                                      : "file"
-                                  }
-                                  style={{
-                                    display: "block",
-                                    fontSize: view === "grid" ? 24 : 28,
-                                    marginBottom:
-                                      view === "grid" ? 4 : undefined,
-                                    color: appearance?.color ?? UI_COLORS.text,
-                                    flexShrink: 0,
-                                  }}
-                                />
-                              )}
-                              <span style={{ minWidth: 0 }}>
-                                <strong
-                                  style={{
-                                    display:
-                                      view === "grid" ? "-webkit-box" : "block",
-                                    WebkitBoxOrient:
-                                      view === "grid" ? "vertical" : undefined,
-                                    WebkitLineClamp:
-                                      view === "grid" ? 2 : undefined,
-                                    overflow:
-                                      view === "grid" ? "hidden" : undefined,
-                                    lineHeight: 1.3,
-                                  }}
-                                  title={result.hit.artifact_title}
+                                  onClick={() => void openResult(result)}
                                 >
-                                  {result.hit.artifact_title}
-                                </strong>
-                                {alias && (
                                   <span
                                     style={{
-                                      display: "block",
-                                      color: UI_COLORS.link,
-                                      fontSize: 12,
+                                      minWidth: 0,
+                                      width:
+                                        view === "grid" ? "100%" : undefined,
+                                      overflow: "hidden",
+                                      overflowWrap:
+                                        view === "grid" ? "normal" : "anywhere",
+                                      display:
+                                        view === "list" ? "flex" : undefined,
+                                      alignItems: "center",
+                                      gap: 12,
                                     }}
                                   >
-                                    @{alias}
+                                    {appearance?.image_blob ? (
+                                      <img
+                                        src={blobImageUrl(
+                                          appearance.image_blob,
+                                        )}
+                                        alt=""
+                                        style={{
+                                          display: "block",
+                                          width: view === "grid" ? 24 : 36,
+                                          height: view === "grid" ? 24 : 36,
+                                          objectFit: "cover",
+                                          borderRadius: 6,
+                                          margin:
+                                            view === "grid"
+                                              ? "0 auto 4px"
+                                              : undefined,
+                                          flexShrink: 0,
+                                        }}
+                                      />
+                                    ) : (
+                                      <Icon
+                                        name={
+                                          isIconName(appearance?.icon)
+                                            ? appearance.icon
+                                            : "file"
+                                        }
+                                        style={{
+                                          display: "block",
+                                          fontSize: view === "grid" ? 24 : 28,
+                                          marginBottom:
+                                            view === "grid" ? 4 : undefined,
+                                          color:
+                                            appearance?.color ?? UI_COLORS.text,
+                                          flexShrink: 0,
+                                        }}
+                                      />
+                                    )}
+                                    <span style={{ minWidth: 0 }}>
+                                      <strong
+                                        style={{
+                                          display:
+                                            view === "grid"
+                                              ? "-webkit-box"
+                                              : "block",
+                                          WebkitBoxOrient:
+                                            view === "grid"
+                                              ? "vertical"
+                                              : undefined,
+                                          WebkitLineClamp:
+                                            view === "grid" ? 2 : undefined,
+                                          overflow:
+                                            view === "grid"
+                                              ? "hidden"
+                                              : undefined,
+                                          lineHeight: 1.3,
+                                        }}
+                                        title={result.hit.artifact_title}
+                                      >
+                                        {result.hit.artifact_title}
+                                      </strong>
+                                      {alias && (
+                                        <span
+                                          style={{
+                                            display: "block",
+                                            color: UI_COLORS.link,
+                                            fontSize: 12,
+                                          }}
+                                        >
+                                          @{alias}
+                                        </span>
+                                      )}
+                                      <span
+                                        style={{
+                                          color: UI_COLORS.secondary,
+                                          fontSize: 12,
+                                          display: "block",
+                                          overflow:
+                                            view === "grid"
+                                              ? "hidden"
+                                              : undefined,
+                                          textOverflow:
+                                            view === "grid"
+                                              ? "ellipsis"
+                                              : undefined,
+                                          whiteSpace:
+                                            view === "grid"
+                                              ? "nowrap"
+                                              : undefined,
+                                        }}
+                                        title={`${projectTitle(result.agent.endpoint.project_id)} · @${result.agent.name} · ${result.hit.artifact_kind}`}
+                                      >
+                                        {projectTitle(
+                                          result.agent.endpoint.project_id,
+                                        )}{" "}
+                                        · @{result.agent.name} ·{" "}
+                                        {result.hit.artifact_kind}
+                                      </span>
+                                    </span>
                                   </span>
-                                )}
-                                <span
+                                </Button>
+                                <div
                                   style={{
-                                    color: UI_COLORS.secondary,
-                                    fontSize: 12,
-                                    display: "block",
-                                    overflow:
-                                      view === "grid" ? "hidden" : undefined,
-                                    textOverflow:
-                                      view === "grid" ? "ellipsis" : undefined,
-                                    whiteSpace:
-                                      view === "grid" ? "nowrap" : undefined,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    alignSelf:
+                                      view === "grid" ? "stretch" : undefined,
+                                    justifyContent:
+                                      view === "grid" ? "flex-end" : undefined,
                                   }}
-                                  title={`${projectTitle(result.agent.endpoint.project_id)} · @${result.agent.name} · ${result.hit.artifact_kind}`}
                                 >
-                                  {projectTitle(
-                                    result.agent.endpoint.project_id,
-                                  )}{" "}
-                                  · @{result.agent.name} ·{" "}
-                                  {result.hit.artifact_kind}
-                                </span>
-                              </span>
-                            </span>
-                          </Button>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                              alignSelf:
-                                view === "grid" ? "stretch" : undefined,
-                              justifyContent:
-                                view === "grid" ? "flex-end" : undefined,
-                            }}
-                          >
-                            {onShowConversation && (
-                              <Button
-                                type="text"
-                                disabled={opening}
-                                aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
-                                onClick={() => void openResult(result, true)}
-                                icon={<Icon name="comment" />}
-                              />
-                            )}
-                            <Button
-                              type="text"
-                              aria-label={`${pins.pins.includes(identity(result)) ? "Unpin" : "Pin"} ${result.hit.artifact_title}`}
-                              aria-pressed={pins.pins.includes(
-                                identity(result),
-                              )}
-                              onClick={() =>
-                                pins.setPinned(
-                                  identity(result),
-                                  !pins.pins.includes(identity(result)),
-                                )
-                              }
-                              icon={
-                                <Icon
-                                  name={
-                                    pins.pins.includes(identity(result))
-                                      ? "pushpin-filled"
-                                      : "pushpin"
-                                  }
-                                />
-                              }
-                            />
-                            {reorder && (
-                              <PinOrderMenu
-                                title={result.hit.artifact_title ?? "artifact"}
-                                index={pinnedIndex}
-                                count={visiblePins.length}
-                                onMove={(index) =>
-                                  pins.move(visiblePins, id, index)
-                                }
-                              />
-                            )}
-                            <Dropdown
-                              trigger={["click"]}
-                              menu={{
-                                items: [
-                                  {
-                                    key: "appearance",
-                                    label: "Edit appearance",
-                                  },
-                                ],
-                                onClick: () => {
-                                  if (
-                                    !result.hit.artifact_id ||
-                                    !result.catalogEntryId
-                                  )
-                                    return;
-                                  setAppearanceTarget({
-                                    projectId: result.agent.endpoint.project_id,
-                                    path: result.agent.path,
-                                    threadId: result.threadId,
-                                    artifactId: result.hit.artifact_id,
-                                    entryId: result.catalogEntryId,
-                                  });
-                                },
-                              }}
-                            >
-                              <Button
-                                type="text"
-                                aria-label={`More options for ${result.hit.artifact_title}`}
-                                icon={<Icon name="ellipsis" />}
-                              />
-                            </Dropdown>
-                          </div>
-                        </div>
-                      );
-                      return reorder && view === "list" ? (
-                        <SortableItem key={id} id={id} hideActive={false}>
-                          {row}
-                        </SortableItem>
-                      ) : (
-                        row
-                      );
-                    })}
-                  </SortableList>
-                </div>
+                                  {onShowConversation && (
+                                    <Button
+                                      type="text"
+                                      disabled={opening}
+                                      aria-label={`Show conversation for ${result.hit.artifact_title} from ${result.agent.name}`}
+                                      onClick={() =>
+                                        void openResult(result, true)
+                                      }
+                                      icon={<Icon name="comment" />}
+                                    />
+                                  )}
+                                  <Button
+                                    type="text"
+                                    data-artifact-pin-identity={id}
+                                    aria-label={`${pins.pins.includes(identity(result)) ? "Unpin" : "Pin"} ${result.hit.artifact_title}`}
+                                    aria-pressed={pins.pins.includes(
+                                      identity(result),
+                                    )}
+                                    onClick={(event) => {
+                                      const pinned = !pins.pins.includes(id);
+                                      pinFocus.current = {
+                                        id,
+                                        pinned,
+                                        button: event.currentTarget,
+                                      };
+                                      pins.setPinned(id, pinned);
+                                    }}
+                                    icon={
+                                      <Icon
+                                        name={
+                                          pins.pins.includes(identity(result))
+                                            ? "pushpin-filled"
+                                            : "pushpin"
+                                        }
+                                      />
+                                    }
+                                  />
+                                  {reorder && (
+                                    <PinOrderMenu
+                                      title={
+                                        result.hit.artifact_title ?? "artifact"
+                                      }
+                                      index={pinnedIndex}
+                                      count={visiblePins.length}
+                                      onMove={(index) =>
+                                        pins.move(visiblePins, id, index)
+                                      }
+                                    />
+                                  )}
+                                  <Dropdown
+                                    trigger={["click"]}
+                                    menu={{
+                                      items: [
+                                        {
+                                          key: "appearance",
+                                          label: "Edit appearance",
+                                        },
+                                      ],
+                                      onClick: () => {
+                                        if (
+                                          !result.hit.artifact_id ||
+                                          !result.catalogEntryId
+                                        )
+                                          return;
+                                        setAppearanceTarget({
+                                          projectId:
+                                            result.agent.endpoint.project_id,
+                                          path: result.agent.path,
+                                          threadId: result.threadId,
+                                          artifactId: result.hit.artifact_id,
+                                          entryId: result.catalogEntryId,
+                                        });
+                                      },
+                                    }}
+                                  >
+                                    <Button
+                                      type="text"
+                                      aria-label={`More options for ${result.hit.artifact_title}`}
+                                      icon={<Icon name="ellipsis" />}
+                                    />
+                                  </Dropdown>
+                                </div>
+                              </div>
+                            );
+                            return reorder && view === "list" ? (
+                              <SortableItem key={id} id={id} hideActive={false}>
+                                {row}
+                              </SortableItem>
+                            ) : (
+                              row
+                            );
+                          })}
+                        </SortableList>
+                      </div>
+                    </section>
+                  );
+                })}
               </section>
-            );
-          })}
+            ))}
         </div>
         {ordered.length > 200 && (
           <p role="status">

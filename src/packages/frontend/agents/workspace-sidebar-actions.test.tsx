@@ -42,7 +42,7 @@ test("account footer stays outside the keyboard-accessible navigation scroll are
       firstNavigationItem={<button>Projects</button>}
       footer={<button>Account menu</button>}
     >
-      <button>Library</button>
+      <button>Artifacts</button>
       <input aria-label="Filter agents" />
       <button>Last agent</button>
     </WorkspaceSidebarActions>,
@@ -57,7 +57,7 @@ test("account footer stays outside the keyboard-accessible navigation scroll are
   expect(
     within(scroll).queryByRole("button", { name: "Account menu" }),
   ).toBeNull();
-  for (const name of ["Projects", "Library", "Last agent"])
+  for (const name of ["Projects", "Artifacts", "Last agent"])
     expect(within(scroll).getByRole("button", { name })).toBeVisible();
   expect(
     within(scroll).getByRole("textbox", { name: "Filter agents" }),
@@ -74,7 +74,7 @@ test("does not render a duplicate New Agent button above navigation", () => {
   expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
 });
 
-test.each(["Projects", "Library"])(
+test.each(["Projects", "Artifacts"])(
   "sidebar hide control shares the %s row without a spacer and is keyboard operable",
   async (name) => {
     const user = userEvent.setup();

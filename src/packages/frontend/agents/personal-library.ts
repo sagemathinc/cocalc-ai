@@ -11,7 +11,7 @@ const loads = new Map<string, Promise<PersonalLibrarySnapshot>>();
 const writes = new Map<string, Promise<PersonalLibrarySnapshot>>();
 const generations = new Map<string, number>();
 
-/** Invalidate retained Library views after writes through another surface. */
+/** Invalidate retained Artifacts views after writes through another surface. */
 export function refreshPersonalLibrary(accountId: string) {
   cache.delete(accountId);
   loads.delete(accountId);
@@ -120,7 +120,7 @@ export function usePersonalLibrary() {
   }, [accountId, revision]);
 
   async function mutate(run: () => Promise<PersonalLibrarySnapshot>) {
-    if (!accountId) throw Error("Sign in to organize Library.");
+    if (!accountId) throw Error("Sign in to organize Artifacts.");
     const generation = generations.get(accountId) ?? 0;
     const client = webapp_client.conat_client;
     const assertCurrentAccount = () => {

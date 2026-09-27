@@ -3003,7 +3003,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       collaboratorsOpen
         ? "Collaborators"
         : libraryOpen
-          ? "Library"
+          ? "Artifacts"
           : creating
             ? "New Agent"
             : selected
@@ -3707,7 +3707,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       aria-current={libraryOpen ? "page" : undefined}
       onClick={showLibrary}
     >
-      Library
+      Artifacts
     </Button>
   );
   const sidebar = (
@@ -4132,7 +4132,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           collaboratorsOpen
             ? "Collaborators"
             : libraryOpen
-              ? "Artifact Library"
+              ? "Artifacts"
               : selected
                 ? `Agent @${selected.name}`
                 : "Agent workspace"
