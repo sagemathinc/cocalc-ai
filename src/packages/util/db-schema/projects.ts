@@ -361,6 +361,10 @@ Table({
       pg_type: "VARCHAR(64)",
       desc: "Control-plane bay that authoritatively owns this project record.",
     },
+    creation_request_hash: {
+      type: "string",
+      desc: "Server-only exact inter-bay create receipt, committed with the project. Not exposed through user_query.",
+    },
     course_vm_recommendations: {
       type: "map",
       pg_type: "JSONB",

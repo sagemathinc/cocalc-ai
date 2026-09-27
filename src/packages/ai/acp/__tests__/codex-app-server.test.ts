@@ -5397,85 +5397,93 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("revalidates and reuses the same retained subscription runtime", async () => {
-    const processes: FakeCodexAppServerProc[] = [];
-    const validateSubscriptionCredential = jest.fn(async () => {});
-    const spawnCodexAppServer = jest.fn(async () => {
-      const index = processes.length;
-      const proc = new FakeCodexAppServerProc((fake, message) => {
-        switch (message.method) {
-          case "thread/start":
-          case "thread/resume":
-            fake.sendResponse(message.id, {
-              thread: { id: `subscription-thread-${index}` },
-            });
-            break;
-          case "turn/start":
-            fake.sendResponse(message.id, {
-              turn: { id: `subscription-turn-${index}` },
-            });
-            setImmediate(() =>
-              fake.sendNotification("turn/completed", {
-                turn: {
-                  id: `subscription-turn-${index}`,
-                  status: "completed",
-                },
-              }),
-            );
-            break;
-          case "thread/backgroundTerminals/list":
-            fake.sendResponse(message.id, {
-              data: [{ itemId: "build", command: "pnpm build" }],
-              nextCursor: null,
-            });
-            break;
-          case "thread/list":
-            fake.sendResponse(message.id, { data: [], nextCursor: null });
-            break;
-          default:
-            if (typeof message.id === "number")
-              fake.sendResponse(message.id, {});
-        }
+  it.each([
+    {
+      paymentSource: "subscription-credential" as const,
+      credentialId: "credential-A",
+    },
+    { paymentSource: "subscription" as const },
+    { paymentSource: "auto" as const },
+    undefined,
+  ])(
+    "revalidates and reuses the same retained subscription runtime (%j)",
+    async (config) => {
+      const processes: FakeCodexAppServerProc[] = [];
+      const validateSubscriptionCredential = jest.fn(async () => {});
+      const spawnCodexAppServer = jest.fn(async () => {
+        const index = processes.length;
+        const proc = new FakeCodexAppServerProc((fake, message) => {
+          switch (message.method) {
+            case "thread/start":
+            case "thread/resume":
+              fake.sendResponse(message.id, {
+                thread: { id: `subscription-thread-${index}` },
+              });
+              break;
+            case "turn/start":
+              fake.sendResponse(message.id, {
+                turn: { id: `subscription-turn-${index}` },
+              });
+              setImmediate(() =>
+                fake.sendNotification("turn/completed", {
+                  turn: {
+                    id: `subscription-turn-${index}`,
+                    status: "completed",
+                  },
+                }),
+              );
+              break;
+            case "thread/backgroundTerminals/list":
+              fake.sendResponse(message.id, {
+                data: [{ itemId: "build", command: "pnpm build" }],
+                nextCursor: null,
+              });
+              break;
+            case "thread/list":
+              fake.sendResponse(message.id, { data: [], nextCursor: null });
+              break;
+            default:
+              if (typeof message.id === "number")
+                fake.sendResponse(message.id, {});
+          }
+        });
+        processes.push(proc);
+        return {
+          proc: proc as any,
+          cmd: "fake",
+          args: [],
+          authSource: "subscription",
+          runtimeEnv: {},
+          credentialId: "credential-A",
+          validateSubscriptionCredential,
+        };
       });
-      processes.push(proc);
-      return {
-        proc: proc as any,
-        cmd: "fake",
-        args: [],
-        authSource: "subscription",
-        runtimeEnv: {},
-        credentialId: "credential-A",
-        validateSubscriptionCredential,
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected");
+        },
+        spawnCodexAppServer,
+      });
+      const agent = new CodexAppServerAgent();
+      const request = {
+        project_id: "project",
+        account_id: "Q",
+        session_id: "retained-subscription-thread",
+        stream: async () => {},
+        config,
       };
-    });
-    setCodexProjectSpawner({
-      spawnCodexExec: async () => {
-        throw new Error("unexpected");
-      },
-      spawnCodexAppServer,
-    });
-    const agent = new CodexAppServerAgent();
-    const request = {
-      project_id: "project",
-      account_id: "Q",
-      session_id: "retained-subscription-thread",
-      stream: async () => {},
-      config: {
-        paymentSource: "subscription-credential" as const,
-        credentialId: "credential-A",
-      },
-    };
-    try {
-      await agent.evaluate({ ...request, prompt: "first" });
-      await agent.evaluate({ ...request, prompt: "second" });
+      try {
+        await agent.evaluate({ ...request, prompt: "first" });
+        await agent.evaluate({ ...request, prompt: "second" });
 
-      expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
-      expect(validateSubscriptionCredential).toHaveBeenCalledTimes(1);
-      expect(processes[0].killed).toBe(false);
-    } finally {
-      await agent.dispose();
-    }
-  });
+        expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
+        expect(validateSubscriptionCredential).toHaveBeenCalledTimes(1);
+        expect(processes[0].killed).toBe(false);
+      } finally {
+        await agent.dispose();
+      }
+    },
+  );
 
   it("stops same-account retained work when changing subscription credentials", async () => {
     const processes: FakeCodexAppServerProc[] = [];

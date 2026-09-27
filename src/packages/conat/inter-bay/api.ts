@@ -9,6 +9,8 @@ import type {
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
 import type { ProjectRecoveryStatus } from "@cocalc/conat/hub/api/projects";
+import type { CreatedProjectBootstrap } from "@cocalc/conat/hub/api/projects";
+import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type {
   AccountFinancialHandoff,
@@ -2775,6 +2777,7 @@ export type ProjectLeaveOrDeleteProjectsResult = {
 };
 
 export type ProjectControlMethod =
+  | "create"
   | "check-start-admission"
   | "start"
   | "stop"
@@ -2806,6 +2809,10 @@ export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
+  | "get-api-relay-target"
+  | "get-api-relay-host-url"
+  | "update-api-relay-usage"
+  | "update-api-relay-account-usage"
   | "list"
   | "list-host-access"
   | "set-host-access"
@@ -3304,7 +3311,24 @@ export interface InterBayDirectoryApi {
   ) => Promise<void>;
 }
 
+export interface ProjectControlCreateRequest {
+  source_bay_id: string;
+  // Equal to options.project_id: one operation cannot allocate another project.
+  operation_id: string;
+  options: CreateProjectOptions & {
+    project_id: string;
+    host_id: string;
+    account_id: string;
+  };
+}
+
 export interface InterBayProjectControlApi {
+  create: (
+    opts: ProjectControlCreateRequest,
+  ) => Promise<CreatedProjectBootstrap>;
+  createStatus: (
+    opts: ProjectControlCreateRequest,
+  ) => Promise<CreatedProjectBootstrap | null>;
   checkStartAdmission: (
     opts: ProjectControlStartRequest,
   ) => Promise<ProjectControlStartAdmission>;
@@ -3642,6 +3666,25 @@ export interface InterBayExternalCredentialsApi {
 }
 
 export interface InterBayHostConnectionApi {
+  updateApiRelayUsage: (
+    opts: Parameters<Hosts["updateProjectApiRelayUsage"]>[0] & {
+      host_id: string;
+    },
+  ) => ReturnType<Hosts["updateProjectApiRelayUsage"]>;
+  updateApiRelayAccountUsage: (
+    opts: Parameters<Hosts["updateProjectApiRelayUsage"]>[0] & {
+      host_id: string;
+      account_id: string;
+    },
+  ) => ReturnType<Hosts["updateProjectApiRelayUsage"]>;
+  getApiRelayHostUrl: (opts: {
+    target_host_id: string;
+    target_project_id: string;
+  }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
+  getApiRelayTarget: (opts: {
+    target_host_id: string;
+    target_project_id: string;
+  }) => ReturnType<Hosts["resolveProjectApiRelayTarget"]>;
   listHostOperations: (opts: {
     account_id?: string;
     host_id: string;
@@ -3918,6 +3961,13 @@ export interface InterBayHostConnectionApi {
 
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
+  { name: "getApiRelayTarget", method: "get-api-relay-target" },
+  { name: "getApiRelayHostUrl", method: "get-api-relay-host-url" },
+  { name: "updateApiRelayUsage", method: "update-api-relay-usage" },
+  {
+    name: "updateApiRelayAccountUsage",
+    method: "update-api-relay-account-usage",
+  },
   { name: "list", method: "list" },
   { name: "listHostAccess", method: "list-host-access" },
   { name: "setHostAccess", method: "set-host-access" },
@@ -6034,6 +6084,25 @@ export function createInterBayProjectControlClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayProjectControlApi {
+  const createClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "create">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({ dest_bay, method: "create" }),
+    transport: "request",
+    noRetry: true,
+  });
+  const createStatusClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "createStatus">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.min(timeout ?? 15_000, 15_000),
+    }),
+    subject: projectControlSubject({ dest_bay, method: "create" }),
+    transport: "request",
+    noRetry: true,
+  });
   const startClient = createServiceClient<
     Pick<InterBayProjectControlApi, "start">
   >({
@@ -6181,6 +6250,8 @@ export function createInterBayProjectControlClient({
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
+    create: async (opts) => await createClient.create(opts),
+    createStatus: async (opts) => await createStatusClient.createStatus(opts),
     backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
     getRootfsStates: async (opts) =>
@@ -6210,6 +6281,27 @@ export function createInterBayProjectControlClient({
         opts,
       ),
   };
+}
+
+export function createInterBayProjectControlCreateHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: Pick<InterBayProjectControlApi, "create" | "createStatus">;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "create" | "createStatus">
+  >({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({ dest_bay: bay_id, method: "create" }),
+    impl: {
+      create: async (opts) => await impl.create(opts),
+      createStatus: async (opts) => await impl.createStatus(opts),
+    },
+  });
 }
 
 export function createInterBayProjectControlHandler({

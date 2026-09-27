@@ -188,6 +188,11 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("initCodexProjectRunner", () => {
+  const originalSiteUrl = process.env.COCALC_SITE_URL;
+  afterEach(() => {
+    if (originalSiteUrl === undefined) delete process.env.COCALC_SITE_URL;
+    else process.env.COCALC_SITE_URL = originalSiteUrl;
+  });
   beforeEach(() => {
     hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
     hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
@@ -201,6 +206,7 @@ describe("initCodexProjectRunner", () => {
     delete process.env.COCALC_BIN_PATH;
     delete process.env.COCALC_CLI_BIN;
     delete process.env.COCALC_API_URL;
+    delete process.env.COCALC_SITE_URL;
     delete process.env.BASE_URL;
     delete process.env.MASTER_CONAT_SERVER;
     delete process.env.COCALC_MASTER_CONAT_SERVER;

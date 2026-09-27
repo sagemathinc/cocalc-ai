@@ -198,6 +198,7 @@ function ResolvedWorkbenchSurface(props: WorkbenchProps) {
           path={directPath}
           projectId={props.project_id}
           threadId={props.desc.get("data-thread")}
+          fontSize={props.font_size}
         />
       ) : (
         <Workbench {...props} />
@@ -227,10 +228,12 @@ function DirectFileWorkbench({
   path,
   projectId,
   threadId,
+  fontSize,
 }: {
   path: string;
   projectId: string;
   threadId?: string;
+  fontSize?: number;
 }) {
   const artifact = {
     event: "chat-artifact",
@@ -247,6 +250,7 @@ function DirectFileWorkbench({
       projectId={projectId}
       artifact={artifact}
       historical={false}
+      fontSize={fontSize}
     />
   );
 }
@@ -562,6 +566,7 @@ function WorkbenchDocument({
         key={`${accountId}:${artifact.thread_id}:${artifact.artifact_id}:${version ?? "current"}`}
         artifact={artifact}
         historical={historical}
+        fontSize={font_size}
         storageKey={
           accountId && !read_only && !source
             ? `chat-action-review:${JSON.stringify([accountId, project_id, path, artifact.thread_id, artifact.artifact_id])}`

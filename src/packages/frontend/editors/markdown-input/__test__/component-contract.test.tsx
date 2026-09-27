@@ -515,6 +515,22 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 74);
   });
 
+  it("keeps fixed-height markdown scrolling inside CodeMirror, not its wrapper", async () => {
+    await renderMarkdownInput(
+      <MarkdownInput
+        value={"line\n".repeat(40)}
+        onChange={() => {}}
+        height="120px"
+        autoGrow={false}
+        chromeLayout="external"
+      />,
+    );
+
+    expect(latestEditor.getWrapperElement().style.overflow).toBe("hidden");
+    expect(latestEditor.getScrollerElement().style.overflowY).toBe("auto");
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, "100%");
+  });
+
   it("clears the mode switch float on the editor box so markdown keeps full width", async () => {
     const { container } = await renderMarkdownInput(
       <MarkdownInput

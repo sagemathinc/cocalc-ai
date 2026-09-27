@@ -847,7 +847,7 @@ export function MarkdownInput(props: Props) {
       const baseHeight = fixedHeight ?? `${initialMinHeight}px`;
       let s =
         `height:${baseHeight};width:100%;max-width:100%;` +
-        `box-sizing:border-box;font-family:sans-serif !important;`;
+        `overflow:hidden;box-sizing:border-box;font-family:sans-serif !important;`;
       if (compact) {
         s += "padding:0";
       } else {
@@ -855,7 +855,7 @@ export function MarkdownInput(props: Props) {
       }
       if (!isAutoGrow) {
         const h = fixedHeight ?? "100%";
-        s += `;min-height:${h};max-height:${h};overflow:auto;`;
+        s += `;min-height:${h};max-height:${h};`;
       }
       e.setAttribute("style", s);
       syncCodeMirrorLayout();

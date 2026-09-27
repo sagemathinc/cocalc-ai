@@ -298,17 +298,20 @@ async function loadManagedEgressCounterBaseline({
   }));
 }
 
-async function initializeManagedEgressCounters({
+export async function initializeManagedEgressCounters({
   account_id,
   windows,
+  transaction,
 }: {
   account_id: string;
   windows: AccountUsageWindows;
+  transaction?: PoolClient;
 }): Promise<void> {
   await ensureAccountUsageCountersInitialized({
     account_id,
     metric: USAGE_COUNTER_METRIC,
     windows,
+    transaction,
     loadBaseline: async ({ client, windows: missing, cutoff }) =>
       await loadManagedEgressCounterBaseline({
         client,

@@ -84,6 +84,7 @@ export function registerProjectCourseCommands(
               client,
               project_id: instructorProject.project_id,
               path: coursePath,
+              timeout_ms: ctx.timeoutMs,
             });
             try {
               return summarizeCourseRows({
@@ -142,6 +143,7 @@ export function registerProjectCourseCommands(
               client,
               project_id: instructorProject.project_id,
               path: coursePath,
+              timeout_ms: ctx.timeoutMs,
             });
             try {
               const configResult = await setCourseRootfs({
@@ -199,6 +201,7 @@ export function registerProjectCourseCommands(
               client,
               project_id: instructorProject.project_id,
               path: coursePath,
+              timeout_ms: ctx.timeoutMs,
             });
             try {
               return await reconfigureCourseProjects({

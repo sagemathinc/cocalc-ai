@@ -12,6 +12,7 @@ import {
   CodeEditorState,
 } from "../base-editor/actions-structured";
 import { FrameTree } from "../frame-tree/types";
+import { terminalScopeView } from "../frame-tree/terminal-scope";
 import { ChatActions } from "@cocalc/frontend/chat/actions";
 import {
   getInitialState,
@@ -428,17 +429,53 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
         ? chatActions?.getCodexConfig(selectedThreadKey)
         : undefined,
     );
-    await super.terminal(frameId, noSwitch, workingDirectory);
+    await super.terminal(
+      frameId,
+      noSwitch,
+      workingDirectory,
+      typeof selectedThreadKey === "string" && selectedThreadKey.trim()
+        ? selectedThreadKey
+        : undefined,
+    );
   }
 
   override focus(id?: string): void {
     if (id == null) {
       id = this._get_active_id();
     }
+    id = terminalScopeView(
+      this.store?.getIn(["local_view_state", "frame_tree"]),
+      this.store?.getIn(["local_view_state", "active_id"]),
+    ).visibleId(id);
     if (id != null && focusChatFrameInput(id)) {
       return;
     }
     super.focus(id);
+  }
+
+  override set_active_id(id: string, ignore_if_missing?: boolean): void {
+    const target = terminalScopeView(
+      this.store?.getIn(["local_view_state", "frame_tree"]),
+      this.store?.getIn(["local_view_state", "active_id"]),
+    ).visibleId(id);
+    if (target) super.set_active_id(target, ignore_if_missing);
+  }
+
+  override set_frame_data(obj: object): void {
+    super.set_frame_data(obj);
+    if (!("selectedThreadKey" in obj)) return;
+    const activeId = this._get_active_id();
+    const view = terminalScopeView(this._get_tree(), activeId);
+    const activeScope =
+      this._get_frame_node(activeId)?.get("data-terminalScope");
+    const selectedFrame = (obj as { id?: string }).id;
+    const target =
+      activeScope != null && activeScope !== obj.selectedThreadKey
+        ? (selectedFrame ?? view.visibleId(activeId))
+        : view.visibleId(activeId);
+    if (target && target !== activeId) this.set_active_id(target);
+    const fullId = this.store.getIn(["local_view_state", "full_id"]);
+    if (fullId && view.visibleId(fullId) !== fullId) this.unset_frame_full();
   }
 
   async gotoFragment(fragmentId: FragmentId) {

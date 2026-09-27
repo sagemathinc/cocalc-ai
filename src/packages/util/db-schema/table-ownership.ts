@@ -967,6 +967,60 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Account-scoped usage counter state keyed by account_usage_windows. Authority is inherited from the referenced window's account_id; these rows must move or be removed with that account's usage windows.",
   }),
 
+  ...adHocEntries(["account_api_relay_leases", "account_api_relay_admission"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    source: "server/membership/api-relay-quota.ts",
+    migrate_to_schema: true,
+    notes:
+      "Account-home relay quota reservations, retry receipts, and admission budgets. Rehome must preserve reservations and replay protection alongside usage windows; these are not disposable connection state.",
+  }),
+
+  ...adHocEntries(
+    [
+      "project_maintenance_status",
+      "project_maintenance_attempts",
+      "project_recovery_objective_state",
+      "project_restore_drill_attestations",
+    ],
+    {
+      ownership: "project-owning",
+      authority: "project_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        host_id: "Reporting runtime location, not project ownership authority.",
+      },
+      source: "server/projects recovery reporting schema bootstraps",
+      migrate_to_schema: true,
+      notes:
+        "Project-owning-bay recovery observations, attempt history, outstanding objectives, and restore evidence. Project rehome needs explicit preservation rules before moving this state.",
+    },
+  ),
+
+  ...adHocEntries(
+    ["project_recovery_objective_daily", "project_recovery_coverage_slots"],
+    {
+      ownership: "audit-local",
+      authority: "local",
+      portability: "stable",
+      source: "server/projects/recovery-objectives.ts",
+      migrate_to_schema: true,
+      notes:
+        "Bay-local historical recovery counts and worst-gap coverage observations. Retain this evidence on the recording bay; current project state cannot reconstruct past coverage gaps.",
+    },
+  ),
+
+  ...adHocEntries(["project_recovery_customer_warning_scan_status"], {
+    ownership: "stable-bay",
+    authority: "bay_id",
+    portability: "stable",
+    source: "server/projects/recovery-customer-warning-maintenance.ts",
+    migrate_to_schema: true,
+    notes:
+      "Bay-owned recovery-warning scan cursor and full-scan completion evidence. The cursor project is a traversal reference, not ownership authority.",
+  }),
+
   ...adHocEntries(["project_app_private_hostnames"], {
     ownership: "project-owning",
     authority: "project_id",

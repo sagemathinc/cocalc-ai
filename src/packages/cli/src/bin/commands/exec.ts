@@ -851,41 +851,46 @@ Example:
     )
     .option("--stdin", "read javascript from stdin")
     .action(async (code: string[], opts: ExecCliOptions, command: Command) => {
-      await deps.withContext(command, "exec", async (ctx) => {
-        const inlineScript = (code ?? []).join(" ").trim();
-        const filePath = `${opts.file ?? ""}`.trim();
-        const readFromStdin = !!opts.stdin || filePath === "-";
-        const readFromFile = filePath.length > 0 && filePath !== "-";
-        const sourceCount =
-          (inlineScript.length > 0 ? 1 : 0) +
-          (readFromFile ? 1 : 0) +
-          (readFromStdin ? 1 : 0);
-        if (sourceCount === 0) {
-          throw new Error(
-            "javascript code must be provided inline, with --file <path>, or with --stdin",
-          );
-        }
-        if (sourceCount > 1) {
-          throw new Error(
-            "choose exactly one script source: inline code, --file <path>, or --stdin",
-          );
-        }
-        const script = readFromFile
-          ? await readFile(filePath, "utf8")
-          : readFromStdin
-            ? await readExecScriptFromStdin()
-            : inlineScript;
-        if (!script.trim()) {
-          throw new Error("javascript code must be specified");
-        }
+      await deps.withContext(
+        command,
+        "exec",
+        async (ctx) => {
+          const inlineScript = (code ?? []).join(" ").trim();
+          const filePath = `${opts.file ?? ""}`.trim();
+          const readFromStdin = !!opts.stdin || filePath === "-";
+          const readFromFile = filePath.length > 0 && filePath !== "-";
+          const sourceCount =
+            (inlineScript.length > 0 ? 1 : 0) +
+            (readFromFile ? 1 : 0) +
+            (readFromStdin ? 1 : 0);
+          if (sourceCount === 0) {
+            throw new Error(
+              "javascript code must be provided inline, with --file <path>, or with --stdin",
+            );
+          }
+          if (sourceCount > 1) {
+            throw new Error(
+              "choose exactly one script source: inline code, --file <path>, or --stdin",
+            );
+          }
+          const script = readFromFile
+            ? await readFile(filePath, "utf8")
+            : readFromStdin
+              ? await readExecScriptFromStdin()
+              : inlineScript;
+          if (!script.trim()) {
+            throw new Error("javascript code must be specified");
+          }
 
-        const api = createBackendExecApi(ctx, deps);
-        const runner = new AsyncFunction("api", `"use strict";\n${script}\n`);
-        const result = await runner(api);
-        return {
-          result: result ?? null,
-        };
-      });
+          const api = createBackendExecApi(ctx, deps);
+          const runner = new AsyncFunction("api", `"use strict";\n${script}\n`);
+          const result = await runner(api);
+          return {
+            result: result ?? null,
+          };
+        },
+        { projectOnly: {} },
+      );
     });
 
   return program;

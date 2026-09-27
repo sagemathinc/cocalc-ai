@@ -28,6 +28,29 @@ import { lite } from "@cocalc/frontend/lite";
 
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
+const RESPONSE_PREVIEW_LENGTH = 400;
+
+function SubmittedAnswer({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (value.length <= RESPONSE_PREVIEW_LENGTH) {
+    return <div style={{ whiteSpace: "pre-wrap" }}>{value}</div>;
+  }
+  return (
+    <div>
+      <div style={{ whiteSpace: "pre-wrap" }}>
+        {expanded ? value : `${value.slice(0, RESPONSE_PREVIEW_LENGTH)}...`}
+      </div>
+      <Button
+        size="small"
+        type="link"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? "Hide full response" : "Show full response"}
+      </Button>
+    </div>
+  );
+}
 
 function responseId(): string {
   return (
@@ -77,6 +100,10 @@ function answersForQuestion(opts: {
 export interface CodexAttentionDraft {
   selected: Record<string, string | undefined>;
   other: Record<string, string>;
+  submitted?: {
+    answers: Record<string, string[]>;
+    declined: boolean;
+  };
 }
 
 export type CodexAttentionDraftUpdater = (
@@ -85,16 +112,20 @@ export type CodexAttentionDraftUpdater = (
 
 export function CodexAttentionCard({
   initialRecord,
+  responseInActivity,
   draft: savedDraft,
   onDraftChange,
 }: {
   initialRecord: AcpAttentionRecord;
+  responseInActivity?: boolean;
   draft?: CodexAttentionDraft;
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
   return (
     <RuntimeCodexAttentionCard
+      key={`${initialRecord.account_id}:${initialRecord.attention_id}`}
       initialRecord={initialRecord}
+      responseInActivity={responseInActivity}
       draft={savedDraft}
       onDraftChange={onDraftChange}
     />
@@ -103,10 +134,12 @@ export function CodexAttentionCard({
 
 function RuntimeCodexAttentionCard({
   initialRecord,
+  responseInActivity,
   draft: savedDraft,
   onDraftChange,
 }: {
   initialRecord: AcpAttentionRecord;
+  responseInActivity?: boolean;
   draft?: CodexAttentionDraft;
   onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
@@ -122,10 +155,13 @@ function RuntimeCodexAttentionCard({
   const [error, setError] = useState<string>();
   const [collapsed, setCollapsed] = useState(() => {
     try {
+      const stored = sessionStorage.getItem(
+        `codex-attention-collapsed:${initialRecord.attention_id}`,
+      );
       return (
-        sessionStorage.getItem(
-          `codex-attention-collapsed:${initialRecord.attention_id}`,
-        ) === "1"
+        stored === "1" ||
+        (stored == null &&
+          ["answered", "declined"].includes(initialRecord.state))
       );
     } catch {
       return false;
@@ -133,6 +169,21 @@ function RuntimeCodexAttentionCard({
   });
   const responseIdRef = useRef(responseId());
   const markedSeenRef = useRef(initialRecord.seen_at != null);
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const restoreReceiptFocus = useRef(false);
+
+  const acceptRecord = (next: AcpAttentionRecord) => {
+    setRecord((current) =>
+      next.updated_at > current.updated_at ? next : current,
+    );
+  };
+
+  useEffect(() => {
+    if (restoreReceiptFocus.current && draft.submitted) {
+      restoreReceiptFocus.current = false;
+      receiptRef.current?.focus();
+    }
+  }, [draft.submitted]);
 
   useEffect(() => {
     setRecord((current) =>
@@ -150,7 +201,7 @@ function RuntimeCodexAttentionCard({
         attention_id: initialRecord.attention_id,
       })
       .then((result) => {
-        if (result.ok && result.record) setRecord(result.record);
+        if (result.ok && result.record) acceptRecord(result.record);
       })
       .catch(() => {
         // Seeing the request must not be blocked by a transient delivery error.
@@ -159,6 +210,7 @@ function RuntimeCodexAttentionCard({
   }, [initialRecord.attention_id, initialRecord.project_id]);
 
   useEffect(() => {
+    if (record.state !== "pending") return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
@@ -174,7 +226,7 @@ function RuntimeCodexAttentionCard({
           const next = result.records?.find(
             ({ attention_id }) => attention_id === initialRecord.attention_id,
           );
-          if (next) setRecord(next);
+          if (result.ok && next) acceptRecord(next);
         }
       } catch (err) {
         if (!disposed && record.state === "pending") {
@@ -224,6 +276,7 @@ function RuntimeCodexAttentionCard({
   const respond = async (decline = false) => {
     setSubmitting(true);
     setError(undefined);
+    const focusedControl = document.activeElement;
     try {
       const result = await webapp_client.conat_client.attentionAcp({
         action: "respond",
@@ -233,10 +286,27 @@ function RuntimeCodexAttentionCard({
         answers: decline ? undefined : answers,
         decline,
       });
+      if (result.state === "already_submitted") {
+        if (result.record) setRecord(result.record);
+        throw new Error(
+          "This question already has a response. Your draft was not submitted.",
+        );
+      }
+      // A dispatch failure can still include a durably saved response.
+      if (
+        result.record &&
+        (result.ok || result.record.response_submitted_at != null)
+      ) {
+        restoreReceiptFocus.current = document.activeElement === focusedControl;
+        updateDraft((current) => ({
+          ...current,
+          submitted: { answers: decline ? {} : answers, declined: decline },
+        }));
+        setRecord(result.record);
+      }
       if (!result.ok || !result.record) {
         throw new Error(result.error ?? "The response was not accepted.");
       }
-      setRecord(result.record);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -322,15 +392,29 @@ function RuntimeCodexAttentionCard({
   const pending = record.state === "pending";
   const lateQuestion =
     record.state === "stale" && record.source_kind === "codex_sync_question";
-  const answerable = (pending || lateQuestion) && !record.response_submitted_at;
+  const submitted = draft.submitted;
+  const hasResponse = record.response_submitted_at != null || submitted != null;
+  const answerable = (pending || lateQuestion) && !hasResponse;
   const pendingFreshAuth =
     pending &&
     record.source_kind === "cocalc_action" &&
     record.action?.kind === "fresh_auth";
-  const staleWithAnswer =
-    record.state === "stale" && record.response_submitted_at != null;
-  const responseAwaitingCodex =
-    pending && record.response_submitted_at != null && !pendingFreshAuth;
+  const staleWithAnswer = record.state === "stale" && hasResponse;
+  // An async "answered" record can mean merely queued, not model receipt.
+  const received =
+    record.source_kind === "codex_sync_question" &&
+    record.state === "answered" &&
+    record.resolution_reason === "Codex accepted the response";
+  const responseLabel = received
+    ? "Received by Codex"
+    : staleWithAnswer
+      ? "Response saved; delivery failed"
+      : "Response submitted";
+  const responseDescription = received
+    ? "Codex accepted your response."
+    : staleWithAnswer
+      ? "Your response is saved, but could not be delivered. You can retry with this answer."
+      : "Your response is saved. Receipt by Codex is not confirmed.";
   const setDismissed = (value: boolean) => {
     setCollapsed(value);
     try {
@@ -352,6 +436,8 @@ function RuntimeCodexAttentionCard({
         borderRadius: 12,
         padding: "12px 16px",
         width: "100%",
+        minWidth: 0,
+        overflowWrap: "anywhere",
         color: UI_COLORS.text,
         background: UI_COLORS.surface,
       }}
@@ -365,39 +451,81 @@ function RuntimeCodexAttentionCard({
             <Tag color={pending ? "gold" : "default"}>
               {pendingFreshAuth
                 ? "Waiting for authorization"
-                : responseAwaitingCodex
-                  ? "Response submitted"
+                : hasResponse
+                  ? responseLabel
                   : lateQuestion
                     ? "Turn ended"
                     : stateLabel(record.state)}
             </Tag>
           </Space>
-          <Button type="text" onClick={() => setDismissed(!collapsed)}>
+          <Button
+            type="text"
+            aria-expanded={!collapsed}
+            onClick={() => setDismissed(!collapsed)}
+          >
             {collapsed ? "Show question" : "Dismiss"}
           </Button>
         </Space>
+        <div
+          ref={receiptRef}
+          tabIndex={-1}
+          role={hasResponse ? "status" : undefined}
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {hasResponse ? responseDescription : null}
+        </div>
         {!collapsed && (
           <>
-            <Text type="secondary" aria-live="polite">
-              {pendingFreshAuth
-                ? "Approve this request in CoCalc. The waiting command will continue automatically."
-                : responseAwaitingCodex
-                  ? "Your response is saved. Waiting for Codex to accept it."
+            {!hasResponse && (
+              <Text type="secondary" aria-live="polite">
+                {pendingFreshAuth
+                  ? "Approve this request in CoCalc. The waiting command will continue automatically."
                   : lateQuestion
                     ? "That turn has ended. Send your answer as a new message to continue."
                     : record.is_blocking
                       ? "The current Codex turn is paused until you respond."
                       : record.source_kind === "codex_async_question"
-                        ? "Codex may continue while it waits. Your response starts a new user message."
+                        ? "Codex can keep working while you answer. Your response will be saved with this question and submitted to Codex."
                         : record.summary}
-            </Text>
+              </Text>
+            )}
             {lite && pending ? (
               <Text type="secondary">
                 This request is available in this project. Cross-device inbox
                 and email delivery are not available in CoCalc Lite.
               </Text>
             ) : null}
-            {answerable && !pendingFreshAuth && !responseAwaitingCodex
+            {hasResponse && responseInActivity ? (
+              <Text type="secondary">
+                Your question and saved answer are in the turn activity.
+              </Text>
+            ) : null}
+            {hasResponse && !responseInActivity
+              ? record.questions.map((question) => (
+                  <section
+                    key={question.id}
+                    aria-label={`Response for ${question.header}`}
+                  >
+                    <Text strong>{question.header}</Text>
+                    <Paragraph
+                      style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}
+                    >
+                      {question.question}
+                    </Paragraph>
+                    <Text strong>Your response</Text>
+                    <SubmittedAnswer
+                      value={
+                        submitted?.declined
+                          ? "Declined to answer"
+                          : (submitted?.answers[question.id]?.join("\n") ??
+                            "Response saved. Answer text is not available in this view.")
+                      }
+                    />
+                  </section>
+                ))
+              : null}
+            {answerable && !pendingFreshAuth
               ? record.questions.map((question) => (
                   <fieldset
                     key={question.id}
@@ -531,7 +659,7 @@ function RuntimeCodexAttentionCard({
                   Snooze 5 minutes
                 </Button>
               </Space>
-            ) : answerable && !responseAwaitingCodex ? (
+            ) : answerable ? (
               <Space wrap>
                 <Button
                   type="primary"

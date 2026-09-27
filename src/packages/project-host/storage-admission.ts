@@ -248,6 +248,7 @@ export function createStorageAdmissionController(
   let deferredTotal = 0;
   let observedDeferralTotal = 0;
   const activeByPriority = emptyActiveCounts();
+  let starvationOverrideActive = false;
 
   const transition = (
     next: HostStoragePressureState,
@@ -408,10 +409,12 @@ export function createStorageAdmissionController(
     current: HostStorageAdmissionMetrics,
     requested: boolean | undefined,
   ): boolean => {
+    // Only the I/O hysteresis gate can be bypassed, never lifecycle settling,
+    // unavailable samples, or emergency pressure, including during mutations.
+    const reason = backgroundReason(current);
     return (
       requested === true &&
-      current.pressure_state !== "emergency" &&
-      !current.sample_error
+      (reason === "io_pressure_contended" || reason === "io_pressure_recovery")
     );
   };
 
@@ -437,15 +440,24 @@ export function createStorageAdmissionController(
     const spec = getStorageOperationSpec(operation_kind);
     const background =
       spec.priority === "scheduled" || spec.priority === "scavenger";
-    const reason = background ? backgroundReason(current) : undefined;
+    const reason = background
+      ? starvationOverrideActive
+        ? "maintenance_starvation_in_flight"
+        : backgroundReason(current)
+      : undefined;
     const wouldDefer = reason != null;
     const starvationOverride =
+      mode === "enforce" &&
       background &&
-      operation_kind === "scheduled_backup" &&
+      (operation_kind === "scheduled_backup" ||
+        operation_kind === "scheduled_snapshot") &&
       wouldDefer &&
+      !starvationOverrideActive &&
+      activeByPriority.scheduled === 0 &&
       starvationOverrideAllowed(current, allow_starvation_override);
     const admitted = mode !== "enforce" || !wouldDefer || starvationOverride;
     if (admitted) {
+      if (starvationOverride) starvationOverrideActive = true;
       admittedTotal += 1;
       activeByPriority[spec.priority] += 1;
     } else {
@@ -476,6 +488,7 @@ export function createStorageAdmissionController(
       release: () => {
         if (released || !admitted) return;
         released = true;
+        if (starvationOverride) starvationOverrideActive = false;
         activeByPriority[spec.priority] = Math.max(
           0,
           activeByPriority[spec.priority] - 1,
@@ -540,7 +553,8 @@ export function startStorageAdmissionController(): () => void {
   configureBtrfsBackgroundMutationGuard((context) =>
     activeController?.backgroundDeferralReason({
       allow_starvation_override:
-        context.operation_class === "scheduled_backup" &&
+        (context.operation_class === "scheduled_backup" ||
+          context.operation_class === "scheduled_snapshot") &&
         context.starvation_override,
     }),
   );

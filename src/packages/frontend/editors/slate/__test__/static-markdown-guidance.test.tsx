@@ -1,10 +1,21 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import StaticMarkdown from "../static-markdown";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
+const mockGetIdentity = jest.fn();
+const mockOpenAgentThread = jest.fn();
+jest.mock("@cocalc/frontend/agents/open-notification", () => ({
+  openAgentNotification: async () => false,
+}));
+jest.mock("@cocalc/frontend/agents/open-agent", () => ({
+  openAgentThread: (...args) => mockOpenAgentThread(...args),
+}));
+
 jest.mock("@cocalc/frontend/agents/api", () => ({
+  personalAgentApi: () => ({ getIdentity: mockGetIdentity }),
   useNamedAgents: () => ({ directory: undefined }),
   sameEndpoint: (a, b) =>
     a.project_id === b.project_id && a.agent_id === b.agent_id,
@@ -19,6 +30,7 @@ describe("static guidance rendering", () => {
     ["sending", "Sending guidance", UI_COLORS.infoBg],
     ["queued", "Guidance queued", UI_COLORS.warningBg],
     ["not-sent", "Guidance not sent", UI_COLORS.dangerBg],
+    ["saved", "Message saved; receipt by Codex unconfirmed", UI_COLORS.surface],
   ])(
     "uses semantic foreground and background for %s guidance",
     (state, label, background) => {
@@ -32,6 +44,38 @@ describe("static guidance rendering", () => {
       expect(region.style.color).toBe(UI_COLORS.text);
     },
   );
+  it("keeps folded network cards keyboard navigable without claiming receipt", async () => {
+    const user = userEvent.setup();
+    const identity = {
+      project_id: "44444444-4444-4444-8444-444444444444",
+      agent_id: "33333333-3333-4333-8333-333333333333",
+      path: "peer.chat",
+      thread_id: "peer-thread",
+    };
+    mockGetIdentity.mockResolvedValue(identity);
+    render(
+      <StaticMarkdown
+        value={
+          "````guidance saved\n```agent-message direction=incoming from=%40reviewer source=33333333-3333-4333-8333-333333333333 project=44444444-4444-4444-8444-444444444444\nReview ready\n```\n````"
+        }
+      />,
+    );
+    expect(
+      screen.getByRole("region", {
+        name: "Message saved; receipt by Codex unconfirmed",
+      }),
+    ).toBeVisible();
+    const peer = screen.getByRole("button", { name: "Open agent @reviewer" });
+    await user.tab();
+    expect(peer).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mockOpenAgentThread).toHaveBeenCalledWith(identity),
+    );
+    expect(
+      screen.queryByText("Agent guidance received"),
+    ).not.toBeInTheDocument();
+  });
   it("marks rich guidance content as a constrained layout boundary", () => {
     render(
       <StaticMarkdown

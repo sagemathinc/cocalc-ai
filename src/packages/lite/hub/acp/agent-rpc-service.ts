@@ -1,4 +1,5 @@
 import type { Client } from "@cocalc/conat/core/client";
+import getLogger from "@cocalc/backend/logger";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
@@ -31,6 +32,23 @@ import {
 
 type Prepared = ReturnType<typeof prepareChatSend>;
 type ChatDB = Pick<ImmerDB, "get" | "set" | "commit" | "save" | "save_to_disk">;
+const logger = getLogger("lite:acp:agent-rpc-service");
+
+// Receipts are visible to chat collaborators. Do not persist arbitrary backend
+// error text, which may contain credentials or another account's details.
+function launchFailureSummary(error: unknown): string {
+  const text = error instanceof Error ? error.message : `${error}`;
+  if (/timeout|timed out|deadline/i.test(text)) {
+    return "The agent launch acknowledgment timed out.";
+  }
+  if (/unauthoriz|permission|forbidden|revoked|access denied/i.test(text)) {
+    return "Agent launch authorization failed. Check the recipient and Agent Network permissions.";
+  }
+  if (/usage limit|quota|credits|payment|subscription|credential/i.test(text)) {
+    return "Agent launch encountered a payment, subscription, or usage-limit error. Check the recipient agent's AI settings.";
+  }
+  return "The agent did not confirm launch. Check recipient activity before resubmitting.";
+}
 
 export interface AgentRpcExecutionAdapter {
   authorize(e: AgentRpcEnvelope): Promise<void>;
@@ -200,6 +218,7 @@ export function createAgentRpcService(
             chat_effect: "none",
           });
         let admissionStarted = false;
+        let savedMessage: Prepared["message"] | undefined;
         let chatEffect: "none" | "saved" | "unknown" = "none";
         let starting = false;
         let validatingFiles = false;
@@ -302,6 +321,7 @@ export function createAgentRpcService(
             chatEffect = "unknown";
             db.set({
               ...prepared.message,
+              agent_rpc_launch: { state: "pending", updated_at: Date.now() },
               // Correlation metadata comes from the authorized envelope, not
               // JSON supplied in the body. It is never an authorization input.
               agent_rpc: {
@@ -327,12 +347,63 @@ export function createAgentRpcService(
             await db.save();
             await db.save_to_disk();
             chatEffect = "saved";
+            savedMessage = prepared.message;
             await guard();
             admissionStarted = true;
             await deps.admit(prepared);
+            // A receipt records admission, not completion of the agent's work.
+            try {
+              db.set({
+                event: "chat",
+                date: prepared.message.date,
+                sender_id: prepared.message.sender_id,
+                message_id: prepared.message.message_id,
+                agent_rpc_launch: { state: "accepted", updated_at: Date.now() },
+              });
+              db.commit();
+              await db.save();
+            } catch {
+              // A projection failure cannot undo a known successful admission.
+              logger.warn("could not persist accepted agent launch receipt", {
+                attempt_id: e.attempt_id,
+              });
+            }
             return rpcOutcome(e, "accepted", { chat_effect: chatEffect });
           });
         } catch (error) {
+          const detail = launchFailureSummary(error);
+          logger.warn("agent message launch failed", {
+            project_id: e.target.project_id,
+            attempt_id: e.attempt_id,
+            message_id: savedMessage?.message_id,
+            admissionStarted,
+            error: detail,
+          });
+          if (savedMessage) {
+            const message = savedMessage;
+            try {
+              await deps.withChat(e, async (db) => {
+                db.set({
+                  event: "chat",
+                  date: message.date,
+                  sender_id: message.sender_id,
+                  message_id: message.message_id,
+                  agent_rpc_launch: {
+                    state: admissionStarted ? "unknown" : "rejected",
+                    error: detail,
+                    updated_at: Date.now(),
+                  },
+                });
+                db.commit();
+                await db.save();
+                await db.save_to_disk();
+              });
+            } catch {
+              logger.warn("could not persist agent launch failure", {
+                attempt_id: e.attempt_id,
+              });
+            }
+          }
           const startupUnknown =
             starting &&
             (error instanceof StartupDeadline ||
@@ -360,8 +431,7 @@ export function createAgentRpcService(
                     : admissionStarted
                       ? {
                           code: "execution_ack_unknown" as const,
-                          reason:
-                            "Execution acknowledgment unavailable; inspect before any explicit retry",
+                          reason: `Execution acknowledgment unavailable; inspect before any explicit retry. ${detail}`,
                         }
                       : {
                           ...(Date.now() >= e.deadline

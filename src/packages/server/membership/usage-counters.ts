@@ -131,16 +131,18 @@ async function initializeAccountUsageCountersInternal({
   metric,
   windows,
   loadBaseline,
+  transaction,
 }: {
   account_id: string;
   metric: AccountUsageCounterMetric;
   windows: AccountUsageWindow[];
   loadBaseline: BaselineLoader;
+  transaction?: PoolClient;
 }): Promise<void> {
   await ensureAccountUsageCounterSchema();
-  const client = await getPool().connect();
+  const client = transaction ?? (await getPool().connect());
   try {
-    await client.query("BEGIN");
+    if (!transaction) await client.query("BEGIN");
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
       [account_id, metric],
@@ -196,12 +198,12 @@ async function initializeAccountUsageCountersInternal({
         [missing.map(({ id }) => id), metric, cutoff],
       );
     }
-    await client.query("COMMIT");
+    if (!transaction) await client.query("COMMIT");
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (!transaction) await client.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
-    client.release();
+    if (!transaction) client.release();
   }
 }
 
@@ -210,14 +212,27 @@ export async function ensureAccountUsageCountersInitialized({
   metric,
   windows,
   loadBaseline,
+  transaction,
 }: {
   account_id: string;
   metric: AccountUsageCounterMetric;
   windows: AccountUsageWindows;
   loadBaseline: BaselineLoader;
+  transaction?: PoolClient;
 }): Promise<void> {
   const windowList = Object.values(windows);
   if (windowList.length === 0) return;
+  // Do not cache uncommitted initialization or wait for an initializer that
+  // needs the transaction's advisory lock.
+  if (transaction) {
+    return await initializeAccountUsageCountersInternal({
+      account_id,
+      metric,
+      windows: windowList,
+      loadBaseline,
+      transaction,
+    });
+  }
   const key = initializationKey({ metric, windows: windowList });
   const cached = initializedCounters.get(key);
   if (cached) {

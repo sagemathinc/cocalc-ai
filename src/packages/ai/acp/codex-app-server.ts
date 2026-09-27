@@ -622,6 +622,7 @@ type CodexAppServerRuntime = {
   cwd: string;
   paymentSource: CodexSessionConfig["paymentSource"];
   credentialId?: string;
+  requestedCredentialId?: string;
   maxConcurrentSubagents?: number;
   spawned: SpawnedCodexAppServer;
   client: AppServerClient;
@@ -2531,7 +2532,9 @@ export class CodexAppServerAgent implements AcpAgent {
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
         (request.config?.paymentSource ?? "auto") &&
-      runtime.credentialId === request.config?.credentialId;
+      // Auto/default requests have no ID even when the spawner resolved one.
+      // Compare selections here; keep the resolved ID for revoke validation.
+      runtime.requestedCredentialId === request.config?.credentialId;
     if (!matches) return false;
     if (authSourceForSpawned(runtime.spawned) !== "subscription") return true;
     if (
@@ -2678,6 +2681,7 @@ export class CodexAppServerAgent implements AcpAgent {
       cwd,
       paymentSource: request.config?.paymentSource,
       credentialId: spawned.credentialId ?? request.config?.credentialId,
+      requestedCredentialId: request.config?.credentialId,
       maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
         request.config?.maxConcurrentSubagents,
       ),

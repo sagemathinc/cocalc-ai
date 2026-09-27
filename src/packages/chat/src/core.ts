@@ -127,6 +127,8 @@ export interface ChatMessage {
   acp_thread_id?: string | null;
   acp_automation_id?: string | null;
   acp_started_at_ms?: number;
+  // Project-visible working directory of this turn, not the current thread preference.
+  acp_working_directory?: string;
   acp_guidance_delivered_at_ms?: number;
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
@@ -178,6 +180,7 @@ export interface BuildChatMessageOptions {
   acp_thread_id?: string | null;
   acp_automation_id?: string | null;
   acp_started_at_ms?: number;
+  acp_working_directory?: string;
   acp_usage?: any;
   historyAuthorId?: string;
   historyEntryDate?: string;
@@ -216,6 +219,7 @@ export function buildChatMessage(
     acp_thread_id: options.acp_thread_id,
     acp_automation_id: options.acp_automation_id,
     acp_started_at_ms: options.acp_started_at_ms,
+    acp_working_directory: options.acp_working_directory,
     acp_usage: options.acp_usage,
     acp_account_id: options.acp_account_id,
     message_id: options.message_id,

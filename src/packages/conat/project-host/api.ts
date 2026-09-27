@@ -1050,6 +1050,8 @@ export interface HostRegisterOnPremTunnelResponse {
 
 export interface HostProjectMaintenanceSchedule {
   project_id: string;
+  // Response-only deferral: do not replace or renew a validated outage lease.
+  owner_entitlements_unresolved?: boolean;
   storage_account_id?: string | null;
   storage_service_class?: "paying" | "free" | "unclassified";
   storage_priority?: number;

@@ -18,8 +18,14 @@ import {
   codexModelOptionsForCatalog,
   codexThreadConfigKey,
 } from "../codex";
+import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "../codex-subscription-selection";
 
 const getCodexUsageStatus = jest.fn();
+const getCodexPaymentSource = jest.fn();
+let mockAccountId: string | undefined;
 let projectToolsVersion = "tools-v1";
 let mockWatchedFormValues: Record<string, unknown> = {};
 let mockModelSelectOnChange: ((value: string) => void) | undefined;
@@ -177,7 +183,8 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useState: React.useState,
     useAccountOtherSetting: () => undefined,
     useProjectMapField: () => projectToolsVersion,
-    useTypedRedux: () => undefined,
+    useTypedRedux: (store: string, key: string) =>
+      store === "account" && key === "account_id" ? mockAccountId : undefined,
     TypedMap,
     createTypedMap,
   };
@@ -218,6 +225,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
           getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
         system: {
+          getCodexPaymentSource: (...args: any[]) =>
+            getCodexPaymentSource(...args),
           getCodexUsageStatus: (...args: any[]) => getCodexUsageStatus(...args),
         },
       },
@@ -247,6 +256,9 @@ describe("CodexConfigButton", () => {
     jest.mocked(window.getComputedStyle).mockRestore();
   });
   beforeEach(() => {
+    jest.requireMock("@cocalc/frontend/lite").lite = false;
+    mockAccountId = undefined;
+    getCodexPaymentSource.mockReset();
     stableForm.resetFields.mockClear();
     stableForm.setFieldsValue.mockClear();
     stableForm.getFieldsValue.mockClear();
@@ -409,6 +421,121 @@ describe("CodexConfigButton", () => {
       expect.objectContaining({ paymentSource: "subscription" }),
     );
   });
+
+  it.each([
+    [undefined, false],
+    [undefined, true],
+    ["composer", false],
+    ["composer", true],
+    ["mobile-composer", false],
+    ["mobile-composer", true],
+  ] as const)(
+    "Lite %s selects and submits subscription B (default revoked: %s)",
+    async (compact, revoked) => {
+      jest.requireMock("@cocalc/frontend/lite").lite = true;
+      mockAccountId = "local-account";
+      const user = userEvent.setup();
+      const a = "00000000-0000-4000-8000-000000000001";
+      const b = "00000000-0000-4000-8000-000000000002";
+      const scope = {
+        accountId: mockAccountId,
+        projectId: "project-1",
+        threadKey: "lite-thread",
+      };
+      writeCodexSubscriptionSelection({ ...scope, credentialId: a });
+      const actions = {
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any;
+      render(
+        <CodexConfigButton
+          compact={compact}
+          threadKey={scope.threadKey}
+          chatPath="foo.chat"
+          projectId={scope.projectId}
+          actions={actions}
+          threadConfig={{ paymentSource: "subscription" }}
+          paymentSource={{
+            source: revoked ? "none" : "subscription",
+            hasSubscription: !revoked,
+            credentialId: revoked ? undefined : a,
+            subscriptions: [
+              ...(revoked
+                ? []
+                : [
+                    {
+                      id: a,
+                      label: "Personal",
+                      updatedAt: "2026-09-26T00:00:00Z",
+                    },
+                  ]),
+              { id: b, label: "Work", updatedAt: "2026-09-26T00:00:00Z" },
+            ],
+            hasProjectApiKey: false,
+            hasAccountApiKey: false,
+            hasSiteApiKey: false,
+            sharedHomeMode: "disabled",
+          }}
+        />,
+      );
+      expect(readCodexSubscriptionSelection(scope)).toBe(a);
+      expect(actions.setCodexConfig).not.toHaveBeenCalled();
+      if (compact !== "mobile-composer") {
+        const trigger = await screen.findByRole("button", {
+          name:
+            compact === "composer"
+              ? /^Change payment source/
+              : "Change Codex payment source",
+        });
+        trigger.focus();
+        await user.keyboard("{Enter}");
+        const choice = screen.getByRole("button", {
+          name: "Work",
+          exact: true,
+        });
+        choice.focus();
+        await user.keyboard("{Enter}");
+      } else {
+        const trigger = await screen.findByRole("button", {
+          name: /Agent settings:/,
+        });
+        trigger.focus();
+        await user.keyboard("{Enter}");
+        const payment = screen.getByRole("combobox", {
+          name: "Payment source",
+        });
+        payment.focus();
+        expect(document.activeElement).toBe(payment);
+        await user.selectOptions(payment, `subscription:${b}`);
+        await user.click(screen.getByRole("button", { name: "Save" }));
+      }
+      expect(actions.setCodexConfig).toHaveBeenCalledWith(
+        scope.threadKey,
+        expect.objectContaining({ paymentSource: "subscription" }),
+      );
+      const credentialId = readCodexSubscriptionSelection(scope);
+      expect(credentialId).toBe(b);
+      getCodexPaymentSource.mockResolvedValue({
+        source: "subscription",
+        credentialId: b,
+      });
+      const { fetchCodexPaymentSourceForSubmit } = jest.requireActual(
+        "../use-codex-payment-source",
+      );
+      await expect(
+        fetchCodexPaymentSourceForSubmit({
+          projectId: scope.projectId,
+          preference: "subscription",
+          credentialId,
+        }),
+      ).resolves.toMatchObject({ credentialId: b });
+      expect(getCodexPaymentSource).toHaveBeenCalledWith({
+        project_id: scope.projectId,
+        preference: "subscription",
+        credential_id: b,
+      });
+    },
+  );
 
   it("offers direct runtime controls in the composer rail", async () => {
     const actions = {

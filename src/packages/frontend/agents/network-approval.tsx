@@ -99,23 +99,37 @@ export function NetworkApproval({
     ? cachedAgentNameContext(value.sourceContext)
     : undefined;
 
+  const sourceNetworks =
+    directory?.networks.filter(
+      (network) =>
+        network.state === "active" && !!registeredMember(network, value.source),
+    ) ?? [];
   const targetNetworks =
     directory?.networks.filter(
       (network) =>
         network.state === "active" && !!registeredMember(network, value.target),
     ) ?? [];
-  const sharedNetwork = targetNetworks.find((network) =>
-    registeredMember(network, value.source),
+  const sharedNetwork = sourceNetworks.find((network) =>
+    registeredMember(network, value.target),
   );
-  const joinableNetworks = targetNetworks.filter(
+  const sourceOnlyNetworks = sourceNetworks.filter(
+    (network) => !registeredMember(network, value.target),
+  );
+  const targetOnlyNetworks = targetNetworks.filter(
+    (network) => !registeredMember(network, value.source),
+  );
+  const availableNetworks = [...sourceOnlyNetworks, ...targetOnlyNetworks];
+  const joinableNetworks = availableNetworks.filter(
     (network) =>
-      !registeredMember(network, value.source) &&
       activeNetworkMembers(network).length <
-        (directory?.usage.member_limit ?? 0),
+      (directory?.usage.member_limit ?? 0),
   );
   const selectedNetwork = joinableNetworks.find(
     ({ agent_network_id }) => agent_network_id === selection,
   );
+  const addingTarget =
+    !!selectedNetwork && !!registeredMember(selectedNetwork, value.source);
+  const memberToAdd = addingTarget ? value.target : value.source;
   const selectedProjects = new Set(
     selectedNetwork
       ? activeNetworkMembers(selectedNetwork).flatMap((member) =>
@@ -124,8 +138,7 @@ export function NetworkApproval({
       : [],
   );
   const crossesProject = selectedNetwork
-    ? selectedProjects.size > 0 &&
-      !selectedProjects.has(value.source.project_id)
+    ? selectedProjects.size > 0 && !selectedProjects.has(memberToAdd.project_id)
     : value.source.project_id !== value.target.project_id;
   const creating = selection === NEW_NETWORK;
   const atNetworkLimit =
@@ -161,18 +174,25 @@ export function NetworkApproval({
       const next = await loadAllNetworks();
       if (!alive.current || revision !== loadRevision.current) return;
       setDirectory(next);
+      const activeForSource = next.networks.filter(
+        (network) =>
+          network.state === "active" &&
+          !!registeredMember(network, value.source),
+      );
       const activeForTarget = next.networks.filter(
         (network) =>
           network.state === "active" &&
           !!registeredMember(network, value.target),
       );
-      const shared = activeForTarget.find((network) =>
-        registeredMember(network, value.source),
+      const shared = activeForSource.find((network) =>
+        registeredMember(network, value.target),
       );
-      const firstJoinable = activeForTarget.find(
+      const firstJoinable = [...activeForSource, ...activeForTarget].find(
         (network) =>
-          !registeredMember(network, value.source) &&
-          activeNetworkMembers(network).length < next.usage.member_limit,
+          !(
+            registeredMember(network, value.source) &&
+            registeredMember(network, value.target)
+          ) && activeNetworkMembers(network).length < next.usage.member_limit,
       );
       setSelection(
         shared?.agent_network_id ??
@@ -214,12 +234,12 @@ export function NetworkApproval({
       const completed = await runFreshAuthAction(async () => {
         boundAccount.assertCurrent();
         if (selectedNetwork) {
-          const key = `join:${selectedNetwork.agent_network_id}:${value.source.agent_id}:${selectedNetwork.generation}`;
+          const key = `join:${selectedNetwork.agent_network_id}:${memberToAdd.agent_id}:${selectedNetwork.generation}`;
           await personalAgentApi().updateAgentNetwork({
             request_id: requestId(key),
             agent_network_id: selectedNetwork.agent_network_id,
             action: "add-member",
-            member: { kind: "registered", endpoint: value.source },
+            member: { kind: "registered", endpoint: memberToAdd },
           });
         } else {
           const title = newTitle.trim();
@@ -288,7 +308,7 @@ export function NetworkApproval({
           {sourceNaming.field}
           {loading && (
             <div role="status" style={{ textAlign: "center", padding: 20 }}>
-              <Spin /> Loading {value.targetLabel}&apos;s networks...
+              <Spin /> Loading Agent Networks...
             </div>
           )}
           {loadError && (
@@ -323,7 +343,7 @@ export function NetworkApproval({
             >
               <Space orientation="vertical" style={{ width: "100%" }}>
                 {joinableNetworks.length > 0 && (
-                  <strong>Join an existing network</strong>
+                  <strong>Use an existing network</strong>
                 )}
                 {joinableNetworks.map((network) => (
                   <div
@@ -346,11 +366,11 @@ export function NetworkApproval({
                     </div>
                   </div>
                 ))}
-                {targetNetworks.length > joinableNetworks.length && (
+                {availableNetworks.length > joinableNetworks.length && (
                   <div style={{ color: UI_COLORS.secondary }}>
-                    {targetNetworks.length - joinableNetworks.length} other
+                    {availableNetworks.length - joinableNetworks.length} other
                     active network
-                    {targetNetworks.length - joinableNetworks.length === 1
+                    {availableNetworks.length - joinableNetworks.length === 1
                       ? " is"
                       : "s are"}{" "}
                     full.
@@ -402,8 +422,8 @@ export function NetworkApproval({
           {selectedNetwork && (
             <Alert
               type="info"
-              title={`Add ${sourceLabel} to ${networkLabel(selectedNetwork)}`}
-              description={`${sourceLabel} will be able to message every current member, and every member will be able to message ${sourceLabel}.`}
+              title={`Add ${addingTarget ? value.targetLabel : sourceLabel} to ${networkLabel(selectedNetwork)}`}
+              description={`${addingTarget ? value.targetLabel : sourceLabel} will be able to message every current member, and every member will be able to message ${addingTarget ? value.targetLabel : sourceLabel}.`}
             />
           )}
           {crossesProject && !sharedNetwork && (

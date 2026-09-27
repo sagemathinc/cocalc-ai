@@ -24,6 +24,43 @@ This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @
 - Keep dependencies narrow: podman, btrfs, project-runner, file-server, and project-proxy live here; frontend and heavy hub logic stay out.
 - Reuse appropriate Lite helpers without exposing the host-wide control database to project clients; the persistence boundaries below still apply.
 
+## Memory Pressure Eviction Policy
+
+Ordinary memory eviction is **idle-first across compute tiers**. Among eligible
+projects, older authoritative edit activity always sorts before newer activity;
+tier and deprioritization are only tie breakers for exactly equal timestamps.
+The normal-candidate ordering invariant is: if eligible ordinary candidates A
+and B have `last_edited(A) < last_edited(B)`, A must precede B, regardless of tier,
+even for a one-millisecond difference. Do not group activity into buckets and
+then sort by tier within a bucket. Eligibility requires at least
+one hour of known edit inactivity by default, configurable with
+`COCALC_PROJECT_HOST_MEMORY_PRESSURE_MIN_IDLE_MS`. Startup, explicit protection,
+and cooldown guards still apply. Missing, non-finite, zero, negative, or future
+edit timestamps are unknown, not evidence of inactivity.
+
+True memory emergencies can relax these protections, including the idle cutoff,
+to preserve the host. Unknown activity remains an emergency fallback after known
+activity, not an artificial epoch-zero timestamp that jumps to the front.
+Directly attributed resource offenders retain their safety bypass and first
+rank. Missing or invalid tier information stays unknown: it is neither priority
+zero nor a paid entitlement, breaks otherwise equal ties after known tiers, and
+does not produce the free-tier stop label.
+
+Admission decisions and enforcement of a project's own quota/resource limits
+are separate from ordinary memory victim selection. Those safety paths, direct
+offender precedence, and emergency protection relaxation are explicit
+exceptions, not reasons to let tier outrank idleness in the ordinary comparator.
+
+The ordering signal is `authoritative_last_edited_ms` from the owning bay's
+existing policy mirror, not browser presence. `last_browser_activity_ms` records
+receipt of an open-page heartbeat, not typing or focus. The browser only emits
+these heartbeats when its browser-idle runtime policy is enabled, so absence is
+expected for many paid projects and does not prove inactivity. Conversely, a
+background page can keep emitting indefinitely and must not pin its project.
+Presence age is recorded separately in eviction evidence and does not affect
+eligibility, tier, or idle ordering. This policy does not change browser-idle
+maintenance, heartbeat transport, or policy synchronization.
+
 ## Routing Rules (HTTP vs conat)
 
 - Prefer conat hub RPC for any endpoint that is user-, account-, or project-scoped.
@@ -100,3 +137,37 @@ persistence is project-scoped; Lite table changefeeds are Plus-only.**
 ## Packaging
 
 - Bundling/SEA lives here (moved from `project-runner`): `pnpm --filter @cocalc/project-host build:tarball` to create the bundle, `pnpm --filter @cocalc/project-host sea` for the SEA archive.
+
+## Paced Maintenance Under I/O Pressure
+
+In storage-admission `enforce` mode, snapshots and backups at least one hour
+past their actual due time may make low-priority progress during `contended`
+or `recovery` pressure. Normal recovery hysteresis is unchanged: sustained
+moderate pressure need not fall below 1% for 60 seconds to protect overdue data.
+
+- `COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_AGE_MS` defaults to `3600000`
+  (one hour), measured from the schedule's due time, not simply the last edit.
+- `COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_INTERVAL_MS` defaults to
+  `300000` (five minutes). There is one escape attempt in flight per host, then
+  a cooldown from its completion, including failures and deferrals. The old
+  `STARVATION_OVERRIDES_PER_SWEEP` setting is no longer used: repeated sweeps
+  cannot reset this budget.
+- A process-local queue alternates maintenance types and rotates projects
+  after attempted escapes. Repeated inventories retain queue position; targeted
+  change/retry batches cannot jump ahead of other known overdue projects.
+  Initial ordering retains the normal service-class/account ordering. Completed,
+  disabled, and reassigned work is removed when schedules are refreshed.
+- Full reconciliation populates the queue; event/retry wakeups service its next
+  eligible project after cooldown. For a stable finite backlog, each type gets
+  every other slot while both have eligible debt, and each project rotates within
+  its type. This bounds scheduling delay by backlog and operation duration, not
+  a wall-clock completion guarantee. Retry backoff and safety deferrals still apply.
+- Emergency or unavailable I/O pressure, lifecycle activity and its settling
+  window cannot be bypassed, including at Btrfs mutation boundaries. Memory is
+  checked at sweep entry and before dispatch. Existing disk-space checks,
+  ownership confirmation/leases, volume lifecycle locks, and low-priority
+  maintenance cgroup execution remain in force.
+
+Queue position and cooldown reset on process restart; ordinary startup delay
+still applies. No starvation escape is granted to scavengers. Interactive
+storage, transport, and eviction are unchanged.
