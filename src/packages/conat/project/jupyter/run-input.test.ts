@@ -18,6 +18,7 @@ describe("bounded run input", () => {
       password: true,
     });
     const prompt = input.get()!;
+    expect(prompt.sequence).toBe(1);
     prompt.prompt = "client mutation";
     expect(input.get()!.prompt).toBe("password?");
     expect(() => input.request({ id: "other", prompt: "?" })).toThrow(
@@ -33,6 +34,7 @@ describe("bounded run input", () => {
     expect(JSON.stringify(input)).not.toContain("secret");
     const second = input.request({ id: "cell", prompt: "again?" });
     const next = input.get()!;
+    expect(next.sequence).toBe(2);
     expect(next.request_id).not.toBe(prompt.request_id);
     expect(input.answer(prompt.request_id, "late")).toBe("already-accepted");
     expect(input.get()!.request_id).toBe(next.request_id);

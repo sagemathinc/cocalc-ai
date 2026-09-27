@@ -14,6 +14,7 @@ export interface JupyterInputPrompt {
 export interface JupyterInputRequest extends JupyterInputPrompt {
   request_id: string;
   expires_at: number;
+  sequence: number;
 }
 
 export const MAX_INPUT_PROMPT_BYTES = 16 * 1024;
@@ -39,6 +40,7 @@ export class JupyterRunInput {
   };
   private accepted?: string;
   private closed = false;
+  private sequence = 0;
 
   constructor(private readonly timeoutMs = INPUT_TIMEOUT_MS) {
     if (
@@ -65,6 +67,7 @@ export class JupyterRunInput {
       password: prompt.password,
       request_id: uuid(),
       expires_at: Date.now() + this.timeoutMs,
+      sequence: ++this.sequence,
     };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

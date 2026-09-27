@@ -25,6 +25,7 @@ import { sleep } from "@cocalc/util/async-utils";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
 import type { KernelSpec } from "@cocalc/util/jupyter/types";
 import { createJupyterReplayReader } from "./jupyter-replay";
+import { createJupyterInputResponder } from "./jupyter-input";
 
 type ProjectIdentity = {
   project_id: string;
@@ -1651,6 +1652,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     waitForAck?: boolean;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
+    const input = createJupyterInputResponder(
+      stdin ?? (async () => "stdin not implemented"),
+    );
     const normalizedPath = normalizeNotebookPath(path);
     const { project, client, syncdb, release } =
       await acquireProjectJupyterSession0({
@@ -1670,7 +1674,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         path: normalizedPath,
         project_id: project.project_id,
         client,
-        stdin,
+        stdin: input.handle,
       });
       const run_id = `cli-${Date.now().toString(36)}-${Math.random()
         .toString(36)
@@ -1691,6 +1695,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
       );
       const recovery = new AbortController();
       const replay = createJupyterReplayReader({
+        input,
         runId: run_id,
         signal: recovery.signal,
         createClient: () =>
@@ -1698,7 +1703,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
             path: normalizedPath,
             project_id: project.project_id,
             client,
-            stdin,
+            stdin: input.handle,
           }),
       });
       const output = recoverRunOutput({
@@ -1723,6 +1728,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         },
       };
     } catch (error) {
+      input.close();
       await release();
       throw error;
     }

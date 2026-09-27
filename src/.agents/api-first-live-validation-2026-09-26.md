@@ -637,6 +637,30 @@ and live two-prompt/revocation validation remain to be implemented and exercised
 These tests do not establish fresh credential issuance or revocation while a
 prompt is pending, and the deployed failure above remains the live result.
 
+### CLI pending-input integration (not deployed)
+
+The CLI run session now shares an input responder between original and replay
+clients. Server prompts carry a monotonically increasing per-run sequence as
+well as their unique request ID. The responder retains only the current prompt
+state, shares its callback promise across duplicate delivery, and rejects older
+sequences. It clears the stored answer after acknowledgement or observed absence
+of pending input, and closes with the run/replay reader. Callback errors are
+reported without their potentially sensitive original message.
+
+Replay polling checks pending input without awaiting the human callback. A ready
+answer is submitted against its exact run/request; an uncertain acknowledgement
+can be retried with the same request ID without invoking the callback again.
+Input lookup/submission share the existing five-second replay deadline, including
+transport retries. Deadline cancellation closes the responder, so a late lookup
+cannot start a callback. No execution request is retried. A mismatched replay
+run is rejected before input recovery is attempted.
+
+Twenty-five focused CLI tests pass, including five responder/deadline cases;
+11 input-state/scoped-service tests pass. CLI typechecking and test compilation
+pass. This is component evidence, not a deployed interactive-input success.
+The project runtime and CLI both need rebuilding/upgrading before repeating the
+real two-prompt probe and testing revocation while a callback is pending.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing

@@ -1,19 +1,23 @@
 import type { JupyterClient } from "@cocalc/conat/project/jupyter/run-code";
+import type { createJupyterInputResponder } from "./jupyter-input";
 
-type ReplayClient = Pick<JupyterClient, "getRun" | "close"> & {
-  socket: { state: string };
-};
+type ReplayClient = Pick<JupyterClient, "getRun" | "close"> &
+  Partial<Pick<JupyterClient, "getInput" | "answerInput">> & {
+    socket: { state: string };
+  };
 
 export function createJupyterReplayReader({
   createClient,
   runId,
   signal,
   timeoutMs = 5000,
+  input,
 }: {
   createClient: () => ReplayClient;
   runId: string;
   signal: AbortSignal;
   timeoutMs?: number;
+  input?: ReturnType<typeof createJupyterInputResponder>;
 }) {
   let client: ReplayClient | undefined;
   let closed = false;
@@ -28,6 +32,7 @@ export function createJupyterReplayReader({
       closed = true;
       cancel?.(new Error("Jupyter replay reader closed"));
       dispose();
+      input?.close();
     },
     readPage: async (after_seq: number) => {
       signal.throwIfAborted();
@@ -38,6 +43,7 @@ export function createJupyterReplayReader({
       const interrupted = new Promise<never>((_, reject) => {
         cancel = (error) => {
           stopped = true;
+          input?.close();
           reject(error);
           dispose();
         };
@@ -66,11 +72,33 @@ export function createJupyterReplayReader({
               }
               const current = client;
               try {
-                return await current.getRun(
+                const remainingMs = () => Math.max(1, deadline - Date.now());
+                const page = await current.getRun(
                   runId,
                   { after_seq },
-                  { timeout: Math.max(1, deadline - Date.now()) },
+                  { timeout: remainingMs() },
                 );
+                if (page && page.run_id !== runId)
+                  throw Error("Jupyter replay run mismatch");
+                if (
+                  input &&
+                  page &&
+                  !page.done &&
+                  !stopped &&
+                  !signal.aborted
+                ) {
+                  if (!current.getInput || !current.answerInput)
+                    throw Error("Jupyter input recovery unavailable");
+                  await input.recover(
+                    {
+                      getInput: current.getInput,
+                      answerInput: current.answerInput,
+                    },
+                    runId,
+                    remainingMs,
+                  );
+                }
+                return page;
               } catch (error) {
                 if (
                   stopped ||
