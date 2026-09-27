@@ -39,6 +39,20 @@ completed. This adds one manual-key WebSocket upgrade/egress revocation case;
 it does not establish bidirectional application recovery, managed-key replay,
 authority-outage behavior, or the full session-family acceptance matrix.
 
+A bidirectional follow-up used the existing `ws` 8.21.3 library at both ends
+instead of the minimal outbound-frame fixture. The client sent numbered
+commands every 100 ms; the app acknowledged each and recorded its receipt
+count/timestamp on closure. Revocation began after five acknowledgments.
+All 243 sent commands were acknowledged and recorded. Client closure occurred
+24616 ms after start and 23367 ms after deletion; the last acknowledgment was
+23352 ms after deletion and the last app receipt was 23326 ms after deletion.
+The app socket closed after 24592 ms. A write on the closed client failed,
+exchange with the revoked parent failed, and no credentials reached the app.
+The installed CLI and ordinary HTTP negative checks passed in the same run.
+The probe removed its app, temporary dependency archive, files, and keys.
+This proves one continuous bidirectional manual-key transport case, not
+application-level reconnection/recovery or managed-turn replay.
+
 Build `20260927T184112Z-0844025c1997` was promoted healthy at
 18:44:03 UTC via explicit-version operation
 `cb031c1e-d2c8-4d71-97c6-668df4df173e`. The same public-route probe now
