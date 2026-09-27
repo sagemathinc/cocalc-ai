@@ -30,8 +30,11 @@ import {
   admitStorageOperation,
   getStorageAdmissionStatus,
 } from "./storage-admission";
+import type { StorageAdmissionTicket } from "./storage-admission";
 import type { StorageOperationKind } from "./storage-operation-registry";
 import { orderProjectMaintenance } from "./maintenance-priority";
+import { createMaintenanceStarvationQueue } from "./maintenance-starvation";
+import type { StarvedMaintenance } from "./maintenance-starvation";
 import { recoveryFailureReason } from "./recovery-failure-reason";
 import { setSnapshotBackupMaintenanceGate } from "./snapshot-backup-gate";
 import { onProjectChangeReported } from "./last-edited";
@@ -59,9 +62,8 @@ const MAX_CANDIDATE_LIMIT = 500;
 const CHANGE_EVENT_BATCH_LIMIT = 50;
 const CHANGE_EVENT_DELAY_MS = 15_000;
 const CHANGE_EVENT_RETRY_MS = 60_000;
-const DEFAULT_STARVATION_AGE_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_STARVATION_OVERRIDES_PER_SWEEP = 1;
-const MAX_STARVATION_OVERRIDES_PER_SWEEP = 4;
+const DEFAULT_STARVATION_AGE_MS = 60 * 60 * 1000;
+const DEFAULT_STARVATION_INTERVAL_MS = 5 * 60 * 1000;
 const GIB = 1024 ** 3;
 const DEFAULT_MEMORY_AVAILABLE_RATIO = 0.25;
 const DEFAULT_MEMORY_AVAILABLE_MIN_BYTES = 2 * GIB;
@@ -76,6 +78,7 @@ const inFlightBackups = new Set<string>();
 let snapshotLaneRunning = false;
 let backupLaneRunning = false;
 let scheduleListing: Promise<HostProjectMaintenanceSchedule[]> | undefined;
+let starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
 
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
@@ -433,6 +436,7 @@ async function runScheduledStorageOperation({
   project_id,
   operation_kind,
   allowStarvationOverride = false,
+  starvationIntervalMs = DEFAULT_STARVATION_INTERVAL_MS,
   validate,
   run,
 }: {
@@ -443,15 +447,30 @@ async function runScheduledStorageOperation({
     "scheduled_snapshot" | "scheduled_backup"
   >;
   allowStarvationOverride?: boolean;
+  starvationIntervalMs?: number;
   validate: () => Promise<string | undefined>;
   run: () => Promise<void>;
 }): Promise<{ ran: boolean; starvationOverride: boolean; reason?: string }> {
-  const ticket = admitStorageOperation({
-    operation_kind,
-    project_id,
-    allow_starvation_override: allowStarvationOverride,
-  });
+  const releaseReservation = allowStarvationOverride
+    ? starvationQueue.reserve(
+        project_id,
+        operation_kind === "scheduled_snapshot" ? "snapshot" : "backup",
+        starvationIntervalMs,
+      )
+    : undefined;
+  let ticket: StorageAdmissionTicket;
+  try {
+    ticket = admitStorageOperation({
+      operation_kind,
+      project_id,
+      allow_starvation_override: releaseReservation != null,
+    });
+  } catch (err) {
+    releaseReservation?.(false);
+    throw err;
+  }
   if (!ticket.admitted) {
+    releaseReservation?.(false);
     logger.info("deferring scheduled project storage operation", {
       hostId,
       project_id,
@@ -461,14 +480,17 @@ async function runScheduledStorageOperation({
     return { ran: false, starvationOverride: false, reason: ticket.reason };
   }
   if (ticket.starvation_override) {
-    logger.info("admitting overdue backup maintenance at low priority", {
-      hostId,
-      project_id,
-      operation_kind,
-      reason: ticket.reason,
-    });
+    logger.info(
+      "admitting overdue snapshot/backup maintenance at low priority",
+      {
+        hostId,
+        project_id,
+        operation_kind,
+        reason: ticket.reason,
+      },
+    );
   }
-  if (ticket.would_defer) {
+  if (ticket.would_defer && !ticket.starvation_override) {
     logger.info("scheduled project storage operation would be deferred", {
       hostId,
       project_id,
@@ -491,6 +513,13 @@ async function runScheduledStorageOperation({
           starvation_override: ticket.starvation_override,
         },
         async () => {
+          const memory = maintenanceMemoryDecision({
+            configuredParallelism: 1,
+          });
+          if (memory.skip) {
+            validationReason = memory.reason;
+            return;
+          }
           validationReason = await validate();
           if (validationReason) return;
           await run();
@@ -529,6 +558,7 @@ async function runScheduledStorageOperation({
     }
   } finally {
     ticket.release();
+    releaseReservation?.(ticket.starvation_override);
   }
 }
 
@@ -545,19 +575,6 @@ function parseTimestampMs(
 ): number | undefined {
   const parsed = value ? new Date(value).getTime() : Number.NaN;
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function backupIsStarved({
-  backupDueSince,
-  nowMs = Date.now(),
-  starvationAgeMs,
-}: {
-  backupDueSince: string | null | undefined;
-  nowMs?: number;
-  starvationAgeMs: number;
-}): boolean {
-  const dueSinceMs = parseTimestampMs(backupDueSince);
-  return dueSinceMs != null && nowMs - dueSinceMs >= starvationAgeMs;
 }
 
 function backupDueAt(
@@ -659,8 +676,11 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     admission?.mode === "enforce" &&
     (admission.lifecycle_active > 0 || admission.pressure_state !== "normal");
   const starvationOverrideEligible =
-    admission == null ||
-    (admission.pressure_state !== "emergency" && !admission.sample_error);
+    admission?.mode === "enforce" &&
+    admission.lifecycle_active === 0 &&
+    (admission.pressure_state === "contended" ||
+      admission.pressure_state === "recovery") &&
+    !admission.sample_error;
   if (sweepRestricted) {
     logger.info("restricting snapshot/backup maintenance sweep", {
       hostId,
@@ -743,13 +763,9 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_AGE_MS,
     DEFAULT_STARVATION_AGE_MS,
   );
-  const starvationOverrideLimit = Math.min(
-    MAX_STARVATION_OVERRIDES_PER_SWEEP,
-    parsePositiveInteger(
-      process.env
-        .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_OVERRIDES_PER_SWEEP,
-      DEFAULT_STARVATION_OVERRIDES_PER_SWEEP,
-    ),
+  const starvationIntervalMs = parsePositiveInteger(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_INTERVAL_MS,
+    DEFAULT_STARVATION_INTERVAL_MS,
   );
   const parallelism = memoryDecision.parallelism;
   if (parallelism < configuredParallelism) {
@@ -815,7 +831,10 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
       requestedProjectIds: projectIds,
     });
   }
-  if (!rows.length) return true;
+  if (!rows.length) {
+    if (!shadow) starvationQueue.update([], projectIds);
+    return true;
+  }
   const candidateDiscoveryMs = Date.now() - listingStartedAt;
   const validateAssignment = async (
     row: HostProjectMaintenanceSchedule,
@@ -965,6 +984,30 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
     return true;
   }
   const queuedAt = Date.now();
+  const starved: StarvedMaintenance[] = [];
+  for (const kind of ["snapshot", "backup"] as const) {
+    for (const row of kind === "snapshot" ? snapshotRows : backupRows) {
+      const schedule = mergeSchedule(
+        kind === "snapshot" ? DEFAULT_SNAPSHOT_COUNTS : DEFAULT_BACKUP_COUNTS,
+        kind === "snapshot" ? row.snapshots : row.backups,
+      );
+      const due =
+        kind === "snapshot"
+          ? snapshotDueAt(row, schedule)
+          : backupDueAt(row, schedule);
+      if (schedule.disabled || due == null || queuedAt - due < starvationAgeMs)
+        continue;
+      starved.push({
+        projectId: row.project_id,
+        kind,
+        retryAt:
+          parseTimestampMs(
+            kind === "snapshot" ? row.snapshot_retry_at : row.backup_retry_at,
+          ) ?? 0,
+      });
+    }
+  }
+  starvationQueue.update(starved, projectIds);
   // Publish every due item before a long lane starts. A project waiting behind
   // hundreds of backups must already count as debt and appear in bay health.
   // Use the inventory timestamp so a completion racing this publication wins.
@@ -1065,6 +1108,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             hostId,
             project_id,
             operation_kind: "scheduled_snapshot",
+            allowStarvationOverride: starvationOverrideEligible,
+            starvationIntervalMs,
             validate: () => validateAssignment(row, "snapshot"),
             run: async () => {
               const updated = await runScheduledSnapshotMaintenance({
@@ -1217,7 +1262,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   const backupLane = async () => {
     if (backupLaneRunning) return;
     backupLaneRunning = true;
-    let starvationOverrideReservations = 0;
     try {
       await runWithParallelism(backupRows, parallelism, async (row) => {
         const project_id = row.project_id;
@@ -1310,15 +1354,6 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
         ) {
           return;
         }
-        const starved = backupIsStarved({
-          backupDueSince: new Date(dueAt).toISOString(),
-          starvationAgeMs,
-        });
-        const allowStarvationOverride =
-          starved &&
-          starvationOverrideEligible &&
-          starvationOverrideReservations < starvationOverrideLimit;
-        if (allowStarvationOverride) starvationOverrideReservations += 1;
         inFlightBackups.add(project_id);
         const startedAt = Date.now();
         let stageDurations: Record<string, number> = {};
@@ -1333,7 +1368,8 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
             project_id,
             operation_kind: "scheduled_backup",
             validate: () => validateAssignment(row, "backup"),
-            allowStarvationOverride,
+            allowStarvationOverride: starvationOverrideEligible,
+            starvationIntervalMs,
             run: async () => {
               const updated = await runScheduledBackupMaintenance({
                 project_id,
@@ -1427,6 +1463,17 @@ async function runProjectSnapshotBackupMaintenanceSweepUnlocked({
   };
   const overlappingLane = snapshotLaneRunning || backupLaneRunning;
   await Promise.all([snapshotLane(), backupLane()]);
+  const nextStarved = starvationQueue.next();
+  if (starvationOverrideEligible && nextStarved) {
+    // Wake the globally fair winner even when it was outside this event batch.
+    onFutureDue?.(
+      nextStarved.projectId,
+      Math.max(
+        Date.now() + CHANGE_EVENT_RETRY_MS,
+        starvationQueue.nextAllowedAt(),
+      ),
+    );
+  }
   // One lane may have been occupied by an event-triggered batch. A full
   // reconciliation is incomplete until both lanes have seen its inventory.
   return !overlappingLane;
@@ -1639,7 +1686,9 @@ export const _test = {
   parseMeminfo,
   parsePressureFullAvg10,
   maintenanceMemoryDecision,
-  backupIsStarved,
+  resetStarvationQueue: () => {
+    starvationQueue = createMaintenanceStarvationQueue(() => Date.now());
+  },
   backupDueAt,
   snapshotDueAt,
   runScheduledStorageOperation,

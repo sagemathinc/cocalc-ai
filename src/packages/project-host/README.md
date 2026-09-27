@@ -100,3 +100,37 @@ persistence is project-scoped; Lite table changefeeds are Plus-only.**
 ## Packaging
 
 - Bundling/SEA lives here (moved from `project-runner`): `pnpm --filter @cocalc/project-host build:tarball` to create the bundle, `pnpm --filter @cocalc/project-host sea` for the SEA archive.
+
+## Paced Maintenance Under I/O Pressure
+
+In storage-admission `enforce` mode, snapshots and backups at least one hour
+past their actual due time may make low-priority progress during `contended`
+or `recovery` pressure. Normal recovery hysteresis is unchanged: sustained
+moderate pressure need not fall below 1% for 60 seconds to protect overdue data.
+
+- `COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_AGE_MS` defaults to `3600000`
+  (one hour), measured from the schedule's due time, not simply the last edit.
+- `COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_STARVATION_INTERVAL_MS` defaults to
+  `300000` (five minutes). There is one escape attempt in flight per host, then
+  a cooldown from its completion, including failures and deferrals. The old
+  `STARVATION_OVERRIDES_PER_SWEEP` setting is no longer used: repeated sweeps
+  cannot reset this budget.
+- A process-local queue alternates maintenance types and rotates projects
+  after attempted escapes. Repeated inventories retain queue position; targeted
+  change/retry batches cannot jump ahead of other known overdue projects.
+  Initial ordering retains the normal service-class/account ordering. Completed,
+  disabled, and reassigned work is removed when schedules are refreshed.
+- Full reconciliation populates the queue; event/retry wakeups service its next
+  eligible project after cooldown. For a stable finite backlog, each type gets
+  every other slot while both have eligible debt, and each project rotates within
+  its type. This bounds scheduling delay by backlog and operation duration, not
+  a wall-clock completion guarantee. Retry backoff and safety deferrals still apply.
+- Emergency or unavailable I/O pressure, lifecycle activity and its settling
+  window cannot be bypassed, including at Btrfs mutation boundaries. Memory is
+  checked at sweep entry and before dispatch. Existing disk-space checks,
+  ownership confirmation/leases, volume lifecycle locks, and low-priority
+  maintenance cgroup execution remain in force.
+
+Queue position and cooldown reset on process restart; ordinary startup delay
+still applies. No starvation escape is granted to scavengers. Interactive
+storage, transport, and eviction are unchanged.
