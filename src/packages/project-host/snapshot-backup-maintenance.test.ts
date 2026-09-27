@@ -1600,6 +1600,47 @@ describe("snapshot-backup-maintenance", () => {
     );
   });
 
+  it("walks past an unresolved owner's disabled row on a later page and runs both lanes", async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      project_id: `project-${String(index).padStart(4, "0")}`,
+      last_changed: "2026-04-01T00:00:00.000Z",
+      backup_due_since: "2026-04-01T00:00:00.000Z",
+      snapshots: { daily: 1, disabled: index === 499 },
+      backups: { daily: 1, disabled: index === 499 },
+      max_snapshots_per_project: index === 499 ? null : 8,
+      max_backups_per_project: index === 499 ? null : 4,
+    }));
+    listProjectMaintenanceSchedulesMock.mockImplementation(
+      async ({ cursor_project_id, limit }) => {
+        const start = cursor_project_id
+          ? rows.findIndex((row) => row.project_id === cursor_project_id) + 1
+          : 0;
+        return rows.slice(start, start + limit);
+      },
+    );
+    const { runProjectSnapshotBackupMaintenanceSweepOnce } =
+      await import("./snapshot-backup-maintenance");
+    await expect(
+      runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" }),
+    ).resolves.toBe(true);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(3);
+    for (const operation of [
+      runScheduledSnapshotMaintenanceMock,
+      runScheduledBackupMaintenanceMock,
+    ]) {
+      expect(operation).toHaveBeenCalledTimes(500);
+      expect(operation).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: "project-0500" }),
+      );
+      expect(operation).not.toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: "project-0499" }),
+      );
+    }
+    expect(reportProjectMaintenanceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ project_id: "project-0499" }),
+    );
+  });
+
   it("starts a newly due snapshot while a previous backup is still running", async () => {
     let finishBackup!: (value: { created: boolean }) => void;
     const backupRunning = new Promise<{ created: boolean }>((resolve) => {

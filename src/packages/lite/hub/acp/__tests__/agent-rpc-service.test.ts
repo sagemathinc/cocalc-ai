@@ -40,7 +40,16 @@ function fixture() {
   ];
   const db = {
     get: () => rows,
-    set: jest.fn((row) => rows.push(row)),
+    set: jest.fn((row) => {
+      const existing = rows.find(
+        (value) =>
+          value.event === row.event &&
+          value.message_id &&
+          value.message_id === row.message_id,
+      );
+      if (existing) Object.assign(existing, row);
+      else rows.push({ ...row });
+    }),
     commit: jest.fn(),
     save: jest.fn(async () => {}),
     save_to_disk: jest.fn(async () => {}),
@@ -153,7 +162,7 @@ test("external source may use session delivery but not live project paths", asyn
     { kind: "project-file", path: "/home/user/secret" } as any,
   ];
   await expect(service.submit(e)).rejects.toThrow("external agents");
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
 });
 
 test("reports when a named recipient is not configured as an agent", async () => {
@@ -335,7 +344,7 @@ test("idle wake and busy queue use one existing admission call with target ident
   expect(prepared.request.account_id).toBe(e.account_id);
   expect(prepared.request.project_id).toBe(e.target.project_id);
   expect(prepared.request.chat.agent_delivery_id).toBeUndefined();
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
   expect(db.set.mock.calls[0][0].agent_rpc).toEqual({
     version: 3,
     source: e.source,
@@ -378,8 +387,63 @@ test("revocation after chat save rejects and preserves saved chat", async () => 
     chat_effect: "saved",
   });
   expect(deps.admit).not.toHaveBeenCalled();
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
 });
+
+test("saved launch failures get a visible receipt without leaking arbitrary backend errors", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.admit = jest.fn(async () => {
+    throw new Error("timeout with secret=private-credential");
+  });
+  const outcome = await service.submit(e);
+  expect(outcome).toMatchObject({ outcome: "unknown", chat_effect: "saved" });
+  expect(
+    db.get().find((row) => row.event === "chat").agent_rpc_launch,
+  ).toMatchObject({
+    state: "unknown",
+    error: "The agent launch acknowledgment timed out.",
+  });
+  expect(JSON.stringify([outcome, db.get()])).not.toContain(
+    "private-credential",
+  );
+  await service.submit(e);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test("accepted admission is not reclassified if its receipt cannot be saved", async () => {
+  const { e, deps, service, db } = fixture();
+  db.save
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("receipt save failed"));
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  await service.submit(e);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  ["selected subscription unavailable: private-credential", "AI settings"],
+  ["permission revoked: private-credential", "permissions"],
+  ["opaque-private-value", "did not confirm launch"],
+])(
+  "launch failure summaries remain actionable without raw backend errors",
+  async (error, hint) => {
+    const { e, deps, service, db } = fixture();
+    deps.admit = jest.fn(async () => {
+      throw new Error(error);
+    });
+    const result = await service.submit(e);
+    expect(result.reason).toContain(hint);
+    expect(JSON.stringify([result, db.get()])).not.toContain(
+      "private-credential",
+    );
+    expect(JSON.stringify([result, db.get()])).not.toContain(
+      "opaque-private-value",
+    );
+  },
+);
 
 test("lost execution ack is unknown and cannot cause a recovery admission", async () => {
   const { e, deps, service } = fixture();

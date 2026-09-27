@@ -5,10 +5,16 @@
 
 import { LoadingOutlined } from "@ant-design/icons";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ChatSourceContent } from "@cocalc/frontend/chat/source-file-context";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { register, type SlateElement } from "./register";
 
-export type GuidanceState = "sending" | "sent" | "queued" | "not-sent";
+export type GuidanceState =
+  | "saved"
+  | "sending"
+  | "sent"
+  | "queued"
+  | "not-sent";
 
 export interface Guidance extends SlateElement {
   type: "guidance";
@@ -17,6 +23,7 @@ export interface Guidance extends SlateElement {
 }
 
 const GUIDANCE_STATES = new Set<GuidanceState>([
+  "saved",
   "sending",
   "sent",
   "queued",
@@ -58,7 +65,16 @@ function guidanceAppearance(
   state: GuidanceState | undefined,
   agentDirection?: "incoming" | "outgoing",
 ) {
-  if (agentDirection === "incoming") {
+  if (state === "saved") {
+    return {
+      label: "Message saved; receipt by Codex unconfirmed",
+      borderColor: UI_COLORS.border,
+      background: UI_COLORS.surface,
+      pillBackground: UI_COLORS.surface,
+      pillColor: UI_COLORS.secondary,
+    };
+  }
+  if (agentDirection === "incoming" && state === "sent") {
     return {
       label: "Agent guidance received",
       borderColor: UI_COLORS.infoBg,
@@ -67,7 +83,7 @@ function guidanceAppearance(
       pillColor: UI_COLORS.info,
     };
   }
-  if (agentDirection === "outgoing") {
+  if (agentDirection === "outgoing" && state === "sent") {
     return {
       label: "Agent guidance sent",
       borderColor: UI_COLORS.successBg,
@@ -157,7 +173,7 @@ const Element = ({ attributes, children, element }) => {
         className="cocalc-slate-guidance-content"
         style={{ minWidth: 0, overflowWrap: "anywhere" }}
       >
-        {children}
+        <ChatSourceContent>{children}</ChatSourceContent>
       </div>
     </section>
   );

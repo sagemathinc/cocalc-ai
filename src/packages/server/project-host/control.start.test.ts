@@ -745,7 +745,33 @@ describe("startProjectOnHost placement", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
   });
 
-  it("passes account_id when automatic placement registers a project on a remote shared-pool host", async () => {
+  it("rejects an existing assignment to a host outside the project's bay", async () => {
+    poolConnectMock = jest.fn();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS runtime_lifecycle_revision")) {
+        return {
+          rows: [
+            {
+              title: "Mismatched ownership",
+              users: {},
+              image: "",
+              host_id: "host-2",
+              owning_bay_id: "bay-0",
+              region: "wnam",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { ensurePlacement } = await import("./control");
+    await expect(ensurePlacement("proj-1", "account-1")).rejects.toThrow(
+      "host placement requires project rehome",
+    );
+    expect(poolConnectMock).not.toHaveBeenCalled();
+  });
+
+  it("requires rehome before placing an existing project on a remote shared-pool host", async () => {
     let loadProjectCalls = 0;
     let placementQuery = 0;
     interBayHostListMock = jest.fn(async () => [
@@ -831,42 +857,16 @@ describe("startProjectOnHost placement", () => {
     }));
 
     const { startProjectOnHost } = await import("./control");
-    await startProjectOnHost("proj-1", {
-      account_id: "account-1",
-      lro_op_id: "op-1",
-    });
-
-    expect(placementQuery).toBe(2);
-    expect(interBayHostControlCreateProjectMock).toHaveBeenCalledWith({
-      account_id: "account-1",
-      host_id: "host-2",
-      create: {
-        project_id: "proj-1",
-        title: "Remote placement",
-        users: { owner: { group: "owner" } },
-        image: "cocalc.local/rootfs/release",
-        start: false,
-        ensure_volume: false,
-        authorized_keys: "ssh-ed25519 AAAATEST user@test",
-        run_quota: {},
-        run_quota_revision: 0,
-        runtime_lifecycle_revision: 0,
-      },
-    });
-    expect(interBayHostControlStartProjectMock).toHaveBeenCalledWith({
-      host_id: "host-2",
-      start: expect.objectContaining({
-        project_id: "proj-1",
-        authorized_keys: "ssh-ed25519 AAAATEST user@test",
-        run_quota: {},
-        image: "cocalc.local/rootfs/release",
-        restore: "none",
-        restore_backup_id: undefined,
-        run_quota_revision: 0,
-        runtime_lifecycle_revision: 0,
+    await expect(
+      startProjectOnHost("proj-1", {
+        account_id: "account-1",
         lro_op_id: "op-1",
       }),
-    });
+    ).rejects.toThrow("requires project rehome");
+
+    expect(placementQuery).toBe(2);
+    expect(interBayHostControlCreateProjectMock).not.toHaveBeenCalled();
+    expect(interBayHostControlStartProjectMock).not.toHaveBeenCalled();
   });
 
   it("forwards managed egress overrides when starting on a host", async () => {
@@ -1104,7 +1104,7 @@ describe("startProjectOnHost placement", () => {
     );
   });
 
-  it("allows placement onto a host from another bay", async () => {
+  it("rejects placement onto a host from another bay before writing", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
@@ -1128,13 +1128,11 @@ describe("startProjectOnHost placement", () => {
     }));
 
     const { savePlacement } = await import("./control");
-    await expect(savePlacement("proj-1", { host_id: "host-2" })).resolves.toBe(
-      undefined,
-    );
-    expect(notifyProjectHostUpdateMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      host_id: "host-2",
-    });
+    await expect(
+      savePlacement("proj-1", { host_id: "host-2" }),
+    ).rejects.toThrow("requires project rehome");
+    expect(poolConnectMock).not.toHaveBeenCalled();
+    expect(notifyProjectHostUpdateMock).not.toHaveBeenCalled();
   });
 
   it("skips restart when the assigned host still reports the project running", async () => {

@@ -76,3 +76,47 @@ test("an unavailable designated default fails before queue admission", async () 
     "Default subscription was revoked.",
   );
 });
+
+test.each([undefined, "", "  \t\n"])(
+  "rejects explicit subscription admission with a missing or blank ID (%j) before resolving a default",
+  async (credentialId) => {
+    const resolver = jest.fn(async () => ({
+      source: "subscription",
+      credentialId: randomUUID(),
+    }));
+    setCodexCredentialAdmissionResolver(resolver);
+    await expect(
+      pinCodexCredentialAtAdmission({
+        ...request(),
+        config: { paymentSource: "subscription-credential", credentialId },
+      }),
+    ).rejects.toThrow("explicit ChatGPT subscription");
+    expect(resolver).not.toHaveBeenCalled();
+  },
+);
+
+test("normalizes a valid explicit selector without dropping its credential ID", async () => {
+  const credentialId = randomUUID();
+  const resolver = jest.fn(async () => ({
+    source: "subscription",
+    credentialId,
+  }));
+  setCodexCredentialAdmissionResolver(resolver);
+  const admitted = await pinCodexCredentialAtAdmission({
+    ...request(),
+    config: {
+      paymentSource: "subscription-credential",
+      credentialId: ` ${credentialId} `,
+    },
+  });
+  expect(resolver).toHaveBeenCalledWith(
+    expect.objectContaining({
+      preference: "subscription",
+      credential_id: credentialId,
+    }),
+  );
+  expect(admitted.config).toMatchObject({
+    paymentSource: "subscription-credential",
+    credentialId,
+  });
+});

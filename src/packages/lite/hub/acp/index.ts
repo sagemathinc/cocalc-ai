@@ -1,5 +1,6 @@
 import path from "node:path";
 import { hubApi } from "../api";
+import { installLiteCodexSpawner } from "../codex-runtime";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -257,6 +258,7 @@ import {
 import {
   claimAcpSteer,
   decodeAcpSteerCandidateIds,
+  decodeAcpSteerFallbackRequest,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
@@ -288,6 +290,12 @@ import {
   publishStoredAttentionNoticeBestEffort,
   reconcileCodexAction,
 } from "./codex-attention";
+import {
+  attentionResponseMessageId,
+  attentionResponseMetadata,
+  buildAttentionResponseProjection,
+  formatAttentionResponseTranscript,
+} from "./attention-response-projection";
 import {
   getAcpWorker,
   heartbeatAcpWorker,
@@ -2038,6 +2046,8 @@ export class ChatStreamWriter {
   private metadata: AcpChatContext;
   private readonly chatKey: string;
   private readonly workspaceRoot?: string;
+  private workingDirectory?: string;
+  private lastCommittedWorkingDirectory?: string;
   private readonly hostWorkspaceRoot?: string;
   private readonly hostProjectRoot?: string;
   private inlineCodeLinksCache?: {
@@ -2701,6 +2711,7 @@ export class ChatStreamWriter {
     this.client = client;
     this.chatKey = chatKey(metadata);
     this.workspaceRoot = workspaceRoot;
+    this.workingDirectory = workspaceRoot;
     this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
     this.hostProjectRoot = hostProjectRoot;
     this.usePool = syncdbOverride == null;
@@ -2838,6 +2849,7 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
+        acp_working_directory: this.workingDirectory,
         acp_account_id: this.approverAccountId,
         acp_started_at_ms:
           Number(this.metadata.started_at_ms) > 0
@@ -2870,6 +2882,9 @@ export class ChatStreamWriter {
       this.observePatchflowVersions("init:placeholder");
       current = this.findChatRow();
     }
+    this.workingDirectory =
+      this.recordField<string>(current, "acp_working_directory") ??
+      this.workingDirectory;
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
     if (arr.length > 0) {
@@ -3036,6 +3051,9 @@ export class ChatStreamWriter {
     if (payload.type === "event") {
       const { event } = payload;
       if (event.type === "config") {
+        if (event.workingDirectory) {
+          this.workingDirectory = event.workingDirectory;
+        }
         const paymentSource = paymentSourceFromAuthSource({
           authSource: event.authSource,
           accountId: this.approverAccountId,
@@ -3234,6 +3252,7 @@ export class ChatStreamWriter {
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3286,6 +3305,7 @@ export class ChatStreamWriter {
       sender_id: rowSender,
       date: rowDate,
       generating,
+      acp_working_directory: this.workingDirectory,
       acp_log_store: this.logStoreName,
       acp_log_key: this.logKey,
       acp_log_subject: this.logSubject,
@@ -3388,6 +3408,10 @@ export class ChatStreamWriter {
 
   private primeCommittedStateFromRow(row: any): void {
     if (row == null) return;
+    this.lastCommittedWorkingDirectory = this.recordField<string>(
+      row,
+      "acp_working_directory",
+    );
     this.lastCommittedThreadId =
       this.recordField<string>(row, "acp_thread_id") ?? null;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
@@ -3411,6 +3435,7 @@ export class ChatStreamWriter {
     const startedAtMs = this.normalizeStartedAtMs(this.metadata.started_at_ms);
     return (
       this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedWorkingDirectory !== this.workingDirectory ||
       this.lastCommittedStartedAtMs !== startedAtMs ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
       this.lastCommittedGenerating !== generating ||
@@ -3431,6 +3456,7 @@ export class ChatStreamWriter {
   }
 
   private markCommitted(generating: boolean): void {
+    this.lastCommittedWorkingDirectory = this.workingDirectory;
     this.lastCommittedThreadId = this.threadId;
     this.lastCommittedStartedAtMs = this.normalizeStartedAtMs(
       this.metadata.started_at_ms,
@@ -3466,6 +3492,8 @@ export class ChatStreamWriter {
       }
       return (
         currentContent === (this.content ?? "") &&
+        this.recordField<string>(current, "acp_working_directory") ===
+          this.workingDirectory &&
         currentThreadId === this.threadId &&
         currentStartedAtMs ===
           this.normalizeStartedAtMs(this.metadata.started_at_ms) &&
@@ -6880,6 +6908,7 @@ export async function recoverDetachedWorkerStartupState(
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
+  if (!preferContainerExecutor()) installLiteCodexSpawner();
   // IMPORTANT: initialize sqlite with the same path used by the embedding
   // process before any ACP queue/lease tables are touched. Otherwise ACP can
   // accidentally lock the sqlite module onto a fallback cwd-relative file or a
@@ -7470,7 +7499,9 @@ async function ensureAgent(
     const created = await CodexAppServerAgent.create({
       binaryPath: process.env.COCALC_CODEX_BIN,
       cwd: bindings.workspaceRoot ?? process.cwd(),
-      attentionHandler: createCodexAttentionHandler(conatClient!),
+      attentionHandler: createCodexAttentionHandler(conatClient!, {
+        onSyncResponseResolved: persistAttentionResponseProjection,
+      }),
       uploadGeneratedImage: uploadGeneratedImageBlob,
       onOutstandingWorkChanged: async ({
         sessionId,
@@ -9451,7 +9482,13 @@ async function prepareQueuedUserMessageForExecution({
           prompt: request.prompt,
           guidance: request.chat.send_mode === "immediate",
         }).request;
-        currentAgentConfig = current.config;
+        // Refresh execution settings, but retain admitted funding (including
+        // implicit auto) so execution and durable Q&A guidance agree.
+        currentAgentConfig = {
+          ...current.config,
+          paymentSource: request.config?.paymentSource,
+          credentialId: request.config?.credentialId,
+        };
         currentAgentSessionId = current.session_id;
       }
       if (current != null) {
@@ -10597,7 +10634,20 @@ async function trySteerCandidateIds({
         throw new Error("durable ACP steer claim was lost");
       }
       try {
-        const result = await agent.steer(id, request);
+        // Authorized RPC guidance inherits the actual live turn's funding,
+        // not next-turn preferences. Keep the original for durable/queue fallback.
+        const steerRequest =
+          request.chat.agent_rpc_execution?.guidance === true
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  paymentSource: undefined,
+                  credentialId: undefined,
+                },
+              }
+            : request;
+        const result = await agent.steer(id, steerRequest);
         if (result.state === "steered") {
           return {
             state: "steered",
@@ -10739,13 +10789,16 @@ function enqueueInterruptRequestForExecution({
 function enqueueSteerRequestForExecution({
   request,
   candidateIds,
+  fallbackConfig,
 }: {
   request: AcpSteerRequest;
   candidateIds?: string[];
+  fallbackConfig?: AcpSteerRequest["config"];
 }) {
   return enqueueAcpSteer({
     request,
     candidate_ids: candidateIds,
+    fallback_config: fallbackConfig,
   });
 }
 
@@ -10912,7 +10965,7 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
           continue;
         }
-        await fallbackAcpSteerToQueuedTurn(request);
+        await fallbackAcpSteerToQueuedTurn(decodeAcpSteerFallbackRequest(row));
         markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
         markAcpSteerError({
@@ -11120,6 +11173,56 @@ function formatAttentionAnswer(
   return lines.join("\n");
 }
 
+async function persistAttentionResponseProjection(
+  submitted: AcpAttentionStoredRecord,
+): Promise<void> {
+  if (!submitted.response_id || submitted.response_submitted_at == null) return;
+  if (!conatClient) throw new Error("conat client must be initialized");
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: submitted.project_id,
+    path: submitted.path,
+    fn: async (syncdb) => {
+      // The runtime can acknowledge while the submit RPC is opening the chat.
+      const record = getAcpAttention(submitted.attention_id) ?? submitted;
+      const existing = findChatRowByMessageId(
+        syncdb,
+        attentionResponseMessageId(record),
+      );
+      const ownerDate = record.message_date ?? record.chat.message_date;
+      const owner = ownerDate
+        ? syncdb.get_one({ event: "chat", date: new Date(ownerDate) })
+        : undefined;
+      const projection = buildAttentionResponseProjection(
+        record,
+        record.chat.message_id ?? syncdbField<string>(owner, "message_id"),
+      );
+      if (!projection) return;
+      if (existing) {
+        // Preserve edits and any async continuation/queue state on this same row.
+        syncdb.set({
+          event: "chat",
+          date: syncdbField(existing, "date"),
+          sender_id: syncdbField(existing, "sender_id"),
+          message_id: syncdbField(existing, "message_id"),
+          thread_id: syncdbField(existing, "thread_id"),
+          acp_attention_response: projection.acp_attention_response,
+          ...(projection.acp_guidance_delivered_at_ms != null
+            ? {
+                acp_guidance_delivered_at_ms:
+                  projection.acp_guidance_delivered_at_ms,
+              }
+            : {}),
+        });
+      } else {
+        syncdb.set(projection);
+      }
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
 function asyncAttentionNotificationMetadata(
   record: AcpAttentionStoredRecord,
 ): Pick<
@@ -11145,7 +11248,7 @@ async function deliverAsyncAttentionAnswer(
     record.response_submitted_at ?? record.updated_at ?? Date.now();
   const userDate = new Date(responseSubmittedAt);
   const assistantDate = new Date(userDate.valueOf() + 1);
-  const userMessageId = uuidsha1(`acp-attention-user:${responseIdentity}`);
+  const userMessageId = attentionResponseMessageId(record);
   const assistantMessageId = uuidsha1(
     `acp-attention-assistant:${responseIdentity}`,
   );
@@ -11172,30 +11275,68 @@ async function deliverAsyncAttentionAnswer(
         alreadyDelivered =
           Number(syncdbField(existingAnswer, "acp_guidance_delivered_at_ms")) >
           0;
+        if (
+          !alreadyDelivered &&
+          syncdbField(existingAnswer, "post_only") === true
+        ) {
+          // A continued sync answer is now dispatchable, not transcript-only.
+          // Keep its identity and history so queued/cancel/retry controls apply.
+          syncdb.set({
+            event: "chat",
+            date: syncdbField(existingAnswer, "date"),
+            sender_id: syncdbField(existingAnswer, "sender_id"),
+            message_id: syncdbField(existingAnswer, "message_id"),
+            thread_id: syncdbField(existingAnswer, "thread_id"),
+            post_only: false,
+          });
+          syncdb.commit();
+          await syncdb.save();
+        }
         return;
       }
       const parentMessageId = latestThreadMessageIdInSyncDB({
         syncdb,
         threadId: record.thread_id,
       });
-      syncdb.set(
-        buildChatMessage({
+      syncdb.set({
+        ...buildChatMessage({
           sender_id: senderId,
           date: userDate,
           prevHistory: [],
-          content,
+          content: formatAttentionResponseTranscript(record),
+          historyEntryDate: userDate.toISOString(),
           generating: false,
           message_id: userMessageId,
           thread_id: record.thread_id,
           parent_message_id: parentMessageId,
         }),
-      );
+        acp_attention_response: attentionResponseMetadata(record),
+      });
       syncdb.commit();
       await syncdb.save();
     },
   });
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
+  }
+  const fallbackConfig = config;
+  const activeJob = listRunningAcpJobs().find(
+    (job) =>
+      job.project_id === record.project_id &&
+      job.path === record.path &&
+      job.thread_id === record.thread_id &&
+      job.account_id === record.account_id,
+  );
+  const activeRequest = activeJob ? decodeAcpJobRequest(activeJob) : undefined;
+  if (activeRequest && activeRequest.request_kind !== "command") {
+    // An answer is guidance, not a request to change the active turn's funding.
+    // Thread preferences are for the next turn and lack its admission-time pin.
+    const activeConfig = activeRequest.config;
+    config = {
+      ...config,
+      paymentSource: activeConfig?.paymentSource,
+      credentialId: activeConfig?.credentialId,
+    };
   }
   const request: AcpSteerRequest = {
     project_id: record.project_id,
@@ -11240,7 +11381,7 @@ async function deliverAsyncAttentionAnswer(
   if (existingSteer?.state === "error" && !retryFailed) {
     throw new Error(existingSteer.error ?? "queued Codex guidance failed");
   }
-  enqueueSteerRequestForExecution({ request });
+  enqueueSteerRequestForExecution({ request, fallbackConfig });
   if (liteUseDetachedAcpWorker()) {
     try {
       await ensureDetachedWorkerRunning({ force: true });
@@ -11451,6 +11592,9 @@ async function handleAcpAttentionRequest(
           records.map(async (record) => {
             try {
               await reconcileCodexAction({ client: conatClient!, record });
+              if (record.source_kind === "codex_sync_question") {
+                await persistAttentionResponseProjection(record);
+              }
             } catch (err) {
               logger.debug("failed to reconcile Codex action while listing", {
                 attention_id: record.attention_id,
@@ -11619,6 +11763,21 @@ async function handleAcpAttentionRequest(
           current.state === "stale"
         )
       ) {
+        try {
+          await persistAttentionResponseProjection(submitted.record);
+        } catch (err) {
+          logger.warn("failed to project saved Codex question response", {
+            attention_id: current.attention_id,
+            err,
+          });
+          return {
+            ok: false,
+            state: submitted.state,
+            record: publicAttentionRecord(submitted.record),
+            error:
+              "Response saved, but chat history could not be updated. Please retry.",
+          };
+        }
         return {
           ok: true,
           state: submitted.state,
@@ -12732,7 +12891,10 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  handleAcpAttentionRequest,
+  persistAttentionResponseProjection,
   handleAcpControlRequest,
+  handleAcpSteerRequest,
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,

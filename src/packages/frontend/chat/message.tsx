@@ -25,6 +25,8 @@ import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
 import { ArtifactCards } from "./artifacts";
 import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
+import { AgentLaunchStatus } from "./agent-launch-status";
+import { ActivityMessageBody } from "./activity-message-body";
 import {
   DropdownMenu,
   Gap,
@@ -38,7 +40,9 @@ import CopyButton, {
 } from "@cocalc/frontend/components/copy-button";
 import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown, { formatMarkdownPage } from "./bounded-static-markdown";
+import { MAX_RENDERED_TEXT_CHARS, PagedText } from "./paged-text";
+import type { TextSource } from "./text-source";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { resolveGitTurnDirectory } from "./git-turn-context";
@@ -62,10 +66,15 @@ import {
   type CodexThreadConfig,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
-import { movePostedMessageToAgent } from "./post-to-agent";
+import {
+  canMovePostedMessageToAgent,
+  movePostedMessageToAgent,
+} from "./post-to-agent";
 import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
+import { agentMessageDirectory } from "./activity-path-context";
+import { AgentMessageFileContext } from "./message-file-context";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
@@ -128,21 +137,22 @@ import {
 } from "./git-commit-links";
 import {
   canUseCompletedCachedCodexActivity,
-  codexActivityBlocksToSelectableMarkdown,
+  codexActivityTextSource,
+  codexActivityWindow,
   computeAcpStateToRender,
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
+  getAcpMessageDeliveryLabel,
   getQueuedMessageEditHelpText,
-  limitCodexActivityBlocks,
   resolveCodexOverflowMenuLocation,
   resolveCodexShowActivityButtonState,
   resolveEditedMessageForSave,
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
   resolveLiveCodexActivityBlocks,
+  reconcileActivityGuidance,
   resolveMessageBodyMode,
   resolveRenderedMessageValue,
   shouldLoadCodexPreviewBody,
-  shouldShowCodexShowActivityButton,
   shouldShowAcpResubmitToAgentButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
@@ -358,6 +368,7 @@ interface Props {
   }) => void;
   attachedSteers?: AttachedSteerMessage[];
   activitySteers?: AttachedSteerMessage[];
+  compactActivityMessage?: boolean;
   suppressInlineCodexStatus?: boolean;
   read_only?: boolean;
   expandedCodexActivity?: boolean;
@@ -463,6 +474,7 @@ export default function Message({
   onOpenGitBrowser,
   attachedSteers,
   activitySteers,
+  compactActivityMessage = false,
   suppressInlineCodexStatus = false,
   read_only = false,
   expandedCodexActivity = false,
@@ -484,9 +496,7 @@ export default function Message({
   const edited_message_ref = useRef(edited_message);
 
   const [show_history, set_show_history] = useState(false);
-  const [codexActivityVisibleLimit, setCodexActivityVisibleLimit] = useState(
-    DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
-  );
+  const [codexActivityPageEnd, setCodexActivityPageEnd] = useState<number>();
 
   const historyEntries = useMemo(() => historyArray(message), [message]);
   const firstHistoryEntry = useMemo(
@@ -991,8 +1001,9 @@ export default function Message({
     if (
       !showCodexActivity ||
       !effectiveGenerating ||
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
+      ((!Array.isArray(codexPreviewLog.events) ||
+        codexPreviewLog.events.length === 0) &&
+        !activitySteers?.length)
     ) {
       return undefined;
     }
@@ -1003,7 +1014,7 @@ export default function Message({
         )
       : [];
     const blocks = getLiveResponseBlocks(
-      codexPreviewLog.events as any,
+      (codexPreviewLog.events ?? []) as any,
       steerItems.map(({ date, text, state }) => ({ date, text, state })),
     ) as InlineCodexActivityBlock[];
     return blocks.length > 0 ? blocks : undefined;
@@ -1023,8 +1034,9 @@ export default function Message({
   );
   const completedCodexActivityBlocksFromEvents = useMemo(() => {
     if (
-      !Array.isArray(codexPreviewLog.events) ||
-      codexPreviewLog.events.length === 0
+      (!Array.isArray(codexPreviewLog.events) ||
+        codexPreviewLog.events.length === 0) &&
+      !activitySteers?.length
     ) {
       return undefined;
     }
@@ -1036,7 +1048,7 @@ export default function Message({
       : [];
     const blocks = (
       getMountedIntermediateResponseBlocks(
-        codexPreviewLog.events as any,
+        (codexPreviewLog.events ?? []) as any,
         steerItems.map(({ date, text, state }) => ({ date, text, state })),
       ) as InlineCodexActivityBlock[]
     ).filter(
@@ -1058,7 +1070,15 @@ export default function Message({
       }) &&
       trimmedCachedBlocks != null
     ) {
-      return trimmedCachedBlocks;
+      return reconcileActivityGuidance(
+        trimmedCachedBlocks,
+        (activitySteers ?? []).map(({ date, text, state }) => ({
+          kind: "guidance",
+          time: date,
+          text,
+          state,
+        })),
+      );
     }
     if (
       allowAsyncCompletedCodexActivityLoad &&
@@ -1066,8 +1086,17 @@ export default function Message({
     ) {
       return completedCodexActivityBlocksFromEvents;
     }
+    if (activitySteers?.length) {
+      return activitySteers.map(({ date, text, state }) => ({
+        kind: "guidance" as const,
+        time: date,
+        text,
+        state,
+      }));
+    }
     return undefined;
   }, [
+    activitySteers,
     allowAsyncCompletedCodexActivityLoad,
     cachedCodexActivityBlocks,
     codexPreviewLog.liveStatus,
@@ -1123,7 +1152,7 @@ export default function Message({
     const formattedValue = is_viewers_message
       ? renderedMessageValue
       : formatCodexErrorMarkdown(
-          linkifyCommitHashes(renderedMessageValue),
+          renderedMessageValue,
           lite,
           acpState === "error",
         );
@@ -1283,21 +1312,32 @@ export default function Message({
     [messageThreadId, threadRootMs],
   );
 
-  const threadCodexConfig = useMemo(() => {
-    if (threadLookup.threadLookupKey == null) return undefined;
-    return (
-      actions?.getThreadMetadata(threadLookup.threadLookupKey, {
-        threadId: threadLookup.threadId,
-      })?.acp_config ?? undefined
-    );
-  }, [actions, threadLookup]);
+  const threadCodexConfig =
+    threadLookup.threadLookupKey == null
+      ? undefined
+      : actions?.getThreadMetadata(threadLookup.threadLookupKey, {
+          threadId: threadLookup.threadId,
+        })?.acp_config;
 
-  const activityBasePath = useMemo(
-    () =>
+  const activityBasePath = agentMessageDirectory({
+    workingDirectory: field<string>(message, "acp_working_directory"),
+    events: codexPreviewLog.events,
+    fallback:
       (threadCodexConfig as any)?.get?.("workingDirectory") ??
       threadCodexConfig?.workingDirectory,
-    [threadCodexConfig],
-  );
+  });
+
+  function withMessageFileContext(children: ReactNode) {
+    return (
+      <AgentMessageFileContext
+        projectId={project_id}
+        path={path}
+        directory={isCodexAgentMessage ? activityBasePath : undefined}
+      >
+        {children}
+      </AgentMessageFileContext>
+    );
+  }
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
@@ -1885,28 +1925,41 @@ export default function Message({
     );
   }
 
-  function getCodexOverflowItems(): MenuItems {
+  function getCodexActivityToggle() {
+    if (
+      !showCodexActivity ||
+      effectiveGenerating ||
+      !onExpandedCodexActivityChange
+    )
+      return;
     const hasVisibleCompletedActivity =
       inlineCodexActivityMode === "completed" &&
       Array.isArray(completedCodexActivityBlocks) &&
       completedCodexActivityBlocks.length > 0;
     const showActivityButtonState = resolveCodexShowActivityButtonState({
       allowAsyncCompletedCodexActivityLoad,
-      hasVisibleCompletedActivity,
+      // Human/peer activity remains available even when the agent log was
+      // pruned or cannot be loaded.
+      hasVisibleCompletedActivity:
+        hasVisibleCompletedActivity || !!activitySteers?.length,
       hasLoadedActivityEvents:
         Array.isArray(codexPreviewLog.events) &&
         codexPreviewLog.events.length > 0,
       hasLogRef: codexPreviewLog.hasLogRef,
       loadState: codexPreviewLog.loadState,
     });
-    const showShowActivityButton = shouldShowCodexShowActivityButton({
-      showCodexActivity,
-      expandedCodexActivity,
-      hasVisibleCompletedActivity,
-      canToggle: onExpandedCodexActivityChange != null,
-      effectiveGenerating,
-      isLastMessageInThread,
-    });
+    return {
+      expanded: expandedCodexActivity,
+      label: expandedCodexActivity
+        ? "Hide activity"
+        : showActivityButtonState.label,
+      loading: !expandedCodexActivity && showActivityButtonState.loading,
+      disabled: !expandedCodexActivity && showActivityButtonState.disabled,
+      onToggle: () => onExpandedCodexActivityChange(!expandedCodexActivity),
+    };
+  }
+
+  function getCodexOverflowItems(): MenuItems {
     const overflowItems: MenuItems = [
       {
         key: "info",
@@ -1966,7 +2019,7 @@ export default function Message({
     ];
 
     if (
-      field<boolean>(message, "post_only") &&
+      canMovePostedMessageToAgent(message) &&
       showEditButton &&
       isCodexThread &&
       messageThreadId &&
@@ -1996,26 +2049,6 @@ export default function Message({
                 "Could not finish moving this posted message. Check the thread before retrying.",
               ),
             );
-        },
-      });
-    }
-
-    if (showShowActivityButton && onExpandedCodexActivityChange) {
-      overflowItems.push({
-        key: "show-activity",
-        label: showActivityButtonState.loading
-          ? "Loading activity…"
-          : showActivityButtonState.label,
-        disabled:
-          showActivityButtonState.disabled || showActivityButtonState.loading,
-        onClick: () => {
-          if (
-            showActivityButtonState.disabled ||
-            showActivityButtonState.loading
-          ) {
-            return;
-          }
-          onExpandedCodexActivityChange(true);
         },
       });
     }
@@ -2119,37 +2152,54 @@ export default function Message({
     value,
     message_class,
     style,
+    followTail = false,
+    pageKey,
   }: {
-    value: string;
+    value: string | TextSource;
     message_class?: string;
     style?: CSSProperties;
+    followTail?: boolean;
+    pageKey?: string | number;
   }) {
     return (
       <div className={message_class} data-chat-selectable-message="true">
-        <EditableMarkdown
+        <PagedText
+          key={pageKey}
           value={value}
-          read_only
-          font_size={font_size}
-          minimal
-          hidePath
-          disableWindowing
-          noVfill
-          showEditBar={false}
-          height="auto"
-          autoMinHeight={0}
-          style={{
-            ...SELECTABLE_MARKDOWN_STYLE,
-            backgroundColor: "transparent",
-            minHeight: 0,
-            ...style,
-          }}
-          pageStyle={{
-            padding: 0,
-            background: "transparent",
-            minWidth: "100%",
-            overflowX: "visible",
-          }}
-        />
+          followTail={followTail}
+          renderRanges
+        >
+          {(part) => (
+            <EditableMarkdown
+              value={formatMarkdownPage(
+                part,
+                is_viewers_message ? undefined : linkifyCommitHashes,
+              )}
+              read_only
+              enableUpload={false}
+              font_size={font_size}
+              minimal
+              hidePath
+              disableWindowing
+              noVfill
+              showEditBar={false}
+              height="auto"
+              autoMinHeight={0}
+              style={{
+                ...SELECTABLE_MARKDOWN_STYLE,
+                backgroundColor: "transparent",
+                minHeight: 0,
+                ...style,
+              }}
+              pageStyle={{
+                padding: 0,
+                background: "transparent",
+                minWidth: "100%",
+                overflowX: "visible",
+              }}
+            />
+          )}
+        </PagedText>
       </div>
     );
   }
@@ -2179,6 +2229,7 @@ export default function Message({
         <div
           style={{
             marginBottom: 10,
+            minHeight: 24,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -2210,36 +2261,23 @@ export default function Message({
     blocks,
     message_class,
     openCommitFromMessage,
-    showHeader = false,
-    onHideActivity,
     showQuotaHelp = true,
   }: {
     blocks: Array<{
       kind: "agent" | "guidance";
       text: string;
       time?: number;
-      state?: "sending" | "sent" | "queued" | "not-sent";
+      state?: "saved" | "sending" | "sent" | "queued" | "not-sent";
     }>;
     message_class?: string;
     openCommitFromMessage: (e: any) => void;
-    showHeader?: boolean;
-    onHideActivity?: () => void;
     showQuotaHelp?: boolean;
   }) {
-    const { visibleBlocks, hiddenCount } = limitCodexActivityBlocks(
+    const { end, hiddenCount, visibleBlocks } = codexActivityWindow(
       blocks,
-      codexActivityVisibleLimit,
+      codexActivityPageEnd,
     );
-    const combinedAgentText = visibleBlocks
-      .filter((block) => block.kind === "agent")
-      .map((block) => block.text)
-      .join("\n\n");
-    const selectableActivityMarkdown = codexActivityBlocksToSelectableMarkdown(
-      visibleBlocks.map((block) => ({
-        ...block,
-        text: linkifyCommitHashes(block.text),
-      })),
-    );
+    const selectableActivityMarkdown = codexActivityTextSource(visibleBlocks);
     const body = (
       <div onClickCapture={openCommitFromMessage}>
         <div
@@ -2249,7 +2287,7 @@ export default function Message({
             gap: 8,
           }}
         >
-          {hiddenCount > 0 ? (
+          {blocks.length > DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT ? (
             <div
               style={{
                 display: "flex",
@@ -2260,25 +2298,44 @@ export default function Message({
             >
               <Button
                 size="small"
+                disabled={hiddenCount === 0}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  setCodexActivityVisibleLimit((current) =>
-                    Math.min(
-                      blocks.length,
-                      current + DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
-                    ),
-                  );
+                  setCodexActivityPageEnd(hiddenCount);
                 }}
               >
                 Show {Math.min(hiddenCount, DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT)}
                 {" earlier activity items"}
               </Button>
+              <Button
+                size="small"
+                disabled={end === blocks.length}
+                onClick={() =>
+                  setCodexActivityPageEnd(
+                    Math.min(
+                      blocks.length,
+                      end + DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
+                    ),
+                  )
+                }
+              >
+                Later activity items
+              </Button>
+              <Button
+                size="small"
+                disabled={codexActivityPageEnd == null}
+                onClick={() => setCodexActivityPageEnd(undefined)}
+              >
+                Latest activity items
+              </Button>
             </div>
           ) : null}
-          {selectableActivityMarkdown
+          {selectableActivityMarkdown.length > 0
             ? renderSelectableMarkdownBody({
                 value: selectableActivityMarkdown,
+                followTail: effectiveGenerating && codexActivityPageEnd == null,
+                pageKey: codexActivityPageEnd ?? "latest",
                 message_class,
                 style: MARKDOWN_STYLE,
               })
@@ -2286,34 +2343,25 @@ export default function Message({
         </div>
         {showQuotaHelp ? (
           <CodexQuotaHelp
-            message={combinedAgentText}
+            message={selectableActivityMarkdown.slice(
+              Math.max(
+                0,
+                selectableActivityMarkdown.length - MAX_RENDERED_TEXT_CHARS,
+              ),
+              selectableActivityMarkdown.length,
+            )}
             projectId={project_id}
             isError={showCodexErrorHelp}
           />
         ) : null}
       </div>
     );
-    if (!showHeader) {
-      return body;
-    }
+    // Keep the same wrapper during and after streaming so completion does not
+    // remount Slate, clear a selection, or insert a heading above the reader.
     return renderCodexSectionChrome({
       label: "Agent activity",
       accentColor: UI_COLORS.secondary,
       borderColor: UI_COLORS.border,
-      action: onHideActivity ? (
-        <Button
-          size="small"
-          type="text"
-          style={{ color: UI_COLORS.muted }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onHideActivity();
-          }}
-        >
-          Hide activity
-        </Button>
-      ) : undefined,
       children: body,
     });
   }
@@ -2370,6 +2418,8 @@ export default function Message({
         return;
       }
       if (!embeddingOptions.openFilesInWorkbench || !actions) return;
+      // Human guidance keeps chat-relative navigation, including in activity.
+      if (anchor?.closest(".cocalc-slate-guidance")) return;
       const file = projectFileTargetFromHref({
         href,
         projectId: project_id,
@@ -2426,6 +2476,7 @@ export default function Message({
         {renderForkNotice()}
         <AgentMessageStatus
           show={showCodexActivity && !suppressInlineCodexActivity}
+          activityToggle={getCodexActivityToggle()}
           generating={effectiveGenerating}
           durationLabel={durationLabel}
           lastActivityAtMs={lastCodexActivityAtMs}
@@ -2503,13 +2554,7 @@ export default function Message({
               blocks: activityBlocksToRender,
               message_class,
               openCommitFromMessage: openResultFromMessage,
-              showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
-              onHideActivity:
-                inlineCodexActivityMode === "completed" &&
-                onExpandedCodexActivityChange
-                  ? () => onExpandedCodexActivityChange(false)
-                  : undefined,
             })
           : null}
         {shouldRenderCompletedFinalResponse ? (
@@ -2554,6 +2599,9 @@ export default function Message({
                     })
                   ) : (
                     <StaticMarkdown
+                      format={
+                        is_viewers_message ? undefined : linkifyCommitHashes
+                      }
                       style={MARKDOWN_STYLE}
                       value={value}
                       className={message_class}
@@ -2606,6 +2654,7 @@ export default function Message({
                 })
               ) : (
                 <StaticMarkdown
+                  format={is_viewers_message ? undefined : linkifyCommitHashes}
                   style={MARKDOWN_STYLE}
                   value={value}
                   className={message_class}
@@ -2669,6 +2718,7 @@ export default function Message({
               })
             ) : (
               <StaticMarkdown
+                format={is_viewers_message ? undefined : linkifyCommitHashes}
                 style={{ fontSize: `${font_size ?? 14}px` }}
                 value={value}
                 editorTheme={editorTheme}
@@ -2788,7 +2838,7 @@ export default function Message({
           {renderMessageHeader(lighten)}
           {messageBodyMode === "edit"
             ? renderEditMessage()
-            : renderMessageBody({ message_class })}
+            : withMessageFileContext(renderMessageBody({ message_class }))}
           {renderEditingMeta()}
           <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
           <ArtifactCards
@@ -3133,8 +3183,12 @@ export default function Message({
   );
 
   const renderAcpState = () => {
-    if (field<boolean>(message, "post_only"))
-      return <Tag>Posted · Not sent to agent</Tag>;
+    const receiptLabel = getAcpMessageDeliveryLabel({
+      postOnly: field<boolean>(message, "post_only"),
+      attentionResponse: field(message, "acp_attention_response"),
+      deliveredAtMs: field(message, "acp_guidance_delivered_at_ms"),
+    });
+    if (receiptLabel) return <Tag>{receiptLabel}</Tag>;
     if (!acpStateToRender) return null;
     if (acpStateToRender === "queue") {
       return (
@@ -3193,8 +3247,28 @@ export default function Message({
 
   return (
     <Row ref={messageRowRef} tabIndex={-1} style={getStyle()}>
-      {renderCols()}
-      {renderZenMessageDrawer()}
+      <ActivityMessageBody compact={compactActivityMessage && !isEditing}>
+        {renderCols()}
+      </ActivityMessageBody>
+      {withMessageFileContext(renderZenMessageDrawer())}
+      {rpcAttribution && (
+        <div style={{ width: "100%" }}>
+          <AgentLaunchStatus
+            receipt={field(message, "agent_rpc_launch")}
+            acpState={acpState}
+            onResubmit={
+              actions && !read_only && sender_is_viewer(account_id, message)
+                ? () =>
+                    resendCanceledAcpTurn({
+                      actions,
+                      message,
+                      useCurrentPayment: true,
+                    })
+                : undefined
+            }
+          />
+        </div>
+      )}
       <AcpPromptModal
         open={showAcpPromptModal}
         title="Full agent prompt for this message"

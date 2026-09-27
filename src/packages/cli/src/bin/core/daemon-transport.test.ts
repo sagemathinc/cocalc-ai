@@ -34,6 +34,39 @@ test("daemonFingerprintMatches requires an exact fingerprint match", () => {
   assert.equal(daemonFingerprintMatches("a", undefined), false);
 });
 
+test("daemon reuse requires matching local transport, project admission and profile configuration", () => {
+  const fingerprint = (env: NodeJS.ProcessEnv) =>
+    currentDaemonFingerprint([], "/nonexistent-node-for-test", env);
+  const initial = fingerprint({});
+  for (const key of [
+    "CONAT_SERVER",
+    "COCALC_API_RELAY",
+    "COCALC_API_RELAY_HUB_URL",
+    "COCALC_SITE_URL",
+    "COCALC_PROJECT_ID",
+    "COCALC_PROJECT_SECRET",
+    "COCALC_SECRET_TOKEN",
+    "COCALC_CLI_CONFIG",
+    "HOME",
+    "XDG_CONFIG_HOME",
+  ]) {
+    const changed = fingerprint({ [key]: "new-sensitive-configuration" });
+    assert.notEqual(changed, initial, key);
+    assert.equal(changed.includes("new-sensitive-configuration"), false);
+  }
+  assert.equal(
+    fingerprint({ COCALC_API_RELAY: "1", CONAT_SERVER: "http://local" }),
+    fingerprint({ CONAT_SERVER: "http://local", COCALC_API_RELAY: "1" }),
+  );
+  assert.equal(
+    fingerprint({
+      COCALC_CLI_DAEMON_MODE: "1",
+      COCALC_CODEX_MESSAGE_DATE: "later",
+    }),
+    initial,
+  );
+});
+
 test("ensurePrivateDaemonRuntimeDir creates a private runtime directory", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "cocalc-cli-daemon-"));
   const socket = path.join(dir, "runtime", "cli-daemon.sock");

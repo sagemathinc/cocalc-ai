@@ -494,14 +494,31 @@ export async function resolveHostConnectionLocalHelper({
   });
   const ioPlacementConformant = hostIoPlacementConformant(row);
   if (!hostAccessRoleCan(accessRole, "view") && !isShared) {
-    const { rows: projectRows } = await pool().query(
-      `SELECT 1
+    let projectAccess = false;
+    if (project_id) {
+      try {
+        await assertAccountProjectHostTokenProjectAccess({
+          account_id,
+          host_id,
+          project_id,
+        });
+        projectAccess = true;
+      } catch {
+        // Public-share access is checked separately below.
+      }
+    }
+    const { rows: projectRows } =
+      projectAccess || project_id
+        ? { rows: [] }
+        : await pool().query(
+            `SELECT 1
        FROM projects
        WHERE host_id=$1 AND users ? $2
        LIMIT 1`,
-      [host_id, account_id],
-    );
+            [host_id, account_id],
+          );
     const publicShareAllowed =
+      !projectAccess &&
       projectRows.length === 0 &&
       !!project_id &&
       !!public_directory_share_id &&
@@ -511,7 +528,7 @@ export async function resolveHostConnectionLocalHelper({
         project_id,
         public_directory_share_id,
       }));
-    if (!projectRows.length && !publicShareAllowed) {
+    if (!projectAccess && !projectRows.length && !publicShareAllowed) {
       throw new Error("not authorized");
     }
   }
