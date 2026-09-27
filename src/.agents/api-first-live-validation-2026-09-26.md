@@ -462,6 +462,17 @@ accepted a forged route. These tests do not establish rotated-namespace recovery
 or a deployed terminal workflow. Production protocol code is unchanged from
 the pinned review candidate.
 
+The project-package terminal integration test now runs the actual terminal
+service and client over an isolated broker with the existing project-host
+API-key subject policy and a real `node-pty` Bash process. It verifies shell
+input/output, retained history, reverse size requests, continued denial of
+broad subscriptions and inbox publication, reattachment to the same process,
+and explicit terminal destruction. The shell output marker is assembled by
+the shell so echoed input alone cannot satisfy the assertion. The test passes,
+and the project TypeScript build passes. This is application-level integration
+evidence, not deployed CLI, managed-turn, rotated-credential, or outage evidence.
+Production protocol code remains unchanged and deployment remains pending.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
