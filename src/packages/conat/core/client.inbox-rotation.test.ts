@@ -14,14 +14,15 @@ describe("authenticated reply namespace rotation", () => {
     await ConatServer.closeAllForTests();
   });
 
-  it.each([
-    [true, false],
-    [false, false],
-    [true, true],
-    [false, true],
-  ])(
-    "uses the authorized inbox after transport reconnection (rotation=%s, mutable provider=%s)",
-    async (rotate, mutableProvider) => {
+  it.each(
+    [true, false].flatMap((rotate) =>
+      [true, false].flatMap((mutableProvider) =>
+        [true, false].map((many) => [rotate, mutableProvider, many]),
+      ),
+    ),
+  )(
+    "uses the authorized inbox after transport reconnection (rotation=%s, mutable provider=%s, many=%s)",
+    async (rotate, mutableProvider, many) => {
       const stablePrefix = `_INBOX.stable-${randomUUID()}`;
       let providerPrefix = stablePrefix;
       const broker = init({
@@ -94,9 +95,14 @@ describe("authenticated reply namespace rotation", () => {
           if (args[1] === "held") acknowledged();
           return result;
         });
-        const pending = !rotate
-          ? client.request("rotation.echo", "held", { timeout: 3000 })
-          : undefined;
+        const pending = many
+          ? client
+              .requestMany("rotation.echo", "held", {
+                maxWait: 3000,
+                maxMessages: 1,
+              })
+              .then(async (sub) => (await sub.next()).value!)
+          : client.request("rotation.echo", "held", { timeout: 3000 });
         void pending?.catch(() => {});
         if (pending) await Promise.all([admission, acknowledgment]);
         client.conn.disconnect();
@@ -114,6 +120,15 @@ describe("authenticated reply namespace rotation", () => {
         client.conn.connect();
         await signedIn;
         expect(client.info!.user.reply_prefix === previous).toBe(!rotate);
+        if (rotate) {
+          const deadline = Symbol("still waiting on the old inbox");
+          const outcome = await Promise.race([
+            pending.catch((error) => error),
+            delay(250).then(() => deadline),
+          ]);
+          expect(outcome).toMatchObject({ code: "CONNECTION_LOST" });
+          expect(heldExecutions).toBe(1);
+        }
         const after = client.request("rotation.echo", "after", {
           timeout: 2000,
         });
@@ -124,7 +139,7 @@ describe("authenticated reply namespace rotation", () => {
         expect((await after).data).toBe("after");
         expect((client as any).inboxSubject === previousInbox).toBe(!rotate);
         expect(client.numSubscriptions()).toBe(1);
-        if (pending) {
+        if (!rotate) {
           expect(heldRequest).toBeDefined();
           await heldRequest!.respond("completed-before-reconnect");
           expect((await pending).data).toBe("completed-before-reconnect");
@@ -135,6 +150,7 @@ describe("authenticated reply namespace rotation", () => {
             client.subscribe(previous + ".probe"),
           ).rejects.toMatchObject({ code: 403 });
         }
+        expect((client as any).inboxRequests.size).toBe(0);
       } finally {
         releaseRefresh();
         subscription.close();

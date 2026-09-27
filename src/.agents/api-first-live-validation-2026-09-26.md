@@ -113,6 +113,30 @@ dedicated project. A private receipt review request for this source head was
 accepted (attempt `b95d4241-e4de-4084-bb14-c3d02e5bc6c1`); no review disposition
 has been received in this validation run.
 
+### Prompt failure of replaced reply inboxes (not deployed)
+
+A real-broker regression reproduced one cause of renewal delay: an admitted
+request whose reply namespace was replaced waited for its full timeout and
+returned 408, even though the old response channel could no longer deliver.
+Both rotating-prefix cases failed the new test before the fix.
+
+The client now tracks request iterators by their reply inbox. Replacing an
+inbox, or closing the client, cancels its pending single-response and streamed
+requests with `CONNECTION_LOST`. Reconnection that preserves the same inbox
+continues to preserve pending responses. There is no automatic transport replay;
+the filesystem receipt protocol remains responsible for recovery. Tracking is
+released on successful completion, cancellation, and publication failure.
+
+Eight real-broker rotation cases cover stable/rotating namespaces, mutable
+credential providers, and both request forms. Rotated requests reject within a
+250ms test deadline after sign-in, rather than their three-second timeout;
+the service executes each held request only once. Close/failure cleanup tests
+verify that pending-request tracking and inbox listeners are released.
+The five focused suites pass 35 tests, and the reconnect-policy suite passes
+eight more with normal timing settings (test-mode timing changes its defaults).
+Conat and CLI TypeScript builds pass. This follow-up is not deployed yet; a
+rebuilt installed CLI and completed high-rate probe remain required.
+
 ## Disk-save disconnect reproduction, 2026-09-27
 
 Further installed-CLI probes used the same verified `d20be971...` bundle:

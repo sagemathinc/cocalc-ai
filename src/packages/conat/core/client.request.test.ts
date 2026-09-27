@@ -9,6 +9,60 @@ jest.mock("@cocalc/conat/logger", () => ({
 }));
 
 describe("core client request setup failures", () => {
+  it.each(
+    [false, true].flatMap((many) =>
+      ["close", "publish-error"].map((end) => [many, end] as const),
+    ),
+  )("releases tracked requests (many=%s, end=%s)", async (many, end) => {
+    jest.resetModules();
+    const socket = {
+      on: jest.fn(),
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+      close: jest.fn(),
+      io: { on: jest.fn(), connect: jest.fn(), disconnect: jest.fn() },
+    };
+    jest.doMock("socket.io-client", () => ({ connect: () => socket }));
+    const { Client } = require("./client");
+    const { EventEmitter } = require("node:events");
+    const client = new Client({
+      address: "http://example.com",
+      autoConnect: false,
+      noCache: true,
+    });
+    const inbox = new EventEmitter();
+    client.inbox = inbox;
+    client.inboxSubject = "test.inbox";
+    client.state = "connected";
+    client.publish = jest.fn(async () => {
+      if (end === "publish-error") throw new Error("publication rejected");
+      return { count: 1 };
+    });
+    try {
+      const pending = many
+        ? client
+            .requestMany("test.subject", "payload")
+            .then((sub) => sub.next())
+        : client.request("test.subject", "payload", { timeout: 30_000 });
+      void pending.catch(() => {});
+      await new Promise((resolve) => setImmediate(resolve));
+      if (end === "close") {
+        expect(client.inboxRequests.size).toBe(1);
+        client.close();
+        await expect(pending).rejects.toMatchObject({
+          code: "CONNECTION_LOST",
+        });
+      } else {
+        await expect(pending).rejects.toThrow("publication rejected");
+      }
+      expect(client.inboxRequests.size).toBe(0);
+      expect(inbox.eventNames()).toEqual([]);
+      expect(client.publish).toHaveBeenCalledTimes(1);
+    } finally {
+      client.close();
+    }
+  });
+
   it.each(["publish", "fastRpcRequest"])(
     "%s reports lost acknowledgments as structured errors without replay",
     async (method) => {

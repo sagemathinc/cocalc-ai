@@ -630,6 +630,10 @@ export class Client extends EventEmitter {
   private initializedInboxPrefix?: string;
   private inboxConnectionId?: string;
   private inbox?: EventEmitter;
+  private inboxRequests = new Map<
+    EventEmitter,
+    Map<EventIterator<Message>, string>
+  >();
   private inboxSubscription?: Subscription;
   private inboxGeneration = 0;
   private permissionError = {
@@ -1122,6 +1126,9 @@ export class Client extends EventEmitter {
   private initInbox = async ({ preserve = false } = {}) => {
     const preservedInbox = preserve ? this.inbox : undefined;
     const preservedSubject = preservedInbox ? this.inboxSubject : undefined;
+    for (const inbox of this.inboxRequests.keys()) {
+      if (inbox !== preservedInbox) this.invalidateInboxRequests(inbox);
+    }
     // A new authenticated namespace must not reuse replies or subscriptions
     // from the previous one, including an initialization still in flight.
     const generation = ++this.inboxGeneration;
@@ -1193,6 +1200,50 @@ export class Client extends EventEmitter {
     this.emit("inbox", inboxSubject);
   };
 
+  private trackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+    subject: string,
+  ) {
+    if (inbox !== this.inbox || this.isClosed()) {
+      sub.cancel();
+      throw new ConatError("request reply inbox was replaced", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+    }
+    let requests = this.inboxRequests.get(inbox);
+    if (!requests) {
+      requests = new Map();
+      this.inboxRequests.set(inbox, requests);
+    }
+    requests.set(sub, subject);
+  }
+
+  private untrackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+  ) {
+    const requests = this.inboxRequests.get(inbox);
+    requests?.delete(sub);
+    if (!requests?.size) this.inboxRequests.delete(inbox);
+  }
+
+  private invalidateInboxRequests(inbox: EventEmitter) {
+    const requests = this.inboxRequests.get(inbox);
+    this.inboxRequests.delete(inbox);
+    for (const [sub, subject] of requests ?? []) {
+      // Losing the response channel says nothing about execution. Recovery
+      // belongs to the operation protocol, not automatic transport replay.
+      sub.cancel(
+        new ConatError("request reply inbox was replaced or closed", {
+          code: "CONNECTION_LOST",
+          subject,
+        }),
+      );
+    }
+  }
+
   private isClosed = () => {
     return this.state == "closed";
   };
@@ -1224,6 +1275,8 @@ export class Client extends EventEmitter {
     }
     this.routedClients = {};
     this.setState("closed");
+    for (const inbox of this.inboxRequests.keys())
+      this.invalidateInboxRequests(inbox);
     this.removeAllListeners();
     this.closeAllSockets();
     // @ts-ignore
@@ -2503,7 +2556,9 @@ export class Client extends EventEmitter {
       idle: timeout,
       limit: 1,
       map: (args) => args[0],
+      onEnd: () => this.untrackInboxRequest(inbox, sub),
     });
+    this.trackInboxRequest(inbox, sub, subject);
 
     const opts = {
       ...options,
@@ -2590,8 +2645,12 @@ export class Client extends EventEmitter {
       sizeOf: (message) => message.length,
       overflow: "throw",
       map: (args) => args[0],
-      onEnd: () => signal?.removeEventListener("abort", abort),
+      onEnd: () => {
+        signal?.removeEventListener("abort", abort);
+        this.untrackInboxRequest(inbox, sub);
+      },
     });
+    this.trackInboxRequest(inbox, sub, subject);
     signal?.addEventListener("abort", abort, { once: true });
     try {
       const { count } = await this.publish(subject, mesg, {
