@@ -586,6 +586,23 @@ execution outcome, not evidence that the operation was rejected. No automatic
 replay is added. All four inbox-rotation cases and the Conat TypeScript build
 pass. This is local broker evidence, not deployed CLI/session validation.
 
+### Attach-only terminal recovery primitive (not deployed)
+
+The terminal API now has an explicit `attach` operation. It binds a fresh
+authorized socket to an existing running session and returns its PID and bounded
+history, but never creates a replacement process. Missing or ended sessions
+reject before changing the socket's existing attachment. `spawn` retains its
+existing create-or-attach semantics. Terminal RPC failures now use the standard
+Conat error header instead of serializing an Error as successful response data;
+the client also validates the returned running-session PID.
+
+Both real-PTY scoped-transport cases pass, including fresh reply-namespace
+rotation, same-PID reattachment, no extra spawn, failed attachment without
+disrupting subsequent terminal I/O, and rejection after process destruction.
+The 20 terminal/socket regression tests pass. This establishes an attach-only
+primitive for recovery; automatic transport replacement and frontend/daemon
+session recovery are not yet implemented or claimed.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale

@@ -61,11 +61,13 @@ describe("terminal over scoped project-host transport", () => {
       await service.waitUntilSignedIn({ timeout: 5000 });
       await client.waitUntilSignedIn({ timeout: 5000 });
       let pty: ReturnType<typeof spawn> | undefined;
+      let spawnCount = 0;
       const listener = terminalServer({
         client: service,
         project_id,
         // The service uses the synchronous provider used by the project runtime.
         spawn: ((command, args, options) => {
+          spawnCount++;
           pty = spawn(command, args, options);
           return pty;
         }) as unknown as Parameters<typeof terminalServer>[0]["spawn"],
@@ -81,6 +83,10 @@ describe("terminal over scoped project-host transport", () => {
       let output = "";
       terminal.socket.on("data", (data) => (output += String(data)));
       try {
+        await expect(terminal.attach(id, { timeout: 5000 })).rejects.toThrow(
+          "terminal session is not running",
+        );
+        expect(spawnCount).toBe(0);
         await terminal.spawn("/bin/bash", ["--noprofile", "--norc"], {
           id,
           env: { PATH: "/usr/bin:/bin", TERM: "xterm", PS1: "" },
@@ -129,10 +135,12 @@ describe("terminal over scoped project-host transport", () => {
         terminal = terminalClient({ client, project_id, reconnection: false });
         output = "";
         terminal.socket.on("data", (data) => (output += String(data)));
-        expect(
-          await terminal.spawn("/bin/bash", [], { id, timeout: 5000 }),
-        ).toContain(marker);
+        expect(await terminal.attach(id, { timeout: 5000 })).toContain(marker);
         expect(terminal.pid).toBe(pid);
+        expect(spawnCount).toBe(1);
+        await expect(
+          terminal.attach(randomUUID(), { timeout: 5000 }),
+        ).rejects.toThrow("terminal session is not running");
         const resumedMarker = `resumed-${randomUUID()}`;
         expect(
           await terminal.write({
@@ -155,6 +163,10 @@ describe("terminal over scoped project-host transport", () => {
           }),
         ]);
         expect(await terminal.state(id)).toBe("off");
+        await expect(terminal.attach(id, { timeout: 5000 })).rejects.toThrow(
+          "terminal session is not running",
+        );
+        expect(spawnCount).toBe(1);
       } finally {
         pty?.kill();
         terminal.close();
