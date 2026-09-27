@@ -10,6 +10,7 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 const mockGetAccountId = jest.fn();
 const mockGetAccountFromApiKey = jest.fn();
 const mockGetProjects = jest.fn();
+const mockListProjectSummaries = jest.fn();
 const mockCreateProject = jest.fn();
 const mockUserIsInGroup = jest.fn();
 
@@ -25,6 +26,10 @@ jest.mock("@cocalc/server/auth/api", () => ({
 jest.mock("@cocalc/server/projects/get", () => ({
   __esModule: true,
   default: (...args) => mockGetProjects(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/projects", () => ({
+  listProjectSummaries: (...args) => mockListProjectSummaries(...args),
 }));
 
 jest.mock("@cocalc/server/projects/create", () => ({
@@ -61,6 +66,15 @@ describe("/api/v2/projects list API-key scope", () => {
       .mockReset()
       .mockResolvedValue("33333333-3333-4333-8333-333333333333");
     mockUserIsInGroup.mockReset().mockResolvedValue(false);
+    mockListProjectSummaries.mockReset().mockResolvedValue({
+      projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          title: "Project",
+        },
+      ],
+      next_offset: null,
+    });
   });
 
   it("requires project list capability for API-key project listing", async () => {
@@ -88,6 +102,7 @@ describe("/api/v2/projects list API-key scope", () => {
       error: "API key lacks required capability 'project:list'",
     });
     expect(mockGetProjects).not.toHaveBeenCalled();
+    expect(mockListProjectSummaries).not.toHaveBeenCalled();
   });
 
   it("does not allow API-key project listing for a different account", async () => {
@@ -111,6 +126,7 @@ describe("/api/v2/projects list API-key scope", () => {
     });
     expect(mockUserIsInGroup).not.toHaveBeenCalled();
     expect(mockGetProjects).not.toHaveBeenCalled();
+    expect(mockListProjectSummaries).not.toHaveBeenCalled();
   });
 
   it("allows API-key project listing with project list capability", async () => {
@@ -132,10 +148,13 @@ describe("/api/v2/projects list API-key scope", () => {
         title: "Project",
       },
     ]);
-    expect(mockGetProjects).toHaveBeenCalledWith({
+    expect(mockListProjectSummaries).toHaveBeenCalledWith({
       account_id,
       limit: 10,
+      offset: 0,
+      search: undefined,
     });
+    expect(mockGetProjects).not.toHaveBeenCalled();
   });
 
   it("requires project list capability for API-key get-one", async () => {
