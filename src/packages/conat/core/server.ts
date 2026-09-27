@@ -1503,6 +1503,32 @@ export class ConatServer extends EventEmitter {
     );
   };
 
+  private requireCurrentLease = (user: any, subject: string): void => {
+    const expiry = Number(user?.auth_lease_exp_s) * 1000;
+    // Timer teardown may run after a queued request or asynchronous policy check.
+    // An expired session is never new authority, nor a permanent scope denial.
+    if (Number.isFinite(expiry) && expiry > 0 && Date.now() >= expiry) {
+      throw new ConatError("authentication lease expired", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+    }
+  };
+
+  private authorizePublication = async (
+    options: Omit<Parameters<AllowFunction>[0], "type">,
+  ): Promise<void> => {
+    const { user, subject } = options;
+    this.requireCurrentLease(user, subject);
+    const allowed = await this.isAllowed({ ...options, type: "pub" });
+    this.requireCurrentLease(user, subject);
+    if (!allowed) {
+      const message = `permission denied publishing to '${subject}' from ${JSON.stringify(user)}`;
+      this.log(message);
+      throw new ConatError(message, { code: 403 });
+    }
+  };
+
   private publish = async ({
     subject,
     data,
@@ -1533,24 +1559,11 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
-    if (
-      !(await this.isAllowed({
-        user: from,
-        subject,
-        type: "pub",
-        forwardedCaller: clusterForward ? data[7] : undefined,
-      }))
-    ) {
-      const message = `permission denied publishing to '${subject}' from ${JSON.stringify(
-        from,
-      )}`;
-      this.log(message);
-      throw new ConatError(message, {
-        // this is the http code for permission denied, and having this
-        // set is assumed elsewhere in our code, so don't mess with it!
-        code: 403,
-      });
-    }
+    await this.authorizePublication({
+      user: from,
+      subject,
+      forwardedCaller: clusterForward ? data[7] : undefined,
+    });
     if (retainAuthority && !retainAuthority())
       throw new ConatError("API-key publication authority is unavailable", {
         code: 403,
@@ -1576,6 +1589,7 @@ export class ConatServer extends EventEmitter {
       throw new ConatError("API-key publication authority is unavailable", {
         code: 403,
       });
+    this.requireCurrentLease(from, subject);
     stampFileReadPrincipal({
       subject,
       data,
@@ -2019,6 +2033,23 @@ export class ConatServer extends EventEmitter {
       s.recv = recv0;
     });
 
+    const authorizeSocketPublication = async (subject: string, respond) => {
+      try {
+        await this.authorizePublication({ user, subject });
+        return true;
+      } catch (err) {
+        if (err.code === 403) {
+          socket.emit("permission", {
+            message: err.message,
+            subject,
+            type: "pub",
+          });
+        }
+        respond({ error: `${err}`, code: err.code });
+        return false;
+      }
+    };
+
     socket.on("wait-for-interest", async (payload: any = {}, respond) => {
       if (respond == null) {
         return;
@@ -2037,14 +2068,7 @@ export class ConatServer extends EventEmitter {
         respond({ error: "invalid subject" });
         return;
       }
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied waiting for interest in '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       if (!trackApiKeyPublication(subject, respond)) return;
       try {
         respond(await this.waitForInterest(subject, timeout, socket.id));
@@ -2222,19 +2246,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
       if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
@@ -2317,19 +2329,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied fast RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
       if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();
@@ -2420,19 +2420,7 @@ export class ConatServer extends EventEmitter {
         return;
       }
       const authStart = Date.now();
-      if (!(await this.isAllowed({ user, subject, type: "pub" }))) {
-        const message = `permission denied raw RPC to '${subject}' from ${JSON.stringify(
-          user,
-        )}`;
-        this.log(message);
-        socket.emit("permission", {
-          message,
-          subject,
-          type: "pub",
-        });
-        respond({ error: message, code: 403 });
-        return;
-      }
+      if (!(await authorizeSocketPublication(subject, respond))) return;
       const authMs = Date.now() - authStart;
       if (!trackApiKeyPublication(subject, respond)) return;
       const routeStart = Date.now();

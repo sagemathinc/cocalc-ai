@@ -163,8 +163,31 @@ the service executes each held request only once. Close/failure cleanup tests
 verify that pending-request tracking and inbox listeners are released.
 The five focused suites pass 35 tests, and the reconnect-policy suite passes
 eight more with normal timing settings (test-mode timing changes its defaults).
-Conat and CLI TypeScript builds pass. This follow-up is not deployed yet; a
-rebuilt installed CLI and completed high-rate probe remain required.
+Conat and CLI TypeScript builds pass. Installed validation of this client change
+is recorded above; a completed high-rate probe remains required.
+
+### Lease-expiry admission classification (not deployed)
+
+The broker now checks the authenticated lease deadline before and after the
+publication policy check, across publish, interest waits, RPC, fast RPC, and
+raw RPC. Expired leases return `CONNECTION_LOST` without routing the request;
+ordinary permission denials under a current lease remain 403. Socket teardown,
+credential renewal, and receipt-based mutation recovery retain their existing
+roles. The broker does not extend authority or replay work. Publication also
+rechecks the deadline after asynchronous return-inbox authorization.
+
+The new real-broker matrix deterministically advances the server-owned deadline
+while the original teardown timer is still pending. All 15 expiry cases failed
+before the fix, and the five current-lease permission cases already passed.
+All 20 cases now pass, including expiry during either a successful or denied
+asynchronous policy check. Conat and project-host TypeScript builds pass.
+The six-suite regression set passes 82 tests with test-mode cleanup enabled,
+including caller/revocation, admission, reply rotation, receipts, and confined
+socket return paths; the process exits normally. A first invocation without
+test mode also passed assertions but retained handles and was terminated after
+reporting completion, so it is not the clean-exit verification.
+Installed sustained editing and explicit revocation must still be rerun with
+this broker change before the live failure above can be considered closed.
 
 ## Disk-save disconnect reproduction, 2026-09-27
 
