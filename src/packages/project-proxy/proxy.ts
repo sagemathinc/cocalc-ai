@@ -161,6 +161,19 @@ function restreamParsedBody(
   proxyReq.write(body);
 }
 
+function propagateUpstreamFailure(
+  upstream: http.IncomingMessage,
+  downstream: http.ServerResponse,
+): void {
+  // pipe() does not terminate its destination when the source aborts.
+  const abort = () => downstream.destroy();
+  upstream.once("aborted", abort);
+  upstream.once("error", abort);
+  upstream.once("close", () => {
+    if (!upstream.complete) abort();
+  });
+}
+
 function normalizeRedirectLocation(
   location: string,
   req: http.IncomingMessage,
@@ -321,7 +334,8 @@ export function createProxyHandlers({
     }
   });
 
-  proxy.on("proxyRes", (proxyRes, req) => {
+  proxy.on("proxyRes", (proxyRes, req, res) => {
+    propagateUpstreamFailure(proxyRes, res);
     normalizeProxyRedirectHeaders(proxyRes, req);
     if (noteUpstreamHttpBytes) {
       proxyRes.on("data", (chunk) => {
@@ -485,7 +499,8 @@ export function attachProjectProxy({
     }
   });
 
-  proxy.on("proxyRes", (proxyRes, req) => {
+  proxy.on("proxyRes", (proxyRes, req, res) => {
+    propagateUpstreamFailure(proxyRes, res);
     normalizeProxyRedirectHeaders(proxyRes, req);
     rewriteResponse?.(proxyRes, req);
     if (noteUpstreamHttpBytes) {

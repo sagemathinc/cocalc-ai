@@ -8,7 +8,7 @@ import { once } from "node:events";
 import { connect } from "node:net";
 import type { AddressInfo, Server } from "node:net";
 import express from "express";
-import { attachProjectProxy } from "./proxy";
+import { attachProjectProxy, createProxyHandlers } from "./proxy";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -19,6 +19,70 @@ async function closeServer(server: Server | http.Server): Promise<void> {
 }
 
 describe("project proxy upstream boundary metering", () => {
+  it.each(["ingress", "project"])(
+    "propagates an upstream stream abort through the %s proxy",
+    async (mode) => {
+      const upstream = http.createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.write("before-expiry");
+        const timer = setTimeout(() => res.destroy(), 50);
+        res.once("close", () => clearTimeout(timer));
+      });
+      upstream.listen(0, "127.0.0.1");
+      await once(upstream, "listening");
+      const resolveTarget = () => ({
+        handled: true,
+        target: {
+          host: "127.0.0.1",
+          port: (upstream.address() as AddressInfo).port,
+        },
+      });
+      const app = express();
+      const server = http.createServer(app);
+      if (mode === "ingress") {
+        const { handleRequest } = createProxyHandlers({ resolveTarget });
+        app.use((req, res) => void handleRequest(req, res));
+      } else {
+        attachProjectProxy({ httpServer: server, app, resolveTarget });
+      }
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const result = await new Promise<{ state: string; body: string }>(
+          (resolve) => {
+            let body = "";
+            const req = http.get({
+              host: "127.0.0.1",
+              port: (server.address() as AddressInfo).port,
+              path: `/${PROJECT_ID}/proxy/8080/stream`,
+            });
+            const timer = setTimeout(() => {
+              resolve({ state: "timeout", body });
+              req.destroy();
+            }, 1000);
+            const finish = (state: string) => {
+              clearTimeout(timer);
+              resolve({ state, body });
+            };
+            req.on("error", () => finish("request-error"));
+            req.on("response", (res) => {
+              res.on("data", (chunk) => (body += chunk));
+              res.on("aborted", () => finish("aborted"));
+              res.on("error", () => finish("response-error"));
+              res.on("end", () => finish("ended"));
+            });
+          },
+        );
+        expect(result).toEqual({ state: "aborted", body: "before-expiry" });
+      } finally {
+        server.closeAllConnections();
+        upstream.closeAllConnections();
+        await closeServer(server);
+        await closeServer(upstream);
+      }
+    },
+  );
+
   it.each(["expired", "closed", "serialization"])(
     "does not forward parsed JSON after delayed resolution (%s)",
     async (mode) => {

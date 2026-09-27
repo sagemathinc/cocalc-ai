@@ -10,6 +10,15 @@ This is development evidence, not production approval or completion of phases 1-
 
 ### Reviewed deployed HTTP probe
 
+Local follow-up reproduced the client hang in both shared proxy entry points:
+an upstream response wrote data and destroyed its socket, but the downstream
+client timed out instead of receiving an aborted response. The ingress fallback
+uses `createProxyHandlers` from this same module. Both entry points now destroy
+the downstream response on upstream abort/error or incomplete close, without
+reporting a successful end. The two regressions failed before the fix and pass
+afterward; 14 proxy tests, 73 host HTTP/router tests, and the project-host build
+pass. This fix is not yet deployed or verified on the public route.
+
 Follow-up repeats used asynchronous CLI deletion so the response reader was not
 blocked by the test harness. Both repeats received data only within the signed
 lifetime, but did not observe client-visible stream termination before the
