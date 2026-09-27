@@ -85,10 +85,12 @@ export async function getProjectHostAccessWithApiKey({
   apiBaseUrl,
   apiKey,
   project_id,
+  http_proxy_port,
 }: {
   apiBaseUrl: string;
   apiKey: string;
   project_id: string;
+  http_proxy_port?: number;
 }): Promise<ApiKeyProjectHostAccess> {
   const response = await fetch(
     new URL("/api/conat/project-host-api-key", apiBaseUrl),
@@ -98,7 +100,7 @@ export async function getProjectHostAccessWithApiKey({
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ project_id }),
+      body: JSON.stringify({ project_id, http_proxy_port }),
       signal: AbortSignal.timeout(10_000),
     },
   );

@@ -2900,6 +2900,18 @@ async function resolveProxyUrl({
   local_proxy: boolean;
 }> {
   const project = await resolveProject(ctx, projectIdentifier);
+  const apiKey = apiKeyForProject(ctx, project.project_id);
+  if (apiKey) {
+    const { resolveScopedProxyUrl } =
+      await import("./core/scoped-project-proxy");
+    return await resolveScopedProxyUrl({
+      apiBaseUrl: ctx.apiBaseUrl,
+      apiKey,
+      project_id: project.project_id,
+      port,
+      hostIdentifier,
+    });
+  }
   const host = hostIdentifier
     ? await resolveHost(ctx, hostIdentifier)
     : project.host_id

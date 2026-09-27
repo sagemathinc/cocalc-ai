@@ -63,47 +63,102 @@ describe("/api/conat/project-host-api-key", () => {
     expect(resolveHostConnection).not.toHaveBeenCalled();
   });
 
-  test("resolves placement after confirming a project data grant", async () => {
-    jest.mocked(resolveProjectReferenceForMemberAllowRemote).mockResolvedValue({
-      title: "Granted project",
-      host_id,
-    } as any);
-    jest.mocked(issueProjectHostApiKeyToken).mockResolvedValue({
-      host_id,
-      token: "test-token",
-      expires_at: 123,
-    });
-    jest.mocked(resolveHostConnection).mockResolvedValue({
-      connect_url: "wss://test.invalid",
-      local_proxy: false,
-    } as any);
+  test.each([undefined, 8080])(
+    "resolves placement after confirming a project data grant (HTTP port %s)",
+    async (http_proxy_port) => {
+      if (http_proxy_port !== undefined) {
+        // Configure a runtime grant independently of the legacy capability list.
+        jest.mocked(getAccountFromApiKey).mockResolvedValue({
+          account_id,
+          api_key_id: 1,
+          key_id: "test-key-1234",
+          auth_method: "api_key",
+          scope_revision: 1,
+          scope: {
+            version: 1,
+            account: [],
+            projects: [
+              {
+                project_id: granted_project_id,
+                capabilities: ["project:exec"],
+              },
+            ],
+          },
+        });
+      }
+      jest
+        .mocked(resolveProjectReferenceForMemberAllowRemote)
+        .mockResolvedValue({
+          title: "Granted project",
+          host_id,
+        } as any);
+      jest.mocked(issueProjectHostApiKeyToken).mockResolvedValue({
+        host_id,
+        token: "test-token",
+        expires_at: 123,
+      });
+      jest.mocked(resolveHostConnection).mockResolvedValue({
+        connect_url: "wss://test.invalid",
+        local_proxy: false,
+      } as any);
+      const { req, res } = createMocks({
+        body: { project_id: granted_project_id, http_proxy_port },
+        method: "POST",
+        url: "/api/conat/project-host-api-key",
+      });
+
+      await handler(req, res);
+
+      expect(resolveProjectReferenceForMemberAllowRemote).toHaveBeenCalledWith({
+        account_id,
+        project_id: granted_project_id,
+      });
+      expect(issueProjectHostApiKeyToken).toHaveBeenCalledWith({
+        account_id,
+        key_id: "test-key-1234",
+        scope_revision: 1,
+        project_id: granted_project_id,
+        host_id,
+        ...(http_proxy_port === undefined ? {} : { http_proxy_port }),
+      });
+      expect(res._getJSONData()).toEqual({
+        project_id: granted_project_id,
+        title: "Granted project",
+        host_id,
+        connect_url: "wss://test.invalid",
+        local_proxy: false,
+        token: "test-token",
+        expires_at: 123,
+      });
+    },
+  );
+
+  test.each([null, 0, -1, 65536, 1.2, "8080"])(
+    "rejects invalid HTTP port %s before placement",
+    async (http_proxy_port) => {
+      const { req, res } = createMocks({
+        body: { project_id: granted_project_id, http_proxy_port },
+        method: "POST",
+      });
+      await handler(req, res);
+      expect(res._getJSONData().error).toMatch("http_proxy_port must be");
+      expect(
+        resolveProjectReferenceForMemberAllowRemote,
+      ).not.toHaveBeenCalled();
+      expect(issueProjectHostApiKeyToken).not.toHaveBeenCalled();
+    },
+  );
+
+  test("denies viewer HTTP access before placement or token issuance", async () => {
     const { req, res } = createMocks({
-      body: { project_id: granted_project_id },
+      body: { project_id: granted_project_id, http_proxy_port: 8080 },
       method: "POST",
-      url: "/api/conat/project-host-api-key",
     });
-
     await handler(req, res);
-
-    expect(resolveProjectReferenceForMemberAllowRemote).toHaveBeenCalledWith({
-      account_id,
-      project_id: granted_project_id,
-    });
-    expect(issueProjectHostApiKeyToken).toHaveBeenCalledWith({
-      account_id,
-      key_id: "test-key-1234",
-      scope_revision: 1,
-      project_id: granted_project_id,
-      host_id,
-    });
-    expect(res._getJSONData()).toEqual({
-      project_id: granted_project_id,
-      title: "Granted project",
-      host_id,
-      connect_url: "wss://test.invalid",
-      local_proxy: false,
-      token: "test-token",
-      expires_at: 123,
-    });
+    expect(res._getJSONData().error).toBe(
+      "HTTP proxy access requires project:exec",
+    );
+    expect(resolveProjectReferenceForMemberAllowRemote).not.toHaveBeenCalled();
+    expect(issueProjectHostApiKeyToken).not.toHaveBeenCalled();
   });
 });

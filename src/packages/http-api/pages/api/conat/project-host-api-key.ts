@@ -17,9 +17,23 @@ export default async function handle(req, res) {
     if (!principal?.account_id || !principal.key_id) {
       throw new Error("must authenticate with an account API key");
     }
-    const { project_id } = getParams(req);
+    const { project_id, http_proxy_port } = getParams(req);
     if (!isValidUUID(project_id)) {
       throw new Error("project_id must be a valid UUID");
+    }
+    if (
+      http_proxy_port !== undefined &&
+      (!Number.isInteger(http_proxy_port) ||
+        http_proxy_port < 1 ||
+        http_proxy_port > 65535)
+    ) {
+      throw new Error("http_proxy_port must be an integer between 1 and 65535");
+    }
+    if (
+      http_proxy_port !== undefined &&
+      !hasApiKeyProjectCapability(principal, "project:exec", project_id)
+    ) {
+      throw new Error("HTTP proxy access requires project:exec");
     }
     if (
       !(["project:exec", "file:read", "file:write"] as const).some(
@@ -45,6 +59,7 @@ export default async function handle(req, res) {
       scope_revision: principal.scope_revision ?? 0,
       project_id,
       host_id,
+      ...(http_proxy_port === undefined ? {} : { http_proxy_port }),
     });
     const connection = await resolveHostConnection({
       account_id: principal.account_id,
