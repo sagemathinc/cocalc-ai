@@ -287,42 +287,105 @@ describe("manageApiKeys local bay access", () => {
     });
   });
 
-  it("does not let manual editing extend a managed turn key", async () => {
-    queryMock = jest.fn(async (sql) => {
-      const text = `${sql}`;
-      if (text.includes("SELECT id,key_id,account_id")) {
-        return {
-          rows: [
-            {
-              id: 17,
-              key_id: "managed-key",
-              account_id: ACCOUNT_ID,
-              name: "CoCalc connector turn",
-              expire: new Date("2026-09-25T00:00:00Z"),
-              capabilities: [],
-              allowed_project_ids: [],
-            },
-          ],
-        };
-      }
-      return { rows: [] };
-    });
-    const { default: manageApiKeys } = await import("./manage");
-    await expect(
-      manageApiKeys({
+  it.each([
+    { expire: new Date("2027-09-25T00:00:00Z") },
+    { scope: { version: 1, account: ["account:read"], projects: [] } },
+  ])(
+    "does not let manual editing renew a managed turn key: %j",
+    async (edit) => {
+      queryMock = jest.fn(async (sql) => {
+        const text = `${sql}`;
+        if (text.includes("SELECT id,key_id,account_id")) {
+          return {
+            rows: [
+              {
+                id: 17,
+                key_id: "managed-key",
+                account_id: ACCOUNT_ID,
+                name: "CoCalc connector turn",
+                expire: new Date("2026-09-25T00:00:00Z"),
+                capabilities: [],
+                allowed_project_ids: [],
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+      const { default: manageApiKeys } = await import("./manage");
+      await expect(
+        manageApiKeys({
+          account_id: ACCOUNT_ID,
+          action: "edit",
+          id: 17,
+          ...edit,
+        }),
+      ).rejects.toThrow("managed by a connector");
+      expect(
+        queryMock.mock.calls.find(([sql]) =>
+          `${sql}`.includes("UPDATE api_keys SET expire="),
+        )?.[0],
+      ).toContain("NOT EXISTS");
+      expect(
+        upsertClusterAccountApiKeyDirectoryEntryMock,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      "scope",
+      { scope: { version: 1, account: ["account:read"], projects: [] } },
+      true,
+    ],
+    ["legacy scope", { capabilities: ["account:read"] }, true],
+    ["name", { name: "renamed" }, false],
+    ["expiry", { expire: new Date("2027-01-01") }, false],
+  ])(
+    "allocates fresh delegation only for explicit %s edits",
+    async (_name, edit, regrant) => {
+      queryMock = jest.fn(async (sql) => {
+        if (`${sql}`.includes("SELECT id,key_id,account_id")) {
+          return {
+            rows: [
+              {
+                id: 17,
+                key_id: "manual-key",
+                account_id: ACCOUNT_ID,
+                name: "old",
+                capabilities: ["account:read"],
+                allowed_project_ids: [],
+              },
+            ],
+          };
+        }
+        if (`${sql}`.includes("UPDATE api_keys SET expire=")) {
+          return { rows: [{ scope_revision: 2 }] };
+        }
+        if (`${sql}`.includes("SELECT hash FROM api_keys")) {
+          return { rows: [{ hash: "hash" }] };
+        }
+        return { rows: [] };
+      });
+      const { default: manageApiKeys } = await import("./manage");
+      await manageApiKeys({
         account_id: ACCOUNT_ID,
         action: "edit",
         id: 17,
-        expire: new Date("2027-09-25T00:00:00Z"),
-      }),
-    ).rejects.toThrow("managed by a connector");
-    expect(
-      queryMock.mock.calls.find(([sql]) =>
+        ...edit,
+      });
+      const update = queryMock.mock.calls.find(([sql]) =>
         `${sql}`.includes("UPDATE api_keys SET expire="),
-      )?.[0],
-    ).toContain("NOT EXISTS");
-    expect(upsertClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
-  });
+      );
+      expect(update?.[0]).toContain(
+        "issuance_sequence=COALESCE($9::BIGINT,issuance_sequence)",
+      );
+      expect(update?.[1][8]).toBe(regrant ? "9007199254740993" : null);
+      expect(upsertClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope_revision: 2 }),
+      );
+    },
+  );
 
   it("rejects api key creation without explicit capabilities", async () => {
     const { default: manageApiKeys } = await import("./manage");

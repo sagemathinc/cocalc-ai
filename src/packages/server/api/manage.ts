@@ -391,7 +391,7 @@ async function createApiKey({
   return { ...key, trunc, secret };
 }
 
-async function updateApiKey({ apiKey, account_id }) {
+async function updateApiKey({ apiKey, account_id, regrant = false }) {
   log.debug("udpateApiKey", apiKey);
   const pool = getPool();
   const {
@@ -404,30 +404,40 @@ async function updateApiKey({ apiKey, account_id }) {
     scope,
     last_active,
   } = apiKey;
-  const { rows: updatedRows } = await pool.query(
-    `UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,
+  const update = async (db, issuance_sequence: string | null) => {
+    const result = await db.query(
+      `UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,
             allowed_project_ids=$6,scope=$7::JSONB,last_active=$8,
-            scope_revision=COALESCE(scope_revision,1)+1
+            scope_revision=COALESCE(scope_revision,1)+1,
+            issuance_sequence=COALESCE($9::BIGINT,issuance_sequence)
       WHERE id=$1 AND account_id=$2
         AND NOT EXISTS (
           SELECT 1 FROM agent_cocalc_connector_turns
             WHERE key_id=api_keys.key_id AND account_id=$2
         )
       RETURNING scope_revision`,
-    [
-      id,
-      account_id,
-      expire,
-      name,
-      capabilities,
-      allowed_project_ids,
-      scope == null ? null : JSON.stringify(scope),
-      last_active,
-    ],
-  );
-  if (!updatedRows[0]) {
-    throw Error("API key was deleted or is managed by a connector");
-  }
+      [
+        id,
+        account_id,
+        expire,
+        name,
+        capabilities,
+        allowed_project_ids,
+        scope == null ? null : JSON.stringify(scope),
+        last_active,
+        issuance_sequence,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw Error("API key was deleted or is managed by a connector");
+    }
+    return result;
+  };
+  // Explicit scope consent is new delegation, serialized with membership-loss
+  // watermarks. Metadata edits must not revive a previously revoked grant.
+  const { rows: updatedRows } = regrant
+    ? await withApiKeyIssuance(pool, account_id, update)
+    : await update(pool, null);
   const { rows } = await pool.query(
     "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
     [id, account_id],
@@ -534,7 +544,14 @@ async function doManageApiKeys({
         changed = true;
       }
       if (changed) {
-        await updateApiKey({ apiKey, account_id });
+        await updateApiKey({
+          apiKey,
+          account_id,
+          regrant:
+            scope !== undefined ||
+            capabilities !== undefined ||
+            allowed_project_ids !== undefined,
+        });
       }
       break;
   }
