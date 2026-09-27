@@ -460,3 +460,63 @@ test("ending a turn revokes its ordinary key and tombstones the directory", asyn
     home_bay_id: "bay-0",
   });
 });
+
+test.each([
+  ["active", "64"],
+  ["recent_minute", "60"],
+  ["recent_burst", "10"],
+])(
+  "issuance rejects the account %s budget before allocating a key",
+  async (field, count) => {
+    const { beginManagedCocalcConnectorTurn } =
+      await import("./cocalc-connector-turn");
+    const original = clientQuery.getMockImplementation()!;
+    clientQuery.mockImplementation(async (sql, args) => {
+      if (`${sql}`.includes("AS recent_minute")) {
+        return {
+          rows: [
+            {
+              active: "0",
+              recent_minute: "0",
+              recent_burst: "0",
+              [field]: count,
+            },
+          ],
+        };
+      }
+      return original(sql, args);
+    });
+    await expect(beginManagedCocalcConnectorTurn(request)).rejects.toThrow(
+      "key limit reached",
+    );
+    expect(allocateSequence).not.toHaveBeenCalled();
+    expect(savedKey).toBeUndefined();
+    expect(savedTurn).toBeUndefined();
+    expect(directory).not.toHaveBeenCalled();
+    expect(clientQuery.mock.calls.map(([sql]) => `${sql}`)).toContain(
+      "ROLLBACK",
+    );
+  },
+);
+
+test("throttled renewal still attests the live turn without extending expiry", async () => {
+  const { beginManagedCocalcConnectorTurn, renewManagedCocalcConnectorTurn } =
+    await import("./cocalc-connector-turn");
+  const issued = await beginManagedCocalcConnectorTurn(request);
+  const args = { ...request, turn_id: issued!.turn_id };
+  const firstExpiry = await renewManagedCocalcConnectorTurn(args);
+  clientQuery.mockClear();
+  hostLease.mockClear();
+  expect(await renewManagedCocalcConnectorTurn(args)).toBe(firstExpiry);
+  expect(hostLease).toHaveBeenCalledTimes(1);
+  expect(
+    clientQuery.mock.calls.some(([sql]) =>
+      `${sql}`.includes("UPDATE api_keys SET expire"),
+    ),
+  ).toBe(false);
+  hostLease.mockRejectedValueOnce(new Error("turn finished"));
+  await expect(renewManagedCocalcConnectorTurn(args)).rejects.toThrow(
+    "turn finished",
+  );
+  expect(savedKey.expire.valueOf()).toBe(firstExpiry);
+});
