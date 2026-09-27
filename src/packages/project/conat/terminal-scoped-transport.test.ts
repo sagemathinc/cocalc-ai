@@ -76,7 +76,7 @@ describe("terminal over scoped project-host transport", () => {
       let terminal = terminalClient({
         client,
         project_id,
-        reconnection: false,
+        reconnection: true,
         getSize: () => ({ rows: 31, cols: 97 }),
       });
       const id = randomUUID();
@@ -118,8 +118,10 @@ describe("terminal over scoped project-host transport", () => {
           client.publish(prefix + ".foreign", null, { waitForInterest: false }),
         ).rejects.toMatchObject({ code: 403 });
 
-        terminal.close();
         if (rotate) {
+          const closed = new Promise<void>((resolve) =>
+            terminal.socket.once("closed", resolve),
+          );
           const previousPrefix = client.info!.user.reply_prefix;
           client.conn.disconnect();
           const signedIn = new Promise<void>((resolve) =>
@@ -127,11 +129,19 @@ describe("terminal over scoped project-host transport", () => {
           );
           client.conn.connect();
           await signedIn;
+          await closed;
+          expect(terminal.socket.closeReason).toBe("reply-namespace-changed");
+          expect(terminal.socket.state).toBe("closed");
+          await expect(terminal.history(id)).rejects.toThrow("closed");
+          expect(() => terminal.socket.write("discarded input")).toThrow(
+            "closed",
+          );
           expect(client.info!.user.reply_prefix).not.toBe(previousPrefix);
           await expect(
             client.subscribe(previousPrefix + ".probe"),
           ).rejects.toMatchObject({ code: 403 });
         }
+        terminal.close();
         terminal = terminalClient({ client, project_id, reconnection: false });
         output = "";
         terminal.socket.on("data", (data) => (output += String(data)));

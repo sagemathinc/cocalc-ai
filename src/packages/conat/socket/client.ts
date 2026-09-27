@@ -55,6 +55,19 @@ export class ConatSocketClient extends ConatSocketBase {
   private dataQueueScheduled = false;
   private inboxReturn = false;
   private returnInbox?: string;
+  public closeReason?: "reply-namespace-changed";
+
+  private onInboxReady = (inboxSubject: string) => {
+    if (
+      this.returnInbox != null &&
+      !this.returnInbox.startsWith(`${inboxSubject}.socket.`)
+    ) {
+      // An existing server socket is bound to its original return route.
+      // Its owner must reattach application state on a new authorized socket.
+      this.closeReason = "reply-namespace-changed";
+      this.close();
+    }
+  };
 
   private returnHeaders = (): Headers =>
     this.returnInbox ? { [SOCKET_RETURN_HEADER]: this.returnInbox } : {};
@@ -63,6 +76,7 @@ export class ConatSocketClient extends ConatSocketBase {
     super(opts);
     this.loadBalancer = opts.loadBalancer;
     this.loadBalancerTimeout = opts.loadBalancerTimeout;
+    this.client.on("inbox", this.onInboxReady);
     // logger.silly("creating a client socket connecting to ", this.subject);
     this.initTCP();
     this.on("ready", () => {
@@ -558,6 +572,7 @@ export class ConatSocketClient extends ConatSocketBase {
     if (this.state == "closed") {
       return;
     }
+    this.client.removeListener("inbox", this.onInboxReady);
     this.connectAttempts.clear();
     this.sub?.close();
     if (this.tcp != null) {
@@ -567,6 +582,7 @@ export class ConatSocketClient extends ConatSocketBase {
       );
     }
     this.queuedWrites = [];
+    this.dataQueue = [];
     // tell server we're gone (but don't wait for a reply)
     try {
       this.client.publishSync(this.serverSubject(), null, {

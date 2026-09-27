@@ -23,9 +23,16 @@ Broker lease expiry removes the private subscription. Existing socket interest
 cleanup then releases the logical socket; this does not terminate application
 processes launched through it. New brokers and services must be deployed before
 scoped clients rely on this protocol. Two-broker tests cover attestation forwarding,
-bidirectional traffic, and expiry-driven interest withdrawal. Reconnect with a
-rotated reply namespace and application-specific session recovery still need
-their own coverage, as does rollout in the deployed multibay environment.
+bidirectional traffic, and expiry-driven interest withdrawal.
+
+When the authenticated reply namespace changes, an inbox-return client socket
+closes with `closeReason === "reply-namespace-changed"`. It does not redirect the
+existing server socket or replay queued transport data on a different route.
+Owners must create a fresh socket and explicitly reattach application state.
+Terminal `attach` supports this without spawning a replacement process; real
+PTY tests cover reattachment and rejection of operations on the old socket.
+Automatic application recovery and deployed multibay rollout remain separate
+validation requirements.
 
 In compute networking, **TCP sockets** are a great idea that's been around since 1974! They are
 incredibly useful as an abstraction. To create

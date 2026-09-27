@@ -615,6 +615,22 @@ Ordered data retransmission inside an existing logical socket is unchanged.
 Tests cover response timeout, an admitted service-side `503`, and a stream setup
 whose publication acknowledgment is deliberately lost after admission.
 
+### Explicit socket retirement on reply-namespace rotation (not deployed)
+
+Inbox-return sockets now listen for the client's authenticated inbox becoming
+ready. If its namespace no longer contains the socket's bound return route, the
+socket closes with `closeReason: reply-namespace-changed`, removes its listener,
+and clears queued transport input/output. It does not mutate the server's route
+binding or transfer unacknowledged input to a new logical connection. Existing
+owners receive the normal closed event and can create a new authorized socket.
+
+The real-PTY test now leaves the old reconnect-enabled socket alive across
+namespace rotation, observes automatic retirement, verifies old reads/writes
+reject, then explicitly attaches a fresh socket to the same PID. Both PTY cases
+and 21 socket/inbox tests pass; Conat and project TypeScript builds pass.
+Automatic application-level reattachment is still not implemented by this
+change; this supplies its explicit transport invalidation boundary.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
