@@ -6,6 +6,34 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Write-outcome recovery foundation, 2026-09-27
+
+The existing edit-journal service deduplicates collaborative-history commits,
+while ordinary filesystem writes have no operation receipt. The conditional
+patch helper is not proof that an earlier request executed. Recovery therefore
+needs an explicit outcome contract rather than automatic full-write replay.
+
+Added a process-local `MutationReceipts` primitive with server-generated
+reservations, server-supplied scope and payload fingerprints, shared in-flight
+results, bounded total/per-scope entries, expiry, and completed-result eviction.
+Unknown IDs (including restart/expiry/eviction) cannot be recreated by execution.
+Running work retains its admission slot until it settles, even after callers
+disconnect or TTL elapses. Outcomes are void/error, not retained file contents.
+This is at-most-once execution within one surviving receipt store, not durable
+exactly-once delivery across crashes.
+
+Ten focused tests cover concurrent/lost-ack retries, scope and payload changes,
+failed execution, expiry, restart, eviction, malformed fingerprints, and retained
+capacity for hung work. Together with request/inbox/admission coverage, all 24
+tests passed; the Conat TypeScript build passed.
+
+The primitive is deliberately not exposed through an RPC yet. Integration must
+derive its scope and fingerprint on the server, authorize reservation/execution/
+outcome access under the current credential, reject changed authority, and keep
+result lookup on the direct project-host data plane. Missing outcomes must stay
+unknown; clients must not silently allocate a new mutation and replay it. No
+production default limits or end-to-end receipt recovery are claimed here.
+
 ## Disk-save disconnect reproduction, 2026-09-27
 
 Further installed-CLI probes used the same verified `d20be971...` bundle:
