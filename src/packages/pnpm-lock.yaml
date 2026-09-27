@@ -921,6 +921,9 @@ importers:
       '@rc-component/tabs':
         specifier: 1.7.0
         version: 1.7.0(patch_hash=3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@rc-component/util':
+        specifier: 1.10.0
+        version: 1.10.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@simplewebauthn/browser':
         specifier: ^13.3.0
         version: 13.3.0
