@@ -358,6 +358,7 @@ export function ApiKeyScopeEditor({
         <div style={{ marginTop: 12 }}>
           <SelectProject
             ariaLabel="Add project access"
+            value={null}
             fullCollaboratorOnly
             disabled={disabled}
             exclude={[

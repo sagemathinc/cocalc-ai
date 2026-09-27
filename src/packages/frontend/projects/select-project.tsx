@@ -19,7 +19,7 @@ interface Props {
   disabled?: boolean;
   fullCollaboratorOnly?: boolean;
   onChange: (project_id: string) => void; // called when specific project selected
-  value?: string; // currently selected project
+  value?: string | null; // null keeps a controlled picker empty
   defaultValue?: string;
   style?: CSS;
 }
