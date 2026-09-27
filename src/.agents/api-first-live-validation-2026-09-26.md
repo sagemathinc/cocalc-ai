@@ -263,6 +263,46 @@ client lease, and observes both disconnection and remote interest removal.
 Conat typechecking and `git diff --check` pass. This follow-up still needs a
 coordinated issuer/host upgrade and installed notebook retest.
 
+### Installed notebook execution and restart persistence
+
+The follow-up was deployed to the isolated host3 on 2026-09-27. The targeted
+host bundle build passed at `9cc0f888885d06e1819ae5a3a6cf7970faf3ebc5`, with
+identity `20260927T025624Z-9cc0f888885d` and archive SHA256
+`2258ccc33ea9a0c283ec7d0a930647243d9504c577ec4722b52f6e0b22e03007`.
+All three dev bays restarted successfully. Host upgrade
+`8eb196d7-9015-4295-8233-d44e2ba55a5b` succeeded with managed-service alignment;
+bootstrap status confirmed this host identity and zero drift. Project and tools
+bundles remain `1790476486202` and `1790476544436`, respectively. Delta's host
+was not upgraded.
+
+The first probe stopped before creating a key because the development session's
+fresh-auth interval had expired. The supported `auth elevate --dev` flow renewed
+it. Subsequent probes used the installed CLI with a clean environment, a private
+credential file, and an ordinary five-minute API key restricted to validation
+project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535`. Human fixture credentials were
+not passed to those scoped CLI processes.
+
+- Key 87: discovered the temporary Python kernel, inserted cell `4397e6`, ran
+  Python (`cli-muj8fv7k-hw11mo`), verified `notebook-answer-42`, saved, and
+  verified the same cell/output from a separate CLI process.
+- Key 88: repeated execution/save with cell `072413` and run
+  `cli-muj8hgsu-2zbnaa`, then restarted the disposable project using the human
+  fixture session. Restart `7f2383a5-7b8c-4c54-94e2-b694f4e3bb25` succeeded.
+  A new scoped CLI process reopened the notebook and verified the saved cell
+  and output after that restart.
+
+Both probes exited successfully and deleted their keys and private provider/
+notebook directories. The temporary Python environment/kernelspec remains
+installed for further tests. No raw notebook JSON was read or edited; notebook
+operations used the live Jupyter scripting API. This establishes the ordinary
+manual-key edit/run/save/reopen workflow, including project-restart persistence.
+It does not establish stream resumption, sustained-session revocation, the
+managed-turn matrix, or readiness of hosts that have not been upgraded.
+
+A supplemental private review of `0d9db0b52a..9cc0f88888` was accepted and saved
+under attempt `b9c73fea-390f-41e6-ad15-153b7c059277`. No review result has yet
+been received; this is not a security approval.
+
 ## Shared-editor round-trip coverage (component tests)
 
 The connector wrapper tests now render the real shared scope editor, replacing
