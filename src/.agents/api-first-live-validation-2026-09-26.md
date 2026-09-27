@@ -26,9 +26,15 @@ resetting it. Twenty-four admission, summary and rehome tests pass, including
 PGlite transaction checks; eleven routing/policy tests and server/HTTP builds
 also pass. This is not a live multi-bay or load-test result.
 
-These changes are not deployed. Independent review of the correction and
-account admission is pending. Per-key search limits, other search surfaces,
-and aggregate file-read/download concurrency remain unfinished.
+Independent review passed the correction and account admission at `c60f70bd91`.
+The per-key follow-up now admits summary requests at 60/minute sustained with
+burst 10, atomically with the account bucket. HTTP summary and legacy list/get-one
+routes pass server-authenticated key identity; public RPC parameters cannot
+nominate admission identity. The current account-home key revision and expiry
+are checked under the transaction lock. Denials charge neither bucket, and
+key migration retains its debt. Other search surfaces and aggregate
+file-read/download concurrency remain unfinished. This follow-up is pending
+independent review and deployment; none of these summary changes is deployed.
 
 ## Project-list byte budget follow-up, 2026-09-27
 

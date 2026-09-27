@@ -9,7 +9,7 @@ import {
   type ApiKeyPrincipal,
 } from "@cocalc/server/api/api-key-scope";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
-import { listProjectSummaries } from "@cocalc/server/conat/api/projects";
+import { listProjectSummariesForApiKey } from "@cocalc/server/conat/api/projects";
 import getOneProject from "@cocalc/server/projects/get-one";
 
 export default async function handle(req, res) {
@@ -20,7 +20,7 @@ export default async function handle(req, res) {
       if (!principal?.account_id || principal.account_id !== account_id) {
         throw Error("must be signed in with a valid account API key");
       }
-      res.json(await getOneProjectForApiKey({ account_id, principal }));
+      res.json(await getOneProjectForApiKey(principal));
       return;
     }
     res.json(await getOneProject(account_id));
@@ -29,15 +29,13 @@ export default async function handle(req, res) {
   }
 }
 
-async function getOneProjectForApiKey({
-  account_id,
-  principal,
-}: {
-  account_id: string;
-  principal: ApiKeyPrincipal;
-}): Promise<{ project_id: string; title?: string; description?: string }> {
+async function getOneProjectForApiKey(
+  principal: ApiKeyPrincipal,
+): Promise<{ project_id: string; title?: string; description?: string }> {
   requireApiKeyCapability(principal, "project:list");
-  const { projects } = await listProjectSummaries({ account_id, limit: 1 });
+  const { projects } = await listProjectSummariesForApiKey(principal, {
+    limit: 1,
+  });
   if (projects.length >= 1) {
     const { project_id, title, description } = projects[0];
     return { project_id, title, description };

@@ -20,7 +20,8 @@ jest.mock("@cocalc/server/projects/get", () => ({
   default: (...args) => mockLegacy(...args),
 }));
 jest.mock("@cocalc/server/conat/api/projects", () => ({
-  listProjectSummaries: (...args) => mockSummaries(...args),
+  listProjectSummariesForApiKey: (principal, opts) =>
+    mockSummaries({ ...opts, account_id: principal.account_id }),
 }));
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,

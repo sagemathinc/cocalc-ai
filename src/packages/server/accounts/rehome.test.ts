@@ -1285,11 +1285,12 @@ describe("account rehome", () => {
       )?.[1],
     ).toEqual([account]);
   });
-  it("imports key issuance sequences without converting them to numbers", async () => {
+  it("imports key issuance sequences and search debt without resetting them", async () => {
     const key = {
       account_id: TARGET_ACCOUNT_ID,
       key_id: "portable-key",
       issuance_sequence: "9007199254740993",
+      api_search_next_ms: "1790536633803",
     };
     queryMock = jest.fn(async (sql: string) => ({
       rows: sql.includes("information_schema.columns")

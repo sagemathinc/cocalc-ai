@@ -51,6 +51,11 @@ export interface ApiKey {
 Table({
   name: "api_keys",
   fields: {
+    api_search_next_ms: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Internal per-key search admission virtual arrival time, preserved on account rehome.",
+    },
     id: ID,
     account_id: CREATED_BY, // who made this api key
     expire: {

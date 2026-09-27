@@ -96,7 +96,7 @@ test("rejects account admission before allocating a summary query", async () => 
   await expect(listProjectSummaries({ account_id })).rejects.toThrow(
     "account search rate exceeded",
   );
-  expect(admitAccountSearch).toHaveBeenCalledWith(account_id);
+  expect(admitAccountSearch).toHaveBeenCalledWith(account_id, undefined);
   expect(getPool).not.toHaveBeenCalled();
 });
 

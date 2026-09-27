@@ -69,6 +69,9 @@ export async function ensureApiKeysV2Schema(): Promise<void> {
     await pool.query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
     );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+    );
     await pool.query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );

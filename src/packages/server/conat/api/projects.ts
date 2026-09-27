@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import type { ApiKeyPrincipal } from "@cocalc/server/api/api-key-scope";
 import createProject, {
   createProjectWithBootstrap,
 } from "@cocalc/server/projects/create";
@@ -3387,13 +3389,59 @@ export async function listAccountProjectWindow({
   });
 }
 
-export async function listProjectSummaries({
+export async function listProjectSummaries(opts: {
+  account_id: string;
+  project_id?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  // Public RPC parameters must never supply admission identity.
+  const { account_id, project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+  });
+}
+
+export async function listProjectSummariesForApiKey(
+  principal: ApiKeyPrincipal,
+  opts: {
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  },
+) {
+  requireApiKeyCapability(principal, "project:list");
+  if (!principal.account_id || !principal.key_id || !principal.scope_revision)
+    throw Error("missing authenticated search key identity");
+  const { project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id: principal.account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+    admission_key: {
+      key_id: principal.key_id,
+      scope_revision: principal.scope_revision,
+    },
+  });
+}
+
+async function listProjectSummariesWithAdmission({
+  admission_key,
   account_id,
   project_id,
   limit,
   offset,
   search,
 }: {
+  admission_key?: { key_id: string; scope_revision: number };
   account_id: string;
   project_id?: string;
   limit?: number;
@@ -3408,9 +3456,17 @@ export async function listProjectSummaries({
     return await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
       dest_bay: location.home_bay_id,
-    }).listProjectSummaries({ account_id, project_id, limit, offset, search });
+    }).listProjectSummaries({
+      account_id,
+      project_id,
+      limit,
+      offset,
+      search,
+      ...(admission_key ? { admission_key } : {}),
+    });
   }
   return await listProjectSummariesLocal({
+    ...(admission_key ? { admission_key } : {}),
     account_id,
     project_id,
     limit,

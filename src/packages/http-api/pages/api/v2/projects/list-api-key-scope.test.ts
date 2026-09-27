@@ -29,7 +29,8 @@ jest.mock("@cocalc/server/projects/get", () => ({
 }));
 
 jest.mock("@cocalc/server/conat/api/projects", () => ({
-  listProjectSummaries: (...args) => mockListProjectSummaries(...args),
+  listProjectSummariesForApiKey: (principal, opts) =>
+    mockListProjectSummaries({ ...opts, account_id: principal.account_id }),
 }));
 
 jest.mock("@cocalc/server/projects/create", () => ({

@@ -34,6 +34,12 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 }));
 
 describe("API-key project summaries route to account home", () => {
+  it("does not expose the authenticated-key helper as a public RPC", async () => {
+    const { getHubApiPrincipalPolicy } = await import("@cocalc/conat/hub/api");
+    expect(
+      getHubApiPrincipalPolicy("projects.listProjectSummariesForApiKey"),
+    ).toBeUndefined();
+  });
   const request = { account_id: accountId, limit: 5, search: "Sage" };
   const page = { projects: [], next_offset: null };
 
@@ -78,4 +84,56 @@ describe("API-key project summaries route to account home", () => {
     );
     expect(listLocalMock).not.toHaveBeenCalled();
   });
+
+  it("public RPC ignores caller-supplied admission identity", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({ home_bay_id: "bay-0" });
+    const { listProjectSummaries } = await import("./projects");
+    await listProjectSummaries({
+      ...request,
+      admission_key: { key_id: "victim-key", scope_revision: 1 },
+    } as any);
+    expect(listLocalMock.mock.calls[0][0]).not.toHaveProperty("admission_key");
+  });
+
+  it("rejects missing key identity before routing", async () => {
+    const { listProjectSummariesForApiKey } = await import("./projects");
+    await expect(
+      listProjectSummariesForApiKey(
+        { account_id: accountId, capabilities: ["project:list"] } as any,
+        {},
+      ),
+    ).rejects.toThrow("missing authenticated search key identity");
+    expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["bay-0", "bay-1"])(
+    "derives key identity and account from the principal on %s",
+    async (home_bay_id) => {
+      resolveAccountHomeBayMock.mockResolvedValue({ home_bay_id });
+      const { listProjectSummariesForApiKey } = await import("./projects");
+      await listProjectSummariesForApiKey(
+        {
+          account_id: accountId,
+          key_id: "real-key",
+          scope_revision: 3,
+          capabilities: ["project:list"],
+        } as any,
+        {
+          account_id: "victim",
+          admission_key: { key_id: "victim-key", scope_revision: 1 },
+          limit: 5,
+        } as any,
+      );
+      expect(
+        home_bay_id === "bay-0" ? listLocalMock : listRemoteMock,
+      ).toHaveBeenCalledWith({
+        account_id: accountId,
+        project_id: undefined,
+        limit: 5,
+        offset: undefined,
+        search: undefined,
+        admission_key: { key_id: "real-key", scope_revision: 3 },
+      });
+    },
+  );
 });

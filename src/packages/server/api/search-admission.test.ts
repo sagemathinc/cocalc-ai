@@ -24,12 +24,26 @@ test("retains rate debt through clock rollback and rejects corrupt clocks", () =
   }
 });
 
+test("key bucket permits burst 10 and refills one admission per second", () => {
+  const now = 1_790_000_000_000;
+  let next: number | null = null;
+  for (let i = 0; i < 10; i++) next = nextSearchAdmission(next, now, true);
+  expect(next).toBe(now + 10000);
+  expect(() => nextSearchAdmission(next, now + 999, true)).toThrow(
+    "key search rate exceeded",
+  );
+  expect(nextSearchAdmission(next, now + 1000, true)).toBe(now + 11000);
+});
+
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 describeDb("durable account-home search admission", () => {
   const pool = getPool();
   const account_id = randomUUID();
   beforeAll(async () => {
+    await pool.query(
+      "CREATE TABLE IF NOT EXISTS api_keys(account_id UUID, key_id TEXT, scope_revision INTEGER, expire TIMESTAMPTZ)",
+    );
     await pool.query(
       "CREATE TABLE IF NOT EXISTS accounts(account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN)",
     );
@@ -39,12 +53,18 @@ describeDb("durable account-home search admission", () => {
     ]);
   });
   beforeEach(async () => {
+    await pool.query("DELETE FROM api_keys WHERE account_id=$1", [account_id]);
+    await pool.query(
+      "INSERT INTO api_keys(account_id,key_id,scope_revision) VALUES($1,'search-key-1',1),($1,'search-key-2',1)",
+      [account_id],
+    );
     await pool.query(
       "UPDATE accounts SET home_bay_id=NULL, api_search_next_ms=NULL WHERE account_id=$1",
       [account_id],
     );
   });
   afterAll(async () => {
+    await pool.query("DELETE FROM api_keys WHERE account_id=$1", [account_id]);
     await pool.query("DELETE FROM accounts WHERE account_id=$1", [account_id]);
   });
   test("separate invocations share durable debt and denials leave it unchanged", async () => {
@@ -69,6 +89,83 @@ describeDb("durable account-home search admission", () => {
       code: "api_search_rate_limited",
     });
     expect(await read()).toBe(previous);
+  });
+  test("key rejection does not charge the account or a different key", async () => {
+    await pool.query(
+      "UPDATE api_keys SET api_search_next_ms=floor(extract(epoch FROM clock_timestamp())*1000)+60000 WHERE account_id=$1 AND key_id='search-key-1'",
+      [account_id],
+    );
+    await expect(
+      admitAccountSearch(account_id, {
+        key_id: "search-key-1",
+        scope_revision: 1,
+      }),
+    ).rejects.toThrow("key search rate exceeded");
+    expect(
+      (
+        await pool.query(
+          "SELECT api_search_next_ms FROM accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0].api_search_next_ms,
+    ).toBeNull();
+    await expect(
+      admitAccountSearch(account_id, {
+        key_id: "search-key-2",
+        scope_revision: 1,
+      }),
+    ).resolves.toBeUndefined();
+  });
+  test("account rejection cannot be bypassed by switching keys", async () => {
+    await pool.query(
+      "UPDATE accounts SET api_search_next_ms=floor(extract(epoch FROM clock_timestamp())*1000)+60000 WHERE account_id=$1",
+      [account_id],
+    );
+    for (const key_id of ["search-key-1", "search-key-2"]) {
+      await expect(
+        admitAccountSearch(account_id, { key_id, scope_revision: 1 }),
+      ).rejects.toThrow("account search rate exceeded");
+    }
+    expect(
+      (
+        await pool.query(
+          "SELECT api_search_next_ms FROM api_keys WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows.every((row) => row.api_search_next_ms === null),
+    ).toBe(true);
+  });
+  test("revoked, changed and expired keys are rejected without charging", async () => {
+    await expect(
+      admitAccountSearch(account_id, {
+        key_id: "missing-key",
+        scope_revision: 1,
+      }),
+    ).rejects.toThrow("unavailable or changed");
+    await expect(
+      admitAccountSearch(account_id, {
+        key_id: "search-key-1",
+        scope_revision: 2,
+      }),
+    ).rejects.toThrow("unavailable or changed");
+    await pool.query(
+      "UPDATE api_keys SET expire=clock_timestamp()-interval '1 second' WHERE account_id=$1",
+      [account_id],
+    );
+    await expect(
+      admitAccountSearch(account_id, {
+        key_id: "search-key-1",
+        scope_revision: 1,
+      }),
+    ).rejects.toThrow("unavailable or changed");
+    expect(
+      (
+        await pool.query(
+          "SELECT api_search_next_ms FROM accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows[0].api_search_next_ms,
+    ).toBeNull();
   });
   test("serializes concurrent admissions rather than overwriting one another", async () => {
     // Keep virtual time ahead of database wall time throughout these writes.

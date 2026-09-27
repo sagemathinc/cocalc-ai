@@ -12,6 +12,10 @@ jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
 }));
 
 import hubHandler from "./hub";
+import { listProjectSummariesForApiKey } from "@cocalc/server/conat/api/projects";
+jest.mock("@cocalc/server/conat/api/projects", () => ({
+  listProjectSummariesForApiKey: jest.fn(),
+}));
 import projectHandler from "./project";
 
 jest.mock("@cocalc/server/auth/api", () => ({
@@ -24,13 +28,9 @@ jest.mock("@cocalc/backend/conat", () => ({
 jest.mock("@cocalc/server/api/hub-bridge", () => jest.fn());
 jest.mock("@cocalc/server/api/project-bridge", () => jest.fn());
 jest.mock("@cocalc/server/projects/is-collaborator", () => jest.fn());
-jest.mock(
-  "@cocalc/server/api/api-key-audit",
-  () => ({
-    recordApiKeyAuditEventSoon: jest.fn(),
-  }),
-  { virtual: true },
-);
+jest.mock("@cocalc/server/api/api-key-audit", () => ({
+  recordApiKeyAuditEventSoon: jest.fn(),
+}));
 
 const mockConat = jest.mocked(conat);
 const mockGetAccountFromApiKey = jest.mocked(getAccountFromApiKey);
@@ -39,6 +39,31 @@ const mockProjectBridge = jest.mocked(projectBridge);
 const mockIsCollaborator = jest.mocked(isCollaborator);
 
 describe("/api/conat/hub", () => {
+  test("summary dispatch preserves authenticated key context outside the account bridge", async () => {
+    const principal = {
+      account_id: "acc-1",
+      key_id: "real-key",
+      scope_revision: 3,
+      capabilities: ["project:list"],
+    } as any;
+    mockGetAccountFromApiKey.mockResolvedValue(principal);
+    const opts = {
+      limit: 5,
+      account_id: "victim",
+      admission_key: { key_id: "victim-key", scope_revision: 1 },
+    };
+    jest
+      .mocked(listProjectSummariesForApiKey)
+      .mockResolvedValue({ projects: [], next_offset: null });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { name: "projects.listProjectSummaries", args: [opts] },
+    });
+    await hubHandler(req, res);
+    expect(listProjectSummariesForApiKey).toHaveBeenCalledWith(principal, opts);
+    expect(mockHubBridge).not.toHaveBeenCalled();
+    expect(res._getJSONData()).toEqual({ projects: [], next_offset: null });
+  });
   beforeEach(() => {
     jest.resetAllMocks();
     mockConat.mockReturnValue({ id: "backend-client" } as any);

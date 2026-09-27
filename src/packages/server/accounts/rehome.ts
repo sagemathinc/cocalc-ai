@@ -230,6 +230,9 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
     );
     await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+    );
+    await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );
     await getPool().query(

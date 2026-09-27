@@ -4742,6 +4742,7 @@ export interface InterBayAccountLocalApi
     opts: import("@cocalc/util/api-key-management").ApiKeyActionDecision,
   ) => Promise<import("@cocalc/util/api-key-management").ApiKeyActionReview>;
   listProjectSummaries: (opts: {
+    admission_key?: { key_id: string; scope_revision: number };
     account_id: string;
     project_id?: string;
     limit?: number;

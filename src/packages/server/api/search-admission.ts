@@ -23,7 +23,11 @@ export async function ensureSearchAdmissionSchema(): Promise<void> {
       .query(
         "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
       )
-      .then(() => undefined)
+      .then(async () => {
+        await pool.query(
+          "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+        );
+      })
       .catch((error) => {
         schemas.delete(pool);
         throw error;
@@ -33,7 +37,13 @@ export async function ensureSearchAdmissionSchema(): Promise<void> {
   await pending;
 }
 
-export function nextSearchAdmission(previous: unknown, now: number): number {
+export function nextSearchAdmission(
+  previous: unknown,
+  now: number,
+  key = false,
+): number {
+  const interval = key ? 1000 : INTERVAL_MS;
+  const burst = key ? 10 : BURST;
   const next = previous == null ? now : Number(previous);
   if (
     !Number.isSafeInteger(next) ||
@@ -43,23 +53,39 @@ export function nextSearchAdmission(previous: unknown, now: number): number {
   ) {
     throw Error("invalid search admission clock");
   }
-  const retryAfterMs = next - (BURST - 1) * INTERVAL_MS - now;
+  const retryAfterMs = next - (burst - 1) * interval - now;
   if (retryAfterMs > 0) {
     throw Object.assign(
       new Error(
-        `account search rate exceeded; retry after ${Math.ceil(retryAfterMs / 1000)} seconds`,
+        `${key ? "key" : "account"} search rate exceeded; retry after ${Math.ceil(retryAfterMs / 1000)} seconds`,
       ),
       { code: "api_search_rate_limited", retry_after_ms: retryAfterMs },
     );
   }
-  return Math.max(next, now) + INTERVAL_MS;
+  return Math.max(next, now) + interval;
+}
+
+export interface SearchAdmissionKey {
+  key_id: string;
+  scope_revision: number;
 }
 
 // Invoke only on the resolved account home, before the bounded summary query.
 // Durable account state is copied by account rehome; process/key changes do not
 // replenish the bucket. The database clock avoids independent hub clock skew.
-export async function admitAccountSearch(account_id: string): Promise<void> {
+export async function admitAccountSearch(
+  account_id: string,
+  key?: SearchAdmissionKey,
+): Promise<void> {
   if (!isValidUUID(account_id)) throw Error("invalid account id");
+  if (
+    key &&
+    (!/^[A-Za-z0-9_-]{8,128}$/.test(key.key_id) ||
+      !Number.isSafeInteger(key.scope_revision) ||
+      key.scope_revision < 1)
+  ) {
+    throw Error("invalid search key identity");
+  }
   await ensureSearchAdmissionSchema();
   const client = await getPool().connect();
   try {
@@ -81,6 +107,17 @@ export async function admitAccountSearch(account_id: string): Promise<void> {
       [account_id],
     );
     if (!rows.length) throw Error("search account is unavailable");
+    const keyRow = key
+      ? (
+          await client.query(
+            `SELECT api_search_next_ms FROM api_keys
+       WHERE account_id=$1 AND key_id=$2 AND scope_revision=$3
+       AND (expire IS NULL OR expire > clock_timestamp()) FOR UPDATE`,
+            [account_id, key.key_id, key.scope_revision],
+          )
+        ).rows[0]
+      : undefined;
+    if (key && !keyRow) throw Error("search key is unavailable or changed");
     const { rows: clock } = await client.query(
       "SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint::text AS now_ms",
     );
@@ -88,10 +125,22 @@ export async function admitAccountSearch(account_id: string): Promise<void> {
       rows[0].api_search_next_ms,
       Number(clock[0]?.now_ms),
     );
+    const keyNext = key
+      ? nextSearchAdmission(
+          keyRow.api_search_next_ms,
+          Number(clock[0]?.now_ms),
+          true,
+        )
+      : undefined;
     await client.query(
       "UPDATE accounts SET api_search_next_ms=$2 WHERE account_id=$1",
       [account_id, next],
     );
+    if (key)
+      await client.query(
+        "UPDATE api_keys SET api_search_next_ms=$3 WHERE account_id=$1 AND key_id=$2",
+        [account_id, key.key_id, keyNext],
+      );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
