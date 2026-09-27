@@ -628,6 +628,8 @@ export class Client extends EventEmitter {
   public readonly options: ClientOptions;
   private inboxSubject: string;
   private inbox?: EventEmitter;
+  private inboxSubscription?: Subscription;
+  private inboxGeneration = 0;
   private permissionError = {
     pub: new TTL<string, string>({ ttl: 1000 * 60 }),
     sub: new TTL<string, string>({ ttl: 1000 * 60 }),
@@ -766,8 +768,9 @@ export class Client extends EventEmitter {
         ack();
       }
       const firstTime = this.info == null;
+      const previousInboxPrefix = firstTime ? undefined : this.getInboxPrefix();
       this.info = info;
-      if (firstTime) {
+      if (firstTime || previousInboxPrefix !== this.getInboxPrefix()) {
         void this.initInbox().catch((err) => {
           if (this.isClosed()) {
             return;
@@ -1098,7 +1101,18 @@ export class Client extends EventEmitter {
   // identity wrt a remote server (example: a project api key knows
   // the project_id but the client might not).
   public inboxPrefixHook?: (info: ServerInfo | undefined) => string | undefined;
+  private getInboxPrefix = () =>
+    this.inboxPrefixHook?.(this.info) ??
+    this.options?.inboxPrefix ??
+    INBOX_PREFIX;
+
   private initInbox = async () => {
+    // A new authenticated namespace must not reuse replies or subscriptions
+    // from the previous one, including an initialization still in flight.
+    const generation = ++this.inboxGeneration;
+    this.inboxSubscription?.close();
+    this.inboxSubscription = undefined;
+    this.inbox = undefined;
     // For request/respond instead of setting up one
     // inbox *every time there is a request*, we setup a single
     // inbox once and for all for all responses.  We listen for
@@ -1112,23 +1126,25 @@ export class Client extends EventEmitter {
     // multiple servers solving the race condition would slow everything down
     // due to having to wait for so many acknowledgements.  Instead, we
     // remove all those problems by just using a single inbox subscription.
-    const inboxPrefix =
-      this.inboxPrefixHook?.(this.info) ??
-      this.options?.inboxPrefix ??
-      INBOX_PREFIX;
+    const inboxPrefix = this.getInboxPrefix();
     if (!inboxPrefix.startsWith(INBOX_PREFIX)) {
       throw Error(`custom inboxPrefix must start with '${INBOX_PREFIX}'`);
     }
-    this.inboxSubject = `${inboxPrefix}.${randomId()}`;
+    const inboxSubject = `${inboxPrefix}.${randomId()}`;
+    this.inboxSubject = inboxSubject;
+    const superseded = () =>
+      this.isClosed() || generation !== this.inboxGeneration;
     let sub;
     await until(
       async () => {
+        if (superseded()) return true;
         try {
           await this.waitUntilSignedIn();
-          sub = await this.subscribe(this.inboxSubject + ".*");
+          if (superseded()) return true;
+          sub = await this.subscribe(inboxSubject + ".*");
           return true;
         } catch (err) {
-          if (this.isClosed()) {
+          if (superseded()) {
             return true;
           }
           // this should only fail due to permissions issues, at which point
@@ -1141,20 +1157,23 @@ export class Client extends EventEmitter {
       },
       { start: 3000, max: 30000 },
     );
-    if (this.isClosed()) {
+    if (superseded()) {
+      sub?.close();
       return;
     }
 
-    this.inbox = new EventEmitter();
+    this.inboxSubscription = sub;
+    const inbox = new EventEmitter();
+    this.inbox = inbox;
     (async () => {
       for await (const mesg of sub) {
-        if (this.inbox == null) {
+        if (superseded()) {
           return;
         }
-        this.inbox.emit(mesg.subject, mesg);
+        inbox.emit(mesg.subject, mesg);
       }
     })();
-    this.emit("inbox", this.inboxSubject);
+    this.emit("inbox", inboxSubject);
   };
 
   private isClosed = () => {

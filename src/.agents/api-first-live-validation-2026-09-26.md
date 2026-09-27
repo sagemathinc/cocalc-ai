@@ -473,6 +473,23 @@ and the project TypeScript build passes. This is application-level integration
 evidence, not deployed CLI, managed-turn, rotated-credential, or outage evidence.
 Production protocol code remains unchanged and deployment remains pending.
 
+### Reply namespace reconnect follow-up (not deployed)
+
+A real-broker regression reproduced an ordinary request timeout after reconnect:
+the authenticated reply prefix changed, but the shared client retained its first
+request/reply inbox. The client now replaces that inbox when the authenticated
+prefix changes, closes the old subscription, and prevents superseded asynchronous
+initialization from installing an old inbox. An unchanged prefix retains the
+existing inbox. The regression passes for both cases, with one active inbox
+subscription and continued denial of the old namespace after rotation.
+
+The request/reconnect/socket selection passes 24 tests and the Conat TypeScript
+build passes. This changes shared client production code beyond the earlier
+pinned socket review candidate. It does not yet solve persistent logical-socket
+return-route rotation or establish deployed CLI recovery. In-flight requests
+are not automatically replayed; callers must handle their existing timeout/error
+semantics without assuming that a timed-out mutation was not executed.
+
 - Managed source-turn invalidation, membership loss during established project
   sessions, and human-approved regrant by editing an existing key.
 - Home outage, account migration, migration with active keys/sessions, stale
