@@ -267,8 +267,11 @@
   flex-direction: column;
   min-height: 100px;
 }
+.collaborators-collection[data-view="grid"] .collaborators-row {
+  padding: 8px;
+}
 .collaborators-collection[data-view="grid"] .collaborators-row-time {
-  margin: 0 12px 6px;
+  margin: 0 8px 6px;
   text-align: left;
 }
 .collaborators-collection[data-view="grid"] .collaborators-conversation-title {
