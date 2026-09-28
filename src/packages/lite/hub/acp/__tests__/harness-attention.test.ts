@@ -27,6 +27,7 @@ test("Claude async questions are durable, idempotent and survive turn completion
       project_id: "project",
       path: "claude.chat",
       thread_id: "conversation",
+      harness_session_id: "native",
       sender_id: "acp-harness",
       message_date: new Date().toISOString(),
     },
@@ -51,6 +52,9 @@ test("Claude async questions are durable, idempotent and survive turn completion
   ).rejects.toThrow(/different questions/);
   await handler.runtimeClosed?.(context);
   expect(getAcpAttention(first.attention_id)?.state).toBe("pending");
+  expect(getAcpAttention(first.attention_id)?.chat.harness_session_id).toBe(
+    "native",
+  );
 });
 
 test.each(["answer", "cancel"])(

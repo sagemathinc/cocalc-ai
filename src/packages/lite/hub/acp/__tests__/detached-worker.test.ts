@@ -40,7 +40,11 @@ import {
 } from "../../sqlite/acp-jobs";
 import { setAcpAdmissionLimitsProvider } from "../admission";
 import { hubApi } from "../../api";
-import { setHarnessLauncher } from "../harness-runtime";
+import {
+  setHarnessLauncher,
+  harnessRuntimeKey,
+  prepareHarnessRequest,
+} from "../harness-runtime";
 import {
   enqueueAcpInterrupt,
   listPendingAcpInterrupts,
@@ -57,6 +61,7 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 }));
 
 jest.mock("@cocalc/ai/acp", () => ({
+  getCodexProjectSpawner: () => ({}),
   assertSameTurnPrincipal:
     jest.requireActual("@cocalc/ai/acp").assertSameTurnPrincipal,
   CODEX_ACP_RECOVERY_ERROR_CODE: {
@@ -307,6 +312,104 @@ it.each(["network membership revoked", "authorization service unavailable"])(
       setHarnessLauncher();
       if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
       else process.env.COCALC_ACP_HARNESSES = original;
+    }
+  },
+);
+
+it.each(["created-by-preceding-turn", ""])(
+  "passes refreshed human queue context %j to a cold ACP runtime with admitted settings",
+  async (currentSessionId) => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("unexpected launch");
+    });
+    const request = prepareHarnessRequest({
+      ...makeRequest(),
+      session_id: undefined,
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+        settings: { configOptions: [{ id: "model", value: "admitted-model" }] },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+        claudeAiConnectors: false,
+      },
+    });
+    const job = enqueueAcpJob(request);
+    const rows = [
+      {
+        event: "chat-thread-config",
+        thread_id: request.chat!.thread_id,
+        agent_kind: "acp",
+        agent_runtime: {
+          ...request.runtime,
+          settings: { configOptions: [{ id: "model", value: "next-model" }] },
+        },
+        agent_session_id: currentSessionId,
+      },
+    ];
+    jest
+      .mocked(chatServer.acquireChatSyncDB)
+      .mockResolvedValue(makeSyncdb(rows) as any);
+    acpTestInternals.initializeAcpRuntime({
+      sync: { akv: () => ({}) },
+    } as unknown as ConatClient);
+    // Keep this regression at the durable queue -> runtime boundary; log-store
+    // durability is covered by the storage/recovery tests below.
+    jest
+      .spyOn(ChatStreamWriter.prototype as any, "persistLog")
+      .mockResolvedValue(undefined);
+    const evaluate = jest.fn(async () => {});
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      harnessRuntimeKey(request),
+      request.project_id,
+      { evaluate } as any,
+      true,
+    );
+    try {
+      const claimed = claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+      })!;
+      await acpTestInternals.runQueuedAcpJob(claimed);
+      expect(
+        getAcpJob({
+          project_id: job.project_id,
+          path: job.path,
+          user_message_id: job.user_message_id,
+        })?.error,
+      ).toBeFalsy();
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(evaluate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_id: currentSessionId,
+          runtime: request.runtime,
+          harness_credential: request.harness_credential,
+        }),
+      );
+      expect(decodeAcpJobRequest(job).session_id).toBeUndefined();
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
     }
   },
 );

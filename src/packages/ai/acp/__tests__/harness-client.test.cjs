@@ -769,6 +769,15 @@ test("Claude tool questions return before the answer and steer the same running 
   );
   assert.equal(created.length, 1);
   assert.equal(created[0].context.chat.thread_id, "conversation-a");
+  assert.equal(created[0].context.chat.harness_session_id, "fixture-session");
+  assert.deepEqual(
+    await agent.steer("fixture-session", {
+      ...request,
+      session_id: "replaced-session",
+      prompt: "stale answer",
+    }),
+    { state: "missing" },
+  );
   assert.equal(agent.hasRunningTurn("fixture-session"), true);
   assert.deepEqual(
     await agent.steer("fixture-session", {
@@ -831,6 +840,8 @@ test("harness adapter binds durable questions to the current account, chat and e
   assert.equal(asked[0].context.accountId, "account-a");
   assert.equal(asked[0].context.chat.thread_id, "conversation-a");
   assert.equal(asked[0].context.threadId, "fixture-session");
+  assert.equal(asked[0].context.chat.harness_session_id, "fixture-session");
+  assert.equal(request.chat.harness_session_id, undefined);
   assert.notEqual(asked[0].context.turnId, asked[1].context.turnId);
   assert.equal(resolved[0].requestId, asked[0].requestId);
   assert.equal(closed[0].turnId, asked[0].context.turnId);
@@ -885,6 +896,39 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   assert.equal(events[0].threadId, "fixture-session");
   await agent.evaluate({ ...request, session_id: "fixture-session" });
   assert.equal(events.at(-1).finalResponse, "Hello world 2");
+  assert.equal(launches(), 1);
+});
+
+test("explicit context reset retires the warm harness before opening a fresh session", async (t) => {
+  const { agent, request, events, launches, stops } = adapter(t);
+  await agent.evaluate(request);
+  await agent.evaluate(request); // Missing is not an explicit reset.
+  assert.equal(events.at(-1).finalResponse, "Hello world 2");
+  assert.equal(launches(), 1);
+  await agent.evaluate({ ...request, session_id: "" });
+  assert.equal(stops(), 1);
+  assert.equal(launches(), 2);
+  assert.equal(events.at(-1).finalResponse, "Hello world 1");
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.equal(events.at(-1).finalResponse, "Hello world 2");
+  assert.equal(launches(), 2);
+});
+
+test("context reset cannot launch a replacement after unconfirmed cleanup", async (t) => {
+  const { agent, request, launches } = adapter(t, [], undefined, true);
+  await agent.evaluate(request);
+  await assert.rejects(
+    agent.evaluate({ ...request, session_id: "" }),
+    /cleanup|stop failed/i,
+  );
+  assert.equal(launches(), 1);
+  await assert.rejects(agent.evaluate(request), /not idle/);
+});
+
+test("a cold harness honors an explicit reset without attempting session load", async (t) => {
+  const { agent, request, events, launches } = adapter(t, ["--no-resume"]);
+  await agent.evaluate({ ...request, session_id: "" });
+  assert.equal(events.at(-1).finalResponse, "Hello world 1");
   assert.equal(launches(), 1);
 });
 

@@ -123,6 +123,8 @@ export interface AcpChatContext {
   thread_id?: string;
   thread_title?: string;
   parent_message_id?: string;
+  // Stamped by the harness on durable questions, never inferred from later turns.
+  harness_session_id?: string;
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";

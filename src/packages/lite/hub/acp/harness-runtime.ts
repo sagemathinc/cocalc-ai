@@ -226,9 +226,19 @@ export function queuedAgentSession(
         JSON.stringify(parseAcpHarnessRuntime(current.runtime).profile)
     )
       throw Error("Recipient ACP runtime changed while the message was queued");
+    if (
+      admitted.session_id &&
+      current.session_id != null &&
+      admitted.session_id !== current.session_id
+    )
+      throw Error(
+        "The ACP context was reset or replaced; send a new message in the agent conversation",
+      );
     return {
       config: undefined,
-      session_id: admitted.session_id ?? current.session_id,
+      // Empty is an explicit reset, not a missing ID. Once a preceding queued
+      // turn has established its new session, later unbound turns follow it.
+      session_id: current.session_id ?? admitted.session_id,
     };
   }
   // Refresh native execution settings, but retain admitted funding (including

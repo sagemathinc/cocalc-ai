@@ -9627,6 +9627,32 @@ async function recordAcpGuidanceDelivered(
   }
 }
 
+function queuedConversationSession(syncdb: SyncDB, request: AcpRequest) {
+  const values = syncdb.get();
+  const rows = Array.isArray(values) ? values : (values?.toJS?.() ?? []);
+  const thread = rows.find(
+    (row) =>
+      row?.event === THREAD_CONFIG_EVENT &&
+      row.thread_id === request.chat?.thread_id,
+  );
+  if (!thread || thread.archived)
+    throw new Error("target thread unavailable at execution");
+  const current = prepareChatSend({
+    projectId: request.project_id,
+    accountId: request.account_id,
+    path: request.chat!.path,
+    thread,
+    rows,
+    prompt: request.prompt,
+    guidance: request.chat?.send_mode === "immediate",
+  }).request;
+  // prepareChatSend intentionally hides the reset marker from session inference.
+  // Execution must keep it to retire a warm worker, not resume its cached client.
+  if (current.runtime && thread.agent_session_id === "")
+    current.session_id = "";
+  return queuedAgentSession(request, current);
+}
+
 async function prepareQueuedUserMessageForExecution({
   client,
   project_id,
@@ -9657,27 +9683,11 @@ async function prepareQueuedUserMessageForExecution({
       const versionCountBefore = syncdbVersionCount(syncdb);
       const current = findChatRowByMessageId(syncdb, user_message_id);
       if (
-        request?.request_kind !== "command" &&
-        request?.chat?.agent_rpc_execution
+        request &&
+        request.request_kind !== "command" &&
+        (request.runtime || request.chat?.agent_rpc_execution)
       ) {
-        const values = syncdb.get();
-        const rows = Array.isArray(values) ? values : (values?.toJS?.() ?? []);
-        const thread = rows.find(
-          (row) =>
-            row?.event === THREAD_CONFIG_EVENT && row.thread_id === thread_id,
-        );
-        if (!thread || thread.archived)
-          throw new Error("target thread unavailable at execution");
-        const current = prepareChatSend({
-          projectId: project_id,
-          accountId: request.account_id,
-          path,
-          thread,
-          rows,
-          prompt: request.prompt,
-          guidance: request.chat.send_mode === "immediate",
-        }).request;
-        const queued = queuedAgentSession(request, current);
+        const queued = queuedConversationSession(syncdb, request);
         currentAgentConfig = queued.config;
         currentAgentSessionId = queued.session_id;
       }
@@ -10383,7 +10393,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       user_message_id,
       err,
     });
-    if (request.chat?.agent_rpc_execution) {
+    if (
+      request.chat?.agent_rpc_execution ||
+      (request.request_kind !== "command" && request.runtime)
+    ) {
+      if (request.request_kind !== "command" && request.runtime)
+        await writeQueuedJobFailureToChat({ request, error: `${err}` });
       setAcpJobState({
         op_id: job.op_id,
         state: "canceled",
@@ -10403,7 +10418,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     request,
     latestContent: latestQueuedMessageContent,
   });
-  if (request.chat?.agent_rpc_execution) {
+  if (request.runtime || request.chat?.agent_rpc_execution) {
     refreshedRequest.config = currentAgentConfig;
     refreshedRequest.session_id = currentAgentSessionId;
   }
@@ -10817,6 +10832,9 @@ async function trySteerCandidateIds({
   let firstError: unknown;
   let sawNotSteerable = false;
   for (const id of ids) {
+    // Cached writer/lease aliases can outlive an ACP reset. Only the current
+    // native session may receive guidance, never another candidate's context.
+    if (request.runtime && id !== request.session_id) continue;
     for (const agent of agentsForProject(projectId)) {
       if (typeof agent.steer !== "function") {
         continue;
@@ -11513,12 +11531,25 @@ async function deliverAsyncAttentionAnswer(
             "The question's execution configuration is unavailable; send your answer in the agent conversation.",
           );
         assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        // Admission can precede session creation. New questions carry the
+        // actual native ID; old records are usable only with an admitted ID.
+        const questionSessionId =
+          record.chat.harness_session_id || source.session_id;
+        if (!questionSessionId)
+          throw Error(
+            "The question's ACP context is unavailable; send your answer in the agent conversation.",
+          );
+        const session = queuedAgentSession(
+          { ...source, session_id: questionSessionId },
+          {
+            ...source,
+            session_id: syncdbField<string>(threadConfig, "agent_session_id"),
+          },
+        );
         harnessExecution = {
           runtime: source.runtime,
           harness_credential: source.harness_credential,
-          session_id:
-            syncdbField<string>(threadConfig, "agent_session_id") ||
-            source.session_id,
+          session_id: session.session_id,
         };
       }
       config = syncdbField(threadConfig, "acp_config") ?? {};
@@ -12155,6 +12186,16 @@ async function attemptAcpSteerRequest(
   // A forwarded steer may outlive its admission authority. Recheck before
   // injecting into any runtime; ordinary human guidance needs no network grant.
   await authorizeAgentDeliveryExecution(request, hubApi.agent);
+  if (request.runtime) {
+    const session = await withChatSyncDB({
+      client: conatClient,
+      project_id: request.project_id,
+      path: request.chat.path,
+      fn: async (syncdb) => queuedConversationSession(syncdb, request),
+    });
+    if (!session.session_id) return { state: "not_steerable" };
+    request = { ...request, session_id: session.session_id };
+  }
   await acknowledgeAutomationFromHumanTurn(request);
 
   const projectId = request.chat.project_id ?? request.project_id;

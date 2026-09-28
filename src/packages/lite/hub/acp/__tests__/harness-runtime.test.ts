@@ -327,9 +327,9 @@ test("queued ACP delivery preserves admitted settings and exact existing session
     config: undefined,
     session_id: "created-by-previous-turn",
   });
-  admitted.session_id = "admitted-session";
+  admitted.session_id = current.session_id;
   expect(queuedAgentSession(admitted, current).session_id).toBe(
-    "admitted-session",
+    "created-by-previous-turn",
   );
   expect(admitted.runtime!.settings.configOptions![0].value).toBe("a");
   current.runtime!.profile.revision = "changed";
@@ -340,6 +340,36 @@ test("queued ACP delivery preserves admitted settings and exact existing session
     queuedAgentSession({ ...admitted, runtime: undefined }, current),
   ).toThrow();
 });
+
+test.each([
+  [undefined, "", ""],
+  ["", "", ""],
+  ["", "new-session", "new-session"],
+  [undefined, "new-session", "new-session"],
+  ["old-session", undefined, "old-session"],
+])(
+  "queued ACP context %j -> %j resolves to %j",
+  (admitted, current, expected) => {
+    expect(
+      queuedAgentSession(
+        { ...request(), session_id: admitted },
+        { ...request(), session_id: current },
+      ).session_id,
+    ).toBe(expected);
+  },
+);
+
+test.each(["", "replacement-session"])(
+  "queued ACP messages pinned before a reset to %j fail closed",
+  (current) => {
+    expect(() =>
+      queuedAgentSession(
+        { ...request(), session_id: "old-session" },
+        { ...request(), session_id: current },
+      ),
+    ).toThrow("context was reset or replaced");
+  },
+);
 
 test.each([
   undefined,

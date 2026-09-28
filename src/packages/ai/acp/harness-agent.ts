@@ -93,6 +93,14 @@ export class HarnessAgent implements AcpAgent {
     this.interrupted = false;
     try {
       await this.validateAuthority?.(this.binding);
+      // The service preserves the authoritative empty reset marker. Missing
+      // IDs can be sync lag; only an explicit reset retires a retained client.
+      if (request.session_id === "" && this.client) {
+        await this.client.dispose();
+        this.client = undefined;
+      }
+      if (this.closed)
+        throw Error("ACP conversation was disposed during reset");
       if (!this.client) {
         const client = await AcpHarnessClient.start(
           this.binding,
@@ -187,7 +195,7 @@ export class HarnessAgent implements AcpAgent {
       this.attentionContext = {
         projectId: request.project_id,
         accountId: request.account_id,
-        chat: request.chat,
+        chat: { ...request.chat, harness_session_id: client.sessionId! },
         threadId: client.sessionId!,
         turnId: `acp-${randomUUID()}`,
         stream: request.stream,
@@ -344,6 +352,8 @@ export class HarnessAgent implements AcpAgent {
     threadId: string,
     request: AcpSteerRequest,
   ): Promise<AcpSteerResult> {
+    if (request.session_id != null && request.session_id !== threadId)
+      return { state: "missing" };
     if (threadId !== this.client?.sessionId) return { state: "missing" };
     assertSameTurnPrincipal(this.binding.accountId, request.account_id);
     if (
