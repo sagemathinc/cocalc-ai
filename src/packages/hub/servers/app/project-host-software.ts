@@ -551,6 +551,42 @@ async function redirectContainerRuntime(
 
 export default function init(router: Router) {
   router.get(
+    "/software/harnesses/claude-code/:version/:sha256/harnesses-linux-:arch.tar.xz",
+    async (req, res) => {
+      const { version, sha256, arch } = req.params;
+      if (
+        !SAFE_PLATFORM_TOKEN.test(version) ||
+        !/^[a-f0-9]{64}$/.test(sha256) ||
+        (arch !== "amd64" && arch !== "arm64")
+      ) {
+        sendNotFound(res, "invalid managed harness selector");
+        return;
+      }
+      try {
+        if (await maybeRedirectToRemoteSoftware(req, res)) return;
+        const root = resolvePackagesRoot();
+        const file = root
+          ? join(root, "project", "build", `harnesses-linux-${arch}.tar.xz`)
+          : undefined;
+        if (
+          !file ||
+          !existsSync(file) ||
+          (await getFileMeta(file)).sha256 !== sha256
+        ) {
+          sendNotFound(
+            res,
+            "pinned managed harness artifact is unavailable locally",
+          );
+          return;
+        }
+        res.sendFile(file);
+      } catch (err) {
+        logger.error("software managed harness error", { err: String(err) });
+        sendNotFound(res, "failed serving managed harness artifact");
+      }
+    },
+  );
+  router.get(
     "/software/container-runtime/latest-:os-:arch.json",
     redirectContainerRuntime,
   );

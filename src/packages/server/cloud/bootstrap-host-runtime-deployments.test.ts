@@ -137,6 +137,7 @@ describe("bootstrap-host promoted artifact defaults", () => {
   beforeEach(() => {
     process.env.MASTER_CONAT_SERVER = "http://master.example.test";
     process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_MODE = "disabled";
+    process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES = "1";
     getServerSettingsMock = jest.fn(async () => ({
       project_hosts_software_base_url: softwareBaseUrl,
       project_hosts_bootstrap_channel: "latest",
@@ -152,6 +153,9 @@ describe("bootstrap-host promoted artifact defaults", () => {
   afterEach(() => {
     delete process.env.MASTER_CONAT_SERVER;
     delete process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_MODE;
+    delete process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES;
+    delete process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE;
+    delete process.env.COCALC_BAY_ID;
   });
 
   async function loadBootstrapHost() {
@@ -281,6 +285,97 @@ describe("bootstrap-host promoted artifact defaults", () => {
     expect(scripts.bootstrapPyUrl).toBe(
       `${softwareBaseUrl}/bootstrap/bootstrap-v5/bootstrap.py`,
     );
+    expect(scripts.managedHarness).toEqual({
+      name: "claude-code",
+      version: "0.81.1",
+      os: "linux",
+      arch: "amd64",
+      sha256:
+        "e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3",
+      url: `${softwareBaseUrl}/harnesses/claude-code/0.81.1/e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3/harnesses-linux-amd64.tar.xz`,
+    });
+    // Older bootstrap runners ignore the new spec; do not enable ACP in them.
+    expect(scripts.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+  });
+
+  it("pins a separate immutable payload for each supported architecture", async () => {
+    const { resolveManagedHarness } = await loadBootstrapHost();
+    const amd64 = resolveManagedHarness(softwareBaseUrl, "linux", "amd64")!;
+    const arm64 = resolveManagedHarness(
+      `${softwareBaseUrl}/`,
+      "linux",
+      "arm64",
+    )!;
+    expect(arm64).toMatchObject({
+      name: "claude-code",
+      version: "0.81.1",
+      os: "linux",
+      arch: "arm64",
+      sha256:
+        "d39ceeceb2501c65502f49c24662c15076361a59c717f8ccfa6d7a99e26c1dac",
+    });
+    expect(arm64.url).toBe(
+      `${softwareBaseUrl}/harnesses/claude-code/0.81.1/${arm64.sha256}/harnesses-linux-arm64.tar.xz`,
+    );
+    expect(amd64.sha256).not.toBe(arm64.sha256);
+    expect(
+      resolveManagedHarness(softwareBaseUrl, "darwin", "arm64"),
+    ).toBeUndefined();
+    expect(
+      resolveManagedHarness(softwareBaseUrl, "linux", "s390x"),
+    ).toBeUndefined();
+  });
+
+  it("does not require optional pinned archives for local development unless opted in", async () => {
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    delete process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES;
+    const local = await buildBootstrapScripts(baseRow() as any);
+    expect(local.managedHarness).toBeUndefined();
+    expect(local.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+    process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES = "1";
+    const optedIn = await buildBootstrapScripts(baseRow() as any);
+    expect(optedIn.managedHarness?.name).toBe("claude-code");
+    expect(optedIn.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+  });
+
+  it("automatically provisions managed bays but honors local endpoints and a site disable", async () => {
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    delete process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES;
+    process.env.COCALC_BAY_ID = "bay-test";
+    const row = baseRow();
+    row.metadata.machine.metadata.self_host_mode = "cloud";
+    row.metadata.runtime.public_ip = "203.0.113.10";
+    const managed = await buildBootstrapScripts(row as any);
+    expect(managed.managedHarness?.name).toBe("claude-code");
+    expect(managed.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE = "local";
+    const local = await buildBootstrapScripts(row as any);
+    expect(local.managedHarness).toBeUndefined();
+    expect(local.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+    delete process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE;
+    process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES = "0";
+    const disabled = await buildBootstrapScripts(row as any);
+    expect(disabled.managedHarness).toBeUndefined();
+    expect(disabled.envLines).not.toContain("COCALC_ACP_HARNESSES=1");
+  });
+
+  it("includes the pinned harness without eager enablement for older bootstrap runners", async () => {
+    const { buildBootstrapScriptWithStatus, resolveManagedHarness } =
+      await loadBootstrapHost();
+    const script = await buildBootstrapScriptWithStatus(
+      baseRow() as any,
+      "test-token",
+      "https://example.test",
+    );
+    const match = script.match(
+      /bootstrap-desired-state\.json"\n([\s\S]*?)\nEOF_COCALC_BOOTSTRAP_DESIRED_STATE/,
+    );
+    expect(match).not.toBeNull();
+    const desired = JSON.parse(match![1]);
+    expect(desired.managed_harness).toEqual(
+      resolveManagedHarness(softwareBaseUrl, "linux", "amd64"),
+    );
+    expect(desired.env_lines).not.toContain("COCALC_ACP_HARNESSES=1");
   });
 
   it("falls back to the existing latest-manifest behavior when no promoted default exists", async () => {
