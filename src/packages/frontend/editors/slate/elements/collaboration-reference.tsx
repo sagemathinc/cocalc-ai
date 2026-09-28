@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useRef, useState } from "react";
+import { Button } from "antd";
 import type { CollaborationReference } from "@cocalc/util/collaboration-references";
 import {
   collaborationReferenceLabel,
@@ -11,7 +12,9 @@ import {
 } from "@cocalc/util/collaboration-references";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { ProjectAccessDialog } from "@cocalc/frontend/project/access";
 import {
   openResolvedCollaborationReference,
   resolveCollaborationReference,
@@ -38,6 +41,34 @@ export function createCollaborationReference(
   };
 }
 
+async function checkReference(reference: CollaborationReference) {
+  let lookupFailed = false;
+  try {
+    const resource = await resolveCollaborationReference(reference);
+    if (resource) return { resource };
+  } catch {
+    lookupFailed = true;
+  }
+  // A missing resource can also mean deleted/archived content or a network
+  // failure. Only claim missing project access after the access API confirms it.
+  try {
+    const access =
+      await webapp_client.project_collaborators.get_access_landing_info({
+        project_id: reference.target.project_id,
+      });
+    if (access.relationship === "none")
+      return { resource: null, noProjectAccess: true };
+  } catch {
+    // Keep the generic retry state; never expose raw server error metadata.
+  }
+  return {
+    resource: null,
+    error: lookupFailed
+      ? "Could not load this link. Check your connection and try again."
+      : undefined,
+  };
+}
+
 export function CollaborationReferenceLink({
   reference,
 }: {
@@ -51,30 +82,23 @@ export function CollaborationReferenceLink({
   const activeKey = useRef(key);
   activeKey.current = key;
   const requestSequence = useRef(0);
+  const [accessDialogKey, setAccessDialogKey] = useState<string>();
   const [state, setState] = useState<{
     key: string;
     resource?: CollaborationResource | null;
     error?: string;
     busy?: boolean;
+    noProjectAccess?: boolean;
   }>();
 
   useEffect(() => {
     if (!accountId) return;
     let cancelled = false;
     const sequence = ++requestSequence.current;
-    void resolveCollaborationReference(reference).then(
-      (resource) => {
-        if (!cancelled && requestSequence.current === sequence)
-          setState({ key, resource });
-      },
-      () => {
-        if (!cancelled && requestSequence.current === sequence)
-          setState({
-            key,
-            error: "Could not check reference. Activate to retry.",
-          });
-      },
-    );
+    void checkReference(reference).then((result) => {
+      if (!cancelled && requestSequence.current === sequence)
+        setState({ key, ...result });
+    });
     return () => {
       cancelled = true;
     };
@@ -97,18 +121,18 @@ export function CollaborationReferenceLink({
     reference.target.kind === "conversation"
       ? "conversation"
       : reference.target.kind;
-  async function open() {
+  async function open(navigate = true) {
     const sequence = ++requestSequence.current;
-    setState({ key, resource, busy: true });
+    setState({ ...current, key, resource, busy: true });
     try {
       // Always authorize again: display metadata may predate a membership removal.
-      const resolved = await resolveCollaborationReference(reference);
+      const result = await checkReference(reference);
       if (activeKey.current !== key || requestSequence.current !== sequence)
         return;
-      setState({ key, resource: resolved });
-      if (resolved)
+      setState({ key, ...result });
+      if (result.resource && navigate)
         await openResolvedCollaborationReference(
-          resolved,
+          result.resource,
           () =>
             activeKey.current === key && requestSequence.current === sequence,
         );
@@ -116,24 +140,7 @@ export function CollaborationReferenceLink({
       if (activeKey.current === key && requestSequence.current === sequence)
         setState({
           key,
-          error:
-            "Reference could not be opened. It may be unavailable or you may no longer have access.",
-        });
-    }
-  }
-  async function projectAccess() {
-    try {
-      // Reuse the project landing page's invite acceptance and access-request
-      // workflow. Opening it neither grants access nor submits a request.
-      await redux
-        .getActions("projects")
-        .open_project({ project_id: reference.target.project_id });
-    } catch {
-      if (activeKey.current === key)
-        setState({
-          key,
-          resource: null,
-          error: "Could not open project access options. Try again.",
+          error: "Could not open this link. Try again.",
         });
     }
   }
@@ -159,21 +166,38 @@ export function CollaborationReferenceLink({
       >
         {label}
       </button>
-      {(resource === null || current?.error) && (
+      {current?.noProjectAccess ? (
         <>
-          {resource === null && (
-            <span role="status"> Unavailable reference. </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void projectAccess()}
-            title="Open project access options to accept an invitation or request collaborator access."
-          >
-            Request project access
-          </button>
+          <span role="status"> You do not have access to this project. </span>
+          <Button size="small" onClick={() => setAccessDialogKey(key)}>
+            Request access
+          </Button>
         </>
-      )}
-      {current?.error && <span role="alert"> {current.error}</span>}
+      ) : current?.error ? (
+        <>
+          <span role="alert"> {current.error} </span>
+          <Button
+            size="small"
+            disabled={current.busy}
+            onClick={() => void open()}
+          >
+            Retry
+          </Button>
+        </>
+      ) : resource === null ? (
+        <span role="status">
+          {" "}
+          This content is unavailable or you no longer have access.{" "}
+        </span>
+      ) : null}
+      <ProjectAccessDialog
+        projectId={reference.target.project_id}
+        open={accessDialogKey === key}
+        onClose={() => {
+          setAccessDialogKey(undefined);
+          void open(false);
+        }}
+      />
     </>
   );
 }

@@ -105,6 +105,93 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("MentionsActions realtime feed", () => {
+  it.each([0, 8])(
+    "counts access-request rows before a totals event, preserving a server total of %s",
+    async (serverTotal) => {
+      let mentionsStore = ImmutableMap({
+        mentions: ImmutableMap(),
+        unread_count: serverTotal,
+      });
+      const redux = {
+        getStore: (name) =>
+          name === "account"
+            ? ImmutableMap({ account_id: "acct-1" })
+            : mentionsStore,
+        _set_state: (patch) => {
+          if (patch.mentions)
+            mentionsStore = mentionsStore.merge(patch.mentions);
+        },
+      } as any;
+      const actions = new MentionsActions("mentions", redux);
+      const notification = {
+        notification_id: "request-1",
+        kind: "account_notice",
+        project_id: "project-1",
+        summary: {
+          notice_type: "project_access_request",
+          requested_role: "viewer",
+        },
+        read_state: { read: false },
+        created_at: new Date().toISOString(),
+      };
+      const event = {
+        type: "notification.upsert",
+        account_id: "acct-1",
+        notification,
+      };
+      // A missing/delayed counts event must not hide a delivered access request.
+      (actions as any).handleRealtimeFeedChange(event);
+      expect(mentionsStore.get("unread_count")).toBe(Math.max(1, serverTotal));
+      (actions as any).handleRealtimeFeedChange(event);
+      expect(mentionsStore.get("unread_count")).toBe(Math.max(1, serverTotal));
+      expect((mentionsStore.get("mentions") as any).size).toBe(1);
+    },
+  );
+
+  it("does not let a stale count hide unread rows during a refresh or counts event", async () => {
+    let mentionsStore = ImmutableMap({
+      mentions: ImmutableMap(),
+      unread_count: 0,
+    });
+    const redux = {
+      getStore: (name) =>
+        name === "account"
+          ? ImmutableMap({ account_id: "acct-1" })
+          : mentionsStore,
+      _set_state: (patch) => {
+        if (patch.mentions) mentionsStore = mentionsStore.merge(patch.mentions);
+      },
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+    const notifications = mockedWebappClient.conat_client.hub.notifications;
+    const row = {
+      notification_id: "request-1",
+      kind: "account_notice",
+      project_id: "project-1",
+      summary: { notice_type: "project_access_request" },
+      read_state: { read: false },
+      created_at: new Date(),
+    };
+    notifications.list.mockResolvedValue([row]);
+    await actions.refresh();
+    expect(mentionsStore.get("unread_count")).toBe(1);
+    (actions as any).handleRealtimeFeedChange({
+      type: "notification.counts",
+      account_id: "acct-1",
+      counts: { unread: 0 },
+    });
+    expect(mentionsStore.get("unread_count")).toBe(1);
+    await flush();
+    expect(mentionsStore.get("unread_count")).toBe(1);
+    // A refreshed read row clears the badge normally.
+    notifications.list.mockResolvedValue([
+      { ...row, read_state: { read: true } },
+    ]);
+    await actions.refresh();
+    expect(mentionsStore.get("unread_count")).toBe(0);
+    actions.destroy();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     resetProjectionDiagnosticsForTests();

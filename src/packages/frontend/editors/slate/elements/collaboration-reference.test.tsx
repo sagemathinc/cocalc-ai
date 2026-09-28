@@ -9,6 +9,11 @@ const mockGetResource = jest.fn();
 const mockOpenCollaborators = jest.fn();
 const mockOpenLibrary = jest.fn();
 const mockOpenProject = jest.fn();
+const mockAccessInfo = jest.fn();
+const mockRequestAccess = jest.fn();
+jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
+  Avatar: () => null,
+}));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => mockAccountId,
   redux: {
@@ -18,6 +23,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    project_collaborators: {
+      get_access_landing_info: (...args) => mockAccessInfo(...args),
+      request_access: (...args) => mockRequestAccess(...args),
+    },
     conat_client: {
       hub: {
         collaborators: { getResource: (...args) => mockGetResource(...args) },
@@ -65,6 +74,15 @@ beforeEach(() => {
   mockOpenCollaborators.mockReset();
   mockOpenLibrary.mockReset();
   mockOpenProject.mockReset().mockResolvedValue(undefined);
+  mockAccessInfo.mockReset().mockResolvedValue({
+    project_id: reference.target.project_id,
+    title: "Shared project",
+    relationship: "collaborator",
+  });
+  mockRequestAccess.mockReset().mockResolvedValue({
+    request_id: "request-1",
+    requested_role: "viewer",
+  });
 });
 
 test("viewer alias is resolved by identity and keyboard activation reauthorizes before navigation", async () => {
@@ -100,7 +118,7 @@ test("removed access becomes unavailable without opening a route", async () => {
   mockGetResource.mockResolvedValue(null);
   await userEvent.click(button);
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "Unavailable reference",
+    "This content is unavailable",
   );
   expect(
     screen.queryByRole("button", { name: /viewer-alias/ }),
@@ -117,7 +135,7 @@ test("unavailable or identity-mismatched metadata never replaces the authored la
   });
   render(<CollaborationReferenceLink reference={reference} />);
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "Unavailable reference",
+    "This content is unavailable",
   );
   expect(
     screen.getByRole("button", { name: "Open conversation @old-alias" }),
@@ -125,18 +143,31 @@ test("unavailable or identity-mismatched metadata never replaces the authored la
   expect(screen.queryByText("Wrong identity")).not.toBeInTheDocument();
 });
 
-test("unavailable references offer the existing project invitation/access-request page", async () => {
+test("missing project access opens a styled modal with keyboard focus restored to the chat", async () => {
   mockGetResource.mockResolvedValue(null);
+  mockAccessInfo.mockResolvedValue({
+    project_id: reference.target.project_id,
+    title: "Shared project",
+    relationship: "none",
+  });
   render(<CollaborationReferenceLink reference={reference} />);
   const access = await screen.findByRole("button", {
-    name: "Request project access",
+    name: "Request access",
   });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "You do not have access to this project.",
+  );
+  expect(access).toHaveClass("ant-btn");
   expect(mockOpenProject).not.toHaveBeenCalled();
   access.focus();
   await userEvent.keyboard("{Enter}");
-  expect(mockOpenProject).toHaveBeenCalledWith({
-    project_id: reference.target.project_id,
-  });
+  const dialog = await screen.findByRole("dialog", { name: "Project access" });
+  await screen.findByRole("radio", { name: "Viewer" });
+  expect(mockOpenProject).not.toHaveBeenCalled();
+  expect(mockRequestAccess).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await waitFor(() => expect(access).toHaveFocus());
   // An invitation accepted later needs no rebinding: activating the original link rechecks access.
   mockGetResource.mockResolvedValue(resource);
   await userEvent.click(
@@ -144,7 +175,7 @@ test("unavailable references offer the existing project invitation/access-reques
   );
   await waitFor(() => expect(mockOpenCollaborators).toHaveBeenCalled());
   expect(
-    screen.queryByRole("button", { name: "Request project access" }),
+    screen.queryByRole("button", { name: "Request access" }),
   ).not.toBeInTheDocument();
 });
 
@@ -250,9 +281,40 @@ test("authorization errors do not disclose server error metadata", async () => {
   mockGetResource.mockRejectedValue(Error("Sensitive project title"));
   render(<CollaborationReferenceLink reference={reference} />);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not check reference",
+    "Could not load this link",
   );
   expect(screen.queryByText(/Sensitive project/)).not.toBeInTheDocument();
+});
+
+test("access-denied lookup failures use confirmed project access information", async () => {
+  mockGetResource.mockRejectedValue(Error("permission denied"));
+  mockAccessInfo.mockResolvedValue({
+    project_id: reference.target.project_id,
+    relationship: "none",
+  });
+  render(<CollaborationReferenceLink reference={reference} />);
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "You do not have access to this project.",
+  );
+  expect(
+    screen.getByRole("button", { name: "Request access" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("network failures offer an explicit retry without claiming the user lacks access", async () => {
+  mockGetResource.mockRejectedValue(Error("offline"));
+  mockAccessInfo.mockRejectedValue(Error("offline"));
+  render(<CollaborationReferenceLink reference={reference} />);
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(screen.queryByText(/You do not have access/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Request access" }),
+  ).not.toBeInTheDocument();
+  mockGetResource.mockResolvedValue(resource);
+  retry.focus();
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(mockOpenCollaborators).toHaveBeenCalled());
 });
 
 test.each(["agent", "artifact", "conversation"] as const)(
