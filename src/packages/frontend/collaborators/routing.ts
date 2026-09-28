@@ -52,7 +52,7 @@ export function parseCollaboratorsRoute(
         if (!kind || !["conversation", "agent", "artifact"].includes(kind))
           throw Error();
         result.resourceKind = kind as CollaboratorsRoute["resourceKind"];
-      } else if (key !== "project" && key !== "person") {
+      } else if (key !== "project" && key !== "person" && key !== "projects") {
         throw Error();
       }
       const value = decodeURIComponent(rest.shift() ?? "");
@@ -64,7 +64,17 @@ export function parseCollaboratorsRoute(
       )
         throw Error();
       if (key === "project") result.projectId = value;
-      else if (key === "person") result.personId = value;
+      else if (key === "projects") {
+        const ids = value.split(",");
+        if (
+          ids.length > 50 ||
+          ids.some(
+            (id) => !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id),
+          )
+        )
+          throw Error();
+        result.projectIds = [...new Set(ids)];
+      } else if (key === "person") result.personId = value;
       else result.resourceId = value;
     }
     if (result.resourceId && !result.projectId) throw Error();
@@ -85,6 +95,8 @@ export function collaboratorsTargetPath(
   if (route.routeError) return "collaborators/invalid";
   const parts = ["collaborators", route.view ?? "conversations"];
   if (route.projectId) parts.push("project", route.projectId);
+  if (route.projectIds?.length)
+    parts.push("projects", route.projectIds.join(","));
   if (route.personId) parts.push("person", route.personId);
   if (route.resourceKind && route.resourceId)
     parts.push("resource", route.resourceKind, route.resourceId);

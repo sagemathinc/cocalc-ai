@@ -97,3 +97,45 @@ it("keeps search mounted and focused after zero results and allows another searc
   expect(selector).toHaveFocus();
 });
 jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));
+
+it("applies multiple projects only on confirmation and retains labels across searches", async () => {
+  const user = userEvent.setup();
+  const second = { ...project, project_id: "second", title: "Second project" };
+  const api = {
+    listProjects: jest.fn(async ({ search }) =>
+      page(search === "Second" ? [second] : [project]),
+    ),
+  };
+  const apply = jest.fn();
+  const select = jest.fn();
+  render(
+    <DirectoryPicker
+      api={api as any}
+      kind="project"
+      title="Filter by project"
+      onSelect={select}
+      onSelectProjects={apply}
+      onClose={jest.fn()}
+    />,
+  );
+  const selector = screen.getByRole("combobox", { name: "Search projects" });
+  await waitFor(() => expect(api.listProjects).toHaveBeenCalled());
+  await user.click(selector);
+  fireEvent.keyDown(selector, { key: "Enter", keyCode: 13, which: 13 });
+  await user.type(selector, "Second");
+  await waitFor(() =>
+    expect(api.listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: "Second" }),
+    ),
+  );
+  await user.click(await screen.findByText("Second project"));
+  expect(select).not.toHaveBeenCalled();
+  expect(apply).not.toHaveBeenCalled();
+  const button = screen.getByRole("button", { name: "Apply" });
+  button.focus();
+  await user.keyboard("{Enter}");
+  expect(apply).toHaveBeenCalledWith([
+    { id: "shared", title: "Shared project" },
+    { id: "second", title: "Second project" },
+  ]);
+});

@@ -1568,6 +1568,50 @@ test("shared resource discovery excludes solo projects without changing general 
   );
 });
 
+test("multi-project resource filters retain access gates and cursor binding", async () => {
+  await ingestCollaborationSnapshot(
+    snapshot(1, [resource("a"), resource("b")]),
+    authority,
+  );
+  await deliver();
+  const absent = randomUUID();
+  const first = await listCollaborationResources({
+    account_id,
+    project_ids: [absent, project_id],
+    limit: 1,
+  });
+  expect(first.items).toHaveLength(1);
+  expect(first.next).toBeDefined();
+  const second = await listCollaborationResources({
+    account_id,
+    project_ids: [project_id, absent],
+    limit: 1,
+    after: first.next,
+  });
+  expect(second.items).toHaveLength(1);
+  expect(second.items[0].resource_id).not.toBe(first.items[0].resource_id);
+  expect(
+    (await listCollaborationResources({ account_id, project_ids: [absent] }))
+      .items,
+  ).toEqual([]);
+  await expect(
+    listCollaborationResources({
+      account_id,
+      project_ids: [absent],
+      after: first.next,
+    }),
+  ).rejects.toThrow("cursor");
+  await projectIndex("viewer");
+  expect(
+    (
+      await listCollaborationResources({
+        account_id,
+        project_ids: [project_id, absent],
+      })
+    ).items,
+  ).toEqual([]);
+});
+
 test("title/alias search and cursor filter binding are deterministic and bounded", async () => {
   await ingestCollaborationSnapshot(
     snapshot(1, [resource("one"), resource("two")]),

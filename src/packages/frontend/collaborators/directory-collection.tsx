@@ -50,6 +50,7 @@ function StandaloneCollection<T>(props: DirectoryCollectionProps<T>) {
   );
 }
 function DirectoryCollectionContent<T>({
+  collection,
   items,
   label,
   itemId,
@@ -114,6 +115,7 @@ function DirectoryCollectionContent<T>({
     <div
       className="collaborators-list collaborators-collection"
       data-view={view}
+      data-collection={collection}
     >
       {showViewControl && (
         <div className="collaborators-actions">
@@ -153,7 +155,7 @@ function DirectoryCollectionContent<T>({
             className="collaborators-collection-item"
             style={{
               display: "flex",
-              flexDirection: view === "grid" ? "column" : "row",
+              flexDirection: "row",
               alignItems: "center",
               color: UI_COLORS.text,
               minWidth: 0,
@@ -165,7 +167,12 @@ function DirectoryCollectionContent<T>({
             </div>
             <div
               className="collaborators-row-controls"
-              style={{ display: "flex", gap: 4, flexShrink: 0 }}
+              style={{
+                display: "flex",
+                flexDirection: view === "grid" ? "column" : "row",
+                gap: 4,
+                flexShrink: 0,
+              }}
             >
               {controls.dragHandle}
               {controls.pinButton}

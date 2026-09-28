@@ -134,6 +134,7 @@ function CollaboratorsWorkspace({
   headerActions,
   view = "conversations",
   projectId,
+  projectIds,
   personId,
   resourceKind,
   resourceId,
@@ -180,6 +181,7 @@ function CollaboratorsWorkspace({
   const route: CollaboratorsRoute = {
     view,
     projectId,
+    projectIds,
     personId,
     resourceKind,
     resourceId,
@@ -192,21 +194,28 @@ function CollaboratorsWorkspace({
         ? projectId
         : undefined;
   // The selected resource's project is a locator, not a new list filter.
-  const listRoute = useRef({ view, projectId, personId });
+  const listRoute = useRef({ view, projectId, projectIds, personId });
   if (!selection || listRoute.current.view !== view)
-    listRoute.current = { view, projectId, personId };
+    listRoute.current = { view, projectId, projectIds, personId };
   const listProjectId = listRoute.current.projectId;
+  const listProjectIds =
+    listRoute.current.projectIds ?? (listProjectId ? [listProjectId] : []);
   const listPersonId = listRoute.current.personId;
-  const projectTitle = listProjectId
-    ? projects?.getIn([listProjectId, "title"])
-    : undefined;
+  const projectFilters = listProjectIds.map((id) => {
+    const title =
+      revision.ready && (filterNames[id] || projects?.getIn([id, "title"]));
+    return {
+      id,
+      title: typeof title === "string" && title ? title : "Project",
+    };
+  });
   const selectedProjectTitle = projectId
     ? projects?.getIn([projectId, "title"])
     : undefined;
   const queryKey = JSON.stringify([
     view,
     search,
-    listProjectId,
+    listProjectIds,
     listPersonId,
     scope,
     projectView,
@@ -220,7 +229,7 @@ function CollaboratorsWorkspace({
       const opts = {
         shared_only: true,
         search,
-        project_id: listProjectId,
+        project_ids: listProjectIds.length ? listProjectIds : undefined,
         person_id: listPersonId,
         after,
         limit: 50,
@@ -264,12 +273,13 @@ function CollaboratorsWorkspace({
         page: listRef.current?.closest(".collaborators-page")?.scrollTop ?? 0,
       };
     }
-    onNavigate(next);
+    onNavigate({ ...next, projectIds: listProjectIds });
   }
   function filter(next: CollaboratorsRoute) {
     listRoute.current = {
       view: next.view,
       projectId: next.projectId,
+      projectIds: next.projectIds,
       personId: next.personId,
     };
     returnRoute.current = undefined;
@@ -280,6 +290,7 @@ function CollaboratorsWorkspace({
     onNavigate(
       returnRoute.current ?? {
         view,
+        projectIds: listProjectIds,
         projectId: view === "projects" ? undefined : projectId,
         personId: view === "people" ? undefined : personId,
       },
@@ -399,7 +410,13 @@ function CollaboratorsWorkspace({
           active={active}
           id={toolbarId}
           view={view}
-          onView={(view) => onNavigate({ view, projectId, personId })}
+          onView={(view) =>
+            onNavigate({
+              view,
+              projectIds: listProjectIds,
+              personId: listPersonId,
+            })
+          }
           input={input}
           onInput={setInput}
           scope={scope}
@@ -407,16 +424,7 @@ function CollaboratorsWorkspace({
           projectView={projectView}
           onProjectView={setProjectView}
           preferences={preferences}
-          projectLabel={
-            listProjectId
-              ? (revision.ready &&
-                  (filterNames[listProjectId] ||
-                    (typeof projectTitle === "string"
-                      ? projectTitle
-                      : undefined))) ||
-                "Project"
-              : undefined
-          }
+          projectFilters={projectFilters}
           personLabel={
             listPersonId
               ? (revision.ready && filterNames[listPersonId]) || "Person"
@@ -424,8 +432,14 @@ function CollaboratorsWorkspace({
           }
           onProjectFilter={() => setPicker("project")}
           onPersonFilter={() => setPicker("person")}
-          onClearProject={() => filter({ view, personId: listPersonId })}
-          onClearPerson={() => filter({ view, projectId: listProjectId })}
+          onClearProject={(id) =>
+            filter({
+              view,
+              personId: listPersonId,
+              projectIds: listProjectIds.filter((value) => value !== id),
+            })
+          }
+          onClearPerson={() => filter({ view, projectIds: listProjectIds })}
           onAction={view === "conversations" ? newConversation : invite}
         />
         <div className="collaborators-header-actions">
@@ -690,6 +704,26 @@ function CollaboratorsWorkspace({
               : `Filter by ${picker}`
           }
           projectId={projectId}
+          projectIds={listProjectIds}
+          selectedProjects={projectFilters}
+          onSelectProjects={
+            picker === "project"
+              ? (items) => {
+                  setFilterNames((names) => ({
+                    ...names,
+                    ...Object.fromEntries(
+                      items.map(({ id, title }) => [id, title]),
+                    ),
+                  }));
+                  filter({
+                    view,
+                    personId: listPersonId,
+                    projectIds: items.map(({ id }) => id),
+                  });
+                  setPicker(undefined);
+                }
+              : undefined
+          }
           personId={personId}
           onClose={() => setPicker(undefined)}
           onCreateProject={
@@ -708,9 +742,9 @@ function CollaboratorsWorkspace({
                 ...route,
                 resourceId: undefined,
                 resourceKind: undefined,
-                ...(picker === "project"
-                  ? { projectId: item.id }
-                  : { personId: item.id }),
+                projectId: undefined,
+                projectIds: listProjectIds,
+                personId: item.id,
               });
             setPicker(undefined);
           }}

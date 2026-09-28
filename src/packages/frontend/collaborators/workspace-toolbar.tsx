@@ -39,7 +39,7 @@ export function WorkspaceToolbar({
   projectView,
   onProjectView,
   preferences,
-  projectLabel,
+  projectFilters = [],
   personLabel,
   onProjectFilter,
   onPersonFilter,
@@ -62,11 +62,11 @@ export function WorkspaceToolbar({
   projectView: ProjectView;
   onProjectView: (view: ProjectView) => void;
   preferences: DirectoryCollectionPreferences;
-  projectLabel?: string;
+  projectFilters?: { id: string; title: string }[];
   personLabel?: string;
   onProjectFilter: () => void;
   onPersonFilter: () => void;
-  onClearProject: () => void;
+  onClearProject: (id: string) => void;
   onClearPerson: () => void;
   onAction: () => void;
   controlsTarget?: HTMLElement | null;
@@ -95,19 +95,27 @@ export function WorkspaceToolbar({
         ? "Invite"
         : "Invite to project";
   const filters = [
-    projectLabel && {
-      label: projectLabel,
+    ...projectFilters.map(({ id, title }) => ({
+      label: title,
       name: "Clear project filter",
-      clear: onClearProject,
-    },
+      key: id,
+      clear: () => onClearProject(id),
+    })),
     personLabel && {
       label: personLabel,
       name: "Clear person filter",
+      key: "person",
       clear: onClearPerson,
     },
   ].filter(
-    (item): item is { label: string; name: string; clear: () => void } =>
-      !!item,
+    (
+      item,
+    ): item is {
+      label: string;
+      name: string;
+      key: string;
+      clear: () => void;
+    } => !!item,
   );
   function pick(action: () => void) {
     setFiltersOpen(false);
@@ -212,7 +220,7 @@ export function WorkspaceToolbar({
                     >
                       {view !== "projects" && (
                         <Button onClick={() => pick(onProjectFilter)}>
-                          {projectLabel
+                          {projectFilters.length
                             ? "Change project filter"
                             : "Filter by project"}
                         </Button>
@@ -323,9 +331,9 @@ export function WorkspaceToolbar({
               className="collaborators-filter-chips"
               aria-label="Active filters"
             >
-              {filters.map(({ label, name, clear }) => (
+              {filters.map(({ label, name, clear, key }) => (
                 <Button
-                  key={name}
+                  key={key}
                   size="small"
                   aria-label={`${name}: ${label}`}
                   onClick={() => {

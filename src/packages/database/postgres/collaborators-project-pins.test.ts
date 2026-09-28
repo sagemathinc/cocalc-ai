@@ -3,7 +3,11 @@ import "@cocalc/util/db-schema/collaborators-workspace";
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import { syncCollaboratorsSchema } from "./collaborators-common";
-import { listCollaborationProjects } from "./collaborators-discovery";
+import {
+  listCollaborationProjects,
+  listCollaborationPeople,
+  collaborationPageQuery,
+} from "./collaborators-discovery";
 import { checkCollaborationRevision } from "./collaborators-changes";
 
 const account_id = randomUUID();
@@ -37,6 +41,91 @@ beforeAll(async () => {
 }, 60000);
 afterAll(async () => {
   await testCleanup();
+});
+
+test("multi-project union filters before pagination and counts shared people once", async () => {
+  const project_ids = [ids[20], ids[40], ids[60]];
+  const first = await listCollaborationProjects({
+    account_id,
+    project_ids,
+    limit: 2,
+  });
+  expect(first.items.map((item) => item.project_id)).toEqual([
+    ids[60],
+    ids[40],
+  ]);
+  expect(first.next).toBeDefined();
+  const second = await listCollaborationProjects({
+    account_id,
+    project_ids: [...project_ids].reverse(),
+    limit: 2,
+    after: first.next,
+  });
+  expect(second.items.map((item) => item.project_id)).toEqual([ids[20]]);
+  await expect(
+    listCollaborationProjects({
+      account_id,
+      project_ids: [ids[20]],
+      after: first.next,
+    }),
+  ).rejects.toThrow("cursor");
+  await getPool().query(
+    `INSERT INTO account_collaborator_index(account_id,collaborator_account_id,display_name) VALUES($1,$2,'Peer')`,
+    [account_id, person_id],
+  );
+  const people = await listCollaborationPeople({ account_id, project_ids });
+  expect(people.items).toEqual([
+    { account_id: person_id, display_name: "Peer", common_project_count: 3 },
+  ]);
+  await getPool().query(
+    `UPDATE collaboration_access SET lease_until=now()-interval '1 minute' WHERE account_id=$1 AND project_id=$2`,
+    [account_id, ids[40]],
+  );
+  try {
+    expect(
+      (await listCollaborationPeople({ account_id, project_ids })).items[0]
+        .common_project_count,
+    ).toBe(2);
+    const filtered = await listCollaborationProjects({
+      account_id,
+      project_ids,
+    });
+    expect(filtered.items.map((item) => item.project_id)).toEqual([
+      ids[60],
+      ids[20],
+    ]);
+    expect(filtered.coverage).toBe("indexing");
+    expect(
+      (await listCollaborationProjects({ account_id, project_ids: [ids[20]] }))
+        .coverage,
+    ).toBe("complete");
+  } finally {
+    await getPool().query(
+      `UPDATE collaboration_access SET lease_until=now()+interval '1 hour' WHERE account_id=$1 AND project_id=$2`,
+      [account_id, ids[40]],
+    );
+  }
+});
+
+test("multi-project filter validates bounds and normalizes duplicates and empty selections", () => {
+  for (const project_ids of [
+    "not-an-array",
+    ["bad-id"],
+    Array(51).fill(ids[0]),
+  ])
+    expect(() =>
+      collaborationPageQuery({ account_id, project_ids } as any, "people"),
+    ).toThrow("project_ids");
+  expect(
+    collaborationPageQuery(
+      { account_id, project_ids: [ids[0], ids[0]] },
+      "people",
+    ).project_ids,
+  ).toEqual([ids[0]]);
+  expect(
+    collaborationPageQuery({ account_id, project_ids: [] }, "people")
+      .project_ids,
+  ).toBeUndefined();
 });
 test("sparse pinned filter is applied before bounded keyset pages, preserving recent order", async () => {
   const calls = jest.spyOn(getPool(), "query");

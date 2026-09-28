@@ -15,6 +15,7 @@ export type ProjectView = NonNullable<CollaborationProjectQuery["view"]>;
 export interface CollaboratorsRoute {
   view: CollaboratorsView;
   projectId?: string;
+  projectIds?: string[];
   personId?: string;
   resourceKind?: CollaborationResourceKind;
   resourceId?: string;

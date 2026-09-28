@@ -5,9 +5,13 @@ import { emptyCollaborationPersonalState } from "@cocalc/util/collaborators";
 import { ResourceList } from "./resource-list";
 
 let mockAbsolute = false;
+const mockSetAbsolute = jest.fn();
 jest.mock("@cocalc/frontend/app/use-context", () => ({
   __esModule: true,
-  default: () => ({ timeAgoAbsolute: mockAbsolute }),
+  default: () => ({
+    timeAgoAbsolute: mockAbsolute,
+    setTimeAgoAbsolute: mockSetAbsolute,
+  }),
 }));
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: ({ account_id }) => <span data-testid={`avatar-${account_id}`} />,
@@ -84,6 +88,11 @@ test("keyboard selection and timestamp focus are separate; dates honor the exist
     new Date(resource.updated_at!).toLocaleString(),
   );
   expect(screen.getByText("1 hour ago")).toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  (await screen.findByRole("radio", { name: "Absolute" })).focus();
+  await user.keyboard(" ");
+  expect(mockSetAbsolute).toHaveBeenCalledWith(true);
+  expect(onOpen).toHaveBeenCalledTimes(1);
   mockAbsolute = true;
   rerender(
     <ResourceList

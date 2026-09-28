@@ -271,6 +271,7 @@ export class PageActions extends Actions<PageState> {
                 ? {
                     view: page.get("collaborators_view"),
                     projectId: page.get("collaborators_project_id"),
+                    projectIds: page.get("collaborators_project_ids")?.toJS(),
                     personId: page.get("collaborators_person_id"),
                     resourceKind: page.get("collaborators_resource_kind"),
                     resourceId: page.get("collaborators_resource_id"),

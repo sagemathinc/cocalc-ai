@@ -21,6 +21,9 @@ export function DirectoryPicker({
   kind,
   title,
   projectId,
+  projectIds,
+  selectedProjects = [],
+  onSelectProjects,
   personId,
   sharedOnly = false,
   onSelect,
@@ -31,6 +34,9 @@ export function DirectoryPicker({
   kind: "project" | "person";
   title: string;
   projectId?: string;
+  projectIds?: string[];
+  selectedProjects?: { id: string; title: string }[];
+  onSelectProjects?: (items: { id: string; title: string }[]) => void;
   personId?: string;
   sharedOnly?: boolean;
   onSelect: (item: { id: string; title: string }) => void;
@@ -44,9 +50,10 @@ export function DirectoryPicker({
       : undefined,
   );
   const [input, setInput] = useState("");
+  const [selected, setSelected] = useState(selectedProjects);
   const search = useDirectorySearch(input);
   const result = useDirectory<CollaborationProject | CollaborationPerson>(
-    JSON.stringify([kind, search, projectId, personId, sharedOnly]),
+    JSON.stringify([kind, search, projectId, projectIds, personId, sharedOnly]),
     (after) =>
       kind === "project"
         ? api.listProjects({
@@ -56,8 +63,26 @@ export function DirectoryPicker({
             after,
             limit: 25,
           })
-        : api.listPeople({ search, project_id: projectId, after, limit: 25 }),
+        : api.listPeople({
+            search,
+            project_id: projectIds ? undefined : projectId,
+            project_ids: projectIds?.length ? projectIds : undefined,
+            after,
+            limit: 25,
+          }),
   );
+  const projects = ((result.page?.items ?? []) as CollaborationProject[]).map(
+    (project) => ({
+      id: project.project_id,
+      title: project.title || "Untitled",
+      group: project.role,
+    }),
+  );
+  // Keep labels when a selected project is outside the current search page.
+  for (const item of selected) {
+    if (!projects.some(({ id }) => id === item.id))
+      projects.push({ ...item, group: "collaborator" });
+  }
   function restoreFocus() {
     // This picker unmounts immediately, before the modal's closing animation.
     requestAnimationFrame(() => {
@@ -80,6 +105,17 @@ export function DirectoryPicker({
             <Button onClick={onCreateProject}>Create project</Button>
           )}
           <Button onClick={cancel}>Cancel</Button>
+          {onSelectProjects && (
+            <Button
+              type="primary"
+              onClick={() => {
+                onSelectProjects(selected);
+                restoreFocus();
+              }}
+            >
+              Apply
+            </Button>
+          )}
         </>
       }
     >
@@ -112,21 +148,31 @@ export function DirectoryPicker({
             maxResults={result.page?.items.length || 25}
             onLoadMore={result.next}
             onSearch={(value) => setInput(value.slice(0, 200))}
-            projects={(
-              (result.page?.items ?? []) as CollaborationProject[]
-            ).map((project) => ({
-              id: project.project_id,
-              title: project.title || "Untitled",
-              group: project.role,
-            }))}
-            onChange={(id) => {
-              const item = (
-                result.page?.items as CollaborationProject[] | undefined
-              )?.find((project) => project.project_id === id);
-              if (!item) return;
-              onSelect({ id, title: item.title });
-              restoreFocus();
-            }}
+            projects={projects}
+            {...(onSelectProjects
+              ? {
+                  multiple: true as const,
+                  maxSelections: 50,
+                  value: selected.map(({ id }) => id),
+                  onChange: (ids: string[]) =>
+                    setSelected(
+                      ids.map((id) => ({
+                        id,
+                        title:
+                          projects.find((item) => item.id === id)?.title ?? id,
+                      })),
+                    ),
+                }
+              : {
+                  onChange: (id: string) => {
+                    const item = (
+                      result.page?.items as CollaborationProject[] | undefined
+                    )?.find((project) => project.project_id === id);
+                    if (!item) return;
+                    onSelect({ id, title: item.title });
+                    restoreFocus();
+                  },
+                })}
           />
         )}
         <DirectoryResults

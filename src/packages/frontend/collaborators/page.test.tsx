@@ -165,6 +165,51 @@ function Workspace({
   );
 }
 
+test("multi-project chips remove only their own filter and survive detail navigation", async () => {
+  const user = userEvent.setup();
+  mockProjects = fromJS({
+    geometry: { title: "Geometry Lab" },
+    algebra: { title: "Algebra" },
+  });
+  render(
+    <Workspace
+      initial={{ view: "conversations", projectIds: ["geometry", "algebra"] }}
+    />,
+  );
+  const row = await screen.findByRole("button", {
+    name: /Office hours Geometry Lab/,
+  });
+  await waitFor(() =>
+    expect(mockApi.listResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project_ids: ["geometry", "algebra"],
+        after: undefined,
+      }),
+    ),
+  );
+  await user.click(row);
+  expect(
+    screen.getByRole("button", { name: "Clear project filter: Algebra" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Back to results" }));
+  await user.click(
+    screen.getByRole("button", { name: "Clear project filter: Geometry Lab" }),
+  );
+  await waitFor(() =>
+    expect(mockApi.listResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project_ids: ["algebra"], after: undefined }),
+    ),
+  );
+  expect(
+    screen.queryByRole("button", {
+      name: "Clear project filter: Geometry Lab",
+    }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Clear project filter: Algebra" }),
+  ).toBeInTheDocument();
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockAccount = "alice";
@@ -610,9 +655,12 @@ test.each(["Escape", "Cancel"])(
     );
     project.focus();
     await user.keyboard("{Enter}");
+    await user.click(
+      screen.getByRole("button", { name: "Apply", exact: true }),
+    );
     await waitFor(() =>
       expect(mockApi.listResources).toHaveBeenLastCalledWith(
-        expect.objectContaining({ project_id: "geometry" }),
+        expect.objectContaining({ project_ids: ["geometry"] }),
       ),
     );
     await waitFor(() =>
@@ -627,7 +675,7 @@ test.each(["Escape", "Cancel"])(
     );
     await waitFor(() =>
       expect(mockApi.listResources).toHaveBeenLastCalledWith(
-        expect.objectContaining({ project_id: undefined }),
+        expect.objectContaining({ project_ids: undefined }),
       ),
     );
     expect(trigger).toHaveFocus();

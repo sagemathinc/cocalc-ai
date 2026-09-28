@@ -67,6 +67,8 @@ export interface CollaborationProject {
 export interface CollaborationQuery {
   account_id?: string;
   project_id?: string;
+  /** Match any selected project (at most 50); combined with project_id by intersection. */
+  project_ids?: string[];
   person_id?: string;
   search?: string;
   /** Restrict discovery to projects with another human owner/collaborator. */

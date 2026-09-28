@@ -48,6 +48,15 @@ const SHARED = `EXISTS(SELECT 1 FROM jsonb_each(p.users_summary) member
 function query(input: CollaborationResourceQuery, mode: string) {
   uuid(input.account_id, "account_id");
   if (input.project_id != null) uuid(input.project_id, "project_id");
+  if (
+    input.project_ids != null &&
+    (!Array.isArray(input.project_ids) || input.project_ids.length > 50)
+  )
+    throw Error("invalid project_ids: expected at most 50 projects");
+  for (const id of input.project_ids ?? []) uuid(id, "project_ids");
+  const project_ids = input.project_ids?.length
+    ? [...new Set(input.project_ids)].sort()
+    : undefined;
   if (input.person_id != null) uuid(input.person_id, "person_id");
   const search = boundedText(input.search ?? "", "search", 128, true).trim();
   if (input.shared_only != null && typeof input.shared_only !== "boolean")
@@ -75,6 +84,7 @@ function query(input: CollaborationResourceQuery, mode: string) {
       mode,
       input.account_id,
       input.project_id ?? null,
+      project_ids ?? null,
       input.person_id ?? null,
       search,
       input.kind ?? null,
@@ -106,6 +116,7 @@ function query(input: CollaborationResourceQuery, mode: string) {
   }
   return {
     ...input,
+    project_ids,
     account_id: input.account_id!,
     search,
     limit,
@@ -215,7 +226,9 @@ async function page<T>(
     ...(await coverage(
       opts.account_id,
       opts.project_id,
-      coverageProjects,
+      coverageProjects && opts.project_ids
+        ? coverageProjects.filter((id) => opts.project_ids!.includes(id))
+        : (coverageProjects ?? opts.project_ids),
       resources,
       opts.shared_only,
     )),
@@ -243,6 +256,8 @@ export async function listCollaborationResources(
   if (q.shared_only) access.push(SHARED);
   const where = ["r.account_id=$1"];
   if (q.project_id) where.push(`r.project_id=${param(q.project_id)}::uuid`);
+  if (q.project_ids)
+    where.push(`r.project_id=ANY(${param(q.project_ids)}::uuid[])`);
   if (q.kind) where.push(`r.kind=${param(q.kind)}`);
   if (q.search) {
     const search = param(q.search);
@@ -367,6 +382,7 @@ export async function listCollaborationProjects(
     AND ($4='' OR to_tsvector('simple',COALESCE(p.title,'')) @@ plainto_tsquery('simple',$4))
     AND ($5::bigint IS NULL OR (floor(extract(epoch FROM COALESCE(p.sort_key,'epoch'::timestamp))*1000)::bigint,p.project_id)<($5,$6::uuid))
     AND ($9::boolean IS FALSE OR p.project_id=ANY($8::uuid[]))
+    AND ($10::uuid[] IS NULL OR p.project_id=ANY($10::uuid[]))
     ORDER BY activity DESC,p.project_id DESC LIMIT $7`,
     [
       q.account_id,
@@ -378,6 +394,7 @@ export async function listCollaborationProjects(
       q.limit + 1,
       pins,
       view === "pinned",
+      q.project_ids ?? null,
     ],
   );
   return page(
@@ -408,14 +425,16 @@ export async function listCollaborationPeople(
     `SELECT c.collaborator_account_id,left(c.display_name,256) AS display_name,
     (SELECT count(*)::integer FROM collaboration_access x ${ACCESS} WHERE x.account_id=$1::uuid AND ${VISIBLE}
       AND p.users_summary #>> ARRAY[c.collaborator_account_id::text,'group'] IN ('owner','collaborator')
-      AND ($2::uuid IS NULL OR x.project_id=$2)) AS common_project_count
+      AND ($2::uuid IS NULL OR x.project_id=$2)
+      AND ($7::uuid[] IS NULL OR x.project_id=ANY($7::uuid[]))) AS common_project_count
     FROM account_collaborator_index c WHERE c.account_id=$1::uuid AND c.collaborator_account_id<>$1::uuid
     AND ($3::uuid IS NULL OR c.collaborator_account_id=$3)
     AND ($4='' OR to_tsvector('simple',COALESCE(c.display_name,'')) @@ plainto_tsquery('simple',$4))
     AND ($5::uuid IS NULL OR c.collaborator_account_id>$5)
     AND EXISTS(SELECT 1 FROM collaboration_access x ${ACCESS} WHERE x.account_id=$1::uuid AND ${VISIBLE}
       AND p.users_summary #>> ARRAY[c.collaborator_account_id::text,'group'] IN ('owner','collaborator')
-      AND ($2::uuid IS NULL OR x.project_id=$2))
+      AND ($2::uuid IS NULL OR x.project_id=$2)
+      AND ($7::uuid[] IS NULL OR x.project_id=ANY($7::uuid[])))
     ORDER BY c.collaborator_account_id LIMIT $6`,
     [
       q.account_id,
@@ -424,6 +443,7 @@ export async function listCollaborationPeople(
       q.search,
       q.after?.key ?? null,
       q.limit + 1,
+      q.project_ids ?? null,
     ],
   );
   return page(

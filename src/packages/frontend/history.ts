@@ -207,6 +207,7 @@ export function load_target(
         collaborators_open: parsed.collaborators != null,
         collaborators_view: parsed.collaborators?.view,
         collaborators_project_id: parsed.collaborators?.projectId,
+        collaborators_project_ids: parsed.collaborators?.projectIds,
         collaborators_person_id: parsed.collaborators?.personId,
         collaborators_resource_kind: parsed.collaborators?.resourceKind,
         collaborators_resource_id: parsed.collaborators?.resourceId,

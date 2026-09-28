@@ -10,12 +10,11 @@ export function ActivityTime({ timestamp }: { timestamp?: number }) {
   const date = new Date(timestamp);
   return (
     <Tooltip title={date.toLocaleString()} trigger={["hover", "focus"]}>
-      <span
-        className="collaborators-row-time"
-        tabIndex={0}
-        aria-label={`Last activity: ${date.toLocaleString()}`}
-      >
-        <TimeAgo date={date} click_to_toggle={false} />
+      <span className="collaborators-row-time">
+        <TimeAgo
+          date={date}
+          accessibleLabel={`Last activity: ${date.toLocaleString()}`}
+        />
       </span>
     </Tooltip>
   );

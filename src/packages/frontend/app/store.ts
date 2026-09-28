@@ -34,6 +34,7 @@ export interface PageState {
   collaborators_open?: boolean;
   collaborators_view?: CollaboratorsRoute["view"];
   collaborators_project_id?: string;
+  collaborators_project_ids?: string[];
   collaborators_person_id?: string;
   collaborators_resource_kind?: CollaboratorsRoute["resourceKind"];
   collaborators_resource_id?: string;
@@ -95,6 +96,7 @@ export function init_store() {
     collaborators_open: collaborators != null,
     collaborators_view: collaborators?.view,
     collaborators_project_id: collaborators?.projectId,
+    collaborators_project_ids: collaborators?.projectIds,
     collaborators_person_id: collaborators?.personId,
     collaborators_resource_kind: collaborators?.resourceKind,
     collaborators_resource_id: collaborators?.resourceId,

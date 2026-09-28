@@ -138,6 +138,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 4px;
   height: auto;
   width: 100%;
@@ -156,6 +157,9 @@
 }
 .collaborators-person-row > span:last-child {
   min-width: 0;
+}
+.collaborators-person-row > :first-child {
+  flex-shrink: 0;
 }
 .collaborators-person-row .collaborators-row-title {
   display: -webkit-box;
@@ -189,11 +193,18 @@
 }
 .collaborators-collection[data-view="grid"] .collaborators-collection-item {
   /* VirtuosoGrid requires equal-height tiles, including long titles. */
-  height: 180px;
+  height: 144px;
   box-sizing: border-box;
   border: 1px solid var(--cocalc-ui-border);
   padding: 8px;
   background: var(--cocalc-ui-surface);
+}
+.collaborators-collection[data-view="grid"][data-collection="people"]
+  .collaborators-collection-item {
+  height: 104px;
+}
+.collaborators-collection[data-view="grid"] .collaborators-row-controls {
+  align-self: center;
 }
 .collaborators-collection .collection-group-heading {
   font-size: 14px;
@@ -258,14 +269,14 @@
     opacity: 1;
   }
 }
-.collaborators-row-time:focus-visible {
+.collaborators-row-time [role="button"]:focus-visible {
   outline: 2px solid var(--cocalc-ui-link);
   outline-offset: 2px;
 }
 .collaborators-collection[data-view="grid"] .collaborators-conversation-row {
   display: flex;
   flex-direction: column;
-  min-height: 100px;
+  min-height: 0;
 }
 .collaborators-collection[data-view="grid"] .collaborators-row {
   padding: 8px;
@@ -296,17 +307,12 @@
     padding-inline: 8px;
   }
   .collaborators-conversation-row {
-    position: relative;
     display: block;
-  }
-  .collaborators-conversation-row .collaborators-row {
-    padding-bottom: 26px;
   }
   .collaborators-conversation-row .collaborators-row-time {
     display: block;
     text-align: left;
-    margin: -24px 12px 6px;
-    position: relative;
+    margin: 0 8px 8px;
   }
   .collaborators-conversation-title {
     flex-wrap: wrap;

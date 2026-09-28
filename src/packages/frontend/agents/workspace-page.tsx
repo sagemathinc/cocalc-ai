@@ -2833,6 +2833,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     "page",
     "collaborators_person_id",
   );
+  const collaboratorsProjectIds = useTypedRedux(
+    "page",
+    "collaborators_project_ids",
+  );
   const collaboratorsResourceKind = useTypedRedux(
     "page",
     "collaborators_resource_kind",
@@ -2862,6 +2866,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       route: {
         view: collaboratorsView ?? "conversations",
         projectId: collaboratorsProjectId,
+        projectIds: collaboratorsProjectIds
+          ? Array.from(collaboratorsProjectIds)
+          : undefined,
         personId: collaboratorsPersonId,
         resourceKind: collaboratorsResourceKind,
         resourceId: collaboratorsResourceId,
@@ -2920,6 +2927,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     libraryEntryId,
     collaboratorsView,
     collaboratorsProjectId,
+    collaboratorsProjectIds,
     collaboratorsPersonId,
     collaboratorsResourceId,
   ]);

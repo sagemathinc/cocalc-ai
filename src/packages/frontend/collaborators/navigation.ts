@@ -18,6 +18,7 @@ export function collaboratorsRouteState(
   return {
     collaborators_view: route.view ?? "conversations",
     collaborators_project_id: route.projectId,
+    collaborators_project_ids: route.projectIds,
     collaborators_person_id: route.personId,
     collaborators_resource_kind: route.resourceKind,
     collaborators_resource_id: route.resourceId,
@@ -30,6 +31,7 @@ export const closedCollaboratorsState = {
   collaborators_open: false,
   collaborators_view: undefined,
   collaborators_project_id: undefined,
+  collaborators_project_ids: undefined,
   collaborators_person_id: undefined,
   collaborators_resource_kind: undefined,
   collaborators_resource_id: undefined,
