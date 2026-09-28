@@ -5,6 +5,27 @@
 
 export const PROJECT_RUNTIME_RECOVERY_EVENT = "runtime-recovery";
 
+const foregroundViews = new Map<string, Set<object>>();
+
+export function registerForegroundProjectRuntimeView(
+  projectId: string,
+): () => void {
+  const token = {};
+  const views = foregroundViews.get(projectId) ?? new Set<object>();
+  views.add(token);
+  foregroundViews.set(projectId, views);
+  return () => {
+    views.delete(token);
+    if (views.size === 0 && foregroundViews.get(projectId) === views) {
+      foregroundViews.delete(projectId);
+    }
+  };
+}
+
+export function hasForegroundProjectRuntimeView(projectId: string): boolean {
+  return (foregroundViews.get(projectId)?.size ?? 0) > 0;
+}
+
 export interface RuntimeRecoveryNotice {
   id: string;
   reason: "project_runtime_changed" | "project_runtime_lost";
@@ -61,6 +82,26 @@ export function shouldRecoverFromProjectRuntimeExit(project: unknown): boolean {
     reason === "host_pressure" ||
     reason === "host_pressure_free"
   );
+}
+
+export function shouldAutoRestartAfterRuntimeLoss({
+  runtimeExitReason,
+  projectVisible,
+  browserVisible,
+}: {
+  runtimeExitReason?: string;
+  projectVisible: boolean;
+  browserVisible: boolean;
+}): boolean {
+  // Retained background projects must not undo intentional pressure eviction.
+  // Opening/starting a project explicitly uses the normal start path instead.
+  if (
+    runtimeExitReason === "host_pressure" ||
+    runtimeExitReason === "host_pressure_free"
+  ) {
+    return projectVisible && browserVisible;
+  }
+  return true;
 }
 
 export function isFreeTierPressureRecovery(

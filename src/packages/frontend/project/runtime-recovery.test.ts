@@ -16,9 +16,67 @@ import {
   shouldShowProjectRuntimeRecoveryBanner,
   isFreeTierPressureRecovery,
   shouldRecoverFromProjectRuntimeExit,
+  shouldAutoRestartAfterRuntimeLoss,
 } from "./runtime-recovery";
 
 describe("project runtime recovery", () => {
+  it.each(["host_pressure", "host_pressure_free"])(
+    "does not restart background projects evicted for %s",
+    (runtimeExitReason) => {
+      for (const projectVisible of [false, true]) {
+        for (const browserVisible of [false, true]) {
+          expect(
+            shouldAutoRestartAfterRuntimeLoss({
+              runtimeExitReason,
+              projectVisible,
+              browserVisible,
+            }),
+          ).toBe(projectVisible && browserVisible);
+        }
+      }
+    },
+  );
+
+  it("does not revive 21 retained projects when pressure exits are replayed", () => {
+    const trackers = Array.from(
+      { length: 21 },
+      () => new ProjectRuntimeExitTracker(),
+    );
+    const recover = (browserVisible: boolean) =>
+      trackers.flatMap((tracker, index) => {
+        const reason = tracker.observe({
+          state: {
+            state: "opened",
+            runtime_exit_reason: "host_pressure",
+            time: "2026-09-28T14:39:00.000Z",
+          },
+        });
+        return reason != null &&
+          shouldAutoRestartAfterRuntimeLoss({
+            runtimeExitReason: reason,
+            projectVisible: index === 0,
+            browserVisible,
+          })
+          ? [index]
+          : [];
+      });
+    expect(recover(true)).toEqual([0]);
+    expect(recover(true)).toEqual([]);
+  });
+
+  it.each([undefined, "container_missing"])(
+    "preserves unexpected runtime recovery for reason %s",
+    (runtimeExitReason) => {
+      expect(
+        shouldAutoRestartAfterRuntimeLoss({
+          runtimeExitReason,
+          projectVisible: false,
+          browserVisible: false,
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("identifies priority-zero pressure recovery", () => {
     expect(
       isFreeTierPressureRecovery({

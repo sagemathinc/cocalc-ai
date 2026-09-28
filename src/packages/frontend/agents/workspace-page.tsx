@@ -4418,6 +4418,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       active={
                         active &&
                         !libraryOpen &&
+                        (!isNarrow || !mobileList) &&
                         !!selected &&
                         agentWorkspaceKey(selected) === workspace
                       }
