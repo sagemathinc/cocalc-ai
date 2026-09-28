@@ -72,6 +72,49 @@ function claudeRequest(): AcpRequest {
 }
 const original = process.env.COCALC_ACP_HARNESSES;
 
+test("network Claude admission reuses only this account's private human selection", async () => {
+  const source = claudeRequest();
+  source.harness_credential = {
+    version: 1,
+    provider: "anthropic",
+    mode: "account-subscription",
+    credentialId: randomUUID(),
+    claudeAiConnectors: false,
+  };
+  enqueueAcpJob(await pinCodexCredentialAtAdmission(source));
+  const incoming: AcpRequest = {
+    ...source,
+    harness_credential: undefined,
+    chat: {
+      ...source.chat!,
+      agent_message: true,
+      agent_rpc_execution: { guidance: true } as any,
+    },
+  };
+  const admitted = await pinCodexCredentialAtAdmission(incoming);
+  expect(admitted.harness_credential).toEqual(source.harness_credential);
+  expect(incoming.harness_credential).toBeUndefined();
+  await expect(
+    pinCodexCredentialAtAdmission({ ...incoming, account_id: randomUUID() }),
+  ).rejects.toThrow(/selected payment/);
+  await expect(
+    pinCodexCredentialAtAdmission({
+      ...incoming,
+      chat: { ...incoming.chat!, thread_id: "another" },
+    }),
+  ).rejects.toThrow(/selected payment/);
+  const changed = {
+    ...incoming,
+    runtime: {
+      ...incoming.runtime!,
+      profile: { ...incoming.runtime!.profile, revision: "other" },
+    },
+  };
+  await expect(pinCodexCredentialAtAdmission(changed)).rejects.toThrow(
+    /runtime changed/,
+  );
+});
+
 test("fork source must match the saved native ID and complete runtime snapshot", () => {
   const runtime = claudeRequest().runtime;
   const source = {

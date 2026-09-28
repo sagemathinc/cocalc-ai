@@ -7943,7 +7943,8 @@ async function executeAcpRequest({
     currentAgent = await createHarnessAgent(
       request,
       createCodexAttentionHandler(conatClient!, {
-        runtimeLabel: "ACP",
+        runtimeLabel:
+          request.runtime?.profile.id === "claude-code" ? "Claude" : "Agent",
         onSyncResponseResolved: persistAttentionResponseProjection,
       }),
     );
@@ -11341,6 +11342,10 @@ async function fallbackAcpSteerToQueuedTurn(
 async function handleAcpSteerRequest(
   request: AcpSteerRequest,
 ): Promise<AcpSteerResponse> {
+  if (request.runtime) {
+    await assertThreadRuntimeAtAdmission(request);
+    request = { ...request, ...(await pinCodexCredentialAtAdmission(request)) };
+  }
   const result = await attemptAcpSteerRequest(request);
   if (result.state === "steered") {
     const threadId = `${request.chat?.thread_id ?? ""}`.trim();
@@ -11381,10 +11386,11 @@ function publicAttentionRecord(
 function formatAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
 ): string {
+  const label = record.chat.sender_id === "acp-harness" ? "agent" : "Codex";
   if (record.response_declined) {
-    return "I declined to answer the earlier Codex question.";
+    return `I declined to answer the earlier ${label} question.`;
   }
-  const lines = ["Answer to the earlier Codex question:"];
+  const lines = [`Answer to the earlier ${label} question:`];
   for (const question of record.questions) {
     const answers = record.response?.[question.id] ?? [];
     lines.push(`\n${question.header}: ${answers.join(", ")}`);
@@ -11473,6 +11479,9 @@ async function deliverAsyncAttentionAnswer(
   );
   const content = formatAttentionAnswer(record);
   let config: any = {};
+  let harnessExecution:
+    | Pick<AcpSteerRequest, "runtime" | "harness_credential" | "session_id">
+    | undefined;
   const senderId = record.account_id;
   let assistantSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
   let alreadyDelivered = false;
@@ -11482,13 +11491,45 @@ async function deliverAsyncAttentionAnswer(
     path: record.path,
     fn: async (syncdb) => {
       const threadConfig = preferredThreadConfigRow(syncdb, record.thread_id);
+      const runtime: any = syncdbField(threadConfig, "agent_runtime");
+      if (runtime != null || record.chat.sender_id === "acp-harness") {
+        const sourceJob =
+          record.chat.parent_message_id &&
+          getAcpJob({
+            project_id: record.project_id,
+            path: record.path,
+            user_message_id: record.chat.parent_message_id,
+          });
+        const source = sourceJob && decodeAcpJobRequest(sourceJob);
+        if (
+          runtime == null ||
+          !source ||
+          source.request_kind === "command" ||
+          !source.runtime ||
+          source.account_id !== record.account_id ||
+          source.chat?.thread_id !== record.thread_id
+        )
+          throw Error(
+            "The question's execution configuration is unavailable; send your answer in the agent conversation.",
+          );
+        assertConfiguredHarnessRuntime(source, runtime?.toJS?.() ?? runtime);
+        harnessExecution = {
+          runtime: source.runtime,
+          harness_credential: source.harness_credential,
+          session_id:
+            syncdbField<string>(threadConfig, "agent_session_id") ||
+            source.session_id,
+        };
+      }
       config = syncdbField(threadConfig, "acp_config") ?? {};
       if (typeof config?.toJS === "function") {
         config = config.toJS();
       }
-      assistantSenderId = resolveAutomationChatSenderId(
-        syncdbField<string>(threadConfig, "agent_model") ?? config.model,
-      );
+      assistantSenderId = harnessExecution
+        ? "acp-harness"
+        : resolveAutomationChatSenderId(
+            syncdbField<string>(threadConfig, "agent_model") ?? config.model,
+          );
       const existingAnswer = findChatRowByMessageId(syncdb, userMessageId);
       if (existingAnswer) {
         alreadyDelivered =
@@ -11562,7 +11603,8 @@ async function deliverAsyncAttentionAnswer(
     account_id: record.account_id,
     prompt: content,
     session_id: normalizeCodexSessionId(config?.sessionId) ?? record.thread_id,
-    config,
+    config: harnessExecution ? undefined : config,
+    ...harnessExecution,
     chat: {
       project_id: record.project_id,
       path: record.path,
@@ -11600,7 +11642,10 @@ async function deliverAsyncAttentionAnswer(
   if (existingSteer?.state === "error" && !retryFailed) {
     throw new Error(existingSteer.error ?? "queued Codex guidance failed");
   }
-  enqueueSteerRequestForExecution({ request, fallbackConfig });
+  enqueueSteerRequestForExecution({
+    request,
+    fallbackConfig: harnessExecution ? undefined : fallbackConfig,
+  });
   if (liteUseDetachedAcpWorker()) {
     try {
       await ensureDetachedWorkerRunning({ force: true });
@@ -11659,13 +11704,14 @@ async function dispatchClaimedAsyncAttentionResponse(
         record: deferred ? publicAttentionRecord(deferred) : undefined,
       };
     }
+    const label = record.chat.sender_id === "acp-harness" ? "agent" : "Codex";
     const resolved = resolveAcpAttention({
       attention_id: record.attention_id,
       state: record.response_declined ? "declined" : "answered",
       reason:
         delivery.state === "steered"
-          ? "Answer submitted as guidance to the active Codex turn"
-          : "Answer queued as a new Codex message",
+          ? `Answer submitted as guidance to the active ${label} turn`
+          : `Answer queued as a new ${label} message`,
     });
     if (resolved && conatClient) {
       void publishStoredAttentionNoticeBestEffort({
@@ -12106,6 +12152,11 @@ async function attemptAcpSteerRequest(
     throw new Error("conat client must be initialized");
   }
   assertRunningJobSteerPrincipal(request);
+  if (request.runtime) {
+    // A durable steer may be delivered well after admission. Recheck the
+    // network as well as the active harness's subscription authority.
+    await authorizeAgentDeliveryExecution(request, hubApi.agent);
+  }
   await acknowledgeAutomationFromHumanTurn(request);
 
   const projectId = request.chat.project_id ?? request.project_id;
@@ -12128,9 +12179,11 @@ async function attemptAcpSteerRequest(
       : workspaceRoot;
   const useNativeTerminal = useContainer ? false : sessionMode === "auto";
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
-  const agent = await ensureAgent(projectId, useNativeTerminal, bindings);
-  if (typeof agent.steer !== "function") {
-    return { state: "not_steerable" };
+  if (!request.runtime) {
+    const agent = await ensureAgent(projectId, useNativeTerminal, bindings);
+    if (typeof agent.steer !== "function") {
+      return { state: "not_steerable" };
+    }
   }
 
   const candidateIds = resolveSteerCandidateIds({

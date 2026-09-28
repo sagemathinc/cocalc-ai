@@ -293,7 +293,7 @@ export function createCodexAttentionHandler(
     runtimeLabel = "Codex",
     onSyncResponseResolved,
   }: {
-    runtimeLabel?: "Codex" | "ACP";
+    runtimeLabel?: "Codex" | "ACP" | "Claude" | "Agent";
     onSyncResponseResolved?: (
       record: AcpAttentionStoredRecord,
     ) => Promise<void>;
@@ -405,6 +405,20 @@ export function createCodexAttentionHandler(
       if (!context.chat?.path || !context.chat.thread_id) {
         throw new Error("Codex attention requires durable chat context");
       }
+      // Keep the historical source kind so existing response/recovery paths
+      // apply equally to native Codex and ACP tool-bridge questions.
+      const existing = getAcpAttentionBySource({
+        project_id: context.projectId,
+        source_kind: "codex_async_question",
+        source_id: asyncSourceId(context, itemId),
+      });
+      if (
+        existing &&
+        JSON.stringify(existing.questions) !== JSON.stringify(questions)
+      )
+        throw Error(
+          "Question request ID was already used for different questions",
+        );
       const stored = upsertAcpAttention({
         project_id: context.projectId,
         account_id: context.accountId,
@@ -416,7 +430,7 @@ export function createCodexAttentionHandler(
         attention_kind: "question",
         is_blocking: false,
         title: titleForQuestions(questions),
-        summary: "Codex may continue while it waits for your reply.",
+        summary: `${runtimeLabel} may continue while it waits for your reply.`,
         questions,
         chat: context.chat,
       });

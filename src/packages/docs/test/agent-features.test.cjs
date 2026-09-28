@@ -66,21 +66,21 @@ test("assessment distinguishes Claude preview from full parity and unknown evide
   const body = full.getDocsEntry(slug).body;
   for (const phrase of [
     "Claude Code remains an experimental preview",
-    "Live Agent Networks that guide busy recipients | Supported | Not supported",
+    "Live Agent Networks that guide busy recipients | Supported | Preview",
+    "Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview",
     "Agent-to-agent messaging across projects | Supported | Unverified",
     "Continuing goals with optional token budgets](/docs/ai/codex-goals) | Supported | Not supported",
     "Schedule agent prompts](/docs/ai/codex-automation) | Supported | Not supported",
     "Accepted means admitted, not completed",
-    "not a documented workaround",
+    "live-verified",
     "not a copy of project files",
     "approval is not execution",
   ])
     assert.ok(body.includes(phrase), phrase);
   const claude = full.getDocsEntry("ai/claude-code").body;
-  assert.doesNotMatch(
-    claude,
-    /Authorized Agent Network subscription turns are supported/,
-  );
-  assert.match(claude, /live\s+recipient path rejects ACP guidance/);
-  assert.match(claude, /queued subscription delivery remains\s+unverified/);
+  assert.match(claude, /still need live qualification/);
+  assert.match(claude, /privately stored selection and connectors choice/);
+  assert.match(claude, /request_user_input_async/);
+  assert.match(claude, /if that turn has already finished/);
+  assert.doesNotMatch(claude, /recipient path rejects ACP guidance/);
 });

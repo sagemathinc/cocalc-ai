@@ -57,14 +57,14 @@ general availability or close its release gates.
 | [Continue a saved conversation](/docs/ai/codex-conversations) | Supported | Preview | Native session storage must still exist. Visible chat history alone cannot reconstruct all native context. |
 | [Copy/fork an agent with conversation context](/docs/ai/codex-conversations) | Supported | Preview | Claude's happy path has live confirmation. A fork is not a copy of project files or a separate Git worktree. |
 | [Queue follow-up messages and manage drafts](/docs/ai/codex-conversations) | Supported | Preview | A queued human message waits for execution; editing or canceling unsent work is different from interrupting admitted work. |
-| [Guide a running turn](/docs/ai/codex-conversations) | Supported | Limited | ACP steering depends on advertised adapter support. Do not assume Codex-style live guidance; the Agent Network live-delivery gap below is separate. |
+| [Guide a running turn](/docs/ai/codex-conversations) | Supported | Preview | Requires adapter steering support. The pinned Claude adapter supports delivery during active work; otherwise messages queue. |
 | [Stop the current turn](/docs/ai/codex-notifications) | Supported | Preview | Stops are not rollbacks of file changes, external requests, or provider usage. Claude also cancels its managed project commands. |
 | [Return after a browser disconnect](/docs/ai/codex-conversations) | Supported | Preview | Closing a browser is not cancellation. Project/host loss is different: do not assume running commands are replayed or recovered automatically. |
 | [Paste images and attach project context](/docs/ai/editor-agent) | Conditional | Preview | Model, attachment type, size, and transport limits apply. Claude accepts pasted images; this does not imply arbitrary binary attachments or native PDF understanding. |
 | [Ask from an editor selection, notebook cell, error, or terminal](/docs/ai/editor-agent) | Supported | Unverified | Do not assume every editor-to-agent shortcut correctly targets Claude just because the chat composer is shared. |
 | [Preview/edit a generated prompt before submission](/docs/ai/editor-agent) | Supported | Unverified | Agent Prompt appears only for workflows that prepare one; it is not the complete runtime instruction set. |
 | [Answer structured blocking questions](/docs/ai/codex-goals) | Supported | Limited | ACP supports a bounded subset of form questions when the adapter requests it; not all provider question tools map to it. |
-| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Not supported | Do not equate an ordinary Claude chat question with Codex's asynchronous request/response workflow. |
+| [Answer asynchronous questions while work continues](/docs/ai/codex-goals) | Supported | Preview | Claude subscription tools use the same durable question cards and answer delivery as Codex. Answers guide active work or resume the conversation after its turn finishes. |
 | [Dictate or use voice controls](/docs/ai/codex-chat) | Conditional | Unverified | Depends on the site's voice service, browser permission, and UI mode; a microphone icon is not evidence of provider feature parity. |
 
 ## Project work and tools
@@ -95,10 +95,10 @@ isolated login controller. Both agents remain subject to CLI authorization.
 | Feature | Codex | Claude Code | Conditions and differences |
 | --- | --- | --- | --- |
 | Registered agent identity and peer discovery | Supported | Preview | Claude project tools receive the registered thread's identity on updated hosts. Discovery does not itself start work. |
-| Agent-to-agent messaging in one project | Supported | Limited | Claude sender identity/discovery is verified; successful delivery also depends on the recipient runtime. |
-| Agent-to-agent messaging across projects | Supported | Unverified | CoCalc routes approved network messages across projects; Claude subscription delivery has not been qualified end to end. |
-| Queued Agent Networks that wake idle recipients | Supported | Unverified | Claude needs verified recipient subscription selection and admission, not just a valid sender identity. |
-| Live Agent Networks that guide busy recipients | Supported | Not supported | The current live recipient path rejects generic ACP guidance, including Claude, before submitting work. |
+| Agent-to-agent messaging in one project | Supported | Preview | Claude-to-Claude delivery and replies are live-verified. Mixed Claude/Codex routing has automated coverage; live mixed-runtime qualification remains outstanding. |
+| Agent-to-agent messaging across projects | Supported | Unverified | The shared routing path supports Claude and has automated cross-project coverage; live cross-project Claude subscription delivery has not yet been qualified. |
+| Queued Agent Networks that wake idle recipients | Supported | Preview | Claude resumes using the recipient's previously admitted subscription selection, not the sender's credentials. Idle-recipient execution is live-verified. |
+| Live Agent Networks that guide busy recipients | Supported | Preview | Claude can receive messages during active work when the execution principal matches the network account. Network and subscription authorization are rechecked at delivery. |
 | Broadcast to several network peers | Supported | Unverified | Explicit network membership and bounded recipient limits apply; broadcast does not bypass a recipient's restrictions. |
 | Same-project file references and cross-project file snapshots in messages | Supported | Unverified | References are live files; snapshots are bounded copies. Neither grants arbitrary access to the sending project. |
 | Enrolled external agents in Agent Networks | Conditional | Unverified | Explicit external enrollment and network membership are required; sharing a provider account is not enrollment. |
@@ -138,13 +138,18 @@ recipient's chat and activity show execution results. Human
 [CLI submission to a thread](/docs/ai/codex-conversations) is a different
 operation and is not an agent-identity fallback.
 
-**Current Claude blocker:** a live check on 2026-09-28 confirmed Claude identity
-and peer discovery, but a test send to a Claude recipient in a live network was
-rejected before entering the recipient chat. Do not treat network visibility,
-sender repair, or subscription admission code as proof that the complete flow
-works. Changing network permissions or signing in again does not implement the
-missing recipient delivery path. Queued Claude delivery remains unverified,
-not a documented workaround.
+**Claude setup:** the network account must first send a human message in the
+recipient thread with its selected Claude subscription. Subsequent network work
+uses that privately stored selection, including the connectors choice; it does
+not borrow the sender's payment method. A missing selection, changed runtime,
+disconnected subscription, or authorization mismatch rejects delivery.
+
+A live check on 2026-09-28 verified a Claude-to-Claude round trip: a busy Claude
+received a network ping during a foreground command and replied to an idle
+Claude, which resumed and confirmed receipt. Cross-project and mixed
+Claude/Codex combinations have automated routing coverage but still need live
+qualification. Network visibility or an accepted receipt alone is not proof
+that recipient execution completed.
 
 ## Goals, schedules, and monitoring
 
@@ -190,8 +195,9 @@ GitHub permissions, and fresh-auth requirements remain separate checks.
 
 ## Choosing a workflow
 
-Use Codex when the task depends on continuing goals, scheduled agent work,
-asynchronous question cards, or established Agent Network delivery. Use the
+Use Codex when the task depends on continuing goals or scheduled agent work.
+Both integrations provide asynchronous question cards and Agent Network
+delivery, subject to the qualification notes above. Use the
 Claude preview for interactive project work when its listed limitations are
 acceptable. Shared CoCalc tools can provide notebook, document, Git, terminal,
 and browser workflows without implying that every native Codex feature exists

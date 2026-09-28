@@ -4,6 +4,7 @@
  */
 
 import { CLAUDE_PROJECT_MCP_SOURCE } from "./claude-project-tool-source";
+import type { HarnessProcess } from "@cocalc/ai/acp/harness";
 import { randomBytes } from "node:crypto";
 import { createServer, type Socket } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -25,6 +26,9 @@ export interface ClaudeProjectToolBridge {
   cancel(): Promise<void>;
   resume(): void;
   close(): Promise<void>;
+  setAsyncQuestionHandler: NonNullable<
+    HarnessProcess["setAsyncQuestionHandler"]
+  >;
 }
 
 export async function createClaudeProjectToolBridge(
@@ -47,6 +51,9 @@ export async function createClaudeProjectToolBridge(
   let closed: Promise<void> | undefined;
   let fenced = false;
   let paused = false;
+  let asyncQuestion:
+    | Parameters<ClaudeProjectToolBridge["setAsyncQuestionHandler"]>[0]
+    | undefined;
   let generation = new AbortController();
   const jobs = new ClaudeProjectJobs(execute);
   let checking = false;
@@ -116,6 +123,8 @@ export async function createClaudeProjectToolBridge(
           else if (tool === "project_exec_cancel")
             result = await jobs.cancel(args);
           else if (tool === "project_exec_list") result = jobs.list();
+          else if (tool === "request_user_input_async" && asyncQuestion)
+            result = await asyncQuestion(args);
           else throw Error("Unsupported project tool");
           socket.end(JSON.stringify(result) + "\n");
         } catch (error) {
@@ -149,6 +158,9 @@ export async function createClaudeProjectToolBridge(
     });
     return {
       directory,
+      setAsyncQuestionHandler: (handler) => {
+        asyncQuestion = handler;
+      },
       resume: () => {
         if (!fenced) {
           paused = false;

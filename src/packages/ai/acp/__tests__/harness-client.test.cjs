@@ -624,6 +624,7 @@ function adapter(
 ) {
   let launches = 0;
   let stops = 0;
+  let askAsync;
   const agent = new HarnessAgent(
     {
       projectId: "project-a",
@@ -676,6 +677,9 @@ function adapter(
           await closed;
           if (cleanupFails) throw Error("test launcher stop failed");
         },
+        setAsyncQuestionHandler: (handler) => {
+          askAsync = handler;
+        },
       };
     },
     attention,
@@ -716,8 +720,73 @@ function adapter(
     events,
     launches: () => launches,
     stops: () => stops,
+    askAsync: (input) => askAsync(input),
   };
 }
+
+test("Claude tool questions return before the answer and steer the same running turn", async (t) => {
+  const created = [];
+  const attention = {
+    createAsyncQuestion: async (request) => {
+      created.push(request);
+      return { attention_id: "saved-question" };
+    },
+  };
+  const { agent, request, events, askAsync } = adapter(
+    t,
+    ["--steering"],
+    attention,
+  );
+  let ready;
+  const started = new Promise((resolve) => {
+    ready = resolve;
+  });
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.text === "working") ready();
+    },
+  });
+  await started;
+  await assert.rejects(
+    askAsync({
+      request_id: "bad",
+      questions: [{ title: "Secret?", isSecret: true }],
+    }),
+    /Secret/,
+  );
+  assert.deepEqual(
+    await askAsync({
+      request_id: "color",
+      questions: [{ title: "Which color?", options: ["Blue", "Green"] }],
+    }),
+    {
+      question_id: "saved-question",
+      status: "pending",
+    },
+  );
+  assert.equal(created.length, 1);
+  assert.equal(created[0].context.chat.thread_id, "conversation-a");
+  assert.equal(agent.hasRunningTurn("fixture-session"), true);
+  assert.deepEqual(
+    await agent.steer("fixture-session", {
+      ...request,
+      prompt: "Answer: Green",
+    }),
+    {
+      state: "steered",
+      threadId: "fixture-session",
+    },
+  );
+  await run;
+  assert.equal(events.at(-1).finalResponse, "workingsteered: Answer: Green");
+  await assert.rejects(
+    askAsync({ request_id: "late", questions: [{ title: "Too late?" }] }),
+    /active agent turn/,
+  );
+});
 
 test("retained harnesses revalidate credential authority before every turn", async (t) => {
   let checks = 0;

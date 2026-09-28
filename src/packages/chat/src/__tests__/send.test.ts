@@ -61,7 +61,7 @@ test("generic thread metadata round-trips without inventing Codex funding or a s
   ).toBe("native-pi-session");
 });
 
-test("unknown runtime and unsupported guidance do not fall back to Codex", () => {
+test("ACP guidance preserves the runtime; unknown runtimes do not fall back to Codex", () => {
   const options = {
     projectId: "project",
     accountId: "account",
@@ -75,9 +75,11 @@ test("unknown runtime and unsupported guidance do not fall back to Codex", () =>
       agent_runtime: runtime,
     }),
   };
-  expect(() => prepareChatSend({ ...options, guidance: true })).toThrow(
-    /guidance/,
-  );
+  const guided = prepareChatSend({ ...options, guidance: true }).request;
+  expect(guided.runtime).toEqual(runtime);
+  expect(guided.config).toBeUndefined();
+  expect(guided.harness_credential).toBeUndefined();
+  expect(guided.chat.send_mode).toBe("immediate");
   expect(() =>
     prepareChatSend({
       ...options,

@@ -481,6 +481,9 @@ ${skill}
       projectToolServerName: CLAUDE_PROJECT_MCP_NAME,
       cancelTools: toolBridge ? () => toolBridge!.cancel() : undefined,
       resumeTools: toolBridge ? () => toolBridge!.resume() : undefined,
+      setAsyncQuestionHandler: toolBridge
+        ? (handler) => toolBridge!.setAsyncQuestionHandler(handler)
+        : undefined,
       stdin: proc.stdin,
       stdout: proc.stdout,
       stderr: proc.stderr,

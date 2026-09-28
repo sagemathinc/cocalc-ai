@@ -14,6 +14,45 @@ jest.mock("@cocalc/conat/hub/call-hub", () => ({
 beforeEach(() => initAcpDatabase({ filename: ":memory:" }));
 afterEach(() => closeAcpDatabase());
 
+test("Claude async questions are durable, idempotent and survive turn completion", async () => {
+  const handler = createCodexAttentionHandler({} as any, {
+    runtimeLabel: "Claude",
+  });
+  const context: CodexAttentionContext = {
+    projectId: "project",
+    accountId: "account",
+    threadId: "native",
+    turnId: "turn",
+    chat: {
+      project_id: "project",
+      path: "claude.chat",
+      thread_id: "conversation",
+      sender_id: "acp-harness",
+      message_date: new Date().toISOString(),
+    },
+    stream: async () => {},
+  };
+  const input = {
+    itemId: "target",
+    questions: [{ id: "target", header: "Target", question: "Which target?" }],
+    context,
+  };
+  const first = await handler.createAsyncQuestion(input);
+  expect(first.is_blocking).toBe(false);
+  expect(first.summary).toContain("Claude may continue");
+  expect((await handler.createAsyncQuestion(input)).attention_id).toBe(
+    first.attention_id,
+  );
+  await expect(
+    handler.createAsyncQuestion({
+      ...input,
+      questions: [{ ...input.questions[0], question: "Changed?" }],
+    }),
+  ).rejects.toThrow(/different questions/);
+  await handler.runtimeClosed?.(context);
+  expect(getAcpAttention(first.attention_id)?.state).toBe("pending");
+});
+
 test.each(["answer", "cancel"])(
   "ACP durable attention %s lifecycle",
   async (action) => {

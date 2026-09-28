@@ -32,6 +32,7 @@ import {
   pinCodexCredentialAtAdmission,
   setCodexCredentialAdmissionResolver,
 } from "../codex-credential-admission";
+import { setHarnessLauncher } from "../harness-runtime";
 
 const mockSteer = jest.fn();
 jest.mock("@cocalc/ai/acp", () => ({
@@ -226,6 +227,106 @@ afterEach(async () => {
     delete process.env.COCALC_LITE_ACP_DETACHED_WORKER;
   else process.env.COCALC_LITE_ACP_DETACHED_WORKER = originalDetached;
 });
+
+it("does not deliver a harness answer through Codex when its runtime is missing", async () => {
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer({
+      ...record,
+      chat: { ...record.chat, sender_id: "acp-harness" },
+    }),
+  ).rejects.toThrow(/execution configuration is unavailable/);
+  expect(mockSteer).not.toHaveBeenCalled();
+  expect(listQueuedAcpJobs()).toHaveLength(0);
+});
+
+it.each([true, false])(
+  "delivers Claude answers with private funding (running=%s)",
+  async (running) => {
+    const previous = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    setHarnessLauncher(async () => {
+      throw Error("must not launch during delivery");
+    });
+    const source: AcpRequest = {
+      ...turnRequest(undefined),
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 2,
+          kind: "acp",
+          id: "claude-code",
+          revision: "0.81.1",
+          cwd: "/home/user",
+          credentialMode: "project-managed",
+          executionPolicy: "full-access",
+        },
+      },
+      harness_credential: {
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "33333333-3333-4333-8333-333333333333",
+        claudeAiConnectors: false,
+      },
+    };
+    rows[0].agent_runtime = source.runtime;
+    rows[0].agent_session_id = "claude-session";
+    const job = startRunningTurn(source);
+    if (!running) setAcpJobState({ op_id: job.op_id, state: "done" });
+    const steer = jest.fn(async (id) => ({
+      state: id === "claude-session" && running ? "steered" : "missing",
+      threadId: id,
+    }));
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "claude",
+      projectId,
+      { steer } as any,
+      true,
+    );
+    const claudeRecord = {
+      ...record,
+      chat: { ...source.chat!, ...record.chat },
+    };
+    try {
+      const result =
+        await acpTestInternals.deliverAsyncAttentionAnswer(claudeRecord);
+      expect(result.state).toBe(running ? "steered" : "queued");
+      expect(mockSteer).not.toHaveBeenCalled();
+      if (running) {
+        expect(steer).toHaveBeenCalledWith(
+          "claude-session",
+          expect.objectContaining({
+            runtime: source.runtime,
+            harness_credential: source.harness_credential,
+          }),
+        );
+        expect(
+          steer.mock.calls.find(([id]) => id === "claude-session")?.[1]?.config,
+        ).toBeUndefined();
+      } else {
+        const queued = listQueuedAcpJobs();
+        expect(queued).toHaveLength(1);
+        expect(decodeAcpJobRequest(queued[0])).toMatchObject({
+          runtime: source.runtime,
+          harness_credential: source.harness_credential,
+          session_id: "claude-session",
+        });
+      }
+      const count = steer.mock.calls.length;
+      await acpTestInternals.deliverAsyncAttentionAnswer(claudeRecord);
+      expect(steer).toHaveBeenCalledTimes(count);
+      expect(JSON.stringify(rows)).not.toContain(
+        source.harness_credential!.mode,
+      );
+    } finally {
+      unregister();
+      setHarnessLauncher();
+      if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previous;
+    }
+  },
+);
 
 it("steers an active turn and records the human answer as delivered", async () => {
   mockSteer.mockResolvedValue({ state: "steered", threadId: sessionId });

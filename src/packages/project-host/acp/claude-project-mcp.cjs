@@ -88,6 +88,42 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: "request_user_input_async",
+    description:
+      "Ask the user one to three short questions while continuing useful work. Returns immediately after saving a question card; the reply arrives as a user message during this turn, or a continuation if the turn has finished. Do not poll or stop unrelated work waiting for a reply. Use only for missing information, preferences, or clarification, never authentication, secrets, or permission escalation. Use a unique request_id and reuse it only when retrying the identical request.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        request_id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,128}$" },
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          items: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description: "The complete, self-contained question",
+              },
+              options: {
+                type: "array",
+                minItems: 1,
+                items: { type: "string" },
+                description:
+                  "Optional suggested answers; free text is always available",
+              },
+            },
+            required: ["title"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["request_id", "questions"],
+      additionalProperties: false,
+    },
+  },
 ];
 /** @param {string} tool @param {Record<string, unknown>} args @returns {Promise<any>} */
 function execute(tool, args) {

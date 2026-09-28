@@ -139,6 +139,7 @@ test("trusted MCP helper executes only through the scoped project socket", async
       "project_exec_wait",
       "project_exec_cancel",
       "project_exec_list",
+      "request_user_input_async",
     ]);
     const called = await request(3, "tools/call", {
       name: "project_exec",
@@ -156,7 +157,32 @@ test("trusted MCP helper executes only through the scoped project socket", async
         onOutput: expect.any(Function),
       }),
     );
+    const question = {
+      request_id: "target",
+      questions: [{ title: "Which target?" }],
+    };
+    const ask = jest.fn(async () => ({
+      question_id: "durable-question",
+      status: "pending" as const,
+    }));
+    bridge.setAsyncQuestionHandler(ask);
+    const asked = await request(20, "tools/call", {
+      name: "request_user_input_async",
+      arguments: question,
+    });
+    expect(asked.result.isError).toBe(false);
+    expect(JSON.parse(asked.result.content[0].text)).toEqual({
+      question_id: "durable-question",
+      status: "pending",
+    });
+    expect(ask).toHaveBeenCalledWith(question);
     authorized = false;
+    const deniedQuestion = await request(21, "tools/call", {
+      name: "request_user_input_async",
+      arguments: question,
+    });
+    expect(deniedQuestion.result.isError).toBe(true);
+    expect(ask).toHaveBeenCalledTimes(1);
     const revoked = await request(4, "tools/call", {
       name: "project_exec",
       arguments: { script: "id" },

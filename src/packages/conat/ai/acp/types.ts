@@ -198,6 +198,8 @@ export type AcpInterruptResponse = {
 
 export type AcpSteerRequest = {
   request_kind?: "codex";
+  runtime?: AcpHarnessRuntime;
+  harness_credential?: AcpHarnessCredential;
   project_id: string;
   account_id: string;
   prompt: string;

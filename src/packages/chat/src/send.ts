@@ -56,8 +56,6 @@ export function prepareChatSend({
     thread.agent_runtime == null
       ? undefined
       : parseAcpHarnessRuntime(thread.agent_runtime);
-  if (runtime && guidance)
-    throw Error("This ACP harness does not support live guidance");
   if (
     thread.agent_kind !== "acp" &&
     thread.acp_config == null &&

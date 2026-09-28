@@ -64,9 +64,16 @@ export interface HarnessProcess {
   closed: Promise<void>;
   cancelTools?(): Promise<void>;
   resumeTools?(): void;
+  /** Trusted tool bridge callback, scoped to this process's admitted conversation. */
+  setAsyncQuestionHandler?(handler: HarnessAsyncQuestionHandler): void;
   /** Launcher must terminate the execution boundary, including descendants. */
   stop(): Promise<void>;
 }
+
+export type HarnessAsyncQuestionHandler = (input: unknown) => Promise<{
+  question_id: string;
+  status: "pending";
+}>;
 
 export interface HarnessBinding {
   projectId: string;

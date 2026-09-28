@@ -118,9 +118,11 @@ project.
 Work accepted by this agent consumes the selected subscription's usage
 allowance. Agent Network authorization and recipient payment authorization
 are separate requirements: a valid sender identity does not select a recipient's
-subscription. Do not assume authorized Agent Network messages can currently
-start Claude subscription turns end to end; see the limitations below. Never
-work around a rejected delivery by borrowing another account's credentials.
+subscription. The network account must first send a human message in the
+recipient thread with its selected subscription. Network turns then reuse that
+privately stored selection and connectors choice, with authorization rechecked
+at delivery. Never work around a rejected delivery by borrowing another
+account's credentials.
 
 CoCalc checks credential authority when admitting and running work and before
 mediated project commands. Disconnect prevents future authorized use; it
@@ -159,11 +161,27 @@ services have a separate lifecycle and may require separate cleanup.
   and goal workflows are not yet supported by this integration.
 - A background subprocess finishing does not automatically wake a completed
   CoCalc turn. Ask Claude to wait for completion or explicitly check its status.
-- Registered Claude agents can discover network peers through project tools on
-  updated hosts. End-to-end Agent Network delivery is not yet qualified: the live
-  recipient path rejects ACP guidance, and queued subscription delivery remains
-  unverified. Account API-key network turns are rejected by admission. See the
+- Registered Claude agents can discover network peers and exchange messages
+  through project tools on updated hosts. Live messages can guide busy Claude
+  recipients; idle recipients resume with their own subscription selection.
+  Claude-to-Claude delivery is live-verified; mixed Claude/Codex and cross-project
+  paths have automated coverage but still need live qualification.
+  Account API-key network turns are rejected by admission. See the
   [coordination comparison](/docs/ai/agent-features#agent-coordination).
+
+### Questions while work continues
+
+Claude can ask nonblocking questions using the same durable question cards as
+Codex. You can choose a suggested answer or enter your own while Claude keeps
+working. Your answer is delivered to the active turn, or starts a continuation
+if that turn has already finished. The continuation keeps the original turn's
+subscription selection and rechecks authorization; it does not switch to Codex.
+
+The subscription tool \`request_user_input_async\` saves up to three questions
+and returns immediately. Claude should use it when other useful work can
+continue, rather than waiting or polling for an answer. Questions are for
+clarification, not passwords, login codes, authentication, or permission
+escalation. See [goals and questions](/docs/ai/codex-goals) for the shared cards.
 
 ## Troubleshooting and agent-readable help
 

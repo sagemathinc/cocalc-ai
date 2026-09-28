@@ -453,6 +453,31 @@ export function listQueuedAcpJobs(): AcpJobRow[] {
     .all() as AcpJobRow[];
 }
 
+/** Private admission history, never a credential selected by shared chat rows. */
+export function latestHumanHarnessJob({
+  project_id,
+  account_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  account_id: string;
+  path: string;
+  thread_id: string;
+}): AcpJobRow | undefined {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND account_id = ? AND path = ? AND thread_id = ?
+         AND json_extract(request_json, '$.runtime.kind') = 'acp'
+         AND json_extract(request_json, '$.chat.agent_message') IS NOT 1
+         AND json_extract(request_json, '$.chat.agent_rpc_execution') IS NULL
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(project_id, account_id, path, thread_id) as AcpJobRow | undefined;
+}
+
 export function listQueuedAcpJobThreadKeys(): Pick<
   AcpJobRow,
   "project_id" | "path" | "thread_id"

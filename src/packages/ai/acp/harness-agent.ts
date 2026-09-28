@@ -17,6 +17,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { harnessPrompt } from "./harness-context";
 import { assertSameTurnPrincipal } from "./turn-principal";
+import { normalizeCodexAsyncQuestions } from "./codex-attention";
 import type {
   CodexAttentionContext,
   CodexAttentionHandler,
@@ -95,7 +96,57 @@ export class HarnessAgent implements AcpAgent {
       if (!this.client) {
         const client = await AcpHarnessClient.start(
           this.binding,
-          this.launch,
+          async (binding) => {
+            const process = await this.launch(binding);
+            process.setAsyncQuestionHandler?.(async (input) => {
+              const context = this.attentionContext;
+              if (
+                !context ||
+                !this.attention ||
+                !this.busy ||
+                this.closed ||
+                this.interrupted
+              )
+                throw Error("Async questions require an active agent turn");
+              if (!this.client?.supportsSteering)
+                throw Error(
+                  "This adapter does not support asynchronous answers",
+                );
+              if (!input || typeof input !== "object" || Array.isArray(input))
+                throw Error("Invalid async question request");
+              const { request_id, questions } = input as Record<
+                string,
+                unknown
+              >;
+              if (
+                typeof request_id !== "string" ||
+                !/^[a-zA-Z0-9_-]{1,128}$/.test(request_id)
+              )
+                throw Error(
+                  "Provide a unique request_id; reuse it only for an identical question",
+                );
+              const normalized = normalizeCodexAsyncQuestions({
+                type: "agentMessage",
+                delivery: "async",
+                id: request_id,
+                questions,
+              });
+              if (!normalized) throw Error("Provide one to three questions");
+              await this.validateAuthority?.(this.binding);
+              if (
+                this.attentionContext !== context ||
+                this.closed ||
+                this.interrupted
+              )
+                throw Error("The question's turn has ended");
+              const record = await this.attention.createAsyncQuestion({
+                ...normalized,
+                context,
+              });
+              return { question_id: record.attention_id, status: "pending" };
+            });
+            return process;
+          },
           30_000,
           this.attention
             ? async (questions, signal, validate) => {
