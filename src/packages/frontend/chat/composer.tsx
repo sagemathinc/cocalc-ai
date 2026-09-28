@@ -975,7 +975,10 @@ export function ChatRoomComposer({
               minHeight: 32,
             }}
           >
-            <ComposerConnectors agent={agentMentions.namedAgent}>
+            <ComposerConnectors
+              agent={agentMentions.namedAgent}
+              supportsCocalcAccess={threadMetadata != null && !isGenericHarness}
+            >
               {(extraMenuItems) => (
                 <AgentFileAttachment
                   extraMenuItems={extraMenuItems}

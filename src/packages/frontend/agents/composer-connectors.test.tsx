@@ -77,9 +77,18 @@ const config = {
   scope: { version: 1, account: [], projects: [] },
 };
 
-function Controls({ value = agent }: { value?: NamedAgent | null }) {
+function Controls({
+  value = agent,
+  supportsCocalcAccess = true,
+}: {
+  value?: NamedAgent | null;
+  supportsCocalcAccess?: boolean;
+}) {
   return (
-    <ComposerConnectors agent={value ?? undefined}>
+    <ComposerConnectors
+      agent={value ?? undefined}
+      supportsCocalcAccess={supportsCocalcAccess}
+    >
       {(extraMenuItems) => (
         <AgentFileAttachment
           projectId="project"
@@ -363,4 +372,48 @@ test("network loading failures remain reachable from + with retry", async () => 
   );
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(mockRefresh).toHaveBeenCalledTimes(1);
+});
+
+test("unsupported harness keeps networks usable without offering CoCalc access", async () => {
+  mockApi.getCocalcConnectorConfig.mockResolvedValue(config);
+  const user = userEvent.setup();
+  const view = render(<Controls supportsCocalcAccess={false} />);
+  const plus = screen.getByRole("button", { name: "Add files and more" });
+  plus.focus();
+  await user.keyboard("{Enter}");
+  const unavailable = await screen.findByRole("menuitem", {
+    name: "CoCalc (Codex only)",
+  });
+  expect(unavailable).toHaveAttribute("aria-disabled", "true");
+  expect(mockApi.getCocalcConnectorConfig).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /^CoCalc connector/ }),
+  ).toBeNull();
+
+  const networks = screen.getByRole("menuitem", { name: "Agent Networks" });
+  networks.focus();
+  fireEvent.keyDown(networks, { key: "Enter", keyCode: 13, which: 13 });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Network tags for @builder",
+  });
+  await waitFor(() =>
+    expect(dialog.contains(document.activeElement)).toBe(true),
+  );
+  within(dialog)
+    .getAllByRole("button", { name: "Close", exact: true })[0]
+    .focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(plus).toHaveFocus());
+
+  // A runtime switch must neither rewrite nor remove existing saved grants.
+  view.rerender(<Controls supportsCocalcAccess />);
+  expect(
+    await screen.findByRole("button", { name: "CoCalc connector" }),
+  ).toBeVisible();
+  view.rerender(<Controls supportsCocalcAccess={false} />);
+  expect(
+    screen.queryByRole("button", { name: /^CoCalc connector/ }),
+  ).toBeNull();
+  expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
+  expect(mockApi.removeCocalcConnectorConfig).not.toHaveBeenCalled();
 });

@@ -19,14 +19,20 @@ import { refreshAgentNetworks, sameEndpoint, useAgentNetworks } from "./api";
 
 interface Props {
   agent?: NamedAgent;
+  supportsCocalcAccess: boolean;
   children: (items: MenuProps["items"]) => ReactNode;
 }
 
-export function ComposerConnectors({ agent, children }: Props) {
+export function ComposerConnectors({
+  agent,
+  supportsCocalcAccess,
+  children,
+}: Props) {
   return agent ? (
     <NamedAgentConnectors
       key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
       agent={agent}
+      supportsCocalcAccess={supportsCocalcAccess}
     >
       {children}
     </NamedAgentConnectors>
@@ -68,6 +74,7 @@ function ConnectorIcon({
 
 function NamedAgentConnectors({
   agent,
+  supportsCocalcAccess,
   children,
 }: Props & { agent: NamedAgent }) {
   const { directory, error } = useAgentNetworks();
@@ -88,52 +95,60 @@ function NamedAgentConnectors({
     directory?.controls.paused ||
     assigned.every((network) => network.state !== "active");
   const openNetworks = () => setNetworksOpen(true);
+  const menu = (onOpen?: () => void) => (
+    <span ref={menuRef} style={{ display: "inline-flex" }}>
+      {children([
+        {
+          key: "cocalc-connector",
+          label: supportsCocalcAccess ? "CoCalc" : "CoCalc (Codex only)",
+          disabled: !supportsCocalcAccess,
+          icon: (
+            <span aria-hidden>
+              <Icon name="cocalc-ring" />
+            </span>
+          ),
+          onClick: onOpen,
+        },
+        {
+          key: "agent-networks",
+          label: "Agent Networks",
+          icon: <ApartmentOutlined aria-hidden />,
+          onClick: openNetworks,
+        },
+      ])}
+    </span>
+  );
   return (
     <>
-      <CocalcConnector
-        agent={agent}
-        onRemoved={() => menuRef.current?.querySelector("button")?.focus()}
-        renderTrigger={({ config, onOpen }) => (
-          <>
-            <span ref={menuRef} style={{ display: "inline-flex" }}>
-              {children([
-                {
-                  key: "cocalc-connector",
-                  label: "CoCalc",
-                  icon: (
-                    <span aria-hidden>
-                      <Icon name="cocalc-ring" />
-                    </span>
-                  ),
-                  onClick: onOpen,
-                },
-                {
-                  key: "agent-networks",
-                  label: "Agent Networks",
-                  icon: <ApartmentOutlined aria-hidden />,
-                  onClick: openNetworks,
-                },
-              ])}
-            </span>
-            {config && (
-              <ConnectorIcon
-                label={`CoCalc connector${config.enabled ? "" : " (disabled)"}`}
-                icon={<Icon name="cocalc-ring" />}
-                onClick={onOpen}
-                muted={!config.enabled}
-              />
-            )}
-            {assigned.length > 0 && (
-              <ConnectorIcon
-                label={`Agent Networks connector (${assigned.length} ${assigned.length === 1 ? "tag" : "tags"}${paused ? ", paused" : ""})`}
-                icon={<ApartmentOutlined />}
-                onClick={openNetworks}
-                muted={paused}
-              />
-            )}
-          </>
-        )}
-      />
+      {supportsCocalcAccess ? (
+        <CocalcConnector
+          agent={agent}
+          onRemoved={() => menuRef.current?.querySelector("button")?.focus()}
+          renderTrigger={({ config, onOpen }) => (
+            <>
+              {menu(onOpen)}
+              {config && (
+                <ConnectorIcon
+                  label={`CoCalc connector${config.enabled ? "" : " (disabled)"}`}
+                  icon={<Icon name="cocalc-ring" />}
+                  onClick={onOpen}
+                  muted={!config.enabled}
+                />
+              )}
+            </>
+          )}
+        />
+      ) : (
+        menu()
+      )}
+      {assigned.length > 0 && (
+        <ConnectorIcon
+          label={`Agent Networks connector (${assigned.length} ${assigned.length === 1 ? "tag" : "tags"}${paused ? ", paused" : ""})`}
+          icon={<ApartmentOutlined />}
+          onClick={openNetworks}
+          muted={paused}
+        />
+      )}
       {directory ? (
         <AgentNetworkTagsEditor
           open={networksOpen}
