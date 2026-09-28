@@ -5,13 +5,19 @@
 
 import { randomUUID } from "node:crypto";
 import { delay } from "awaiting";
-import { Client, connect, type Message } from "./client";
-import { ConatServer, init } from "./server";
+import { connect, type Client, type Message } from "./client";
+import { init, type ConatServer } from "./server";
 
 describe("authenticated reply namespace rotation", () => {
+  const clients = new Set<Client>();
+  const brokers = new Set<ConatServer>();
+
   afterEach(async () => {
-    Client.closeAllForTests();
-    await ConatServer.closeAllForTests();
+    // The global test registries are disabled without COCALC_TEST_MODE.
+    for (const client of clients) client.close();
+    clients.clear();
+    await Promise.all([...brokers].map((broker) => broker.close()));
+    brokers.clear();
   });
 
   it.each(
@@ -41,17 +47,20 @@ describe("authenticated reply namespace rotation", () => {
             ? subject === "rotation.echo"
             : subject.startsWith(user.reply_prefix + ".")),
       });
+      brokers.add(broker);
       const service = connect({
         address: broker.address(),
         noCache: true,
         auth: { hub_id: "service" },
       });
+      clients.add(service);
       const client = connect({
         address: broker.address(),
         noCache: true,
         reconnection: false,
         auth: { account_id: "test" },
       });
+      clients.add(client);
       client.inboxPrefixHook = mutableProvider
         ? () => providerPrefix
         : (info) => info?.user?.reply_prefix;

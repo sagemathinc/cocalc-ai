@@ -191,7 +191,7 @@ describe("core client request setup failures", () => {
     try {
       await expect(
         client.request("test.subject", ["payload"], { timeout: 25 }),
-      ).rejects.toThrow(/timeout.*waiting for "info"/);
+      ).rejects.toMatchObject({ code: 408 });
       expect(socket.emit).not.toHaveBeenCalled();
       expect(client.inbox.eventNames()).toEqual([]);
     } finally {

@@ -634,7 +634,10 @@ export class Client extends EventEmitter {
   private inbox?: EventEmitter;
   private inboxRequests = new Map<
     EventEmitter,
-    Map<EventIterator<Message>, string>
+    Map<
+      EventIterator<Message>,
+      { subject: string; onInvalidate?: (err: ConatError) => void }
+    >
   >();
   private inboxSubscription?: Subscription;
   private inboxGeneration = 0;
@@ -1226,6 +1229,7 @@ export class Client extends EventEmitter {
     inbox: EventEmitter,
     sub: EventIterator<Message>,
     subject: string,
+    onInvalidate?: (err: ConatError) => void,
   ) {
     if (inbox !== this.inbox || this.isClosed()) {
       sub.cancel();
@@ -1239,7 +1243,7 @@ export class Client extends EventEmitter {
       requests = new Map();
       this.inboxRequests.set(inbox, requests);
     }
-    requests.set(sub, subject);
+    requests.set(sub, { subject, onInvalidate });
   }
 
   private untrackInboxRequest(
@@ -1254,15 +1258,17 @@ export class Client extends EventEmitter {
   private invalidateInboxRequests(inbox: EventEmitter) {
     const requests = this.inboxRequests.get(inbox);
     this.inboxRequests.delete(inbox);
-    for (const [sub, subject] of requests ?? []) {
+    for (const [sub, { subject, onInvalidate }] of requests ?? []) {
       // Losing the response channel says nothing about execution. Recovery
       // belongs to the operation protocol, not automatic transport replay.
-      sub.cancel(
-        new ConatError("request reply inbox was replaced or closed", {
-          code: "CONNECTION_LOST",
-          subject,
-        }),
-      );
+      const err = new ConatError("request reply inbox was replaced or closed", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+      // Stop pending transport admission too, not just response consumption.
+      // Normal iterator completion only untracks and must not invoke this.
+      onInvalidate?.(err);
+      sub.cancel(err);
     }
   }
 
@@ -2635,7 +2641,9 @@ export class Client extends EventEmitter {
         map: (args) => args[0],
         onEnd: () => this.untrackInboxRequest(inbox, sub!),
       });
-      this.trackInboxRequest(inbox, sub, subject);
+      this.trackInboxRequest(inbox, sub, subject, (err) =>
+        controller.abort(err),
+      );
 
       const { count } = await abortable(
         this.publish(subject, mesg, {

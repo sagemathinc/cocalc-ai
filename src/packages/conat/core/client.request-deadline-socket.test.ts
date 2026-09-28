@@ -140,6 +140,106 @@ describe("request admission with real Socket.IO", () => {
     expectNoQueuedSend();
   });
 
+  it.each(["sign-in", "transport"])(
+    "inbox invalidation aborts a request waiting for %s before handoff",
+    async (phase) => {
+      if (phase === "sign-in") client.state = "disconnected";
+      transport.writable = false;
+      const result = request().catch((err) => err);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(client.inboxRequests.size).toBe(1);
+
+      client.invalidateInboxRequests(inbox);
+      await jest.advanceTimersByTimeAsync(0);
+      // Assert prompt rejection without waiting for the request's deadline.
+      expect(
+        await Promise.race([result, Promise.resolve("still pending")]),
+      ).toMatchObject({ code: "CONNECTION_LOST", subject });
+      expect(client.inboxRequests.size).toBe(0);
+      expect(engine.listeners("drain")).toHaveLength(0);
+      expectNoQueuedSend();
+
+      client.state = "connected";
+      client.emit("info");
+      drain();
+      socket.emitBuffered();
+      await jest.advanceTimersByTimeAsync(1000);
+      expectNoQueuedSend();
+
+      // Cancelling an old request must not poison the new reply namespace.
+      inbox = new EventEmitter();
+      client.inbox = inbox;
+      client.inboxSubject = "INBOX.replaced";
+      const fresh = request();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(packets).toHaveBeenCalledTimes(1);
+      const packet = packets.mock.calls[0][0];
+      ack(packet);
+      reply(packet);
+      await expect(fresh).resolves.toEqual({ data: "ok" });
+      expect(client.inboxRequests.size).toBe(0);
+    },
+  );
+
+  it("inbox invalidation aborts pending chunks and ACK waits without retracting handed-off frames", async () => {
+    client.info.max_payload = 1000;
+    const result = client
+      .request(subject, Buffer.alloc(2500), { timeout: 1000 })
+      .catch((err) => err);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(packets).toHaveBeenCalledTimes(1);
+    expect(wire).toHaveLength(1);
+    expect(engine.writeBuffer).toHaveLength(2);
+
+    client.invalidateInboxRequests(inbox);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(
+      await Promise.race([result, Promise.resolve("still pending")]),
+    ).toMatchObject({ code: "CONNECTION_LOST", subject });
+    expect(client.inboxRequests.size).toBe(0);
+    expect(inbox.eventNames()).toHaveLength(0);
+    expect(engine.listeners("drain")).toHaveLength(0);
+    expect(engine.writeBuffer).toHaveLength(2);
+
+    for (let i = 0; i < 6; i++) {
+      drain();
+      await jest.advanceTimersByTimeAsync(0);
+    }
+    expect(wire).toHaveLength(2);
+    expect(packets).toHaveBeenCalledTimes(1);
+    ack(packets.mock.calls[0][0]);
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(packets).toHaveBeenCalledTimes(1);
+    expect(Object.keys(socket.acks)).toHaveLength(0);
+    expect(socket.sendBuffer).toHaveLength(0);
+    expect(socket._queue).toHaveLength(0);
+  });
+
+  it.each(["before", "after"])(
+    "does not abort successful responses arriving %s the publish ACK",
+    async (order) => {
+      const pending = request();
+      await jest.advanceTimersByTimeAsync(0);
+      const packet = packets.mock.calls[0][0];
+      if (order === "before") {
+        reply(packet);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(client.inboxRequests.size).toBe(1);
+        ack(packet);
+      } else {
+        ack(packet);
+        await jest.advanceTimersByTimeAsync(0);
+        reply(packet);
+      }
+      await expect(pending).resolves.toEqual({ data: "ok" });
+      expect(client.inboxRequests.size).toBe(0);
+      client.invalidateInboxRequests(inbox);
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(inbox.eventNames()).toHaveLength(0);
+      expect(packets).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("retracts only its unsent Socket.IO packet if heartbeat expires inside emit", async () => {
     const oldPacket = { data: ["unrelated", "buffered earlier"] };
     socket.sendBuffer.push(oldPacket);
