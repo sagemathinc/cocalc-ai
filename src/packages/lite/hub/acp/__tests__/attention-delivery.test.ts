@@ -39,6 +39,8 @@ import { HarnessAgent } from "@cocalc/ai/acp/harness";
 const mockSteer = jest.fn();
 // The worker test injects a client; protocol transport is covered in ai/acp.
 jest.mock("@agentclientprotocol/sdk-v1", () => ({}), { virtual: true });
+const mockAuthorizeRpcExecution = jest.fn();
+const originalAuthorizeRpcExecution = hubApi.agent.authorizeRpcExecution;
 jest.mock("@cocalc/ai/acp", () => ({
   ...jest.requireActual("@cocalc/ai/acp"),
   CodexAppServerAgent: {
@@ -202,6 +204,8 @@ beforeAll(() => {
 afterAll(() => closeAcpDatabase());
 
 beforeEach(() => {
+  mockAuthorizeRpcExecution.mockReset().mockResolvedValue({});
+  hubApi.agent.authorizeRpcExecution = mockAuthorizeRpcExecution;
   const db = getAcpDatabase();
   for (const { name } of db
     .prepare(
@@ -250,6 +254,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  if (originalAuthorizeRpcExecution === undefined)
+    delete hubApi.agent.authorizeRpcExecution;
+  else hubApi.agent.authorizeRpcExecution = originalAuthorizeRpcExecution;
   setCodexCredentialAdmissionResolver();
   await disposeAcpAgents();
   configureAcpDetachedWorkerRunning(undefined);
@@ -873,6 +880,111 @@ describe("agent RPC live guidance funding", () => {
       user_message_id: request.chat.parent_message_id!,
     })!;
   }
+
+  it.each([
+    ["direct", "network generation changed"],
+    ["direct", "account generation changed"],
+    ["direct", "network membership revoked"],
+    ["durable", "network generation changed"],
+    ["durable", "account generation changed"],
+    ["durable", "network membership revoked"],
+  ])("rejects %s native guidance after %s", async (delivery, reason) => {
+    const request = guidanceRequest();
+    startRunningTurn(turnRequest(liveConfig));
+    if (delivery === "durable") {
+      mockLiveRuntime(liveConfig).running.clear();
+      jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+        {
+          project_id: projectId,
+          path: record.path,
+          thread_id: record.thread_id,
+          session_id: sessionId,
+          owner_instance_id: "other-worker",
+        } as any,
+      ]);
+      await acpTestInternals.handleAcpSteerRequest(request);
+      expect(storedSteer(request).state).toBe("pending");
+    }
+    // Revoke after admission/forwarding but before the owner injects guidance.
+    mockAuthorizeRpcExecution.mockRejectedValue(new Error(reason));
+    const runtime = mockLiveRuntime(liveConfig);
+    const send = runtime.running.get(sessionId)!.client.request;
+    mockSteer.mockClear();
+    if (delivery === "direct") {
+      await expect(
+        acpTestInternals.handleAcpSteerRequest(request),
+      ).rejects.toThrow(reason);
+    } else {
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(storedSteer(request)).toMatchObject({
+        state: "error",
+        error: reason,
+      });
+      const attempts = mockAuthorizeRpcExecution.mock.calls.length;
+      await acpTestInternals.processPendingAcpSteersOnce();
+      expect(mockAuthorizeRpcExecution).toHaveBeenCalledTimes(attempts);
+    }
+    expect(mockAuthorizeRpcExecution).toHaveBeenLastCalledWith({
+      account_id: accountId,
+      authorization: request.chat.agent_rpc_execution,
+    });
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(listQueuedAcpJobs()).toEqual([]);
+    expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
+  });
+
+  it.each(["direct", "durable"])(
+    "keeps %s human guidance independent of Agent Network authorization",
+    async (delivery) => {
+      const request = guidanceRequest(liveConfig);
+      delete request.chat.agent_rpc_execution;
+      mockAuthorizeRpcExecution.mockRejectedValue(
+        new Error("not a network turn"),
+      );
+      const runtime = mockLiveRuntime(liveConfig);
+      if (delivery === "direct") {
+        await expect(
+          acpTestInternals.handleAcpSteerRequest(request),
+        ).resolves.toMatchObject({ state: "steered" });
+      } else {
+        enqueueAcpSteer({ request });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request).state).toBe("handled");
+      }
+      expect(mockAuthorizeRpcExecution).not.toHaveBeenCalled();
+      expect(
+        runtime.running.get(sessionId)!.client.request,
+      ).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["direct", "durable"])(
+    "rejects %s legacy agent guidance before native injection",
+    async (delivery) => {
+      const request = guidanceRequest(liveConfig);
+      delete request.chat.agent_rpc_execution;
+      request.chat.agent_delivery_id = "retired-delivery";
+      const runtime = mockLiveRuntime(liveConfig);
+      if (delivery === "direct") {
+        await expect(
+          acpTestInternals.handleAcpSteerRequest(request),
+        ).rejects.toThrow("Legacy agent delivery is retired");
+      } else {
+        enqueueAcpSteer({ request });
+        await acpTestInternals.processPendingAcpSteersOnce();
+        expect(storedSteer(request)).toMatchObject({
+          state: "error",
+          error: expect.stringContaining("Legacy agent delivery is retired"),
+        });
+      }
+      expect(mockAuthorizeRpcExecution).not.toHaveBeenCalled();
+      expect(
+        runtime.running.get(sessionId)!.client.request,
+      ).not.toHaveBeenCalled();
+      expect(listQueuedAcpJobs()).toEqual([]);
+    },
+  );
 
   it.each(["auto", "subscription", "subscription-credential"] as const)(
     "inherits live funding instead of the next-turn %s config",

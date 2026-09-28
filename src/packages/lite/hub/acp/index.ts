@@ -12152,11 +12152,9 @@ async function attemptAcpSteerRequest(
     throw new Error("conat client must be initialized");
   }
   assertRunningJobSteerPrincipal(request);
-  if (request.runtime) {
-    // A durable steer may be delivered well after admission. Recheck the
-    // network as well as the active harness's subscription authority.
-    await authorizeAgentDeliveryExecution(request, hubApi.agent);
-  }
+  // A forwarded steer may outlive its admission authority. Recheck before
+  // injecting into any runtime; ordinary human guidance needs no network grant.
+  await authorizeAgentDeliveryExecution(request, hubApi.agent);
   await acknowledgeAutomationFromHumanTurn(request);
 
   const projectId = request.chat.project_id ?? request.project_id;
