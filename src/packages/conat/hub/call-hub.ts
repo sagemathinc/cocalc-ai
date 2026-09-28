@@ -2,6 +2,9 @@ import { type Client } from "@cocalc/conat/core/client";
 import { ConatError } from "@cocalc/conat/util";
 import { resolveHostConnectionSingleFlight } from "./resolve-host-singleflight";
 const DEFAULT_TIMEOUT = 15000;
+// The shared flight has its own bounded lifetime, independent of which waiter
+// arrives first. Caller timeouts only bound their individual waits below.
+const RESOLVER_FLIGHT_TIMEOUT = 15000;
 
 // Share resolver work across SDK calls and the browser's direct fallback. Other
 // RPCs (especially token issuance) must retain their own scope and semantics.
@@ -21,7 +24,7 @@ export function requestHub(
       client.info?.user,
     ],
     data.args,
-    request,
+    () => client.request(subject, data, { timeout: RESOLVER_FLIGHT_TIMEOUT }),
   );
   // A joiner has its own deadline, but timing out its wait must not evict or
   // cancel the underlying RPC. Only the single-flight helper owns that entry.

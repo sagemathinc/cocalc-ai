@@ -169,6 +169,81 @@ describe("host resolver single-flight at the outbound RPC boundary", () => {
     }
   });
 
+  it("a short first caller cannot cap a later ordinary resolver waiter", async () => {
+    jest.useFakeTimers();
+    try {
+      const request = jest.fn(
+        (_subject, _data, { timeout }) =>
+          new Promise((resolve, reject) => {
+            const expiry = setTimeout(
+              () => reject(new ConatError("transport deadline", { code: 408 })),
+              timeout,
+            );
+            setTimeout(() => {
+              clearTimeout(expiry);
+              resolve({ data: "recovered" });
+            }, 8_000);
+          }),
+      );
+      const client = { request } as unknown as Client;
+      const short = requestHub(client, subject, data, { timeout: 5_000 }).catch(
+        (err) => err,
+      );
+      await jest.advanceTimersByTimeAsync(1_000);
+      const ordinary = callHub({
+        client,
+        account_id: "account-1",
+        ...data,
+        timeout: 15_000,
+      });
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledWith(subject, data, { timeout: 15_000 });
+      await jest.advanceTimersByTimeAsync(4_000);
+      expect(await short).toMatchObject({ code: 408 });
+      await jest.advanceTimersByTimeAsync(3_000);
+      await expect(ordinary).resolves.toBe("recovered");
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("caps even a long first caller at the resolver-owned transport deadline", async () => {
+    jest.useFakeTimers();
+    try {
+      const request = jest.fn(
+        (_subject, _data, { timeout }) =>
+          new Promise((_resolve, reject) => {
+            setTimeout(
+              () => reject(new ConatError("transport deadline", { code: 408 })),
+              timeout,
+            );
+          }),
+      );
+      const client = { request } as unknown as Client;
+      const first = requestHub(client, subject, data, {
+        timeout: 60_000,
+      }).catch((err) => err);
+      await jest.advanceTimersByTimeAsync(15_000);
+      expect(await first).toMatchObject({
+        code: 408,
+        message: "transport deadline",
+      });
+      expect(jest.getTimerCount()).toBe(0);
+      const retry = requestHub(client, subject, data, { timeout: 1_000 }).catch(
+        (err) => err,
+      );
+      expect(request).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(await retry).toMatchObject({ code: 408 });
+      await jest.advanceTimersByTimeAsync(14_000);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("retains the RPC after every waiter times out, then evicts its late rejection for retry", async () => {
     jest.useFakeTimers();
     try {

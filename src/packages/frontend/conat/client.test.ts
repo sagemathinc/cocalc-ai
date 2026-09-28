@@ -2413,7 +2413,8 @@ describe("ConatClient routed project-host reconnect", () => {
         name: "hosts.resolveHostConnection",
         args: [{ host_id: "host-1" }],
       },
-      expect.objectContaining({ timeout: 5_000 }),
+      // Direct callers wait five seconds, but do not shorten the shared flight.
+      expect.objectContaining({ timeout: 15_000 }),
     );
     expect(connect).toHaveBeenCalledTimes(1);
 
