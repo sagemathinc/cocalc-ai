@@ -1,16 +1,19 @@
 #!/usr/bin/env ts-node
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { randomUUID } from "node:crypto";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
   ChatStreamWriter,
   acpTestInternals,
   disposeAllChatWritersForTests,
   finalizeInterruptedAcpBackendState,
+  fenceAcpProjectAfterStop,
   isFatalAcpWorkerStorageError,
   isProjectAcpStorageError,
   recoverCurrentWorkerStuckAcpTurns,
   recoverDetachedWorkerStartupState,
   recoverOrphanedAcpTurns,
+  recoverOrphanedRunningAcpJobsWithoutLease,
   shouldCompleteAcpTurnAfterTerminalStorageFailure,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
@@ -36,6 +39,22 @@ import {
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { setAcpAdmissionLimitsProvider } from "../admission";
+import { hubApi } from "../../api";
+import { setHarnessLauncher } from "../harness-runtime";
+import {
+  enqueueAcpInterrupt,
+  listPendingAcpInterrupts,
+} from "../../sqlite/acp-interrupts";
+import {
+  getAcpAttention,
+  submitAcpAttentionResponse,
+  upsertAcpAttention,
+} from "../../sqlite/acp-attention";
+
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: jest.fn(async () => undefined),
+}));
 
 jest.mock("@cocalc/ai/acp", () => ({
   assertSameTurnPrincipal:
@@ -82,6 +101,7 @@ jest.mock("@cocalc/project/logger", () => {
   };
 });
 jest.mock("../../sqlite/acp-turns", () => ({
+  fenceAcpTurnLeasesForProject: jest.fn(() => 0),
   countRunningAcpTurnLeasesForWorker: jest.fn(() => 0),
   startAcpTurnLease: jest.fn(),
   heartbeatAcpTurnLease: jest.fn(),
@@ -218,6 +238,79 @@ function makeRequest() {
   };
 }
 
+it.each(["network membership revoked", "authorization service unavailable"])(
+  "persisted generic peer execution refuses launch when %s",
+  async (message) => {
+    const original = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    const launch = jest.fn(async () => {
+      throw Error("must not launch");
+    });
+    setHarnessLauncher(launch);
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    const authorize = jest.fn().mockRejectedValueOnce(Error(message));
+    hubApi.agent.authorizeRpcExecution = authorize;
+    const base = makeRequest();
+    const authorization = {
+      version: 3,
+      source: { agent_id: randomUUID(), project_id: randomUUID() },
+      source_run_id: randomUUID(),
+      target: { agent_id: randomUUID(), project_id: base.project_id },
+      target_path: base.chat.path,
+      target_thread_id: base.chat.thread_id,
+      agent_network_id: randomUUID(),
+      network_generation: randomUUID(),
+      account_generation: 0,
+      configured_delivery: "queued",
+      principal_account_id: base.account_id,
+      guidance: false,
+    };
+    const stream = jest.fn(async () => {});
+    try {
+      const job = enqueueAcpJob({
+        ...base,
+        config: undefined,
+        runtime: {
+          version: 1,
+          kind: "acp",
+          profile: {
+            version: 1,
+            kind: "acp",
+            id: "fixture",
+            revision: "1",
+            executable: "/home/user/fixture",
+            args: [],
+            cwd: "/home/user",
+            executionPolicy: "full-access",
+            credentialMode: "project-managed",
+          },
+        },
+        chat: { ...base.chat, agent_rpc_execution: authorization },
+      } as any);
+      const admitted = decodeAcpJobRequest(job);
+      await expect(
+        acpTestInternals.executeAcpRequest({
+          ...admitted,
+          stream,
+        } as any),
+      ).rejects.toThrow(message);
+      expect(authorize).toHaveBeenCalledWith({
+        account_id: base.account_id,
+        authorization,
+      });
+      expect(launch).not.toHaveBeenCalled();
+      expect(stream).not.toHaveBeenCalled();
+    } finally {
+      if (originalAuthorize === undefined)
+        delete (hubApi.agent as any).authorizeRpcExecution;
+      else hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = original;
+    }
+  },
+);
+
 function makeCommandRequest() {
   return {
     request_kind: "command" as const,
@@ -322,6 +415,269 @@ it("finalizes only the spoken turn when another turn starts in the same thread",
   );
 });
 
+it("project fencing retains a failed harness cleanup for the next attempt", async () => {
+  const request = makeRequest();
+  const dispose = jest
+    .fn()
+    .mockRejectedValueOnce(Error("temporary removal failure"))
+    .mockResolvedValue(undefined);
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "cleanup-retry-harness",
+    request.project_id,
+    { dispose } as any,
+    true,
+  );
+  try {
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).rejects.toThrow("temporary removal failure");
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).resolves.toMatchObject({ disposed_agents: 1 });
+    expect(dispose).toHaveBeenCalledTimes(2);
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).resolves.toMatchObject({ disposed_agents: 0 });
+    expect(dispose).toHaveBeenCalledTimes(2);
+  } finally {
+    unregister();
+  }
+});
+
+it.each(["lost", "terminal", "live"])(
+  "worker recovery reconciles synchronous questions with a %s responder",
+  async (responder) => {
+    const request = makeRequest();
+    const record = upsertAcpAttention({
+      project_id: request.project_id,
+      account_id: request.account_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      turn_id: "question-turn",
+      source_kind: "codex_sync_question",
+      source_id: `worker-question-${responder}`,
+      attention_kind: "question",
+      is_blocking: true,
+      title: "ACP needs input",
+      questions: [
+        { id: "target", header: "Target", question: "Choose target" },
+      ],
+      chat: request.chat,
+    });
+    (turns.getAcpTurnLease as jest.Mock).mockReturnValue({
+      state: responder === "terminal" ? "completed" : "running",
+      owner_instance_id: "question-worker",
+      pid: responder === "lost" ? null : process.pid,
+      heartbeat_at: responder === "lost" ? 1 : Date.now(),
+      started_at: 1,
+    });
+    try {
+      await recoverDetachedWorkerStartupState({} as ConatClient);
+      expect(getAcpAttention(record.attention_id)?.state).toBe(
+        responder === "live" ? "pending" : "stale",
+      );
+      if (responder !== "live") {
+        expect(
+          getAcpAttention(record.attention_id)?.resolution_reason,
+        ).toContain("responder was lost");
+        expect(
+          submitAcpAttentionResponse({
+            attention_id: record.attention_id,
+            project_id: request.project_id,
+            account_id: request.account_id,
+            response_id: "late-answer",
+            answers: { target: ["local"] },
+          }),
+        ).toMatchObject({
+          state: "already_submitted",
+          record: { state: "stale" },
+        });
+        expect(
+          getAcpAttention(record.attention_id)?.response_id,
+        ).toBeUndefined();
+      }
+    } finally {
+      getAcpDatabase()
+        .prepare("DELETE FROM acp_attention_requests WHERE attention_id = ?")
+        .run(record.attention_id);
+    }
+  },
+);
+
+it.each([
+  ["direct", "1"],
+  ["durable", "1"],
+  ["direct", "0"],
+  ["durable", "0"],
+])(
+  "%s harness cancel with admission flag %s waits for the prompt outcome",
+  async (delivery, enabled) => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    const request = {
+      ...makeRequest(),
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "fixture",
+          revision: "1",
+          executable: "/home/user/fixture",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    } satisfies AcpRequest;
+    const job = enqueueAcpJob(request);
+    claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      worker_id: "worker-P",
+    });
+    const interruptOutstanding = jest.fn(async () => true);
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "cancel-test",
+      request.project_id,
+      { interruptOutstanding } as any,
+      true,
+    );
+    try {
+      // The rollback switch applies to new admissions, not existing stop requests.
+      process.env.COCALC_ACP_HARNESSES = enabled;
+      if (delivery === "direct") {
+        expect(
+          await acpTestInternals.handleInterruptRequest({
+            ...request,
+            threadId: request.chat.thread_id,
+          }),
+        ).toMatchObject({ ok: true, state: "queued" });
+      } else {
+        enqueueAcpInterrupt({
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+          chat: request.chat,
+        });
+        await acpTestInternals.processPendingAcpInterruptsOnce();
+        expect(listPendingAcpInterrupts()).toHaveLength(0);
+      }
+      expect(interruptOutstanding).toHaveBeenCalledTimes(1);
+      const key = {
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+      };
+      expect(getAcpJob(key)?.state).toBe("running");
+      expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+      // The worker, not the cancellation transport, owns finalization.
+      setAcpJobState({
+        op_id: job.op_id,
+        state: "error",
+        worker_id: "worker-P",
+      });
+      expect(getAcpJob(key)?.state).toBe("error");
+    } finally {
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
+      unregister();
+    }
+  },
+);
+
+it("targeted harness cancellation leaves other turn interrupts pending", async () => {
+  const request = makeRequest();
+  const expectedMessageId = request.chat.message_id!;
+  const sessionId = "harness-session";
+  (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+    {
+      project_id: request.project_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      message_id: expectedMessageId,
+      session_id: sessionId,
+    },
+  ]);
+  for (const messageId of [expectedMessageId, "another-turn"]) {
+    enqueueAcpInterrupt({
+      project_id: request.project_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id!,
+      chat: { ...request.chat, message_id: messageId },
+      expected_message_id: messageId,
+      expected_session_id: sessionId,
+    });
+  }
+  const interruptOutstanding = jest.fn(async () => true);
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "targeted-cancel-harness",
+    request.project_id,
+    { interruptOutstanding } as any,
+    true,
+  );
+  try {
+    await expect(
+      acpTestInternals.handleInterruptRequest({
+        ...request,
+        threadId: request.chat.thread_id,
+        expected_message_id: expectedMessageId,
+        expected_session_id: sessionId,
+      }),
+    ).resolves.toMatchObject({ ok: true, state: "queued" });
+    expect(interruptOutstanding).toHaveBeenCalledWith(
+      sessionId,
+      expectedMessageId,
+    );
+    expect(listPendingAcpInterrupts()).toEqual([
+      expect.objectContaining({ expected_message_id: "another-turn" }),
+    ]);
+    expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+  } finally {
+    unregister();
+    getAcpDatabase().prepare("DELETE FROM acp_interrupts").run();
+  }
+});
+
+it("preserves native interruption finalization", async () => {
+  const request = makeRequest();
+  const job = enqueueAcpJob(request);
+  claimNextQueuedAcpJobForThread({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    worker_id: "worker-P",
+  });
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "native-cancel-test",
+    request.project_id,
+    { interruptOutstanding: async () => true } as any,
+    false,
+  );
+  try {
+    expect(
+      await acpTestInternals.handleInterruptRequest({
+        ...request,
+        threadId: request.chat.thread_id,
+      }),
+    ).toMatchObject({ ok: true, state: "interrupted" });
+    expect(
+      getAcpJob({
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
+  } finally {
+    unregister();
+  }
+});
+
 it("rejects another human before durable steering while permitting an ordinary queued turn", () => {
   const request = makeRequest();
   enqueueAcpJob(request);
@@ -409,6 +765,116 @@ function makeSyncdb(rows: any[] = []) {
 }
 
 describe("terminal failure recovery", () => {
+  it("recovers a real SQLite-full terminal write without replaying the harness", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "gone",
+      worker_bundle_version: "old",
+    });
+    const db = getAcpDatabase();
+    db.prepare(
+      "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+    ).run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+    const limit = db.prepare("PRAGMA max_page_count").get().max_page_count;
+    const pages = db.prepare("PRAGMA page_count").get().page_count;
+    let storageError: unknown;
+    try {
+      // Restrict only this test database, without filling the host filesystem.
+      db.exec(`PRAGMA max_page_count = ${pages}`);
+      try {
+        setAcpJobState({
+          op_id: queued.op_id,
+          state: "error",
+          error: "x".repeat(1024 * 1024),
+        });
+      } catch (error) {
+        storageError = error;
+      }
+      expect(storageError).toBeDefined();
+      expect(`${storageError}`).toContain("database or disk is full");
+      expect(isFatalAcpWorkerStorageError(storageError)).toBe(true);
+      expect(
+        shouldCompleteAcpTurnAfterTerminalStorageFailure({
+          err: storageError,
+          phase: "terminal-summary",
+          finishedBy: "summary",
+          terminalRowAlreadyPersisted: true,
+        }),
+      ).toBe(false);
+      expect(
+        getAcpJob({
+          project_id: queued.project_id,
+          path: queued.path,
+          user_message_id: queued.user_message_id,
+        })?.state,
+      ).toBe("running");
+    } finally {
+      db.exec(`PRAGMA max_page_count = ${limit}`);
+    }
+
+    await recoverOrphanedRunningAcpJobsWithoutLease({ graceMs: 0 });
+    const recovered = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(recovered?.state).toBe("error");
+    expect(recovered?.error).toContain("completion is unknown");
+    expect(listQueuedAcpJobs()).toHaveLength(0);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
+  it("never creates a Codex recovery continuation for a generic harness", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_model_capacity",
+    });
+    expect(resumed).toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
+  it("terminalizes an orphaned harness rather than replaying ambiguous delivery", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "gone",
+      worker_bundle_version: "old",
+    });
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+      )
+      .run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+    await recoverOrphanedRunningAcpJobsWithoutLease({ graceMs: 0 });
+    const after = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(after?.state).toBe("error");
+    expect(after?.error).toContain("completion is unknown");
+  });
+
   it("schedules a same-process wakeup for a delayed continuation", () => {
     const previous = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
     process.env.COCALC_LITE_ACP_DETACHED_WORKER = "0";
@@ -1285,6 +1751,89 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(recoveryRow).toBeTruthy();
     expect(recoveryRow?.sender_id).toBeTruthy();
   });
+
+  it.each(["partial", "empty", "unavailable"])(
+    "preserves unknown harness outcome after worker loss (%s chat)",
+    async (chatState) => {
+      const request = {
+        ...makeRequest(),
+        runtime: { version: 1, kind: "acp", profile: {} },
+      };
+      const job = enqueueAcpJob(request as any);
+      claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        worker_id: "worker-old",
+        worker_bundle_version: "bundle-old",
+      });
+      const rows: any[] = [
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: true,
+          history:
+            chatState === "partial"
+              ? [{ content: "partial harness output" }]
+              : [],
+        },
+      ];
+      (chatServer.acquireChatSyncDB as jest.Mock).mockImplementation(
+        async () => {
+          if (chatState === "unavailable") throw new Error("chat unavailable");
+          return makeSyncdb(rows);
+        },
+      );
+      (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+        {
+          project_id: request.project_id,
+          path: request.chat.path,
+          message_date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          owner_instance_id: "worker-old",
+          started_at: Date.now() - 60000,
+          heartbeat_at: Date.now() - 30000,
+        },
+      ]);
+      expect(
+        await recoverOrphanedAcpTurns({} as ConatClient, { autoResume: true }),
+      ).toBe(1);
+      expect(
+        getAcpJob({
+          project_id: job.project_id,
+          path: job.path,
+          user_message_id: job.user_message_id,
+        }),
+      ).toMatchObject({
+        state: "error",
+        error: expect.stringContaining("completion is unknown"),
+      });
+      expect(turns.finalizeAcpTurnLease).toHaveBeenCalledWith(
+        expect.objectContaining({ state: "error" }),
+      );
+      expect(
+        listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+      ).toHaveLength(0);
+      if (chatState !== "unavailable") {
+        const row = rows.find((x) => x.event === "chat");
+        expect(row).toMatchObject({
+          generating: false,
+          acp_interrupted: false,
+        });
+        expect(row.history[0].content).toContain("completion is unknown");
+        if (chatState === "partial")
+          expect(row.history[0].content).toContain("partial harness output");
+        expect(rows.find((x) => x.event === "chat-thread-state")?.state).toBe(
+          "error",
+        );
+      }
+    },
+  );
 
   it("does not let an unavailable chat block later orphan recovery", async () => {
     const badRequest = {

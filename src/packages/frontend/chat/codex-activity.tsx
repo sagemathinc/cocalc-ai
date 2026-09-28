@@ -18,7 +18,6 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "./bounded-static-markdown";
-import { MAX_RENDERED_TEXT_CHARS } from "./paged-text";
 import { ChatSourceContent } from "./source-file-context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
@@ -41,17 +40,23 @@ import { PeerMessageCard, type PeerMessageEvent } from "./peer-message-card";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { openProjectFileResult } from "./open-result";
 import { projectFileTargetFromHref } from "./project-file-target";
+import { HarnessToolRow, updateHarnessTool } from "./harness-tool";
+import type { HarnessToolEntry } from "./harness-tool";
+import {
+  ActivityCodeBlock,
+  MAX_TERMINAL_PAGE_CHARS,
+  stripAnsi,
+  toFencedCodeBlock,
+} from "./activity-code-block";
 
 const { Text } = Typography;
-// A page of backticks needs two fences of length n + 1, two newlines,
-// and at most the two-character "sh" language hint: 3n + 6 characters.
-const MAX_TERMINAL_PAGE_CHARS = Math.floor((MAX_RENDERED_TEXT_CHARS - 6) / 3);
 const OpenActivityFileContext = React.createContext<
   ((target: { path: string; line?: number }) => void) | undefined
 >(undefined);
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
 type SubagentActivityItem = SubagentEvent & { seq: number; time?: number };
 type ActivityEntry =
+  | HarnessToolEntry
   | {
       kind: "reasoning";
       id: string;
@@ -669,6 +674,14 @@ function ActivityRow({
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
+    case "harness-tool":
+      return (
+        <HarnessToolRow
+          entry={entry}
+          fontSize={fontSize}
+          editorTheme={editorTheme}
+        />
+      );
     case "subagents": {
       const active = entry.agents.filter((agent) =>
         isActiveSubagentState(agent.state),
@@ -968,8 +981,12 @@ function normalizeEvents(
   activitySteers?: AttachedSteerMessage[],
 ): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
+  const harness = events.some(
+    (message) => message.type === "event" && message.event.type === "harness",
+  );
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
+  const harnessTools = new Map<string, HarnessToolEntry>();
   const subagents = new Map<string, SubagentActivityItem>();
   let sawTerminalFinalizer = false;
   for (const message of events) {
@@ -1008,7 +1025,9 @@ function normalizeEvents(
         time,
         label:
           message.state === "running"
-            ? "Codex started"
+            ? harness
+              ? "ACP started"
+              : "Codex started"
             : message.state === "queued"
               ? "Queued"
               : "Starting",
@@ -1036,6 +1055,7 @@ function normalizeEvents(
         continue;
       }
       const entry = createEventEntry({
+        harnessTools,
         event: message.event,
         seq,
         time,
@@ -1267,18 +1287,23 @@ function coalesceStatusEntries(entries: ActivityEntry[]): ActivityEntry[] {
 }
 
 function createEventEntry({
+  harnessTools,
   event,
   seq,
   time,
   rows,
   terminals,
 }: {
+  harnessTools: Map<string, HarnessToolEntry>;
   event: AcpStreamEvent;
   seq: number;
   time?: number;
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
+  if (event?.type === "harness") {
+    return updateHarnessTool(event, harnessTools, seq, time);
+  }
   if (event?.type === "goal") {
     const goal = event.snapshot?.goal;
     return {
@@ -1994,11 +2019,10 @@ export function TerminalRow({
           >
             Input
           </Text>
-          <StaticMarkdown
+          <ActivityCodeBlock
             value={inputText}
-            format={(part) => toFencedCodeBlock(part, "sh")}
-            maxChars={MAX_TERMINAL_PAGE_CHARS}
-            style={{ fontSize, marginTop: 0 }}
+            language="sh"
+            fontSize={fontSize}
             editorTheme={editorTheme}
           />
         </>
@@ -2016,15 +2040,13 @@ export function TerminalRow({
           >
             Output
           </Text>
-          <StaticMarkdown
+          <ActivityCodeBlock
             value={
               entry.truncated
                 ? `${outputText}\n[output truncated]`.trim()
                 : outputText
             }
-            format={toFencedCodeBlock}
-            maxChars={MAX_TERMINAL_PAGE_CHARS}
-            style={{ fontSize, marginTop: 0 }}
+            fontSize={fontSize}
             editorTheme={editorTheme}
           />
         </>
@@ -2280,38 +2302,6 @@ function TimestampTooltip({
   );
 }
 
-function stripAnsi(text: string): string {
-  if (!text) return "";
-  // OSC (e.g., title) sequences.
-  const withoutOsc = text.replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "");
-  // CSI and related ANSI escape sequences.
-  return withoutOsc.replace(
-    /[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])/g,
-    "",
-  );
-}
-
-function maxBacktickRun(text: string): number {
-  let run = 0;
-  let max = 0;
-  for (const ch of text) {
-    if (ch === "`") {
-      run += 1;
-      if (run > max) max = run;
-    } else {
-      run = 0;
-    }
-  }
-  return max;
-}
-
-function toFencedCodeBlock(content: string, language = ""): string {
-  const fenceLen = Math.max(3, maxBacktickRun(content) + 1);
-  const fence = "`".repeat(fenceLen);
-  const info = language.trim();
-  return `${fence}${info}\n${content}\n${fence}`;
-}
-
 function formatTerminalStatus(entry: {
   completed?: boolean;
   exitStatus?: { exitCode?: number; signal?: string };
@@ -2381,6 +2371,11 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
   const lines: string[] = [];
   for (const entry of entries) {
     switch (entry.kind) {
+      case "harness-tool":
+        lines.push(
+          `- ACP tool: ${entry.title} (${entry.status})\n\n${entry.output}`,
+        );
+        break;
       case "reasoning":
         lines.push(
           entry.text ? `- Reasoning: ${entry.text}` : "- Reasoning step",
@@ -2510,7 +2505,10 @@ export function codexActivityToMarkdown(
   },
 ): string {
   const body = codexEventsToMarkdown(events, options?.activitySteers);
-  const sections = ["## Codex Activity"];
+  const harness = events.some(
+    (message) => message.type === "event" && message.event.type === "harness",
+  );
+  const sections = [harness ? "## ACP Activity" : "## Codex Activity"];
   const durationLabel = options?.durationLabel?.trim();
   if (options?.generating === true) {
     sections.push(

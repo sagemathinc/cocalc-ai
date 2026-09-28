@@ -376,6 +376,24 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
     return cached;
   }
 
+  // Project-scoped agent sessions cannot use account-wide project discovery.
+  // The API still authorizes the requested operation against the token scope.
+  if (
+    isValidUUID(identifier) &&
+    identifier === process.env.COCALC_PROJECT_ID &&
+    !!process.env.COCALC_AGENT_TOKEN_FILE
+  ) {
+    const project = {
+      project_id: identifier,
+      title: identifier,
+      host_id: null,
+      state: null,
+      deleted: false,
+    } as W;
+    setCachedProject(ctx, project, projectCacheTtlMs);
+    return project;
+  }
+
   if (isValidUUID(identifier)) {
     let queryErr: unknown;
     let rows: W[] = [];
@@ -455,12 +473,16 @@ export async function resolveProjectFromArgOrContext<
   }
   const currentDir = cwd;
   const context = readProjectContext(currentDir);
-  if (!context?.project_id) {
+  const projectId =
+    (process.env.COCALC_AGENT_TOKEN_FILE
+      ? process.env.COCALC_PROJECT_ID
+      : undefined) || context?.project_id;
+  if (!projectId) {
     throw new Error(
       `missing --project and no project context is set at ${projectContextPath(currentDir)}; run 'cocalc project use --project <project>'`,
     );
   }
-  return await resolveProject(ctx, context.project_id, projectCacheTtlMs);
+  return await resolveProject(ctx, projectId, projectCacheTtlMs);
 }
 
 export function normalizeUserSearchName(row: UserSearchResult): string {

@@ -78,7 +78,7 @@ function AccountAgentMessaging() {
             Modal.confirm({
               title: "Revoke all Agent Networks?",
               content:
-                "This permanently closes every Agent Network and changes the account authorization generation. Already accepted work is not canceled.",
+                "This permanently closes every Agent Network and blocks new messages and queued work that has not started. Already-running work is not canceled.",
               okText: "Revoke all",
               okButtonProps: { danger: true },
               onOk: () => accountAction("revoke_all"),

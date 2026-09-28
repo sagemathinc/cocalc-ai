@@ -14,8 +14,19 @@ import { reconcileOnce, resetReconcileStateForTests } from "./reconcile";
 import { getMountPoint } from "./file-server";
 import { setProjectStateReporter } from "./project-state-reporter";
 import { getProject, upsertProject } from "./sqlite/projects";
+import { resetProjectRuntimeLifecycleForTesting } from "./runtime-lifecycle";
 
 const mockSpawn = jest.fn();
+const mockFence = jest.fn();
+const mockResumeDiscovery = jest.fn();
+const mockPauseDiscovery = jest.fn(() => mockResumeDiscovery);
+
+jest.mock("./hub/acp/worker-manager", () => ({
+  fenceProjectHostAcpWork: (...args: any[]) => mockFence(...args),
+}));
+jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
+  pauseHarnessDiscovery: (...args: any[]) => mockPauseDiscovery(...args),
+}));
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -162,6 +173,8 @@ describe("reconcileOnce", () => {
     (getMountPoint as jest.Mock).mockReturnValue(mountPoint);
     closeDatabase();
     resetReconcileStateForTests();
+    resetProjectRuntimeLifecycleForTesting();
+    mockFence.mockReset().mockResolvedValue(undefined);
     mockPodmanPs();
     setProjectStateReporter(jest.fn(async () => undefined));
   });
@@ -345,6 +358,62 @@ describe("reconcileOnce", () => {
       http_port: null,
       ssh_port: null,
     });
+    expect(mockFence).toHaveBeenCalledWith({ project_id });
+    expect(mockResumeDiscovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("fences an exited primary container before recording it stopped", async () => {
+    upsertProject({ project_id, state: "running" });
+    mockPodmanPs(`project-${project_id}|exited|\n`);
+    mockFence.mockImplementation(async () => {
+      expect(getProject(project_id)?.state).toBe("running");
+      expect(mockPauseDiscovery).toHaveBeenCalledWith(project_id);
+    });
+    await reconcileOnce();
+    expect(mockFence).toHaveBeenCalledTimes(1);
+    expect(getProject(project_id)?.state).toBe("opened");
+    await reconcileOnce();
+    expect(mockFence).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a project that restarted after the initial inventory", async () => {
+    upsertProject({ project_id, state: "running" });
+    mockPodmanPs(`project-${project_id}|exited|\n`);
+    const stoppedProbe = mockSpawn.getMockImplementation()!;
+    mockSpawn.mockImplementationOnce((...args: any[]) => {
+      const child = stoppedProbe(...args);
+      mockPodmanPs(`project-${project_id}|running|\n`);
+      return child;
+    });
+    await reconcileOnce();
+    expect(mockFence).not.toHaveBeenCalled();
+    expect(getProject(project_id)?.state).toBe("running");
+  });
+
+  it("retries failed fencing without losing the active project marker", async () => {
+    upsertProject({ project_id, state: "running" });
+    mockPodmanPs(`project-${project_id}|exited|\n`);
+    mockFence.mockRejectedValueOnce(new Error("fence failed"));
+    await expect(reconcileOnce()).rejects.toThrow("fence failed");
+    expect(getProject(project_id)?.state).toBe("running");
+    expect(mockResumeDiscovery).toHaveBeenCalledTimes(1);
+    await reconcileOnce();
+    expect(getProject(project_id)?.state).toBe("opened");
+    expect(mockFence).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not fence when the confirming inventory fails", async () => {
+    upsertProject({ project_id, state: "running" });
+    mockPodmanPs(`project-${project_id}|exited|\n`);
+    const stoppedProbe = mockSpawn.getMockImplementation()!;
+    mockSpawn.mockImplementationOnce((...args: any[]) => {
+      const child = stoppedProbe(...args);
+      mockPodmanPsError();
+      return child;
+    });
+    await reconcileOnce();
+    expect(mockFence).not.toHaveBeenCalled();
+    expect(getProject(project_id)?.state).toBe("running");
   });
 
   it("does not downgrade running projects when the podman probe fails", async () => {

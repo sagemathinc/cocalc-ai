@@ -15,6 +15,11 @@ import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
 import {
+  MANAGED_SANDBOX_COMMAND_SUPERVISOR,
+  SANDBOX_COMMAND_SUPERVISOR,
+} from "./sandbox-command-supervisor";
+import { runContainedSandboxCommand } from "./sandbox-command-containment";
+import {
   DEFAULT_PROJECT_RUNTIME_GID,
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
@@ -26,8 +31,12 @@ export interface SandboxExecOptions {
   project_id: string;
   script: string;
   cwd?: string;
+  env?: Record<string, string>;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  signal?: AbortSignal;
+  /** Stream output without execFile's lifetime output buffer. Requires a lease. */
+  onOutput?: (stream: "stdout" | "stderr", data: string) => void;
   /**
    * When true, start a fresh one-off container instead of exec'ing into the
    * existing project container. This is useful when the main container is not
@@ -47,6 +56,8 @@ export interface SandboxExecResult {
   stderr: string;
   code: number | null;
   signal?: string;
+  /** False means the trusted runtime could not confirm an empty job scope. */
+  cleanupConfirmed?: boolean;
 }
 
 const logger = getLogger("project-runner:sandbox-exec");
@@ -74,11 +85,23 @@ export async function sandboxExec({
   project_id,
   script,
   cwd,
+  env: extraEnv,
   timeoutMs,
   maxOutputBytes,
   useEphemeral,
   noNetwork,
+  signal,
+  onOutput,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
+  if (onOutput && !signal)
+    throw Error("Streaming sandbox execution requires a lease");
+  if (onOutput && useEphemeral)
+    throw Error("Managed commands require the existing project container");
+  if (extraEnv?.COCALC_MANAGED_JOB_SCOPE !== undefined)
+    throw Error("Managed job scope is reserved for the trusted runtime");
+  if (onOutput && signal?.aborted)
+    return { stdout: "", stderr: "", code: 130, cleanupConfirmed: true };
+  signal?.throwIfAborted();
   logger.debug("sandboxExec", {
     project_id,
     useEphemeral,
@@ -109,8 +132,20 @@ export async function sandboxExec({
     args: string[],
     launcher?: ReturnType<typeof projectPoolPodmanLauncher>,
   ): Promise<SandboxExecResult> => {
+    if (onOutput && signal) {
+      return runContainedSandboxCommand({
+        project_id,
+        args,
+        signal,
+        timeoutMs: timeoutMs ?? 3_600_000,
+        onOutput,
+      });
+    }
     return await new Promise((resolve) => {
-      execFile(
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const stop = () => child.stdin?.end();
+      const child = execFile(
         launcher?.command ?? "podman",
         launcher ? [...launcher.argsPrefix, ...args] : args,
         {
@@ -118,13 +153,16 @@ export async function sandboxExec({
           // inherit a deployment or project directory that may have been
           // replaced, unmounted, or made inaccessible while the host stays up.
           cwd: "/",
-          timeout: timeoutMs,
+          timeout: signal ? (timeoutMs ?? 120_000) + 10_000 : timeoutMs,
           maxBuffer: Math.max(1024, maxOutputBytes ?? 10 * 1024 * 1024),
           killSignal: "SIGKILL",
           env: podmanEnv(),
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (error: any, stdout?: string, stderr?: string) => {
+          clearInterval(heartbeat);
+          clearTimeout(deadline);
+          signal?.removeEventListener("abort", stop);
           if (error) {
             resolve({
               stdout: stdout ?? "",
@@ -137,6 +175,16 @@ export async function sandboxExec({
           }
         },
       );
+      if (signal) {
+        child.stdin?.on("error", () => {});
+        heartbeat = setInterval(() => {
+          if (!child.stdin?.destroyed && !child.stdin?.writableEnded)
+            child.stdin?.write(".\n");
+        }, 1000);
+        deadline = setTimeout(stop, timeoutMs ?? 120_000);
+        signal.addEventListener("abort", stop, { once: true });
+        if (signal.aborted) stop();
+      }
     });
   };
 
@@ -179,6 +227,11 @@ export async function sandboxExec({
       for (const key in env) {
         args.push("-e", `${key}=${env[key]}`);
       }
+      for (const [key, value] of Object.entries(extraEnv ?? {})) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+          throw Error("Invalid sandbox environment key");
+        args.push("-e", `${key}=${value}`);
+      }
 
       args.push(mountArg({ source: home, target: HOME }));
       if (scratch) {
@@ -196,7 +249,17 @@ export async function sandboxExec({
 
       rootfs = await mountRootFs({ project_id, home, config: { image } });
       args.push("--rootfs", rootfs);
-      args.push("/bin/bash", "-lc", script);
+      args.push(
+        ...(signal
+          ? [
+              "/opt/cocalc/bin/node",
+              "-e",
+              SANDBOX_COMMAND_SUPERVISOR,
+              "--",
+              script,
+            ]
+          : ["/bin/bash", "-lc", script]),
+      );
     } else {
       args.push(
         "exec",
@@ -209,12 +272,27 @@ export async function sandboxExec({
         `USER=${DEFAULT_PROJECT_RUNTIME_USER}`,
         "-e",
         `LOGNAME=${DEFAULT_PROJECT_RUNTIME_USER}`,
+      );
+      for (const [key, value] of Object.entries(extraEnv ?? {})) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+          throw Error("Invalid sandbox environment key");
+        args.push("-e", `${key}=${value}`);
+      }
+      args.push(
         "--workdir",
         getWorkdir(),
         `project-${project_id}`,
-        "/bin/bash",
-        "-lc",
-        script,
+        ...(signal
+          ? [
+              "/opt/cocalc/bin/node",
+              "-e",
+              onOutput
+                ? MANAGED_SANDBOX_COMMAND_SUPERVISOR
+                : SANDBOX_COMMAND_SUPERVISOR,
+              "--",
+              script,
+            ]
+          : ["/bin/bash", "-lc", script]),
       );
     }
 

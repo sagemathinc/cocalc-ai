@@ -474,6 +474,7 @@ describe("project-host Conat auth", () => {
     const otherProjectId = "00000000-1000-4000-8000-000000000003";
     const operations = [
       "api",
+      "harness-v1",
       "interrupt",
       "steer",
       "fork",
@@ -570,30 +571,33 @@ describe("project-host Conat auth", () => {
       );
     });
 
-    it("rejects account and project authorization mismatches", async () => {
-      mockGetRow.mockImplementation((_table, key) => {
-        const requestedProjectId = JSON.parse(key).project_id;
-        return requestedProjectId === project_id
-          ? { users: { [account_id]: { group: "collaborator" } } }
-          : { users: {} };
-      });
-      const { isAllowed } = createProjectHostConatAuth({ host_id });
+    it.each(["api", "harness-v1"])(
+      "rejects account and project authorization mismatches for %s",
+      async (operation) => {
+        mockGetRow.mockImplementation((_table, key) => {
+          const requestedProjectId = JSON.parse(key).project_id;
+          return requestedProjectId === project_id
+            ? { users: { [account_id]: { group: "collaborator" } } }
+            : { users: {} };
+        });
+        const { isAllowed } = createProjectHostConatAuth({ host_id });
 
-      await expect(
-        isAllowed({
-          user: { account_id },
-          type: "pub",
-          subject: `acp.project-${project_id}.account-${otherAccountId}.api`,
-        }),
-      ).resolves.toBe(false);
-      await expect(
-        isAllowed({
-          user: { account_id },
-          type: "pub",
-          subject: `acp.project-${otherProjectId}.account-${account_id}.api`,
-        }),
-      ).resolves.toBe(false);
-    });
+        await expect(
+          isAllowed({
+            user: { account_id },
+            type: "pub",
+            subject: `acp.project-${project_id}.account-${otherAccountId}.${operation}`,
+          }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({
+            user: { account_id },
+            type: "pub",
+            subject: `acp.project-${otherProjectId}.account-${account_id}.${operation}`,
+          }),
+        ).resolves.toBe(false);
+      },
+    );
 
     it("refreshing a legacy human token enables automation without upgrading the old connection", async () => {
       mockGetRow.mockReturnValue({

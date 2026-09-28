@@ -34,6 +34,7 @@ import {
 } from "@cocalc/frontend/project/open-file";
 import { getLogger } from "@cocalc/frontend/logger";
 import { syncdocDiagnosticLog } from "@cocalc/frontend/syncdoc-diagnostics";
+import { agentWorkingDirectory } from "@cocalc/frontend/chat/agent-working-directory";
 
 const FRAME_TYPE = "chatroom";
 const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
@@ -53,15 +54,13 @@ type ChatEditorState = CodeEditorState & ChatState;
 
 export function chatTerminalWorkingDirectory(
   selectedThreadKey: unknown,
-  config: { workingDirectory?: unknown } | undefined,
+  config: unknown,
+  runtime?: unknown,
 ): string | undefined {
   if (typeof selectedThreadKey !== "string" || !selectedThreadKey.trim()) {
     return;
   }
-  const workingDirectory = config?.workingDirectory;
-  return typeof workingDirectory === "string" && workingDirectory.trim()
-    ? workingDirectory.trim()
-    : undefined;
+  return agentWorkingDirectory({ acp_config: config, agent_runtime: runtime });
 }
 
 export function focusChatFrameInput(
@@ -418,21 +417,32 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   override async terminal(
     frameId: string,
     noSwitch: boolean = false,
+    workingDirectory?: string,
+    terminalScope?: string,
   ): Promise<void> {
-    const selectedThreadKey = this._get_frame_node(frameId)?.get(
-      "data-selectedThreadKey",
-    );
+    const selectedThreadKey =
+      terminalScope ??
+      this._get_frame_node(frameId)?.get("data-selectedThreadKey");
     const chatActions = this.getChatActions(frameId);
-    const workingDirectory = chatTerminalWorkingDirectory(
-      selectedThreadKey,
+    const metadata =
       typeof selectedThreadKey === "string"
-        ? chatActions?.getCodexConfig(selectedThreadKey)
-        : undefined,
-    );
+        ? chatActions?.getThreadMetadata?.(selectedThreadKey, {
+            threadId: selectedThreadKey,
+          })
+        : undefined;
+    const directory =
+      workingDirectory ??
+      chatTerminalWorkingDirectory(
+        selectedThreadKey,
+        typeof selectedThreadKey === "string"
+          ? chatActions?.getCodexConfig(selectedThreadKey)
+          : undefined,
+        metadata?.agent_runtime,
+      );
     await super.terminal(
       frameId,
       noSwitch,
-      workingDirectory,
+      directory,
       typeof selectedThreadKey === "string" && selectedThreadKey.trim()
         ? selectedThreadKey
         : undefined,

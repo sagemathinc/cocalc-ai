@@ -183,7 +183,7 @@ it("saves canonical sync Q&A at submission time and restores it without attentio
   expect(projected.history[0]).toMatchObject({
     date: projected.date,
     content:
-      "Response to Codex questions:\n\nRegion: Where should this run?\nEU",
+      "Response to agent questions:\n\nRegion: Where should this run?\nEU",
   });
   expect(projected.acp_guidance_delivered_at_ms).toBeUndefined();
   rows = JSON.parse(JSON.stringify(saved)); // Reopen from durable chat, no local draft.
@@ -294,6 +294,22 @@ it("promotes a saved sync answer to a dispatchable queued continuation without r
   }
 });
 
+it.each(["Codex", "ACP"])(
+  "projects an explicitly accepted %s sync response as received",
+  async (runtime) => {
+    await respond();
+    const stored = getAcpAttention(record.attention_id)!;
+    const projection = buildAttentionResponseProjection({
+      ...stored,
+      state: "answered",
+      resolution_reason: `${runtime} accepted the response`,
+      resolved_at: 12345,
+    });
+    expect(projection?.acp_guidance_delivered_at_ms).toBe(12345);
+    expect(projection?.post_only).toBe(true);
+  },
+);
+
 it("never interprets an async answered/queued state as model receipt", async () => {
   await respond();
   const stored = getAcpAttention(record.attention_id)!;
@@ -307,6 +323,11 @@ it("never interprets an async answered/queued state as model receipt", async () 
       state: "answered" as const,
       dispatch_as_async: true,
       resolution_reason: "Codex accepted the response",
+    },
+    {
+      state: "answered" as const,
+      dispatch_as_async: true,
+      resolution_reason: "ACP accepted the response",
     },
   ]) {
     expect(

@@ -55,7 +55,7 @@ export function ExternalAgentInstallations({
       });
       bound.assertCurrent();
       setDirectory(value);
-      setNotice("Installation revoked. Already accepted work is not canceled.");
+      setNotice("Installation revoked. Already-running work is not canceled.");
       heading.current?.focus();
     } catch (err) {
       setError(`${err}`);

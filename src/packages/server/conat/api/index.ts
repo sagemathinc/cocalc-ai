@@ -505,6 +505,7 @@ registerBillingAuthorityHubApiExecutor(getResponseLocal);
 
 const AGENT_HUB_API_METHODS = new Set([
   "system.getPublicSiteUrl",
+  "projects.status",
   "notifications.startCodexFreshAuthAction",
   "notifications.getCodexFreshAuthActionStatus",
   "compute.listProjectVms",

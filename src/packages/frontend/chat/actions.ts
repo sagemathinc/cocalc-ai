@@ -57,6 +57,7 @@ import {
   CHAT_THREAD_META_ROW_DATE,
   addToHistory,
   threadConfigRecordKey,
+  resolveHarnessSessionId,
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
@@ -101,6 +102,14 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processAI as processAIExternal } from "./actions/ai";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "./harness-credential-selection";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import { parseHarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
 import {
   readCodexSubscriptionSelection,
@@ -200,7 +209,8 @@ export type ThreadAgentKind = "acp" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
 
 export interface NewThreadAgentOptions {
-  mode: "codex" | "human";
+  mode: "codex" | "human" | "acp";
+  runtime?: AcpHarnessRuntime;
   model?: string;
   codexConfig?: Partial<CodexThreadConfig>;
 }
@@ -219,6 +229,9 @@ export interface PreparedChatSendIdentity {
 }
 
 export interface ThreadMetadataSnapshot {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_runtime_controls?: unknown;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -250,6 +263,11 @@ function deriveThreadAgentFromMetadata(args: {
   codexConfig?: CodexThreadConfig;
 }): NewThreadAgentOptions | undefined {
   const metadata = args.metadata;
+  if (metadata?.agent_runtime != null)
+    return {
+      mode: "acp",
+      runtime: parseAcpHarnessRuntime(metadata.agent_runtime),
+    };
   const codexConfig = args.codexConfig;
   const agentModel =
     typeof metadata?.agent_model === "string" && metadata.agent_model.trim()
@@ -360,6 +378,14 @@ function buildNewThreadConfig({
     threadConfigPatch.agent_kind = "none";
     threadConfigPatch.agent_model = null;
     threadConfigPatch.agent_mode = null;
+  } else if (agentMode === "acp") {
+    threadConfigPatch.agent_runtime = parseAcpHarnessRuntime(
+      threadAgent?.runtime,
+    );
+    threadConfigPatch.agent_kind = "acp";
+    threadConfigPatch.agent_model = "acp-harness";
+    threadConfigPatch.agent_mode = "interactive";
+    threadConfigPatch.acp_config = null;
   } else if (agentMode === "codex") {
     const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
     const defaultSessionMode = getDefaultCodexSessionMode();
@@ -2165,6 +2191,7 @@ export class ChatActions extends Actions<ChatState> {
     const readString = (
       key:
         | "name"
+        | "agent_session_id"
         | "thread_color"
         | "thread_accent_color"
         | "thread_icon"
@@ -2225,6 +2252,13 @@ export class ChatActions extends Actions<ChatState> {
       agent_kind,
       agent_model,
       agent_mode,
+      agent_runtime: field<AcpHarnessRuntime>(cfg, "agent_runtime"),
+      agent_runtime_controls: field(cfg, "agent_runtime_controls"),
+      // Preserve the explicit reset marker instead of treating it as missing.
+      agent_session_id:
+        field(cfg, "agent_session_id") === ""
+          ? ""
+          : readString("agent_session_id"),
       acp_config,
       codex_completion_notification:
         normalizeCodexCompletionNotificationOverride(
@@ -2836,6 +2870,7 @@ export class ChatActions extends Actions<ChatState> {
     const metadata = this.getThreadMetadata(normalizedThreadId, {
       threadId: normalizedThreadId,
     });
+    if (metadata.agent_runtime != null) return;
     if (
       !isCodexModelName(model) &&
       metadata.agent_kind !== "acp" &&
@@ -2908,6 +2943,67 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.syncdb.commit();
+    void this.saveSyncdb();
+  };
+
+  discoverHarnessControls = async (threadKey: string) => {
+    const thread_id = this.normalizeThreadId(threadKey);
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    if (!thread_id || !project_id || !path || !this.syncdb)
+      throw Error("ACP conversation is not ready");
+    await this.saveSyncdb();
+    const { readHarnessCredentialSelection } =
+      await import("./harness-credential-selection");
+    const result = await webapp_client.conat_client.controlAcp({
+      project_id,
+      path,
+      thread_id,
+      user_message_id: thread_id,
+      action: "discover_harness_v1",
+      harness_credential: readHarnessCredentialSelection({
+        accountId: redux.getStore("account")?.get("account_id"),
+        projectId: project_id,
+        threadKey,
+      }),
+    });
+    if (!result.ok || !result.harness)
+      throw Error("ACP discovery is unavailable on this host");
+    return result.harness;
+  };
+
+  setHarnessSessionSettings = (
+    threadKey: string,
+    settings: HarnessSessionSettings,
+  ): void => {
+    const runtime = parseAcpHarnessRuntime(
+      this.getThreadMetadata(threadKey).agent_runtime,
+    );
+    const next = {
+      ...runtime,
+      settings: parseHarnessSessionSettings(settings),
+    };
+    if (!this.setThreadConfigRecord(threadKey, { agent_runtime: next }))
+      throw Error("Unable to save ACP settings");
+    this.syncdb?.commit();
+    void this.saveSyncdb();
+  };
+
+  setHarnessWorkingDirectory = (threadKey: string, cwd: string): void => {
+    const metadata = this.getThreadMetadata(threadKey);
+    const runtime = parseAcpHarnessRuntime(metadata.agent_runtime);
+    const next = parseAcpHarnessRuntime({
+      ...runtime,
+      profile: { ...runtime.profile, cwd },
+    });
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        agent_runtime: next,
+        acp_config: { ...metadata.acp_config, workingDirectory: cwd },
+      })
+    )
+      throw Error("Unable to save ACP working directory");
+    this.syncdb?.commit();
     void this.saveSyncdb();
   };
 
@@ -2990,6 +3086,8 @@ export class ChatActions extends Actions<ChatState> {
     if (!this.syncdb || !this.store) {
       throw new Error("Chat actions are not initialized");
     }
+    const projectId = this.store.get("project_id");
+    if (!projectId) throw Error("Missing project id for agent copy");
     const sourceThreadId = this.normalizeThreadId(threadKey);
     if (!sourceThreadId) {
       throw new Error("Invalid thread id");
@@ -2997,6 +3095,18 @@ export class ChatActions extends Actions<ChatState> {
     const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
       threadId: sourceThreadId,
     });
+    const sourceRuntime =
+      sourceMetadata.agent_runtime == null
+        ? undefined
+        : parseAcpHarnessRuntime(sourceMetadata.agent_runtime);
+    const harnessCredential =
+      sourceRuntime?.profile.id === "claude-code"
+        ? readHarnessCredentialSelection({
+            accountId: this.redux.getStore("account").get_account_id(),
+            projectId: this.store.get("project_id"),
+            threadKey: sourceThreadId,
+          })
+        : undefined;
     const threadMessages = this.getMessagesInThread(sourceThreadId) ?? [];
     const rootMessage =
       threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
@@ -3012,8 +3122,9 @@ export class ChatActions extends Actions<ChatState> {
       toISOString(latestMessage ? dateValue(latestMessage) : undefined) ??
       toISOString(sourceMetadata.latest_chat_date_ms);
 
-    const sourceConfig =
-      sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
+    const sourceConfig = sourceRuntime
+      ? undefined
+      : (sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId));
     const inferredSourceSessionId = (() => {
       for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
         if (isAcpAutomationMessage(threadMessages[i])) continue;
@@ -3027,7 +3138,33 @@ export class ChatActions extends Actions<ChatState> {
     const shouldForkAcp =
       isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
-    if (shouldForkAcp) {
+    let forkedHarnessSessionId: string | undefined;
+    if (sourceRuntime) {
+      const sessionId = resolveHarnessSessionId(
+        sourceMetadata.agent_session_id,
+        inferredSourceSessionId,
+      );
+      if (!sessionId)
+        throw Error("This agent has no saved context to copy yet");
+      await this.syncdb.save();
+      const result = await webapp_client.conat_client.controlAcp({
+        project_id: this.store.get("project_id"),
+        path: this.store.get("path"),
+        thread_id: sourceThreadId,
+        user_message_id: sourceThreadId,
+        action: "fork_harness_v1",
+        expected_session_id: sessionId,
+        expected_runtime: sourceRuntime,
+        harness_credential: harnessCredential,
+      });
+      if (
+        !result.ok ||
+        !result.forked_session_id ||
+        result.forked_session_id === sessionId
+      )
+        throw Error("The harness did not return an independent copied session");
+      forkedHarnessSessionId = result.forked_session_id;
+    } else if (shouldForkAcp) {
       const sourceSessionId = normalizeCodexSessionId(sourceConfig?.sessionId);
       const config =
         !sourceSessionId && inferredSourceSessionId
@@ -3048,7 +3185,7 @@ export class ChatActions extends Actions<ChatState> {
         nextConfig = { ...config };
       }
     }
-    if (nextConfig && !nextConfig.model) {
+    if (nextConfig && !sourceRuntime && !nextConfig.model) {
       nextConfig.model = DEFAULT_CODEX_MODEL_NAME;
     }
 
@@ -3109,6 +3246,15 @@ export class ChatActions extends Actions<ChatState> {
           ? "interactive"
           : (sourceMetadata.agent_mode ?? (isAI ? "interactive" : null)),
       acp_config: nextConfig ?? null,
+      ...(sourceRuntime
+        ? {
+            agent_runtime: sourceRuntime,
+            agent_session_id: forkedHarnessSessionId,
+            agent_runtime_controls:
+              sourceMetadata.agent_runtime_controls ?? null,
+            agent_model: sourceMetadata.agent_model ?? null,
+          }
+        : {}),
     };
     if (
       !this.setThreadConfigRecord(newThreadId, configPatch, {
@@ -3121,7 +3267,14 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     void this.saveSyncdb();
 
-    if (shouldForkAcp) {
+    if (sourceRuntime && harnessCredential) {
+      writeHarnessCredentialSelection({
+        accountId: sender_id,
+        projectId,
+        threadKey: newThreadId,
+        credential: harnessCredential,
+      });
+    } else if (!sourceRuntime && shouldForkAcp) {
       const projectId = this.store.get("project_id");
       const credentialId =
         readCodexSubscriptionSelection({

@@ -830,7 +830,7 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-RUNTIME_WRAPPER_VERSION = "20260825-v16"
+RUNTIME_WRAPPER_VERSION = "20260926-v19"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4504,6 +4504,563 @@ def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
         run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
+MANAGED_PROJECT_JOB_HELPER = r'''#!/usr/bin/python3
+# Trusted lifecycle supervisor. Never execute project code with host privileges.
+import base64
+from contextlib import contextmanager
+import ctypes
+import errno
+import fcntl
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import selectors
+import signal
+import sys
+import time
+import uuid
+
+POOL = Path("__PROJECT_POOL_CGROUP__")
+RUNTIME_USER = "__RUNTIME_USER__"
+LOCK = Path("/run/lock/cocalc-project-cgroups.lock")
+STATE = Path("/run/cocalc-managed-project-jobs")
+PODMAN = "/opt/cocalc/container-runtime/current/bin/podman"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+JOB = re.compile(r"job-(\d+)-(\d+)-(\d+)-(\d+)-(\d+)-(" + UUID + r")$")
+LEGACY_JOB = re.compile(r"job-\d+-\d+-\d+-\d+-" + UUID + r"$")
+
+@contextmanager
+def lifecycle_lock():
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.fstat(fd).st_uid != 0:
+            raise RuntimeError("untrusted lifecycle lock")
+        until = time.monotonic() + 15
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= until:
+                    raise RuntimeError("project lifecycle busy")
+                time.sleep(0.05)
+        yield fd
+    finally:
+        os.close(fd)
+
+def require_inherited_lock():
+    # These operations are internal calls from the root storage wrapper, which
+    # already holds fd 9. Never acquire a second open-file-description lock.
+    actual, expected = os.fstat(9), LOCK.stat()
+    if (actual.st_dev, actual.st_ino, actual.st_uid) != (expected.st_dev, expected.st_ino, 0):
+        raise RuntimeError("missing lifecycle lock")
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+def state_path(project):
+    if not re.fullmatch(UUID, project):
+        raise ValueError("invalid project")
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
+        raise RuntimeError("untrusted admission state")
+    return STATE / project
+
+def read_state(project):
+    path = state_path(project)
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+
+def write_state(project, value):
+    path = state_path(project)
+    temporary = path.with_name(project + ".tmp")
+    temporary.write_text(json.dumps(value))
+    temporary.replace(path)
+
+def parent_scope(project):
+    parent = POOL / ("project-" + project)
+    if not parent.is_dir() or parent.is_symlink() or parent.stat().st_uid != 0:
+        raise RuntimeError("project containment unavailable")
+    return parent
+
+def member(pid, scope):
+    expected = "/" + str(scope.relative_to(Path("/sys/fs/cgroup")))
+    return "0::" + expected in Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+
+def active_state(project):
+    value = read_state(project)
+    parent = parent_scope(project)
+    if (not value or value["status"] != "active" or
+        value["inode"] != parent.stat().st_ino or
+        not alive(value["init"], value["start"]) or not member(value["init"], parent)):
+        raise RuntimeError("project job admission is blocked")
+    return value
+
+def activate(project, init):
+    with lifecycle_lock():
+        previous = read_state(project)
+        if previous and previous["status"] == "stopping":
+            raise RuntimeError("project cleanup is unresolved")
+        parent = parent_scope(project)
+        start = identity(init)
+        if not member(init, parent):
+            raise RuntimeError("project generation is not contained")
+        reap_project_locked(project)
+        # Repeated finalization is idempotent; it cannot replace a live generation.
+        if previous and previous["status"] == "active":
+            if active_state(project)["init"] != init or previous["start"] != start:
+                raise RuntimeError("project generation changed without cleanup")
+            return
+        if any(path.is_dir() for path in parent.iterdir()):
+            raise RuntimeError("unresolved project job scopes")
+        write_state(project, {"status": "active", "generation": str(uuid.uuid4()),
+                             "inode": parent.stat().st_ino, "init": init, "start": start})
+
+def begin_stop_locked(project):
+    # Persist before either startup or main cgroup is killed. Failed teardown,
+    # helper/worker crashes and retries must never reopen admission.
+    write_state(project, {"status": "stopping"})
+    parent = POOL / ("project-" + project)
+    if parent.exists():
+        parent_scope(project)
+        (parent / "cgroup.kill").write_text("1\n")
+
+def cleanup_locked(project):
+    begin_stop_locked(project)
+    parent = POOL / ("project-" + project)
+    if parent.exists():
+        parent_scope(project)
+        failed = False
+        until = time.monotonic() + 10
+        for scope in parent.iterdir():
+            if not scope.is_dir():
+                continue
+            try:
+                validate_scope(scope)
+                kill_scope(scope, max(0, until - time.monotonic()))
+            except Exception:
+                failed = True
+        if failed:
+            raise RuntimeError("project job cleanup not confirmed")
+        kill_scope(parent, max(0, until - time.monotonic()))
+    write_state(project, {"status": "stopped"})
+    quarantine_path(project).unlink(missing_ok=True)
+
+def validate_scope(scope):
+    if (scope.is_symlink() or scope.stat().st_uid != 0 or
+        not (JOB.fullmatch(scope.name) or LEGACY_JOB.fullmatch(scope.name))):
+        raise RuntimeError("unrecognized job scope")
+
+def identity(pid):
+    text = Path(f"/proc/{pid}/stat").read_text()
+    fields = text[text.rindex(")") + 2:].split()
+    if fields[0] in ("Z", "X"):
+        raise ProcessLookupError("process is dead")
+    return fields[19]
+
+def alive(pid, start):
+    try:
+        return identity(int(pid)) == start
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+class BackgroundWarningTracker:
+    # The in-project supervisor may already have warned before killing its
+    # process group. Only deduplicate diagnostics; never affect cgroup cleanup.
+    note = (b"Background processes were terminated when the command exited; "
+            b"use cocalc project terminal spawn for persistent services.\n")
+
+    def __init__(self):
+        self.seen = False
+        self.tail = b""
+
+    def observe(self, stream, chunk):
+        if stream != "stderr" or self.seen:
+            return
+        text = self.tail + chunk
+        self.seen = self.note in text
+        self.tail = b"" if self.seen else text[-(len(self.note) - 1):]
+
+def live_scope_processes(scope):
+    # Diagnostic only. Cleanup always uses atomic cgroup.kill, never this count.
+    try:
+        pids = (scope / "cgroup.procs").read_text().split()
+    except OSError:
+        return 0
+    count = 0
+    for pid in pids:
+        try:
+            identity(int(pid))
+            count += 1
+        except (OSError, ValueError):
+            pass
+    return count
+
+def kill_scope(scope, timeout=10):
+    # cgroup.kill covers fork/setsid/reparenting races, unlike PID enumeration.
+    try:
+        (scope / "cgroup.kill").write_text("1\n")
+    except FileNotFoundError:
+        if not scope.exists():
+            return
+        raise
+    until = time.monotonic() + timeout
+    while True:
+        try:
+            if "populated 0" in (scope / "cgroup.events").read_text().splitlines():
+                scope.rmdir()
+                return
+        except FileNotFoundError:
+            if not scope.exists():
+                return
+            raise
+        except OSError as error:
+            if error.errno != errno.EBUSY:
+                raise
+        if time.monotonic() >= until:
+            raise RuntimeError("job containment cleanup not confirmed")
+        time.sleep(0.05)
+
+def quarantine_path(project):
+    return state_path(project).with_suffix(".quarantine")
+
+def reap_project_locked(project):
+    # Only this project's cleanup gates its admission. No waits for dying
+    # processes under the host-wide lock: subsequent sweeps retry busy scopes.
+    quarantine = quarantine_path(project)
+    try:
+        sweep_project_locked(project)
+    except Exception:
+        temporary = quarantine.with_suffix(".quarantine.tmp")
+        temporary.write_text(json.dumps({"cleanup_error": "job cleanup not confirmed",
+                                         "observed_at": time.time()}))
+        temporary.replace(quarantine)
+        raise
+    quarantine.unlink(missing_ok=True)
+
+def sweep_project_locked(project):
+    parent = POOL / ("project-" + project)
+    if not parent.exists():
+        return
+    parent_scope(project)
+    failed = False
+    try:
+        active_state(project)
+        stopping = False
+    except Exception:
+        stopping = True
+    for scope in parent.iterdir():
+        if not scope.is_dir():
+            continue
+        try:
+            validate_scope(scope)
+            match = JOB.fullmatch(scope.name)
+            expired = True  # Legacy scopes have no enforceable deadline.
+            if match:
+                owner, owner_start, guard, guard_start, deadline, _ = match.groups()
+                expired = (stopping or time.monotonic() * 1000 >= int(deadline) or
+                           not alive(owner, owner_start) or not alive(guard, guard_start))
+            if expired:
+                kill_scope(scope, timeout=0)
+        except Exception:
+            failed = True
+    if failed:
+        raise RuntimeError("abandoned job cleanup not confirmed")
+
+def reap():
+    failed = 0
+    for parent in POOL.glob("project-*"):
+        if not re.fullmatch("project-" + UUID, parent.name):
+            continue
+        try:
+            with lifecycle_lock():
+                reap_project_locked(parent.name.removeprefix("project-"))
+        except Exception:
+            failed += 1
+    # This aggregate is diagnostic only (periodic caller logs a warning), never
+    # an admission decision. Every other project has already been attempted.
+    if failed:
+        raise RuntimeError("some project job sweeps failed")
+
+def config_from_stdin():
+    # Bound startup waiting and input before creating any execution authority.
+    sel = selectors.DefaultSelector()
+    sel.register(0, selectors.EVENT_READ)
+    data = bytearray()
+    until = time.monotonic() + 5
+    try:
+        while b"\n" not in data:
+            if time.monotonic() >= until:
+                raise RuntimeError("missing job configuration")
+            if not sel.select(0.1):
+                continue
+            chunk = os.read(0, 4096)
+            if not chunk:
+                raise RuntimeError("job owner disconnected")
+            data.extend(chunk)
+            if len(data) > 128 * 1024:
+                raise ValueError("job configuration too large")
+        return json.loads(data.split(b"\n", 1)[0])
+    finally:
+        sel.close()
+
+def prevent_privilege_gain(libc):
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise RuntimeError("unable to disable new privileges")
+
+def launch_locked(scope, account, args, env, pipes):
+    # Child cannot exec (or fork) until its parent has placed it in the scope
+    # and verified membership under the same lock used by project stop.
+    gate_read, gate_write = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            os.dup2(pipes[0][0], 0)  # Replace the host control lease immediately.
+            os.dup2(pipes[1][1], 1)
+            os.dup2(pipes[2][1], 2)
+            os.dup2(gate_read, 3)
+            os.closerange(4, 65536)  # Includes the inherited lifecycle lock.
+            if os.read(3, 1) != b"1":
+                os._exit(125)
+            os.close(3)
+            os.setsid()
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.prctl(8, 0, 0, 0, 0) != 0:  # PR_SET_KEEPCAPS
+                os._exit(125)
+            os.initgroups(account.pw_name, account.pw_gid)
+            os.setresgid(account.pw_gid, account.pw_gid, account.pw_gid)
+            os.setresuid(account.pw_uid, account.pw_uid, account.pw_uid)
+            caps = Path("/proc/self/status").read_text().splitlines()
+            if any(int(line.split()[1], 16) for line in caps
+                   if line.startswith(("CapEff:", "CapPrm:", "CapAmb:"))):
+                os._exit(125)
+            # This path only execs into an already-running project. Do not
+            # allow its executable chain to regain privileges; hosts needing
+            # a fresh privileged UID/GID mapping here must fail closed.
+            prevent_privilege_gain(libc)
+            os.chdir("/")
+            # Supplied environment/argv are only used after dropping privileges.
+            executable = PODMAN if Path(PODMAN).is_file() else "/usr/bin/podman"
+            args = ["exec", "-e", "COCALC_MANAGED_JOB_SCOPE=" + scope.name, *args[1:]]
+            os.execve(executable, [executable, *args], env)
+        except BaseException:
+            os._exit(125)
+    os.close(gate_read)
+    try:
+        (scope / "cgroup.procs").write_text(str(child))
+        if not member(child, scope):
+            raise RuntimeError("launcher containment not confirmed")
+        os.write(gate_write, b"1")
+        return child
+    except BaseException:
+        # The child might still be outside the scope if migration failed.
+        try:
+            os.kill(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(child, 0)
+        raise
+    finally:
+        os.close(gate_write)
+
+def lease_connected():
+    probe = selectors.DefaultSelector()
+    probe.register(0, selectors.EVENT_READ)
+    remaining = 64 * 1024
+    until = time.monotonic() + 0.05
+    try:
+        while probe.select(0):
+            if remaining <= 0 or time.monotonic() >= until:
+                return False
+            chunk = os.read(0, min(remaining, 4096))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
+        return True
+    finally:
+        probe.close()
+
+def supervise(project, job, owner, timeout_ms):
+    admitted = time.monotonic()
+    if not re.fullmatch(UUID, project) or not re.fullmatch(UUID, job):
+        raise ValueError("invalid job identity")
+    if not 0 < timeout_ms <= 86400000:
+        raise ValueError("invalid deadline")
+    account = pwd.getpwnam(RUNTIME_USER)
+    if account.pw_uid == 0 or account.pw_gid == 0:
+        raise ValueError("managed jobs require an unprivileged runtime account")
+    if Path(f"/proc/{owner}").stat().st_uid != account.pw_uid:
+        raise ValueError("job owner is not the runtime user")
+    owner_start = identity(owner)
+    with lifecycle_lock():
+        generation = active_state(project)["generation"]
+    config = config_from_stdin()
+    args, env = config["args"], config["env"]
+    if (not isinstance(args, list) or not args or args[0] != "exec" or
+        not all(isinstance(x, str) and "\0" not in x for x in args) or
+        not isinstance(env, dict) or
+        not all(isinstance(k, str) and isinstance(v, str) and
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\0" not in v
+                for k, v in env.items())):
+        raise ValueError("invalid launcher configuration")
+    parent = POOL / ("project-" + project)
+    deadline = admitted + timeout_ms / 1000
+    # Kernel-owned directory name is durable reaper metadata, including the
+    # monotonic hard deadline. A SIGSTOP'ed but live guard cannot renew it.
+    scope = parent / f"job-{owner}-{owner_start}-{os.getpid()}-{identity(os.getpid())}-{int(deadline * 1000)}-{job}"
+    child = None
+    completed = False
+    pipes = []
+    sel = selectors.DefaultSelector()
+    pending = bytearray()
+    background_warning = BackgroundWarningTracker()
+    stopped = False
+    result = 1
+    def stop(*_):
+        nonlocal stopped
+        stopped = True
+    def emit(value):
+        pending.extend(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+        if len(pending) > 256 * 1024:
+            raise RuntimeError("job output transport stalled")
+    def flush():
+        if pending:
+            try:
+                del pending[:os.write(1, pending)]
+            except BlockingIOError:
+                pass
+    def emit_output(stream, chunk):
+        background_warning.observe(stream, chunk)
+        emit({"type": "output", "stream": stream,
+              "data": base64.b64encode(chunk).decode("ascii")})
+    os.set_blocking(1, False)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        with lifecycle_lock():
+            reap_project_locked(project)
+            if active_state(project)["generation"] != generation:
+                raise RuntimeError("project generation changed before admission")
+            # Observe cancellation after the sweep/lock wait, not before it.
+            if stopped or time.monotonic() >= deadline or not alive(owner, owner_start) or not lease_connected():
+                result = 130
+                return
+            scope.mkdir(mode=0o755)
+            if not (scope / "cgroup.kill").exists():
+                raise RuntimeError("atomic job cancellation unavailable")
+            for _ in range(3):
+                pipes.append(os.pipe())
+            child = launch_locked(scope, account, args, env, pipes)
+        os.close(pipes[0][0])
+        os.close(pipes[1][1])
+        os.close(pipes[2][1])
+        heartbeat = pipes[0][1]
+        os.set_blocking(heartbeat, False)
+        sel.register(0, selectors.EVENT_READ, "lease")
+        for fd, stream in [(pipes[1][0], "stdout"), (pipes[2][0], "stderr")]:
+            os.set_blocking(fd, False)
+            sel.register(fd, selectors.EVENT_READ, stream)
+        last_lease = last_beat = time.monotonic()
+        while not stopped:
+            now = time.monotonic()
+            if now >= deadline or now - last_lease >= 5 or not alive(owner, owner_start):
+                stopped = True
+                break
+            # The in-project supervisor is defense in depth, not the boundary.
+            if now - last_beat >= 1:
+                try:
+                    os.write(heartbeat, b".\n")
+                except (BrokenPipeError, BlockingIOError):
+                    pass
+                last_beat = now
+            for key, _ in sel.select(0.05):
+                chunk = os.read(key.fd, 4096)
+                if key.data == "lease":
+                    if not chunk:
+                        stopped = True
+                    last_lease = time.monotonic()
+                elif chunk:
+                    emit_output(key.data, chunk)
+                else:
+                    sel.unregister(key.fd)
+            flush()
+            pid, status = os.waitpid(child, os.WNOHANG)
+            if pid:
+                child = None
+                completed = True
+                result = os.waitstatus_to_exitcode(status)
+                break
+        if stopped:
+            result = 130
+    finally:
+        # Even success kills detached leftovers. Do not report success until
+        # populated=0 AND rmdir confirm that there is no remaining authority.
+        try:
+            with lifecycle_lock():
+                leftovers = live_scope_processes(scope) if completed and not stopped else 0
+                kill_scope(scope)
+            if child is not None:
+                os.waitpid(child, 0)
+            for fd in ([pipes[0][0]] + [pair[1] for pair in pipes]) if pipes else []:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            # Drain output after all writers have exited, without a lifetime buffer.
+            for pair in pipes[1:]:
+                fd = pair[0]
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    emit_output("stdout" if pair is pipes[1] else "stderr", chunk)
+                    flush()
+            if leftovers and not background_warning.seen:
+                note = ("Remaining job processes were terminated when the command exited; "
+                        "use cocalc project terminal spawn for persistent services.\n")
+                emit({"type": "output", "stream": "stderr",
+                      "data": base64.b64encode(note.encode()).decode("ascii")})
+            emit({"type": "exit", "code": result, "cleanup": True})
+        except Exception:
+            # Leave the cgroup for the independent orphan sweep; no clean exit frame.
+            raise RuntimeError("job containment cleanup not confirmed") from None
+        finally:
+            sel.close()
+            until = time.monotonic() + 1
+            while pending and time.monotonic() < until:
+                try:
+                    flush()
+                except BrokenPipeError:
+                    break
+                time.sleep(0.01)
+
+if __name__ == "__main__":
+    try:
+        if os.geteuid() != 0:
+            raise RuntimeError("requires trusted runtime helper")
+        if sys.argv[1:] == ["reap"]:
+            reap()
+        elif len(sys.argv) == 4 and sys.argv[1] == "activate":
+            activate(sys.argv[2], int(sys.argv[3]))
+        elif len(sys.argv) == 3 and sys.argv[1] in ("begin-stop-locked", "cleanup-locked"):
+            require_inherited_lock()
+            if sys.argv[1] == "begin-stop-locked":
+                begin_stop_locked(sys.argv[2])
+            else:
+                cleanup_locked(sys.argv[2])
+        elif len(sys.argv) == 6 and sys.argv[1] == "run":
+            supervise(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]))
+        else:
+            raise ValueError("invalid helper operation")
+    except Exception:
+        print("Managed job containment unavailable or cleanup unconfirmed", file=sys.stderr)
+        sys.exit(1)
+'''
+
 RUNTIME_STORAGE_PATH_HELPER = r'''#!/usr/bin/python3
 """Root-owned, openat2-anchored path mutations for cocalc-runtime-storage.
 
@@ -6651,6 +7208,7 @@ verify_project_pid_in_pool() {
 attach_project_launcher() {
   local project_id="$1" pid="$2" target
   require_runtime_owned_pid "$pid"
+  pid_in_managed_project_job "$pid" && return 0
   target="$(project_cgroup "$project_id")"
   [ -d "$target" ] || target="$(project_legacy_cgroup)"
   [ -d "$target" ] || target="$PROJECT_POOL_CGROUP_DEFAULT"
@@ -6747,11 +7305,23 @@ configure_bees_cgroup() {
   fi
 }
 
+pid_in_managed_project_job() {
+  local actual
+  actual="$(awk -F: '$1 == "0" {print $3}' "/proc/$1/cgroup" 2>/dev/null)" || return 0
+  case "$actual" in
+    "$(project_pool_relative_path)"/project-*/job-*) return 0 ;;
+  esac
+  return 1
+}
+
 attach_pid_to_project_pool_storage() {
   local pid="$1" pool="$2"
   if [ -z "$pid" ] || ! echo "$pid" | grep -Eq '^[0-9]+$' || ! kill -0 "$pid" 2>/dev/null; then
     return 0
   fi
+  # Reconciliation must not flatten a managed job into the project leaf:
+  # doing so would remove it from that job's atomic cancellation scope.
+  pid_in_managed_project_job "$pid" && return 0
   printf '%s\n' "$pid" > "$pool/cgroup.procs"
 }
 
@@ -7787,6 +8357,23 @@ case "$cmd" in
     attach_project_launcher "$1" "$2"
     release_project_lock
     ;;
+  supervise-project-job)
+    if [ "$#" -ne 4 ] || ! is_project_uuid "$1" || ! is_project_uuid "$2"; then
+      echo "usage: cocalc-runtime-storage supervise-project-job <project-id> <job-id> <owner-pid> <timeout-ms>" >&2
+      exit 2
+    fi
+    require_runtime_owned_pid "$3"
+    exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+      /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job run "$@"
+    ;;
+  reap-project-jobs)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage reap-project-jobs" >&2
+      exit 2
+    fi
+    exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+      /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job reap
+    ;;
   verify-project-pool)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
       echo "usage: cocalc-runtime-storage verify-project-pool <project-id> <pid>" >&2
@@ -7936,6 +8523,12 @@ case "$cmd" in
         [ "$actual_io_weight" = "$final_io_weight" ] ||
           deny "project-cgroup-io-weight-mismatch" "expected=${final_io_weight},actual=${actual_io_weight:-missing}"
       fi
+    fi
+    # Only verified startup finalization opens managed-job admission. Resource
+    # reconciliation must not clear a stopping/failed-cleanup generation.
+    if [ -n "$init_pid" ]; then
+      /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+        /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job activate "$project_id" "$init_pid"
     fi
     ;;
   finish-project-startup-cgroup)
@@ -8189,6 +8782,8 @@ PY
       deny "project-id-invalid" "${1:-missing}"
     fi
     acquire_project_cgroup_lock
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+      /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job begin-stop-locked "$1"
     pool="$(project_cgroup "$1")"
     startup_pool="$(project_startup_runtime_cgroup "$1")"
     if [ -d "$startup_pool" ]; then
@@ -8204,18 +8799,8 @@ PY
       fi
       release_project_startup_io_capacity
     fi
-    if [ -d "$pool" ]; then
-      if [ -w "$pool/cgroup.kill" ]; then
-        printf '1\n' > "$pool/cgroup.kill" 2>/dev/null || true
-      fi
-      for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-        rmdir "$pool" 2>/dev/null && break
-        sleep 0.1
-      done
-      if [ -d "$pool" ]; then
-        deny "project-cgroup-cleanup-failed" "$1"
-      fi
-    fi
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+      /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job cleanup-locked "$1"
     release_project_lock
     # Periodic reconciliation removes the now-stale socket-cgroup rules.
     # Avoid a global foreground nftables lock and start/stop deletion races.
@@ -9594,6 +10179,9 @@ esac
         "1" if cfg.allow_loopback_rustic_rest else "0",
     )
     wrappers = {
+        "/usr/local/libexec/cocalc-managed-project-job": MANAGED_PROJECT_JOB_HELPER.replace(
+            "__PROJECT_POOL_CGROUP__", DEFAULT_PROJECT_POOL_CGROUP
+        ).replace("__RUNTIME_USER__", cfg.ssh_user),
         "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
@@ -11496,6 +12084,11 @@ attach_pid_to_project_pool() {
   if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
     return 0
   fi
+  local actual
+  actual="$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup" 2>/dev/null)" || return 0
+  case "${actual}" in
+    "$(project_pool_cgroup | sed 's#^/sys/fs/cgroup##')"/project-*/job-*) return 0 ;;
+  esac
   if [ -z "${target}" ]; then
     target="$(project_pool_cgroup)/legacy"
   fi

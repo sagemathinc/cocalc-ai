@@ -4,6 +4,16 @@
  */
 
 import { sandboxExec } from "./sandbox-exec";
+import { runContainedSandboxCommand } from "./sandbox-command-containment";
+import { MANAGED_SANDBOX_COMMAND_SUPERVISOR } from "./sandbox-command-supervisor";
+
+jest.mock("./sandbox-command-containment", () => ({
+  runContainedSandboxCommand: jest.fn(async () => ({
+    code: 0,
+    stdout: "",
+    stderr: "",
+  })),
+}));
 
 const execFileMock = jest.fn();
 const podmanEnvMock = jest.fn(() => ({
@@ -75,5 +85,53 @@ describe("sandboxExec", () => {
       }),
       expect.any(Function),
     );
+  });
+
+  it("passes scoped CLI file paths only to the project exec", async () => {
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callback(undefined, "", "");
+    });
+    await sandboxExec({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      script: "true",
+      env: { COCALC_BEARER_TOKEN_FILE: "/tmp/scoped/token" },
+    });
+    const args = execFileMock.mock.calls[0][1] as string[];
+    expect(args).toContain("COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token");
+    expect(args).not.toContain("COCALC_BEARER_TOKEN=/tmp/scoped/token");
+    expect(execFileMock.mock.calls[0][2].env).not.toHaveProperty(
+      "COCALC_BEARER_TOKEN_FILE",
+    );
+  });
+
+  it("streams through the same supervised project launcher and scoped environment", async () => {
+    const signal = new AbortController().signal;
+    const onOutput = jest.fn();
+    await sandboxExec({
+      project_id: "00000000-0000-4000-8000-000000000001",
+      script: "long-build",
+      env: { COCALC_BEARER_TOKEN_FILE: "/tmp/scoped/token" },
+      signal,
+      onOutput,
+      timeoutMs: 3600000,
+    });
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(runContainedSandboxCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "00000000-0000-4000-8000-000000000001",
+        signal,
+        onOutput,
+        timeoutMs: 3600000,
+        args: expect.arrayContaining([
+          "project-00000000-0000-4000-8000-000000000001",
+          MANAGED_SANDBOX_COMMAND_SUPERVISOR,
+          "long-build",
+          "COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token",
+        ]),
+      }),
+    );
+    await expect(
+      sandboxExec({ project_id: "fixture", script: "x", onOutput }),
+    ).rejects.toThrow("lease");
   });
 });

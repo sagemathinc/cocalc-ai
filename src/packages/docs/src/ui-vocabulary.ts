@@ -205,7 +205,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     // labels.assistant also says "Codex" but no component renders it, so it
     // cannot anchor anything.
     anchors: [
-      ren("frontend/chat/agent-message-status.tsx", ">Codex activity<"),
+      def("frontend/chat/agent-message-status.tsx", 'agentLabel = "Codex"'),
       def("essential-frontend/src/ui.tsx", 'label: "Codex"'),
     ],
     usedIn: [conventions("the Codex assistant")],

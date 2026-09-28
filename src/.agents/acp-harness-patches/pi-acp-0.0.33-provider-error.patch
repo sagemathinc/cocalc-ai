@@ -1,0 +1,88 @@
+diff --git a/src/acp/session.ts b/src/acp/session.ts
+index d2fae68..e0d156b 100644
+--- a/src/acp/session.ts
++++ b/src/acp/session.ts
+@@ -270,6 +270,7 @@ export class PiAcpSession {
+   // Used to map abort semantics to ACP stopReason.
+   // Applies to the currently running turn.
+   private cancelRequested = false
++  private lastAssistantFailed = false
+
+   // Current in-flight turn (if any). Additional prompts are queued.
+   private pendingTurn: PendingTurn | null = null
+@@ -473,6 +474,7 @@ export class PiAcpSession {
+
+   private startTurn(t: QueuedTurn): void {
+     this.cancelRequested = false
++    this.lastAssistantFailed = false
+     this.inAgentLoop = false
+
+     this.pendingTurn = { resolve: t.resolve, reject: t.reject }
+@@ -826,6 +828,13 @@ export class PiAcpSession {
+       case 'turn_end': {
+         // pi uses `turn_end` for sub-steps (e.g. tool_use) and will often start another turn.
+         // Do NOT resolve the ACP `session/prompt` here; wait for `agent_settled`.
++        const message = ev.message
++        if (message && typeof message === 'object' && !Array.isArray(message)) {
++          const assistant = message as Record<string, unknown>
++          if (assistant.role === 'assistant' && typeof assistant.stopReason === 'string') {
++            this.lastAssistantFailed = assistant.stopReason === 'error'
++          }
++        }
+         break
+       }
+
+@@ -841,7 +850,11 @@ export class PiAcpSession {
+         // the ACP `session/prompt` request.
+         void this.flushEmits().finally(() => {
+           const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
+-          this.pendingTurn?.resolve(reason)
++          if (this.lastAssistantFailed && !this.cancelRequested) {
++            this.pendingTurn?.reject(RequestError.internalError(undefined, 'Pi inference failed'))
++          } else {
++            this.pendingTurn?.resolve(reason)
++          }
+           this.pendingTurn = null
+           this.inAgentLoop = false
+
+diff --git a/test/component/session-events.test.ts b/test/component/session-events.test.ts
+index 2148ce8..34fba9c 100644
+--- a/test/component/session-events.test.ts
++++ b/test/component/session-events.test.ts
+@@ -636,6 +636,36 @@ test('PiAcpSession: omits edit tool line when oldText matches multiple times', a
+   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath }])
+ })
+
++for (const outcome of ['error', 'recovered', 'cancelled'] as const) {
++  test(`PiAcpSession: settled provider error is ${outcome}`, async () => {
++    const conn = new FakeAgentSideConnection()
++    const proc = new FakePiRpcProcess()
++    const session = new PiAcpSession({
++      sessionId: 's1',
++      cwd: process.cwd(),
++      mcpServers: [],
++      proc: proc as any,
++      conn: asAgentConn(conn),
++      fileCommands: []
++    })
++    const pending = session.prompt('hello')
++    const rejected = outcome === 'error' ? assert.rejects(pending, /Pi inference failed/) : undefined
++    proc.emit({ type: 'turn_end', message: { role: 'assistant', stopReason: 'error' } })
++    if (outcome === 'recovered') {
++      proc.emit({ type: 'agent_end', willRetry: true })
++      proc.emit({ type: 'agent_start' })
++      proc.emit({ type: 'turn_end', message: { role: 'assistant', stopReason: 'stop' } })
++    }
++    if (outcome === 'cancelled') await session.cancel()
++    proc.emit({ type: 'agent_settled' })
++    if (rejected) await rejected
++    else assert.equal(await pending, outcome === 'cancelled' ? 'cancelled' : 'end_turn')
++    const next = session.prompt('next')
++    proc.emit({ type: 'agent_settled' })
++    assert.equal(await next, 'end_turn')
++  })
++}
++
+ test('PiAcpSession: prompt stays open through retry runs until agent_settled', async () => {
+   const conn = new FakeAgentSideConnection()
+   const proc = new FakePiRpcProcess()
