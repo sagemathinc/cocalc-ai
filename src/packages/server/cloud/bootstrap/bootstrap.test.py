@@ -2617,6 +2617,41 @@ class BootstrapLogRotationTest(unittest.TestCase):
 
 
 class BootstrapBundleRetentionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        repair = mock.patch.object(bootstrap, "run_best_effort")
+        repair.start()
+        self.addCleanup(repair.stop)
+
+    def make_fixture(self, tmpdir: str):
+        cfg = make_cfg(tmpdir)
+        root = Path(tmpdir) / "bundles"
+        root.mkdir()
+        for index in range(1, 10):
+            version = root / f"v{index}"
+            version.mkdir()
+            (version / "supervisor").mkdir()
+            os.utime(version, (index, index))
+        current = root / "current"
+        current.symlink_to(root / "v8", target_is_directory=True)
+        bundle = bootstrap.BundleSpec(
+            "", None, "", str(root), str(root / "v9"), str(current), "v9",
+        )
+        proc_root = Path(tmpdir) / "proc"
+        proc = proc_root / "123"
+        proc.mkdir(parents=True)
+        # Like a Node process after setting process.title: no bundle path in argv.
+        (proc / "cmdline").write_bytes(b"project-host:host-agent\0")
+        (proc / "mountinfo").write_text("")
+        (proc / "maps").write_text("")
+        (proc / "fd").mkdir()
+        return cfg, bundle, root, proc_root, proc
+
+    def remaining(self, root: Path) -> list[str]:
+        return sorted(
+            child.name for child in root.iterdir()
+            if child.is_dir() and not child.is_symlink()
+        )
+
     def test_prunes_old_bundle_versions_but_keeps_current_and_desired(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -2641,7 +2676,10 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                 version="v7",
             )
 
-            bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            proc_root = Path(tmpdir) / "proc"
+            proc_root.mkdir()
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
 
             remaining = sorted(
                 child.name
@@ -2745,6 +2783,153 @@ class BootstrapBundleRetentionTest(unittest.TestCase):
                 if child.is_dir() and not child.is_symlink()
             )
             self.assertEqual(remaining, ["v2", "v6", "v7"])
+
+    def test_prune_preserves_kernel_references_without_bundle_in_argv(self) -> None:
+        for reference in ("cwd", "exe", "root", "fd", "fd-directory", "maps"):
+            for deleted in (False, True):
+                with self.subTest(reference=reference, deleted=deleted), \
+                        tempfile.TemporaryDirectory() as tmpdir:
+                    cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
+                    target = str(root / "v1" / "supervisor")
+                    if reference in ("exe", "fd", "maps"):
+                        target += "/file with spaces"
+                    if deleted:
+                        target += " (deleted)"
+                    if reference == "maps":
+                        (proc / "maps").write_text(
+                            f"1000-2000 r-xp 00000000 08:01 42 {target}\n"
+                        )
+                    else:
+                        link = proc / "fd" / "3" if reference.startswith("fd") else proc / reference
+                        link.symlink_to(target)
+                    with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                        bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+                    self.assertEqual(self.remaining(root), ["v1", "v8", "v9"])
+
+    def test_live_references_can_exceed_retention_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
+            (proc / "cwd").symlink_to(root / "v1")
+            (proc / "exe").symlink_to(root / "v2" / "node")
+            (proc / "fd" / "3").symlink_to(root / "v3" / "index.js")
+            (proc / "maps").write_text(
+                f"1000-2000 r-xp 00000000 08:01 42 {root}/v4/addon.node\n"
+            )
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            self.assertEqual(self.remaining(root), ["v1", "v2", "v3", "v4", "v8", "v9"])
+
+    def test_process_paths_do_not_match_sibling_bundle_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
+            (proc / "cwd").symlink_to(f"{root}-other/v1")
+            (proc / "exe").symlink_to(root / "v1-other" / "node")
+            (proc / "fd" / "3").symlink_to("socket:[123]")
+            (proc / "fd" / "4").symlink_to(root / "v1" / ".." / "v7")
+            (proc / "cmdline").write_bytes(os.fsencode(root) + b"/\0")
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            self.assertEqual(self.remaining(root), ["v7", "v8", "v9"])
+
+    def test_unreadable_references_skip_pruning_but_keep_ownership_repair(self) -> None:
+        for reference in ("cmdline", "cwd", "exe", "root", "fd", "fd/3", "maps", "mountinfo", "proc"):
+            with self.subTest(reference=reference), tempfile.TemporaryDirectory() as tmpdir:
+                cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
+                cfg = replace(cfg, project_host_bundle=bundle)
+                target = proc_root if reference == "proc" else proc / reference
+                original_open = Path.open
+                original_iterdir = Path.iterdir
+                original_readlink = os.readlink
+
+                def checked_open(path, *args, **kwargs):
+                    if path == target:
+                        raise PermissionError("injected unreadable process reference")
+                    return original_open(path, *args, **kwargs)
+
+                def checked_iterdir(path):
+                    if path == target:
+                        raise PermissionError("injected unreadable process reference")
+                    return original_iterdir(path)
+
+                def checked_readlink(path, *args, **kwargs):
+                    if Path(path) == target:
+                        raise PermissionError("injected unreadable process reference")
+                    return original_readlink(path, *args, **kwargs)
+
+                (proc / "fd" / "3").symlink_to(root / "v1")
+                with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), \
+                        mock.patch.object(Path, "open", checked_open), \
+                        mock.patch.object(Path, "iterdir", checked_iterdir), \
+                        mock.patch.object(os, "readlink", checked_readlink), \
+                        mock.patch.object(bootstrap, "run_best_effort") as repair:
+                    bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+                self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+                self.assertIn("skipping bundle pruning", Path(cfg.log_file).read_text())
+                self.assertTrue(any(str(root) in call.args[1] for call in repair.call_args_list))
+
+    def test_missing_proc_root_skips_pruning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, _proc_root, _proc = self.make_fixture(tmpdir)
+            with mock.patch.object(bootstrap, "PROC_ROOT", Path(tmpdir) / "missing"):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+
+    def test_reference_scan_deadline_skips_pruning(self) -> None:
+        for scanner in ("live_mounted_bundle_versions", "live_process_bundle_versions"):
+            with self.subTest(scanner=scanner), tempfile.TemporaryDirectory() as tmpdir:
+                cfg, bundle, root, proc_root, _proc = self.make_fixture(tmpdir)
+                with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), \
+                        mock.patch.object(bootstrap, "BUNDLE_REFERENCE_SCAN_SECONDS", 0):
+                    with self.assertRaises(TimeoutError):
+                        getattr(bootstrap, scanner)(root)
+                    bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+                self.assertEqual(self.remaining(root), [f"v{i}" for i in range(1, 10)])
+
+    def test_disappearing_process_and_fd_references_do_not_block_pruning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, proc = self.make_fixture(tmpdir)
+            (proc_root / "456").symlink_to(Path(tmpdir) / "gone-process")
+            fd = proc / "fd" / "3"
+            fd.symlink_to(root / "v1")
+            original_readlink = os.readlink
+
+            def disappearing_readlink(path, *args, **kwargs):
+                if Path(path) == fd:
+                    raise FileNotFoundError("descriptor closed during scan")
+                return original_readlink(path, *args, **kwargs)
+
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root), \
+                    mock.patch.object(os, "readlink", disappearing_readlink):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+            self.assertEqual(self.remaining(root), ["v7", "v8", "v9"])
+
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux /proc")
+    def test_running_process_cwd_survives_pruning_until_process_exits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg, bundle, root, proc_root, _proc = self.make_fixture(tmpdir)
+            cwd = root / "v1" / "supervisor"
+            with subprocess.Popen(
+                [sys.executable, "-u", "-c",
+                 "import os, sys; print('ready'); sys.stdin.readline(); print(os.getcwd())"],
+                cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            ) as child:
+                try:
+                    self.assertEqual(child.stdout.readline(), "ready\n")
+                    (proc_root / str(child.pid)).symlink_to(Path("/proc") / str(child.pid))
+                    with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                        bootstrap.prune_bundle_versions(cfg, bundle, keep=3)
+                    self.assertTrue(cwd.is_dir())
+                    output, errors = child.communicate("\n", timeout=5)
+                    self.assertEqual(child.returncode, 0, errors)
+                    self.assertEqual(output.strip(), str(cwd))
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+            with mock.patch.object(bootstrap, "PROC_ROOT", proc_root):
+                bootstrap.prune_bundle_versions(cfg, bundle, keep=2)
+            self.assertEqual(self.remaining(root), ["v8", "v9"])
 
 
 class BootstrapOwnershipScopeTest(unittest.TestCase):

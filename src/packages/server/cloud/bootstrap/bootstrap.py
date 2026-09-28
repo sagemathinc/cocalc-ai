@@ -842,6 +842,7 @@ CLOUDFLARED_DEB_SHA256 = {
 }
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
+BUNDLE_REFERENCE_SCAN_SECONDS = 10
 PROC_ROOT = Path("/proc")
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
 ROOTLESS_SUBID_ALIGNMENT = 65536
@@ -4079,9 +4080,15 @@ def prune_bundle_versions(
     if not root.is_dir():
         return
     keep_resolved: set[Path] = set()
-    live_versions = live_mounted_bundle_versions(root)
-    live_versions.update(live_process_bundle_versions(root))
-    for version in sorted(live_versions):
+    try:
+        live_versions = live_mounted_bundle_versions(root)
+        live_versions.update(live_process_bundle_versions(root))
+    except OSError as err:
+        # Retention is optional; incomplete /proc visibility is not evidence
+        # that an old runtime is unused. Still repair runtime-root ownership.
+        log_line(cfg, f"bootstrap: skipping bundle pruning for {root}: {err}")
+        live_versions = None
+    for version in sorted(live_versions or ()):
         live_dir = root / version
         if live_dir.exists() and live_dir.is_dir():
             keep_resolved.add(live_dir.resolve())
@@ -4118,6 +4125,8 @@ def prune_bundle_versions(
         reverse=True,
     )
     for child in candidates:
+        if live_versions is None:
+            break
         try:
             resolved = child.resolve()
         except Exception:
@@ -4172,6 +4181,11 @@ def strip_deleted_mount_suffix(value: str) -> str:
     return value
 
 
+def check_bundle_reference_scan_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise TimeoutError("live bundle reference scan exceeded time limit")
+
+
 def live_mounted_bundle_versions(root: Path) -> set[str]:
     """Return version directories under root referenced by live mountinfo.
 
@@ -4187,11 +4201,9 @@ def live_mounted_bundle_versions(root: Path) -> set[str]:
         root_abs = root.absolute()
     root_text = str(root_abs)
     versions: set[str] = set()
-    try:
-        proc_entries = list(PROC_ROOT.iterdir())
-    except Exception:
-        return versions
-    for proc in proc_entries:
+    deadline = time.monotonic() + BUNDLE_REFERENCE_SCAN_SECONDS
+    for proc in PROC_ROOT.iterdir():
+        check_bundle_reference_scan_deadline(deadline)
         if not proc.name.isdigit():
             continue
         mountinfo = proc / "mountinfo"
@@ -4200,9 +4212,10 @@ def live_mounted_bundle_versions(root: Path) -> set[str]:
                 encoding="utf-8",
                 errors="replace",
             ).splitlines()
-        except Exception:
+        except (FileNotFoundError, ProcessLookupError):
             continue
         for line in lines:
+            check_bundle_reference_scan_deadline(deadline)
             fields = line.split(" ")
             if len(fields) < 5:
                 continue
@@ -4221,11 +4234,12 @@ def live_mounted_bundle_versions(root: Path) -> set[str]:
 
 
 def live_process_bundle_versions(root: Path) -> set[str]:
-    """Return version directories referenced by live process command lines.
+    """Protect bundles referenced by process paths, files, maps or command lines.
 
     Component-scoped rollouts can intentionally leave project-host services on
-    different artifact versions. Those services do not bind mount their own
-    bundle, so mountinfo alone cannot protect their supervisor path.
+    different artifact versions. Node can overwrite its command line, so inspect
+    kernel references independently of argv. Do not read process environments or
+    open file contents. Unreadable references abort pruning, not installation.
     """
     try:
         root_abs = root.resolve()
@@ -4233,33 +4247,60 @@ def live_process_bundle_versions(root: Path) -> set[str]:
         root_abs = root.absolute()
     root_prefix = f"{root_abs}/"
     versions: set[str] = set()
-    try:
-        proc_entries = list(PROC_ROOT.iterdir())
-    except Exception:
-        return versions
-    for proc in proc_entries:
+    deadline = time.monotonic() + BUNDLE_REFERENCE_SCAN_SECONDS
+
+    def add_path(value: str) -> None:
+        value = os.path.normpath(strip_deleted_mount_suffix(value))
+        if not value.startswith(root_prefix):
+            return
+        version = value[len(root_prefix):].split("/", 1)[0]
+        if version and version not in {"current", ".", ".."}:
+            versions.add(version)
+
+    def add_link(link: Path) -> None:
+        check_bundle_reference_scan_deadline(deadline)
+        try:
+            add_path(os.readlink(link))
+        except (FileNotFoundError, ProcessLookupError):
+            # Processes exit, descriptors close, and kernel threads have no exe.
+            pass
+
+    for proc in PROC_ROOT.iterdir():
+        check_bundle_reference_scan_deadline(deadline)
         if not proc.name.isdigit():
             continue
         try:
             cmdline = (proc / "cmdline").read_bytes().replace(b"\0", b" ")
             text = os.fsdecode(cmdline)
-        except Exception:
-            continue
+        except (FileNotFoundError, ProcessLookupError):
+            text = ""
         offset = 0
         while True:
+            check_bundle_reference_scan_deadline(deadline)
             start = text.find(root_prefix, offset)
             if start < 0:
                 break
             remainder = text[start + len(root_prefix) :]
-            version = remainder.split("/", 1)[0].split(None, 1)[0]
-            if version and version not in {"current", "."}:
-                candidate = root_abs / version
-                try:
-                    if candidate.is_dir() and not candidate.is_symlink():
-                        versions.add(version)
-                except OSError:
-                    pass
+            first = remainder.split("/", 1)[0].split(None, 1)
+            if first:
+                add_path(root_prefix + first[0])
             offset = start + len(root_prefix)
+        for name in ("cwd", "exe", "root"):
+            add_link(proc / name)
+        try:
+            for fd in (proc / "fd").iterdir():
+                add_link(fd)
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+        try:
+            with (proc / "maps").open(encoding="utf-8", errors="replace") as maps:
+                for line in maps:
+                    check_bundle_reference_scan_deadline(deadline)
+                    fields = line.split(None, 5)
+                    if len(fields) == 6:
+                        add_path(decode_mountinfo_path(fields[5].rstrip("\n")))
+        except (FileNotFoundError, ProcessLookupError):
+            pass
     return versions
 
 
