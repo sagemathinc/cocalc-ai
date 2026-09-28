@@ -32,6 +32,7 @@ export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
   accountId?: string;
   apiBaseUrl?: string;
   apiKey?: string;
+  globals?: { disableEnvAuthDefaults?: boolean };
   managedConnector?: ManagedConnectorCredential;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
@@ -442,7 +443,9 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
   if (
     isValidUUID(identifier) &&
     identifier === process.env.COCALC_PROJECT_ID &&
-    !!process.env.COCALC_AGENT_TOKEN_FILE
+    !!process.env.COCALC_AGENT_TOKEN_FILE &&
+    !ctx.apiKey &&
+    !ctx.globals?.disableEnvAuthDefaults
   ) {
     const project = {
       project_id: identifier,

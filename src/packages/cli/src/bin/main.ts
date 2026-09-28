@@ -2577,6 +2577,8 @@ async function resolveProjectConatClient(
   }
   if (
     isCliAgentModeEnabled() &&
+    !ctx.apiKey &&
+    !ctx.globals.disableEnvAuthDefaults &&
     isValidUUID(envProjectId) &&
     (!explicitIdentifier || explicitIdentifier === envProjectId)
   ) {
