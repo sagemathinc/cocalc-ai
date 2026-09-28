@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { launchClaudeSubscriptionController } from "./claude-subscription-controller";
 import {
   launchHarnessInProject as launch,
   resolveHarnessCommand,
@@ -228,6 +229,34 @@ test("sidecar preserves structured argv, project networking and pool containment
   expect(mockCloseLease).toHaveBeenCalledTimes(1);
   await handle.stop();
   expect(mockUnmount).toHaveBeenCalledTimes(1);
+});
+
+test("subscription controller receives the admitted conversation for agent identity", async () => {
+  const subscription = {
+    ...binding,
+    profile: {
+      version: 2 as const,
+      kind: "acp" as const,
+      id: "claude-code" as const,
+      revision: "0.81.1",
+      cwd: "/home/user",
+      credentialMode: "project-managed" as const,
+      executionPolicy: "full-access" as const,
+    },
+    credential: {
+      version: 1 as const,
+      provider: "anthropic" as const,
+      mode: "account-subscription" as const,
+      credentialId: "13ba1a66-881b-4fe1-b732-15088f82434f",
+    },
+  };
+  await launch(subscription, conversation);
+  expect(launchClaudeSubscriptionController).toHaveBeenCalledWith(
+    subscription,
+    "agent",
+    conversation,
+  );
+  expect(mockLease).not.toHaveBeenCalled();
 });
 
 test("qualified profiles resolve only through the trusted entry point", () => {

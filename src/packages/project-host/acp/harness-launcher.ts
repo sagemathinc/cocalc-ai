@@ -98,7 +98,10 @@ export async function launchHarnessInProject(
       candidate?.package.version !== profile.revision
     )
       throw Error("Unsupported Claude subscription profile");
-    return await launchClaudeSubscriptionController(binding);
+    return await launchClaudeSubscriptionController(binding, "agent", {
+      path,
+      threadId,
+    });
   }
   const harnessCommand = resolveHarnessCommand(
     profile,

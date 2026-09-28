@@ -237,6 +237,7 @@ export function claudeSubscriptionContainerArgs(options: {
 export async function launchClaudeSubscriptionController(
   binding: HarnessBinding,
   purpose: "agent" | "usage" = "agent",
+  conversation?: { path: string; threadId: string },
 ): Promise<HarnessProcess> {
   const { projectId, accountId, credential } = binding;
   if (
@@ -246,6 +247,14 @@ export async function launchClaudeSubscriptionController(
     credential.provider !== "anthropic"
   )
     throw Error("Invalid Claude subscription controller binding");
+  if (
+    purpose === "agent" &&
+    (typeof conversation?.path !== "string" ||
+      !conversation.path ||
+      typeof conversation.threadId !== "string" ||
+      !conversation.threadId)
+  )
+    throw Error("ACP launch requires an admitted conversation");
   const credentialId = credential.credentialId;
   const skill = purpose === "agent" ? await getBuiltinClaudeSkillText() : "";
   const systemPromptAppend = `The CoCalc skill is preloaded below as session instructions, not as a separate Skill tool. Follow it for CoCalc workflows.
@@ -253,6 +262,7 @@ This is an isolated subscription controller. Run ALL project filesystem and CLI 
 Current project tool server: ${CLAUDE_PROJECT_MCP_NAME}.
 ${CLAUDE_PROJECT_JOB_GUIDANCE}
 Use the exact installed CLI command: "/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js".
+The project_exec environment contains the runtime-issued CoCalc agent identity for registered agents. Run agent whoami, destinations, and messaging there, not in this isolated controller. Never substitute account credentials if agent identity or network access is unavailable.
 
 <cocalc-skill>
 ${skill}
@@ -357,6 +367,12 @@ ${skill}
     await restoreClaudeSubscriptionHome(home, registered.payload);
     let sessionDirectory: string | undefined;
     if (purpose === "agent") {
+      // Resolve identity from the admitted conversation, never the subscription
+      // or environment inherited by the credential-bearing controller.
+      const identityContext = {
+        COCALC_CODEX_CHAT_PATH: conversation!.path,
+        COCALC_CODEX_THREAD_ID: conversation!.threadId,
+      };
       const projectPaths = await localPath({ project_id: projectId });
       sessionDirectory = await ensureClaudeTranscriptDirectory({
         projectHome: projectPaths.home,
@@ -371,12 +387,16 @@ ${skill}
           projectId,
           accountId,
           credentialId,
+          conversation!.path,
+          conversation!.threadId,
         ]),
+        currentEnv: identityContext,
         home: projectPaths.home,
         scratch: projectPaths.scratch,
       });
       if (!cliLease) throw Error("Scoped Claude CLI credentials unavailable");
       const cliEnv: Record<string, string> = {
+        ...identityContext,
         COCALC_PROJECT_ID: projectId,
         COCALC_BEARER_TOKEN: "",
         COCALC_AGENT_TOKEN: "",
