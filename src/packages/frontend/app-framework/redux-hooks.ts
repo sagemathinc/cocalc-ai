@@ -405,20 +405,42 @@ class SharedReduxSubscription {
     if ((redux as any).getStore == null) return;
     const [name, ...subpath] = this.resolved.path;
     if (!name) return;
-    const store = redux.getStore(name);
-    if (store == null) {
-      console.warn(`store "${name}" must exist; path=`, this.resolved.path);
+    let store = redux.getStore(name);
+    const handleChange = () => {
+      this.emit(store?.getIn(subpath as any));
+    };
+    const attachStore = (nextStore) => {
+      store = nextStore;
+      this.waitingForStore = false;
+      this.storeAttached = true;
+      store.on("change", handleChange);
+      handleChange();
+    };
+
+    if (store != null) {
+      attachStore(store);
+      this.unsubscribeFromStore = () => {
+        store.removeListener("change", handleChange);
+      };
       return;
     }
-    const handleChange = () => {
-      this.emit(store.getIn(subpath as any));
-    };
-    store.on("change", handleChange);
-    this.storeAttached = true;
+
+    // Named stores (notably notifications) can be initialized lazily after
+    // their first consumer mounts, just like project and editor stores.
+    this.waitingForStore = true;
+    if (redux.reduxStore?.subscribe == null) return;
+    const unsubscribe = redux.reduxStore.subscribe(() => {
+      if (!this.active) return;
+      const nextStore = redux.getStore(name);
+      if (nextStore != null) {
+        unsubscribe();
+        attachStore(nextStore);
+      }
+    });
     this.unsubscribeFromStore = () => {
-      store.removeListener("change", handleChange);
+      unsubscribe();
+      store?.removeListener("change", handleChange);
     };
-    handleChange();
   }
 
   private startProject(): void {

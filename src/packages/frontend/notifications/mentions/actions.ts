@@ -354,11 +354,7 @@ export class MentionsActions extends Actions<MentionsState> {
       this.setState({
         loading: false,
         mentions: buildNotificationInboxMap({ account_id, rows }),
-        // List and counts are separate reads and may straddle a new notice.
-        unread_count: Math.max(
-          getUnreadNotificationCount(counts),
-          countUnreadNotificationRows(rows),
-        ),
+        unread_count: getUnreadNotificationCount(counts),
       });
       this.readThroughRevision = snapshot.read_through_revision;
       this.notificationRowProjectionVersion += 1;
@@ -537,10 +533,7 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     this.setState({
       mentions: mentions.sort(mentionSort) as MentionsMap,
-      unread_count: Math.max(
-        getUnreadNotificationCount(counts),
-        countUnreadMentions(mentions, account_id),
-      ),
+      unread_count: getUnreadNotificationCount(counts),
     });
     this.notificationRowProjectionVersion += 1;
     this.lastSuccessfulRefreshAt = Date.now();
@@ -628,17 +621,10 @@ export class MentionsActions extends Actions<MentionsState> {
           });
           return;
         }
-        const mentions = this.getMentions()
-          .set(event.notification.notification_id, mention)
-          .sort(mentionSort) as MentionsMap;
         this.setState({
-          mentions,
-          // Rows and totals arrive separately. Never hide a known unread row
-          // while waiting for a total; keep totals beyond the loaded inbox.
-          unread_count: Math.max(
-            this.redux.getStore("mentions")?.get("unread_count") ?? 0,
-            countUnreadMentions(mentions, account_id),
-          ),
+          mentions: this.getMentions()
+            .set(event.notification.notification_id, mention)
+            .sort(mentionSort) as MentionsMap,
         });
         this.notificationRowProjectionVersion += 1;
         return;
@@ -653,12 +639,7 @@ export class MentionsActions extends Actions<MentionsState> {
         // Multi-project marking publishes intermediate counts. Reconcile once
         // after every write, not against the optimistically updated whole inbox.
         if (this.bulkReadDepth > 0) return;
-        this.setState({
-          unread_count: Math.max(
-            event.counts.unread,
-            countUnreadMentions(this.getMentions(), account_id),
-          ),
-        });
+        this.setState({ unread_count: event.counts.unread });
         if (
           event.counts.unread !==
           countUnreadMentions(this.getMentions(), account_id)
