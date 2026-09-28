@@ -107,12 +107,14 @@ describe("sandboxExec", () => {
   it("streams through the same supervised project launcher and scoped environment", async () => {
     const signal = new AbortController().signal;
     const onOutput = jest.fn();
+    const onCleanupConfirmed = jest.fn();
     await sandboxExec({
       project_id: "00000000-0000-4000-8000-000000000001",
       script: "long-build",
       env: { COCALC_BEARER_TOKEN_FILE: "/tmp/scoped/token" },
       signal,
       onOutput,
+      onCleanupConfirmed,
       timeoutMs: 3600000,
     });
     expect(execFileMock).not.toHaveBeenCalled();
@@ -121,6 +123,7 @@ describe("sandboxExec", () => {
         project_id: "00000000-0000-4000-8000-000000000001",
         signal,
         onOutput,
+        onCleanupConfirmed,
         timeoutMs: 3600000,
         args: expect.arrayContaining([
           "project-00000000-0000-4000-8000-000000000001",

@@ -4784,6 +4784,43 @@ def reap():
     if failed:
         raise RuntimeError("some project job sweeps failed")
 
+def confirm_cleanup():
+    # Read-only, bounded recovery for identities emitted by this supervisor.
+    # A successful global sweep is NOT evidence that a particular job is gone.
+    jobs = config_from_stdin().get("jobs")
+    if not isinstance(jobs, list) or len(jobs) > 64:
+        raise ValueError("invalid cleanup queries")
+    for job in jobs:
+        if (not isinstance(job, dict) or
+            not isinstance(job.get("project_id"), str) or
+            not re.fullmatch(UUID, job["project_id"]) or
+            not isinstance(job.get("scope"), str) or
+            len(job["scope"]) > 256 or not JOB.fullmatch(job["scope"])):
+            raise ValueError("invalid cleanup identity")
+    confirmed = []
+    with lifecycle_lock():
+        # Refuse missing/untrusted mounts rather than treating them as cleanup.
+        if POOL.is_symlink() or POOL.stat().st_uid != 0:
+            raise RuntimeError("untrusted containment pool")
+        for job in jobs:
+            try:
+                parent = POOL / ("project-" + job["project_id"])
+                if parent.is_symlink():
+                    continue
+                if parent.exists():
+                    parent_scope(job["project_id"])
+                scope = parent / job["scope"]
+                # lstat distinguishes absence from symlinks and read errors.
+                try:
+                    scope.lstat()
+                except FileNotFoundError:
+                    confirmed.append({"project_id": job["project_id"], "scope": job["scope"]})
+            except OSError:
+                continue
+            except RuntimeError:
+                continue
+    print(json.dumps({"confirmed": confirmed}), flush=True)
+
 def config_from_stdin():
     # Bound startup waiting and input before creating any execution authority.
     sel = selectors.DefaultSelector()
@@ -4952,6 +4989,13 @@ def supervise(project, job, owner, timeout_ms):
             scope.mkdir(mode=0o755)
             if not (scope / "cgroup.kill").exists():
                 raise RuntimeError("atomic job cancellation unavailable")
+            # Publish the root-owned identity before creating any process. The
+            # short write is atomic (PIPE_BUF); failure prevents launch. Readers
+            # can later check absence under this same lock: this invocation never
+            # creates the scope again, even if its final cleanup frame is lost.
+            identity_frame = json.dumps({"type": "scope", "scope": scope.name}).encode() + b"\n"
+            if os.write(1, identity_frame) != len(identity_frame):
+                raise RuntimeError("job identity transport failed")
             for _ in range(3):
                 pipes.append(os.pipe())
             child = launch_locked(scope, account, args, env, pipes)
@@ -5044,6 +5088,8 @@ if __name__ == "__main__":
             raise RuntimeError("requires trusted runtime helper")
         if sys.argv[1:] == ["reap"]:
             reap()
+        elif sys.argv[1:] == ["confirm-cleanup"]:
+            confirm_cleanup()
         elif len(sys.argv) == 4 and sys.argv[1] == "activate":
             activate(sys.argv[2], int(sys.argv[3]))
         elif len(sys.argv) == 3 and sys.argv[1] in ("begin-stop-locked", "cleanup-locked"):
@@ -8373,6 +8419,14 @@ case "$cmd" in
     fi
     exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
       /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job reap
+    ;;
+  confirm-project-job-cleanup)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage confirm-project-job-cleanup" >&2
+      exit 2
+    fi
+    exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+      /usr/bin/python3 -I /usr/local/libexec/cocalc-managed-project-job confirm-cleanup
     ;;
   verify-project-pool)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then

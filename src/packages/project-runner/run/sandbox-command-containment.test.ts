@@ -3,14 +3,16 @@ import { PassThrough } from "node:stream";
 import { runContainedSandboxCommand } from "./sandbox-command-containment";
 
 const mockSpawn = jest.fn();
+const mockExecFile = jest.fn();
 jest.mock("node:child_process", () => ({
   spawn: (...args) => mockSpawn(...args),
+  execFile: (...args) => mockExecFile(...args),
 }));
 jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({ PATH: "/usr/bin" }),
 }));
 
-function fixture() {
+function fixture(onCleanupConfirmed?: () => void) {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -26,9 +28,12 @@ function fixture() {
     signal: controller.signal,
     timeoutMs: 10000,
     onOutput: output,
+    onCleanupConfirmed,
   });
   const frame = (value) => child.stdout.write(JSON.stringify(value) + "\n");
-  return { child, controller, output, result, frame };
+  const jobId = mockSpawn.mock.calls.at(-1)[1][4];
+  const scope = `job-${process.pid}-1-42-2-999999999999-${jobId}`;
+  return { child, controller, output, result, frame, scope };
 }
 
 afterEach(() => {
@@ -134,4 +139,116 @@ test("cancellation before admission needs no scope and does not spawn", async ()
     }),
   ).toMatchObject({ code: 130, cleanupConfirmed: true });
   expect(mockSpawn).not.toHaveBeenCalled();
+});
+
+test("recovery requires an exact trusted proof and retries errors without secrets", async () => {
+  jest.useFakeTimers();
+  const confirmed = jest.fn();
+  const { child, result, frame, scope } = fixture(confirmed);
+  frame({ type: "scope", scope });
+  child.emit("close", 1);
+  expect(await result).toMatchObject({ cleanupConfirmed: false });
+  const proof = { project_id: "00000000-0000-4000-8000-000000000001", scope };
+  const responses = [
+    [
+      Error("privileged diagnostic must not escape"),
+      JSON.stringify({ confirmed: [proof] }),
+    ],
+    [null, ""], // An old/missing helper or mere exit success is not a proof.
+    [null, '{"confirmed":[]}'],
+    [null, '{"confirmed":'],
+    [
+      null,
+      JSON.stringify({
+        confirmed: [{ ...proof, project_id: "another-project" }],
+      }),
+    ],
+    [
+      null,
+      JSON.stringify({
+        confirmed: [{ ...proof, scope: scope.replace("-42-", "-43-") }],
+      }),
+    ],
+    [null, JSON.stringify({ confirmed: [proof] })],
+  ];
+  mockExecFile.mockImplementation((command, args, options, callback) => {
+    expect(command).toBe("sudo");
+    expect(args).toEqual([
+      "-n",
+      "/usr/local/sbin/cocalc-runtime-storage",
+      "confirm-project-job-cleanup",
+    ]);
+    expect(options).toMatchObject({ timeout: 30_000, maxBuffer: 65536 });
+    const stdin = new PassThrough();
+    stdin.on("data", (data) => {
+      expect(JSON.parse(data.toString())).toEqual({ jobs: [proof] });
+      callback(...responses.shift()!);
+    });
+    return { stdin };
+  });
+  for (let i = 0; i < 6; i++) {
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(confirmed).not.toHaveBeenCalled();
+  }
+  await jest.advanceTimersByTimeAsync(30_000);
+  expect(confirmed).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(7);
+});
+
+test("untrusted output and mismatched scope identities cannot obtain a recovery handle", async () => {
+  jest.useFakeTimers();
+  for (const mode of ["output", "owner", "job"]) {
+    const confirmed = jest.fn();
+    const { child, result, frame, scope } = fixture(confirmed);
+    if (mode === "output")
+      frame({
+        type: "output",
+        stream: "stdout",
+        data: Buffer.from(JSON.stringify({ type: "scope", scope })).toString(
+          "base64",
+        ),
+      });
+    else
+      frame({
+        type: "scope",
+        scope:
+          mode === "owner"
+            ? scope.replace(`job-${process.pid}-`, "job-0-")
+            : scope.slice(0, -1) + "x",
+      });
+    child.emit("close", 0);
+    expect(await result).toMatchObject({ cleanupConfirmed: false });
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(confirmed).not.toHaveBeenCalled();
+  }
+  expect(mockExecFile).not.toHaveBeenCalled();
+});
+
+test("recovery polling never overlaps a stalled privileged query", async () => {
+  jest.useFakeTimers();
+  const confirmed = jest.fn();
+  const { child, result, frame, scope } = fixture(confirmed);
+  frame({ type: "scope", scope });
+  child.emit("close", 1);
+  await result;
+  let finish: () => void;
+  mockExecFile.mockImplementation((_command, _args, _options, callback) => {
+    const stdin = new PassThrough();
+    stdin.on("data", (data) => {
+      finish = () =>
+        callback(
+          null,
+          JSON.stringify({ confirmed: JSON.parse(data.toString()).jobs }),
+        );
+    });
+    return { stdin };
+  });
+  await jest.advanceTimersByTimeAsync(90_000);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
+  expect(confirmed).not.toHaveBeenCalled();
+  finish!();
+  await jest.advanceTimersByTimeAsync(30_000);
+  expect(confirmed).toHaveBeenCalledTimes(1);
+  expect(mockExecFile).toHaveBeenCalledTimes(1);
 });

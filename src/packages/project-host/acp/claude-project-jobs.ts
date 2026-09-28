@@ -13,6 +13,8 @@ export type ProjectJobExecutor = (
   options: {
     timeoutMs: number;
     onOutput: (stream: "stdout" | "stderr", data: string) => void;
+    /** Trusted runtime proof, including recovery after the executor settles. */
+    onCleanupConfirmed: () => void;
   },
 ) => Promise<SandboxExecResult>;
 type Status = "running" | "completed" | "failed" | "canceled" | "timed_out";
@@ -45,6 +47,30 @@ const RETENTION = 600_000;
 const OUTPUT_BYTES = 1024 * 1024;
 const PAGE_BYTES = 64 * 1024;
 let activeJobs = 0;
+
+function reserve(job: Job) {
+  activeJobs++;
+  let settled = false;
+  let confirmed = false;
+  // Keep late recovery independent of the controller and its executor/authority.
+  const release = () => {
+    if (job.finished !== undefined) return;
+    activeJobs--;
+    job.cleanupUnconfirmed = false;
+    job.finished = Date.now();
+    for (const resolve of [...job.changed]) resolve();
+  };
+  return {
+    confirmCleanup: () => {
+      confirmed = true;
+      if (settled) release();
+    },
+    settle: () => {
+      settled = true;
+      if (!job.cleanupUnconfirmed || confirmed) release();
+    },
+  };
+}
 
 function integer(value: unknown, fallback: number, max: number): number {
   if (value === undefined) return fallback;
@@ -181,7 +207,7 @@ export class ClaudeProjectJobs {
     // an old command whose completion was not received by the caller.
     if (job.requestId)
       this.requests.set(job.requestId, { fingerprint, jobId: job.id });
-    activeJobs++;
+    const reservation = reserve(job);
     let executionStarted = false;
     const timer = setTimeout(() => this.stop(job, "timed_out"), timeoutMs);
     job.done = Promise.resolve()
@@ -195,6 +221,7 @@ export class ClaudeProjectJobs {
           {
             timeoutMs,
             onOutput: (stream, data) => this.append(job, stream, data),
+            onCleanupConfirmed: reservation.confirmCleanup,
           },
         );
       })
@@ -226,10 +253,7 @@ export class ClaudeProjectJobs {
       })
       .finally(() => {
         clearTimeout(timer);
-        if (!job.cleanupUnconfirmed) {
-          activeJobs--;
-          job.finished = Date.now();
-        }
+        reservation.settle();
         this.wake(job);
       });
     return this.wait({ job_id: job.id, cursor: 0, yield_time_ms: waitMs });
@@ -337,6 +361,8 @@ export class ClaudeProjectJobs {
   async close() {
     this.closed = true;
     await this.cancelAll();
+    // The runtime retains only the recovery callback after close, not output.
+    for (const job of this.jobs.values()) job.output = [];
     this.jobs.clear();
     this.requests.clear();
   }

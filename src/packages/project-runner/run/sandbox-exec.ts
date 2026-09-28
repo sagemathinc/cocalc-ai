@@ -37,6 +37,8 @@ export interface SandboxExecOptions {
   signal?: AbortSignal;
   /** Stream output without execFile's lifetime output buffer. Requires a lease. */
   onOutput?: (stream: "stdout" | "stderr", data: string) => void;
+  /** Internal trusted-runtime notification; may arrive after an uncertain exit. */
+  onCleanupConfirmed?: () => void;
   /**
    * When true, start a fresh one-off container instead of exec'ing into the
    * existing project container. This is useful when the main container is not
@@ -92,6 +94,7 @@ export async function sandboxExec({
   noNetwork,
   signal,
   onOutput,
+  onCleanupConfirmed,
 }: SandboxExecOptions): Promise<SandboxExecResult> {
   if (onOutput && !signal)
     throw Error("Streaming sandbox execution requires a lease");
@@ -139,6 +142,7 @@ export async function sandboxExec({
         signal,
         timeoutMs: timeoutMs ?? 3_600_000,
         onOutput,
+        onCleanupConfirmed,
       });
     }
     return await new Promise((resolve) => {

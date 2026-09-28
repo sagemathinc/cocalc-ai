@@ -3,7 +3,8 @@
 import os
 import json
 import base64
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, nullcontext, redirect_stdout
+import io
 import inspect
 import re
 from pathlib import Path
@@ -27,6 +28,70 @@ def helper():
 
 
 class ManagedJobTests(unittest.TestCase):
+    def test_cleanup_confirmation_is_exact_and_read_only_after_scope_removal(self):
+        m = helper()
+        project_id = str(uuid.uuid4())
+        def query(index):
+            return {"project_id": project_id,
+                    "scope": f"job-10-100-20-200-999999999999-00000000-0000-4000-8000-{index:012d}"}
+        with tempfile.TemporaryDirectory() as directory:
+            pool = Path(directory)
+            parent = pool / ("project-" + project_id)
+            parent.mkdir()
+            live, removed, unreadable, symlink = [query(i) for i in range(4)]
+            (parent / live["scope"]).mkdir()
+            (parent / symlink["scope"]).symlink_to(pool / "missing")
+            pool_mock = mock.MagicMock()
+            pool_mock.is_symlink.return_value = False
+            pool_mock.stat.return_value.st_uid = 0
+            pool_mock.__truediv__.side_effect = lambda name: pool / name
+            original_lstat = Path.lstat
+            def lstat(path):
+                if path.name == unreadable["scope"]:
+                    raise PermissionError("fixture")
+                return original_lstat(path)
+            with mock.patch.object(m, "POOL", new=pool_mock), mock.patch.object(m, "parent_scope"), mock.patch.object(m, "lifecycle_lock", side_effect=nullcontext), mock.patch.object(m, "config_from_stdin", return_value={"jobs": [live, removed, unreadable, symlink]}), mock.patch.object(Path, "lstat", new=lstat), mock.patch.object(m, "kill_scope") as kill:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    m.confirm_cleanup()
+                self.assertEqual(json.loads(output.getvalue()), {"confirmed": [removed]})
+                kill.assert_not_called()
+                # Main host reaper or project stop removes a scope independently.
+                (parent / live["scope"]).rmdir()
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    m.confirm_cleanup()
+                self.assertEqual(json.loads(output.getvalue()), {"confirmed": [live, removed]})
+
+    def test_cleanup_confirmation_rejects_unavailable_pool_and_untrusted_parent(self):
+        m = helper()
+        query = {"project_id": str(uuid.uuid4()), "scope": "job-10-100-20-200-999-" + str(uuid.uuid4())}
+        with tempfile.TemporaryDirectory() as directory:
+            pool = Path(directory)
+            with mock.patch.object(m, "POOL", new=pool / "absent"), mock.patch.object(m, "lifecycle_lock", side_effect=nullcontext), mock.patch.object(m, "config_from_stdin", return_value={"jobs": [query]}):
+                with self.assertRaises(FileNotFoundError):
+                    m.confirm_cleanup()
+            parent = pool / ("project-" + query["project_id"])
+            parent.symlink_to(pool / "missing")
+            pool_mock = mock.MagicMock()
+            pool_mock.is_symlink.return_value = False
+            pool_mock.stat.return_value.st_uid = 0
+            pool_mock.__truediv__.side_effect = lambda name: pool / name
+            with mock.patch.object(m, "POOL", new=pool_mock), mock.patch.object(m, "lifecycle_lock", side_effect=nullcontext), mock.patch.object(m, "config_from_stdin", return_value={"jobs": [query]}):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    m.confirm_cleanup()
+                self.assertEqual(json.loads(output.getvalue()), {"confirmed": []})
+
+    def test_cleanup_queries_are_bounded_and_cannot_escape_scope_paths(self):
+        m = helper()
+        valid = {"project_id": str(uuid.uuid4()), "scope": "job-10-100-20-200-999-" + str(uuid.uuid4())}
+        for jobs in [None, [valid] * 65, [None], [{**valid, "scope": "../escape"}], [{**valid, "project_id": "../escape"}], [{**valid, "scope": "job-" + "1" * 300 + valid["scope"][6:]}]]:
+            with self.subTest(jobs=type(jobs)), mock.patch.object(m, "config_from_stdin", return_value={"jobs": jobs}), mock.patch.object(m, "lifecycle_lock") as lock:
+                with self.assertRaises(ValueError):
+                    m.confirm_cleanup()
+                lock.assert_not_called()
+
     def test_cleanup_warns_once_even_when_supervisor_note_arrives_during_final_drain(self):
         for warned in (False, True):
             for cleanup_fails in (False, True):
@@ -37,9 +102,11 @@ class ManagedJobTests(unittest.TestCase):
                     note = m.BackgroundWarningTracker.note if warned else b"ordinary stderr\n"
                     reads = {14: iter([note[:20], note[20:], b""]), 12: iter([b""])}
                     frames = bytearray()
+                    events_order = []
                     def write(fd, chunk):
                         if fd == 1:
                             frames.extend(chunk)
+                            events_order.append("frame")
                         return len(chunk)
                     def patch(obj, name, **kwargs):
                         return stack.enter_context(mock.patch.object(obj, name, **kwargs))
@@ -47,7 +114,8 @@ class ManagedJobTests(unittest.TestCase):
                     patch(m.pwd, "getpwnam", return_value=account)
                     path = patch(m, "Path")
                     path.return_value.stat.return_value.st_uid = 1000
-                    patch(m, "POOL", new=mock.MagicMock())
+                    pool = patch(m, "POOL", new=mock.MagicMock())
+                    pool.__truediv__.return_value.__truediv__.return_value.name = "job-fixture"
                     patch(m, "identity", return_value="1")
                     patch(m, "alive", return_value=True)
                     patch(m, "lifecycle_lock", side_effect=nullcontext)
@@ -55,7 +123,7 @@ class ManagedJobTests(unittest.TestCase):
                     patch(m, "config_from_stdin", return_value={"args": ["exec"], "env": {}})
                     patch(m, "reap_project_locked")
                     patch(m, "lease_connected", return_value=True)
-                    patch(m, "launch_locked", return_value=123)
+                    patch(m, "launch_locked", side_effect=lambda *_: (events_order.append("launch"), 123)[1])
                     patch(m, "live_scope_processes", return_value=1)
                     kill = patch(m, "kill_scope", side_effect=RuntimeError("fixture") if cleanup_fails else None)
                     patch(m.signal, "signal")
@@ -73,7 +141,9 @@ class ManagedJobTests(unittest.TestCase):
                     else:
                         m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 10000)
                     kill.assert_called_once()
+                    self.assertEqual(events_order[:2], ["frame", "launch"])
                     events = [json.loads(line) for line in frames.splitlines()]
+                    self.assertEqual(events[0], {"type": "scope", "scope": "job-fixture"})
                     if cleanup_fails:
                         self.assertFalse(any(event["type"] == "exit" for event in events))
                     else:
@@ -81,6 +151,32 @@ class ManagedJobTests(unittest.TestCase):
                                           if event["type"] == "output" and event["stream"] == "stderr")
                         self.assertEqual(stderr.count(b"use cocalc project terminal spawn"), 1)
                         self.assertEqual(events[-1], {"type": "exit", "code": 0, "cleanup": True})
+
+    def test_identity_transport_failure_prevents_process_launch(self):
+        with ExitStack() as stack:
+            m = helper()
+            def patch(obj, name, **kwargs):
+                return stack.enter_context(mock.patch.object(obj, name, **kwargs))
+            patch(m.pwd, "getpwnam", return_value=types.SimpleNamespace(pw_uid=1000, pw_gid=1000))
+            patch(m, "Path").return_value.stat.return_value.st_uid = 1000
+            pool = patch(m, "POOL", new=mock.MagicMock())
+            pool.__truediv__.return_value.__truediv__.return_value.name = "job-fixture"
+            patch(m, "identity", return_value="1")
+            patch(m, "alive", return_value=True)
+            patch(m, "lifecycle_lock", side_effect=nullcontext)
+            patch(m, "active_state", return_value={"generation": "g"})
+            patch(m, "config_from_stdin", return_value={"args": ["exec"], "env": {}})
+            patch(m, "reap_project_locked")
+            patch(m, "lease_connected", return_value=True)
+            launch = patch(m, "launch_locked")
+            kill = patch(m, "kill_scope")
+            patch(m.signal, "signal")
+            patch(m.os, "set_blocking")
+            patch(m.os, "write", side_effect=lambda _, data: 0 if b'"scope"' in data else len(data))
+            with self.assertRaisesRegex(RuntimeError, "identity transport failed"):
+                m.supervise(str(uuid.uuid4()), str(uuid.uuid4()), 99, 10000)
+            launch.assert_not_called()
+            kill.assert_called_once()
 
     def test_background_warning_tracker_handles_every_chunk_boundary(self):
         m = helper()
@@ -547,7 +643,7 @@ if MODE != 'success': time.sleep(60)
                         frame = json.loads(line)
                         if frame["type"] == "exit":
                             proof = frame
-                        else:
+                        elif frame["type"] == "output":
                             output += base64.b64decode(frame["data"]).decode()
                             if "\n" in output:
                                 escaped = int(output.splitlines()[0])

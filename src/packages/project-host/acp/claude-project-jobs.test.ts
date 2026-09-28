@@ -9,13 +9,15 @@ function fixture() {
     signal: AbortSignal;
     output: Parameters<ProjectJobExecutor>[3]["onOutput"];
     finish: (result: SandboxExecResult) => void;
+    confirmCleanup: () => void;
   }[] = [];
   const execute: ProjectJobExecutor = jest.fn(
-    async (_script, _cwd, signal, { onOutput }) =>
+    async (_script, _cwd, signal, { onOutput, onCleanupConfirmed }) =>
       new Promise((resolve) => {
         runs.push({
           signal,
           output: onOutput,
+          confirmCleanup: onCleanupConfirmed,
           finish: (result) => resolve({ cleanupConfirmed: true, ...result }),
         });
         signal.addEventListener(
@@ -306,12 +308,17 @@ test("unconfirmed cleanup stays pending, blocks admission and survives resume", 
     "cleanup is unconfirmed",
   );
   await jobs.close();
+  runs[0].confirmCleanup();
 });
 
 test("an executor rejection is not evidence that its processes were cleaned up", async () => {
-  const jobs = new ClaudeProjectJobs(async () => {
-    throw Error("lost transport");
-  });
+  let confirmCleanup: () => void;
+  const jobs = new ClaudeProjectJobs(
+    async (_script, _cwd, _signal, options) => {
+      confirmCleanup = options.onCleanupConfirmed;
+      throw Error("lost transport");
+    },
+  );
   const job = await jobs.start({ script: "start" });
   expect(job.cleanup_pending).toBe(true);
   expect(job.status).toBe("failed");
@@ -319,4 +326,87 @@ test("an executor rejection is not evidence that its processes were cleaned up",
     "cleanup is unconfirmed",
   );
   await jobs.close();
+  confirmCleanup!();
+});
+
+test("confirmed recovery releases capacity without reopening a fenced controller", async () => {
+  const { jobs, runs } = fixture();
+  const first = await jobs.start({
+    script: "lost transport",
+    yield_time_ms: 0,
+  });
+  runs[0].finish({
+    code: null,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await jobs.cancel({ job_id: first.job_id });
+  runs[0].confirmCleanup();
+  expect(
+    await jobs.wait({ job_id: first.job_id, yield_time_ms: 0 }),
+  ).toMatchObject({
+    status: "failed",
+    cleanup_pending: false,
+    cleanup_error: undefined,
+    finished_at: expect.any(Number),
+  });
+  jobs.resume();
+  await expect(jobs.start({ script: "still fenced" })).rejects.toThrow(
+    "cleanup is unconfirmed",
+  );
+  await jobs.close();
+});
+
+test("recovery proof racing executor completion cannot release a running reservation", async () => {
+  const { jobs, runs } = fixture();
+  const first = await jobs.start({ script: "finishing", yield_time_ms: 0 });
+  runs[0].confirmCleanup();
+  expect(jobs.list().jobs[0].finished_at).toBeUndefined();
+  runs[0].finish({
+    code: null,
+    stdout: "",
+    stderr: "",
+    cleanupConfirmed: false,
+  });
+  await jobs.cancel({ job_id: first.job_id });
+  expect(jobs.list().jobs[0].cleanup_pending).toBe(false);
+  await jobs.close();
+});
+
+test("duplicate recovery after close releases a reservation exactly once", async () => {
+  const abandoned = fixture();
+  const active = Array.from({ length: 16 }, () => fixture());
+  try {
+    const first = await abandoned.jobs.start({
+      script: "uncertain",
+      yield_time_ms: 0,
+    });
+    abandoned.runs[0].finish({
+      code: null,
+      stdout: "",
+      stderr: "",
+      cleanupConfirmed: false,
+    });
+    await abandoned.jobs.cancel({ job_id: first.job_id });
+    await abandoned.jobs.close();
+    abandoned.runs[0].confirmCleanup();
+    for (const { jobs } of active)
+      for (let i = 0; i < 4; i++)
+        await jobs.start({ script: "running", yield_time_ms: 0 });
+    abandoned.runs[0].confirmCleanup();
+    const extra = fixture();
+    try {
+      await expect(
+        extra.jobs.start({ script: "over capacity", yield_time_ms: 0 }),
+      ).rejects.toThrow("capacity reached");
+    } finally {
+      await extra.jobs.close();
+    }
+  } finally {
+    for (const { jobs } of active) await jobs.close();
+    await abandoned.jobs.close();
+    abandoned.runs[0]?.confirmCleanup();
+  }
 });
