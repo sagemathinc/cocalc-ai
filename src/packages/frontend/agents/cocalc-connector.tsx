@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { LinkOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Space, Spin, Switch } from "antd";
 import {
@@ -23,9 +24,14 @@ import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 export function CocalcConnector({
   agent,
   composer = false,
+  renderTrigger,
 }: {
   agent: NamedAgent;
   composer?: boolean;
+  renderTrigger?: (state: {
+    config: CocalcConnectorConfig | null;
+    onOpen: () => void;
+  }) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -35,10 +41,12 @@ export function CocalcConnector({
   const [config, setConfig] = useState<CocalcConnectorConfig | null>(null);
   const [scope, setScope] = useState<ApiKeyScope>(EMPTY_API_KEY_SCOPE);
   const [enabled, setEnabled] = useState(false);
+  const [loadRequest, setLoadRequest] = useState(0);
+  const preload = !!renderTrigger;
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
-    if (!open) return;
+    if (!preload && loadRequest === 0) return;
     let cancelled = false;
     setLoading(true);
     setLoaded(false);
@@ -70,7 +78,17 @@ export function CocalcConnector({
     return () => {
       cancelled = true;
     };
-  }, [open, agent.endpoint.agent_id, agent.endpoint.project_id]);
+  }, [
+    preload,
+    loadRequest,
+    agent.endpoint.agent_id,
+    agent.endpoint.project_id,
+  ]);
+
+  function onOpen() {
+    setLoadRequest((request) => request + 1);
+    setOpen(true);
+  }
 
   async function save() {
     setSaving(true);
@@ -96,16 +114,20 @@ export function CocalcConnector({
 
   return (
     <>
-      <Button
-        aria-label={composer ? "CoCalc connector" : "CoCalc access"}
-        title="CoCalc access"
-        type={composer ? "default" : "text"}
-        size="small"
-        icon={<LinkOutlined />}
-        onClick={() => setOpen(true)}
-      >
-        {composer ? "CoCalc" : null}
-      </Button>
+      {renderTrigger ? (
+        renderTrigger({ config, onOpen })
+      ) : (
+        <Button
+          aria-label={composer ? "CoCalc connector" : "CoCalc access"}
+          title="CoCalc access"
+          type={composer ? "default" : "text"}
+          size="small"
+          icon={<LinkOutlined />}
+          onClick={onOpen}
+        >
+          {composer ? "CoCalc" : null}
+        </Button>
+      )}
       <Modal
         open={open}
         title={`CoCalc access for @${agent.name}`}
@@ -160,8 +182,8 @@ export function CocalcConnector({
                 />
               </div>
               <div>
-                The agent already has full access to its own project. These
-                settings grant additional access.
+                These settings apply to @{agent.name} across conversations. The
+                agent already has full access to its own project.
               </div>
               <ApiKeyScopeEditor
                 value={scope}

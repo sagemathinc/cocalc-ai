@@ -5,7 +5,6 @@
 
 import {
   normalizeAgentName,
-  type AgentNetwork,
   type NamedAgent,
   type NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
@@ -142,13 +141,10 @@ import {
 import { openAgentThread } from "./open-agent";
 import {
   personalAgentApi,
-  refreshAgentNetworks,
   refreshNamedAgents,
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
-import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
-import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
@@ -170,7 +166,6 @@ import {
 import { AgentLoadingPreview } from "./loading-preview";
 import { AgentDirectoryContent } from "./directory-content";
 import { NameAgent } from "./name-agent";
-import { CocalcConnector } from "./cocalc-connector";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { AgentProjectSelector } from "./agent-project-selector";
@@ -265,20 +260,6 @@ const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
 const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
 const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
-
-function networksForAgent(networks: AgentNetwork[], agent: NamedAgent) {
-  return networks.filter(
-    (network) =>
-      network.state !== "closed" &&
-      network.members.some(
-        (member) =>
-          member.kind === "registered" &&
-          !member.removed_at &&
-          member.endpoint.project_id === agent.endpoint.project_id &&
-          member.endpoint.agent_id === agent.endpoint.agent_id,
-      ),
-  );
-}
 
 function clampAgentDocsDrawerWidth(width: number): number {
   const maximum =
@@ -2170,8 +2151,6 @@ function AgentWorkspace({
   onAgentAppearance,
   onClose,
   onRegisteredThreadSelected,
-  networks,
-  onEditNetworkTags,
 }: {
   onCopy: (agent: NamedAgent) => void;
   onFresh: (agent: NamedAgent) => void;
@@ -2191,8 +2170,6 @@ function AgentWorkspace({
   ) => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
-  networks: AgentNetwork[];
-  onEditNetworkTags: (agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
@@ -2242,7 +2219,6 @@ function AgentWorkspace({
     selectedThread,
   );
   const displayedAgent = selectedAgent ?? agent;
-  const networkTagCount = networksForAgent(networks, displayedAgent).length;
   const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
     agent.endpoint.project_id,
     "users",
@@ -2551,19 +2527,6 @@ function AgentWorkspace({
             ) : (
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
             )}
-            {!unregistered && (
-              <Button
-                type="text"
-                size="small"
-                aria-label={`Edit network tags for @${displayedAgent.name}`}
-                onClick={() => onEditNetworkTags(displayedAgent)}
-                style={{ color: "inherit", height: "auto", padding: 0 }}
-              >
-                Network tags
-                {networkTagCount ? ` (${networkTagCount})` : ""}
-              </Button>
-            )}
-            {!unregistered && <CocalcConnector agent={displayedAgent} />}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
             {workingDirectoryLabel && (
@@ -2855,8 +2818,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
     | undefined;
-  const [networkDetailsId, setNetworkDetailsId] = useState<string>();
-  const [networkTagsAgent, setNetworkTagsAgent] = useState<NamedAgent>();
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -2919,9 +2880,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const networksByAgent = useMemo(
     () => indexAgentNetworks(networks),
     [networks],
-  );
-  const detailsNetwork = networks.find(
-    ({ agent_network_id }) => agent_network_id === networkDetailsId,
   );
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
@@ -4200,8 +4158,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       onAgentActivity={agentOrganization.recordActivity}
                       agentAppearances={agentAppearances}
                       onAgentAppearance={handleAgentAppearance}
-                      networks={networks}
-                      onEditNetworkTags={setNetworkTagsAgent}
                       onClose={() => {
                         unmountWorkspace(workspace);
                         if (isNarrow) setMobileList(true);
@@ -4246,25 +4202,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onClose={() => startFresh(undefined)}
         />
       )}
-      {networkTagsAgent && networkDirectory && (
-        <AgentNetworkTagsEditor
-          agent={networkTagsAgent}
-          directory={networkDirectory}
-          onClose={() => setNetworkTagsAgent(undefined)}
-          onOpenNetwork={(network) =>
-            setNetworkDetailsId(network.agent_network_id)
-          }
-        />
-      )}
-      <AgentNetworkDetailsModal
-        network={detailsNetwork}
-        networks={networkDirectory?.networks}
-        onSelectNetwork={(network) =>
-          setNetworkDetailsId(network.agent_network_id)
-        }
-        onClose={() => setNetworkDetailsId(undefined)}
-        onChanged={refreshAgentNetworks}
-      />
     </main>
   );
 }
