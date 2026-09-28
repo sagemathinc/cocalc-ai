@@ -6,6 +6,77 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Narrowed candidate deployment and smoke test, 2026-09-28
+
+Candidate: `498c97703a52bef73228d95528034d2c6273e842`, private implementation
+PR #2. The distributed read-admission work is excluded and remains in private
+draft PR #1. The revised current-PR scope document governs acceptance; older
+sections below are historical evidence, not additional implementation requests.
+
+### Passed
+
+- Full `pnpm build:dev`, project-host bundle, project bundle, and tools bundles
+  completed in `/home/user/cocalc-ai/src`. The three local hubs were restarted.
+- Before deployment, 133 focused CLI/server/project-host tests, the respective
+  TypeScript builds, and frontend lint passed on the candidate. This deployment
+  turn also passed 15 shared scope-editor/API-key/connector frontend tests.
+- Browser-approved CLI bootstrap completed and its cookie-backed session check
+  succeeded against lite2b.cocalc.ai.
+- A live short-lived manual-key fixture using the rebuilt CLI command modules
+  passed project listing, resolving `remote-jupyter-student-validation` by name,
+  and a read-only directory listing (19 entries). The primary-credential fallback
+  was replaced with a throwing stub. Out-of-scope host exchange, exchange after
+  key deletion, and listing after credential-file removal were rejected. The
+  temporary key and local credential directory were removed.
+
+This fixture exercised deployed services and rebuilt CLI modules. It was NOT
+a native agent turn, managed-key issuance, or the installed CLI executable.
+
+### Deployment blocker and exact remaining state
+
+Produced host build `20260927T235741Z-498c97703a52`, project artifact
+`1790553453044` (build `20260927T235723Z-498c97703a52`), and tools artifact
+`1790553534297`. The all-online upgrade requested explicit runtime alignment.
+On `host-2` and `My host`, artifacts installed and project-host/acp-worker reported
+the new build, but observed conat-router/conat-persist processes still reported
+`20260927T184823Z-b4f85a382a41`. Both operations remained at 75%, "Verifying
+managed component alignment", for over eight minutes. `host3` stayed queued.
+An existing restart-only request for the two host-2 components also stayed queued.
+This is an observed rollout blocker; its underlying cause is not established.
+
+The existing disposable project `2cb4b3fe-2ffa-4061-8e45-d1ee239c9535` on host3
+still had CLI SHA-256
+`82b9edd594d0c05c75df573cf1bce3a87d4627a38ff4a516adc49ae58faa847b`, not the rebuilt
+bundle `f4bb058a0d50699be5028e99e726c021b5c06e51b846114df9fa9ecb394cbe7d`.
+Trying to inspect the installed CLI in the existing disposable host-2 project
+`73a126c9-ea27-4d58-a911-a928bcaac074` returned a project RPC 408 timeout.
+No installed-candidate terminal/notebook or native-agent success is claimed.
+
+At 00:14 UTC the following operation records were canceled through the CLI,
+and the upgrade waiter exited. Cancellation is not artifact rollback or proof
+that already dispatched remote work was undone. Installed artifacts and desired
+versions were left intact; the site is a partial, not fully aligned deployment.
+
+- host-2 upgrade: `6c6f69cc-29b5-4d6c-a330-298dc785a60c`.
+- My host upgrade: `828ce00b-8cf5-4b39-a035-bf24da6b0f8a`.
+- host3 queued upgrade: `a8f3d17a-dd34-4823-9ed0-7bf4d7d00bc2`.
+- host-2 queued component restart: `2702d78f-6719-4e31-bab3-165e7f97b033`.
+
+### Next finite acceptance steps
+
+First resolve runtime alignment as a deployment task and verify the actual
+installed CLI/build in the test project. Do not add a deployment subsystem to
+this PR. Then repeat the user's original delta project-list/file-list request
+in a fresh native agent turn. Test a synthetic file read, a denied write with
+viewer access, and a disposable full-runtime file/terminal/notebook round trip.
+Confirm disconnect/revocation denial and unchanged access to the agent's own
+project. Finish the existing shared-editor/help/approval UI checks with human
+testing. The broader finite acceptance checklist remains recorded in the scope
+document; this smoke test does not close its unexercised cases.
+
+No new production implementation was added during this deployment attempt.
+Distributed read admission and unrelated customer features remain deferred.
+
 ## Project-summary admission follow-up, 2026-09-27
 
 Legacy HTTP API-key `projects/get` now uses the same bounded account-home
