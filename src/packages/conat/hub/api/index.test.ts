@@ -32,6 +32,10 @@ describe("hub API response handling", () => {
 describe("hub API argument transforms", () => {
   it.each([
     "check",
+    "resolveChatAlias",
+    "resolvePersonAlias",
+    "getPersonAlias",
+    "setPersonAlias",
     "listPeople",
     "listProjects",
     "listResources",

@@ -20,6 +20,7 @@ import type { SettingsPageType } from "@cocalc/util/types/settings";
 import {
   collaboratorsTargetPath,
   parseCollaboratorsRoute,
+  parsePrivateAliasRoute,
   type ParsedCollaboratorsRoute,
 } from "@cocalc/frontend/collaborators/routing";
 
@@ -92,6 +93,12 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "chats":
+    case "people":
+      return {
+        page: "agents",
+        collaborators: parsePrivateAliasRoute(segments[0], segments.slice(1)),
+      };
     case "collaborators":
       return {
         page: "agents",

@@ -1,6 +1,36 @@
 import { collaboratorsTargetPath, parseCollaboratorsRoute } from "./routing";
 import { getPageUrlPath, parsePageTarget } from "../page-routing";
 
+test.each(["chats", "people"])(
+  "clean %s aliases roundtrip without becoming stable IDs",
+  (kind) => {
+    const parsed = parsePageTarget(`${kind}/Alice-2`);
+    expect(parsed).toEqual({
+      page: "agents",
+      collaborators: {
+        view: kind === "people" ? "people" : "conversations",
+        aliasKind: kind,
+        alias: "alice-2",
+      },
+    });
+    expect(getPageUrlPath(parsed)).toBe(`/${kind}/alice-2`);
+  },
+);
+test.each([
+  "chats/a/b",
+  "people/%2f",
+  "people/%",
+  "chats//alice",
+  "people/..",
+  "people/a%20b",
+])("invalid private URL fails closed: %s", (target) => {
+  const parsed = parsePageTarget(target);
+  expect(parsed).toMatchObject({
+    page: "agents",
+    collaborators: { routeError: expect.any(String) },
+  });
+});
+
 test("project and person scopes roundtrip with a stable resource identity", () => {
   const route = {
     view: "conversations" as const,

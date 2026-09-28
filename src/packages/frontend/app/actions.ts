@@ -275,6 +275,8 @@ export class PageActions extends Actions<PageState> {
                     resourceKind: page.get("collaborators_resource_kind"),
                     resourceId: page.get("collaborators_resource_id"),
                     routeError: page.get("collaborators_route_error"),
+                    alias: page.get("collaborators_alias"),
+                    aliasKind: page.get("collaborators_alias_kind"),
                   }
                 : undefined,
             }),

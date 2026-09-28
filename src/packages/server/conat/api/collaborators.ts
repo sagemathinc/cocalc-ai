@@ -4,6 +4,10 @@
  */
 import { collaboratorsApi } from "@cocalc/server/collaborators/api";
 export const {
+  resolveChatAlias,
+  resolvePersonAlias,
+  getPersonAlias,
+  setPersonAlias,
   stageRelationPage,
   listParticipants,
   listReferences,

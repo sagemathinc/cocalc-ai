@@ -15,6 +15,7 @@ import type { CollaboratorsRoute } from "./workspace-types";
 let mockAccount = "alice";
 let mockProjects = Map();
 let mockSettings = Map();
+const mockAddCollaborators = jest.fn();
 const mockSavePreferences = jest.fn(async (key, value) => {
   mockSettings = mockSettings.set(key, value);
 });
@@ -26,9 +27,15 @@ const mockApi = {
   listResources: jest.fn(),
   getResource: jest.fn(),
   setPersonalState: jest.fn(),
+  getPersonAlias: jest.fn(),
+  setPersonAlias: jest.fn(),
   ensureRoom: jest.fn(),
 };
 jest.mock("./workspace-api", () => ({ boundCollaboratorsApi: () => mockApi }));
+jest.mock("./navigation", () => ({
+  ...jest.requireActual("./navigation"),
+  canonicalizeCollaboratorsAlias: jest.fn(async () => true),
+}));
 jest.mock("@cocalc/frontend/account/avatar/avatar", () => ({
   Avatar: ({ account_id }) => <span data-testid={`avatar-${account_id}`} />,
 }));
@@ -71,10 +78,46 @@ jest.mock("./human-conversation", () => ({
   HumanConversation: () => <textarea aria-label="Human message" />,
 }));
 jest.mock("./add-collaborators", () => ({
-  AddCollaborators: () => <input aria-label="Invite a collaborator" />,
+  AddCollaborators: (props) => {
+    mockAddCollaborators(props);
+    return <input aria-label="Invite a collaborator" />;
+  },
 }));
 jest.mock("@cocalc/frontend/projects/create-project", () => ({
-  NewProjectCreator: () => <div role="dialog" aria-label="Create project" />,
+  NewProjectCreator: ({ onCreated, onClose }) => (
+    <div role="dialog" aria-label="Create project">
+      <button
+        onClick={() => {
+          // The real creator calls both callbacks after successful creation.
+          onCreated("new-project");
+          onClose();
+        }}
+      >
+        Finish creating project
+      </button>
+      <button onClick={onClose}>Cancel project creation</button>
+    </div>
+  ),
+}));
+jest.mock("@cocalc/frontend/projects/select-project", () => ({
+  SelectProject: ({ ariaLabel, onChange, multiple, fullCollaboratorOnly }) => (
+    <>
+      <input
+        aria-label={ariaLabel || "Project"}
+        data-multiple={multiple}
+        data-full-collaborator={fullCollaboratorOnly}
+      />
+      <button
+        onClick={() =>
+          onChange(multiple ? ["geometry"] : "geometry", {
+            label: "Geometry Lab",
+          })
+        }
+      >
+        Geometry Lab
+      </button>
+    </>
+  ),
 }));
 
 const conversation = {
@@ -136,6 +179,10 @@ beforeEach(() => {
   );
   mockApi.listResources.mockResolvedValue(page([conversation]));
   mockApi.getResource.mockResolvedValue(conversation);
+  mockApi.getPersonAlias.mockResolvedValue({ alias: null });
+  mockApi.setPersonAlias.mockImplementation(async ({ alias }) => ({
+    alias: alias || null,
+  }));
 });
 
 beforeAll(() => {
@@ -228,7 +275,7 @@ test("project creation remains available inside the invitation picker", async ()
   expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
   const picker = await screen.findByRole("dialog", {
-    name: "Choose a project to invite to",
+    name: "Invite a person to projects",
   });
   await user.click(
     within(picker).getByRole("button", { name: "Create project" }),
@@ -237,6 +284,44 @@ test("project creation remains available inside the invitation picker", async ()
     await screen.findByRole("dialog", { name: "Create project" }),
   ).toBeVisible();
 });
+
+test.each(["finish", "cancel"])(
+  "invitation selection survives project creation: %s",
+  async (action) => {
+    const user = userEvent.setup();
+    render(<Workspace initial={{ view: "people", projectId: "geometry" }} />);
+    await user.click(
+      screen.getByRole("button", { name: "Invite", exact: true }),
+    );
+    const invitation = await screen.findByRole("dialog", {
+      name: "Invite a person to projects",
+    });
+    await user.click(
+      within(invitation).getByRole("button", { name: "Create project" }),
+    );
+    const creator = await screen.findByRole("dialog", {
+      name: "Create project",
+    });
+    await user.click(
+      within(creator).getByRole("button", {
+        name:
+          action === "finish"
+            ? "Finish creating project"
+            : "Cancel project creation",
+      }),
+    );
+    const returned = await screen.findByRole("dialog", {
+      name: "Invite a person to projects",
+    });
+    expect(mockAddCollaborators).not.toHaveBeenCalled();
+    await user.click(
+      within(returned).getByRole("button", { name: "Choose person" }),
+    );
+    expect(mockAddCollaborators.mock.lastCall[0].project_ids).toEqual(
+      action === "finish" ? ["geometry", "new-project"] : ["geometry"],
+    );
+  },
+);
 
 test("People navigation uses shared projects, but inviting allows the first collaborator", async () => {
   const user = userEvent.setup();
@@ -264,10 +349,13 @@ test("People navigation uses shared projects, but inviting allows the first coll
   );
   await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
   await user.click(screen.getByRole("button", { name: "Invite", exact: true }));
-  await waitFor(() =>
-    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ shared_only: false, limit: 25 }),
-    ),
+  expect(await screen.findByLabelText("Projects to invite to")).toHaveAttribute(
+    "data-full-collaborator",
+    "true",
+  );
+  expect(screen.getByLabelText("Projects to invite to")).toHaveAttribute(
+    "data-multiple",
+    "true",
   );
 });
 
@@ -284,7 +372,7 @@ test.each(["New conversation", "Invite"])(
       />,
     );
     await user.click(screen.getByRole("button", { name, exact: true }));
-    const dialogName = name === "Invite" ? "Invite collaborator" : name;
+    const dialogName = name === "Invite" ? "Invite a person to projects" : name;
     const dialog = await screen.findByRole("dialog", {
       name: dialogName,
       exact: true,
@@ -309,14 +397,25 @@ test("inviting from a person's overview also offers projects not yet shared with
       exact: true,
     }),
   );
-  await waitFor(() =>
-    expect(mockApi.listProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        shared_only: false,
-        person_id: undefined,
-        limit: 25,
-      }),
-    ),
+  expect(await screen.findByLabelText("Projects to invite to")).toHaveAttribute(
+    "data-multiple",
+    "true",
+  );
+  const invitation = screen.getByRole("dialog", {
+    name: "Invite a person to projects",
+  });
+  await user.click(
+    within(invitation).getByRole("button", { name: "Geometry Lab" }),
+  );
+  expect(mockAddCollaborators).not.toHaveBeenCalled();
+  await user.click(
+    within(invitation).getByRole("button", { name: "Choose person" }),
+  );
+  expect(mockAddCollaborators.mock.lastCall[0]).toEqual(
+    expect.objectContaining({
+      project_ids: ["geometry"],
+      initialPerson: expect.objectContaining({ account_id: "bob" }),
+    }),
   );
 });
 
@@ -399,6 +498,29 @@ test("keyboard opens a conversation and restores focus and search on back", asyn
     ).toHaveFocus(),
   );
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
+});
+
+test("conversation heading includes its private alias", async () => {
+  mockApi.getResource.mockResolvedValue({
+    ...conversation,
+    personal: { alias: "team-room" },
+  });
+  render(
+    <Workspace
+      initial={{
+        view: "conversations",
+        projectId: "geometry",
+        resourceId: "office-hours",
+        resourceKind: "conversation",
+      }}
+    />,
+  );
+  expect(
+    await screen.findByRole("heading", {
+      level: 2,
+      name: /@team-room.*Office hours/,
+    }),
+  ).toBeVisible();
 });
 
 test("open conversation has compact navigation, accessible audience and project settings", async () => {

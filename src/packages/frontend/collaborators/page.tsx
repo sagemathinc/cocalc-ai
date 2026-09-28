@@ -28,6 +28,11 @@ import {
 } from "./use-directory-revision";
 import { useDirectory, useDirectorySearch } from "./use-directory";
 import { DirectoryResults } from "./directory-results";
+import { DirectorySplitView } from "./directory-split-view";
+import {
+  canonicalizeCollaboratorsAlias,
+  withCollaboratorsAlias,
+} from "./navigation";
 import { ProjectList } from "./project-pins";
 import { PEOPLE_VIEWS as VIEWS, WorkspaceToolbar } from "./workspace-toolbar";
 import { DirectoryPicker } from "./directory-picker";
@@ -36,7 +41,6 @@ import { DirectoryCollection } from "./directory-collection";
 import { Overview } from "./overview";
 import { ResourceDetail } from "./resource-detail";
 import { NewConversation } from "./new-conversation";
-import { CollaboratorsModal } from "./modal";
 import type {
   CollaboratorsPageProps,
   CollaboratorsRoute,
@@ -50,8 +54,8 @@ export type {
   CollaboratorsView,
 } from "./workspace-types";
 
-const AddCollaborators = lazy(async () => ({
-  default: (await import("./add-collaborators")).AddCollaborators,
+const InviteProjects = lazy(async () => ({
+  default: (await import("./invite-projects")).InviteProjects,
 }));
 const NewProjectCreator = lazy(async () => ({
   default: (await import("@cocalc/frontend/projects/create-project"))
@@ -125,6 +129,7 @@ function CollaboratorsWorkspace({
   accountId,
   active,
   navigation,
+  headerActions,
   view = "conversations",
   projectId,
   personId,
@@ -144,10 +149,9 @@ function CollaboratorsWorkspace({
   const [projectView, setProjectView] = useState<ProjectView>("recent");
   const [pinRevision, setPinRevision] = useState(0);
   const pinFocus = useRef<string | undefined>(undefined);
-  const [picker, setPicker] = useState<
-    "project" | "person" | "invite" | "conversation"
-  >();
-  const [inviteProject, setInviteProject] = useState<string>();
+  const [picker, setPicker] = useState<"project" | "person" | "conversation">();
+  const [inviteProjects, setInviteProjects] = useState<string[]>();
+  const inviteSelection = useRef<string[]>([]);
   const [createProject, setCreateProject] = useState<
     "invite" | "conversation"
   >();
@@ -156,6 +160,9 @@ function CollaboratorsWorkspace({
   const [settingsProject, setSettingsProject] = useState<string>();
   const [createdResourceId, setCreatedResourceId] = useState<string>();
   const toolbarId = useId();
+  const [panelControls, setPanelControls] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [conversationToolbar, setConversationToolbar] =
     useState<HTMLDivElement | null>(null);
   const conversationOpen = !!resourceId && resourceKind === "conversation";
@@ -288,18 +295,20 @@ function CollaboratorsWorkspace({
     event: MouseEvent<HTMLElement>,
   ) {
     navigate(
-      {
-        ...route,
-        projectId: resource.project_id,
-        resourceKind: resource.kind,
-        resourceId: resource.resource_id,
-      },
+      withCollaboratorsAlias(
+        {
+          ...route,
+          projectId: resource.project_id,
+          resourceKind: resource.kind,
+          resourceId: resource.resource_id,
+        },
+        resource.personal?.alias,
+      ),
       event,
     );
   }
   function invite() {
-    if (projectId) setInviteProject(projectId);
-    else setPicker("invite");
+    setInviteProjects(projectId ? [projectId] : []);
   }
   function newConversation() {
     // Always offer shared projects for a person's overview, never a private DM.
@@ -344,8 +353,10 @@ function CollaboratorsWorkspace({
         className="collaborators-header"
         style={{ borderBottom: `1px solid ${UI_COLORS.border}` }}
       >
-        {navigation}
-        <h1>People</h1>
+        <div className="collaborators-heading">
+          {navigation}
+          <h1>People</h1>
+        </div>
         <WorkspaceToolbar
           compact={conversationOpen}
           controlsTarget={conversationOpen ? conversationToolbar : null}
@@ -381,6 +392,13 @@ function CollaboratorsWorkspace({
           onClearPerson={() => filter({ view, projectId: listProjectId })}
           onAction={view === "conversations" ? newConversation : invite}
         />
+        <div className="collaborators-header-actions">
+          <div
+            className="collaborators-panel-controls"
+            ref={setPanelControls}
+          />
+          {headerActions}
+        </div>
         {preferences.error && (
           <Alert
             role="alert"
@@ -415,12 +433,12 @@ function CollaboratorsWorkspace({
           onClose={() => setError("")}
         />
       )}
-      <div
-        className="collaborators-columns"
-        data-detail={!!selection}
-        role="tabpanel"
+      <DirectorySplitView
+        hasDetail={!!selection}
+        selectionKey={selection}
+        controlsTarget={panelControls}
         id={`${toolbarId}-panel-${view}`}
-        aria-labelledby={`${toolbarId}-tab-${view}`}
+        labelledBy={`${toolbarId}-tab-${view}`}
       >
         <div
           className="collaborators-results"
@@ -574,6 +592,13 @@ function CollaboratorsWorkspace({
                     resource_id: resourceId,
                   }}
                   onChange={result.refresh}
+                  onAlias={(alias) => {
+                    void canonicalizeCollaboratorsAlias(
+                      accountId,
+                      route,
+                      alias,
+                    );
+                  }}
                   onBack={back}
                   onManageProject={(id) => void manageProject(id)}
                   projectTitle={
@@ -601,29 +626,34 @@ function CollaboratorsWorkspace({
                   onResource={openResource}
                   onNewConversation={newConversation}
                   onInvite={invite}
+                  onPersonAliasChange={(alias) => {
+                    void canonicalizeCollaboratorsAlias(
+                      accountId,
+                      route,
+                      alias,
+                    );
+                  }}
                   onManageProject={(id) => void manageProject(id)}
                 />
               ))}
           </div>
         )}
-      </div>
+      </DirectorySplitView>
       {active && picker && (
         <DirectoryPicker
           api={api}
           kind={picker === "person" ? "person" : "project"}
-          sharedOnly={picker !== "invite"}
+          sharedOnly
           title={
-            picker === "invite"
-              ? "Choose a project to invite to"
-              : picker === "conversation"
-                ? "Choose a project for the conversation"
-                : `Filter by ${picker}`
+            picker === "conversation"
+              ? "Choose a project for the conversation"
+              : `Filter by ${picker}`
           }
           projectId={projectId}
-          personId={picker === "invite" ? undefined : personId}
+          personId={personId}
           onClose={() => setPicker(undefined)}
           onCreateProject={
-            picker === "invite" || picker === "conversation"
+            picker === "conversation"
               ? () => {
                   setCreateProject(picker);
                   setPicker(undefined);
@@ -632,8 +662,7 @@ function CollaboratorsWorkspace({
           }
           onSelect={(item) => {
             setFilterNames((names) => ({ ...names, [item.id]: item.title }));
-            if (picker === "invite") setInviteProject(item.id);
-            else if (picker === "conversation") setNewProject(item);
+            if (picker === "conversation") setNewProject(item);
             else
               filter({
                 ...route,
@@ -652,43 +681,49 @@ function CollaboratorsWorkspace({
         open={active && !!settingsProject}
         onClose={() => setSettingsProject(undefined)}
       />
-      {active && inviteProject && (
-        <CollaboratorsModal
-          open
-          title="Invite collaborator"
-          onCancel={() => setInviteProject(undefined)}
-          footer={
-            <Button onClick={() => setInviteProject(undefined)}>Close</Button>
-          }
+      {active && inviteProjects && (
+        <Suspense
+          fallback={<p role="status">Loading project invitations...</p>}
         >
-          <KeyboardBoundary boundary="collaborators-invite">
-            <p>
-              Invitations grant access only to this project, not your account or
-              other projects.
-            </p>
-            <Suspense
-              fallback={<p role="status">Loading project invitations...</p>}
-            >
-              <AddCollaborators
-                project_id={inviteProject}
-                where="collaborators"
-                autoFocus
-              />
-            </Suspense>
-          </KeyboardBoundary>
-        </CollaboratorsModal>
+          <InviteProjects
+            initialProjectIds={inviteProjects}
+            person={
+              personId
+                ? {
+                    account_id: personId,
+                    display_name: filterNames[personId] || "Collaborator",
+                  }
+                : undefined
+            }
+            onClose={() => setInviteProjects(undefined)}
+            onCreateProject={(selected) => {
+              inviteSelection.current = selected;
+              setInviteProjects(undefined);
+              setCreateProject("invite");
+            }}
+          />
+        </Suspense>
       )}
       {active && createProject && (
         <Suspense fallback={<p role="status">Loading project creation...</p>}>
           <NewProjectCreator
             default_value=""
             open
-            onClose={() => setCreateProject(undefined)}
+            onClose={() => {
+              if (createProject === "invite")
+                setInviteProjects(inviteSelection.current);
+              setCreateProject(undefined);
+            }}
             onCreated={(id) => {
               setCreateProject(undefined);
               if (createProject === "conversation")
                 setNewProject({ id, title: "the new project" });
-              else setInviteProject(id);
+              else {
+                // The creator calls onClose after onCreated; both must restore
+                // the selection that includes the newly created project.
+                inviteSelection.current = [...inviteSelection.current, id];
+                setInviteProjects(inviteSelection.current);
+              }
               result.refresh();
             }}
           />

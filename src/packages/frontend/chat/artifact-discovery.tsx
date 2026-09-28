@@ -39,7 +39,7 @@ export function ArtifactBrowserButton({
           aria-label="Browse artifacts"
           aria-haspopup="dialog"
           aria-expanded={agentWorkspace ? open : undefined}
-          size={compact ? "small" : undefined}
+          size="small"
           type={compact ? "text" : "default"}
           icon={compact ? <Icon name="files" /> : undefined}
           style={

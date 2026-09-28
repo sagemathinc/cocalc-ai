@@ -57,6 +57,35 @@ async function ingest(sequence = 1, resources = [resource()]) {
   return store.ingest({ snapshot: snapshot(sequence, resources) });
 }
 
+test("private chat aliases reuse local personal state and people cannot invent membership", async () => {
+  await ingest();
+  await store.api.setPersonalState({
+    ...local,
+    kind: "conversation",
+    resource_id: "thread-a",
+    patch: { alias: "weekly" },
+  });
+  await expect(
+    store.api.resolveChatAlias({ account_id, alias: "Weekly" }),
+  ).resolves.toMatchObject({ resource_id: "thread-a" });
+  await expect(
+    store.api.resolveChatAlias({ account_id, alias: "missing" }),
+  ).resolves.toBeNull();
+  await expect(
+    store.api.resolveChatAlias({ account_id: "other", alias: "weekly" }),
+  ).rejects.toThrow();
+  await expect(
+    store.api.resolvePersonAlias({ account_id, alias: "alice" }),
+  ).resolves.toBeNull();
+  await expect(
+    store.api.setPersonAlias({
+      account_id,
+      person_id: "other",
+      alias: "alice",
+    }),
+  ).rejects.toThrow("not accessible");
+});
+
 // These small fixtures explicitly describe the whole participant set. Runtime
 // producers must derive it from full history, never from the preview array.
 async function ingestCompleteRelations(

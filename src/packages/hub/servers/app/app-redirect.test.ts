@@ -67,6 +67,12 @@ describe("app redirect routes", () => {
 
   it.each([
     "/collaborators",
+    "/chats",
+    "/chats/reviewer",
+    "/chats/reviewer?view=grid",
+    "/people",
+    "/people/alice",
+    "/people/alice?view=grid",
     "/home",
     "/home/",
     "/collaborators/",

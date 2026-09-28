@@ -37,6 +37,7 @@ export function ResourceDetail({
   awaitingIndex = false,
   onManageProject,
   projectTitle,
+  onAlias,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -46,6 +47,7 @@ export function ResourceDetail({
   awaitingIndex?: boolean;
   onManageProject?: (projectId: string) => void;
   projectTitle?: string;
+  onAlias?: (alias: string | null) => void;
 }) {
   const [showSource, setShowSource] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
@@ -69,6 +71,15 @@ export function ResourceDetail({
     true,
     true,
   );
+  const resource = result.page?.items[0];
+  const aliasCallback = useRef(onAlias);
+  aliasCallback.current = onAlias;
+  const hasChat =
+    resource?.kind === "conversation" || resource?.kind === "agent";
+  const alias = resource?.personal?.alias ?? null;
+  useEffect(() => {
+    if (hasChat) aliasCallback.current?.(alias);
+  }, [hasChat, alias]);
   if (result.error)
     return (
       <>
@@ -84,7 +95,6 @@ export function ResourceDetail({
         />
       </>
     );
-  const resource = result.page?.items[0];
   const projectName = resource?.project_title || projectTitle || "Project";
   if (!resource)
     return (
@@ -123,6 +133,11 @@ export function ResourceDetail({
           />
           <div className="collaborators-conversation-heading">
             <h2 ref={heading} tabIndex={-1}>
+              {resource.personal?.alias && (
+                <span style={{ color: UI_COLORS.link }}>
+                  @{resource.personal.alias} &middot;{" "}
+                </span>
+              )}
               {resource.title || "Untitled conversation"}
             </h2>
             <div className="collaborators-conversation-context">
@@ -163,7 +178,10 @@ export function ResourceDetail({
                 compact
                 api={api}
                 resource={resource}
-                onChange={onChange}
+                onChange={() => {
+                  result.refresh();
+                  onChange();
+                }}
                 onShare={share}
               />
             )}

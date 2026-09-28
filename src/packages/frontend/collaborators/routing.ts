@@ -1,8 +1,32 @@
 import type { CollaboratorsRoute } from "./workspace-types";
+import {
+  normalizePrivateAlias,
+  privateAliasPath,
+} from "@cocalc/util/private-alias";
+import type { PrivateAliasKind } from "@cocalc/util/private-alias";
 
 export type ParsedCollaboratorsRoute = Partial<CollaboratorsRoute> & {
   routeError?: string;
 };
+
+export function parsePrivateAliasRoute(
+  kind: PrivateAliasKind,
+  parts: string[],
+): ParsedCollaboratorsRoute {
+  const view = kind === "people" ? "people" : "conversations";
+  if (parts.length === 0 || (parts.length === 1 && !parts[0]))
+    return { view, aliasKind: kind };
+  try {
+    if (parts.length !== 1) throw Error();
+    return {
+      view,
+      aliasKind: kind,
+      alias: normalizePrivateAlias(decodeURIComponent(parts[0])),
+    };
+  } catch {
+    return { view, routeError: "This private alias address is not valid." };
+  }
+}
 
 export function parseCollaboratorsRoute(
   parts: string[],
@@ -53,6 +77,11 @@ export function parseCollaboratorsRoute(
 export function collaboratorsTargetPath(
   route: ParsedCollaboratorsRoute,
 ): string {
+  if (route.aliasKind) {
+    return route.alias
+      ? privateAliasPath(route.aliasKind, route.alias).slice(1)
+      : route.aliasKind;
+  }
   if (route.routeError) return "collaborators/invalid";
   const parts = ["collaborators", route.view ?? "conversations"];
   if (route.projectId) parts.push("project", route.projectId);

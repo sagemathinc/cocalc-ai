@@ -11,6 +11,10 @@ import { refreshPersonalLibrary } from "@cocalc/frontend/agents/personal-library
 export type DirectoryApi = Pick<
   CollaboratorsApi,
   | "listPeople"
+  | "resolveChatAlias"
+  | "resolvePersonAlias"
+  | "getPersonAlias"
+  | "setPersonAlias"
   | "listProjects"
   | "setProjectPinned"
   | "listResources"
@@ -43,6 +47,22 @@ export function boundCollaboratorsApi(accountId: string): DirectoryApi {
     return value;
   }
   return {
+    resolveChatAlias: (opts) =>
+      call((service) =>
+        service.resolveChatAlias({ ...opts, account_id: accountId }),
+      ),
+    resolvePersonAlias: (opts) =>
+      call((service) =>
+        service.resolvePersonAlias({ ...opts, account_id: accountId }),
+      ),
+    getPersonAlias: (opts) =>
+      call((service) =>
+        service.getPersonAlias({ ...opts, account_id: accountId }),
+      ),
+    setPersonAlias: (opts) =>
+      call((service) =>
+        service.setPersonAlias({ ...opts, account_id: accountId }),
+      ),
     check: (opts) =>
       call((service) => service.check({ ...opts, account_id: accountId })),
     listPeople: (opts) =>

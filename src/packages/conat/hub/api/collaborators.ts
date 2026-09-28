@@ -33,6 +33,24 @@ import type {
 } from "@cocalc/util/collaborators";
 
 export interface CollaboratorsApi {
+  /** Private account-home names; returned targets still require ordinary access. */
+  resolveChatAlias(opts: {
+    account_id?: string;
+    alias: string;
+  }): Promise<CollaborationResource | null>;
+  resolvePersonAlias(opts: {
+    account_id?: string;
+    alias: string;
+  }): Promise<CollaborationPerson | null>;
+  getPersonAlias(opts: {
+    account_id?: string;
+    person_id: string;
+  }): Promise<{ alias: string | null }>;
+  setPersonAlias(opts: {
+    account_id?: string;
+    person_id: string;
+    alias: string;
+  }): Promise<{ alias: string | null }>;
   /** Existing pointer only; never creates a room or starts compute. */
   getRoom(opts: {
     project_id: string;
@@ -179,6 +197,10 @@ export interface CollaboratorsApi {
 }
 
 export const collaborators = {
+  resolveChatAlias: authFirstRequireAccount,
+  resolvePersonAlias: authFirstRequireAccount,
+  getPersonAlias: authFirstRequireAccount,
+  setPersonAlias: authFirstRequireAccount,
   getRoom: authFirstRequireAccount,
   replaceRoomForHost: authFirstRequireHost,
   stageRelationPage: authFirstRequireHost,

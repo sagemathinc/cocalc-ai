@@ -19,6 +19,14 @@ const mentionsActions = {
 const webappClient = {
   is_signed_in: jest.fn(() => false),
 };
+const mockResolvePersonAlias = jest.fn();
+const mockResolveChatAlias = jest.fn();
+jest.mock("./collaborators/workspace-api", () => ({
+  boundCollaboratorsApi: () => ({
+    resolvePersonAlias: mockResolvePersonAlias,
+    resolveChatAlias: mockResolveChatAlias,
+  }),
+}));
 
 const accountStore = {
   get: jest.fn((key: string) => {
@@ -96,12 +104,66 @@ import {
   set_url,
   set_url_with_search,
   update_params,
+  replace_url,
 } from "./history";
 import { authViewUrl, signedInRedirectUrl } from "./auth/util";
 import { getPageUrlPath, parsePageTarget } from "./page-routing";
 import { closedCollaboratorsState } from "./collaborators/navigation";
 
 describe("load_target", () => {
+  it("canonical alias updates replace the URL without loading a target or losing parameters", () => {
+    mockRedux.getStore.mockImplementation((name: string) =>
+      name === "page" ? { get: () => undefined } : accountStore,
+    );
+    window.history.replaceState(
+      {},
+      "",
+      "/collaborators/people/person/id?view=grid#details",
+    );
+    const push = jest.spyOn(window.history, "pushState");
+    const length = window.history.length;
+    replace_url("/people/alice");
+    expect(location.pathname + location.search + location.hash).toBe(
+      "/people/alice?view=grid#details",
+    );
+    expect(window.history.length).toBe(length);
+    expect(push).not.toHaveBeenCalled();
+    expect(pageActions.setState).not.toHaveBeenCalled();
+    push.mockRestore();
+  });
+  it("keeps a private alias URL through login and resolves it to a stable ID without a history push", async () => {
+    const path = "/people/alice?view=grid#details";
+    window.history.replaceState({}, "", path);
+    accountStore.get.mockReturnValue(false);
+    load_target(path, false, false);
+    expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
+      "account",
+      false,
+    );
+    expect(mockResolvePersonAlias).not.toHaveBeenCalled();
+    expect(location.pathname + location.search + location.hash).toBe(path);
+    accountStore.get.mockImplementation((key) =>
+      key === "account_id" ? "signed-in-account" : key === "is_logged_in",
+    );
+    mockResolvePersonAlias.mockResolvedValue({
+      account_id: "stable-person-id",
+    });
+    const push = jest.spyOn(window.history, "pushState");
+    load_target(path, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pageActions.setState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        collaborators_person_id: "stable-person-id",
+        collaborators_alias: "alice",
+        collaborators_alias_kind: "people",
+      }),
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(location.pathname + location.search + location.hash).toBe(path);
+    push.mockRestore();
+  });
   it("preserves the active agent across Collaborators browsing and back navigation", () => {
     const state: Record<string, unknown> = {};
     pageActions.setState.mockImplementation((update) =>

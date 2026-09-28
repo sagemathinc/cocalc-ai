@@ -60,6 +60,7 @@ interface Props {
   onShowConversation?: (hit: AgentSearchHit) => Promise<void>;
   onClose?: () => void;
   navigation?: ReactNode;
+  headerActions?: ReactNode;
   /** artifactIdentity(hit); applied on return, without changing filters. */
   selectedArtifactIdentity?: string;
 }
@@ -77,6 +78,7 @@ function AccountArtifactBrowser({
   onShowConversation,
   onClose,
   navigation,
+  headerActions,
   selectedArtifactIdentity,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -265,6 +267,7 @@ function AccountArtifactBrowser({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          {headerActions}
         </header>
         <div
           style={{

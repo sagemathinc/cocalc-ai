@@ -48,6 +48,10 @@ The URI schema handled by the single page app is as follows:
 */
 
 import { join } from "path";
+import {
+  cancelAliasNavigation,
+  resolveCollaboratorsAlias,
+} from "./collaborators/navigation";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -119,10 +123,16 @@ export function set_url(url: string, hash?: string) {
   set_url_with_search(url, undefined, hash);
 }
 
+/** Metadata-only URL canonicalization; preserve Back/Forward history. */
+export function replace_url(url: string, hash?: string) {
+  set_url_with_search(url, undefined, hash, true);
+}
+
 export function set_url_with_search(
   url: string,
   search?: string,
   hash?: string,
+  replace = false,
 ) {
   if (IS_EMBEDDED) {
     // no need to mess with url in embedded mode.
@@ -135,7 +145,9 @@ export function set_url_with_search(
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   // Empty artifact segments are invalid selections, not redundant separators.
   // path.join would turn /artifacts//project/entry into a different, valid route.
-  const full_url = /^\/?(?:artifacts|collaborators)(?:\/|$)/.test(url)
+  const full_url = /^\/?(?:artifacts|collaborators|chats|people)(?:\/|$)/.test(
+    url,
+  )
     ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
     : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
@@ -143,7 +155,8 @@ export function set_url_with_search(
     // Rewriting that URL would push a duplicate and discard Forward history.
     return;
   }
-  history.pushState({}, "", full_url);
+  if (replace) history.replaceState({}, "", full_url);
+  else history.pushState({}, "", full_url);
   consumeGitReviewOnlyNavigation(new URL(location.href));
   window.dispatchEvent(new Event(APP_NAVIGATION_EVENT));
 }
@@ -154,6 +167,7 @@ export function load_target(
   ignore_kiosk: boolean = false,
   change_history: boolean = true,
 ) {
+  const aliasRevision = cancelAliasNavigation();
   if (target?.[0] == "/") {
     target = target.slice(1);
   }
@@ -196,7 +210,13 @@ export function load_target(
         collaborators_person_id: parsed.collaborators?.personId,
         collaborators_resource_kind: parsed.collaborators?.resourceKind,
         collaborators_resource_id: parsed.collaborators?.resourceId,
-        collaborators_route_error: parsed.collaborators?.routeError,
+        collaborators_alias: parsed.collaborators?.alias,
+        collaborators_alias_kind: parsed.collaborators?.aliasKind,
+        collaborators_route_error:
+          parsed.collaborators?.routeError ??
+          (parsed.collaborators?.alias
+            ? "Resolving private alias..."
+            : undefined),
         // Library overlays the workspace; keep its selected conversation.
         ...(!parsed.library && !parsed.collaborators
           ? {
@@ -209,6 +229,8 @@ export function load_target(
           : {}),
       });
       redux.getActions("page").set_active_tab("agents", change_history);
+      if (parsed.collaborators?.alias)
+        void resolveCollaboratorsAlias(parsed.collaborators, aliasRevision);
       break;
 
     case "project": {

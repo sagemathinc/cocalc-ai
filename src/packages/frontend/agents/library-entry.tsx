@@ -18,6 +18,7 @@ interface Props {
   onBack: () => void;
   onShowConversation: (target: ForeignArtifactTarget) => Promise<void>;
   navigation?: ReactNode;
+  headerActions?: ReactNode;
 }
 
 export function LibraryEntry(props: Props) {
@@ -38,6 +39,7 @@ function ResolvedLibraryEntry({
   onBack,
   onShowConversation,
   navigation,
+  headerActions,
 }: Props) {
   const navigationIntent = useNavigationIntent(true, accountId);
   const back = () => {
@@ -123,6 +125,7 @@ function ResolvedLibraryEntry({
   return (
     <LibraryArtifactView
       navigation={navigation}
+      headerActions={headerActions}
       target={target}
       artifactName={
         names.find(

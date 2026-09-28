@@ -7,6 +7,7 @@ import { chmodSync, closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import { normalizePrivateAlias } from "@cocalc/util/private-alias";
 import type { PersonalLibraryApi } from "@cocalc/conat/hub/api/personal-library";
 import { LibraryCompatibility } from "./library";
 import type { ClearArtifactAlias } from "./library-store";
@@ -292,6 +293,20 @@ export class LiteCollaborators {
       },
     });
     this.api = {
+      resolveChatAlias: (opts) => this.resolveChatAlias(opts),
+      resolvePersonAlias: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        normalizePrivateAlias(opts.alias);
+        return null; // Lite has no other human accounts in its People directory.
+      },
+      getPersonAlias: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        throw Error("Person is not accessible");
+      },
+      setPersonAlias: async (opts) => {
+        await this.assertHuman(opts.account_id);
+        throw Error("Person is not accessible");
+      },
       stageRelationPage: localOnly,
       listParticipants: (opts) => this.listParticipants(opts),
       listReferences: (opts) => this.listReferences(opts),
@@ -1289,6 +1304,27 @@ export class LiteCollaborators {
         ? "following"
         : "participation";
     return result;
+  }
+
+  async resolveChatAlias(
+    opts: Parameters<CollaboratorsApi["resolveChatAlias"]>[0],
+  ): Promise<CollaborationResource | null> {
+    await this.assertHuman(opts.account_id);
+    const alias = normalizePrivateAlias(opts.alias);
+    const rows = this.db
+      .prepare(
+        `SELECT r.kind,r.resource_id
+      FROM collaboration_personal s JOIN collaboration_resources r USING(resource_key)
+      WHERE lower(trim(s.alias))=? AND r.kind IN ('conversation','agent') AND r.deleted=0 LIMIT 2`,
+      )
+      .all(alias);
+    if (rows.length !== 1) return null;
+    return this.getResource({
+      account_id: opts.account_id,
+      project_id: this.options.project_id,
+      kind: rows[0].kind as "conversation" | "agent",
+      resource_id: rows[0].resource_id as string,
+    });
   }
 
   async getResource(

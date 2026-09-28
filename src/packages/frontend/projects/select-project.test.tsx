@@ -6,8 +6,38 @@ import { SelectProject } from "./select-project";
 
 jest.mock("antd", () => {
   const actual = jest.requireActual("antd");
-  const Select = ({ children }: { children: React.ReactNode }) => (
-    <select>{children}</select>
+  const Select = ({
+    children,
+    onSearch,
+    mode,
+    value,
+    disabled,
+    onChange,
+    ...props
+  }: any) => (
+    <>
+      <input
+        aria-label="Project search"
+        onChange={(event) => onSearch(event.target.value)}
+      />
+      <select
+        aria-label={props["aria-label"]}
+        multiple={mode === "multiple"}
+        value={value}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(
+            mode === "multiple"
+              ? Array.from(event.target.selectedOptions).map(
+                  (option: any) => option.value,
+                )
+              : event.target.value,
+          )
+        }
+      >
+        {children}
+      </select>
+    </>
   );
   Select.Option = ({
     children,
@@ -96,5 +126,67 @@ describe("SelectProject", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Hidden" }));
     expect(screen.getByText("Hidden Project")).toBeTruthy();
     expect(screen.queryByText("Owner Project")).toBeNull();
+  });
+
+  it("does not allow prioritized or selected viewers to bypass full access restrictions", () => {
+    render(
+      <SelectProject
+        multiple
+        fullCollaboratorOnly
+        at_top={["viewer-project"]}
+        value={["viewer-project", "hidden-project"]}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(screen.queryByText("Viewer Project")).toBeNull();
+    expect(screen.getByText("Hidden Project")).toBeTruthy();
+  });
+
+  it("bounds results after search, allowing projects beyond the first page to be found", () => {
+    render(<SelectProject maxResults={1} onChange={jest.fn()} />);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Showing 1 matches");
+    fireEvent.change(screen.getByRole("textbox", { name: "Project search" }), {
+      target: { value: "Collaborator" },
+    });
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Collaborator Project"]);
+  });
+
+  it("uses only the server-filtered project page and rejects viewer or unknown roles", () => {
+    render(
+      <SelectProject
+        fullCollaboratorOnly
+        projects={[
+          { id: "remote", title: "Remote shared", group: "collaborator" },
+          { id: "viewer", title: "Remote viewer", group: "viewer" },
+          { id: "unknown", title: "Unknown role" },
+        ]}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Remote shared"]);
+    expect(screen.queryByRole("checkbox", { name: "Hidden" })).toBeNull();
+    expect(screen.queryByText("Owner Project")).toBeNull();
+  });
+
+  it("retains multiple selected labels across hidden toggles and searches", () => {
+    render(
+      <SelectProject
+        multiple
+        value={["owner-project", "collab-project"]}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hidden" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Project search" }), {
+      target: { value: "Hidden" },
+    });
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Hidden Project", "Owner Project", "Collaborator Project"]);
   });
 });

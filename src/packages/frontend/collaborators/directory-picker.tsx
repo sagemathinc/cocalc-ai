@@ -13,6 +13,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DirectoryResults } from "./directory-results";
 import { CollaboratorsModal } from "./modal";
 import { useDirectory, useDirectorySearch } from "./use-directory";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 
 export function DirectoryPicker({
   api,
@@ -90,42 +91,71 @@ export function DirectoryPicker({
           cancel();
         }}
       >
-        <label htmlFor={id}>
-          Search {kind === "project" ? "projects" : "people"}
-        </label>
-        <Input
-          id={id}
-          autoFocus
-          value={input}
-          maxLength={200}
-          onChange={(e) => setInput(e.target.value)}
-        />
+        {kind === "person" && (
+          <>
+            <label htmlFor={id}>Search people</label>
+            <Input
+              id={id}
+              autoFocus
+              value={input}
+              maxLength={200}
+              onChange={(e) => setInput(e.target.value)}
+            />
+          </>
+        )}
+        {kind === "project" && (
+          <SelectProject
+            ariaLabel="Search projects"
+            autoFocus
+            fullCollaboratorOnly
+            maxResults={25}
+            onSearch={(value) => setInput(value.slice(0, 200))}
+            projects={(
+              (result.page?.items ?? []) as CollaborationProject[]
+            ).map((project) => ({
+              id: project.project_id,
+              title: project.title || "Untitled",
+              group: project.role,
+            }))}
+            onChange={(id) => {
+              const item = (
+                result.page?.items as CollaborationProject[] | undefined
+              )?.find((project) => project.project_id === id);
+              if (!item) return;
+              onSelect({ id, title: item.title });
+              restoreFocus();
+            }}
+          />
+        )}
         <DirectoryResults
           result={result}
           label={kind === "project" ? "Projects" : "People"}
         >
-          {(items) => (
-            <ul className="collaborators-list">
-              {items.map((item) => {
-                const id =
-                  "project_id" in item ? item.project_id : item.account_id;
-                const title = "title" in item ? item.title : item.display_name;
-                return (
-                  <li key={id}>
-                    <Button
-                      block
-                      onClick={() => {
-                        onSelect({ id, title });
-                        restoreFocus();
-                      }}
-                    >
-                      {title || "Untitled"}
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          {(items) =>
+            kind === "project" ? null : (
+              <ul className="collaborators-list">
+                {items.map((item) => {
+                  const id =
+                    "project_id" in item ? item.project_id : item.account_id;
+                  const title =
+                    "title" in item ? item.title : item.display_name;
+                  return (
+                    <li key={id}>
+                      <Button
+                        block
+                        onClick={() => {
+                          onSelect({ id, title });
+                          restoreFocus();
+                        }}
+                      >
+                        {title || "Untitled"}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          }
         </DirectoryResults>
       </KeyboardBoundary>
     </CollaboratorsModal>

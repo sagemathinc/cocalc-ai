@@ -10,6 +10,8 @@ export const APP_ROUTES = new Set([
   "home",
   "artifacts",
   "collaborators",
+  "chats",
+  "people",
   "app-docs",
   "file-use",
   "help",

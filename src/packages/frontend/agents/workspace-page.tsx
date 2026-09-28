@@ -113,7 +113,7 @@ import { chooseAutomaticProjectRootfs } from "@cocalc/frontend/projects/create-p
 import { chooseOnboardingRootfs } from "@cocalc/frontend/projects/onboarding/rootfs";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
-import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
+import { HomeWorkspaceNavigation as AgentsWorkspaceNavigation } from "@cocalc/frontend/app/home-workspace-navigation";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   useEmailVerificationRequired,
@@ -2128,34 +2128,6 @@ function AgentProjectContext({
   );
 }
 
-function AgentsWorkspaceNavigation({
-  onOpenInProject,
-  onOpenTerminal,
-  foregroundColor,
-  workspaceItems,
-  onOpenDocs,
-}: {
-  onOpenInProject?: () => void;
-  onOpenTerminal?: () => void;
-  foregroundColor?: string;
-  workspaceItems?: import("antd").MenuProps["items"];
-  onOpenDocs?: () => void;
-} = {}) {
-  const { pageStyle } = useAppContext();
-  const accountId = useTypedRedux("account", "account_id");
-  return (
-    <CompactAgentsTopNav
-      isLoggedIn={!!accountId}
-      pageStyle={pageStyle}
-      onOpenInProject={onOpenInProject}
-      onOpenTerminal={onOpenTerminal}
-      foregroundColor={foregroundColor}
-      workspaceItems={workspaceItems}
-      onOpenDocs={onOpenDocs}
-    />
-  );
-}
-
 function AgentWorkspace({
   onCopy,
   onFresh,
@@ -2847,6 +2819,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     "collaborators_enabled",
   );
   const collaboratorsView = useTypedRedux("page", "collaborators_view");
+  const collaboratorsAlias = useTypedRedux("page", "collaborators_alias");
+  const collaboratorsAliasKind = useTypedRedux(
+    "page",
+    "collaborators_alias_kind",
+  );
   const collaboratorsProjectId = useTypedRedux(
     "page",
     "collaborators_project_id",
@@ -2887,6 +2864,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         personId: collaboratorsPersonId,
         resourceKind: collaboratorsResourceKind,
         resourceId: collaboratorsResourceId,
+        alias: collaboratorsAlias,
+        aliasKind: collaboratorsAliasKind,
       },
       error: collaboratorsRouteError,
     };
@@ -4156,6 +4135,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               {...retainedCollaborators.current.route}
               routeError={retainedCollaborators.current.error}
               navigation={libraryNavigationControl()}
+              headerActions={<AgentsWorkspaceNavigation />}
               onNavigate={(route) => {
                 searchNavigation.current++;
                 openCollaborators(route);
@@ -4180,6 +4160,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               (!isNarrow || !mobileList)
             }
             navigation={libraryNavigationControl()}
+            headerActions={<AgentsWorkspaceNavigation />}
             onSelect={openLibraryHit}
             onShowConversation={(result) => openLibraryHit(result, true)}
           />
@@ -4187,6 +4168,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
           <LibraryEntry
             navigation={libraryNavigationControl()}
+            headerActions={<AgentsWorkspaceNavigation />}
             accountId={accountId}
             projectId={libraryProjectId ?? ""}
             entryId={libraryEntryId ?? ""}

@@ -140,7 +140,6 @@ export function CompactAgentsTopNav({
       {isLoggedIn ? (
         <Notification
           active={false}
-          hideWhenEmpty
           pageStyle={pageStyle}
           type="notifications"
         />
@@ -174,6 +173,8 @@ export function CompactAgentsTopNav({
         <span ref={menuTriggerRef}>
           <Button
             aria-label="More navigation"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             type="text"
             style={{
               color: foregroundColor ?? UI_COLORS.text,

@@ -29,6 +29,15 @@ const ownedResource = jest.fn();
 const personal = jest.fn();
 const updatePersonal = jest.fn();
 const projects = jest.fn();
+const people = jest.fn();
+const aliasTarget = jest.fn();
+const readAliases = jest.fn();
+const writeAlias = jest.fn();
+jest.mock("./aliases", () => ({
+  chatAliasTarget: (...args) => aliasTarget(...args),
+  readPersonAliases: (...args) => readAliases(...args),
+  writePersonAlias: (...args) => writeAlias(...args),
+}));
 const readPins = jest.fn();
 const pinsRevision = jest.fn();
 const setPin = jest.fn();
@@ -73,6 +82,10 @@ jest.mock("@cocalc/database/postgres/account-rehome-fence", () => ({
   withAccountRehomeWriteFence: (...args) => pinFence(...args),
 }));
 const remote = {
+  resolveChatAlias: jest.fn(),
+  resolvePersonAlias: jest.fn(),
+  getPersonAlias: jest.fn(),
+  setPersonAlias: jest.fn(),
   getRoom: jest.fn(),
   replaceRoomForHost: jest.fn(),
   stageRelationPage: jest.fn(),
@@ -134,6 +147,7 @@ jest.mock("@cocalc/database/postgres/collaborators-project-page", () => ({
   overlayCollaborationProjectPage: (...a) => overlay(...a),
 }));
 jest.mock("@cocalc/database/postgres/collaborators-discovery", () => ({
+  listCollaborationPeople: (...a) => people(...a),
   listCollaborationResources: (...a) => list(...a),
   listCollaborationProjects: (...a) => projects(...a),
 }));
@@ -637,6 +651,75 @@ test("point lookup goes from account home to resource owner, not the alias owner
     ...target,
     route,
   });
+});
+
+test("chat aliases resolve privately at home then reauthorize with the project owner", async () => {
+  aliasTarget.mockResolvedValue(target);
+  remote.ownedResource.mockResolvedValue({ ...target, title: "chat" });
+  personal.mockResolvedValue({ alias: "weekly" });
+  expect(
+    await collaboratorsApi.resolveChatAlias({ account_id, alias: "weekly" }),
+  ).toMatchObject(target);
+  expect(aliasTarget).toHaveBeenCalledWith(account_id, "weekly");
+  expect(remote.ownedResource).toHaveBeenCalledWith({
+    account_id,
+    ...target,
+    route,
+  });
+  remote.ownedResource.mockRejectedValueOnce(Error("access denied"));
+  await expect(
+    collaboratorsApi.resolveChatAlias({ account_id, alias: "weekly" }),
+  ).rejects.toThrow("access denied");
+  aliasTarget.mockResolvedValue(null);
+  await expect(
+    collaboratorsApi.resolveChatAlias({ account_id, alias: "missing" }),
+  ).resolves.toBeNull();
+});
+
+test.each([
+  "resolveChatAlias",
+  "resolvePersonAlias",
+  "getPersonAlias",
+  "setPersonAlias",
+] as const)(
+  "%s routes to the account home rather than the entry bay",
+  async (method) => {
+    bay = "entry";
+    const opts = { account_id, person_id: randomUUID(), alias: "alice" };
+    await collaboratorsApi[method](opts);
+    expect(remote[method]).toHaveBeenCalledWith({
+      ...opts,
+      route: { bay_id: "home" },
+    });
+    expect(dbQuery).not.toHaveBeenCalled();
+  },
+);
+test("person aliases retain People visibility checks and stale home routes fail closed", async () => {
+  const person_id = randomUUID();
+  readAliases.mockResolvedValue({ [person_id]: "alice" });
+  people.mockResolvedValue({ items: [{ account_id: person_id }] });
+  await expect(
+    collaboratorsApi.resolvePersonAlias({ account_id, alias: "Alice" }),
+  ).resolves.toEqual({ account_id: person_id });
+  expect(people).toHaveBeenCalledWith({ account_id, person_id, limit: 1 });
+  people.mockResolvedValue({ items: [] });
+  await expect(
+    collaboratorsApi.resolvePersonAlias({ account_id, alias: "alice" }),
+  ).resolves.toBeNull();
+  await expect(
+    collaboratorsApi.getPersonAlias({ account_id, person_id }),
+  ).rejects.toThrow("not accessible");
+  await expect(
+    collaboratorsControl.resolvePersonAlias({
+      account_id,
+      alias: "alice",
+      route: { bay_id: "stale" },
+    }),
+  ).rejects.toThrow("stale");
+  settings.mockResolvedValue({ collaborators_enabled: false });
+  await expect(
+    collaboratorsApi.setPersonAlias({ account_id, person_id, alias: "alice" }),
+  ).rejects.toThrow("not enabled");
 });
 test("point lookup keeps identity migration metadata private to the account-home adapter", async () => {
   const requested = { ...target, kind: "agent" as const };

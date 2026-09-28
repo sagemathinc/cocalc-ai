@@ -38,6 +38,8 @@ export interface PageState {
   collaborators_resource_kind?: CollaboratorsRoute["resourceKind"];
   collaborators_resource_id?: string;
   collaborators_route_error?: string;
+  collaborators_alias?: string;
+  collaborators_alias_kind?: CollaboratorsRoute["aliasKind"];
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -97,6 +99,8 @@ export function init_store() {
     collaborators_resource_kind: collaborators?.resourceKind,
     collaborators_resource_id: collaborators?.resourceId,
     collaborators_route_error: collaborators?.routeError,
+    collaborators_alias: collaborators?.alias,
+    collaborators_alias_kind: collaborators?.aliasKind,
     library_open: parsed.page === "agents" && parsed.library === true,
     library_project_id:
       parsed.page === "agents" ? parsed.artifact_project_id : undefined,

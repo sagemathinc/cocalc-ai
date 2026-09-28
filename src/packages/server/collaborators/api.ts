@@ -3,6 +3,12 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { CollaboratorsApi } from "@cocalc/conat/hub/api/collaborators";
+import { normalizePrivateAlias } from "@cocalc/util/private-alias";
+import {
+  chatAliasTarget,
+  readPersonAliases,
+  writePersonAlias,
+} from "./aliases";
 import { stageCollaborationRelationPage } from "@cocalc/database/postgres/collaborators-relations-owner";
 import {
   listCollaborationParticipants,
@@ -182,6 +188,30 @@ async function writer<T>(
 
 /** Public hub calls already have their principal injected by auth-first handlers. */
 export const collaboratorsApi: CollaboratorsApi = {
+  async resolveChatAlias(opts) {
+    await enabled();
+    return home(opts.account_id, (api, route) =>
+      api.resolveChatAlias({ ...opts, route }),
+    );
+  },
+  async resolvePersonAlias(opts) {
+    await enabled();
+    return home(opts.account_id, (api, route) =>
+      api.resolvePersonAlias({ ...opts, route }),
+    );
+  },
+  async getPersonAlias(opts) {
+    await enabled();
+    return home(opts.account_id, (api, route) =>
+      api.getPersonAlias({ ...opts, route }),
+    );
+  },
+  async setPersonAlias(opts) {
+    await enabled();
+    return home(opts.account_id, (api, route) =>
+      api.setPersonAlias({ ...opts, route }),
+    );
+  },
   async stageRelationPage(opts) {
     await enabled();
     uuid(opts.host_id, "authenticated host_id");
@@ -382,6 +412,63 @@ export async function sourcePage(opts: {
 
 /** Trusted fabric only; reject stale destinations rather than forwarding loops. */
 export const collaboratorsControl: InterBayCollaboratorsApi = {
+  async resolveChatAlias(opts) {
+    await checkHome(opts.account_id, opts.route);
+    const target = await chatAliasTarget(opts.account_id!, opts.alias);
+    if (!target) return null;
+    // The alias is a locator only. Always reauthorize at the current owner.
+    return collaboratorsControl.getResource({
+      ...target,
+      account_id: opts.account_id,
+      route: opts.route,
+    });
+  },
+  async resolvePersonAlias(opts) {
+    await checkHome(opts.account_id, opts.route);
+    const alias = normalizePrivateAlias(opts.alias);
+    const aliases = await readPersonAliases(opts.account_id!);
+    const person_id = Object.keys(aliases).find((id) => aliases[id] === alias);
+    if (!person_id) return null;
+    const page = await listCollaborationPeople({
+      account_id: opts.account_id,
+      person_id,
+      limit: 1,
+    });
+    return page.items[0] ?? null;
+  },
+  async getPersonAlias(opts) {
+    await checkHome(opts.account_id, opts.route);
+    uuid(opts.person_id, "person_id");
+    const page = await listCollaborationPeople({
+      account_id: opts.account_id,
+      person_id: opts.person_id,
+      limit: 1,
+    });
+    if (!page.items.length) throw Error("Person is not accessible");
+    return {
+      alias:
+        (await readPersonAliases(opts.account_id!))[
+          opts.person_id.toLowerCase()
+        ] ?? null,
+    };
+  },
+  async setPersonAlias(opts) {
+    await checkHome(opts.account_id, opts.route);
+    return writePersonAlias(
+      opts.account_id!,
+      opts.person_id,
+      opts.alias,
+      async () => {
+        await checkHome(opts.account_id, opts.route);
+        const page = await listCollaborationPeople({
+          account_id: opts.account_id,
+          person_id: opts.person_id,
+          limit: 1,
+        });
+        if (!page.items.length) throw Error("Person is not accessible");
+      },
+    );
+  },
   async stageRelationPage(opts) {
     await enabled();
     return writer(

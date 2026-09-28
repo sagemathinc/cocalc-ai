@@ -32,6 +32,7 @@ export interface LibraryArtifactViewProps {
   onBack: () => void;
   onShowConversation?: (target: ForeignArtifactTarget) => Promise<void> | void;
   navigation?: ReactNode;
+  headerActions?: ReactNode;
 }
 
 /** Navigation and stable URLs belong to the parent, not a chat frame or agent. */
@@ -54,6 +55,7 @@ function LibraryArtifactPage({
   onBack,
   onShowConversation,
   navigation,
+  headerActions,
 }: LibraryArtifactViewProps) {
   const [title, setTitle] = useState<string>();
   const [error, setError] = useState("");
@@ -187,6 +189,7 @@ function LibraryArtifactPage({
           <Button onClick={() => void copyLink()}>Copy link</Button>
         </div>
         <span role="status">{copied ? "Link copied" : ""}</span>
+        {headerActions}
       </header>
       {error && <Alert type="error" title={error} />}
       <Modal

@@ -16,6 +16,7 @@ import { useDirectory } from "./use-directory";
 import { DirectoryResults } from "./directory-results";
 import { ResourceList } from "./resource-list";
 import { ReplaceRoomDialog } from "./replace-room-dialog";
+import { PersonAliasControl } from "./person-alias-control";
 
 export function Overview({
   api,
@@ -28,6 +29,7 @@ export function Overview({
   onNewConversation,
   onInvite,
   onManageProject,
+  onPersonAliasChange,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -42,6 +44,7 @@ export function Overview({
   onNewConversation: () => void;
   onInvite: () => void;
   onManageProject: (projectId: string) => void;
+  onPersonAliasChange?: (alias: string | null) => void;
 }) {
   const [replacingRoom, setReplacingRoom] = useState(false);
   const projects = useDirectory(
@@ -89,6 +92,18 @@ export function Overview({
           ? person?.display_name || "Person overview"
           : project?.title || "Project overview"}
       </h2>
+      {person && (
+        <details>
+          <summary>Private alias</summary>
+          <PersonAliasControl
+            accountId={accountId}
+            personId={person.account_id}
+            api={api}
+            onChange={onPersonAliasChange}
+            onResolve={onPersonAliasChange}
+          />
+        </details>
+      )}
       {personId ? (
         <p>
           Only shared projects and accessible work are shown. Participation and
