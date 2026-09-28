@@ -59,6 +59,9 @@ test("keyboard revocation removes action and restores focus to the section headi
     screen.queryByRole("button", { name: "Revoke Security assistant" }),
   ).toBeNull();
   expect(screen.getByRole("status").textContent).toContain("revoked");
+  expect(screen.getByRole("status").textContent).toContain(
+    "Already-running work is not canceled.",
+  );
   expect(postAuthApi).toHaveBeenLastCalledWith({
     origin: "https://home.test",
     endpoint: "auth/cli/agent/installations",

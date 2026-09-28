@@ -70,3 +70,30 @@ test("text append can opt out of disk save for live-only edits", async () => {
 
   assert.deepEqual(calls, ["from_str", "save"]);
 });
+
+test("writing unchanged live text still saves previously unsaved edits", async () => {
+  const { session, calls } = makeSession("before");
+  const doc = makeTextApi(session).bindDocument(undefined, {
+    path: "/home/user/a.md",
+  });
+  await doc.write("unsaved", { saveToDisk: false });
+  calls.length = 0;
+  const current = await doc.read();
+  await doc.write(current.text, { expectedHash: current.hash });
+  assert.deepEqual(calls, ["save", "save_to_disk"]);
+});
+
+test("unchanged write still honors live-only and stale-hash restrictions", async () => {
+  const { session, calls } = makeSession("before");
+  const doc = makeTextApi(session).bindDocument(undefined, {
+    path: "/home/user/a.md",
+  });
+  await doc.write("before", { saveToDisk: false });
+  assert.deepEqual(calls, ["save"]);
+  calls.length = 0;
+  await assert.rejects(
+    doc.write("before", { expectedHash: -1 }),
+    /changed since read/,
+  );
+  assert.deepEqual(calls, []);
+});

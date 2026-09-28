@@ -2,7 +2,13 @@
 
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,4 +58,28 @@ const bundle = join(out, "index.js");
 if (!existsSync(bundle)) {
   throw new Error(`bundle output is missing: ${bundle}`);
 }
+const git = spawnSync("git", ["rev-parse", "HEAD"], {
+  cwd: cliRoot,
+  encoding: "utf8",
+});
+const status = spawnSync(
+  "git",
+  ["status", "--porcelain", "--untracked-files=no"],
+  {
+    cwd: cliRoot,
+    encoding: "utf8",
+  },
+);
+if (git.status !== 0 || status.status !== 0) {
+  throw new Error("Cannot stamp CLI bundle without Git build identity");
+}
+const metadata = { git: git.stdout.trim(), dirty: !!status.stdout.trim() };
+const source = readFileSync(bundle, "utf8");
+const start = source.startsWith("#!") ? source.indexOf("\n") + 1 : 0;
+writeFileSync(
+  bundle,
+  source.slice(0, start) +
+    `globalThis.__COCALC_CLI_BUILD__=${JSON.stringify(metadata)};\n` +
+    source.slice(start),
+);
 process.stdout.write(`Bundle ready: ${bundle}\n`);

@@ -1,0 +1,7 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+
+export const CLAUDE_PROJECT_JOB_GUIDANCE =
+  "Project commands are managed jobs: run builds/tests in the foreground without &, nohup or setsid. Use the currently advertised cocalc_project_* tools, not schemas remembered from earlier turns. project_exec accepts script, cwd, yield_time_ms, timeout_ms and request_id. Its default initial wait is 10 seconds. A response with status running means the job continues. Use project_exec_wait with job_id and cursor set to next_cursor until completion; waits batch output until the interval ends, a page fills, or the job finishes. Use project_exec_list after an uncertain response and project_exec_cancel to stop a job. yield_time_ms controls only the tool wait; timeout_ms is the job deadline (default one hour, maximum 24 hours). Jobs and their background descendants stop on shell exit, interruption, authority loss or controller shutdown. For persistent services or interactive input use the CoCalc CLI project terminal commands (inspect project terminal --help), not unmanaged detachment.";

@@ -304,7 +304,9 @@ const surfaces = [
   {
     label: "notifications",
     chunks: [...initial, ...notifications],
-    max: 500 * KiB,
+    // Resolver single-flight and end-to-end request deadlines add about 1.5 KiB
+    // to this session-backed route (499.9 -> 501.4 KiB Brotli in PR #730).
+    max: 503 * KiB,
   },
   {
     label: "Essential Docs",

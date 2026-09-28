@@ -24,6 +24,27 @@ describe("chatTerminalWorkingDirectory", () => {
     ).toBeUndefined();
     expect(chatTerminalWorkingDirectory("thread-1", {})).toBeUndefined();
   });
+
+  it("reads Immutable Codex config and prefers Claude or custom ACP runtime cwd", () => {
+    expect(
+      chatTerminalWorkingDirectory(
+        "thread",
+        fromJS({ workingDirectory: "/home/user/codex" }),
+      ),
+    ).toBe("/home/user/codex");
+    for (const runtime of [
+      { profile: { cwd: "/home/user/claude" } },
+      fromJS({ profile: { cwd: "/home/user/claude" } }),
+    ]) {
+      expect(
+        chatTerminalWorkingDirectory(
+          "thread",
+          { workingDirectory: "/stale" },
+          runtime,
+        ),
+      ).toBe("/home/user/claude");
+    }
+  });
 });
 
 describe("chat editor terminal", () => {
@@ -110,5 +131,55 @@ describe("chat editor terminal", () => {
       "thread-1",
     );
     terminal.mockRestore();
+  });
+
+  it.each(["claude-code", "custom-acp"])(
+    "uses %s runtime cwd even without legacy Codex config",
+    async (id) => {
+      const terminal = jest
+        .spyOn(StructuredEditorActions.prototype, "terminal")
+        .mockResolvedValue();
+      const target: any = {
+        _get_frame_node: () => fromJS({ "data-selectedThreadKey": "thread" }),
+        getChatActions: () => ({
+          getCodexConfig: () => undefined,
+          getThreadMetadata: () => ({
+            agent_runtime: { profile: { id, cwd: "/home/user/work" } },
+          }),
+        }),
+      };
+      await Actions.prototype.terminal.call(target, "chat-frame", false);
+      expect(terminal).toHaveBeenCalledWith(
+        "chat-frame",
+        false,
+        "/home/user/work",
+        "thread",
+      );
+    },
+  );
+
+  it("honors the Agents toolbar's explicit thread and directory instead of a stale editor selection", async () => {
+    const terminal = jest
+      .spyOn(StructuredEditorActions.prototype, "terminal")
+      .mockResolvedValue();
+    const target: any = {
+      _get_frame_node: () => fromJS({ "data-selectedThreadKey": "old-thread" }),
+      getChatActions: () => ({
+        getCodexConfig: () => ({ workingDirectory: "/home/user" }),
+      }),
+    };
+    await Actions.prototype.terminal.call(
+      target,
+      "chat-frame",
+      false,
+      "/home/user/current-work",
+      "selected-agent-thread",
+    );
+    expect(terminal).toHaveBeenCalledWith(
+      "chat-frame",
+      false,
+      "/home/user/current-work",
+      "selected-agent-thread",
+    );
   });
 });

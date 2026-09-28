@@ -18,11 +18,14 @@ import {
   type JupyterLiveRunSnapshot,
 } from "@cocalc/conat/project/jupyter/live-run";
 import { projectApiClient } from "@cocalc/conat/project/api";
+import { recoverRunOutput } from "@cocalc/conat/project/jupyter/recover-run";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { sleep } from "@cocalc/util/async-utils";
 import type { JupyterSaveOptions } from "@cocalc/conat/project/api/jupyter";
 import type { KernelSpec } from "@cocalc/util/jupyter/types";
+import { createJupyterReplayReader } from "./jupyter-replay";
+import { createJupyterInputResponder } from "./jupyter-input";
 
 type ProjectIdentity = {
   project_id: string;
@@ -1649,6 +1652,9 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
     waitForAck?: boolean;
     cwd?: string;
   }): Promise<ProjectJupyterRunSession> {
+    const input = createJupyterInputResponder(
+      stdin ?? (async () => "stdin not implemented"),
+    );
     const normalizedPath = normalizeNotebookPath(path);
     const { project, client, syncdb, release } =
       await acquireProjectJupyterSession0({
@@ -1668,7 +1674,7 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         path: normalizedPath,
         project_id: project.project_id,
         client,
-        stdin,
+        stdin: input.handle,
       });
       const run_id = `cli-${Date.now().toString(36)}-${Math.random()
         .toString(36)
@@ -1687,6 +1693,25 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
           },
         },
       );
+      const recovery = new AbortController();
+      const replay = createJupyterReplayReader({
+        input,
+        runId: run_id,
+        signal: recovery.signal,
+        createClient: () =>
+          jupyterClient({
+            path: normalizedPath,
+            project_id: project.project_id,
+            client,
+            stdin: input.handle,
+          }),
+      });
+      const output = recoverRunOutput({
+        source: iter,
+        runId: run_id,
+        signal: recovery.signal,
+        readPage: replay.readPage,
+      });
       return {
         project_id: project.project_id,
         project_title: project.title,
@@ -1694,13 +1719,16 @@ export function createProjectJupyterOps<Ctx, Project extends ProjectIdentity>(
         run_id,
         ack,
         cells: selected,
-        iter,
+        iter: output,
         close: async () => {
+          recovery.abort();
+          replay.close();
           runClient.close();
           await release();
         },
       };
     } catch (error) {
+      input.close();
       await release();
       throw error;
     }

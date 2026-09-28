@@ -20,7 +20,7 @@ export function attentionResponseMetadata(record: AcpAttentionStoredRecord) {
 export function formatAttentionResponseTranscript(
   record: AcpAttentionStoredRecord,
 ): string {
-  const lines = ["Response to Codex questions:"];
+  const lines = ["Response to agent questions:"];
   for (const question of record.questions) {
     lines.push(
       `\n${question.header}: ${question.question}`,
@@ -40,7 +40,8 @@ export function acceptedSyncAttentionResponse(
     record.source_kind === "codex_sync_question" &&
     !record.dispatch_as_async &&
     ((record.state === "answered" &&
-      record.resolution_reason === "Codex accepted the response") ||
+      (record.resolution_reason === "Codex accepted the response" ||
+        record.resolution_reason === "ACP accepted the response")) ||
       (record.state === "declined" &&
         record.resolution_reason === "The user declined to answer"))
   );

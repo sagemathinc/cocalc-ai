@@ -2,6 +2,7 @@ import {
   getHubApiAccountTargetMethods,
   getHubApiPrincipalPolicies,
   initHubApi,
+  isHubApiPrincipalAllowed,
   transformArgs,
 } from "./index";
 import { purchases } from "./purchases";
@@ -30,6 +31,43 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it.each([
+    "apiKeys.decideAction",
+    "apiKeys.listActions",
+    "agent.removeCocalcConnectorConfig",
+  ])("binds %s to the actual human session", async (name) => {
+    const opts = {
+      account_id: "forged",
+      session_hash: "forged",
+      decision: "execute",
+    };
+    expect(
+      await transformArgs({
+        name,
+        args: [opts],
+        account_id: "actual",
+        auth_session_hash: "verified",
+      }),
+    ).toEqual([
+      { account_id: "actual", session_hash: "verified", decision: "execute" },
+    ]);
+    const noSession = await transformArgs({
+      name,
+      args: [opts],
+      account_id: "actual",
+    });
+    expect(noSession[0].session_hash).toBeUndefined();
+    for (const actor of [
+      {},
+      { host_id: "host" },
+      { project_id: "project" },
+      { account_id: "agent", auth_actor: "agent" as const },
+    ]) {
+      await expect(
+        transformArgs({ name, args: [opts], ...actor }),
+      ).rejects.toThrow();
+    }
+  });
   it("binds maintenance list, confirm, and report to the authenticated host", async () => {
     for (const [name, opts] of [
       ["hosts.listProjectMaintenanceSchedules", { host_id: "victim-host" }],
@@ -104,6 +142,44 @@ describe("hub API argument transforms", () => {
       ).rejects.toThrow();
     }
   });
+  it("binds agent project status to the authenticated project", async () => {
+    expect(getHubApiPrincipalPolicies()["projects.status"]).toBe(
+      "account-or-bound-agent-project",
+    );
+    expect(
+      isHubApiPrincipalAllowed({
+        policy: "account-or-bound-agent-project",
+        account_id: "agent-account",
+        project_id: "own-project",
+        auth_actor: "agent",
+      }),
+    ).toBe(true);
+    expect(
+      isHubApiPrincipalAllowed({
+        policy: "account-or-bound-agent-project",
+        account_id: "agent-account",
+        auth_actor: "agent",
+      }),
+    ).toBe(false);
+    expect(
+      await transformArgs({
+        name: "projects.status",
+        args: [{ account_id: "forged", project_id: "other-project" }],
+        account_id: "agent-account",
+        project_id: "own-project",
+        auth_actor: "agent",
+      }),
+    ).toEqual([{ account_id: "agent-account", project_id: "own-project" }]);
+    expect(() =>
+      transformArgs({
+        name: "projects.status",
+        args: [{ project_id: "other-project" }],
+        account_id: "agent-account",
+        auth_actor: "agent",
+      }),
+    ).toThrow("agent project is required");
+  });
+
   it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
     "binds %s to the authenticated human without requiring fresh auth",
     async (name) => {
@@ -147,10 +223,14 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
+      "agent.beginCocalcConnectorTurn",
+      "agent.endCocalcConnectorTurn",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",
       "agent.issueIdentity",
+      "agent.renewCocalcConnectorTurn",
       "aiSessions.upsertProjectHostSession",
+      "apiKeys.getViewerReadPolicy",
       "hosts.checkCodexSiteUsageAllowance",
       "hosts.getAccountEffectiveLimits",
       "hosts.issueProjectHostAgentAuthToken",
@@ -171,7 +251,14 @@ describe("hub API argument transforms", () => {
     ]);
   });
 
-  it.each(["agent.issueIdentity", "agent.endIdentityRun"])(
+  it.each([
+    "agent.issueIdentity",
+    "agent.endIdentityRun",
+    "agent.beginCocalcConnectorTurn",
+    "agent.renewCocalcConnectorTurn",
+    "agent.endCocalcConnectorTurn",
+    "apiKeys.getViewerReadPolicy",
+  ])(
     "binds %s to the trusted host while preserving the execution account target",
     async (name) => {
       expect(
@@ -185,6 +272,7 @@ describe("hub API argument transforms", () => {
         { account_id: "account" },
         { project_id: "project" },
         { account_id: "account", auth_actor: "agent" as const },
+        { host_id: "host", auth_actor: "agent" as const },
       ]) {
         await expect(
           transformArgs({ name, args: [{}], ...actor }),

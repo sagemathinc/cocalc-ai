@@ -23,7 +23,7 @@ export default async function handle(req, res) {
     if (!project_id) {
       throw Error("must specify project_id");
     }
-    assertHttpProjectApiKeyAllowed({ principal, project_id });
+    await assertHttpProjectApiKeyAllowed({ principal, project_id });
     if (!(await isCollaborator({ account_id, project_id }))) {
       throw Error("user must be a collaborator on the project");
     }

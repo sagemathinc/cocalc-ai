@@ -8,6 +8,9 @@ packages:
   - "!**/cdn/dist/**"
   # exclude generated build artifacts that can confuse workspace discovery
   - "!**/build/**"
+  # This isolated npm lockfile is input for architecture-specific harness
+  # artifacts; it must not install large provider SDKs into the main workspace.
+  - "!project/managed-harnesses/**"
 
 # retry-request is overridden because an older Google API dependency pulled in
 # a broken version after the request dependency disappeared upstream.

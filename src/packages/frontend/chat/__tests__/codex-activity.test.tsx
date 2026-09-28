@@ -19,6 +19,49 @@ jest.mock("../activity-diff", () => ({
   ActivityDiff: () => <div>Recorded diff</div>,
 }));
 
+test("generic harness tools appear once with their latest reported status", () => {
+  const events: any[] = [
+    {
+      type: "event",
+      seq: 1,
+      event: {
+        type: "harness",
+        kind: "update",
+        source: "acp",
+        data: {
+          sessionUpdate: "tool_call",
+          toolCallId: "read",
+          title: "Read project file",
+          status: "in_progress",
+        },
+      },
+    },
+    {
+      type: "event",
+      seq: 2,
+      event: {
+        type: "harness",
+        kind: "update",
+        source: "acp",
+        data: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "read",
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "file contents" },
+            },
+          ],
+        },
+      },
+    },
+  ];
+  render(<CodexActivity expanded events={events} />);
+  expect(screen.getAllByText("Read project file · completed")).toHaveLength(1);
+  expect(screen.getByText("file contents")).toBeTruthy();
+});
+
 test.each([16_384, 32_768])(
   "terminal backtick runs of %i characters stay fenced and within the parser budget",
   async (length) => {

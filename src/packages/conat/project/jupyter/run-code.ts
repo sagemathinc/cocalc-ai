@@ -16,16 +16,24 @@ import { getLogger } from "@cocalc/conat/logger";
 import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import { Throttle } from "@cocalc/util/throttle";
 import {
+  JupyterRunInput,
+  type JupyterInputPrompt,
+  type JupyterInputRequest,
+} from "./run-input";
+import {
   canonicalJupyterLiveRunPath,
   jupyterLiveRunKey,
+  jupyterLiveRunPage,
   openJupyterLiveRunStore,
   jupyterLiveRunSubject,
   type JupyterLiveRunBatch,
   type JupyterLiveRunSnapshot,
+  type JupyterLiveRunPage,
 } from "@cocalc/conat/project/jupyter/live-run";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
+export const JUPYTER_BATCH_SEQUENCE_HEADER = "jupyter-batch-sequence";
 const SOCKET_KEEP_ALIVE = parsePositiveInt(
   process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE,
   25_000,
@@ -218,6 +226,7 @@ export interface RunOptions {
   // the socket is used for raw_input, to communicate between the client
   // that initiated the request and the server.
   socket: ServerSocket;
+  stdin?: (prompt: JupyterInputPrompt) => Promise<string>;
 }
 
 type JupyterCodeRunner = (
@@ -268,6 +277,26 @@ export function jupyterServer({
   const moreOutput: { [path: string]: { [id: string]: any[] } } = {};
   let activeRuns = 0;
   let activeSockets = 0;
+  let activeReplayReads = 0;
+  const runInputs = new Map<string, JupyterRunInput>();
+  const inputKey = (path: unknown, runId: unknown) => {
+    if (
+      typeof path !== "string" ||
+      path.length > 4096 ||
+      typeof runId !== "string" ||
+      !runId ||
+      runId.length > 256
+    )
+      throw Error("invalid run input target");
+    return jupyterLiveRunKey({
+      path: canonicalJupyterLiveRunPath(path),
+      run_id: runId,
+    });
+  };
+  server.once("closed", () => {
+    for (const input of runInputs.values()) input.close();
+    runInputs.clear();
+  });
 
   server.on("connection", (socket: ServerSocket) => {
     if (activeSockets >= maxActiveSockets) {
@@ -298,7 +327,60 @@ export function jupyterServer({
     socket.on("request", async (mesg) => {
       const { data } = mesg;
       const { cmd, path } = data;
-      if (cmd == "more") {
+      if (cmd === "get-input" || cmd === "answer-input") {
+        try {
+          const input = runInputs.get(inputKey(path, data.run_id));
+          if (cmd === "get-input") mesg.respondSync(input?.get() ?? null);
+          else {
+            if (!input) throw Error("run input is unavailable");
+            mesg.respondSync({
+              status: input.answer(data.request_id, data.answer),
+            });
+          }
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+        }
+      } else if (cmd === "get-run") {
+        if (activeReplayReads >= maxActiveRuns) {
+          mesg.respondSync(null, {
+            headers: { error: "jupyter replay service is busy" },
+          });
+          return;
+        }
+        activeReplayReads++;
+        try {
+          if (
+            typeof path !== "string" ||
+            path.length > 4096 ||
+            typeof data.run_id !== "string" ||
+            !data.run_id ||
+            data.run_id.length > 256
+          ) {
+            throw Error("invalid run replay target");
+          }
+          const store = await openJupyterLiveRunStore({
+            client,
+            project_id,
+            path,
+          });
+          try {
+            const snapshot = store.get(
+              jupyterLiveRunKey({ path, run_id: data.run_id }),
+            );
+            mesg.respondSync(
+              snapshot == null
+                ? null
+                : jupyterLiveRunPage(snapshot, data.after_seq, data.limit),
+            );
+          } finally {
+            store.close();
+          }
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+        } finally {
+          activeReplayReads--;
+        }
+      } else if (cmd == "more") {
         logger.debug("more output ", { id: data.id });
         mesg.respondSync(moreOutput[path]?.[data.id]);
       } else if (cmd == "get-kernel-status") {
@@ -330,6 +412,16 @@ export function jupyterServer({
           mesg.respondSync(null, { headers: { error } });
           return;
         }
+        let key: string;
+        try {
+          key = inputKey(path, run_id);
+          if (runInputs.has(key)) throw Error("run is already active");
+        } catch (err) {
+          mesg.respondSync(null, { headers: { error: `${err}` } });
+          return;
+        }
+        const input = new JupyterRunInput();
+        runInputs.set(key, input);
         try {
           activeRuns += 1;
           mesg.respondSync({
@@ -360,6 +452,29 @@ export function jupyterServer({
             noHalt,
             limit,
             moreOutput: moreOutput[path],
+            stdin: (prompt: JupyterInputPrompt) => {
+              const result = input.request(prompt);
+              const request = input.get()!;
+              // Legacy delivery and authenticated recovery compete for the same
+              // pending request. A lost socket leaves it available until expiry.
+              if (socket.state !== "ready") return result;
+              const delivery = new AbortController();
+              const stopDelivery = () => delivery.abort();
+              void result.then(stopDelivery, stopDelivery);
+              void socket
+                .request(
+                  { type: "stdin", ...request },
+                  {
+                    timeout: Math.max(1, request.expires_at - Date.now()),
+                    signal: delivery.signal,
+                  },
+                )
+                .then(({ data }) => {
+                  input.answer(request.request_id, data);
+                })
+                .catch(() => {});
+              return result;
+            },
           });
         } catch (err) {
           logger.debug("server: failed to handle execute request -- ", err);
@@ -375,6 +490,8 @@ export function jupyterServer({
             }
           }
         } finally {
+          input.close();
+          runInputs.delete(key);
           activeRuns -= 1;
         }
       } else {
@@ -406,6 +523,7 @@ async function handleRequest({
   noHalt,
   limit,
   moreOutput,
+  stdin,
 }) {
   const startedAt = Date.now();
   let firstMesgAt: number | null = null;
@@ -432,7 +550,7 @@ async function handleRequest({
     path: liveRunPath,
   });
   const liveRunKey = jupyterLiveRunKey({ path: liveRunPath, run_id });
-  const runner = await run({ path, cells, noHalt, socket, run_id });
+  const runner = await run({ path, cells, noHalt, socket, run_id, stdin });
   const output: OutputMessage[] = [];
   let outputVisibleCount = 0;
   let batchSeq = 0;
@@ -499,6 +617,7 @@ async function handleRequest({
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
     void publishLiveBatch(coalescedMesgs);
+    const headers = { [JUPYTER_BATCH_SEQUENCE_HEADER]: batchSeq };
     if (socket.state == "closed") {
       return;
     }
@@ -506,7 +625,7 @@ async function handleRequest({
       if (firstClientWriteAt == null) {
         firstClientWriteAt = Date.now();
       }
-      socket.write(coalescedMesgs);
+      socket.write(coalescedMesgs, { headers });
       if (opts?.fastLane) {
         firstClientBatchFastLane = true;
       }
@@ -515,7 +634,7 @@ async function handleRequest({
         enobufs += 1;
         // wait for the over-filled socket to finish writing out data.
         await socket.drain();
-        socket.write(coalescedMesgs);
+        socket.write(coalescedMesgs, { headers });
         if (opts?.fastLane) {
           firstClientBatchFastLane = true;
         }
@@ -719,8 +838,55 @@ async function handleRequest({
   }
 }
 
+export class JupyterRunTransportError extends Error {
+  readonly code = "JUPYTER_RUN_TRANSPORT_LOST";
+  constructor(readonly run_id: string) {
+    super(
+      "Jupyter output connection closed before completion; the run may still be executing",
+    );
+    this.name = "JupyterRunTransportError";
+  }
+}
+
+export class JupyterRunIterator extends EventIterator<OutputMessage[]> {
+  private sequences = new WeakMap<OutputMessage[], number>();
+  // Undefined means a legacy or discontinuous stream cannot be resumed safely.
+  public replayCursor: number | undefined = 0;
+
+  constructor(
+    ...args: ConstructorParameters<typeof EventIterator<OutputMessage[]>>
+  ) {
+    super(...args);
+    const include = this.filter;
+    this.filter = (batch) => {
+      if (!include(batch)) return false;
+      if (batch.length > 0) {
+        const sequence = this.sequences.get(batch);
+        this.sequences.delete(batch);
+        // EventIterator filters at consumption, not enqueue. Canceled queues
+        // must not advance the cursor past output the caller never received.
+        this.replayCursor =
+          this.replayCursor != null && sequence === this.replayCursor + 1
+            ? sequence
+            : undefined;
+      }
+      return true;
+    };
+  }
+
+  recordSequence(batch: OutputMessage[], sequence: unknown): void {
+    if (typeof sequence === "string" && /^[1-9][0-9]*$/.test(sequence)) {
+      sequence = Number(sequence);
+    }
+    if (Number.isSafeInteger(sequence) && (sequence as number) > 0) {
+      this.sequences.set(batch, sequence as number);
+    }
+  }
+}
+
 export class JupyterClient {
   private iter?: EventIterator<OutputMessage[]>;
+  private activeRunId?: string;
   public readonly socket;
   constructor(
     private client: ConatClient,
@@ -733,9 +899,16 @@ export class JupyterClient {
     }) => Promise<string>,
   ) {
     this.socket = this.client.socket.connect(this.subject);
-    const endIterator = () => this.iter?.end();
+    const endIterator = () => {
+      if (this.iter != null && !this.iter.ended && this.activeRunId != null) {
+        this.iter.cancel(new JupyterRunTransportError(this.activeRunId));
+      }
+    };
     this.socket.once("closed", endIterator);
     this.socket.once("close", endIterator);
+    // Reauthorization may never succeed after revocation. Do not leave a run
+    // iterator waiting for a reconnect, or mistake transport loss for completion.
+    this.socket.on("disconnected", endIterator);
     this.socket.on("request", async (mesg) => {
       const { data } = mesg;
       try {
@@ -772,11 +945,54 @@ export class JupyterClient {
     return data;
   };
 
+  // Retained output only: null means unavailable/expired, not "never executed".
+  // done marks stream termination; callers must inspect output for execution errors.
+  getRun = async (
+    run_id: string,
+    options: { after_seq?: number; limit?: number } = {},
+    requestOptions?: { timeout?: number },
+  ): Promise<JupyterLiveRunPage | null> => {
+    const { data } = await this.socket.request(
+      {
+        cmd: "get-run",
+        path: this.path,
+        run_id,
+        ...options,
+      },
+      requestOptions,
+    );
+    return data;
+  };
+
   getKernelStatus = async (): Promise<KernelStatus> => {
     const { data } = await this.socket.request({
       cmd: "get-kernel-status",
       path: this.path,
     });
+    return data;
+  };
+
+  getInput = async (
+    run_id: string,
+    options?: { timeout?: number },
+  ): Promise<JupyterInputRequest | null> => {
+    const { data } = await this.socket.request(
+      { cmd: "get-input", path: this.path, run_id },
+      options,
+    );
+    return data;
+  };
+
+  answerInput = async (
+    run_id: string,
+    request_id: string,
+    answer: string,
+    options?: { timeout?: number },
+  ): Promise<{ status: "accepted" | "already-accepted" }> => {
+    const { data } = await this.socket.request(
+      { cmd: "answer-input", path: this.path, run_id, request_id, answer },
+      options,
+    );
     return data;
   };
 
@@ -798,7 +1014,7 @@ export class JupyterClient {
       this.iter.end();
       delete this.iter;
     }
-    const iter = new EventIterator<OutputMessage[]>(this.socket, "data", {
+    const iter = new JupyterRunIterator(this.socket, "data", {
       map: (args) => {
         if (args[1]?.error) {
           iter.throw(Error(args[1].error));
@@ -815,11 +1031,16 @@ export class JupyterClient {
           if (filtered.length == 0) {
             return [];
           }
+          iter.recordSequence(
+            filtered,
+            args[1]?.[JUPYTER_BATCH_SEQUENCE_HEADER],
+          );
           return filtered;
         }
       },
     });
     this.iter = iter;
+    this.activeRunId = effectiveRunId;
     // get rid of any fields except id and input from the cells, since, e.g.,
     // if there is a lot of output in a cell, there is no need to send that to the backend.
     const cells1 = cells.map(({ id, input }) => {

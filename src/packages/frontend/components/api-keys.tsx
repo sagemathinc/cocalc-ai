@@ -9,7 +9,6 @@ Applications:
 import {
   Alert,
   Button,
-  Checkbox,
   DatePicker,
   Form,
   Input,
@@ -21,7 +20,7 @@ import {
 } from "antd";
 import { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 const { Text, Paragraph } = Typography; // so can use from nextjs
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
@@ -30,72 +29,30 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import { CancelText } from "@cocalc/frontend/i18n/components";
+import { type ApiKey, type ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import {
-  API_KEY_CAPABILITIES,
-  type ApiKey,
-  type ApiKeyCapability,
-} from "@cocalc/util/db-schema/api-keys";
+  legacyApiKeyScope,
+  normalizeApiKeyScopeV1,
+} from "@cocalc/util/api-key-scope";
+import {
+  ApiKeyScopeEditor,
+  ApiKeyScopeSummary,
+  EMPTY_API_KEY_SCOPE,
+} from "./api-key-scope-editor";
 import CopyToClipBoard from "./copy-to-clipboard";
 import { Icon } from "./icon";
 import { TimeAgo } from "./time-ago";
+import { ApiKeyActionReviews } from "./api-key-action-reviews";
 
 const { useForm } = Form;
 
-const CAPABILITY_DESCRIPTIONS: Record<ApiKeyCapability, string> = {
-  "account:read": "Read basic account-visible metadata, such as account names.",
-  "project:create": "Create new projects owned by this account.",
-  "project:list": "List projects visible to this account.",
-  "project:read": "Read metadata for explicitly allowed projects.",
-  "project:write":
-    "Change metadata or settings for explicitly allowed projects.",
-  "file:read": "Read files from explicitly allowed projects.",
-  "file:write": "Write files in explicitly allowed projects.",
-  "project:exec":
-    "Run commands and project-host APIs in explicitly allowed projects.",
-  "codex:run": "Start Codex/ACP agent turns in explicitly allowed projects.",
-};
-
-const PROJECT_SCOPED_CAPABILITIES = new Set<ApiKeyCapability>([
-  "project:read",
-  "project:write",
-  "file:read",
-  "file:write",
-  "project:exec",
-  "codex:run",
-]);
-
-function needsAllowedProjects(capabilities?: ApiKeyCapability[]): boolean {
-  return (capabilities ?? []).some((capability) =>
-    PROJECT_SCOPED_CAPABILITIES.has(capability),
-  );
-}
-
-function browserOrigin(): string {
-  return typeof window === "undefined" ? "" : window.location.origin;
-}
-
-function apiKeyTestCurl(secret: string): string {
-  return [
-    `curl -sS -u '${secret}:'`,
-    `  -H 'Content-Type: application/json'`,
-    `  -d '{"name":"system.ping","args":[]}'`,
-    `  '${browserOrigin()}/api/conat/hub'`,
-  ].join(" \\\n");
-}
-
-function dateValue(value: any): number {
-  if (value == null) return 0;
-  if (value instanceof Date) return value.valueOf();
-  const n = new Date(value).valueOf();
-  return Number.isFinite(n) ? n : 0;
-}
-
-interface ProjectOption {
-  project_id: string;
-  title: string;
-  state?: string;
-  lastActive: number;
-  unknown?: boolean;
+function scopeForKey(key: ApiKey): ApiKeyScope {
+  return key.scope == null
+    ? legacyApiKeyScope({
+        capabilities: key.capabilities ?? [],
+        allowed_project_ids: key.allowed_project_ids ?? [],
+      })
+    : normalizeApiKeyScopeV1(key.scope);
 }
 
 interface Props {
@@ -114,9 +71,8 @@ interface Props {
     action: "get" | "delete" | "create" | "edit";
     id?: number;
     name?: string;
-    expire?: Date;
-    capabilities?: ApiKeyCapability[];
-    allowed_project_ids?: string[];
+    expire?: Date | null;
+    scope?: ApiKeyScope;
   }) => Promise<ApiKey[] | undefined>;
   mode?: "page" | "flyout";
 }
@@ -131,59 +87,11 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
   const [editModalVisible, setEditModalVisible] = useState<boolean>(false);
   const [form] = useForm();
   const [error, setError] = useState<string | null>(null);
-  const project_map = useTypedRedux("projects", "project_map");
-  const account_id = useTypedRedux("account", "account_id");
-  const selectedCapabilities =
-    (Form.useWatch("capabilities", form) as ApiKeyCapability[] | undefined) ??
-    [];
-  const selectedProjectIdsValue = Form.useWatch("allowed_project_ids", form);
-  const selectedProjectIds = Array.isArray(selectedProjectIdsValue)
-    ? (selectedProjectIdsValue as string[])
-    : [];
-  const allowedProjectsRequired = needsAllowedProjects(selectedCapabilities);
-  const [projectFilter, setProjectFilter] = useState<string>("");
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const [draftScope, setDraftScope] =
+    useState<ApiKeyScope>(EMPTY_API_KEY_SCOPE);
+  const projectMap = useTypedRedux("projects", "project_map");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
-
-  const projectOptions = useMemo<ProjectOption[]>(() => {
-    const selected = new Set(selectedProjectIds);
-    const filter = projectFilter.trim().toLowerCase();
-    const rows: ProjectOption[] = [];
-    project_map?.forEach((project, project_id) => {
-      const id = `${project_id}`;
-      const title = `${project?.get?.("title") ?? "No Title"}`;
-      if (
-        filter &&
-        !title.toLowerCase().includes(filter) &&
-        !id.toLowerCase().includes(filter)
-      ) {
-        return;
-      }
-      rows.push({
-        project_id: id,
-        title,
-        state: `${project?.getIn?.(["state", "state"]) ?? ""}` || undefined,
-        lastActive: dateValue(
-          project?.getIn?.(["last_active", account_id]) ??
-            project?.get?.("last_edited"),
-        ),
-      });
-    });
-    for (const project_id of selected) {
-      if (!rows.some((row) => row.project_id === project_id)) {
-        rows.push({
-          project_id,
-          title: "Unknown or unloaded project",
-          lastActive: 0,
-          unknown: true,
-        });
-      }
-    }
-    return rows
-      .sort(
-        (a, b) => b.lastActive - a.lastActive || a.title.localeCompare(b.title),
-      )
-      .slice(0, 50);
-  }, [account_id, projectFilter, project_map, selectedProjectIds]);
 
   useEffect(() => {
     getAllApiKeys();
@@ -231,9 +139,8 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
   const editApiKey = async (
     id: number,
     name: string,
-    expire?: Date,
-    capabilities?: ApiKeyCapability[],
-    allowed_project_ids?: string[],
+    expire: Date | null,
+    scope: ApiKeyScope,
   ) => {
     try {
       const completed = await runFreshAuthAction(async () => {
@@ -242,22 +149,23 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
           id,
           name,
           expire,
-          capabilities,
-          allowed_project_ids,
+          scope,
         });
         await getAllApiKeys();
+        setEditModalVisible(false);
+        setEditingKey(undefined);
+        setScopeError(null);
       });
       if (!completed) return;
     } catch (err) {
-      setError(`${err}`);
+      setScopeError(`${err}`);
     }
   };
 
   const createApiKey = async (
     name: string,
-    expire?: Date,
-    capabilities?: ApiKeyCapability[],
-    allowed_project_ids?: string[],
+    expire: Date | null,
+    scope: ApiKeyScope,
   ) => {
     try {
       const completed = await runFreshAuthAction(async () => {
@@ -265,55 +173,40 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
           action: "create",
           name,
           expire,
-          capabilities,
-          allowed_project_ids,
+          scope,
         });
+        const secret = response?.[0]?.secret;
+        if (!secret)
+          throw Error("API key was created without a returned secret");
         setAddModalVisible(false);
-        await getAllApiKeys();
-
         Modal.success({
           width: 760,
           title: "New Secret API Key",
-          content: (() => {
-            const secret = response?.[0].secret ?? "failed to get secret";
-            return (
-              <>
-                <div>
-                  Save this secret key somewhere safe.{" "}
-                  <b>You won't be able to view it again here.</b> If you lose
-                  this secret key, you'll need to generate a new one.
-                </div>
-                <div style={{ marginTop: 16 }}>
-                  <strong>Secret API Key</strong>{" "}
-                  <CopyToClipBoard
-                    style={{ marginTop: "16px" }}
-                    outerStyle={{ width: "100%" }}
-                    inputWidth="100%"
-                    value={secret}
-                  />
-                </div>
-                <div style={{ marginTop: 16 }}>
-                  <strong>Test with curl</strong>
-                  <Paragraph type="secondary" style={{ marginTop: 5 }}>
-                    This calls <Text code>system.ping</Text>, which only
-                    verifies that the key is valid.
-                  </Paragraph>
-                  <CopyToClipBoard
-                    outerStyle={{ width: "100%" }}
-                    inputStyle={{ fontSize: "12px" }}
-                    inputWidth="100%"
-                    value={apiKeyTestCurl(secret)}
-                  />
-                </div>
-              </>
-            );
-          })(),
+          content: (
+            <>
+              <div>
+                Save this secret key somewhere safe.{" "}
+                <b>You won't be able to view it again here.</b> If you lose this
+                secret key, you'll need to generate a new one.
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <strong>Secret API Key</strong>{" "}
+                <CopyToClipBoard
+                  style={{ marginTop: "16px" }}
+                  outerStyle={{ width: "100%" }}
+                  inputWidth="100%"
+                  value={secret}
+                />
+              </div>
+            </>
+          ),
         });
+        await getAllApiKeys();
         setError(null);
       });
       if (!completed) return;
     } catch (err) {
-      setError(`${err}`);
+      setScopeError(`${err}`);
     }
   };
 
@@ -332,16 +225,21 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
       },
     },
     {
-      dataIndex: "capabilities",
-      title: "Capabilities",
-      render: (capabilities: string[]) =>
-        capabilities?.length ? capabilities.join(", ") : "None",
-    },
-    {
-      dataIndex: "allowed_project_ids",
-      title: "Allowed Projects",
-      render: (projectIds: string[]) =>
-        projectIds?.length ? projectIds.join(", ") : "None",
+      title: "Permissions",
+      render: (_value, record) => {
+        try {
+          return (
+            <ApiKeyScopeSummary
+              scope={scopeForKey(record)}
+              projectTitle={(project_id) =>
+                projectMap?.getIn([project_id, "title"]) as string | undefined
+              }
+            />
+          );
+        } catch {
+          return <Text type="danger">Invalid permissions</Text>;
+        }
+      },
     },
     {
       dataIndex: "last_active",
@@ -364,25 +262,33 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
             title="Are you sure you want to delete this key?"
             onConfirm={() => deleteApiKey(record.id)}
           >
-            <a>Delete</a>
+            <Button type="link" danger>
+              Delete
+            </Button>
           </Popconfirm>
-          <a
+          <Button
+            type="link"
             onClick={() => {
+              try {
+                setDraftScope(scopeForKey(record));
+              } catch {
+                setError(
+                  "This key has invalid permissions and cannot be edited.",
+                );
+                return;
+              }
+              setScopeError(null);
               // Set the initial form value as the current key name
               form.setFieldsValue({
                 name: record.name,
                 expire: record.expire ? dayjs(record.expire) : undefined,
-                capabilities: record.capabilities ?? [],
-                allowed_project_ids: record.allowed_project_ids ?? [],
               });
-              setProjectFilter("");
               setEditModalVisible(true);
               setEditingKey(record.id);
             }}
-            style={{ marginLeft: "1em" }}
           >
             Edit
-          </a>
+          </Button>
         </Space.Compact>
       ),
     },
@@ -394,8 +300,9 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
 
   const handleAdd = () => {
     form.resetFields();
-    form.setFieldsValue({ capabilities: [], allowed_project_ids: [] });
-    setProjectFilter("");
+    setDraftScope(EMPTY_API_KEY_SCOPE);
+    setScopeError(null);
+    setEditingKey(undefined);
     setAddModalVisible(true);
   };
 
@@ -407,19 +314,18 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
       return;
     }
     const name = values.name;
-    const expire = values.expire?.toDate();
-    const capabilities = (values.capabilities ?? []) as ApiKeyCapability[];
-    const allowed_project_ids = needsAllowedProjects(capabilities)
-      ? ((values.allowed_project_ids ?? []) as string[])
-      : [];
+    const expire = values.expire?.toDate() ?? null;
+    let scope: ApiKeyScope;
+    try {
+      scope = normalizeApiKeyScopeV1(draftScope);
+    } catch (err) {
+      setScopeError(err instanceof Error ? err.message : `${err}`);
+      return;
+    }
     if (editingKey != null) {
-      editApiKey(editingKey, name, expire, capabilities, allowed_project_ids);
-      setEditModalVisible(false);
-      setEditingKey(undefined);
-      form.resetFields();
+      await editApiKey(editingKey, name, expire, scope);
     } else {
-      createApiKey(name, expire, capabilities, allowed_project_ids);
-      form.resetFields();
+      await createApiKey(name, expire, scope);
     }
   };
 
@@ -427,7 +333,8 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     setAddModalVisible(false);
     setEditModalVisible(false);
     setEditingKey(undefined);
-    setProjectFilter("");
+    setDraftScope(EMPTY_API_KEY_SCOPE);
+    setScopeError(null);
     form.resetFields();
   };
 
@@ -453,6 +360,7 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
         />
       )}
       <div style={isFlyout ? { padding: "5px" } : undefined}>
+        <ApiKeyActionReviews onExecuted={getAllApiKeys} />
         <Space.Compact size={size}>
           <Button onClick={handleAdd} size={size}>
             <Icon name="plus-circle" /> Add API key...
@@ -478,14 +386,11 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
         </Paragraph>
         <Modal
           open={addModalVisible || editModalVisible}
-          title={
-            editingKey != null ? "Edit API Key Name" : "Create a New API Key"
-          }
+          title={editingKey != null ? "Edit API Key" : "Create a New API Key"}
           okText={editingKey != null ? "Save" : "Create"}
           cancelText={<CancelText />}
           onCancel={handleModalCancel}
           onOk={handleModalOK}
-          okButtonProps={{ disabled: selectedCapabilities.length === 0 }}
           width={760}
         >
           <Form form={form} layout="vertical">
@@ -516,97 +421,25 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
                 }}
               />
             </Form.Item>
-            <Form.Item
-              name="capabilities"
-              label="Capabilities"
-              rules={[
-                {
-                  required: true,
-                  message: "Select at least one explicit capability",
-                },
-              ]}
-            >
-              <Checkbox.Group style={{ width: "100%" }}>
-                {API_KEY_CAPABILITIES.map((capability) => (
-                  <div key={capability} style={{ marginBottom: 8 }}>
-                    <Checkbox value={capability}>
-                      <Text code>{capability}</Text>{" "}
-                      <Text type="secondary">
-                        - {CAPABILITY_DESCRIPTIONS[capability]}
-                      </Text>
-                    </Checkbox>
-                  </div>
-                ))}
-              </Checkbox.Group>
-            </Form.Item>
-            {allowedProjectsRequired && (
-              <Form.Item
-                label="Allowed Projects"
-                required
-                extra={
-                  <div style={{ marginTop: 5 }}>
-                    Required for project, file, Codex, and exec capabilities.
-                  </div>
-                }
-              >
-                <Input
-                  allowClear
-                  placeholder="Filter projects by title or id..."
-                  value={projectFilter}
-                  onChange={(e) => setProjectFilter(e.target.value)}
-                  style={{ marginBottom: 8 }}
-                />
-                <Form.Item
-                  name="allowed_project_ids"
-                  noStyle
-                  rules={[
-                    {
-                      validator: async (_, value) => {
-                        if (!needsAllowedProjects(selectedCapabilities)) return;
-                        if (value?.length) return;
-                        throw Error("Select at least one allowed project");
-                      },
-                    },
-                  ]}
-                >
-                  <Checkbox.Group style={{ width: "100%" }}>
-                    <div
-                      style={{
-                        border: "1px solid #d9d9d9",
-                        borderRadius: 6,
-                        maxHeight: 260,
-                        overflowY: "auto",
-                        padding: "6px 10px",
-                      }}
-                    >
-                      {projectOptions.length === 0 && (
-                        <Text type="secondary">
-                          No matching projects are loaded.
-                        </Text>
-                      )}
-                      {projectOptions.map((project) => (
-                        <div
-                          key={project.project_id}
-                          style={{ margin: "4px 0" }}
-                        >
-                          <Checkbox value={project.project_id}>
-                            <Text strong>{project.title}</Text>{" "}
-                            <Text code>{project.project_id.slice(0, 8)}</Text>
-                            {project.state && (
-                              <Text type="secondary"> {project.state}</Text>
-                            )}
-                            {project.unknown && (
-                              <Text type="secondary"> selected</Text>
-                            )}
-                          </Checkbox>
-                        </div>
-                      ))}
-                    </div>
-                  </Checkbox.Group>
-                </Form.Item>
-              </Form.Item>
-            )}
           </Form>
+          <ApiKeyScopeEditor
+            value={draftScope}
+            projectTitle={(project_id) =>
+              projectMap?.getIn([project_id, "title"]) as string | undefined
+            }
+            onChange={(scope) => {
+              setDraftScope(scope);
+              setScopeError(null);
+            }}
+          />
+          {scopeError && (
+            <Alert
+              title={scopeError}
+              type="error"
+              role="alert"
+              style={{ marginTop: 12 }}
+            />
+          )}
         </Modal>
       </div>
       <FreshAuthModal {...freshAuthModalProps} />

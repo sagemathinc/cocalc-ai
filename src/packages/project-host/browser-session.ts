@@ -360,6 +360,11 @@ export function issueProjectHostBrowserSessionFromBearer({
     host_id,
     public_key: getProjectHostAuthPublicKey(),
   });
+  if (claims.api_key != null) {
+    throw new Error(
+      "API key child credentials cannot create a browser session",
+    );
+  }
   if ((claims.act ?? "account") !== "account") {
     throw new Error("invalid actor for project-host browser session");
   }

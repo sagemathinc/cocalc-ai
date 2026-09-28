@@ -12,6 +12,12 @@ const getAccountRevokedBeforeMsMock = jest.fn(() => undefined);
 const mockCallHub = jest.fn();
 const mockGetMasterConatClient = jest.fn(() => ({ id: "master-client" }));
 const mockVerifyProjectHostAuthToken = jest.fn();
+const mockVerifyHttpToken = jest.fn();
+const mockGetProject = jest.fn();
+
+jest.mock("./sqlite/projects", () => ({
+  getProject: (...args: any[]) => mockGetProject(...args),
+}));
 
 jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
   getRow: (...args: any[]) => getRowMock(...args),
@@ -32,6 +38,8 @@ jest.mock("./master-status", () => ({
 }));
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
+  verifyProjectHostApiKeyHttpToken: (...args: any[]) =>
+    mockVerifyHttpToken(...args),
   verifyProjectHostAuthToken: (...args: any[]) =>
     mockVerifyProjectHostAuthToken(...args),
 }));
@@ -49,7 +57,11 @@ import {
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
 import { createProjectHostBrowserSessionToken } from "./browser-session";
-import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import {
+  PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
+  PROJECT_HOST_API_KEY_HTTP_HEADER,
+  PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+} from "@cocalc/conat/auth/project-host-http";
 import {
   createPrivateAppHostnameRequestRewriter,
   PRIVATE_APP_HOST_HEADER,
@@ -92,6 +104,100 @@ describe("project-host HTTP session cookie", () => {
     mockGetMasterConatClient.mockReset();
     mockGetMasterConatClient.mockReturnValue({ id: "master-client" });
     mockVerifyProjectHostAuthToken.mockReset();
+    mockVerifyHttpToken.mockReset();
+    mockGetProject.mockReset();
+  });
+
+  it.each([false, true])(
+    "does not promote scoped HTTP access and handles response completion (%s)",
+    async (completed) => {
+      jest.useFakeTimers();
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        mockVerifyHttpToken.mockReturnValue({
+          sub: account_id,
+          iat: now,
+          exp: now + 25,
+          api_key: { placement_revision: 7 },
+        });
+        mockGetProject.mockReturnValue({
+          users: { [account_id]: "owner" },
+          runtime_lifecycle_revision: 7,
+        });
+        const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+        const req = {
+          url: `/${project_id}/proxy/8080/`,
+          headers: {
+            [PROJECT_HOST_API_KEY_HTTP_HEADER]: "scoped-token",
+            cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
+          },
+        } as any;
+        Object.setPrototypeOf(req, new EventEmitter());
+        req.destroy = jest.fn();
+        const res = Object.assign(new EventEmitter(), createResponse(), {
+          destroy: jest.fn(),
+        });
+        await auth.authorizeHttpRequest(req, res, project_id);
+        expect(mockVerifyHttpToken).toHaveBeenCalledWith(
+          expect.objectContaining({ project_id, port: 8080 }),
+        );
+        expect(res.setHeader).not.toHaveBeenCalled();
+        expect(req.headers).toEqual({});
+        if (completed) res.emit("finish");
+        jest.advanceTimersByTime(25_000);
+        expect(res.destroy).toHaveBeenCalledTimes(completed ? 0 : 1);
+        expect(req.destroy).toHaveBeenCalledTimes(completed ? 0 : 1);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it("fails closed before browser cookies when a scoped header is invalid", async () => {
+    const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+    const req = {
+      url: `/${project_id}/proxy/8080/`,
+      headers: {
+        [PROJECT_HOST_API_KEY_HTTP_HEADER]: "invalid",
+        cookie: `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${createProjectHostHttpSessionToken({ account_id })}`,
+      },
+    } as any;
+    mockVerifyHttpToken.mockImplementation(() => {
+      throw new Error("invalid");
+    });
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow("invalid scoped");
+    expect(mockVerifyProjectHostAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("expires scoped WebSockets without waiting for the ordinary session sweep", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      mockVerifyHttpToken.mockReturnValue({
+        sub: account_id,
+        iat: now,
+        exp: now + 25,
+        api_key: { placement_revision: 7 },
+      });
+      mockGetProject.mockReturnValue({
+        users: { [account_id]: "owner" },
+        runtime_lifecycle_revision: 7,
+      });
+      const auth = createProjectHostHttpProxyAuth({ host_id: "host" });
+      const req = {
+        url: `/${project_id}/proxy/8080/`,
+        headers: { [PROJECT_HOST_API_KEY_HTTP_HEADER]: "scoped-token" },
+      } as any;
+      await auth.authorizeUpgradeRequest(req, project_id);
+      const socket = Object.assign(new EventEmitter(), { destroy: jest.fn() });
+      auth.trackUpgradedSocket(req, socket as any);
+      jest.advanceTimersByTime(25_000);
+      expect(socket.destroy).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("scopes the session cookie to the project path", () => {
@@ -346,6 +452,27 @@ describe("project-host HTTP session cookie", () => {
       auth.authorizeHttpRequest(req, createResponse(), project_id),
     ).rejects.toThrow(
       "agent credentials cannot authorize project-host HTTP access",
+    );
+  });
+
+  it("rejects API key child bearers at HTTP session redemption", async () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      api_key: { key_id: "key-id-123" },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer api-key-child" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow(
+      "API key child credentials cannot authorize project-host HTTP access",
     );
   });
 

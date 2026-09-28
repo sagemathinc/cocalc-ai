@@ -41,7 +41,17 @@ export class UsageMonitor extends EventEmitter {
     this.perUser = {};
   };
 
-  private toJson = (user: JSONValue) => json(user) ?? "";
+  private toJson = (user: JSONValue) => {
+    if (user != null && typeof user === "object" && !Array.isArray(user)) {
+      for (const field of ["account_id", "project_id", "hub_id", "host_id"]) {
+        const id = user[field];
+        if (typeof id === "string" && id) {
+          return `${field}:${id}`;
+        }
+      }
+    }
+    return json(user) ?? "";
+  };
 
   private getMaxPerUser = (user: JSONValue): number | undefined => {
     return this.options.getMaxPerUser?.(user) ?? this.options.maxPerUser;

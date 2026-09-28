@@ -358,6 +358,7 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "- COCALC_PROJECT_ID",
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
+    `When CoCalc access is enabled for this turn, use ordinary \`${cliCommand}\` commands. The CLI keeps the own-project credential for this project and automatically selects the temporary scoped credential for permitted account or other-project operations. Inspect \`${cliCommand} project list --help\` or the relevant command's help when needed. Do not read, print, or copy the connector credential file, and do not fall back to a broader login if a grant is absent.`,
     "Project secret changes apply immediately to running projects; do not restart a project merely to apply a secret update. Programs that cache credentials may need their own reload.",
     "Use Codex's synchronous or asynchronous question tools when human input is required. Use asynchronous questions only when useful authorized work can continue while waiting.",
     "Do not use question tools for permission or authentication escalation. Use typed first-party CoCalc actions for supported fresh-auth, login, and approval flows.",
@@ -473,6 +474,10 @@ type SpawnedCodexAppServer = {
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
+  beginConnectorTurn?: (
+    chat: NonNullable<AcpEvaluateRequest["chat"]>,
+  ) => Promise<void>;
+  endConnectorTurn?: () => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
   credentialId?: string;
   validateSubscriptionCredential?: () => Promise<void>;
@@ -2971,6 +2976,7 @@ export class CodexAppServerAgent implements AcpAgent {
     };
 
     try {
+      if (request.chat) await spawned.beginConnectorTurn?.(request.chat);
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
         // A retained process can straddle a project-tools rollout. Refresh it
@@ -4254,6 +4260,11 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw new Error(userFacingPrimaryError);
     } finally {
+      await spawned.endConnectorTurn?.().catch((error) => {
+        logger.warn("managed CoCalc connector revocation unconfirmed", {
+          error: String(error),
+        });
+      });
       if (turnId) await client.finishAttentionTurn(turnId);
       await cleanupMentionFile().catch((error) => {
         logger.warn("failed removing current-turn mention references", {

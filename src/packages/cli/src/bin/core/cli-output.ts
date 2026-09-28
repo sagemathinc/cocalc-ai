@@ -7,6 +7,7 @@
 import { AsciiTable3 } from "ascii-table3";
 import { agentGrantApprovalDetails } from "./agent-grant-approval";
 import { computeFundingHint } from "./compute-funding-hint";
+import { serviceErrorAttributes } from "@cocalc/conat/util";
 
 type OutputGlobals = {
   json?: boolean;
@@ -298,6 +299,7 @@ export function emitError(
 ): void {
   const message = error instanceof Error ? error.message : `${error}`;
   const code = errorCode(error, message);
+  const { retry_after_ms } = serviceErrorAttributes(error);
   const approval = agentGrantApprovalDetails(error);
   const details = approval ?? parseHardDeleteRateLimitDetails(code, message);
   let api = ctx.apiBaseUrl;
@@ -316,7 +318,10 @@ export function emitError(
     (approval?.approval_url
       ? `Approve this exact VM request at ${approval.approval_url}, then retry the command.`
       : undefined) ??
-    computeFundingHint(commandName, code, message);
+    computeFundingHint(commandName, code, message) ??
+    (code === "api_search_rate_limited" && retry_after_ms !== undefined
+      ? `Wait at least ${Math.max(1, Math.ceil(retry_after_ms / 1000))} seconds before retrying this command.`
+      : undefined);
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {
@@ -325,6 +330,7 @@ export function emitError(
       error: {
         code,
         message,
+        ...(retry_after_ms !== undefined ? { retry_after_ms } : undefined),
         ...(details ? { details } : undefined),
         ...(hint ? { hint } : undefined),
       },

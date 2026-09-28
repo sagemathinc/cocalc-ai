@@ -183,6 +183,7 @@ async function openCurrentProjectConatClient({
           project_id?: string;
           hub_id?: string;
           host_id?: string;
+          auth_api_key_reply_prefix?: string;
         }
       | undefined;
     if (!user) return undefined;
@@ -191,6 +192,7 @@ async function openCurrentProjectConatClient({
       project_id: user.project_id,
       hub_id: user.hub_id,
       host_id: user.host_id,
+      auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
     });
   };
   try {

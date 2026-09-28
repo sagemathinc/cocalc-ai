@@ -52,6 +52,7 @@ import {
   INVENTORY_UPDATE_INTERVAL,
 } from "./inventory";
 import { getLogger } from "@cocalc/conat/logger";
+import { abortable } from "@cocalc/conat/core/abort";
 
 const logger = getLogger("sync:dstream");
 
@@ -109,6 +110,8 @@ export class DStream<T = any> extends EventEmitter {
   private saved: { [seq: number]: T } = {};
   private opts: DStreamOptions;
   private lastHasUnsavedChanges = false;
+  private closing = false;
+  private closePromise?: Promise<void>;
 
   constructor(opts: DStreamOptions) {
     super();
@@ -224,7 +227,57 @@ export class DStream<T = any> extends EventEmitter {
     return this.stream == null;
   };
 
-  close = () => {
+  close = (): void | Promise<void> => {
+    if (this.closePromise != null) {
+      return this.closePromise;
+    }
+    if (this.isClosed()) {
+      return;
+    }
+    if (this.noAutosave || !this.hasUnsavedChanges()) {
+      this.closeNow();
+      return;
+    }
+    // Autosave may still be waiting for transport admission. Do not tear down
+    // its socket until queued batches are acknowledged, but bound shutdown.
+    this.closing = true;
+    cancel_scheduled(this.updateInventory);
+    this.closePromise = this.flushAndClose();
+    // Many callers intentionally do not await close. Still surface failures,
+    // while preserving rejection for callers that do await it.
+    void this.closePromise.catch((err) => {
+      logger.warn("close: unable to finish autosave", this.name, err);
+    });
+    return this.closePromise;
+  };
+
+  private flushAndClose = async (): Promise<void> => {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new ConatError("close autosave timeout", { code: 408 }),
+        ),
+      15_000,
+    );
+    try {
+      await abortable(
+        (async () => {
+          // Joining the current batch alone would miss messages queued after
+          // it started. No new writes are admitted once closing begins.
+          while (this.hasUnsavedChanges()) {
+            await this.attemptToSaveBatch();
+          }
+        })(),
+        controller.signal,
+      );
+    } finally {
+      clearTimeout(timer);
+      this.closeNow();
+    }
+  };
+
+  private closeNow = () => {
     if (this.isClosed()) {
       return;
     }
@@ -429,6 +482,9 @@ export class DStream<T = any> extends EventEmitter {
       checkpoint?: CheckpointUpdate;
     },
   ): void => {
+    if (this.closing || this.isClosed()) {
+      throw Error("closed");
+    }
     const id = randomId();
     this.local[id] = mesg;
     this.updateHasUnsavedChanges();

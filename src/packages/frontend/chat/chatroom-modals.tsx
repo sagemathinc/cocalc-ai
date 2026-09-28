@@ -1026,7 +1026,8 @@ export function ChatRoomModals({
           </div>
           <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
             This creates a new chat and links it to the current one. For Codex
-            chats, the agent session will be forked with the same context.
+            and Claude chats, the agent session is copied with its existing
+            context.
           </div>
         </Space>
       </Modal>

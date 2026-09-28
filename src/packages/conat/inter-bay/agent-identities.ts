@@ -31,10 +31,21 @@ export interface AgentIdentityLookupRequest extends AgentIdentityReadRequest {
   agent_id: string;
 }
 
+export interface AgentIdentityRunRequest extends AgentIdentityLookupRequest {
+  run_id: string;
+}
+
+export interface ActiveAgentIdentityRun {
+  expires_at: number;
+}
+
 export interface InterBayAgentIdentityApi {
   list(opts: AgentIdentityReadRequest): Promise<AgentIdentity[]>;
   resolve(opts: AgentIdentityThreadRequest): Promise<AgentIdentity | undefined>;
   get(opts: AgentIdentityLookupRequest): Promise<AgentIdentity>;
+  verifyActiveRun(
+    opts: AgentIdentityRunRequest,
+  ): Promise<ActiveAgentIdentityRun>;
   register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
   startFreshConversation(
     opts: AgentIdentityLookupRequest & { expected_thread_id: string },

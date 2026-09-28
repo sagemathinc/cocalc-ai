@@ -5,10 +5,18 @@ import {
   type Message,
   messageData,
   ConatError,
+  headerToError,
 } from "@cocalc/conat/core/client";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { once } from "@cocalc/util/async-utils";
-import { SOCKET_HEADER_CMD, type State, clientSubject } from "./util";
+import {
+  SOCKET_HEADER_CMD,
+  SOCKET_REQUEST_ID,
+  SOCKET_RESPONSE_ID,
+  type State,
+  clientSubject,
+} from "./util";
+import { randomId } from "@cocalc/conat/names";
 import { type TCP, createTCP } from "./tcp";
 import { type ConatSocketServer } from "./server";
 import { keepAlive, KeepAlive } from "./keepalive";
@@ -48,12 +56,26 @@ export class ServerSocket extends EventEmitter {
   private alive?: KeepAlive;
   private dataQueue: { data: any; headers?: Headers }[] = [];
   private dataQueueScheduled = false;
+  public readonly returnInbox?: string;
+  private pendingReplies = new Map<
+    string,
+    {
+      resolve: (message: Message) => void;
+      reject: (error: Error) => void;
+    }
+  >();
 
-  constructor({ conatSocket, id, subject }) {
+  constructor({
+    conatSocket,
+    id,
+    subject,
+    returnInbox = undefined as string | undefined,
+  }) {
     super();
     this.subject = subject;
     this.conatSocket = conatSocket;
-    this.clientSubject = clientSubject(subject);
+    this.returnInbox = returnInbox;
+    this.clientSubject = returnInbox ?? clientSubject(subject);
     this.id = id;
     this.conn = { id };
     this.initTCP();
@@ -97,7 +119,7 @@ export class ServerSocket extends EventEmitter {
       throw Error("this.tcp already initialized");
     }
     const request = async (mesg, opts?) =>
-      await this.conatSocket.client.request(this.clientSubject, mesg, {
+      await this.request(mesg, {
         ...opts,
         headers: { ...opts?.headers, [SOCKET_HEADER_CMD]: "socket" },
       });
@@ -224,6 +246,9 @@ export class ServerSocket extends EventEmitter {
     delete this.alive;
 
     this.queuedWrites = [];
+    for (const pending of this.pendingReplies.values())
+      pending.reject(new ConatError("closed", { code: "EPIPE" }));
+    this.pendingReplies.clear();
     this.setState("closed");
     this.removeAllListeners();
     delete this.conatSocket.sockets[this.id];
@@ -271,13 +296,61 @@ export class ServerSocket extends EventEmitter {
 
   // use request reply where the client responds
   request = async (data, options?) => {
+    options?.signal?.throwIfAborted();
     await this.waitUntilReady(options?.timeout);
+    options?.signal?.throwIfAborted();
+    if (this.returnInbox) return await this.requestViaService(data, options);
     // logger.silly("server sending request to ", this.clientSubject);
     return await this.conatSocket.client.request(
       this.clientSubject,
       data,
       options,
     );
+  };
+
+  receiveResponse = (message: Message) => {
+    const id = message.headers?.[SOCKET_RESPONSE_ID];
+    if (typeof id !== "string") return;
+    const pending = this.pendingReplies.get(id);
+    if (!pending) return;
+    this.pendingReplies.delete(id);
+    if (message.headers?.error) pending.reject(headerToError(message.headers));
+    else pending.resolve(message);
+  };
+
+  private requestViaService = async (data, options?) => {
+    if (this.pendingReplies.size >= 128)
+      throw new ConatError("too many socket requests", { code: 429 });
+    const id = randomId();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const signal: AbortSignal | undefined = options?.signal;
+    const abort = () =>
+      this.pendingReplies
+        .get(id)
+        ?.reject(signal?.reason ?? Error("socket request aborted"));
+    const response = new Promise<Message>((resolve, reject) => {
+      this.pendingReplies.set(id, { resolve, reject });
+      timer = setTimeout(
+        () => reject(new ConatError("timeout", { code: 408 })),
+        options?.timeout ?? DEFAULT_REQUEST_TIMEOUT,
+      );
+      timer.unref?.();
+    });
+    // A failed publish and a concurrent close must not leave an unhandled reply.
+    response.catch(() => undefined);
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      signal?.throwIfAborted();
+      await this.conatSocket.client.publish(this.clientSubject, data, {
+        ...options,
+        headers: { ...options?.headers, [SOCKET_REQUEST_ID]: id },
+      });
+      return await response;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      clearTimeout(timer);
+      this.pendingReplies.delete(id);
+    }
   };
 
   private waitUntilReady = reuseInFlight(async (timeout?: number) => {

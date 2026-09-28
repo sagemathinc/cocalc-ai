@@ -5,7 +5,6 @@
 
 import {
   normalizeAgentName,
-  type AgentNetwork,
   type NamedAgent,
   type NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
@@ -23,9 +22,13 @@ import { Suspense } from "react";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAppContext } from "@cocalc/frontend/app/context";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexModelCapabilityInfo,
+  ExternalCredentialInfo,
+} from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
@@ -33,6 +36,7 @@ import {
   type CodexReasoningId,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { agentWorkingDirectory } from "@cocalc/frontend/chat/agent-working-directory";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
@@ -59,6 +63,28 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
+import {
+  harnessRuntimeFromDraft,
+  qualifiedHarnessRuntime,
+} from "@cocalc/frontend/chat/harness-profile";
+import { CLAUDE_SUBSCRIPTION_KIND } from "@cocalc/util/ai/external-credential-profiles";
+import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
+import {
+  readHarnessCredentialSelection,
+  writeHarnessCredentialSelection,
+} from "@cocalc/frontend/chat/harness-credential-selection";
+import {
+  NewAgentRuntimeSelect,
+  type NewAgentRuntimeKind,
+} from "./new-agent-runtime-select";
+import { newAgentClaudeCredentialDefault } from "./claude-credential-options";
+import {
+  NewAgentClaudeControls,
+  NewAgentAcpControls,
+} from "./new-agent-harness-controls";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -142,13 +168,10 @@ import {
 import { openAgentThread } from "./open-agent";
 import {
   personalAgentApi,
-  refreshAgentNetworks,
   refreshNamedAgents,
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
-import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
-import { AgentNetworkDetailsModal } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
 import { FreshConversationModal } from "./fresh-conversation-modal";
@@ -264,20 +287,6 @@ const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
 const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
 const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
-
-function networksForAgent(networks: AgentNetwork[], agent: NamedAgent) {
-  return networks.filter(
-    (network) =>
-      network.state !== "closed" &&
-      network.members.some(
-        (member) =>
-          member.kind === "registered" &&
-          !member.removed_at &&
-          member.endpoint.project_id === agent.endpoint.project_id &&
-          member.endpoint.agent_id === agent.endpoint.agent_id,
-      ),
-  );
-}
 
 function clampAgentDocsDrawerWidth(width: number): number {
   const maximum =
@@ -509,6 +518,50 @@ function NewAgentPanel({
     [],
   );
   const modelCustomized = useRef(false);
+  const [sourceRuntime] = useState(() => {
+    if (!sourceAgent) return;
+    const raw = redux
+      .getEditorActions(sourceAgent.endpoint.project_id, sourceAgent.path)
+      ?.getChatActions?.()
+      ?.getThreadMetadata?.(sourceAgent.thread_id)?.agent_runtime;
+    return raw == null ? undefined : raw;
+  });
+  const [runtimeKind, setRuntimeKind] = useState<NewAgentRuntimeKind>(() => {
+    if (sourceRuntime == null) return "codex-native";
+    try {
+      const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
+      return profile.version === 2 && profile.id === "claude-code"
+        ? "claude-code"
+        : "acp";
+    } catch {
+      return "acp";
+    }
+  });
+  const [harnessSettings, setHarnessSettings] =
+    useState<HarnessSessionSettings>(() => {
+      try {
+        const runtime = parseAcpHarnessRuntime(sourceRuntime);
+        return runtime.profile.version === 2 &&
+          runtime.profile.id === "claude-code"
+          ? (runtime.settings ?? {})
+          : {};
+      } catch {
+        return {};
+      }
+    });
+  const [harnessDraft, setHarnessDraft] = useState<HarnessProfileDraft>(() => {
+    try {
+      const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
+      return {
+        id: profile.id,
+        revision: profile.revision,
+        executable: profile.version === 1 ? profile.executable : "",
+        args: profile.version === 1 ? profile.args.join("\n") : "",
+      };
+    } catch {
+      return { id: "", revision: "", executable: "", args: "" };
+    }
+  });
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
       sourceAgent?.endpoint.project_id ||
@@ -517,6 +570,7 @@ function NewAgentPanel({
   );
   const [directory, setDirectory] = useState(
     () =>
+      sourceRuntime?.profile?.cwd ||
       sourceConfig?.workingDirectory?.trim() ||
       (sourceAgent
         ? getProjectHomeDirectory(sourceAgent.endpoint.project_id)
@@ -589,6 +643,30 @@ function NewAgentPanel({
   const createProjectMounted = useRef(false);
   if (createProjectOpen) createProjectMounted.current = true;
   const projectSettingsButton = useRef<HTMLButtonElement>(null);
+  const [anthropicCredentials, setAnthropicCredentials] = useState<
+    ExternalCredentialInfo[]
+  >([]);
+  const [claudeCredentialsLoaded, setClaudeCredentialsLoaded] = useState(false);
+  const initialClaudeCredential = useRef(
+    readHarnessCredentialSelection({
+      accountId: boundAccount.accountId,
+      projectId: sourceAgent?.endpoint.project_id,
+      threadKey: sourceAgent?.thread_id,
+      forNewAgent: true,
+    }),
+  );
+  const claudeCredentialChosen = useRef(
+    initialClaudeCredential.current != null,
+  );
+  const [claudeCredential, setClaudeCredential] =
+    useState<AcpHarnessCredential>(
+      () =>
+        initialClaudeCredential.current ?? {
+          version: 1,
+          provider: "anthropic",
+          mode: "project-secret",
+        },
+    );
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
@@ -635,6 +713,7 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
+    enabled: !!projectId && runtimeKind === "codex-native",
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -707,9 +786,47 @@ function NewAgentPanel({
   }, [projectId, projectMap]);
 
   useEffect(() => {
+    if (runtimeKind !== "claude-code") return;
+    let disposed = false;
+    setAnthropicCredentials([]);
+    setClaudeCredentialsLoaded(false);
+    void webapp_client.conat_client.hub.system
+      .listExternalCredentials({
+        provider: "anthropic",
+        scope: "account",
+      })
+      .then((rows) => {
+        if (!disposed) {
+          setAnthropicCredentials(
+            rows.filter(
+              (row) =>
+                !row.revoked &&
+                (row.kind === "anthropic-api-key" ||
+                  row.kind === CLAUDE_SUBSCRIPTION_KIND),
+            ),
+          );
+          if (!claudeCredentialChosen.current)
+            setClaudeCredential(newAgentClaudeCredentialDefault(rows));
+          setClaudeCredentialsLoaded(true);
+        }
+      })
+      .catch((err) => {
+        if (!disposed) setError(`${err}`);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [runtimeKind, boundAccount.accountId]);
+
+  useEffect(() => {
     let disposed = false;
     setModelCatalog(undefined);
-    if (!projectId || paymentSource?.source !== "subscription") return;
+    if (
+      runtimeKind !== "codex-native" ||
+      !projectId ||
+      paymentSource?.source !== "subscription"
+    )
+      return;
     const cached = cachedAccountCodexModels(projectId, paymentSource);
     if (cached?.length) setModelCatalog(cached);
     void discoverAccountCodexModels(projectId, paymentSource)
@@ -720,7 +837,12 @@ function NewAgentPanel({
     return () => {
       disposed = true;
     };
-  }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
+  }, [
+    paymentSource?.source,
+    paymentSource?.subscriptionRevision,
+    projectId,
+    runtimeKind,
+  ]);
 
   useEffect(() => {
     setConfig((current) => {
@@ -792,11 +914,24 @@ function NewAgentPanel({
         boundAccount.assertCurrent();
         const threadId = chatActions.createEmptyThread({
           name: agentName.trim(),
-          threadAgent: {
-            mode: "codex",
-            model: executionConfig.model,
-            codexConfig: { ...executionConfig, workingDirectory },
-          },
+          threadAgent:
+            runtimeKind !== "codex-native"
+              ? {
+                  mode: "acp",
+                  runtime:
+                    runtimeKind === "claude-code"
+                      ? qualifiedHarnessRuntime(
+                          "claude-code",
+                          workingDirectory,
+                          harnessSettings,
+                        )
+                      : harnessRuntimeFromDraft(harnessDraft, workingDirectory),
+                }
+              : {
+                  mode: "codex",
+                  model: executionConfig.model,
+                  codexConfig: { ...executionConfig, workingDirectory },
+                },
         });
         if (!threadId) throw new Error("Unable to create the agent thread");
         created = { projectId: targetProjectId, path, threadId };
@@ -822,10 +957,19 @@ function NewAgentPanel({
         projectId: targetProjectId,
         threadId,
         credentialId:
+          runtimeKind === "codex-native" &&
           executionConfig.paymentSource === "subscription"
             ? executionConfig.credentialId
             : undefined,
       });
+      if (runtimeKind === "claude-code") {
+        writeHarnessCredentialSelection({
+          accountId: boundAccount.accountId,
+          projectId: targetProjectId,
+          threadKey: threadId,
+          credential: claudeCredential,
+        });
+      }
       return created;
     });
   }
@@ -994,6 +1138,7 @@ function NewAgentPanel({
   }
 
   async function create(requestValue?: string, withoutTask = false) {
+    if (runtimeKind === "claude-code" && !claudeCredentialsLoaded) return;
     const request = (
       requestValue ??
       inputControlRef.current?.getValue?.() ??
@@ -1054,7 +1199,7 @@ function NewAgentPanel({
         }
         createdProjectTitle = automaticProjectCreated.current.title;
       }
-      if (!withoutTask) {
+      if (!withoutTask && runtimeKind === "codex-native") {
         progress("funding", targetProjectId);
         const source = await fetchCodexPaymentSourceForSubmit({
           projectId: targetProjectId,
@@ -1087,6 +1232,8 @@ function NewAgentPanel({
           paymentSource: source,
         });
         if (executionConfig !== config) setConfig(executionConfig);
+      }
+      if (!withoutTask) {
         if (
           !(await preflightNewAgentProjectStart({
             projectId: targetProjectId,
@@ -1102,6 +1249,7 @@ function NewAgentPanel({
         targetProjectId,
         createdProjectTitle,
         executionConfig,
+        withoutTask ? request : undefined,
       );
     } catch (err) {
       attemptRef.current?.finish(
@@ -1121,6 +1269,7 @@ function NewAgentPanel({
     targetProjectId?: string,
     projectTitleOverride?: string,
     executionConfig: NewAgentCodexConfig = config,
+    draft?: string,
   ): Promise<void> {
     const created = await prepare(targetProjectId, executionConfig);
     boundAccount.assertCurrent();
@@ -1132,12 +1281,14 @@ function NewAgentPanel({
         workbenchEnabled: true,
       });
       await waitForChatReady(actions);
-      actions.setCodexConfig(created.threadId, executionConfig);
+      if (runtimeKind === "codex-native")
+        actions.setCodexConfig(created.threadId, executionConfig);
       writeAgentSubscriptionSelection({
         accountId: boundAccount.accountId,
         projectId: created.projectId,
         threadId: created.threadId,
         credentialId:
+          runtimeKind === "codex-native" &&
           executionConfig.paymentSource === "subscription"
             ? executionConfig.credentialId
             : undefined,
@@ -1150,7 +1301,8 @@ function NewAgentPanel({
       const sent = actions.sendChat({
         input: request,
         reply_thread_id: created.threadId,
-        acpConfigOverride: executionConfig,
+        acpConfigOverride:
+          runtimeKind === "codex-native" ? executionConfig : undefined,
         chatIdentity,
       });
       if (sent) {
@@ -1169,6 +1321,15 @@ function NewAgentPanel({
           "The agent was created, but the first request could not start. It is preserved as a draft.",
         );
       }
+    }
+    if (draft) {
+      await writeChatComposerDraft({
+        account_id: boundAccount.accountId,
+        project_id: created.projectId,
+        path: created.path,
+        composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
+        text: draft,
+      });
     }
     rememberAgentName(
       claimedNameRef.current ?? normalizeAgentName(agentName),
@@ -1229,6 +1390,10 @@ function NewAgentPanel({
       setMissingDirectory(undefined);
       await submitNewAgentRequest(
         createWithoutTaskRef.current ? undefined : request,
+        missingDirectory.projectId,
+        undefined,
+        config,
+        createWithoutTaskRef.current ? request : undefined,
       );
     } catch (err) {
       handleCreateError(err);
@@ -1534,138 +1699,216 @@ function NewAgentPanel({
                     disabled={busy || !!pending}
                   />
                 </Popover>
-                <span
-                  style={{
-                    alignItems: "center",
-                    display: "inline-flex",
-                    flex: "0 1 auto",
-                    minWidth: 0,
-                    overflow: "hidden",
-                  }}
-                >
-                  <Dropdown
-                    menu={{
-                      items: modelOptions.map(({ value, label, disabled }) => ({
-                        key: value,
-                        label,
-                        disabled,
-                      })),
-                      selectedKeys: config.model ? [config.model] : [],
-                      onClick: ({ key }) => {
-                        modelCustomized.current = true;
-                        setConfig((current) =>
-                          reconcileAgentConfig(
-                            { ...current, model: key },
-                            modelOptions,
-                          ),
-                        );
-                      },
+                <NewAgentRuntimeSelect
+                  value={runtimeKind}
+                  disabled={busy || !!pending}
+                  onChange={setRuntimeKind}
+                />
+                {runtimeKind === "codex-native" && (
+                  <span
+                    style={{
+                      alignItems: "center",
+                      display: "inline-flex",
+                      flex: "0 1 auto",
+                      minWidth: 0,
+                      overflow: "hidden",
                     }}
-                    trigger={["click"]}
                   >
-                    <ComposerPillButton
-                      aria-label={`Change model. Current model: ${config.model}`}
-                      disabled={busy || !!pending || !!siteFundedPolicy}
-                      style={{
-                        maxWidth: 150,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                    <Dropdown
+                      menu={{
+                        items: modelOptions.map(
+                          ({ value, label, disabled }) => ({
+                            key: value,
+                            label,
+                            disabled,
+                          }),
+                        ),
+                        selectedKeys: config.model ? [config.model] : [],
+                        onClick: ({ key }) => {
+                          modelCustomized.current = true;
+                          setConfig((current) =>
+                            reconcileAgentConfig(
+                              { ...current, model: key },
+                              modelOptions,
+                            ),
+                          );
+                        },
                       }}
+                      trigger={["click"]}
                     >
-                      {config.model}
-                    </ComposerPillButton>
-                  </Dropdown>
-                  <Text type="secondary">·</Text>
-                  <Dropdown
-                    menu={{
-                      items: reasoningOptions.map(({ id, label }) => ({
-                        key: id,
-                        label,
-                      })),
-                      selectedKeys: config.reasoning ? [config.reasoning] : [],
-                      onClick: ({ key }) => {
-                        modelCustomized.current = true;
-                        setConfig((current) => ({
-                          ...current,
-                          reasoning: key as CodexReasoningId,
-                        }));
-                      },
-                    }}
-                    trigger={["click"]}
-                  >
-                    <ComposerPillButton
-                      aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
-                      disabled={
-                        busy ||
-                        !!pending ||
-                        !!siteFundedPolicy ||
-                        reasoningOptions.length === 0
-                      }
-                    >
-                      {selectedReasoningLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                  <Text type="secondary">·</Text>
-                  <Dropdown
-                    menu={{
-                      items: paymentOptions.map(
-                        ({ value, label, disabled }) => ({
-                          key: value,
+                      <ComposerPillButton
+                        aria-label={`Change model. Current model: ${config.model}`}
+                        disabled={busy || !!pending || !!siteFundedPolicy}
+                        style={{
+                          maxWidth: 150,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {config.model}
+                      </ComposerPillButton>
+                    </Dropdown>
+                    <Text type="secondary">·</Text>
+                    <Dropdown
+                      menu={{
+                        items: reasoningOptions.map(({ id, label }) => ({
+                          key: id,
                           label,
-                          disabled,
-                        }),
-                      ),
-                      selectedKeys: [selectedPaymentValue],
-                      onClick: ({ key }) => {
-                        if (key.startsWith("subscription:")) {
+                        })),
+                        selectedKeys: config.reasoning
+                          ? [config.reasoning]
+                          : [],
+                        onClick: ({ key }) => {
+                          modelCustomized.current = true;
                           setConfig((current) => ({
                             ...current,
-                            paymentSource: "subscription",
-                            credentialId: key.slice("subscription:".length),
+                            reasoning: key as CodexReasoningId,
                           }));
-                        } else {
-                          setConfig((current) => ({
-                            ...current,
-                            paymentSource: key as CodexPaymentSourcePreference,
-                            credentialId: undefined,
-                          }));
-                        }
-                      },
-                    }}
-                    trigger={["click"]}
-                  >
-                    <ComposerPillButton
-                      aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
-                      disabled={busy || !!pending || paymentSourceLoading}
-                      style={{
-                        maxWidth: 120,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        },
                       }}
+                      trigger={["click"]}
                     >
-                      {selectedPaymentLabel}
-                    </ComposerPillButton>
-                  </Dropdown>
-                </span>
-                <Popover
-                  content={advancedSettings}
-                  open={moreSettingsOpen}
-                  placement="bottomRight"
-                  trigger="click"
-                  onOpenChange={(open) => {
-                    setMoreSettingsOpen(open);
-                    if (open) setSettingsOpen(false);
-                  }}
-                >
-                  <Button
-                    aria-label="More agent settings"
-                    aria-haspopup="dialog"
-                    icon={<Icon name="sliders" />}
-                    size="small"
-                    type="text"
+                      <ComposerPillButton
+                        aria-label={`Change thinking level. Current level: ${selectedReasoningLabel}`}
+                        disabled={
+                          busy ||
+                          !!pending ||
+                          !!siteFundedPolicy ||
+                          reasoningOptions.length === 0
+                        }
+                      >
+                        {selectedReasoningLabel}
+                      </ComposerPillButton>
+                    </Dropdown>
+                    <Text type="secondary">·</Text>
+                    <Dropdown
+                      menu={{
+                        items: paymentOptions.map(
+                          ({ value, label, disabled }) => ({
+                            key: value,
+                            label,
+                            disabled,
+                          }),
+                        ),
+                        selectedKeys: [selectedPaymentValue],
+                        onClick: ({ key }) => {
+                          if (key.startsWith("subscription:")) {
+                            setConfig((current) => ({
+                              ...current,
+                              paymentSource: "subscription",
+                              credentialId: key.slice("subscription:".length),
+                            }));
+                          } else {
+                            setConfig((current) => ({
+                              ...current,
+                              paymentSource:
+                                key as CodexPaymentSourcePreference,
+                              credentialId: undefined,
+                            }));
+                          }
+                        },
+                      }}
+                      trigger={["click"]}
+                    >
+                      <ComposerPillButton
+                        aria-label={`Change payment source. Current source: ${selectedPaymentLabel}`}
+                        disabled={busy || !!pending || paymentSourceLoading}
+                        style={{
+                          maxWidth: 120,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {selectedPaymentLabel}
+                      </ComposerPillButton>
+                    </Dropdown>
+                  </span>
+                )}
+                {runtimeKind === "codex-native" && (
+                  <Popover
+                    content={advancedSettings}
+                    open={moreSettingsOpen}
+                    placement="bottomRight"
+                    trigger="click"
+                    onOpenChange={(open) => {
+                      setMoreSettingsOpen(open);
+                      if (open) setSettingsOpen(false);
+                    }}
+                  >
+                    <Button
+                      aria-label="More agent settings"
+                      aria-haspopup="dialog"
+                      icon={<Icon name="sliders" />}
+                      size="small"
+                      type="text"
+                      disabled={busy || !!pending}
+                    />
+                  </Popover>
+                )}
+                {runtimeKind === "claude-code" && (
+                  <NewAgentClaudeControls
+                    accountId={boundAccount.accountId}
+                    projectId={projectId}
+                    projectHome={projectHome}
+                    cwd={directory.trim() || projectHome || "/home/user"}
+                    settings={harnessSettings}
+                    onSettings={setHarnessSettings}
+                    credential={claudeCredential}
+                    credentials={anthropicCredentials}
+                    credentialsLoaded={claudeCredentialsLoaded}
+                    onCredential={(credential) => {
+                      claudeCredentialChosen.current = true;
+                      setClaudeCredential(credential);
+                    }}
+                    onConnected={async (credentialId) => {
+                      boundAccount.assertCurrent();
+                      claudeCredentialChosen.current = true;
+                      const rows =
+                        await webapp_client.conat_client.hub.system.listExternalCredentials(
+                          { provider: "anthropic", scope: "account" },
+                        );
+                      boundAccount.assertCurrent();
+                      setAnthropicCredentials(
+                        rows.filter(
+                          (row) =>
+                            !row.revoked &&
+                            (row.kind === "anthropic-api-key" ||
+                              row.kind === CLAUDE_SUBSCRIPTION_KIND),
+                        ),
+                      );
+                      if (
+                        !rows.some(
+                          (row) =>
+                            row.id === credentialId &&
+                            row.kind === CLAUDE_SUBSCRIPTION_KIND &&
+                            !row.revoked,
+                        )
+                      )
+                        throw Error(
+                          "Connected Claude subscription is not available",
+                        );
+                      setClaudeCredentialsLoaded(true);
+                      setClaudeCredential({
+                        version: 1,
+                        provider: "anthropic",
+                        mode: "account-subscription",
+                        credentialId,
+                      });
+                    }}
                     disabled={busy || !!pending}
+                    assertCurrent={() => boundAccount.assertCurrent()}
                   />
-                </Popover>
+                )}
+                {runtimeKind === "acp" && (
+                  <NewAgentAcpControls
+                    draft={harnessDraft}
+                    onChange={setHarnessDraft}
+                    cwd={directory.trim() || projectHome || "/home/user"}
+                    disabled={busy || !!pending}
+                    createDisabled={uploading || !!problem || atLimit}
+                    onCreate={() => void create(undefined, true)}
+                  />
+                )}
                 <span style={{ flex: 1 }} />
               </div>
             )}
@@ -1682,7 +1925,8 @@ function NewAgentPanel({
                 !!problem ||
                 !firstRequest.trim() ||
                 atLimit ||
-                (!projectId && (!projectMap || emailVerificationRequired))
+                (!projectId && (!projectMap || emailVerificationRequired)) ||
+                (runtimeKind === "claude-code" && !claudeCredentialsLoaded)
               }
               onClick={() => void create()}
             />
@@ -1721,7 +1965,7 @@ function NewAgentPanel({
             </Space>
           </div>
         )}
-        {paymentSourceError && (
+        {runtimeKind === "codex-native" && paymentSourceError && (
           <Alert
             role="alert"
             type="error"
@@ -2169,8 +2413,6 @@ function AgentWorkspace({
   onAgentAppearance,
   onClose,
   onRegisteredThreadSelected,
-  networks,
-  onEditNetworkTags,
 }: {
   onCopy: (agent: NamedAgent) => void;
   onFresh: (agent: NamedAgent) => void;
@@ -2190,8 +2432,6 @@ function AgentWorkspace({
   ) => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
-  networks: AgentNetwork[];
-  onEditNetworkTags: (agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useWorkspaceSelectedThread(
@@ -2241,7 +2481,6 @@ function AgentWorkspace({
     selectedThread,
   );
   const displayedAgent = selectedAgent ?? agent;
-  const networkTagCount = networksForAgent(networks, displayedAgent).length;
   const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
     agent.endpoint.project_id,
     "users",
@@ -2291,16 +2530,13 @@ function AgentWorkspace({
         threadId: selectedThread,
       })
     : undefined;
-  const selectedThreadConfig = selectedThreadMetadata?.acp_config as
-    | CodexThreadConfig
-    | undefined;
   const executionState =
     chatActions && selectedThread && !unregistered
       ? namedAgentExecutionState(selectedThreadMetadata ?? {})
       : undefined;
   const selectedWorkingDirectory =
-    (selectedThreadConfig as any)?.get?.("workingDirectory") ??
-    selectedThreadConfig?.workingDirectory;
+    agentWorkingDirectory(selectedThreadMetadata) ??
+    getProjectHomeDirectory(agent.endpoint.project_id);
   const workingDirectoryLabel = relativeAgentWorkingDirectory(
     selectedWorkingDirectory,
     getProjectHomeDirectory(agent.endpoint.project_id),
@@ -2413,7 +2649,18 @@ function AgentWorkspace({
     const id =
       editor?._get_most_recent_active_frame_id_of_type("chatroom") ??
       editor?._get_active_id();
-    if (editor && id) void editor[action](id);
+    if (editor && id) {
+      if (action === "terminal") {
+        void editor.terminal(
+          id,
+          false,
+          selectedWorkingDirectory,
+          selectedThread || agent.thread_id,
+        );
+      } else {
+        void editor[action](id);
+      }
+    }
   };
   return (
     <div
@@ -2549,18 +2796,6 @@ function AgentWorkspace({
               />
             ) : (
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
-            )}
-            {!unregistered && (
-              <Button
-                type="text"
-                size="small"
-                aria-label={`Edit network tags for @${displayedAgent.name}`}
-                onClick={() => onEditNetworkTags(displayedAgent)}
-                style={{ color: "inherit", height: "auto", padding: 0 }}
-              >
-                Network tags
-                {networkTagCount ? ` (${networkTagCount})` : ""}
-              </Button>
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
@@ -2698,7 +2933,14 @@ function AgentWorkspace({
           project_id={agent.endpoint.project_id}
           startingPath={selectedWorkingDirectory}
           onSelect={(workingDirectory) => {
-            chatActions?.setCodexConfig(selectedThread, { workingDirectory });
+            if (selectedThreadMetadata?.agent_runtime != null) {
+              chatActions?.setHarnessWorkingDirectory(
+                selectedThread,
+                workingDirectory,
+              );
+            } else {
+              chatActions?.setCodexConfig(selectedThread, { workingDirectory });
+            }
             setDirectoryOpen(false);
           }}
         />
@@ -2853,8 +3095,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
     | undefined;
-  const [networkDetailsId, setNetworkDetailsId] = useState<string>();
-  const [networkTagsAgent, setNetworkTagsAgent] = useState<NamedAgent>();
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -2917,9 +3157,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const networksByAgent = useMemo(
     () => indexAgentNetworks(networks),
     [networks],
-  );
-  const detailsNetwork = networks.find(
-    ({ agent_network_id }) => agent_network_id === networkDetailsId,
   );
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
@@ -3274,6 +3511,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     setCopyBusy(true);
     setCopyError("");
     try {
+      boundAccount.assertCurrent();
       const actions = initChat(
         copyingAgent.endpoint.project_id,
         copyingAgent.path,
@@ -4180,6 +4418,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       active={
                         active &&
                         !libraryOpen &&
+                        (!isNarrow || !mobileList) &&
                         !!selected &&
                         agentWorkspaceKey(selected) === workspace
                       }
@@ -4198,8 +4437,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                       onAgentActivity={agentOrganization.recordActivity}
                       agentAppearances={agentAppearances}
                       onAgentAppearance={handleAgentAppearance}
-                      networks={networks}
-                      onEditNetworkTags={setNetworkTagsAgent}
                       onClose={() => {
                         unmountWorkspace(workspace);
                         if (isNarrow) setMobileList(true);
@@ -4244,25 +4481,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onClose={() => startFresh(undefined)}
         />
       )}
-      {networkTagsAgent && networkDirectory && (
-        <AgentNetworkTagsEditor
-          agent={networkTagsAgent}
-          directory={networkDirectory}
-          onClose={() => setNetworkTagsAgent(undefined)}
-          onOpenNetwork={(network) =>
-            setNetworkDetailsId(network.agent_network_id)
-          }
-        />
-      )}
-      <AgentNetworkDetailsModal
-        network={detailsNetwork}
-        networks={networkDirectory?.networks}
-        onSelectNetwork={(network) =>
-          setNetworkDetailsId(network.agent_network_id)
-        }
-        onClose={() => setNetworkDetailsId(undefined)}
-        onChanged={refreshAgentNetworks}
-      />
     </main>
   );
 }

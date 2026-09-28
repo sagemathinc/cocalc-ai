@@ -10,6 +10,7 @@ import {
   startFreshConversationLocal,
 } from "./api";
 import { agentIdentityControl } from "./identity-control";
+import { verifyActiveAgentRun } from "./identity-routing";
 
 const account_id = randomUUID(),
   project_id = randomUUID();
@@ -19,6 +20,7 @@ const owner = jest.fn(),
 const query = jest.fn(),
   find = jest.fn(),
   get = jest.fn(),
+  activeRun = jest.fn(),
   fabric = jest.fn();
 const transaction = jest.fn(async (fn) => fn({ query }));
 const remote = {
@@ -28,6 +30,7 @@ const remote = {
   recover: jest.fn(),
   startFreshConversation: jest.fn(),
   get: jest.fn(),
+  verifyActiveRun: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
 const sourceHostAccess = jest.fn();
@@ -61,7 +64,7 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertProjectHostAgentTokenAccess: (...a) => sourceHostAccess(...a),
 }));
 jest.mock("./store", () => ({
-  agentStore: () => ({ query, find, get, transaction }),
+  agentStore: () => ({ query, find, get, activeRun, transaction }),
   normalizeAgentPath: (s) => s,
 }));
 jest.mock("./chat", () => ({
@@ -96,6 +99,14 @@ beforeEach(() => {
     agent_id: request.thread_id,
     created_by: account_id,
   });
+  activeRun.mockReset().mockResolvedValue({
+    account_id,
+    project_id,
+    expires_at: new Date(Date.now() + 60_000),
+  });
+  remote.verifyActiveRun
+    .mockReset()
+    .mockResolvedValue({ expires_at: Date.now() + 60_000 });
   remote.get.mockReset().mockResolvedValue({ agent_id: "remote" });
   remote.list.mockReset().mockResolvedValue([]);
   remote.resolve.mockReset().mockResolvedValue({ agent_id: "remote" });
@@ -105,6 +116,72 @@ beforeEach(() => {
   remote.recover
     .mockReset()
     .mockResolvedValue({ agent_id: "recovered-remote" });
+});
+
+test("active run verification follows project ownership without forwarding secrets", async () => {
+  const agent_id = randomUUID();
+  const run_id = randomUUID();
+  await verifyActiveAgentRun({ account_id, project_id, agent_id, run_id });
+  expect(remote.verifyActiveRun).toHaveBeenCalledWith({
+    account_id,
+    project_id,
+    agent_id,
+    run_id,
+    route: { bay_id: "owner", epoch: 3 },
+  });
+  expect(activeRun).not.toHaveBeenCalled();
+});
+
+test("active run verification rejects owner, project, and stale lease substitution", async () => {
+  bay = "owner";
+  owner.mockResolvedValue({ bay_id: "owner", epoch: 3 });
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    run_id: randomUUID(),
+    route: { bay_id: "owner", epoch: 3 },
+  };
+  await expect(agentIdentityControl.verifyActiveRun(opts)).resolves.toEqual({
+    expires_at: expect.any(Number),
+  });
+  activeRun.mockResolvedValueOnce({
+    account_id: randomUUID(),
+    project_id,
+    expires_at: new Date(Date.now() + 60_000),
+  });
+  await expect(agentIdentityControl.verifyActiveRun(opts)).rejects.toThrow(
+    "does not match",
+  );
+  activeRun.mockResolvedValueOnce({
+    account_id,
+    project_id: randomUUID(),
+    expires_at: new Date(Date.now() + 60_000),
+  });
+  await expect(agentIdentityControl.verifyActiveRun(opts)).rejects.toThrow(
+    "does not match",
+  );
+  await expect(
+    agentIdentityControl.verifyActiveRun({
+      ...opts,
+      route: { bay_id: "owner", epoch: 2 },
+    }),
+  ).rejects.toThrow("stale");
+  expect(activeRun).toHaveBeenCalledTimes(3);
+});
+
+test("expired or unavailable remote run does not fall back to local state", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    run_id: randomUUID(),
+  };
+  remote.verifyActiveRun.mockResolvedValueOnce({ expires_at: Date.now() - 1 });
+  await expect(verifyActiveAgentRun(opts)).rejects.toThrow("expired");
+  remote.verifyActiveRun.mockRejectedValueOnce(new Error("owner unavailable"));
+  await expect(verifyActiveAgentRun(opts)).rejects.toThrow("owner unavailable");
+  expect(activeRun).not.toHaveBeenCalled();
 });
 
 const inspections = [{ read: getIdentity, method: "get" as const }];

@@ -70,4 +70,27 @@ describe("conat auth subject policy", () => {
       }),
     ).toBe(false);
   });
+
+  it("confines an API key to its server-issued reply inbox", () => {
+    const account_id = "22222222-2222-4222-8222-222222222222";
+    const own = "_INBOX.api-key-11111111-1111-4111-8111-111111111111";
+    const other = "_INBOX.api-key-33333333-3333-4333-8333-333333333333";
+    const allowed = (subject: string, prefix?: string) =>
+      checkCommonPermissions({
+        user: {
+          account_id,
+          auth_method: "api_key",
+          auth_api_key_reply_prefix: prefix,
+        },
+        userType: "account",
+        userId: account_id,
+        subject,
+        type: "sub",
+      });
+    expect(allowed(`${own}.reply`, own)).toBe(true);
+    expect(allowed(`${own}-other.reply`, own)).toBe(false);
+    expect(allowed(`${other}.reply`, own)).toBe(false);
+    expect(allowed(`${inboxPrefix({ account_id })}.reply`, own)).toBe(false);
+    expect(allowed(`${inboxPrefix({ account_id })}.reply`)).toBe(false);
+  });
 });

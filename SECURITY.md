@@ -2,17 +2,30 @@
 
 ## Reporting a Vulnerability
 
-Please report suspected security vulnerabilities using
+Report suspected vulnerabilities affecting existing code or
+customer-accessible deployments using
 [GitHub's private vulnerability reporting form](https://github.com/sagemathinc/cocalc-ai/security/advisories/new).
 If you cannot use GitHub's private reporting workflow, email
 [security@cocalc.ai](mailto:security@cocalc.ai).
 
-Do not disclose a suspected vulnerability in a public issue, discussion, pull
-request, commit, or branch before coordinating with the maintainers. Include
-enough information for us to understand and reproduce the issue, such as the
-affected component, impact, reproduction steps, and any relevant logs or
-screenshots. Do not include credentials, personal data, or data belonging to
-other users.
+Security issues **introduced by an unmerged public pull request itself** are
+ordinary pre-merge review findings only if the affected functionality has not
+been deployed to a customer-accessible environment. Private development and
+testing of that PR do not by themselves disqualify it. Discuss and fix those
+issues in the pull request; a private vulnerability report or security advisory
+is not required. Merely discovering an issue during PR review does not qualify.
+The exception does not apply if the issue was pre-existing, also affects
+existing code or a customer-accessible environment, or has already exposed real
+credentials or user data. When the cause or scope is uncertain, report
+privately first.
+
+Do not disclose vulnerabilities covered by private reporting in a public
+issue, discussion, pull request, commit, or branch before coordinating with
+the maintainers. Include enough information for us to understand and
+reproduce the issue, such as the affected component, impact, reproduction
+steps, and any relevant logs or screenshots. Never include credentials,
+personal data, or data belonging to other users in a public report or pull
+request.
 
 We will coordinate disclosure with the reporter after a fix or mitigation is
 available. We do not offer a bug bounty program.
@@ -36,8 +49,10 @@ below and coordinate with maintainers.
 
 ### Released or Deployed Code
 
-Maintainers must handle non-public security fixes through a draft repository
-security advisory:
+Maintainers must handle fixes for privately reported vulnerabilities through
+a draft repository security advisory. Pre-merge findings that meet the
+exception above can instead be fixed and reviewed in the original public pull
+request.
 
 1. Create or accept a draft advisory under the repository's Security tab.
 2. Add only the collaborators needed to investigate and review the issue.
