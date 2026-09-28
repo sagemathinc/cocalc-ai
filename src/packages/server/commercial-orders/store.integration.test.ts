@@ -134,6 +134,123 @@ describePglite("commercial order store", () => {
     ).toThrow("at least one line item is required");
   });
 
+  it("fences billing and new invoices during sync, then records one completion audit", async () => {
+    const created = await store.createCommercialOrder(
+      request({ stripe_customer_id: `cus_${randomUUID()}` }),
+    );
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "approve sync fixture",
+    });
+    await store.assertCommercialStripeBillingSyncAllowed(approved);
+    const reserved = await store.reserveCommercialProviderOperation({
+      order_id: approved.id,
+      expected_version: approved.version,
+      operation: "sync-customer-billing",
+      idempotency_key: `sync-${randomUUID()}`,
+      request: {
+        account_id: actor,
+        reason: "correct approved billing",
+        source: "cli",
+        preview: { customer_id: approved.stripe_customer_id },
+      },
+    });
+    await expect(
+      store.createCommercialInvoiceIntent({
+        order_id: approved.id,
+        actor_account_id: actor,
+        expected_version: approved.version,
+        reason: "attempt invoice during sync",
+        idempotency_key: `invoice-${randomUUID()}`,
+        due_at: new Date().toISOString(),
+      }),
+    ).rejects.toThrow("provider operation sync-customer-billing is reserved");
+    await expect(
+      store.issueManualCommercialInvoice({
+        account_id: actor,
+        id: approved.id,
+        expected_version: approved.version,
+        reason: "attempt manual invoice during sync",
+        invoice_reference: "SYNC-FENCED",
+      }),
+    ).rejects.toThrow("provider operation");
+    await expect(
+      store.updateCommercialBillingDetails({
+        account_id: actor,
+        id: approved.id,
+        expected_version: approved.version,
+        reason: "attempt edit during sync",
+        billing_contacts: [
+          { role: "billing", email_snapshot: "another@example.edu" },
+        ],
+      }),
+    ).rejects.toThrow("provider operation");
+    await store.assertCommercialStripeBillingSyncAllowed(
+      approved,
+      undefined,
+      reserved.operation.id,
+    );
+    await store.setCommercialProviderOperationStatus({
+      id: reserved.operation.id,
+      status: "remote_started",
+    });
+    const completed = await store.completeCommercialStripeBillingSync(
+      reserved.operation.id,
+    );
+    const replay = await store.completeCommercialStripeBillingSync(
+      reserved.operation.id,
+    );
+    expect(completed.version).toBe(approved.version + 1);
+    expect(replay.version).toBe(completed.version);
+    const events = await store.listCommercialOrderEvents({
+      id: approved.id,
+      reason: "inspect sync audit",
+    });
+    expect(
+      events.events.filter(
+        ({ event_type }) => event_type === "stripe-billing-synchronized",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects shared commercial Stripe customers and terminal orders", async () => {
+    const customer = `cus_shared_${randomUUID()}`;
+    const one = await store.createCommercialOrder(
+      request({ stripe_customer_id: customer }),
+    );
+    await expect(
+      store.assertCommercialStripeBillingSyncAllowed(one),
+    ).rejects.toThrow("approve the commercial order");
+    const approved = await store.approveCommercialOrder({
+      account_id: actor,
+      id: one.id,
+      expected_version: one.version,
+      reason: "approve shared customer fixture",
+    });
+    await store.createCommercialOrder(
+      request({ stripe_customer_id: customer }),
+    );
+    await expect(
+      store.assertCommercialStripeBillingSyncAllowed(approved),
+    ).rejects.toThrow("shared with other orders");
+    await expect(
+      store.reserveCommercialProviderOperation({
+        order_id: one.id,
+        expected_version: approved.version,
+        operation: "sync-customer-billing",
+        idempotency_key: `sync-${randomUUID()}`,
+      }),
+    ).rejects.toThrow("shared with other orders");
+    await expect(
+      store.assertCommercialStripeBillingSyncAllowed({
+        ...one,
+        workflow_state: "cancelled",
+      }),
+    ).rejects.toThrow("cancelled order");
+  });
+
   it("creates an idempotent seed-global order and immutable event", async () => {
     const opts = request();
     const first = await store.createCommercialOrder(opts);

@@ -61,6 +61,7 @@ import {
   provisionCommercialSiteLicense,
 } from "./fulfillment/site-license";
 import admins from "@cocalc/server/accounts/admins";
+import { stripeBillingPreview, syncStripeBilling } from "./stripe-billing";
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { getSiteLicenseRevenueAnalytics } from "./site-license-revenue-analytics";
 
@@ -123,6 +124,10 @@ export async function dispatchCommercialSeedRequest(
       return await addCommercialOrderNote(opts);
     case "updateBillingDetails":
       return await updateCommercialBillingDetails(opts);
+    case "stripeBillingPreview":
+      return await stripeBillingPreview(opts);
+    case "syncStripeBilling":
+      return await syncStripeBilling(opts);
     case "updateCollectionMode":
       return await updateCommercialCollectionMode(opts);
     case "approve":

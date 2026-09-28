@@ -440,6 +440,34 @@ The JSON file must contain exactly one \`billing\` contact in
 \`billing_contacts\`. It may also contain \`procurement_contacts\`,
 \`billing_address\`, and \`invoice_memo\`.
 
+AR billing updates do not silently edit an existing Stripe customer. For a
+linked institutional customer, preview the exact email/address diff and then
+commit it explicitly before creating the replacement invoice:
+
+~~~sh
+cocalc admin receivables billing sync-stripe AR-2026-000123 \
+  --reason "sync approved procurement billing correction" --json
+cocalc admin receivables billing sync-stripe AR-2026-000123 \
+  --expected-version 7 --preview-hash <reviewed-sha256> \
+  --idempotency-key procurement-correction-123 \
+  --reason "sync approved procurement billing correction" --commit --json
+~~~
+
+Review before/after, blockers, order_version and preview_hash. This requires
+fresh admin auth and Stripe-draft capability. Customer identity/site metadata
+must already match. Shared AR customers, active invoices/quotes, subscriptions,
+truncated subscription history and unresolved operations block synchronization;
+resolve them through reviewed operator workflows instead. Only approved billing
+email/address change, including clearing obsolete address fields.
+
+After a timeout, retain the original hash and version: recovery verifies Stripe
+before retrying the same provider operation. An unrelated Stripe change requires
+manual reconciliation. If billing authority cached a failed command, use a new
+command idempotency key but the same reviewed hash/version; this does not create
+a new provider operation. Do not re-preview and abandon an unresolved sync.
+New invoicing and AR billing edits remain blocked until it is reconciled.
+Successful sync records the reviewed diff and original actor/reason in AR.
+
 ## Collection-mode corrections
 
 Use the dedicated collection-mode action when an approved order was configured

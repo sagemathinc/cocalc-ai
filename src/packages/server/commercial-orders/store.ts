@@ -1056,13 +1056,15 @@ async function assertNoUnresolvedProviderOperations(
   client: Queryable,
   orderId: string,
   operation: string,
+  exceptOperationId?: string,
 ): Promise<void> {
   const { rows } = await client.query<{ operation: string; status: string }>(
     `SELECT operation,status FROM commercial_provider_operations
        WHERE commercial_order_id=$1
+         AND ($2::uuid IS NULL OR id<>$2::uuid)
          AND status IN ('reserved','remote_started','indeterminate')
        ORDER BY created_at LIMIT 1`,
-    [orderId],
+    [orderId, exceptOperationId ?? null],
   );
   if (rows[0]) {
     throw Error(
@@ -2331,6 +2333,11 @@ export async function issueManualCommercialInvoice(
     opts,
     async (client, before) => {
       assertOrderNotTerminal(before, "manual invoice issuance");
+      await assertNoUnresolvedProviderOperations(
+        client,
+        before.id,
+        "manual invoice issuance",
+      );
       if (!before.approved_at || !before.approved_by_account_id) {
         throw Error("the commercial order must be approved before invoicing");
       }
@@ -2688,6 +2695,11 @@ export async function createCommercialInvoiceIntent(opts: {
     }
     requireExpectedVersion(order.version, opts.expected_version);
     assertOrderNotTerminal(order, "invoice creation");
+    await assertNoUnresolvedProviderOperations(
+      client,
+      order.id,
+      "invoice creation",
+    );
     if (!order.approved_at || !order.approved_by_account_id) {
       throw Error("the commercial order must be approved before invoicing");
     }
@@ -3323,6 +3335,9 @@ export async function reserveCommercialProviderOperation(opts: {
       return { order, operation };
     }
     requireExpectedVersion(order.version, opts.expected_version);
+    if (opts.operation === "sync-customer-billing") {
+      await assertCommercialStripeBillingSyncAllowed(order, client);
+    }
     const { rows } = await client.query(
       `INSERT INTO commercial_provider_operations
         (id,commercial_order_id,commercial_quote_id,commercial_invoice_id,operation,status,
@@ -3342,6 +3357,96 @@ export async function reserveCommercialProviderOperation(opts: {
       ],
     );
     return { order, operation: normalizeProviderOperation(rows[0]) };
+  });
+}
+
+// All financial mutations run in the serialized seed billing authority. The
+// reservation also fences later commands after a remote timeout or worker crash.
+export async function assertCommercialStripeBillingSyncAllowed(
+  order: CommercialOrder,
+  client: Queryable = getPool(),
+  exceptOperationId?: string,
+): Promise<void> {
+  assertSeedAuthority();
+  assertOrderNotTerminal(order, "Stripe billing sync");
+  if (!order.approved_at || !order.approved_by_account_id) {
+    throw Error(
+      "approve the commercial order before synchronizing Stripe billing details",
+    );
+  }
+  if (!order.stripe_customer_id)
+    throw Error("order has no linked Stripe customer");
+  if (
+    order.invoices.some(({ status }) => !["void", "failed"].includes(status))
+  ) {
+    throw Error(
+      "void existing invoices before synchronizing Stripe billing details",
+    );
+  }
+  assertNoActiveStripeQuote(order, "Stripe billing sync");
+  await assertNoUnresolvedProviderOperations(
+    client,
+    order.id,
+    "Stripe billing sync",
+    exceptOperationId,
+  );
+  const { rows } = await client.query(
+    `SELECT id FROM commercial_orders WHERE id<>$1 AND stripe_customer_id=$2
+     UNION SELECT commercial_order_id AS id FROM commercial_invoices
+       WHERE commercial_order_id<>$1 AND provider_customer_id=$2
+     UNION SELECT commercial_order_id AS id FROM commercial_quotes
+       WHERE commercial_order_id<>$1 AND provider_snapshot->>'customer'=$2`,
+    [order.id, order.stripe_customer_id],
+  );
+  if (rows.length) {
+    throw Error(
+      `Stripe customer is shared with other orders (${rows.map(({ id }) => id).join(", ")}); review their billing details before changing the shared customer`,
+    );
+  }
+}
+
+export async function completeCommercialStripeBillingSync(
+  operationId: string,
+): Promise<CommercialOrder> {
+  return await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      "SELECT * FROM commercial_provider_operations WHERE id=$1 FOR UPDATE",
+      [operationId],
+    );
+    const operation = rows[0] && normalizeProviderOperation(rows[0]);
+    if (!operation || operation.operation !== "sync-customer-billing") {
+      throw Error("Stripe billing sync operation not found");
+    }
+    const before = await loadOrder(client, operation.commercial_order_id, true);
+    if (operation.status === "succeeded") return before;
+    if (!["remote_started", "indeterminate"].includes(operation.status)) {
+      throw Error("Stripe billing sync has not started");
+    }
+    await client.query(
+      "UPDATE commercial_provider_operations SET status='succeeded',completed_at=NOW(),updated_at=NOW(),last_error=NULL WHERE id=$1",
+      [operation.id],
+    );
+    await client.query(
+      "UPDATE commercial_orders SET version=version+1,updated_at=NOW() WHERE id=$1",
+      [before.id],
+    );
+    const after = await loadOrder(client, before.id);
+    await insertEvent(client, {
+      commercial_order_id: before.id,
+      event_type: "stripe-billing-synchronized",
+      actor_account_id: operation.request.account_id as string,
+      source: (operation.request.source ?? "cli") as CommercialEventSource,
+      reason: operation.request.reason as string,
+      idempotency_key: `${operation.idempotency_key}:complete`,
+      before: before as any,
+      after: after as any,
+      metadata: {
+        operation_id: operation.id,
+        preview: operation.request.preview,
+      },
+      identity_payload: operation.request,
+    });
+    return after;
   });
 }
 
