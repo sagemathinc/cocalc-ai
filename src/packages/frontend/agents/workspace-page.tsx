@@ -62,6 +62,7 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
+import { hydrateConversationSearchHit } from "../chat/conversation-search/hydrate-hit";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -3196,21 +3197,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }
       return;
     }
-    if (hit.segment_id !== "head") {
-      const { webapp_client } = await import("@cocalc/frontend/webapp-client");
-      if (superseded()) return;
-      const archived =
-        await webapp_client.conat_client.hub.projects.chatStoreReadArchivedHit({
-          project_id: agent.endpoint.project_id,
-          chat_path: agent.path,
-          thread_id: threadId,
-          row_id: hit.row_id,
-        });
-      if (superseded()) return;
-      if (!archived.row?.row)
-        throw new Error("Archived message is no longer available");
-      chat.hydrateArchivedRows([archived.row.row]);
-    }
+    await hydrateConversationSearchHit(
+      chat,
+      agent.endpoint.project_id,
+      agent.path,
+      threadId,
+      hit,
+      () => !superseded(),
+    );
+    if (superseded()) return;
     await editor.gotoFragment({ thread: threadId, chat: hit.date_ms });
     if (
       !superseded() &&

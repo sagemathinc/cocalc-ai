@@ -40,6 +40,8 @@ import { ResourceList } from "./resource-list";
 import { DirectoryCollection } from "./directory-collection";
 import { Overview } from "./overview";
 import { ResourceDetail } from "./resource-detail";
+import { HumanConversationSearch } from "./conversation-search";
+import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 import { NewConversation } from "./new-conversation";
 import type {
   CollaboratorsPageProps,
@@ -143,6 +145,7 @@ function CollaboratorsWorkspace({
   revision: ReturnType<typeof useDirectoryRevision>;
 }) {
   const [input, setInput] = useState("");
+  const [searchHit, setSearchHit] = useState<ConversationSearchHit>();
   const search = useDirectorySearch(input);
   const [scope, setScope] =
     useState<NonNullable<CollaborationResourceQuery["scope"]>>("for-you");
@@ -273,6 +276,7 @@ function CollaboratorsWorkspace({
     onNavigate(next);
   }
   function back() {
+    setSearchHit(undefined);
     onNavigate(
       returnRoute.current ?? {
         view,
@@ -294,6 +298,7 @@ function CollaboratorsWorkspace({
     resource: CollaborationResource,
     event: MouseEvent<HTMLElement>,
   ) {
+    setSearchHit(undefined);
     navigate(
       withCollaboratorsAlias(
         {
@@ -358,6 +363,36 @@ function CollaboratorsWorkspace({
           <h1>People</h1>
         </div>
         <WorkspaceToolbar
+          conversationSearch={
+            <HumanConversationSearch
+              api={api}
+              accountId={accountId}
+              active={active}
+              projects={
+                projects
+                  ?.entrySeq()
+                  .toArray()
+                  .map(([id, project]) => ({
+                    value: id,
+                    label: project.get("title") || "Untitled project",
+                  })) ?? []
+              }
+              onSelect={(resource, hit) => {
+                setSearchHit({ ...hit });
+                navigate(
+                  withCollaboratorsAlias(
+                    {
+                      view: "conversations",
+                      projectId: resource.project_id,
+                      resourceKind: "conversation",
+                      resourceId: resource.resource_id,
+                    },
+                    resource.personal?.alias,
+                  ),
+                );
+              }}
+            />
+          }
           compact={conversationOpen}
           controlsTarget={conversationOpen ? conversationToolbar : null}
           active={active}
@@ -470,7 +505,7 @@ function CollaboratorsWorkspace({
                   ? projectView === "pinned"
                     ? "No pinned projects match. Pin a project from Recent projects or clear your filters."
                     : "No shared projects match. Invite a collaborator or clear your filters."
-                  : "No indexed conversations match. Start a discussion in a project, or try All accessible."
+                  : "No conversations match this filter."
             }
           >
             {(items) =>
@@ -582,6 +617,7 @@ function CollaboratorsWorkspace({
               revision.ready &&
               (resourceId && resourceKind && projectId ? (
                 <ResourceDetail
+                  searchHit={searchHit}
                   key={JSON.stringify([projectId, resourceKind, resourceId])}
                   api={api}
                   accountId={accountId}

@@ -2555,7 +2555,9 @@ export function ChatRoomThreadPanel({
               }}
             >
               {embeddingOptions.agentWorkspace
-                ? "Search all agents"
+                ? embeddingOptions.humanOnly
+                  ? "Search all human conversations"
+                  : "Search all agents"
                 : "Search all threads"}
             </Button>
           </div>

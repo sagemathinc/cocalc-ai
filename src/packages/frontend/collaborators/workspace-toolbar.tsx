@@ -48,6 +48,7 @@ export function WorkspaceToolbar({
   onAction,
   controlsTarget,
   compact = false,
+  conversationSearch,
 }: {
   active: boolean;
   id: string;
@@ -69,6 +70,7 @@ export function WorkspaceToolbar({
   onAction: () => void;
   controlsTarget?: HTMLElement | null;
   compact?: boolean;
+  conversationSearch?: ReactNode;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterButton = useRef<ComponentRef<typeof Button>>(null);
@@ -80,7 +82,10 @@ export function WorkspaceToolbar({
   useEffect(() => {
     if (filtersOpen) filterPanel.current?.focus();
   }, [filtersOpen]);
-  const search = `Search ${view === "people" ? "collaborators" : view}`;
+  const search =
+    view === "conversations"
+      ? "Filter conversations by title or alias"
+      : `Search ${view === "people" ? "collaborators" : view}`;
   const action =
     view === "conversations"
       ? "New conversation"
@@ -170,6 +175,7 @@ export function WorkspaceToolbar({
       </div>
       {placeControls(
         <div className="collaborators-list-controls">
+          {view === "conversations" && conversationSearch}
           <div className="collaborators-toolbar">
             <Input
               className="collaborators-search"
@@ -178,7 +184,11 @@ export function WorkspaceToolbar({
               value={input}
               maxLength={200}
               onChange={(event) => onInput(event.target.value)}
-              placeholder={`${search}...`}
+              placeholder={
+                view === "conversations"
+                  ? "Filter by title or alias..."
+                  : `${search}...`
+              }
             />
             <Popover
               trigger="click"

@@ -22,6 +22,7 @@ const mockLoad = jest.fn(async (account, key) =>
   mockRemote.get(`${account}:${key}`),
 );
 const mockSend = jest.fn();
+const mockReadHit = jest.fn();
 jest.mock("@cocalc/frontend/misc", () => ({
   get_local_storage: (key) => mockLocal.get(key),
   set_local_storage: (key, value) => mockLocal.set(key, value),
@@ -30,6 +31,11 @@ jest.mock("@cocalc/frontend/misc", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
+      hub: {
+        projects: {
+          chatStoreReadArchivedHit: (...args) => mockReadHit(...args),
+        },
+      },
       conat: () => ({
         sync: {
           akv: ({ account_id }) => ({
@@ -178,6 +184,66 @@ test("human chat reuses SideChat with the locked humanOnly embedding and dispose
     "project",
     { instanceKey: options.instanceKey },
   );
+});
+
+test("global search hydrates an archived hit and scrolls without remounting the composer", async () => {
+  const scrollToDate = jest.fn();
+  const hydrateArchivedRows = jest.fn();
+  mockInit.mockReturnValue({
+    syncdb: { get_state: () => "ready" },
+    getThreadMetadata: () => ({ agent_kind: "none" }),
+    setSelectedThread: jest.fn(),
+    scrollToDate,
+    hydrateArchivedRows,
+  });
+  const row = { event: "chat", date: 123, payload: { content: "old message" } };
+  mockReadHit.mockResolvedValue({ row: { row } });
+  const searchHit = {
+    target: {
+      id: "thread",
+      project_id: "project",
+      path: "/room.chat",
+      thread_id: "thread",
+      title: "Office hours",
+      activity: 1,
+    },
+    threadId: "thread",
+    historical: false,
+    hit: { row_id: 42, segment_id: "archive", date_ms: 123 },
+  };
+  const view = render(
+    <HumanConversation accountId="alice" resource={resource} />,
+  );
+  const composer = await screen.findByRole("textbox", {
+    name: "Human composer thread",
+  });
+  view.rerender(
+    <HumanConversation
+      accountId="alice"
+      resource={resource}
+      searchHit={searchHit}
+    />,
+  );
+  await waitFor(() => expect(scrollToDate).toHaveBeenCalledWith(123));
+  expect(mockReadHit).toHaveBeenCalledWith({
+    project_id: "project",
+    chat_path: "/room.chat",
+    thread_id: "thread",
+    row_id: 42,
+  });
+  expect(hydrateArchivedRows).toHaveBeenCalledWith([row]);
+  expect(mockInit).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("textbox", { name: "Human composer thread" })).toBe(
+    composer,
+  );
+  view.rerender(
+    <HumanConversation
+      accountId="alice"
+      resource={resource}
+      searchHit={{ ...searchHit, threadId: "another-thread" }}
+    />,
+  );
+  expect(scrollToDate).toHaveBeenCalledTimes(1);
 });
 
 test("an agent config is not mounted in the human composer", async () => {

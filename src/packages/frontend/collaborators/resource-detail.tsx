@@ -17,6 +17,7 @@ import { PersonalControls } from "./personal-controls";
 import { resolveCollaborationResource } from "./resource-query";
 import { participantSummary } from "./resource-list";
 import { ShareToConversationButton } from "./share-dialog";
+import type { ConversationSearchHit } from "../chat/conversation-search/runner";
 
 const HumanConversation = lazy(async () => ({
   default: (await import("./human-conversation")).HumanConversation,
@@ -38,6 +39,7 @@ export function ResourceDetail({
   onManageProject,
   projectTitle,
   onAlias,
+  searchHit,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -48,6 +50,7 @@ export function ResourceDetail({
   onManageProject?: (projectId: string) => void;
   projectTitle?: string;
   onAlias?: (alias: string | null) => void;
+  searchHit?: ConversationSearchHit;
 }) {
   const [showSource, setShowSource] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
@@ -292,6 +295,7 @@ export function ResourceDetail({
           fallback={<p role="status">Loading conversation renderer...</p>}
         >
           <HumanConversation
+            searchHit={searchHit}
             accountId={accountId}
             resource={resource}
             onOpenOriginal={openSource}

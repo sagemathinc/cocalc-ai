@@ -12,6 +12,14 @@ import userEvent from "@testing-library/user-event";
 import { CollaboratorsPage } from "./page";
 import type { CollaboratorsRoute } from "./workspace-types";
 
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
+  TimeAgo: () => null,
+}));
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: { conat_client: { hub: {} } },
+}));
+
 let mockAccount = "alice";
 let mockProjects = Map();
 let mockSettings = Map();
@@ -463,7 +471,9 @@ test("project Settings opens the shared drawer without leaving People", async ()
 test("keyboard opens a conversation and restores focus and search on back", async () => {
   const user = userEvent.setup();
   render(<Workspace />);
-  const search = screen.getByRole("textbox", { name: "Search conversations" });
+  const search = screen.getByRole("textbox", {
+    name: "Filter conversations by title or alias",
+  });
   await user.type(search, "Office");
   await waitFor(() =>
     expect(mockApi.listResources).toHaveBeenLastCalledWith(

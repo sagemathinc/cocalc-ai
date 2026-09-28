@@ -17,15 +17,20 @@ import {
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { waitForCollaborationChat } from "./chat-runtime";
+import type { ConversationSearchHit } from "../chat/conversation-search/runner";
+import { hydrateConversationSearchHit } from "../chat/conversation-search/hydrate-hit";
+import { conversationSearchStore } from "../chat/conversation-search/state";
 
 export function HumanConversation({
   accountId,
   resource,
   onOpenOriginal,
+  searchHit,
 }: {
   accountId: string;
   resource: CollaborationResource;
   onOpenOriginal?: () => void;
+  searchHit?: ConversationSearchHit;
 }) {
   const id = useId();
   const [actions, setActions] = useState<ChatActions>();
@@ -115,6 +120,7 @@ export function HumanConversation({
       actions={actions}
       resource={resource}
       accountId={accountId}
+      searchHit={searchHit}
     />
   );
 }
@@ -123,11 +129,52 @@ function MountedConversation({
   actions,
   resource,
   accountId,
+  searchHit,
 }: {
   actions: ChatActions;
   resource: CollaborationResource;
   accountId: string;
+  searchHit?: ConversationSearchHit;
 }) {
+  const [searchError, setSearchError] = useState("");
+  useEffect(() => {
+    let canceled = false;
+    setSearchError("");
+    if (
+      !searchHit ||
+      searchHit.target.project_id !== resource.project_id ||
+      searchHit.target.path !== resource.chat_path ||
+      searchHit.threadId !== resource.thread_id
+    )
+      return;
+    const current = () =>
+      !canceled && redux.getStore("account")?.get("account_id") === accountId;
+    void hydrateConversationSearchHit(
+      actions,
+      resource.project_id,
+      resource.chat_path,
+      resource.thread_id,
+      searchHit.hit,
+      current,
+    )
+      .then(() => {
+        if (current() && searchHit.hit.date_ms != null)
+          actions.scrollToDate(searchHit.hit.date_ms);
+      })
+      .catch((error) => {
+        if (current()) setSearchError(String(error));
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [
+    actions,
+    accountId,
+    resource.project_id,
+    resource.chat_path,
+    resource.thread_id,
+    searchHit,
+  ]);
   const context = useProjectContextProvider({
     project_id: resource.project_id,
     is_active: true,
@@ -145,9 +192,19 @@ function MountedConversation({
           hideSingleFrameToolbar: true,
           hideCompactThreadHeader: true,
           sidebarHiddenByDefault: true,
+          onSearchAll: () =>
+            conversationSearchStore(accountId, "human").set({ open: true }),
         }}
       >
         <div className="collaborators-chat">
+          {searchError && (
+            <Alert
+              role="alert"
+              type="error"
+              title="Unable to open search result"
+              description={searchError}
+            />
+          )}
           <SideChat
             project_id={resource.project_id}
             path={resource.chat_path}
