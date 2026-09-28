@@ -2,19 +2,19 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { Button, Checkbox, Input } from "antd";
+import { Button } from "antd";
 import type { InputRef } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ResourcePicker } from "./resource-picker";
 import { collaborationReferenceFromResource } from "@cocalc/util/collaboration-references";
 import type { CollaborationReference } from "@cocalc/util/collaboration-references";
 import { collaborationTargetKey } from "@cocalc/util/collaborators";
 import type {
-  CollaborationPage,
   CollaborationResource,
+  CollaborationTarget,
 } from "@cocalc/util/collaborators";
 import { CollaboratorsModal } from "./modal";
 import { openCollaborators } from "./navigation";
@@ -31,6 +31,7 @@ export interface ShareConversationDialogProps {
   accountId: string;
   reference: CollaborationReference;
   api?: ShareConversationApi;
+  conversation?: CollaborationTarget;
   isCurrent?: () => boolean;
   onClose: () => void;
   afterClose?: () => void;
@@ -42,7 +43,7 @@ export function ShareConversationDialog(props: ShareConversationDialogProps) {
   return (
     <CollaboratorsModal
       open={props.open}
-      title="Share to conversation"
+      title="Add link to another conversation"
       onCancel={props.onClose}
       afterClose={props.afterClose}
       footer={null}
@@ -72,8 +73,8 @@ function ShareContents({
   isCurrent: sourceIsCurrent,
   api = referencePickerApi(),
   searchRef,
+  conversation,
 }: ShareConversationDialogProps & { searchRef: RefObject<InputRef | null> }) {
-  const id = useId();
   const [sessionCurrent] = useState(() => shareSessionIsCurrent(accountId));
   const sourceCurrent = useRef(sourceIsCurrent);
   sourceCurrent.current = sourceIsCurrent;
@@ -86,19 +87,6 @@ function ShareContents({
   }, []);
   const current = () =>
     mounted.current && sessionCurrent() && (sourceCurrent.current?.() ?? true);
-  const [search, setSearch] = useState("");
-  const [allProjects, setAllProjects] = useState(false);
-  const projectId = allProjects ? undefined : reference.target.project_id;
-  const [cursor, setCursor] = useState<{ filter: string; after: string }>();
-  const [revision, setRevision] = useState(0);
-  const filter = JSON.stringify([accountId, projectId, search]);
-  const after = cursor?.filter === filter ? cursor.after : undefined;
-  const key = JSON.stringify([filter, after, revision]);
-  const [state, setState] = useState<{
-    key: string;
-    page?: CollaborationPage<CollaborationResource>;
-    error?: string;
-  }>();
   const [selection, setSelection] = useState<CollaborationResource>();
   const selected = useRef<CollaborationResource | undefined>(undefined);
   const selectionVersion = useRef(0);
@@ -111,42 +99,6 @@ function ShareContents({
     if (selection || completed) heading.current?.focus();
   }, [selection, completed]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (!current()) return;
-      void api
-        .listResources({
-          account_id: accountId,
-          project_id: projectId,
-          kind: "conversation",
-          scope: "all",
-          search: search.trim(),
-          after,
-          limit: 25,
-        })
-        .then(
-          (page) => {
-            if (!cancelled && current()) setState({ key, page });
-          },
-          () => {
-            if (!cancelled && current())
-              setState({
-                key,
-                error: "Could not load conversations. Try again.",
-              });
-          },
-        );
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [api, key, accountId, projectId, search, after]);
-
-  const page = state?.key === key ? state.page : undefined;
-  const loadError = state?.key === key ? state.error : undefined;
-  const destinations = page?.items.filter(isHumanDestination);
   function choose(destination?: CollaborationResource) {
     selectionVersion.current++;
     selected.current = destination;
@@ -188,16 +140,15 @@ function ShareContents({
   return (
     <KeyboardBoundary boundary="collaboration-share-dialog">
       <p style={{ overflowWrap: "anywhere" }}>
-        Reference: <strong>{reference.display_fallback}</strong>
+        Link: <strong>{reference.display_fallback}</strong>
       </p>
       <p>
-        Add a link to an existing human conversation's private draft. Nothing is
-        sent, copied, or granted access; agents are never invoked.
+        Adds a link to your draft in the selected conversation. Nothing is sent.
       </p>
       {completed ? (
         <>
           <h3 ref={heading} tabIndex={-1}>
-            Reference added to draft
+            Link added to draft
           </h3>
           <p role="status">
             Your existing draft was preserved. Nothing was sent.
@@ -249,123 +200,37 @@ function ShareContents({
               loading={busy}
               onClick={() => void addReference()}
             >
-              Add reference to draft
+              Add link to draft
             </Button>
           </div>
         </>
       ) : (
-        <>
-          <label htmlFor={`${id}-search`}>Search conversations</label>
-          <Input
-            id={`${id}-search`}
-            ref={searchRef}
-            autoFocus
-            value={search}
-            maxLength={200}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <Checkbox
-            checked={allProjects}
-            onChange={(event) => setAllProjects(event.target.checked)}
-          >
-            Search all accessible projects
-          </Checkbox>
-          <h3 ref={heading} tabIndex={-1}>
-            Destination conversations
-          </h3>
-          <p role="status">
-            {page
-              ? `${destinations!.length} conversations on this page.`
-              : loadError
-                ? ""
-                : "Searching conversations..."}
-          </p>
-          {loadError && (
-            <p role="alert">
-              {loadError}{" "}
-              <Button onClick={() => setRevision((n) => n + 1)}>Retry</Button>
-            </p>
-          )}
-          {page && page.coverage !== "complete" && (
-            <p role="status">
-              {page.coverage_message ||
-                "Some conversations are still being indexed. Results may be incomplete."}
-            </p>
-          )}
-          {destinations?.length === 0 && (
-            <p>No matching human conversations.</p>
-          )}
-          <ul
-            aria-label="Destination conversations"
-            style={{
-              padding: 0,
-              listStyle: "none",
-              maxHeight: "35vh",
-              overflowY: "auto",
-            }}
-          >
-            {destinations?.map((destination) => (
-              <li
-                key={collaborationTargetKey(destination)}
-                style={{ marginBottom: 8 }}
-              >
-                <button
-                  type="button"
-                  style={{
-                    width: "100%",
-                    padding: 8,
-                    textAlign: "left",
-                    whiteSpace: "normal",
-                    overflowWrap: "anywhere",
-                    color: UI_COLORS.text,
-                    background: UI_COLORS.elevated,
-                    border: `1px solid ${UI_COLORS.border}`,
-                    borderRadius: 4,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => {
-                    if (!current()) {
-                      setError("Your session changed. Close and reopen Share.");
-                      return;
-                    }
-                    choose(destination);
-                  }}
-                >
-                  <strong>
-                    {destination.personal?.alias
-                      ? `@${destination.personal.alias}: `
-                      : ""}
-                    {destination.title || "Untitled conversation"}
-                  </strong>
-                  <span style={{ display: "block" }}>
-                    Human conversation /{" "}
-                    {destination.project_title || "Untitled project"}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {page?.next && (
-            <Button
-              onClick={() => {
-                setCursor({ filter, after: page.next! });
-                heading.current?.focus();
-              }}
-            >
-              Next conversations
-            </Button>
-          )}
-          {after && (
-            <Button
-              onClick={() => {
-                setCursor(undefined);
-                heading.current?.focus();
-              }}
-            >
-              First page
-            </Button>
-          )}
-        </>
+        <ResourcePicker
+          accountId={accountId}
+          projectId={reference.target.project_id}
+          conversation={
+            conversation ??
+            (reference.target.kind === "conversation"
+              ? reference.target
+              : undefined)
+          }
+          kind="conversation"
+          api={api}
+          searchRef={searchRef}
+          label="Destination conversations"
+          accept={(resource) =>
+            isHumanDestination(resource) &&
+            collaborationTargetKey(resource) !==
+              collaborationTargetKey(reference.target)
+          }
+          onSelect={(destination) => {
+            if (!current()) {
+              setError("Your session changed. Close and reopen Share.");
+              return;
+            }
+            choose(destination);
+          }}
+        />
       )}
       {error && <p role="alert">{error}</p>}
       <Button style={{ marginTop: 12 }} onClick={onClose}>
@@ -404,7 +269,7 @@ export function ShareToConversationButton({
       {renderTrigger ? (
         renderTrigger(show)
       ) : (
-        <Button onClick={show}>Share to conversation</Button>
+        <Button onClick={show}>Add link to another conversation</Button>
       )}
       {reference && (
         <ShareConversationDialog

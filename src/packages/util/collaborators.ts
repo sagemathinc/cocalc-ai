@@ -83,6 +83,8 @@ export interface CollaborationProjectQuery extends CollaborationQuery {
 }
 
 export interface CollaborationResourceQuery extends CollaborationQuery {
+  /** Projects shared by every indexed participant of this conversation. */
+  shared_with?: CollaborationTarget;
   kind?: CollaborationResourceKind;
   scope?: "all" | "for-you" | "following" | "collected";
   include_archived?: boolean;

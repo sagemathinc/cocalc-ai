@@ -60,7 +60,6 @@ export function useMentionableUsers(
     enabled: !!humanOnly && collaboratorsEnabled,
     accountId,
     contextProjectId: project_id,
-    userMap: user_map,
   });
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);

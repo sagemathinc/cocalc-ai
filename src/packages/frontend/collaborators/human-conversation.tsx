@@ -192,6 +192,11 @@ function MountedConversation({
       <ChatEmbeddingOptionsProvider
         value={{
           humanOnly: true,
+          conversationTarget: {
+            project_id: resource.project_id,
+            kind: resource.kind,
+            resource_id: resource.resource_id,
+          },
           onThreadHeader,
           agentWorkspace: true,
           agentWorkspaceActive: true,

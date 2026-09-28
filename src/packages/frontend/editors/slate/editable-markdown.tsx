@@ -541,7 +541,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     jupyterGapCursor,
     setJupyterGapCursor,
   } = props;
-  const { project_id, path, desc, isVisible } = useFrameContext();
+  const frameContext = useFrameContext();
+  const { project_id, path, desc } = frameContext;
+  // Standalone composers have no frame; the default context's false visibility
+  // must not suppress their asynchronous mention search.
+  const isVisible =
+    !(frameContext.id || project_id || path) || frameContext.isVisible;
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};

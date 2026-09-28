@@ -6,6 +6,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { tab_to_path } from "@cocalc/util/misc";
 import type { ThreadMetadataSnapshot } from "./actions";
+import type { CollaborationTarget } from "@cocalc/util/collaborators";
 
 export interface EmbeddedThreadHeader {
   appearance: Pick<
@@ -31,6 +32,7 @@ export function chatIsForeground(
 }
 
 export interface ChatEmbeddingOptions {
+  conversationTarget?: CollaborationTarget;
   humanOnly?: boolean;
   agentWorkspace?: boolean;
   agentWorkspaceActive?: boolean;

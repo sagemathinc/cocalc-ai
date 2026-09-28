@@ -12,7 +12,8 @@ import { redux } from "@cocalc/frontend/app-framework";
 export type ReferencePickerApi = Pick<
   CollaboratorsApi,
   "listResources" | "getResource"
->;
+> &
+  Partial<Pick<CollaboratorsApi, "resolveChatAlias">>;
 
 export function referencePickerApi(): ReferencePickerApi {
   return webapp_client.conat_client.hub.collaborators;

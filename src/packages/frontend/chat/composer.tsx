@@ -947,6 +947,7 @@ export function ChatRoomComposer({
                   !!embeddingOptions.humanOnly && selectedThread != null
                 }
                 conversationTitle={threadLabel}
+                conversation={embeddingOptions.conversationTarget}
                 renderActions={attachment}
               />
             ) : (

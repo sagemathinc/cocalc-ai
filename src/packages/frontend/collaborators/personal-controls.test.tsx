@@ -143,7 +143,9 @@ test("compact conversation controls support keyboard pin, alias, sharing and foc
   expect(state.alias).toBe("weekly");
   await user.keyboard("{Enter}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "Share conversation..." }),
+    await screen.findByRole("menuitem", {
+      name: "Add link to another conversation...",
+    }),
   );
   expect(share).toHaveBeenCalledTimes(1);
   expect(menu).toHaveFocus();

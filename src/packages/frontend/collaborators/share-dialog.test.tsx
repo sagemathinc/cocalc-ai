@@ -1,3 +1,12 @@
+jest.mock("react-virtuoso", () => ({
+  Virtuoso: ({ data, itemContent }) => (
+    <div>
+      {data.map((item, i) => (
+        <div key={i}>{itemContent(i, item)}</div>
+      ))}
+    </div>
+  ),
+}));
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
@@ -57,6 +66,7 @@ const destination: CollaborationResource = {
 const reference = collaborationReferenceFromResource(source);
 let api: { listResources: jest.Mock; getResource: jest.Mock };
 beforeEach(() => {
+  sessionStorage.clear();
   mockAccount = "alice";
   mockWrite.mockReset().mockResolvedValue("existing draft plus reference");
   mockOpen.mockReset();
@@ -76,11 +86,11 @@ function button() {
 }
 async function choose() {
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   );
   await userEvent.click(
     await screen.findByRole("button", {
-      name: "Research discussion Human conversation / Research team",
+      name: "Research discussion (Conversation)",
     }),
   );
 }
@@ -89,21 +99,23 @@ test("keyboard chooses an explicit project audience, adds only a draft and opens
   render(button());
   await userEvent.tab();
   expect(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   ).toHaveFocus();
   await userEvent.keyboard("{Enter}");
   expect(
     (
-      await screen.findByRole("dialog", { name: "Share to conversation" })
+      await screen.findByRole("dialog", {
+        name: "Add link to another conversation",
+      })
     ).closest(".collaborators-modal"),
   ).not.toBeNull();
-  const search = screen.getByRole("textbox", { name: "Search conversations" });
+  const search = screen.getByRole("textbox", {
+    name: "Search titles or aliases",
+  });
   await waitFor(() => expect(search).toHaveFocus());
   await screen.findByRole("button", { name: /Research discussion/ });
   await userEvent.tab();
-  expect(
-    screen.getByRole("checkbox", { name: "Search all accessible projects" }),
-  ).toHaveFocus();
+  expect(screen.getByRole("combobox", { name: "Search in" })).toHaveFocus();
   await userEvent.tab();
   expect(
     screen.getByRole("button", { name: /Research discussion/ }),
@@ -119,12 +131,12 @@ test("keyboard chooses an explicit project audience, adds only a draft and opens
   await userEvent.tab();
   await userEvent.tab();
   expect(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   ).toHaveFocus();
   await userEvent.keyboard("{Enter}");
-  await screen.findByRole("heading", { name: "Reference added to draft" });
+  await screen.findByRole("heading", { name: "Link added to draft" });
   expect(
-    screen.getByRole("heading", { name: "Reference added to draft" }),
+    screen.getByRole("heading", { name: "Link added to draft" }),
   ).toHaveFocus();
   expect(mockWrite).toHaveBeenCalledTimes(1);
   expect(mockWrite.mock.calls[0][0]).toMatchObject({
@@ -154,7 +166,7 @@ test("Escape cancels and restores opener focus without modifying a draft", async
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   ).toHaveFocus();
   expect(mockWrite).not.toHaveBeenCalled();
 });
@@ -166,14 +178,16 @@ test("missing project titles use a readable fallback rather than an internal ID"
   });
   render(button());
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   );
   await userEvent.click(
     await screen.findByRole("button", {
-      name: "Research discussion Human conversation / Untitled project",
+      name: "Research discussion (Conversation)",
     }),
   );
-  const dialog = screen.getByRole("dialog", { name: "Share to conversation" });
+  const dialog = screen.getByRole("dialog", {
+    name: "Add link to another conversation",
+  });
   expect(dialog).toHaveTextContent("all collaborators in Untitled project");
   expect(dialog).not.toHaveTextContent(destination.project_id);
   expect(mockWrite).not.toHaveBeenCalled();
@@ -199,7 +213,7 @@ test("bounded global search, paging, coverage, and client-side human-only filter
     .mockResolvedValue({ items: [], coverage: "complete" });
   render(button());
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   );
   await screen.findByRole("button", { name: /Research discussion/ });
   expect(
@@ -207,7 +221,7 @@ test("bounded global search, paging, coverage, and client-side human-only filter
   ).not.toBeInTheDocument();
   expect(screen.getByText("Index quota reached.")).toBeInTheDocument();
   expect(api.listResources).toHaveBeenLastCalledWith({
-    account_id: "alice",
+    shared_with: undefined,
     project_id: source.project_id,
     kind: "conversation",
     scope: "all",
@@ -215,19 +229,20 @@ test("bounded global search, paging, coverage, and client-side human-only filter
     after: undefined,
     limit: 25,
   });
-  await userEvent.click(
-    screen.getByRole("button", { name: "Next conversations" }),
+  await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Load more" }),
+    ).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("heading", { name: "Destination conversations" }),
-  ).toHaveFocus();
-  await screen.findByText("No matching human conversations.");
+    screen.getByRole("button", { name: /Research discussion/ }),
+  ).toBeInTheDocument();
   expect(api.listResources).toHaveBeenLastCalledWith(
     expect.objectContaining({ after: "next-cursor", limit: 25 }),
   );
-  await userEvent.click(
-    screen.getByRole("checkbox", { name: "Search all accessible projects" }),
-  );
+  await userEvent.click(screen.getByRole("combobox", { name: "Search in" }));
+  await userEvent.click(screen.getByText("All my projects"));
   await waitFor(() =>
     expect(api.listResources).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -243,19 +258,19 @@ test("bounded global search, paging, coverage, and client-side human-only filter
 test("search replaces old results immediately; safe load errors are retryable", async () => {
   render(button());
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   );
   await screen.findByRole("button", { name: /Research discussion/ });
   api.listResources.mockRejectedValueOnce(Error("private backend detail"));
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Search conversations" }),
+    screen.getByRole("textbox", { name: "Search titles or aliases" }),
     "new",
   );
   expect(
     screen.queryByRole("button", { name: /Research discussion/ }),
   ).not.toBeInTheDocument();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not load conversations",
+    "Could not load references",
   );
   expect(screen.queryByText(/private backend detail/)).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -274,17 +289,17 @@ test("canceled pending access checks cannot write; reopening starts a fresh sele
   render(button());
   await choose();
   await userEvent.click(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   );
   await waitFor(() => expect(finish).toBeDefined());
   await userEvent.keyboard("{Escape}");
   await act(async () => finish(destination));
   expect(mockWrite).not.toHaveBeenCalled();
   await userEvent.click(
-    screen.getByRole("button", { name: "Share to conversation" }),
+    screen.getByRole("button", { name: "Add link to another conversation" }),
   );
   expect(
-    await screen.findByRole("textbox", { name: "Search conversations" }),
+    await screen.findByRole("textbox", { name: "Search titles or aliases" }),
   ).toBeInTheDocument();
 });
 
@@ -327,19 +342,19 @@ test("choosing the same row again does not revive a canceled in-flight share", a
   render(button());
   await choose();
   await userEvent.click(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   );
   await waitFor(() => expect(finish).toBeDefined());
   await userEvent.click(
     screen.getByRole("button", { name: "Choose another conversation" }),
   );
   await userEvent.click(
-    await screen.findByRole("button", { name: /Research discussion Human/ }),
+    await screen.findByRole("button", { name: /Research discussion/ }),
   );
   await act(async () => finish(destination));
   expect(mockWrite).not.toHaveBeenCalled();
   expect(
-    screen.queryByRole("heading", { name: "Reference added to draft" }),
+    screen.queryByRole("heading", { name: "Link added to draft" }),
   ).not.toBeInTheDocument();
 });
 
@@ -350,7 +365,7 @@ test("revoked destination or agent conversion leaves an actionable error and no 
   render(button());
   await choose();
   await userEvent.click(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not add the reference",
@@ -361,7 +376,7 @@ test("revoked destination or agent conversion leaves an actionable error and no 
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("textbox", { name: "Search conversations" }),
+      screen.getByRole("textbox", { name: "Search titles or aliases" }),
     ).toHaveFocus(),
   );
 });
@@ -386,10 +401,10 @@ test("a replaced source selection callback invalidates an already pending share"
     <ShareConversationDialog {...props} isCurrent={() => true} />,
   );
   await userEvent.click(
-    await screen.findByRole("button", { name: /Research discussion Human/ }),
+    await screen.findByRole("button", { name: /Research discussion/ }),
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   );
   await waitFor(() => expect(finish).toBeDefined());
   view.rerender(<ShareConversationDialog {...props} isCurrent={() => false} />);

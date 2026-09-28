@@ -58,6 +58,11 @@ function query(input: CollaborationResourceQuery, mode: string) {
     ? [...new Set(input.project_ids)].sort()
     : undefined;
   if (input.person_id != null) uuid(input.person_id, "person_id");
+  if (input.shared_with != null) {
+    validateTarget(input.shared_with);
+    if (input.shared_with.kind !== "conversation")
+      throw Error("shared_with must be a human conversation");
+  }
   const search = boundedText(input.search ?? "", "search", 128, true).trim();
   if (input.shared_only != null && typeof input.shared_only !== "boolean")
     throw Error("invalid shared_only");
@@ -91,6 +96,7 @@ function query(input: CollaborationResourceQuery, mode: string) {
       input.scope ?? "all",
       !!input.include_archived,
       !!input.shared_only,
+      input.shared_with ? entryKey(input.shared_with) : null,
     ]),
   );
   let after: { order: number; key: string } | undefined;
@@ -254,6 +260,22 @@ export async function listCollaborationResources(
     "r.generation=COALESCE(x.granted_generation,x.generation)",
   ];
   if (q.shared_only) access.push(SHARED);
+  if (q.shared_with) {
+    // The home projection is complete only after all participant pages arrive.
+    // Both source and candidate retain the ordinary owner-validated access lease.
+    access.push(`EXISTS(SELECT 1 FROM collaboration_index source
+      JOIN collaboration_access sx ON sx.account_id=source.account_id AND sx.project_id=source.project_id
+      JOIN account_project_index sp ON sp.account_id=sx.account_id AND sp.project_id=sx.project_id
+      WHERE source.account_id=$1 AND source.entry_key=${param(entryKey(q.shared_with))}
+      AND source.kind='conversation' AND NOT COALESCE((source.metadata->>'archived')::boolean,FALSE)
+      AND source.relations_complete AND source.relation_set IS NOT NULL
+      AND sx.lease_until>now() AND source.generation=sx.generation
+      AND source.generation=COALESCE(sx.granted_generation,sx.generation)
+      AND sp.users_summary #>> ARRAY[$1::text,'group'] IN ('owner','collaborator')
+      AND NOT EXISTS(SELECT 1 FROM collaboration_participant_index cp
+        WHERE cp.account_id=source.account_id AND cp.entry_key=source.entry_key AND cp.set_key=source.relation_set
+        AND COALESCE(p.users_summary #>> ARRAY[cp.participant_id::text,'group'],'') NOT IN ('owner','collaborator'))) `);
+  }
   const where = ["r.account_id=$1"];
   if (q.project_id) where.push(`r.project_id=${param(q.project_id)}::uuid`);
   if (q.project_ids)
@@ -265,12 +287,13 @@ export async function listCollaborationResources(
     // a selective title query into a scan of every resource in the account.
     matches = `WITH collaboration_matches AS MATERIALIZED (
       SELECT entry_key FROM collaboration_index WHERE account_id=$1 AND to_tsvector('simple',search_text) @@ plainto_tsquery('simple',${search})
+      UNION SELECT entry_key FROM collaboration_personal WHERE account_id=$1 AND starts_with(lower(alias),lower(${search}))
       UNION SELECT i.entry_key FROM agent_personal_names n JOIN collaboration_index i ON
         i.account_id=n.account_id AND i.project_id=n.project_id AND i.kind='agent' AND i.metadata->>'agent_id'=n.agent_id::text
-        WHERE n.account_id=$1 AND n.retired_at IS NULL AND to_tsvector('simple',n.name) @@ plainto_tsquery('simple',${search})
+        WHERE n.account_id=$1 AND n.retired_at IS NULL AND (to_tsvector('simple',n.name) @@ plainto_tsquery('simple',${search}) OR starts_with(lower(n.name),lower(${search})))
       UNION SELECT i.entry_key FROM personal_library_aliases n JOIN collaboration_index i ON
         i.account_id=n.account_id AND i.project_id=n.project_id AND i.kind='artifact' AND i.metadata->>'entry_id'=n.entry_id
-        WHERE n.account_id=$1 AND n.active AND to_tsvector('simple',n.name) @@ plainto_tsquery('simple',${search})
+        WHERE n.account_id=$1 AND n.active AND (to_tsvector('simple',n.name) @@ plainto_tsquery('simple',${search}) OR starts_with(lower(n.name),lower(${search})))
       )`;
     // OFFSET 0 keeps the PK lookup parameterized instead of allowing a hash
     // join to scan the entire account for a one-row search candidate set.

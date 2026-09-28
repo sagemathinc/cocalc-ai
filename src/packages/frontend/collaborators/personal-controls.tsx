@@ -175,7 +175,10 @@ export function PersonalControls({
               ...(onShare
                 ? [
                     { type: "divider" as const },
-                    { key: "share", label: "Share conversation..." },
+                    {
+                      key: "share",
+                      label: "Add link to another conversation...",
+                    },
                   ]
                 : []),
             ],

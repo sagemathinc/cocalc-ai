@@ -13,6 +13,7 @@ import type { CollaborationReference } from "@cocalc/util/collaboration-referenc
 import { ReferencePicker } from "./reference-picker";
 import { ShareConversationDialog } from "./share-dialog";
 import { shareSessionIsCurrent } from "./share-to-conversation";
+import type { CollaborationTarget } from "@cocalc/util/collaborators";
 
 /** Mount keyed by composer session so a picker cannot insert into another draft. */
 export function ReferencePickerComposer({
@@ -20,12 +21,14 @@ export function ReferencePickerComposer({
   inputControlRef,
   allowShareToConversation = false,
   conversationTitle,
+  conversation,
   renderActions,
 }: {
   projectId: string;
   inputControlRef: MutableRefObject<ChatInputControl | null>;
   allowShareToConversation?: boolean;
   conversationTitle?: string;
+  conversation?: CollaborationTarget;
   renderActions?: (
     actions: { key: string; label: string; onClick: () => void }[],
   ) => ReactNode;
@@ -68,14 +71,14 @@ export function ReferencePickerComposer({
         renderActions([
           {
             key: "reference",
-            label: "Insert reference",
+            label: "Insert link",
             onClick: () => showPicker("insert"),
           },
           ...(allowShareToConversation
             ? [
                 {
                   key: "share-artifact",
-                  label: "Share artifact to conversation",
+                  label: "Add artifact link to another conversation",
                   onClick: () => showPicker("share-artifact"),
                 },
               ]
@@ -84,11 +87,11 @@ export function ReferencePickerComposer({
       ) : (
         <>
           <Button size="small" onClick={() => showPicker("insert")}>
-            Insert reference
+            Insert link
           </Button>
           {allowShareToConversation && (
             <Button size="small" onClick={() => showPicker("share-artifact")}>
-              Share artifact to conversation
+              Add artifact link to another conversation
             </Button>
           )}
         </>
@@ -97,6 +100,7 @@ export function ReferencePickerComposer({
         open={open}
         intent={intent}
         conversationTitle={conversationTitle}
+        conversation={conversation}
         projectId={projectId}
         focusTriggerAfterClose={!shareReference && !renderActions}
         onClose={() => setOpen(false)}
@@ -138,6 +142,7 @@ export function ReferencePickerComposer({
           open={shareOpen}
           accountId={pending.current.accountId}
           reference={shareReference}
+          conversation={conversation}
           isCurrent={() =>
             !!pending.current?.isCurrent() &&
             inputControlRef.current === pending.current.control

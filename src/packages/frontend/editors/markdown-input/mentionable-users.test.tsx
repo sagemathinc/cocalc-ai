@@ -19,12 +19,14 @@ let mockHumanOnly = false;
 let mockCollaboratorsEnabled = true;
 let mockAccountId = "22222222-2222-4222-8222-222222222222";
 const mockListResources = jest.fn();
+const mockResolveChatAlias = jest.fn();
 jest.mock("@cocalc/frontend/chat/embedding-options", () => ({
   useChatEmbeddingOptions: () => ({ humanOnly: mockHumanOnly }),
 }));
 jest.mock("@cocalc/frontend/collaborators/reference-picker-api", () => ({
   referencePickerApi: () => ({
     listResources: (...args) => mockListResources(...args),
+    resolveChatAlias: (...args) => mockResolveChatAlias(...args),
   }),
 }));
 
@@ -113,6 +115,7 @@ describe("mentionableUsers", () => {
     mockHumanOnly = false;
     mockCollaboratorsEnabled = true;
     mockAccountId = bob;
+    mockResolveChatAlias.mockReset().mockResolvedValue(null);
     mockListResources
       .mockReset()
       .mockResolvedValue({ items: [], coverage: "complete" });
@@ -302,7 +305,7 @@ describe("mentionableUsers", () => {
         .map((item) => parseCollaborationReference(item.value)!.target.kind),
     ).toEqual(["agent", "artifact", "conversation"]);
     expect(mockUseNamedAgents).toHaveBeenCalledWith(false);
-    expect(mockListResources).toHaveBeenCalledTimes(1);
+    expect(mockListResources).toHaveBeenCalledTimes(2);
     expect(mockListResources).toHaveBeenCalledWith({
       search: "same",
       scope: "all",
@@ -337,6 +340,69 @@ describe("mentionableUsers", () => {
     );
   });
 
+  it("shows local chat aliases while the global search is still pending", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    mockListResources.mockImplementation(({ project_id: project }) =>
+      project
+        ? Promise.resolve({
+            items: [
+              {
+                project_id,
+                kind: "conversation",
+                resource_id: "chat-1",
+                title: "Planning",
+                personal: { alias: "chat1" },
+              },
+            ],
+            coverage: "complete",
+          })
+        : new Promise(() => {}),
+    );
+    const { result } = renderHook(() => useMentionableUsers("chat"));
+    await waitFor(() =>
+      expect(
+        result
+          .current("chat")
+          .some(
+            (item) =>
+              parseCollaborationReference(item.value)?.alias === "chat1",
+          ),
+      ).toBe(true),
+    );
+    expect(
+      result
+        .current("chat")
+        .some((item) => item.value === "collaboration-reference-loading"),
+    ).toBe(true);
+  });
+
+  it("resolves exact chat aliases independently and clears them on account changes", async () => {
+    mockStores(jest.fn().mockReturnValue("Person"));
+    mockHumanOnly = true;
+    mockListResources.mockImplementation(() => new Promise(() => {}));
+    mockResolveChatAlias.mockResolvedValue({
+      project_id,
+      kind: "conversation",
+      resource_id: "old-chat",
+      title: "Older conversation",
+      personal: { alias: "chat1" },
+    });
+    const { result, rerender } = renderHook(() => useMentionableUsers("chat1"));
+    const aliases = () =>
+      result
+        .current("chat1")
+        .map((item) => parseCollaborationReference(item.value)?.alias);
+    await waitFor(() => expect(aliases()).toContain("chat1"));
+    expect(mockResolveChatAlias).toHaveBeenCalledWith({ alias: "chat1" });
+    mockResolveChatAlias.mockResolvedValue(null);
+    mockAccountId = alice;
+    rerender();
+    expect(aliases()).not.toContain("chat1");
+    await waitFor(() => expect(mockResolveChatAlias).toHaveBeenCalledTimes(2));
+    expect(aliases()).not.toContain("chat1");
+  });
+
   it.each(["closed", "agent", "disabled"])(
     "does not query the directory for %s completion",
     async (mode) => {
@@ -351,6 +417,7 @@ describe("mentionableUsers", () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
       });
       expect(mockListResources).not.toHaveBeenCalled();
+      expect(mockResolveChatAlias).not.toHaveBeenCalled();
     },
   );
 
@@ -363,16 +430,18 @@ describe("mentionableUsers", () => {
       kind: "artifact",
       title: "First title",
     };
-    mockListResources
-      .mockResolvedValueOnce({
-        items: [item],
-        next: "next",
-        coverage: "complete",
-      })
-      .mockResolvedValue({
-        items: [{ ...item, resource_id: "artifact:2", title: "Second title" }],
-        coverage: "complete",
-      });
+    mockListResources.mockImplementation(async ({ project_id, after }) =>
+      project_id
+        ? { items: [], coverage: "complete" }
+        : after
+          ? {
+              items: [
+                { ...item, resource_id: "artifact:2", title: "Second title" },
+              ],
+              coverage: "complete",
+            }
+          : { items: [item], next: "next", coverage: "complete" },
+    );
     const { result, rerender } = renderHook(
       ({ search }) => useMentionableUsers(search),
       { initialProps: { search: "title" } },

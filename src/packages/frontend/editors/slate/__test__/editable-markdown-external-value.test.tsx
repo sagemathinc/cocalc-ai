@@ -3,6 +3,11 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
+  FrameContext,
+  defaultFrameContext,
+} from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { useMentions } from "../slate-mentions";
+import {
   EditableMarkdown,
   shouldPublishReadOnlyExternalSlateValue,
 } from "../editable-markdown";
@@ -10,6 +15,10 @@ import {
 jest.mock("@cocalc/frontend/editors/markdown-input/mentionable-users", () => ({
   useMentionableUsers: () => () => [],
 }));
+jest.mock("../slate-mentions", () => {
+  const actual = jest.requireActual("../slate-mentions");
+  return { ...actual, useMentions: jest.fn(actual.useMentions) };
+});
 
 function StreamingMarkdown({ value }: { value: string }) {
   return (
@@ -29,6 +38,26 @@ function StreamingMarkdown({ value }: { value: string }) {
 }
 
 describe("EditableMarkdown external read-only values", () => {
+  it.each([
+    { id: "", visible: false, expected: true },
+    { id: "frame", visible: false, expected: false },
+    { id: "frame", visible: true, expected: true },
+  ])(
+    "passes mention visibility for $id/$visible",
+    ({ id, visible, expected }) => {
+      render(
+        <FrameContext.Provider
+          value={{ ...defaultFrameContext, id, isVisible: visible }}
+        >
+          <StreamingMarkdown value="Mention visibility" />
+        </FrameContext.Provider>,
+      );
+      expect(useMentions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ isVisible: expected }),
+      );
+    },
+  );
+
   it("merges delayed independent edits in two editors without publishing echo loops", async () => {
     const base = "First paragraph.\n\nLast paragraph.";
     const merged = "Local first paragraph.\n\nRemote last paragraph.";

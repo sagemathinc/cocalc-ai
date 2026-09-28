@@ -1,3 +1,12 @@
+jest.mock("react-virtuoso", () => ({
+  Virtuoso: ({ data, itemContent }) => (
+    <div>
+      {data.map((item, i) => (
+        <div key={i}>{itemContent(i, item)}</div>
+      ))}
+    </div>
+  ),
+}));
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Map } from "immutable";
@@ -53,6 +62,7 @@ const items = ["agent", "artifact", "conversation"].map((kind) => ({
   kind,
 }));
 beforeEach(() => {
+  sessionStorage.clear();
   mockAccountId = "viewer";
   mockListResources
     .mockReset()
@@ -65,11 +75,11 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
   const onSelect = jest.fn();
   render(<ReferencePickerButton projectId={project_id} onSelect={onSelect} />);
   await userEvent.tab();
-  const trigger = screen.getByRole("button", { name: "Insert reference" });
+  const trigger = screen.getByRole("button", { name: "Insert link" });
   expect(trigger).toHaveFocus();
   await userEvent.keyboard("{Enter}");
   expect(
-    (await screen.findByRole("dialog", { name: "Insert a reference" })).closest(
+    (await screen.findByRole("dialog", { name: "Insert link" })).closest(
       ".collaborators-modal",
     ),
   ).not.toBeNull();
@@ -78,24 +88,22 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
   });
   await waitFor(() => expect(search).toHaveFocus());
   const conversation = await screen.findByRole("button", {
-    name: "@same: Shared work Human conversation / Geometry / Unknown creator",
+    name: "@same: Shared work (Conversation)",
   });
   expect(
     screen.getByRole("button", {
-      name: "@same: Shared work Agent / Geometry / Unknown creator",
+      name: "@same: Shared work (Agent)",
     }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("button", {
-      name: "@same: Shared work Artifact / Geometry / Unknown creator",
+      name: "@same: Shared work (Artifact)",
     }),
   ).toBeInTheDocument();
   await userEvent.tab();
-  expect(screen.getByRole("combobox", { name: "Resource type" })).toHaveFocus();
+  expect(screen.getByRole("combobox", { name: "Search in" })).toHaveFocus();
   await userEvent.tab();
-  expect(
-    screen.getByRole("checkbox", { name: "Search all accessible projects" }),
-  ).toHaveFocus();
+  expect(screen.getByRole("radio", { name: "All" })).toHaveFocus();
   await userEvent.tab();
   await userEvent.tab();
   await userEvent.tab();
@@ -114,7 +122,7 @@ test("keyboard opens picker, exposes type/project disambiguation, selects stable
 test("Escape cancels without selecting and restores trigger focus", async () => {
   const onSelect = jest.fn();
   render(<ReferencePickerButton onSelect={onSelect} />);
-  const trigger = screen.getByRole("button", { name: "Insert reference" });
+  const trigger = screen.getByRole("button", { name: "Insert link" });
   await userEvent.click(trigger);
   await screen.findByRole("textbox", { name: "Search titles or aliases" });
   await userEvent.keyboard("{Escape}");
@@ -134,13 +142,12 @@ test("can broaden project context through one bounded global search", async () =
       onClose={jest.fn()}
     />,
   );
-  await screen.findByRole("button", { name: /Human conversation/ });
+  await screen.findByRole("button", { name: /Conversation/ });
   expect(mockListResources).toHaveBeenLastCalledWith(
     expect.objectContaining({ project_id, limit: 25 }),
   );
-  await userEvent.click(
-    screen.getByRole("checkbox", { name: "Search all accessible projects" }),
-  );
+  await userEvent.click(screen.getByRole("combobox", { name: "Search in" }));
+  await userEvent.click(screen.getByText("All my projects"));
   await waitFor(() =>
     expect(mockListResources).toHaveBeenLastCalledWith(
       expect.objectContaining({ project_id: undefined, limit: 25 }),
@@ -148,7 +155,7 @@ test("can broaden project context through one bounded global search", async () =
   );
 });
 
-test("search is server-paged, bounded, exposes coverage and replaces rather than accumulates pages", async () => {
+test("search is server-paged, bounded, exposes coverage and accumulates lazy pages", async () => {
   mockListResources
     .mockResolvedValueOnce({
       items,
@@ -160,6 +167,7 @@ test("search is server-paged, bounded, exposes coverage and replaces rather than
         {
           ...base,
           kind: "artifact",
+          resource_id: "new-artifact",
           title: "Unnamed artifact",
           personal: undefined,
         },
@@ -167,12 +175,9 @@ test("search is server-paged, bounded, exposes coverage and replaces rather than
       coverage: "complete",
     });
   render(<ReferencePicker open onSelect={jest.fn()} onClose={jest.fn()} />);
-  await screen.findByRole("button", { name: /Next references/ });
+  await screen.findByRole("button", { name: /Load more/ });
   expect(screen.getByText(/still being indexed/)).toBeInTheDocument();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Next references" }),
-  );
-  expect(screen.getByRole("heading", { name: "References" })).toHaveFocus();
+  await userEvent.click(screen.getByRole("button", { name: "Load more" }));
   await screen.findByRole("button", { name: /Unnamed artifact/ });
   expect(mockListResources).toHaveBeenLastCalledWith(
     expect.objectContaining({
@@ -181,9 +186,7 @@ test("search is server-paged, bounded, exposes coverage and replaces rather than
       limit: 25,
     }),
   );
-  expect(
-    screen.queryByRole("button", { name: /@same/ }),
-  ).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /@same/ })).toHaveLength(3);
   await userEvent.type(
     screen.getByRole("textbox", { name: "Search titles or aliases" }),
     "new title",
@@ -220,6 +223,54 @@ test("late results from an old account cannot populate a new viewer's picker", a
   ).not.toBeInTheDocument();
 });
 
+test("shared scope uses a stable conversation identity, resets paging and is remembered", async () => {
+  const conversation = {
+    project_id,
+    kind: "conversation" as const,
+    resource_id: "current",
+  };
+  const props = {
+    open: true,
+    projectId: project_id,
+    conversation,
+    onSelect: jest.fn(),
+    onClose: jest.fn(),
+  };
+  const view = render(<ReferencePicker {...props} />);
+  await screen.findByRole("button", { name: /\(Conversation\)/ });
+  await userEvent.click(screen.getByRole("combobox", { name: "Search in" }));
+  await userEvent.click(screen.getByText("Projects shared by participants"));
+  await waitFor(() =>
+    expect(mockListResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        shared_with: conversation,
+        project_id: undefined,
+        after: undefined,
+      }),
+    ),
+  );
+  view.unmount();
+  render(<ReferencePicker {...props} />);
+  await waitFor(() =>
+    expect(mockListResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shared_with: conversation }),
+    ),
+  );
+  expect(screen.getByText(/Access can change/)).toBeInTheDocument();
+});
+
+test("resource types are keyboard operable and filter the shared query", async () => {
+  render(<ReferencePicker open onSelect={jest.fn()} onClose={jest.fn()} />);
+  const all = screen.getByRole("radio", { name: "All" });
+  all.focus();
+  await userEvent.keyboard("{ArrowRight}{Enter}");
+  await waitFor(() =>
+    expect(mockListResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "conversation", after: undefined }),
+    ),
+  );
+});
+
 test("changing search immediately hides old results and ignores late responses", async () => {
   let resolve!: (page: unknown) => void;
   mockListResources
@@ -251,7 +302,7 @@ test("errors are announced and can be retried without exposing server details", 
   );
   expect(screen.queryByText(/Sensitive metadata/)).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("button", { name: /Human conversation/ });
+  await screen.findByRole("button", { name: /Conversation/ });
 });
 
 test("composer inserts a bound reference at the saved cursor without invoking an agent", async () => {
@@ -266,12 +317,10 @@ test("composer inserts a bound reference at the saved cursor without invoking an
       inputControlRef={{ current: control }}
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Insert reference" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Insert link" }));
   await userEvent.click(
     await screen.findByRole("button", {
-      name: "@same: Shared work Agent / Geometry / Unknown creator",
+      name: "@same: Shared work (Agent)",
     }),
   );
   expect(control.insertText).toHaveBeenCalledTimes(1);
@@ -312,14 +361,14 @@ test("menu-hosted reference picker returns to the composer on cancellation", asy
       )}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Insert reference" }));
-  await screen.findByRole("dialog", { name: "Insert a reference" });
+  await user.click(screen.getByRole("button", { name: "Insert link" }));
+  await screen.findByRole("dialog", { name: "Insert link" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(control.focus).toHaveBeenCalled());
   expect(control.insertText).not.toHaveBeenCalled();
 });
 
-test("Share artifact to conversation chooses another destination rather than changing the current composer", async () => {
+test("Add artifact link to another conversation chooses another destination rather than changing the current composer", async () => {
   const control = {
     captureSelection: jest.fn(() => ({ line: 0, ch: 2 })),
     insertText: jest.fn(() => true),
@@ -353,15 +402,16 @@ test("Share artifact to conversation chooses another destination rather than cha
     />,
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Share artifact to conversation" }),
+    screen.getByRole("button", {
+      name: "Add artifact link to another conversation",
+    }),
   );
   expect(
-    await screen.findByRole("dialog", { name: "Share to conversation" }),
-  ).toHaveTextContent("choose a destination human conversation");
-  expect(screen.getByText(/does not publish a copy/)).toBeInTheDocument();
+    await screen.findByRole("dialog", { name: "Choose an artifact to link" }),
+  ).toHaveTextContent("then a destination conversation");
   await userEvent.click(
     await screen.findByRole("button", {
-      name: "Share @same: Shared work Artifact / Geometry / Unknown creator",
+      name: "@same: Shared work (Artifact)",
     }),
   );
   expect(mockListResources).toHaveBeenCalledWith(
@@ -369,20 +419,20 @@ test("Share artifact to conversation chooses another destination rather than cha
   );
   expect(control.insertText).not.toHaveBeenCalled();
   const search = await screen.findByRole("textbox", {
-    name: "Search conversations",
+    name: "Search titles or aliases",
   });
   await waitFor(() => expect(search).toHaveFocus());
   await userEvent.click(
     await screen.findByRole("button", {
-      name: "@same: Other discussion Human conversation / Topology",
+      name: "@same: Other discussion (Conversation)",
     }),
   );
   expect(screen.getByText(/all collaborators in Topology/)).toBeInTheDocument();
   expect(mockWriteDraft).not.toHaveBeenCalled();
   await userEvent.click(
-    screen.getByRole("button", { name: "Add reference to draft" }),
+    screen.getByRole("button", { name: "Add link to draft" }),
   );
-  await screen.findByRole("heading", { name: "Reference added to draft" });
+  await screen.findByRole("heading", { name: "Link added to draft" });
   expect(mockWriteDraft).toHaveBeenCalledTimes(1);
   const opts = mockWriteDraft.mock.calls[0][0];
   const markup = opts.text;
@@ -417,11 +467,9 @@ test.each(["account", "composer"])(
         inputControlRef={inputControlRef}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Insert reference" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Insert link" }));
     const choice = await screen.findByRole("button", {
-      name: /Shared work Agent/,
+      name: /Shared work \(Agent\)/,
     });
     if (changed === "account") mockAccountId = "other";
     else inputControlRef.current = { ...control };

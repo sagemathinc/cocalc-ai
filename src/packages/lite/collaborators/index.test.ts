@@ -57,6 +57,32 @@ async function ingest(sequence = 1, resources = [resource()]) {
   return store.ingest({ snapshot: snapshot(sequence, resources) });
 }
 
+test("shared-participant scope requires complete relations and excludes imported nonlocal participants", async () => {
+  const shared_with = {
+    project_id,
+    kind: "conversation" as const,
+    resource_id: "thread-a",
+  };
+  await ingest();
+  expect(
+    await store.api.listResources({ ...local, shared_with }),
+  ).toMatchObject({ items: [], coverage: "indexing" });
+  await ingestCompleteRelations(2, [
+    resource("thread-a", { participant_ids: [account_id] }),
+  ]);
+  expect(
+    (await store.api.listResources({ ...local, shared_with })).items,
+  ).toHaveLength(1);
+  await ingestCompleteRelations(3, [
+    resource("thread-a", {
+      participant_ids: [account_id, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+    }),
+  ]);
+  expect(
+    (await store.api.listResources({ ...local, shared_with })).items,
+  ).toEqual([]);
+});
+
 test("private chat aliases reuse local personal state and people cannot invent membership", async () => {
   await ingest();
   await store.api.setPersonalState({

@@ -1370,6 +1370,30 @@ export class LiteCollaborators {
     await this.assertHuman(opts.account_id);
     this.agentPins.refresh();
     if (opts.kind !== undefined) validate.kind(opts.kind);
+    let sharedKey: string | undefined;
+    if (opts.shared_with) {
+      if (opts.shared_with.kind !== "conversation")
+        throw Error("shared_with must be a human conversation");
+      const context = await this.relationReadContext({
+        ...opts.shared_with,
+        account_id: opts.account_id,
+      });
+      if (
+        !context.key ||
+        this.relations.participants(
+          context.key,
+          { limit: 1 },
+          context.thread_id,
+        ).coverage !== "complete"
+      )
+        return {
+          items: [],
+          coverage: "indexing",
+          coverage_message:
+            "Participants are still being indexed. Try this project or all my projects.",
+        };
+      sharedKey = context.key;
+    }
     const scope = opts.scope ?? "all";
     if (!["all", "for-you", "following", "collected"].includes(scope))
       throw Error("invalid collaborators scope");
@@ -1388,6 +1412,7 @@ export class LiteCollaborators {
       !!opts.include_archived,
       limit,
       sharedTitlesOnly,
+      opts.shared_with ?? null,
     ]);
     const projectPins = (await this.options.projectPins?.revision()) ?? "";
     await this.assertHuman(opts.account_id);
@@ -1395,8 +1420,33 @@ export class LiteCollaborators {
       const revision = this.revision();
       // Capture before querying: later commits must invalidate this page.
       const token = this.revisionToken(revision, projectPins);
+      if (
+        sharedKey &&
+        (!this.db
+          .prepare(
+            "SELECT 1 FROM collaboration_resources WHERE resource_key=? AND deleted=0 AND archived=0",
+          )
+          .get(sharedKey) ||
+          this.relations.participants(sharedKey, { limit: 1 }).coverage !==
+            "complete")
+      )
+        return {
+          items: [],
+          coverage: "indexing",
+          revision: token,
+          coverage_message:
+            "Participants are unavailable or still being indexed. Try another search scope.",
+        };
       const clauses = ["r.deleted=0"];
       const args: SQLInputValue[] = [];
+      if (sharedKey) {
+        // Lite has only one authenticated human. Imported other participants
+        // are not members of this local project.
+        clauses.push(
+          "NOT EXISTS(SELECT 1 FROM collaboration_full_participants WHERE resource_key=? AND account_id<>?)",
+        );
+        args.push(sharedKey, this.options.account_id);
+      }
       if (!opts.include_archived) clauses.push("r.archived=0");
       if (opts.kind) {
         clauses.push("r.kind=?");

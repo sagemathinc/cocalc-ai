@@ -3,8 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useMemo, useState } from "react";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Item } from "@cocalc/frontend/editors/markdown-input/complete";
-import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import {
   collaborationReferenceFromResource,
   serializeCollaborationReference,
@@ -20,24 +20,23 @@ const EMPTY: Item[] = [];
 const GROUPS = {
   agent: "Agents",
   artifact: "Artifacts",
-  conversation: "Human conversations",
+  conversation: "Conversations",
 };
 
-/** One bounded search, only while a human composer's existing @ menu is open. */
+/** Bounded local and global searches, only while the human @ menu is open. */
 export function useReferenceCompletions({
   search,
   enabled,
   accountId,
   contextProjectId,
-  userMap,
 }: {
   search?: string;
   enabled: boolean;
   accountId?: string;
   contextProjectId?: string;
-  userMap?: any;
 }): Item[] {
-  const query = search?.trim().toLowerCase().slice(0, 200);
+  const projects = useTypedRedux("projects", "project_map");
+  const query = search?.trim().replace(/^@/, "").toLowerCase().slice(0, 128);
   const filter = JSON.stringify([accountId, contextProjectId, query, enabled]);
   const [cursor, setCursor] = useState<{ filter: string; after: string }>();
   const after = cursor?.filter === filter ? cursor.after : undefined;
@@ -48,6 +47,76 @@ export function useReferenceCompletions({
     page?: CollaborationPage<CollaborationResource>;
     error?: boolean;
   }>();
+  const [nearby, setNearby] = useState<{
+    filter: string;
+    items: CollaborationResource[];
+  }>();
+  const [exact, setExact] = useState<{
+    filter: string;
+    resource: CollaborationResource | null;
+  }>();
+
+  useEffect(() => {
+    if (!enabled || !accountId || !query || query.length > 80) {
+      setExact(undefined);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      // Exact private aliases must not disappear behind newer prefix matches.
+      void Promise.resolve()
+        .then(() => referencePickerApi().resolveChatAlias?.({ alias: query }))
+        .then(
+          (resource) => {
+            if (!cancelled) setExact({ filter, resource: resource ?? null });
+          },
+          () => {
+            if (!cancelled) setExact({ filter, resource: null });
+          },
+        );
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [filter, enabled, accountId, query, revision]);
+
+  useEffect(() => {
+    if (!enabled || !accountId || query === undefined || !contextProjectId) {
+      setNearby(undefined);
+      return;
+    }
+    let cancelled = false;
+    // A small conversation-only query cannot be crowded out by global artifacts
+    // and agents. Publish it independently, without waiting on the wider search.
+    const timer = setTimeout(
+      () => {
+        void Promise.resolve()
+          .then(() =>
+            referencePickerApi().listResources({
+              project_id: contextProjectId,
+              kind: "conversation",
+              search: query,
+              scope: "all",
+              limit: 25,
+            }),
+          )
+          .then(
+            (page) => {
+              if (!cancelled) setNearby({ filter, items: page.items });
+            },
+            () => {
+              if (!cancelled) setNearby({ filter, items: [] });
+            },
+          );
+      },
+      query ? 150 : 0,
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [filter, enabled, accountId, query, contextProjectId, revision]);
 
   useEffect(() => {
     if (!enabled || !accountId || query === undefined) {
@@ -85,7 +154,10 @@ export function useReferenceCompletions({
   // Keep the matcher stable: CodeMirror refreshes its menu when this changes.
   return useMemo(() => {
     if (!enabled || !accountId) return EMPTY;
-    if (query === undefined || !current)
+    if (
+      query === undefined ||
+      (!current && nearby?.filter !== filter && exact?.filter !== filter)
+    )
       return [
         {
           value: "collaboration-reference-loading",
@@ -94,31 +166,30 @@ export function useReferenceCompletions({
           label: <span role="status">Searching accessible references...</span>,
         },
       ];
-    if (current.error)
-      return [
-        {
-          value: "collaboration-reference-retry",
-          group: "References",
-          label: (
-            <span role="alert">
-              Could not search references. Retry reference search
-            </span>
-          ),
-          onSelect: () => setRevision((n) => n + 1),
-        },
-      ];
-    const page = current.page!;
+    const page = current?.page;
     const seen = new Set<string>();
     const items: Item[] = [];
-    for (const resource of page.items) {
+    const resources = [
+      ...(exact?.filter === filter && exact.resource ? [exact.resource] : []),
+      ...(nearby?.filter === filter ? nearby.items : []),
+      ...(page?.items ?? []),
+    ];
+    const rank = (resource: CollaborationResource) => {
+      const alias = resource.personal?.alias?.toLowerCase();
+      return alias && query && alias === query
+        ? 0
+        : alias && query && alias.startsWith(query)
+          ? 1
+          : resource.project_id === contextProjectId &&
+              resource.kind === "conversation"
+            ? 2
+            : 3;
+    };
+    resources.sort((a, b) => rank(a) - rank(b));
+    for (const resource of resources) {
       const identity = collaborationTargetKey(resource);
       if (seen.has(identity)) continue;
       seen.add(identity);
-      const creator =
-        displayNameFromUserRecord(
-          userMap?.get?.(resource.created_by) ??
-            userMap?.[resource.created_by ?? ""],
-        ) || "Unknown creator";
       items.push({
         value: serializeCollaborationReference(
           collaborationReferenceFromResource(resource),
@@ -141,18 +212,17 @@ export function useReferenceCompletions({
                 maxWidth: 360,
               }}
             >
-              {resource.kind === "conversation"
-                ? "Human conversation"
-                : resource.kind === "agent"
-                  ? "Agent"
-                  : "Artifact"}{" "}
-              / {resource.project_title || "Untitled project"} / {creator}
+              {String(
+                resource.project_title ||
+                  projects?.getIn?.([resource.project_id, "title"]) ||
+                  "Project",
+              )}
             </span>
           </span>
         ),
       });
     }
-    if (page.next)
+    if (page?.next)
       items.push({
         value: "collaboration-reference-next",
         group: "References",
@@ -166,18 +236,32 @@ export function useReferenceCompletions({
         label: "First reference page",
         onSelect: () => setCursor(undefined),
       });
-    if (page.coverage !== "complete")
+    if (page && page.coverage !== "complete")
       items.push({
         value: "collaboration-reference-coverage",
         group: "References",
         disabled: true,
+        label: <span role="status">Some results may not yet be indexed.</span>,
+      });
+    if (current?.error)
+      items.push({
+        value: "collaboration-reference-retry",
+        group: "References",
         label: (
-          <span role="status">
-            {page.coverage_message || "Some resources are still being indexed."}
+          <span role="alert">
+            Could not search references. Retry reference search
           </span>
         ),
+        onSelect: () => setRevision((n) => n + 1),
       });
-    if (!page.items.length)
+    if (!page && !current?.error)
+      items.push({
+        value: "collaboration-reference-loading",
+        disabled: true,
+        group: "References",
+        label: <span role="status">Searching other projects...</span>,
+      });
+    if (page && !resources.length)
       items.push({
         value: "collaboration-reference-empty",
         group: "References",
@@ -185,5 +269,16 @@ export function useReferenceCompletions({
         label: <span role="status">No matching references</span>,
       });
     return items;
-  }, [enabled, accountId, query, current, userMap, filter, after]);
+  }, [
+    enabled,
+    accountId,
+    query,
+    current,
+    nearby,
+    exact,
+    projects,
+    contextProjectId,
+    filter,
+    after,
+  ]);
 }
