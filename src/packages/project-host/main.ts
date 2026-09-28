@@ -1470,7 +1470,9 @@ export async function main(
         project_id,
         force,
         runtime_exit_reason:
-          shared_compute_priority <= 0 ? "host_pressure_free" : "host_pressure",
+          shared_compute_priority != null && shared_compute_priority <= 0
+            ? "host_pressure_free"
+            : "host_pressure",
       });
     },
   });

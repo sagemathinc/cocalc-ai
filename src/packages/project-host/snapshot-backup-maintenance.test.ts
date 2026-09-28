@@ -16,6 +16,7 @@ const markMaintenanceReportDeliveredMock = jest.fn();
 const onProjectChangeReportedMock = jest.fn();
 const onProjectProvisionedReportedMock = jest.fn();
 const loggerInfoMock = jest.fn();
+const mutationContextMock = jest.fn();
 
 jest.mock("./sqlite/maintenance-ledger", () => ({
   listLeasedMaintenanceSchedules: (...args: any[]) =>
@@ -82,16 +83,20 @@ jest.mock("./storage-admission", () => ({
 jest.mock("@cocalc/file-server/btrfs/operation-cache", () => ({
   __esModule: true,
   BtrfsMutationDeferredError: class extends Error {},
-  withBtrfsMutationContext: (_context: unknown, run: () => Promise<unknown>) =>
-    run(),
+  withBtrfsMutationContext: (context: unknown, run: () => Promise<unknown>) => {
+    mutationContextMock(context);
+    return run();
+  },
 }));
 
 describe("snapshot-backup-maintenance", () => {
   const env = process.env;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    const { _test } = await import("./snapshot-backup-maintenance");
+    _test.resetStarvationQueue();
     process.env = { ...env };
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES =
       "0";
@@ -254,7 +259,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_backup",
       project_id: "proj-2",
-      allow_starvation_override: true,
+      allow_starvation_override: false,
     });
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(2);
   });
@@ -1489,7 +1494,7 @@ describe("snapshot-backup-maintenance", () => {
     expect(releaseStorageOperationMock).toHaveBeenCalledTimes(1);
   });
 
-  it("admits only one overdue backup during a lifecycle-restricted sweep", async () => {
+  it("does not request starvation escapes during lifecycle work", async () => {
     getStorageAdmissionStatusMock.mockReturnValue({
       mode: "enforce",
       lifecycle_active: 1,
@@ -1532,14 +1537,11 @@ describe("snapshot-backup-maintenance", () => {
     await runProjectSnapshotBackupMaintenanceSweepOnce({ hostId: "host-1" });
 
     expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
-    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledTimes(1);
-    expect(runScheduledBackupMaintenanceMock).toHaveBeenCalledWith(
-      expect.objectContaining({ project_id: "old-1" }),
-    );
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
     expect(admitStorageOperationMock).toHaveBeenCalledWith({
       operation_kind: "scheduled_backup",
       project_id: "old-1",
-      allow_starvation_override: true,
+      allow_starvation_override: false,
     });
     expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1571,6 +1573,327 @@ describe("snapshot-backup-maintenance", () => {
 
     releaseRows([]);
     await Promise.all([first, second]);
+  });
+
+  describe("paced starvation progress", () => {
+    const interval = 5 * 60_000;
+    let attempts: string[];
+    let attemptTimes: number[];
+    let rows: any[];
+    let full: number;
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-09-27T12:00:00Z"));
+      attempts = [];
+      attemptTimes = [];
+      rows = ["a", "b"].map((project_id) => ({
+        project_id,
+        last_changed: "2026-09-27T10:00:00Z",
+        backup_due_since: "2026-09-27T10:00:00Z",
+        snapshots: {},
+        backups: {},
+        storage_service_class: project_id === "a" ? "paying" : "free",
+      }));
+      listProjectMaintenanceSchedulesMock.mockImplementation(
+        async ({ project_ids }) =>
+          rows.filter(
+            (row) => !project_ids || project_ids.includes(row.project_id),
+          ),
+      );
+      const { createStorageAdmissionController } = jest.requireActual(
+        "./storage-admission",
+      );
+      full = 10;
+      const controller = createStorageAdmissionController({
+        mode: "enforce",
+        readInputs: () => ({
+          sampled_at_ms: Date.now(),
+          host_io_full_avg10: full,
+          starting_projects: 0,
+          stopping_projects: 0,
+          btrfs_mutation_locks: 0,
+          btrfs_mutation_waiters: 0,
+        }),
+      });
+      full = 2.3;
+      controller.sample();
+      getStorageAdmissionStatusMock.mockImplementation(() =>
+        controller.getStatus(),
+      );
+      admitStorageOperationMock.mockImplementation((request) =>
+        controller.admit(request),
+      );
+      runScheduledSnapshotMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`snapshot:${project_id}`);
+          attemptTimes.push(Date.now());
+          // Failing oldest work must not monopolize later sweeps.
+          throw new Error("snapshot failed");
+        },
+      );
+      runScheduledBackupMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`backup:${project_id}`);
+          attemptTimes.push(Date.now());
+          return { created: false, deferred_reason: "disk_pressure" };
+        },
+      );
+    });
+
+    it("makes fair bounded progress for both kinds under sustained moderate pressure", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      for (let i = 0; i < 8; i++) {
+        await sweep({ hostId: "host-1" });
+        expect(attempts).toHaveLength(i + 1);
+        await jest.advanceTimersByTimeAsync(interval - 1);
+        await sweep({ hostId: "host-1" });
+        expect(attempts).toHaveLength(i + 1);
+        await jest.advanceTimersByTimeAsync(1);
+      }
+      expect(attempts).toEqual([
+        "snapshot:a",
+        "backup:a",
+        "snapshot:b",
+        "backup:b",
+        "snapshot:a",
+        "backup:a",
+        "snapshot:b",
+        "backup:b",
+      ]);
+      expect(getStorageAdmissionStatusMock().pressure_state).toBe("recovery");
+      for (const operation_class of [
+        "scheduled_snapshot",
+        "scheduled_backup",
+      ]) {
+        expect(mutationContextMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            operation_class,
+            starvation_override: true,
+            priority: "scheduled",
+            cgroup_path: "/sys/fs/cgroup/cocalc-maintenance",
+          }),
+        );
+      }
+      expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "backup",
+          outcome: "deferred",
+          reason: "disk_pressure",
+        }),
+      );
+    });
+
+    it("fails closed on fresh emergency samples without consuming the fair slot", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      // The sweep's cached status is still recovery; admission must resample.
+      full = 10;
+      for (let i = 0; i < 3; i++) {
+        await sweep({ hostId: "host-1" });
+        await jest.advanceTimersByTimeAsync(interval);
+      }
+      expect(attempts).toEqual([]);
+      full = 2.3;
+      await sweep({ hostId: "host-1" });
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual(["snapshot:a"]);
+    });
+
+    it("makes paced progress through timer-driven retries between full sweeps", async () => {
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+      process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = `${24 * 60 * 60_000}`;
+      const { startProjectSnapshotBackupMaintenance } =
+        await import("./snapshot-backup-maintenance");
+      const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+      try {
+        await jest.advanceTimersByTimeAsync(0);
+        expect(attempts).toEqual(["snapshot:a"]);
+        // Existing jittered retries and event batches can add latency, but
+        // cannot shorten cooldown or require another full inventory sweep.
+        await jest.advanceTimersByTimeAsync(4 * interval - 1);
+        expect(attempts.slice(0, 4)).toEqual([
+          "snapshot:a",
+          "backup:a",
+          "snapshot:b",
+          "backup:b",
+        ]);
+        expect(attempts).toHaveLength(4);
+        for (let i = 1; i < attemptTimes.length; i++) {
+          expect(attemptTimes[i] - attemptTimes[i - 1]).toBeGreaterThanOrEqual(
+            interval,
+          );
+        }
+        expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledWith(
+          expect.objectContaining({ project_ids: expect.any(Array) }),
+        );
+      } finally {
+        stop();
+      }
+    });
+
+    it("rechecks memory after listing and charges a deferred escape attempt", async () => {
+      delete process.env
+        .COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_MAX_MEMORY_AVAILABLE_BYTES;
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      let pressure = 0;
+      const fs = require("node:fs");
+      const originalRead = fs.readFileSync;
+      const read = jest
+        .spyOn(fs, "readFileSync")
+        .mockImplementation((path: unknown, ...args: unknown[]) => {
+          if (`${path}` === "/proc/pressure/memory")
+            return `full avg10=${pressure} avg60=0 avg300=0 total=0\n`;
+          if (`${path}` === "/proc/meminfo")
+            return "MemTotal: 65536000 kB\nMemAvailable: 20971520 kB\n";
+          return originalRead(path, ...args);
+        });
+      listProjectMaintenanceSchedulesMock.mockImplementation(async () => {
+        pressure = 7.5;
+        return rows;
+      });
+      try {
+        await sweep({ hostId: "host-1" });
+        expect(attempts).toEqual([]);
+        expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: "snapshot",
+            outcome: "deferred",
+            reason: "memory_pressure",
+          }),
+        );
+        pressure = 0;
+        listProjectMaintenanceSchedulesMock.mockResolvedValue(rows);
+        await sweep({ hostId: "host-1" });
+        expect(attempts).toEqual([]);
+        await jest.advanceTimersByTimeAsync(interval);
+        await sweep({ hostId: "host-1" });
+        expect(attempts).toEqual(["backup:a"]);
+      } finally {
+        read.mockRestore();
+      }
+    });
+
+    it("publishes successful protection and removes satisfied debt from rotation", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      runScheduledSnapshotMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`snapshot:${project_id}`);
+          return {
+            created_snapshot_at: new Date().toISOString(),
+            latest_snapshot_at: new Date().toISOString(),
+            changed: true,
+          };
+        },
+      );
+      runScheduledBackupMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`backup:${project_id}`);
+          return { created: true, latest_backup_id: `backup-${project_id}` };
+        },
+      );
+      reportProjectMaintenanceMock.mockImplementation(async (report) => {
+        if (report.outcome !== "succeeded") return;
+        rows = rows.map((row) =>
+          row.project_id !== report.project_id
+            ? row
+            : {
+                ...row,
+                ...(report.kind === "snapshot"
+                  ? { last_snapshot: report.latest_snapshot_at }
+                  : { backup_due_since: null }),
+              },
+        );
+      });
+      for (let i = 0; i < 6; i++) {
+        await sweep({ hostId: "host-1" });
+        await jest.advanceTimersByTimeAsync(interval);
+      }
+      expect(attempts).toEqual([
+        "snapshot:a",
+        "backup:a",
+        "snapshot:b",
+        "backup:b",
+      ]);
+      for (const kind of ["snapshot", "backup"]) {
+        expect(reportProjectMaintenanceMock).toHaveBeenCalledWith(
+          expect.objectContaining({ kind, outcome: "succeeded" }),
+        );
+      }
+    });
+
+    it("does not let repeated event batches steal the globally fair slot", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      await sweep({ hostId: "host-1" });
+      await jest.advanceTimersByTimeAsync(interval);
+      await sweep({ hostId: "host-1", projectIds: ["a"] });
+      await jest.advanceTimersByTimeAsync(interval);
+      const onFutureDue = jest.fn();
+      for (let i = 0; i < 3; i++) {
+        await sweep({ hostId: "host-1", projectIds: ["a"], onFutureDue });
+      }
+      expect(attempts).toEqual(["snapshot:a", "backup:a"]);
+      expect(onFutureDue).toHaveBeenCalledWith("b", expect.any(Number));
+      await sweep({ hostId: "host-1", projectIds: ["b"] });
+      expect(attempts).toEqual(["snapshot:a", "backup:a", "snapshot:b"]);
+    });
+
+    it("keeps one escape in flight and waits five minutes after it finishes", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      let finish!: () => void;
+      let started!: () => void;
+      const running = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      runScheduledSnapshotMaintenanceMock.mockImplementation(
+        async ({ project_id }) => {
+          attempts.push(`snapshot:${project_id}`);
+          started();
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+        },
+      );
+      const first = sweep({ hostId: "host-1" });
+      await running;
+      await jest.advanceTimersByTimeAsync(20 * 60_000);
+      await sweep({ hostId: "host-1", projectIds: ["b"] });
+      expect(attempts).toEqual(["snapshot:a"]);
+      finish();
+      await first;
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual(["snapshot:a"]);
+      await jest.advanceTimersByTimeAsync(interval);
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual(["snapshot:a", "backup:a"]);
+    });
+
+    it("requires an hour of actual overdue debt and honors disabled schedules and retries", async () => {
+      const { runProjectSnapshotBackupMaintenanceSweepOnce: sweep } =
+        await import("./snapshot-backup-maintenance");
+      rows = [
+        {
+          ...rows[0],
+          last_changed: "2026-09-27T11:00:00.001Z",
+          backup_due_since: "2026-09-26T10:00:00Z",
+          last_backup: "2026-09-26T11:30:00Z",
+        },
+      ];
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual([]);
+      await jest.advanceTimersByTimeAsync(1);
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual(["snapshot:a"]);
+      rows[0].snapshots = { disabled: true };
+      rows[0].backup_retry_at = "2026-09-27T14:00:00Z";
+      await jest.advanceTimersByTimeAsync(60 * 60_000);
+      await sweep({ hostId: "host-1" });
+      expect(attempts).toEqual(["snapshot:a"]);
+    });
   });
 
   it("walks past two full pages and reaches the final project", async () => {
