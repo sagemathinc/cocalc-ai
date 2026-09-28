@@ -643,6 +643,90 @@ describe("manageApiKeys local bay access", () => {
     });
   });
 
+  it("does not revoke a renewed key based on an expired directory snapshot", async () => {
+    const secret = "sk-cocalc-v2.key-id-remote.secret-part";
+    const renewedExpiry = Date.now() + 60_000;
+    let directoryExpiry = Date.now() - 1;
+    const entry = {
+      key_id: "key-id-remote",
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      hash: "hash",
+      capabilities: ["project:exec"],
+      allowed_project_ids: [PROJECT_ID],
+      scope_revision: 1,
+    };
+    getClusterAccountApiKeyByKeyIdMock.mockImplementation(async () => ({
+      ...entry,
+      expire: directoryExpiry,
+    }));
+    getApiKeyAuthorizationStateMock.mockResolvedValue({
+      hash: "hash",
+      scope_revision: 1,
+      expire_ms: renewedExpiry,
+      scope: {
+        version: 1,
+        account: [],
+        projects: [{ project_id: PROJECT_ID, capabilities: ["project:exec"] }],
+      },
+    });
+    // Renewal has already committed at home; replication catches up after the
+    // authentication read captured its stale expiry.
+    verifyPasswordMock.mockImplementationOnce(() => {
+      directoryExpiry = renewedExpiry;
+      return true;
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(deleteClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+    await expect(getAccountWithApiKey(secret)).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      key_id: entry.key_id,
+      expire_ms: renewedExpiry,
+    });
+    expect(deleteClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not delete a local key renewed after authentication read its expiry", async () => {
+    const secret = "sk-cocalc-v2.key-id-local.secret-part";
+    const renewedExpiry = new Date(Date.now() + 60_000);
+    let expire = new Date(Date.now() - 1);
+    const entry = {
+      id: 9,
+      key_id: "key-id-local",
+      account_id: ACCOUNT_ID,
+      hash: "hash",
+      capabilities: ["project:exec"],
+      allowed_project_ids: [PROJECT_ID],
+      scope_revision: 1,
+    };
+    queryMock.mockImplementation(async (sql) => {
+      if (`${sql}`.startsWith("SELECT id,key_id,account_id")) {
+        return { rows: [{ ...entry, expire }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    verifyPasswordMock.mockImplementationOnce(() => {
+      expire = renewedExpiry;
+      return true;
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        `${sql}`.includes("DELETE FROM api_keys"),
+      ),
+    ).toBe(false);
+    expect(deleteClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+    await expect(getAccountWithApiKey(secret)).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      key_id: entry.key_id,
+      expire_ms: renewedExpiry.valueOf(),
+    });
+    expect(getClusterAccountApiKeyByKeyIdMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["deleted", null],
     ["narrowed", { hash: "hash", scope_revision: 2 }],

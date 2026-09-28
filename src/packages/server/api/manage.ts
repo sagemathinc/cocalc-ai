@@ -642,9 +642,8 @@ async function checkApiKeyRows({
   if (verifyPassword(secret, rows[0].hash)) {
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {
-      // expired entries will get automatically deleted eventually by database
-      // maintenance, but we obviously shouldn't depend on that.
-      await deleteApiKey(rows[0]);
+      // Renewal may have committed since this read. Deny the stale request;
+      // leave deletion to explicit revocation or expiry-aware maintenance.
       recordApiKeyAuditEventSoon({
         event: "api_key_denied",
         value: {
@@ -783,11 +782,8 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     return undefined;
   }
   if (entry.expire != null && entry.expire <= Date.now()) {
-    await deleteClusterAccountApiKeyDirectoryEntry({
-      key_id: v2.key_id,
-      account_id: entry.account_id,
-      home_bay_id: entry.home_bay_id,
-    });
+    // This replica is only a locator. Its stale expiry must never create a
+    // permanent revocation tombstone for a key renewed at its account home.
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
       value: {
