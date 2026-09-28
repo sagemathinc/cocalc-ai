@@ -1029,7 +1029,8 @@ export class Client extends EventEmitter {
             timeout,
             deadline,
             signal,
-            isReady: () => this.isConnected() && this.isSignedIn(),
+            isReady: () =>
+              this.isConnected() && this.info != null && !this.info.user?.error,
             isClosed: this.isClosed,
           },
         );
@@ -2414,7 +2415,12 @@ export class Client extends EventEmitter {
                     timeout,
                     deadline,
                     signal,
-                    isReady: () => this.isConnected() && this.isSignedIn(),
+                    // Match waitUntilSignedIn: no-auth servers send info
+                    // without a user identity, which is valid readiness.
+                    isReady: () =>
+                      this.isConnected() &&
+                      this.info != null &&
+                      !this.info.user?.error,
                     isClosed: this.isClosed,
                   })
                 : timeout

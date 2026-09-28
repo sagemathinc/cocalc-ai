@@ -238,6 +238,17 @@ describe("request admission with real Socket.IO", () => {
     expect(packets).not.toHaveBeenCalled();
   });
 
+  it("admits requests after no-auth servers send info without a user", async () => {
+    client.info = { max_payload: 100000 };
+    const result = request();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(packets).toHaveBeenCalledTimes(1);
+    const packet = packets.mock.calls[0][0];
+    ack(packet);
+    reply(packet);
+    await expect(result).resolves.toEqual({ data: "ok" });
+  });
+
   it("bounds interest ACK and server wait by readiness plus writable wait", async () => {
     client.state = "disconnected";
     const result = request({ waitForInterest: true }).catch((err) => err);
