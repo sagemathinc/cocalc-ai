@@ -289,6 +289,36 @@ test("composer inserts a bound reference at the saved cursor without invoking an
   expect(mockGetResource).not.toHaveBeenCalled();
 });
 
+test("menu-hosted reference picker returns to the composer on cancellation", async () => {
+  const user = userEvent.setup();
+  const control = {
+    captureSelection: jest.fn(() => ({ line: 0, ch: 0 })),
+    insertText: jest.fn(() => true),
+    focus: jest.fn(() => true),
+  };
+  render(
+    <ReferencePickerComposer
+      projectId={project_id}
+      inputControlRef={{ current: control }}
+      allowShareToConversation
+      renderActions={(actions) => (
+        <div>
+          {actions.map((action) => (
+            <button key={action.key} onClick={action.onClick}>
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Insert reference" }));
+  await screen.findByRole("dialog", { name: "Insert a reference" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(control.focus).toHaveBeenCalled());
+  expect(control.insertText).not.toHaveBeenCalled();
+});
+
 test("Share artifact to conversation chooses another destination rather than changing the current composer", async () => {
   const control = {
     captureSelection: jest.fn(() => ({ line: 0, ch: 2 })),

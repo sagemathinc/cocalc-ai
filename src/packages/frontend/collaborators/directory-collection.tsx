@@ -28,6 +28,7 @@ interface DirectoryCollectionProps<T> {
   pinLabel?: (item: T) => string;
   itemStyle?: (item: T) => CSSProperties;
   preferences?: DirectoryCollectionPreferences;
+  viewOverride?: "list" | "grid";
 }
 
 /** Share one preference writer with the toolbar; standalone lists own theirs. */
@@ -60,11 +61,13 @@ function DirectoryCollectionContent<T>({
   itemStyle,
   preferences: prefs,
   showViewControl = false,
+  viewOverride,
 }: DirectoryCollectionProps<T> & {
   preferences: DirectoryCollectionPreferences;
   showViewControl?: boolean;
 }) {
   const [error, setError] = useState("");
+  const view = viewOverride ?? prefs.value.view;
   const [busyIds, setBusyIds] = useState<string[]>([]);
   const pending = useRef(new Set<string>());
   const [overrides, setOverrides] = useState<
@@ -132,7 +135,7 @@ function DirectoryCollectionContent<T>({
         itemId={itemId}
         itemTitle={itemTitle}
         pins={pins}
-        view={prefs.value.view}
+        view={view}
         otherTitle={`Other ${label.toLowerCase()}`}
         pinLabel={pinLabel}
         busyIds={busyIds}
@@ -144,7 +147,7 @@ function DirectoryCollectionContent<T>({
           <div
             style={{
               display: "flex",
-              flexDirection: prefs.value.view === "grid" ? "column" : "row",
+              flexDirection: view === "grid" ? "column" : "row",
               alignItems: "center",
               border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 8,

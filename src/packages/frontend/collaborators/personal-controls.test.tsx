@@ -1,4 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PersonalControls } from "./personal-controls";
 import { emptyCollaborationPersonalState } from "@cocalc/util/collaborators";
@@ -58,7 +64,7 @@ test("keyboard collection, follow, mute, alias, and read actions send independen
   expect(state.following).toBe(true);
   expect(state.muted).toBe(true);
   await user.type(
-    screen.getByRole("textbox", { name: "Personal alias" }),
+    screen.getByRole("textbox", { name: "Private alias" }),
     "weekly",
   );
   screen.getByRole("button", { name: "Save alias" }).focus();
@@ -92,6 +98,61 @@ test("failed mutations announce errors without changing the pressed state", asyn
   ).toHaveAttribute("aria-pressed", "false");
 });
 
+test("compact conversation controls support keyboard pin, alias, sharing and focus restoration", async () => {
+  const user = userEvent.setup();
+  let state = emptyCollaborationPersonalState();
+  const setPersonalState = jest.fn(
+    async ({ patch }) => (state = { ...state, ...patch }),
+  );
+  const share = jest.fn();
+  const outerShortcut = jest.fn();
+  render(
+    <div onKeyDown={outerShortcut}>
+      <PersonalControls
+        compact
+        resource={resource}
+        onChange={jest.fn()}
+        onShare={share}
+        api={{ setPersonalState } as unknown as DirectoryApi}
+      />
+    </div>,
+  );
+  expect(screen.queryByRole("textbox")).toBeNull();
+  screen.getByRole("button", { name: "Pin conversation" }).focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("button", { name: "Unpin conversation" });
+  expect(state.following).toBe(false);
+  const menu = screen.getByRole("button", { name: "Conversation options" });
+  menu.focus();
+  await user.keyboard("{Enter}");
+  const alias = await screen.findByRole("menuitem", {
+    name: "Private alias...",
+  });
+  act(() => alias.focus());
+  outerShortcut.mockClear();
+  // rc-menu still uses the legacy `which` supplied by real keyboard events.
+  expect(
+    fireEvent.keyDown(alias, { key: "Enter", which: 13, keyCode: 13 }),
+  ).toBe(false);
+  expect(outerShortcut).not.toHaveBeenCalled();
+  const input = await screen.findByRole("textbox", { name: "Private alias" });
+  await user.type(input, "weekly");
+  await user.click(screen.getByRole("button", { name: "Save alias" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(menu).toHaveFocus());
+  expect(state.alias).toBe("weekly");
+  await user.keyboard("{Enter}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Share conversation..." }),
+  );
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(menu).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("menuitem", { name: "Private alias..." });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(menu).toHaveFocus());
+});
+
 test("clearing an artifact alias by keyboard preserves its independent shortcut and attention state", async () => {
   const user = userEvent.setup();
   const personal = {
@@ -117,7 +178,7 @@ test("clearing an artifact alias by keyboard preserves its independent shortcut 
       onChange={jest.fn()}
     />,
   );
-  const input = screen.getByRole("textbox", { name: "Personal alias" });
+  const input = screen.getByRole("textbox", { name: "Private alias" });
   await user.clear(input);
   const save = screen.getByRole("button", { name: "Save alias" });
   expect(save).toBeEnabled();
@@ -160,7 +221,7 @@ test("an unnamed agent can be collected and aliased without execution identity e
   await user.keyboard("{Enter}");
   await screen.findByRole("button", { name: "Remove shortcut" });
   await user.type(
-    screen.getByRole("textbox", { name: "Personal alias" }),
+    screen.getByRole("textbox", { name: "Private alias" }),
     "shared-research",
   );
   screen.getByRole("button", { name: "Save alias" }).focus();
@@ -195,7 +256,7 @@ test.each(["agent", "artifact"] as const)(
       />,
     );
     expect(
-      screen.getByRole("textbox", { name: "Personal alias" }),
+      screen.getByRole("textbox", { name: "Private alias" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "Add to my collection" }),

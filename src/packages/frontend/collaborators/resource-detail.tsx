@@ -4,6 +4,11 @@
  */
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Alert, Button } from "antd";
+import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { Icon } from "@cocalc/frontend/components/icon";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { CollaboratorsModal } from "./modal";
 import type { CollaborationTarget } from "@cocalc/util/collaborators";
 import { collaborationTargetKey } from "@cocalc/util/collaborators";
 import type { DirectoryApi } from "./workspace-api";
@@ -30,6 +35,8 @@ export function ResourceDetail({
   onChange,
   onBack,
   awaitingIndex = false,
+  onManageProject,
+  projectTitle,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -37,8 +44,11 @@ export function ResourceDetail({
   onChange: () => void;
   onBack: () => void;
   awaitingIndex?: boolean;
+  onManageProject?: (projectId: string) => void;
+  projectTitle?: string;
 }) {
   const [showSource, setShowSource] = useState(false);
+  const [audienceOpen, setAudienceOpen] = useState(false);
   const sourceBack = useRef<HTMLButtonElement>(null);
   const sourceOpen = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -61,22 +71,33 @@ export function ResourceDetail({
   );
   if (result.error)
     return (
-      <Alert
-        role="alert"
-        type="error"
-        title="Resource unavailable"
-        description={result.error}
-        action={<Button onClick={result.refresh}>Retry resource</Button>}
-      />
+      <>
+        {target.kind === "conversation" && (
+          <Button onClick={onBack}>Back to results</Button>
+        )}
+        <Alert
+          role="alert"
+          type="error"
+          title="Resource unavailable"
+          description={result.error}
+          action={<Button onClick={result.refresh}>Retry resource</Button>}
+        />
+      </>
     );
   const resource = result.page?.items[0];
+  const projectName = resource?.project_title || projectTitle || "Project";
   if (!resource)
     return (
-      <p role="status">
-        {awaitingIndex
-          ? "Conversation created. Waiting for its directory entry..."
-          : "Checking resource access..."}
-      </p>
+      <>
+        {target.kind === "conversation" && (
+          <Button onClick={onBack}>Back to results</Button>
+        )}
+        <p role="status">
+          {awaitingIndex
+            ? "Conversation created. Waiting for its directory entry..."
+            : "Checking resource access..."}
+        </p>
+      </>
     );
   async function openSource() {
     setShowSource(true);
@@ -89,34 +110,118 @@ export function ResourceDetail({
   }
   return (
     <>
-      <h2 ref={heading} tabIndex={-1}>
-        {resource.title || `Untitled ${resource.kind}`}
-      </h2>
-      <p>
-        <strong>
-          Visible to collaborators in {resource.project_title || "this project"}
-          .
-        </strong>{" "}
-        This is not a private recipient list.
-      </p>
-      <p>
-        {resource.created_by
-          ? "Creator attribution is recorded for this resource."
-          : "Creator/publisher attribution is unknown for this legacy resource."}{" "}
-        {resource.kind === "conversation" && `${participantSummary(resource)}.`}
-      </p>
-      <PersonalControls
-        key={collaborationTargetKey(resource)}
-        api={api}
-        resource={resource}
-        onChange={onChange}
-      />
-      <ShareToConversationButton
-        key={`${accountId}:${collaborationTargetKey(resource)}`}
-        api={api}
-        accountId={accountId}
-        resource={resource}
-      />
+      {resource.kind === "conversation" ? (
+        <header
+          className="collaborators-conversation-header"
+          style={{ borderBottom: `1px solid ${UI_COLORS.border}` }}
+        >
+          <Button
+            type="text"
+            aria-label="Back to results"
+            icon={<Icon name="arrow-left" />}
+            onClick={onBack}
+          />
+          <div className="collaborators-conversation-heading">
+            <h2 ref={heading} tabIndex={-1}>
+              {resource.title || "Untitled conversation"}
+            </h2>
+            <div className="collaborators-conversation-context">
+              {onManageProject ? (
+                <Button
+                  type="link"
+                  onClick={() => onManageProject(resource.project_id)}
+                  aria-label={`Settings for ${projectName}`}
+                >
+                  {projectName}
+                </Button>
+              ) : (
+                <span>{projectName}</span>
+              )}
+              <Button
+                type="text"
+                onClick={() => setAudienceOpen(true)}
+                aria-label="Conversation participants and access"
+              >
+                <span
+                  className="collaborators-participant-avatars"
+                  aria-hidden="true"
+                >
+                  {resource.participant_ids.slice(0, 3).map((id) => (
+                    <Avatar key={id} account_id={id} size={20} no_tooltip />
+                  ))}
+                </span>
+                {participantSummary(resource)}
+              </Button>
+            </div>
+          </div>
+          <ShareToConversationButton
+            api={api}
+            accountId={accountId}
+            resource={resource}
+            renderTrigger={(share) => (
+              <PersonalControls
+                compact
+                api={api}
+                resource={resource}
+                onChange={onChange}
+                onShare={share}
+              />
+            )}
+          />
+          <CollaboratorsModal
+            title="Participants and access"
+            open={audienceOpen}
+            footer={null}
+            onCancel={() => setAudienceOpen(false)}
+          >
+            <KeyboardBoundary boundary="conversation-audience">
+              <p>
+                <strong>Visible to collaborators in {projectName}.</strong> This
+                is not a private recipient list.
+              </p>
+              <p>
+                {participantSummary(resource)}. Participation does not define
+                who has access.
+              </p>
+              <div className="collaborators-actions">
+                {resource.participant_ids.map((id) => (
+                  <Avatar key={id} account_id={id} size={32} />
+                ))}
+              </div>
+            </KeyboardBoundary>
+          </CollaboratorsModal>
+        </header>
+      ) : (
+        <>
+          <h2 ref={heading} tabIndex={-1}>
+            {resource.title || `Untitled ${resource.kind}`}
+          </h2>
+          <p>
+            <strong>
+              Visible to collaborators in{" "}
+              {resource.project_title || "this project"}.
+            </strong>{" "}
+            This is not a private recipient list.
+          </p>
+          <p>
+            {resource.created_by
+              ? "Creator attribution is recorded for this resource."
+              : "Creator/publisher attribution is unknown for this legacy resource."}
+          </p>
+          <PersonalControls
+            key={collaborationTargetKey(resource)}
+            api={api}
+            resource={resource}
+            onChange={onChange}
+          />
+          <ShareToConversationButton
+            key={`${accountId}:${collaborationTargetKey(resource)}`}
+            api={api}
+            accountId={accountId}
+            resource={resource}
+          />
+        </>
+      )}
       {showSource ? (
         <>
           <Button ref={sourceBack} onClick={closeSource}>

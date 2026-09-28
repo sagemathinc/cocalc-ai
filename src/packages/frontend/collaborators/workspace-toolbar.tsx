@@ -3,7 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useRef, useState } from "react";
-import type { ComponentRef } from "react";
+import type { ComponentRef, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button, Input, Popover } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { CollectionViewControl } from "@cocalc/frontend/components/collection";
@@ -45,6 +46,8 @@ export function WorkspaceToolbar({
   onClearProject,
   onClearPerson,
   onAction,
+  controlsTarget,
+  compact = false,
 }: {
   active: boolean;
   id: string;
@@ -64,6 +67,8 @@ export function WorkspaceToolbar({
   onClearProject: () => void;
   onClearPerson: () => void;
   onAction: () => void;
+  controlsTarget?: HTMLElement | null;
+  compact?: boolean;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterButton = useRef<ComponentRef<typeof Button>>(null);
@@ -115,6 +120,8 @@ export function WorkspaceToolbar({
     filterButton.current?.focus();
     action();
   }
+  const placeControls = (controls: ReactNode) =>
+    controlsTarget ? createPortal(controls, controlsTarget) : controls;
   return (
     <>
       <div
@@ -161,149 +168,159 @@ export function WorkspaceToolbar({
           </button>
         ))}
       </div>
-      <div className="collaborators-list-controls">
-        <div className="collaborators-toolbar">
-          <Input
-            className="collaborators-search"
-            aria-label={search}
-            prefix={<Icon name="search" />}
-            value={input}
-            maxLength={200}
-            onChange={(event) => onInput(event.target.value)}
-            placeholder={`${search}...`}
-          />
-          <Popover
-            trigger="click"
-            placement="bottomRight"
-            open={active && filtersOpen}
-            onOpenChange={setFiltersOpen}
-            destroyOnHidden
-            fresh
-            content={
-              <KeyboardBoundary boundary="people-filters">
-                {filtersOpen && active && (
-                  <div
-                    ref={filterPanel}
-                    role="dialog"
-                    aria-label="People filters"
-                    tabIndex={-1}
-                    className="collaborators-filters"
-                    onKeyDown={(event) => {
-                      if (event.key !== "Escape") return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setFiltersOpen(false);
-                      filterButton.current?.focus();
-                    }}
-                  >
-                    {view !== "projects" && (
-                      <Button onClick={() => pick(onProjectFilter)}>
-                        {projectLabel
-                          ? "Change project filter"
-                          : "Filter by project"}
-                      </Button>
-                    )}
-                    {view !== "people" && (
-                      <Button onClick={() => pick(onPersonFilter)}>
-                        {personLabel
-                          ? "Change person filter"
-                          : "Filter by person"}
-                      </Button>
-                    )}
-                    {view === "projects" && (
-                      <ProjectViewControls
-                        view={projectView}
-                        onChange={onProjectView}
-                      />
-                    )}
-                    {view === "conversations" && (
-                      <>
-                        <label htmlFor={`${id}-scope`}>Show</label>
-                        <select
-                          id={`${id}-scope`}
-                          value={scope}
-                          style={{
-                            color: UI_COLORS.text,
-                            background: UI_COLORS.surface,
-                            border: `1px solid ${UI_COLORS.controlBorder}`,
-                            padding: 6,
-                            borderRadius: 6,
-                          }}
-                          onChange={(event) =>
-                            onScope(event.target.value as typeof scope)
-                          }
-                        >
-                          {Object.entries(SCOPES).map(([key, label]) => (
-                            <option key={key} value={key}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                        {scope === "for-you" && (
-                          <small>
-                            Mentions, followed conversations, and conversations
-                            you participated in.
-                          </small>
-                        )}
-                        {scope === "collected" && (
-                          <small>
-                            Saved conversations, agents, and artifacts. Removing
-                            a shortcut never deletes the original.
-                          </small>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-              </KeyboardBoundary>
-            }
-          >
-            <Button
-              ref={filterButton}
-              aria-label="Filters"
-              aria-haspopup="dialog"
-              aria-expanded={filtersOpen}
-              icon={<Icon name="sliders" />}
+      {placeControls(
+        <div className="collaborators-list-controls">
+          <div className="collaborators-toolbar">
+            <Input
+              className="collaborators-search"
+              aria-label={search}
+              prefix={<Icon name="search" />}
+              value={input}
+              maxLength={200}
+              onChange={(event) => onInput(event.target.value)}
+              placeholder={`${search}...`}
+            />
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              open={active && filtersOpen}
+              onOpenChange={setFiltersOpen}
+              destroyOnHidden
+              fresh
+              content={
+                <KeyboardBoundary boundary="people-filters">
+                  {filtersOpen && active && (
+                    <div
+                      ref={filterPanel}
+                      role="dialog"
+                      aria-label="People filters"
+                      tabIndex={-1}
+                      className="collaborators-filters"
+                      onKeyDown={(event) => {
+                        if (event.key !== "Escape") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setFiltersOpen(false);
+                        filterButton.current?.focus();
+                      }}
+                    >
+                      {view !== "projects" && (
+                        <Button onClick={() => pick(onProjectFilter)}>
+                          {projectLabel
+                            ? "Change project filter"
+                            : "Filter by project"}
+                        </Button>
+                      )}
+                      {view !== "people" && (
+                        <Button onClick={() => pick(onPersonFilter)}>
+                          {personLabel
+                            ? "Change person filter"
+                            : "Filter by person"}
+                        </Button>
+                      )}
+                      {view === "projects" && (
+                        <ProjectViewControls
+                          view={projectView}
+                          onChange={onProjectView}
+                        />
+                      )}
+                      {view === "conversations" && (
+                        <>
+                          <label htmlFor={`${id}-scope`}>Show</label>
+                          <select
+                            id={`${id}-scope`}
+                            value={scope}
+                            style={{
+                              color: UI_COLORS.text,
+                              background: UI_COLORS.surface,
+                              border: `1px solid ${UI_COLORS.controlBorder}`,
+                              padding: 6,
+                              borderRadius: 6,
+                            }}
+                            onChange={(event) =>
+                              onScope(event.target.value as typeof scope)
+                            }
+                          >
+                            {Object.entries(SCOPES).map(([key, label]) => (
+                              <option key={key} value={key}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          {scope === "for-you" && (
+                            <small>
+                              Mentions, followed conversations, and
+                              conversations you participated in.
+                            </small>
+                          )}
+                          {scope === "collected" && (
+                            <small>
+                              Saved conversations, agents, and artifacts.
+                              Removing a shortcut never deletes the original.
+                            </small>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </KeyboardBoundary>
+              }
             >
-              Filters
-            </Button>
-          </Popover>
-          <CollectionViewControl
-            view={preferences.value.view}
-            onChange={preferences.setView}
-            label={
-              view === "people"
-                ? "People"
-                : view === "projects"
-                  ? "Projects"
-                  : "Conversations"
-            }
-          />
-          <Button type="primary" icon={<Icon name="plus" />} onClick={onAction}>
-            {action}
-          </Button>
-        </div>
-        {!!filters.length && (
-          <div
-            className="collaborators-filter-chips"
-            aria-label="Active filters"
-          >
-            {filters.map(({ label, name, clear }) => (
               <Button
-                key={name}
-                size="small"
-                aria-label={`${name}: ${label}`}
-                onClick={() => {
-                  clear();
-                  filterButton.current?.focus();
-                }}
+                ref={filterButton}
+                aria-label="Filters"
+                aria-haspopup="dialog"
+                aria-expanded={filtersOpen}
+                icon={<Icon name="sliders" />}
               >
-                {label} <Icon name="times" />
+                Filters
               </Button>
-            ))}
+            </Popover>
+            {!compact && (
+              <CollectionViewControl
+                view={preferences.value.view}
+                onChange={preferences.setView}
+                label={
+                  view === "people"
+                    ? "People"
+                    : view === "projects"
+                      ? "Projects"
+                      : "Conversations"
+                }
+              />
+            )}
+            <Button
+              type="primary"
+              aria-label={action}
+              title={compact ? action : undefined}
+              icon={<Icon name="plus" />}
+              onClick={onAction}
+            >
+              {!compact && action}
+            </Button>
           </div>
-        )}
-      </div>
+          {!!filters.length && (
+            <div
+              className="collaborators-filter-chips"
+              aria-label="Active filters"
+            >
+              {filters.map(({ label, name, clear }) => (
+                <Button
+                  key={name}
+                  size="small"
+                  aria-label={`${name}: ${label}`}
+                  onClick={() => {
+                    clear();
+                    filterButton.current?.focus();
+                  }}
+                >
+                  {label} <Icon name="times" />
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>,
+      )}
     </>
   );
 }

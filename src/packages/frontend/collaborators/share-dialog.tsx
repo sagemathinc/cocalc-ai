@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useId, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Button, Checkbox, Input } from "antd";
 import type { InputRef } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -379,30 +379,33 @@ export function ShareToConversationButton({
   accountId,
   resource,
   api,
+  renderTrigger,
 }: {
   accountId: string;
   resource: CollaborationResource;
   api: ShareConversationApi;
+  renderTrigger?: (open: () => void) => ReactNode;
 }) {
   const [reference, setReference] = useState<CollaborationReference>();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  function show() {
+    try {
+      const value = collaborationReferenceFromResource(resource);
+      setReference(value);
+      setOpen(true);
+      setError("");
+    } catch {
+      setError("This resource cannot be referenced.");
+    }
+  }
   return (
     <>
-      <Button
-        onClick={() => {
-          try {
-            const value = collaborationReferenceFromResource(resource);
-            setReference(value);
-            setOpen(true);
-            setError("");
-          } catch {
-            setError("This resource cannot be referenced.");
-          }
-        }}
-      >
-        Share to conversation
-      </Button>
+      {renderTrigger ? (
+        renderTrigger(show)
+      ) : (
+        <Button onClick={show}>Share to conversation</Button>
+      )}
       {reference && (
         <ShareConversationDialog
           open={open}

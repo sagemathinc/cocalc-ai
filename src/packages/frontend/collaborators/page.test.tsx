@@ -377,7 +377,9 @@ test("keyboard opens a conversation and restores focus and search on back", asyn
   act(() => row.focus());
   await user.keyboard("{Enter}");
   expect(
-    await screen.findByText(/Visible to collaborators in Geometry Lab/),
+    await screen.findByRole("button", {
+      name: "Conversation participants and access",
+    }),
   ).toBeInTheDocument();
   expect(screen.getByLabelText("Selected collaboration")).toHaveFocus();
   expect(
@@ -397,6 +399,42 @@ test("keyboard opens a conversation and restores focus and search on back", asyn
     ).toHaveFocus(),
   );
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
+});
+
+test("open conversation has compact navigation, accessible audience and project settings", async () => {
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const grid = screen.getByRole("button", { name: "Grid view" });
+  await user.click(grid);
+  await user.click(
+    await screen.findByRole("button", { name: /Office hours.*Geometry Lab/ }),
+  );
+  const audience = await screen.findByRole("button", {
+    name: "Conversation participants and access",
+  });
+  expect(screen.queryByRole("button", { name: "Grid view" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Office hours.*Geometry Lab/ }),
+  ).toHaveAttribute("aria-current", "true");
+  expect(screen.queryByRole("textbox", { name: "Private alias" })).toBeNull();
+  await user.click(audience);
+  expect(
+    await screen.findByRole("dialog", { name: "Participants and access" }),
+  ).toHaveTextContent("Visible to collaborators in Geometry Lab");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(audience).toHaveFocus());
+  await user.click(
+    screen.getByRole("button", { name: "Settings for Geometry Lab" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Project settings" }),
+  ).toHaveTextContent("geometry");
+  await user.click(screen.getByRole("button", { name: "Close settings" }));
+  await user.click(screen.getByRole("button", { name: "Back to results" }));
+  expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 
 test.each(["Escape", "Cancel"])(

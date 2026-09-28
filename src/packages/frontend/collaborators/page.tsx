@@ -10,6 +10,7 @@ import { Map as ImmutableMap } from "immutable";
 import { Alert, Button } from "antd";
 import { useCollectionPreferences } from "@cocalc/frontend/components/use-collection-preferences";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { collaborationTargetKey } from "@cocalc/util/collaborators";
 import type {
   CollaborationPerson,
   CollaborationProject,
@@ -155,6 +156,9 @@ function CollaboratorsWorkspace({
   const [settingsProject, setSettingsProject] = useState<string>();
   const [createdResourceId, setCreatedResourceId] = useState<string>();
   const toolbarId = useId();
+  const [conversationToolbar, setConversationToolbar] =
+    useState<HTMLDivElement | null>(null);
+  const conversationOpen = !!resourceId && resourceKind === "conversation";
   const preferences = useCollectionPreferences(view);
   const [filterNames, setFilterNames] = useState<Record<string, string>>({});
   const projects = useTypedRedux("projects", "project_map");
@@ -185,6 +189,9 @@ function CollaboratorsWorkspace({
   const listPersonId = listRoute.current.personId;
   const projectTitle = listProjectId
     ? projects?.getIn([listProjectId, "title"])
+    : undefined;
+  const selectedProjectTitle = projectId
+    ? projects?.getIn([projectId, "title"])
     : undefined;
   const queryKey = JSON.stringify([
     view,
@@ -326,6 +333,7 @@ function CollaboratorsWorkspace({
       boundary="collaborators"
       className="collaborators-page"
       data-detail={!!selection}
+      data-conversation={conversationOpen}
       style={{
         background: UI_COLORS.page,
         color: UI_COLORS.text,
@@ -339,6 +347,8 @@ function CollaboratorsWorkspace({
         {navigation}
         <h1>People</h1>
         <WorkspaceToolbar
+          compact={conversationOpen}
+          controlsTarget={conversationOpen ? conversationToolbar : null}
           active={active}
           id={toolbarId}
           view={view}
@@ -418,6 +428,12 @@ function CollaboratorsWorkspace({
           tabIndex={-1}
           aria-label="People results"
         >
+          {conversationOpen && (
+            <div
+              className="collaborators-conversation-toolbar"
+              ref={setConversationToolbar}
+            />
+          )}
           <DirectoryResults
             result={result}
             onRestart={
@@ -446,6 +462,16 @@ function CollaboratorsWorkspace({
                   onOpen={openResource}
                   api={api}
                   preferences={preferences}
+                  compact={conversationOpen}
+                  selectedId={
+                    resourceId && resourceKind && projectId
+                      ? collaborationTargetKey({
+                          project_id: projectId,
+                          kind: resourceKind,
+                          resource_id: resourceId,
+                        })
+                      : undefined
+                  }
                 />
               ) : view === "projects" ? (
                 <ProjectList
@@ -529,9 +555,11 @@ function CollaboratorsWorkspace({
               borderLeft: `1px solid ${UI_COLORS.border}`,
             }}
           >
-            <div>
-              <Button onClick={back}>Back to results</Button>
-            </div>
+            {(!conversationOpen || !revision.ready) && (
+              <div>
+                <Button onClick={back}>Back to results</Button>
+              </div>
+            )}
             {active &&
               revision.ready &&
               (resourceId && resourceKind && projectId ? (
@@ -547,6 +575,12 @@ function CollaboratorsWorkspace({
                   }}
                   onChange={result.refresh}
                   onBack={back}
+                  onManageProject={(id) => void manageProject(id)}
+                  projectTitle={
+                    typeof selectedProjectTitle === "string"
+                      ? selectedProjectTitle
+                      : undefined
+                  }
                 />
               ) : (
                 <Overview

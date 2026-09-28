@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useRef, useState } from "react";
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import { Button } from "antd";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ChatInputControl } from "@cocalc/frontend/chat/input";
@@ -20,11 +20,15 @@ export function ReferencePickerComposer({
   inputControlRef,
   allowShareToConversation = false,
   conversationTitle,
+  renderActions,
 }: {
   projectId: string;
   inputControlRef: MutableRefObject<ChatInputControl | null>;
   allowShareToConversation?: boolean;
   conversationTitle?: string;
+  renderActions?: (
+    actions: { key: string; label: string; onClick: () => void }[],
+  ) => ReactNode;
 }) {
   const accountId = useTypedRedux("account", "account_id");
   const [open, setOpen] = useState(false);
@@ -60,24 +64,46 @@ export function ReferencePickerComposer({
   }
   return (
     <>
-      <Button size="small" onClick={() => showPicker("insert")}>
-        Insert reference
-      </Button>
-      {allowShareToConversation && (
-        <Button size="small" onClick={() => showPicker("share-artifact")}>
-          Share artifact to conversation
-        </Button>
+      {renderActions ? (
+        renderActions([
+          {
+            key: "reference",
+            label: "Insert reference",
+            onClick: () => showPicker("insert"),
+          },
+          ...(allowShareToConversation
+            ? [
+                {
+                  key: "share-artifact",
+                  label: "Share artifact to conversation",
+                  onClick: () => showPicker("share-artifact"),
+                },
+              ]
+            : []),
+        ])
+      ) : (
+        <>
+          <Button size="small" onClick={() => showPicker("insert")}>
+            Insert reference
+          </Button>
+          {allowShareToConversation && (
+            <Button size="small" onClick={() => showPicker("share-artifact")}>
+              Share artifact to conversation
+            </Button>
+          )}
+        </>
       )}
       <ReferencePicker
         open={open}
         intent={intent}
         conversationTitle={conversationTitle}
         projectId={projectId}
-        focusTriggerAfterClose={!shareReference}
+        focusTriggerAfterClose={!shareReference && !renderActions}
         onClose={() => setOpen(false)}
         afterClose={() => {
           if (
-            inserted.current &&
+            (inserted.current || !!renderActions) &&
+            !shareReference &&
             pending.current?.isCurrent() &&
             inputControlRef.current === pending.current.control
           )

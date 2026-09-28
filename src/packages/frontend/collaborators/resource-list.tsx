@@ -5,6 +5,7 @@
 import type { MouseEvent } from "react";
 import { useEffect, useRef } from "react";
 import { Button, Tag } from "antd";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { displayNameFromUserRecord } from "@cocalc/frontend/users/display-name";
 import type { CollaborationResource } from "@cocalc/util/collaborators";
@@ -34,10 +35,14 @@ export function ResourceList({
   onOpen,
   api,
   preferences,
+  compact = false,
+  selectedId,
 }: {
   items: CollaborationResource[];
   api?: DirectoryApi;
   preferences?: DirectoryCollectionPreferences;
+  compact?: boolean;
+  selectedId?: string;
   onOpen: (
     resource: CollaborationResource,
     event: MouseEvent<HTMLElement>,
@@ -74,6 +79,9 @@ export function ResourceList({
     <Button
       type="text"
       className="collaborators-row"
+      aria-current={
+        collaborationTargetKey(item) === selectedId ? "true" : undefined
+      }
       onClick={(event) => onOpen(item, event)}
     >
       <span className="collaborators-row-title">
@@ -81,9 +89,10 @@ export function ResourceList({
         {item.title || `Untitled ${item.kind}`}
       </span>
       <span>
-        {item.project_title || "Project"} · {item.kind}
+        {item.project_title || "Project"}
+        {!compact && ` · ${item.kind}`}
       </span>
-      {item.kind === "conversation" && (
+      {!compact && item.kind === "conversation" && (
         <span>
           {participantSummary(item)} ·{" "}
           {item.updated_at
@@ -91,7 +100,7 @@ export function ResourceList({
             : "No messages yet"}
         </span>
       )}
-      {item.kind === "conversation" && item.activity > 0 && (
+      {!compact && item.kind === "conversation" && item.activity > 0 && (
         <span>
           Latest message by{" "}
           {displayNameFromUserRecord(
@@ -99,7 +108,7 @@ export function ResourceList({
           ) || "Unknown author"}
         </span>
       )}
-      {item.kind === "conversation" && item.reason && (
+      {!compact && item.kind === "conversation" && item.reason && (
         <span>{REASONS[item.reason]}</span>
       )}
       {item.kind === "conversation" && (
@@ -108,7 +117,7 @@ export function ResourceList({
             <Tag>Unread</Tag>
           )}
           {item.reason === "mention" && <Tag>Mention</Tag>}
-          {item.personal?.following && <Tag>Following</Tag>}
+          {!compact && item.personal?.following && <Tag>Following</Tag>}
           {item.personal?.muted && <Tag>Muted</Tag>}
         </span>
       )}
@@ -118,6 +127,15 @@ export function ResourceList({
     <DirectoryCollection<CollaborationResource>
       items={items}
       preferences={preferences}
+      viewOverride={compact ? "list" : undefined}
+      itemStyle={(item) =>
+        collaborationTargetKey(item) === selectedId
+          ? {
+              borderColor: UI_COLORS.link,
+              borderLeftWidth: 3,
+            }
+          : {}
+      }
       collection="conversations"
       label="Conversations"
       itemId={collaborationTargetKey}
