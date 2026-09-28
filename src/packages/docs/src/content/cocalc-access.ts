@@ -32,6 +32,11 @@ conversations, not just the current conversation.
 Start a new turn after saving. These settings belong to your account and this
 agent; another collaborator does not automatically receive your permissions.
 
+To keep the settings for later, turn off **Enable CoCalc access** and save.
+To delete the saved settings altogether, choose **Remove connector** and confirm.
+Removal also revokes active temporary credentials and hides the connector icon.
+You can configure it again through **+ > CoCalc**.
+
 ## What the choices mean
 
 - **Read basic account information** allows the supported basic account lookup.

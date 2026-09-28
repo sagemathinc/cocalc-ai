@@ -106,7 +106,7 @@ test.each([false, true])(
         },
       ],
     };
-    let saved = { enabled: true, revision: 4, scope };
+    let saved = { config_id: "config", enabled: true, revision: 4, scope };
     mockApi.getCocalcConnectorConfig.mockImplementation(async () => saved);
     mockApi.saveCocalcConnectorConfig.mockImplementation(async (opts) => {
       saved = { ...saved, scope: opts.scope, revision: saved.revision + 1 };
@@ -148,6 +148,7 @@ test.each([false, true])(
         source_project_id: agent.endpoint.project_id,
         enabled: true,
         expected_revision: 4,
+        expected_config_id: "config",
         scope: expectedScope,
       }),
     );

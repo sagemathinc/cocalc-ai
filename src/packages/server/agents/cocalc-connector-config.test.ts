@@ -149,6 +149,7 @@ describe("CoCalc connector configuration", () => {
       saveCocalcConnectorConfig({
         ...locator,
         session_hash: "bound-session",
+        expected_config_id: saved.config_id,
         expected_revision: 1,
         scope,
         enabled: true,
@@ -168,18 +169,19 @@ describe("CoCalc connector configuration", () => {
     });
     expect(
       queryMock.mock.calls.find(([sql]) =>
-        `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs"),
+        `${sql}`.includes("UPDATE agent_cocalc_connector_configs"),
       )?.[1][6],
     ).toBe(1);
     const original = queryMock.getMockImplementation()!;
     queryMock.mockImplementation(async (sql, args) =>
-      `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs")
+      `${sql}`.includes("UPDATE agent_cocalc_connector_configs")
         ? { rows: [] }
         : await original(sql, args),
     );
     await expect(
       saveCocalcConnectorConfig({
         ...locator,
+        expected_config_id: saved.config_id,
         expected_revision: 1,
         scope,
         enabled: true,
@@ -193,6 +195,7 @@ describe("CoCalc connector configuration", () => {
       await import("./cocalc-connector-config");
     await saveCocalcConnectorConfig({
       ...locator,
+      expected_config_id: saved.config_id,
       expected_revision: 1,
       scope,
       enabled: false,
@@ -218,6 +221,7 @@ describe("CoCalc connector configuration", () => {
     await expect(
       saveCocalcConnectorConfig({
         ...locator,
+        expected_config_id: saved.config_id,
         expected_revision: 1,
         scope,
         enabled: false,
@@ -236,12 +240,13 @@ describe("CoCalc connector configuration", () => {
     const empty = { version: 1 as const, account: [], projects: [] };
     await saveCocalcConnectorConfig({
       ...locator,
+      expected_config_id: saved.config_id,
       expected_revision: 1,
       scope: empty,
       enabled: false,
     });
     const insert = queryMock.mock.calls.find(([sql]) =>
-      `${sql}`.includes("INSERT INTO agent_cocalc_connector_configs"),
+      `${sql}`.includes("UPDATE agent_cocalc_connector_configs"),
     );
     expect(JSON.parse(insert?.[1][4])).toEqual(empty);
     expect(insert?.[1][5]).toBe(false);
@@ -260,5 +265,139 @@ describe("CoCalc connector configuration", () => {
       saveCocalcConnectorConfig({ ...locator, scope: empty, enabled: true }),
     ).rejects.toThrow("at least one capability");
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  const removal = {
+    ...locator,
+    session_hash: "bound-session",
+    expected_config_id: saved.config_id,
+    expected_revision: saved.revision,
+  };
+
+  it("requires fresh auth, source access and account home before removal", async () => {
+    const { removeCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    freshAuthMock.mockRejectedValueOnce(new Error("fresh auth required"));
+    await expect(removeCocalcConnectorConfig(removal)).rejects.toThrow(
+      "fresh auth required",
+    );
+    sourceMock.mockRejectedValueOnce(new Error("full collaborator required"));
+    await expect(removeCocalcConnectorConfig(removal)).rejects.toThrow(
+      "full collaborator required",
+    );
+    homeMock.mockResolvedValueOnce({ home_bay_id: "other-bay" });
+    await expect(removeCocalcConnectorConfig(removal)).rejects.toThrow(
+      "not on account home",
+    );
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("rolls back removal when active credential revocation fails", async () => {
+    activeKeyIds = ["key-a"];
+    directoryDeleteMock.mockRejectedValueOnce(
+      new Error("revocation unavailable"),
+    );
+    const { removeCocalcConnectorConfig } =
+      await import("./cocalc-connector-config");
+    await expect(removeCocalcConnectorConfig(removal)).rejects.toThrow(
+      "revocation unavailable",
+    );
+    expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
+    expect(queryMock).not.toHaveBeenCalledWith("COMMIT");
+  });
+
+  const describeDb =
+    process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
+  describeDb("configuration lifecycle SQL", () => {
+    let pool;
+    beforeAll(async () => {
+      pool = jest.requireActual("@cocalc/database/pool").default();
+      await pool.query(`
+        CREATE TABLE agent_cocalc_connector_configs (
+          config_id uuid PRIMARY KEY, account_id uuid, agent_id uuid, source_project_id uuid,
+          scope jsonb, revision integer DEFAULT 1, enabled boolean,
+          created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
+          UNIQUE(account_id,agent_id,source_project_id))`);
+      await pool.query(`CREATE TABLE agent_cocalc_connector_turns (
+          account_id uuid, agent_id uuid, source_project_id uuid, key_id text,
+          ended_at timestamptz, expires_at timestamptz, secret_ciphertext text)`);
+      await pool.query("CREATE TABLE api_keys (account_id uuid, key_id text)");
+    });
+    beforeEach(async () => {
+      await pool.query(
+        "TRUNCATE agent_cocalc_connector_configs,agent_cocalc_connector_turns,api_keys",
+      );
+      queryMock.mockImplementation((sql, args) => pool.query(sql, args));
+    });
+    afterAll(async () => {
+      await pool.end();
+    });
+
+    it("removes, returns null, rejects stale saves, and permits explicit re-add", async () => {
+      const {
+        saveCocalcConnectorConfig: save,
+        removeCocalcConnectorConfig: remove,
+        getCocalcConnectorConfig: get,
+      } = await import("./cocalc-connector-config");
+      const original = await save({ ...locator, scope, enabled: true });
+      const expected = {
+        ...locator,
+        expected_config_id: original.config_id,
+        expected_revision: original.revision,
+      };
+      const disabled = await save({ ...expected, scope, enabled: false });
+      await expect(remove(expected)).rejects.toThrow("reload before removing");
+      expected.expected_revision = disabled.revision;
+      await remove(expected);
+      expect(await get(locator)).toBeNull();
+      await expect(save({ ...expected, scope, enabled: true })).rejects.toThrow(
+        "reload before saving",
+      );
+      const replacement = await save({ ...locator, scope, enabled: true });
+      expect(replacement.config_id).not.toBe(original.config_id);
+      // Same revision, different config: old windows must not change the replacement.
+      expected.expected_revision = replacement.revision;
+      await expect(remove(expected)).rejects.toThrow("reload before removing");
+      await expect(
+        save({ ...expected, scope, enabled: false }),
+      ).rejects.toThrow("reload before saving");
+      await expect(save({ ...locator, scope, enabled: false })).rejects.toThrow(
+        "reload before saving",
+      );
+      expect(await get(locator)).toEqual(replacement);
+    });
+
+    it("atomically deletes settings and active keys, retaining settings on revocation failure", async () => {
+      const {
+        saveCocalcConnectorConfig: save,
+        removeCocalcConnectorConfig: remove,
+        getCocalcConnectorConfig: get,
+      } = await import("./cocalc-connector-config");
+      const config = await save({ ...locator, scope, enabled: true });
+      await pool.query("INSERT INTO api_keys VALUES($1,'key-a')", [accountId]);
+      await pool.query(
+        `INSERT INTO agent_cocalc_connector_turns VALUES($1,$2,$3,'key-a',NULL,now()+interval '1 hour','ciphertext')`,
+        [accountId, agentId, projectId],
+      );
+      const expected = {
+        ...locator,
+        expected_config_id: config.config_id,
+        expected_revision: config.revision,
+      };
+      directoryDeleteMock.mockRejectedValueOnce(
+        new Error("revocation unavailable"),
+      );
+      await expect(remove(expected)).rejects.toThrow("revocation unavailable");
+      expect(await get(locator)).toEqual(config);
+      expect((await pool.query("SELECT * FROM api_keys")).rows).toHaveLength(1);
+      await remove(expected);
+      expect(await get(locator)).toBeNull();
+      expect((await pool.query("SELECT * FROM api_keys")).rows).toHaveLength(0);
+      const turn = (
+        await pool.query("SELECT * FROM agent_cocalc_connector_turns")
+      ).rows[0];
+      expect(turn.ended_at).not.toBeNull();
+      expect(turn.secret_ciphertext).toBe("");
+    });
   });
 });

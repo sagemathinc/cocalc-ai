@@ -62,6 +62,7 @@ export const agent = {
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   getCocalcConnectorConfig: authFirstRequireAccount,
   saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
+  removeCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
   beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   renewCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   endCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
@@ -257,11 +258,20 @@ export interface AgentApi {
     opts: AgentHumanAuth & {
       agent_id: string;
       source_project_id: string;
+      expected_config_id?: string;
       expected_revision?: number;
       scope: ApiKeyScope;
       enabled: boolean;
     },
   ): Promise<CocalcConnectorConfig>;
+  removeCocalcConnectorConfig(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      expected_config_id: string;
+      expected_revision: number;
+    },
+  ): Promise<void>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(

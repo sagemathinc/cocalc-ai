@@ -9,6 +9,7 @@ import * as rpc from "@cocalc/server/agents/rpc";
 export {
   getCocalcConnectorConfig,
   saveCocalcConnectorConfig,
+  removeCocalcConnectorConfig,
   beginCocalcConnectorTurn,
   renewCocalcConnectorTurn,
   endCocalcConnectorTurn,

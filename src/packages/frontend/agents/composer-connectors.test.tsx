@@ -27,6 +27,7 @@ jest.mock("@rc-component/util/lib/hooks/useId", () => ({
 const mockApi = {
   getCocalcConnectorConfig: jest.fn(),
   saveCocalcConnectorConfig: jest.fn(),
+  removeCocalcConnectorConfig: jest.fn(),
   listAgentNetworkActivity: jest.fn(),
 };
 const mockRefresh = jest.fn();
@@ -70,6 +71,7 @@ const agent: NamedAgent = {
   updated_at: "2026-09-28T00:00:00.000Z",
 };
 const config = {
+  config_id: "config-id",
   enabled: true,
   revision: 4,
   scope: { version: 1, account: [], projects: [] },
@@ -105,6 +107,7 @@ beforeEach(() => {
     revision: 5,
   }));
   mockApi.listAgentNetworkActivity.mockResolvedValue([]);
+  mockApi.removeCocalcConnectorConfig.mockResolvedValue(undefined);
 });
 
 test.each(["CoCalc", "Agent Networks"])(
@@ -238,6 +241,90 @@ test("network icon tracks assigned tags, preserves details, and disappears after
   expect(
     screen.queryByRole("button", { name: /Agent Networks connector/ }),
   ).not.toBeInTheDocument();
+});
+
+test.each([true, false])(
+  "removal clears %s enabled connector and restores keyboard focus to +",
+  async (enabled) => {
+    mockApi.getCocalcConnectorConfig.mockResolvedValue({ ...config, enabled });
+    const user = userEvent.setup();
+    render(<Controls />);
+    const icon = await screen.findByRole("button", {
+      name: /^CoCalc connector/,
+    });
+    icon.focus();
+    await user.keyboard("{Enter}");
+    const remove = await screen.findByRole("button", {
+      name: "Remove connector",
+    });
+    await waitFor(() => expect(remove).toBeEnabled());
+    remove.focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("dialog", { name: "Remove CoCalc connector?" }),
+    ).toBeVisible();
+    expect(mockApi.removeCocalcConnectorConfig).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("switch", { name: "Enable CoCalc access" }),
+    ).toHaveAttribute("aria-checked", `${enabled}`);
+    await user.click(screen.getByRole("button", { name: "Remove connector" }));
+    screen.getByRole("button", { name: "Remove connector" }).focus();
+    mockApi.getCocalcConnectorConfig.mockResolvedValue(null);
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /^CoCalc connector/ }),
+      ).not.toBeInTheDocument(),
+    );
+    const plus = screen.getByRole("button", { name: "Add files and more" });
+    await waitFor(() => expect(plus).toHaveFocus());
+    expect(mockApi.removeCocalcConnectorConfig).toHaveBeenCalledTimes(1);
+    expect(mockApi.removeCocalcConnectorConfig).toHaveBeenCalledWith({
+      agent_id: agent.endpoint.agent_id,
+      source_project_id: agent.endpoint.project_id,
+      expected_config_id: config.config_id,
+      expected_revision: config.revision,
+    });
+    expect(mockApi.saveCocalcConnectorConfig).not.toHaveBeenCalled();
+    await user.click(plus);
+    await user.click(screen.getByRole("menuitem", { name: "CoCalc" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Enable CoCalc access" }),
+      ).toHaveAttribute("aria-checked", "false"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove connector" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test("failed removal retains the connector and exposes the error", async () => {
+  mockApi.getCocalcConnectorConfig.mockResolvedValue(config);
+  mockApi.removeCocalcConnectorConfig.mockRejectedValueOnce(
+    new Error("revocation unavailable"),
+  );
+  const user = userEvent.setup();
+  render(<Controls />);
+  await user.click(
+    await screen.findByRole("button", { name: "CoCalc connector" }),
+  );
+  const remove = await screen.findByRole("button", {
+    name: "Remove connector",
+  });
+  await waitFor(() => expect(remove).toBeEnabled());
+  await user.click(remove);
+  await user.click(screen.getByRole("button", { name: "Remove connector" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "revocation unavailable",
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "CoCalc connector" }),
+    ).toHaveFocus(),
+  );
 });
 
 test("no config means no connector icon, and unregistered chats keep only the original menu", async () => {

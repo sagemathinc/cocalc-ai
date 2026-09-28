@@ -3,13 +3,13 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { LinkOutlined, ApartmentOutlined } from "@ant-design/icons";
+import { ApartmentOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Spin } from "antd";
 import type { MenuProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-import { Tooltip } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { CocalcConnector } from "./cocalc-connector";
 import { AgentNetworkTagsEditor } from "./agent-network-tags-editor";
@@ -71,6 +71,7 @@ function NamedAgentConnectors({
   children,
 }: Props & { agent: NamedAgent }) {
   const { directory, error } = useAgentNetworks();
+  const menuRef = useRef<HTMLSpanElement>(null);
   const [networksOpen, setNetworksOpen] = useState(false);
   const [detailsId, setDetailsId] = useState<string>();
   const networks = directory?.networks ?? [];
@@ -91,26 +92,33 @@ function NamedAgentConnectors({
     <>
       <CocalcConnector
         agent={agent}
+        onRemoved={() => menuRef.current?.querySelector("button")?.focus()}
         renderTrigger={({ config, onOpen }) => (
           <>
-            {children([
-              {
-                key: "cocalc-connector",
-                label: "CoCalc",
-                icon: <LinkOutlined aria-hidden />,
-                onClick: onOpen,
-              },
-              {
-                key: "agent-networks",
-                label: "Agent Networks",
-                icon: <ApartmentOutlined aria-hidden />,
-                onClick: openNetworks,
-              },
-            ])}
+            <span ref={menuRef} style={{ display: "inline-flex" }}>
+              {children([
+                {
+                  key: "cocalc-connector",
+                  label: "CoCalc",
+                  icon: (
+                    <span aria-hidden>
+                      <Icon name="cocalc-ring" />
+                    </span>
+                  ),
+                  onClick: onOpen,
+                },
+                {
+                  key: "agent-networks",
+                  label: "Agent Networks",
+                  icon: <ApartmentOutlined aria-hidden />,
+                  onClick: openNetworks,
+                },
+              ])}
+            </span>
             {config && (
               <ConnectorIcon
                 label={`CoCalc connector${config.enabled ? "" : " (disabled)"}`}
-                icon={<LinkOutlined />}
+                icon={<Icon name="cocalc-ring" />}
                 onClick={onOpen}
                 muted={!config.enabled}
               />

@@ -10,6 +10,8 @@ const remoteBegin = jest.fn();
 const localBegin = jest.fn();
 const localGet = jest.fn();
 const remoteGet = jest.fn();
+const localRemove = jest.fn();
+const remoteRemove = jest.fn();
 
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => homeBay(...args),
@@ -24,6 +26,7 @@ jest.mock("@cocalc/conat/inter-bay/agent-connector", () => ({
   createInterBayAgentConnectorClient: () => ({
     begin: (...args: any[]) => remoteBegin(...args),
     getConfig: (...args: any[]) => remoteGet(...args),
+    removeConfig: (...args: any[]) => remoteRemove(...args),
   }),
 }));
 jest.mock("./cocalc-connector-turn", () => ({
@@ -34,11 +37,36 @@ jest.mock("./cocalc-connector-turn", () => ({
 jest.mock("./cocalc-connector-config", () => ({
   getCocalcConnectorConfig: (...args: any[]) => localGet(...args),
   saveCocalcConnectorConfig: jest.fn(),
+  removeCocalcConnectorConfig: (...args: any[]) => localRemove(...args),
 }));
 
 beforeEach(() => {
   jest.clearAllMocks();
   homeBay.mockResolvedValue({ home_bay_id: "source-bay" });
+});
+
+test("removal routes to the account home and never falls back on remote failure", async () => {
+  const { removeCocalcConnectorConfig: remove } =
+    await import("./cocalc-connector-routing");
+  const opts = {
+    account_id: accountId,
+    session_hash: "bound",
+    agent_id: "agent",
+    source_project_id: "source",
+    expected_config_id: "config",
+    expected_revision: 1,
+  };
+  await remove(opts);
+  expect(localRemove).toHaveBeenCalledWith(opts);
+  localRemove.mockClear();
+  homeBay.mockResolvedValue({ home_bay_id: "account-home" });
+  remoteRemove.mockRejectedValueOnce(new Error("unavailable"));
+  await expect(remove(opts)).rejects.toThrow("unavailable");
+  expect(remoteRemove).toHaveBeenCalledWith(opts);
+  expect(localRemove).not.toHaveBeenCalled();
+  await expect(remove({ ...opts, account_id: undefined })).rejects.toThrow(
+    "authenticated account required",
+  );
 });
 
 test("authenticated host calls the local account-home issuer", async () => {

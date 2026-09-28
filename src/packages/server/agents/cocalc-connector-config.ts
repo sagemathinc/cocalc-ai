@@ -4,8 +4,12 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 import getPool from "@cocalc/database/pool";
-import type { CocalcConnectorConfig } from "@cocalc/conat/hub/api/agent";
+import type {
+  AgentApi,
+  CocalcConnectorConfig,
+} from "@cocalc/conat/hub/api/agent";
 import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -103,6 +107,7 @@ export async function saveCocalcConnectorConfig({
   session_hash,
   agent_id,
   source_project_id,
+  expected_config_id,
   expected_revision,
   scope,
   enabled,
@@ -111,6 +116,7 @@ export async function saveCocalcConnectorConfig({
   session_hash?: string;
   agent_id: string;
   source_project_id: string;
+  expected_config_id?: string;
   expected_revision?: number;
   scope: ApiKeyScope;
   enabled: boolean;
@@ -122,23 +128,19 @@ export async function saveCocalcConnectorConfig({
   });
   if (typeof enabled !== "boolean") throw new Error("invalid connector state");
   if (
-    expected_revision !== undefined &&
-    (!Number.isSafeInteger(expected_revision) || expected_revision < 1)
+    (expected_revision !== undefined || expected_config_id !== undefined) &&
+    (!isValidUUID(expected_config_id) ||
+      !Number.isSafeInteger(expected_revision) ||
+      expected_revision! < 1)
   ) {
     throw new Error("invalid connector revision");
   }
-  await assertAccountHome(owner);
-  await requireDangerousSessionAuth({
+  await authorizeConfigChange({
     account_id: owner,
     session_hash,
-    require_second_factor: true,
-    allow_actor_impersonation: false,
+    agent_id,
+    source_project_id,
   });
-  await assertProjectFullCollaborator({
-    account_id: owner,
-    project_id: source_project_id,
-  });
-  await assertNativeAgent({ account_id: owner, agent_id, source_project_id });
   // Disabled settings may retain an empty draft, but cannot issue a key.
   const canonical = normalizeApiKeyScopeV1(scope, { allowEmpty: !enabled });
   if (enabled) {
@@ -151,57 +153,49 @@ export async function saveCocalcConnectorConfig({
   let result: CocalcConnectorConfig | undefined;
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<CocalcConnectorConfig>(
-      `INSERT INTO agent_cocalc_connector_configs
+    // Updating a removed configuration must not silently recreate it. Its ID
+    // also prevents a stale editor from modifying a newly added connector.
+    const { rows } =
+      expected_revision === undefined
+        ? await client.query<CocalcConnectorConfig>(
+            `INSERT INTO agent_cocalc_connector_configs
        (config_id,account_id,agent_id,source_project_id,scope,enabled)
      VALUES($1,$2,$3,$4,$5::JSONB,$6)
      ON CONFLICT(account_id,agent_id,source_project_id)
-     DO UPDATE SET scope=EXCLUDED.scope,enabled=EXCLUDED.enabled,
-                   revision=agent_cocalc_connector_configs.revision+1,
-                   updated_at=now()
-       WHERE agent_cocalc_connector_configs.revision=$7
+     DO NOTHING
      RETURNING config_id,account_id,agent_id,source_project_id,scope,
                revision,enabled,created_at,updated_at`,
-      [
-        randomUUID(),
-        owner,
-        agent_id,
-        source_project_id,
-        JSON.stringify(canonical),
-        enabled,
-        expected_revision ?? null,
-      ],
-    );
+            [
+              randomUUID(),
+              owner,
+              agent_id,
+              source_project_id,
+              JSON.stringify(canonical),
+              enabled,
+            ],
+          )
+        : await client.query<CocalcConnectorConfig>(
+            `UPDATE agent_cocalc_connector_configs
+          SET scope=$5::JSONB,enabled=$6,revision=revision+1,updated_at=now()
+        WHERE config_id=$1 AND account_id=$2 AND agent_id=$3
+          AND source_project_id=$4 AND revision=$7
+      RETURNING config_id,account_id,agent_id,source_project_id,scope,
+                revision,enabled,created_at,updated_at`,
+            [
+              expected_config_id,
+              owner,
+              agent_id,
+              source_project_id,
+              JSON.stringify(canonical),
+              enabled,
+              expected_revision,
+            ],
+          );
     result = rows[0];
     if (!result) {
       throw new Error("CoCalc connector changed; reload before saving");
     }
-    const { rows: active } = await client.query<{ key_id: string }>(
-      `SELECT key_id FROM agent_cocalc_connector_turns
-        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
-          AND ended_at IS NULL AND expires_at>now() FOR UPDATE`,
-      [owner, agent_id, source_project_id],
-    );
-    for (const { key_id } of active) {
-      await deleteClusterAccountApiKeyDirectoryEntry({
-        key_id,
-        account_id: owner,
-        home_bay_id: getConfiguredBayId(),
-      });
-    }
-    if (active.length) {
-      await client.query(
-        `UPDATE agent_cocalc_connector_turns
-            SET ended_at=now(),secret_ciphertext=''
-          WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
-            AND ended_at IS NULL AND expires_at>now()`,
-        [owner, agent_id, source_project_id],
-      );
-      await client.query(
-        `DELETE FROM api_keys WHERE account_id=$1 AND key_id=ANY($2::TEXT[])`,
-        [owner, active.map(({ key_id }) => key_id)],
-      );
-    }
+    await revokeConfigTurns(client, owner, agent_id, source_project_id);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -210,4 +204,103 @@ export async function saveCocalcConnectorConfig({
     client.release();
   }
   return result;
+}
+
+async function authorizeConfigChange(opts: {
+  account_id: string;
+  session_hash?: string;
+  agent_id: string;
+  source_project_id: string;
+}) {
+  await assertAccountHome(opts.account_id);
+  await requireDangerousSessionAuth({
+    account_id: opts.account_id,
+    session_hash: opts.session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  await assertProjectFullCollaborator({
+    account_id: opts.account_id,
+    project_id: opts.source_project_id,
+  });
+  await assertNativeAgent(opts);
+}
+
+export const removeCocalcConnectorConfig: AgentApi["removeCocalcConnectorConfig"] =
+  async (opts) => {
+    const owner = accountIdForLocator(opts);
+    const {
+      agent_id,
+      source_project_id,
+      expected_config_id,
+      expected_revision,
+    } = opts;
+    if (
+      !isValidUUID(expected_config_id) ||
+      !Number.isSafeInteger(expected_revision) ||
+      expected_revision < 1
+    ) {
+      throw new Error("invalid connector revision");
+    }
+    await authorizeConfigChange({ ...opts, account_id: owner });
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      // DELETE holds the same config-row lock used by turn issuance until commit.
+      const { rows } = await client.query(
+        `DELETE FROM agent_cocalc_connector_configs
+        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+          AND config_id=$4 AND revision=$5 RETURNING config_id`,
+        [
+          owner,
+          agent_id,
+          source_project_id,
+          expected_config_id,
+          expected_revision,
+        ],
+      );
+      if (!rows.length)
+        throw new Error("CoCalc connector changed; reload before removing");
+      await revokeConfigTurns(client, owner, agent_id, source_project_id);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+async function revokeConfigTurns(
+  client: PoolClient,
+  owner: string,
+  agent_id: string,
+  source_project_id: string,
+) {
+  const { rows: active } = await client.query<{ key_id: string }>(
+    `SELECT key_id FROM agent_cocalc_connector_turns
+        WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+          AND ended_at IS NULL AND expires_at>now() FOR UPDATE`,
+    [owner, agent_id, source_project_id],
+  );
+  for (const { key_id } of active) {
+    await deleteClusterAccountApiKeyDirectoryEntry({
+      key_id,
+      account_id: owner,
+      home_bay_id: getConfiguredBayId(),
+    });
+  }
+  if (active.length) {
+    await client.query(
+      `UPDATE agent_cocalc_connector_turns
+            SET ended_at=now(),secret_ciphertext=''
+          WHERE account_id=$1 AND agent_id=$2 AND source_project_id=$3
+            AND ended_at IS NULL AND expires_at>now()`,
+      [owner, agent_id, source_project_id],
+    );
+    await client.query(
+      `DELETE FROM api_keys WHERE account_id=$1 AND key_id=ANY($2::TEXT[])`,
+      [owner, active.map(({ key_id }) => key_id)],
+    );
+  }
 }

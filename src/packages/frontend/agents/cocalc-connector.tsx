@@ -3,9 +3,9 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { LinkOutlined, QuestionCircleOutlined } from "@ant-design/icons";
+import { DeleteOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Space, Spin, Switch } from "antd";
 import {
   FreshAuthModal,
@@ -20,14 +20,18 @@ import {
 } from "@cocalc/frontend/components/api-key-scope-editor";
 import { personalAgentApi } from "./api";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
+import { Icon } from "@cocalc/frontend/components";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 export function CocalcConnector({
   agent,
   composer = false,
   renderTrigger,
+  onRemoved,
 }: {
   agent: NamedAgent;
   composer?: boolean;
+  onRemoved?: () => void;
   renderTrigger?: (state: {
     config: CocalcConnectorConfig | null;
     onOpen: () => void;
@@ -37,6 +41,8 @@ export function CocalcConnector({
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removed = useRef(false);
   const [error, setError] = useState("");
   const [config, setConfig] = useState<CocalcConnectorConfig | null>(null);
   const [scope, setScope] = useState<ApiKeyScope>(EMPTY_API_KEY_SCOPE);
@@ -86,6 +92,7 @@ export function CocalcConnector({
   ]);
 
   function onOpen() {
+    setConfirmRemove(false);
     setLoadRequest((request) => request + 1);
     setOpen(true);
   }
@@ -99,10 +106,36 @@ export function CocalcConnector({
           agent_id: agent.endpoint.agent_id,
           source_project_id: agent.endpoint.project_id,
           expected_revision: config?.revision,
+          expected_config_id: config?.config_id,
           scope,
           enabled,
         });
         setConfig(saved);
+      });
+      if (completed) setOpen(false);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!config) return;
+    setSaving(true);
+    setError("");
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        await personalAgentApi().removeCocalcConnectorConfig({
+          agent_id: agent.endpoint.agent_id,
+          source_project_id: agent.endpoint.project_id,
+          expected_config_id: config.config_id,
+          expected_revision: config.revision,
+        });
+        setConfig(null);
+        setScope(EMPTY_API_KEY_SCOPE);
+        setEnabled(false);
+        removed.current = true;
       });
       if (completed) setOpen(false);
     } catch (err) {
@@ -122,7 +155,7 @@ export function CocalcConnector({
           title="CoCalc access"
           type={composer ? "default" : "text"}
           size="small"
-          icon={<LinkOutlined />}
+          icon={<Icon name="cocalc-ring" />}
           onClick={onOpen}
         >
           {composer ? "CoCalc" : null}
@@ -130,20 +163,55 @@ export function CocalcConnector({
       )}
       <Modal
         open={open}
-        title={`CoCalc access for @${agent.name}`}
-        onCancel={() => setOpen(false)}
+        title={
+          confirmRemove
+            ? "Remove CoCalc connector?"
+            : `CoCalc access for @${agent.name}`
+        }
+        onCancel={() => {
+          if (!saving) setOpen(false);
+        }}
+        afterClose={() => {
+          if (removed.current) {
+            removed.current = false;
+            onRemoved?.();
+          }
+        }}
+        modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
         width={700}
         footer={
-          <Space>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
+          <Space wrap>
+            {config && (
+              <Button
+                danger
+                icon={<DeleteOutlined aria-hidden />}
+                loading={saving && confirmRemove}
+                disabled={loading || !loaded || (saving && !confirmRemove)}
+                onClick={() =>
+                  confirmRemove ? void remove() : setConfirmRemove(true)
+                }
+              >
+                Remove connector
+              </Button>
+            )}
             <Button
-              type="primary"
-              loading={saving}
-              disabled={loading || !loaded}
-              onClick={() => void save()}
+              disabled={saving}
+              onClick={() =>
+                confirmRemove ? setConfirmRemove(false) : setOpen(false)
+              }
             >
-              Save access
+              Cancel
             </Button>
+            {!confirmRemove && (
+              <Button
+                type="primary"
+                loading={saving}
+                disabled={loading || !loaded}
+                onClick={() => void save()}
+              >
+                Save access
+              </Button>
+            )}
           </Space>
         }
       >
@@ -151,11 +219,18 @@ export function CocalcConnector({
           {error && (
             <Alert
               type="error"
-              title="Unable to load or save access"
+              title="Unable to update CoCalc access"
               description={error}
             />
           )}
-          {loading ? (
+          {confirmRemove ? (
+            <p>
+              Remove saved CoCalc access for @{agent.name} across all
+              conversations? Active temporary credentials will be revoked. This
+              does not stop programs already started or change access to the
+              agent's own project.
+            </p>
+          ) : loading ? (
             <Spin aria-label="Loading CoCalc access" />
           ) : (
             <>
