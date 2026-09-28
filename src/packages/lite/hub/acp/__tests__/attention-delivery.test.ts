@@ -33,8 +33,12 @@ import {
   setCodexCredentialAdmissionResolver,
 } from "../codex-credential-admission";
 import { setHarnessLauncher } from "../harness-runtime";
+import { hubApi } from "../../api";
+import { HarnessAgent } from "@cocalc/ai/acp/harness";
 
 const mockSteer = jest.fn();
+// The worker test injects a client; protocol transport is covered in ai/acp.
+jest.mock("@agentclientprotocol/sdk-v1", () => ({}), { virtual: true });
 jest.mock("@cocalc/ai/acp", () => ({
   ...jest.requireActual("@cocalc/ai/acp"),
   CodexAppServerAgent: {
@@ -121,6 +125,32 @@ function startRunningTurn(request: AcpRequest) {
     path: record.path,
     thread_id: record.thread_id,
   })!;
+}
+
+function claudeTurnRequest(): AcpRequest {
+  return {
+    ...turnRequest(undefined),
+    runtime: {
+      version: 1,
+      kind: "acp",
+      profile: {
+        version: 2,
+        kind: "acp",
+        id: "claude-code",
+        revision: "0.81.1",
+        cwd: "/home/user",
+        credentialMode: "project-managed",
+        executionPolicy: "full-access",
+      },
+    },
+    harness_credential: {
+      version: 1,
+      provider: "anthropic",
+      mode: "account-subscription",
+      credentialId: "33333333-3333-4333-8333-333333333333",
+      claudeAiConnectors: false,
+    },
+  };
 }
 
 function rpcTurnRequest(config: AcpRequest["config"]): AcpRequest {
@@ -247,29 +277,7 @@ it.each([true, false])(
     setHarnessLauncher(async () => {
       throw Error("must not launch during delivery");
     });
-    const source: AcpRequest = {
-      ...turnRequest(undefined),
-      runtime: {
-        version: 1,
-        kind: "acp",
-        profile: {
-          version: 2,
-          kind: "acp",
-          id: "claude-code",
-          revision: "0.81.1",
-          cwd: "/home/user",
-          credentialMode: "project-managed",
-          executionPolicy: "full-access",
-        },
-      },
-      harness_credential: {
-        version: 1,
-        provider: "anthropic",
-        mode: "account-subscription",
-        credentialId: "33333333-3333-4333-8333-333333333333",
-        claudeAiConnectors: false,
-      },
-    };
+    const source = claudeTurnRequest();
     rows[0].agent_runtime = source.runtime;
     rows[0].agent_session_id = "claude-session";
     const job = startRunningTurn(source);
@@ -700,6 +708,132 @@ it("uses the generic agent identity if the thread has no model", async () => {
   await acpTestInternals.deliverAsyncAttentionAnswer(record);
   expect(decodeAcpJobRequest(listQueuedAcpJobs()[0]).chat?.sender_id).toBe(
     "openai-codex-agent",
+  );
+});
+
+describe("Claude network worker delivery", () => {
+  it.each([
+    ["direct", "allowed"],
+    ["direct", "network revoked"],
+    ["direct", "subscription revoked"],
+    ["durable", "allowed"],
+    ["durable", "network revoked"],
+    ["durable", "subscription revoked"],
+  ])(
+    "%s guidance checks %s before adapter injection",
+    async (path, outcome) => {
+      const previous = process.env.COCALC_ACP_HARNESSES;
+      process.env.COCALC_ACP_HARNESSES = "1";
+      setHarnessLauncher(async () => {
+        throw Error("guidance must not launch a second harness");
+      });
+      const source = claudeTurnRequest();
+      rows[0].agent_runtime = source.runtime;
+      rows[0].agent_session_id = sessionId;
+      startRunningTurn(source);
+      const request: AcpSteerRequest = {
+        ...rpcTurnRequest(undefined),
+        runtime: source.runtime,
+        session_id: sessionId,
+        chat: {
+          ...rpcTurnRequest(undefined).chat!,
+          parent_message_id: "network-guidance",
+          message_id: "network-assistant",
+        },
+      };
+      request.chat.agent_rpc_execution!.guidance = true;
+      request.chat.agent_rpc_execution!.configured_delivery = "live";
+      request.chat.agent_rpc_execution!.source.project_id =
+        "44444444-4444-4444-8444-444444444444";
+      const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+      const authorize = jest.fn(async () => {
+        if (outcome === "network revoked") throw Error(outcome);
+        return {} as any;
+      });
+      hubApi.agent.authorizeRpcExecution = authorize;
+      const validateAuthority = jest.fn(async () => {
+        if (outcome === "subscription revoked") throw Error(outcome);
+      });
+      const client = {
+        sessionId,
+        running: true,
+        supportsSteering: true,
+        steer: jest.fn(async () => "injected"),
+      };
+      const runtime = {
+        binding: {
+          accountId,
+          projectId,
+          profile: source.runtime!.profile,
+          credential: source.harness_credential,
+        },
+        conversation: { path: record.path, threadId: record.thread_id },
+        busy: true,
+        client,
+        validateAuthority,
+      };
+      const steer = jest.fn((id, incoming) =>
+        HarnessAgent.prototype.steer.call(runtime as any, id, incoming),
+      );
+      const unregister = acpTestInternals.registerInterruptAgentForTests(
+        "claude-network",
+        projectId,
+        { steer } as any,
+        true,
+      );
+      try {
+        if (path === "direct") {
+          const delivery = acpTestInternals.handleAcpSteerRequest(request);
+          if (outcome === "allowed")
+            await expect(delivery).resolves.toMatchObject({ state: "steered" });
+          else await expect(delivery).rejects.toThrow(outcome);
+        } else {
+          // Admission happened before the queued delivery authorization check.
+          enqueueAcpSteer({
+            request: await pinCodexCredentialAtAdmission(request),
+            candidate_ids: [sessionId],
+          });
+          await acpTestInternals.processPendingAcpSteersOnce();
+          expect(
+            getAcpSteer({
+              project_id: projectId,
+              path: record.path,
+              user_message_id: "network-guidance",
+            }),
+          ).toMatchObject({
+            state: outcome === "allowed" ? "handled" : "error",
+          });
+        }
+        expect(authorize).toHaveBeenCalledWith({
+          account_id: accountId,
+          authorization: request.chat.agent_rpc_execution,
+        });
+        expect(mockSteer).not.toHaveBeenCalled();
+        expect(listQueuedAcpJobs()).toEqual([]);
+        if (outcome === "allowed") {
+          expect(client.steer).toHaveBeenCalledTimes(1);
+          expect(validateAuthority).toHaveBeenCalledWith(runtime.binding);
+          expect(
+            steer.mock.calls.find(([id]) => id === sessionId)?.[1],
+          ).toMatchObject({
+            harness_credential: source.harness_credential,
+            account_id: accountId,
+          });
+        } else {
+          expect(client.steer).not.toHaveBeenCalled();
+          if (outcome === "network revoked")
+            expect(steer).not.toHaveBeenCalled();
+        }
+      } finally {
+        unregister();
+        if (originalAuthorize === undefined)
+          delete hubApi.agent.authorizeRpcExecution;
+        else hubApi.agent.authorizeRpcExecution = originalAuthorize;
+        setHarnessLauncher();
+        if (previous === undefined) delete process.env.COCALC_ACP_HARNESSES;
+        else process.env.COCALC_ACP_HARNESSES = previous;
+      }
+    },
   );
 });
 
