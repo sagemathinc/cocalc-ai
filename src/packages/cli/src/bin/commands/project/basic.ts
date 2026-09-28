@@ -887,18 +887,28 @@ export function registerProjectBasicCommands(
 
           const waitForAsyncExecResult = async (
             existingJobId: string,
-            api: {
-              system: {
-                exec: (opts: {
-                  async_get: string;
-                }) => Promise<ExecuteCodeOutput>;
-              };
-            },
+            projectId: string,
           ): Promise<ExecuteCodeOutput> => {
             const started = Date.now();
             let last: ExecuteCodeOutput | undefined;
             while (Date.now() - started <= ctx.timeoutMs) {
-              last = await fetchAsyncExecResult(existingJobId, api);
+              try {
+                // Re-resolve the scoped connection as its authorization lease expires.
+                // Only status reads may be retried; never resubmit the command.
+                const { api } = await resolveProjectProjectApi(ctx, projectId);
+                last = await fetchAsyncExecResult(existingJobId, api);
+              } catch (error) {
+                if ((error as { code?: string })?.code !== "CONNECTION_LOST") {
+                  throw Object.assign(
+                    new Error(
+                      `Unable to read exec job ${existingJobId}. Resume with project exec --project ${projectId} --job-id ${existingJobId} --wait. The command was not resubmitted.`,
+                    ),
+                    { cause: error, code: (error as { code?: unknown })?.code },
+                  );
+                }
+                await sleep(Math.max(100, pollMs));
+                continue;
+              }
               if (
                 !isAsyncExecOutput(last) ||
                 isTerminalAsyncStatus(last.status)
@@ -910,7 +920,7 @@ export function registerProjectBasicCommands(
             const lastStatus =
               last && isAsyncExecOutput(last) ? last.status : "unknown";
             throw new Error(
-              `timeout waiting for exec job ${existingJobId}; last status=${lastStatus}`,
+              `timeout waiting for exec job ${existingJobId}; last status=${lastStatus}. Resume with project exec --project ${projectId} --job-id ${existingJobId} --wait. The command was not resubmitted.`,
             );
           };
 
@@ -926,7 +936,7 @@ export function registerProjectBasicCommands(
             const resolved = await resolveProjectProjectApi(ctx, opts.project);
             ws = resolved.project;
             result = wantsWait
-              ? await waitForAsyncExecResult(jobId, resolved.api)
+              ? await waitForAsyncExecResult(jobId, resolved.project.project_id)
               : await fetchAsyncExecResult(jobId, resolved.api);
           } else {
             const timeout = getProjectExecTimeoutSeconds(
@@ -962,7 +972,7 @@ export function registerProjectBasicCommands(
               if (wantsWait && isAsyncExecOutput(result)) {
                 result = await waitForAsyncExecResult(
                   result.job_id,
-                  resolved.api,
+                  resolved.project.project_id,
                 );
               }
             } else {
