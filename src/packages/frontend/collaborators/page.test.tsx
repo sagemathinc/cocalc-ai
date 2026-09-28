@@ -85,8 +85,25 @@ jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
 jest.mock("@cocalc/frontend/agents/open-agent", () => ({
   openAgentThread: jest.fn(),
 }));
+const mockEditAppearance = jest.fn();
+const mockCreateConversation = jest.fn();
+jest.mock("./start-conversation", () => ({
+  createConversation: (...args) => mockCreateConversation(...args),
+}));
 jest.mock("./human-conversation", () => ({
-  HumanConversation: () => <textarea aria-label="Human message" />,
+  HumanConversation: ({ onThreadHeader }) => {
+    require("react").useEffect(() => {
+      onThreadHeader?.({
+        appearance: {
+          name: "Office hours",
+          thread_accent_color: "#123456",
+          thread_icon: "star",
+        },
+        editAppearance: mockEditAppearance,
+      });
+    }, [onThreadHeader]);
+    return <textarea aria-label="Human message" />;
+  },
 }));
 jest.mock("./add-collaborators", () => ({
   AddCollaborators: (props) => {
@@ -579,6 +596,75 @@ test("conversation heading includes its private alias", async () => {
       name: /@team-room.*Office hours/,
     }),
   ).toBeVisible();
+});
+
+test("the live thread theme and keyboard title/alias controls are used in the header", async () => {
+  const user = userEvent.setup();
+  mockApi.getResource.mockResolvedValue({
+    ...conversation,
+    personal: { alias: "team-room" },
+  });
+  render(
+    <Workspace
+      initial={{
+        view: "conversations",
+        projectId: "geometry",
+        resourceId: "office-hours",
+        resourceKind: "conversation",
+      }}
+    />,
+  );
+  const appearance = await screen.findByRole("button", {
+    name: "Edit Thread Appearance: Office hours",
+  });
+  await waitFor(() => expect(appearance).toBeEnabled());
+  expect(appearance.closest("header")).toHaveStyle({ background: "#123456" });
+  appearance.focus();
+  await user.keyboard("{Enter}");
+  expect(mockEditAppearance).toHaveBeenCalled();
+  const alias = screen.getByRole("button", {
+    name: "Edit private alias @team-room",
+  });
+  alias.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("textbox", { name: "Private alias" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(alias).toHaveFocus());
+  await user.click(
+    screen.getByRole("button", { name: "Conversation options" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("menuitem", { name: "Appearance..." }),
+    ).toBeVisible(),
+  );
+});
+
+test("a newly confirmed directory entry refreshes the sidebar without waiting for the revision poll", async () => {
+  const user = userEvent.setup();
+  mockApi.listResources.mockResolvedValue(page([]));
+  mockCreateConversation.mockResolvedValue({
+    project_id: "geometry",
+    kind: "conversation",
+    resource_id: "office-hours",
+  });
+  // The immediate creation refresh races the directory projection.
+  mockApi.getResource.mockImplementation(async () => {
+    mockApi.listResources.mockResolvedValue(page([conversation]));
+    return conversation;
+  });
+  render(<Workspace />);
+  await user.click(screen.getByRole("button", { name: "New conversation" }));
+  await user.click(await screen.findByRole("button", { name: "Geometry Lab" }));
+  await user.type(
+    await screen.findByRole("textbox", { name: "Conversation title" }),
+    "Office hours",
+  );
+  await user.click(screen.getByRole("button", { name: "Start discussion" }));
+  expect(
+    await screen.findByRole("button", { name: /Office hours.*Geometry Lab/ }),
+  ).toBeVisible();
+  expect(mockCreateConversation).toHaveBeenCalledTimes(1);
 });
 
 test("open conversation has compact navigation, accessible audience and project settings", async () => {

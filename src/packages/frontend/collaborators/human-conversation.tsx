@@ -12,6 +12,7 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat, removeWithInstance } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
+import type { EmbeddedThreadHeader } from "@cocalc/frontend/chat/embedding-options";
 import {
   ProjectContext,
   useProjectContextProvider,
@@ -26,11 +27,13 @@ export function HumanConversation({
   resource,
   onOpenOriginal,
   searchHit,
+  onThreadHeader,
 }: {
   accountId: string;
   resource: CollaborationResource;
   onOpenOriginal?: () => void;
   searchHit?: ConversationSearchHit;
+  onThreadHeader?: (header: EmbeddedThreadHeader | undefined) => void;
 }) {
   const id = useId();
   const [actions, setActions] = useState<ChatActions>();
@@ -121,6 +124,7 @@ export function HumanConversation({
       resource={resource}
       accountId={accountId}
       searchHit={searchHit}
+      onThreadHeader={onThreadHeader}
     />
   );
 }
@@ -130,11 +134,13 @@ function MountedConversation({
   resource,
   accountId,
   searchHit,
+  onThreadHeader,
 }: {
   actions: ChatActions;
   resource: CollaborationResource;
   accountId: string;
   searchHit?: ConversationSearchHit;
+  onThreadHeader?: (header: EmbeddedThreadHeader | undefined) => void;
 }) {
   const [searchError, setSearchError] = useState("");
   useEffect(() => {
@@ -186,6 +192,7 @@ function MountedConversation({
       <ChatEmbeddingOptionsProvider
         value={{
           humanOnly: true,
+          onThreadHeader,
           agentWorkspace: true,
           agentWorkspaceActive: true,
           disableConversationFocus: true,

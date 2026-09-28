@@ -641,6 +641,13 @@ function CollaboratorsWorkspace({
                   api={api}
                   accountId={accountId}
                   awaitingIndex={createdResourceId === resourceId}
+                  onResolved={() => {
+                    if (createdResourceId !== resourceId) return;
+                    // The initial refresh can beat directory ingestion. Once
+                    // detail lookup confirms it, do not wait for the next poll.
+                    setCreatedResourceId(undefined);
+                    result.refresh();
+                  }}
                   target={{
                     project_id: projectId,
                     kind: resourceKind,

@@ -399,6 +399,22 @@
   font-size: 18px;
   margin: 2px 0 4px;
 }
+.collaborators-conversation-heading .collaborators-heading-button {
+  height: auto;
+  padding: 0 2px;
+  font: inherit;
+  color: inherit;
+  white-space: normal;
+  text-align: left;
+  max-width: 100%;
+}
+.collaborators-conversation-header > button,
+.collaborators-conversation-header .collaborators-conversation-context button,
+.collaborators-conversation-header
+  .collaborators-conversation-actions
+  > button {
+  color: inherit;
+}
 .collaborators-conversation-context {
   display: flex;
   flex-wrap: wrap;

@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useId, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { Alert, Button, Dropdown, Input } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -20,12 +21,20 @@ export function PersonalControls({
   onChange,
   compact = false,
   onShare,
+  onAppearance,
+  aliasOpen: controlledAliasOpen,
+  onAliasOpenChange,
+  aliasTrigger,
 }: {
   api: DirectoryApi;
   resource: CollaborationResource;
   onChange: () => void;
   compact?: boolean;
   onShare?: () => void;
+  onAppearance?: () => void;
+  aliasOpen?: boolean;
+  onAliasOpenChange?: (open: boolean) => void;
+  aliasTrigger?: RefObject<HTMLButtonElement | null>;
 }) {
   const id = useId();
   const [personal, setPersonal] = useState(
@@ -35,9 +44,15 @@ export function PersonalControls({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const [aliasOpen, setAliasOpen] = useState(false);
+  const [localAliasOpen, setLocalAliasOpen] = useState(false);
+  const aliasOpen = controlledAliasOpen ?? localAliasOpen;
+  const setAliasOpen = (open: boolean) => {
+    setLocalAliasOpen(open);
+    onAliasOpenChange?.(open);
+  };
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const aliasOpenedFromMenu = useRef(false);
   const mounted = useRef(true);
   const pending = useRef(false);
   const aliasUnavailable = resource.kind === "artifact" && !resource.entry_id;
@@ -134,6 +149,9 @@ export function PersonalControls({
           autoFocus
           menu={{
             items: [
+              ...(onAppearance
+                ? [{ key: "appearance", label: "Appearance..." }]
+                : []),
               {
                 key: "alias",
                 label: "Private alias...",
@@ -164,7 +182,11 @@ export function PersonalControls({
             onClick: ({ key }) => {
               setMenuOpen(false);
               menuButton.current?.focus();
-              if (key === "alias") setAliasOpen(true);
+              if (key === "alias") {
+                aliasOpenedFromMenu.current = true;
+                setAliasOpen(true);
+              }
+              if (key === "appearance") onAppearance?.();
               if (key === "follow")
                 void update({ following: !personal.following });
               if (key === "mute") void update({ muted: !personal.muted });
@@ -207,7 +229,13 @@ export function PersonalControls({
           open={aliasOpen}
           footer={null}
           onCancel={() => setAliasOpen(false)}
-          afterClose={() => menuButton.current?.focus()}
+          afterClose={() => {
+            (aliasOpenedFromMenu.current
+              ? menuButton.current
+              : (aliasTrigger?.current ?? menuButton.current)
+            )?.focus();
+            aliasOpenedFromMenu.current = false;
+          }}
         >
           <KeyboardBoundary boundary="conversation-alias">
             {aliasForm}

@@ -18,6 +18,9 @@ import { resolveCollaborationResource } from "./resource-query";
 import { participantSummary } from "./resource-list";
 import { ShareToConversationButton } from "./share-dialog";
 import type { ConversationSearchHit } from "../chat/conversation-search/runner";
+import type { EmbeddedThreadHeader } from "../chat/embedding-options";
+import { ThreadBadge } from "../chat/thread-badge";
+import { resolveAgentHeaderTheme } from "../agents/workspace-header-theme";
 
 const HumanConversation = lazy(async () => ({
   default: (await import("./human-conversation")).HumanConversation,
@@ -40,6 +43,7 @@ export function ResourceDetail({
   projectTitle,
   onAlias,
   searchHit,
+  onResolved,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -51,9 +55,13 @@ export function ResourceDetail({
   projectTitle?: string;
   onAlias?: (alias: string | null) => void;
   searchHit?: ConversationSearchHit;
+  onResolved?: () => void;
 }) {
   const [showSource, setShowSource] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
+  const [aliasOpen, setAliasOpen] = useState(false);
+  const aliasTrigger = useRef<HTMLButtonElement>(null);
+  const [threadHeader, setThreadHeader] = useState<EmbeddedThreadHeader>();
   const sourceBack = useRef<HTMLButtonElement>(null);
   const sourceOpen = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -75,6 +83,15 @@ export function ResourceDetail({
     true,
   );
   const resource = result.page?.items[0];
+  const resolvedCallback = useRef(onResolved);
+  resolvedCallback.current = onResolved;
+  useEffect(() => {
+    if (resource) resolvedCallback.current?.();
+  }, [resource?.resource_id]);
+  const theme = resolveAgentHeaderTheme({
+    appearance: threadHeader?.appearance,
+    fallbackTitle: resource?.title || "Untitled conversation",
+  });
   const aliasCallback = useRef(onAlias);
   aliasCallback.current = onAlias;
   const hasChat =
@@ -126,7 +143,11 @@ export function ResourceDetail({
       {resource.kind === "conversation" ? (
         <header
           className="collaborators-conversation-header"
-          style={{ borderBottom: `1px solid ${UI_COLORS.border}` }}
+          style={{
+            borderBottom: `1px solid ${theme.primaryColor || UI_COLORS.border}`,
+            background: theme.backgroundColor,
+            color: theme.textColor,
+          }}
         >
           <Button
             type="text"
@@ -137,11 +158,37 @@ export function ResourceDetail({
           <div className="collaborators-conversation-heading">
             <h2 ref={heading} tabIndex={-1}>
               {resource.personal?.alias && (
-                <span style={{ color: UI_COLORS.link }}>
-                  @{resource.personal.alias} &middot;{" "}
-                </span>
+                <>
+                  <Button
+                    type="text"
+                    className="collaborators-heading-button"
+                    ref={aliasTrigger}
+                    aria-label={`Edit private alias @${resource.personal.alias}`}
+                    aria-haspopup="dialog"
+                    onClick={() => setAliasOpen(true)}
+                  >
+                    @{resource.personal.alias}
+                  </Button>
+                  {" \u00b7 "}
+                </>
               )}
-              {resource.title || "Untitled conversation"}
+              <Button
+                type="text"
+                className="collaborators-heading-button"
+                aria-label={`Edit Thread Appearance: ${theme.title}`}
+                aria-haspopup="dialog"
+                disabled={!threadHeader?.editAppearance}
+                onClick={threadHeader?.editAppearance}
+              >
+                <ThreadBadge
+                  color={threadHeader?.appearance.thread_color}
+                  accentColor={threadHeader?.appearance.thread_accent_color}
+                  icon={threadHeader?.appearance.thread_icon}
+                  image={threadHeader?.appearance.thread_image}
+                  size={26}
+                />
+                {theme.title}
+              </Button>
             </h2>
             <div className="collaborators-conversation-context">
               {onManageProject ? (
@@ -186,6 +233,10 @@ export function ResourceDetail({
                   onChange();
                 }}
                 onShare={share}
+                onAppearance={threadHeader?.editAppearance}
+                aliasOpen={aliasOpen}
+                onAliasOpenChange={setAliasOpen}
+                aliasTrigger={aliasTrigger}
               />
             )}
           />
@@ -299,6 +350,7 @@ export function ResourceDetail({
             accountId={accountId}
             resource={resource}
             onOpenOriginal={openSource}
+            onThreadHeader={setThreadHeader}
           />
         </Suspense>
       )}

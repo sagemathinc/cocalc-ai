@@ -27,17 +27,8 @@ import { ArtifactCards } from "./artifacts";
 import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
 import { AgentLaunchStatus } from "./agent-launch-status";
 import { ActivityMessageBody } from "./activity-message-body";
-import {
-  DropdownMenu,
-  Gap,
-  Icon,
-  TimeAgo,
-  Tip,
-  Tooltip,
-} from "@cocalc/frontend/components";
-import CopyButton, {
-  copyTextToClipboard,
-} from "@cocalc/frontend/components/copy-button";
+import { Gap, Icon, TimeAgo, Tip, Tooltip } from "@cocalc/frontend/components";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import type { MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import StaticMarkdown, { formatMarkdownPage } from "./bounded-static-markdown";
@@ -83,8 +74,8 @@ import {
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
 import ChatInput from "./input";
-import { AIFeedback } from "./ai-msg-feedback";
 import { Name } from "./name";
+import { MessageActionsMenu } from "./message-actions-menu";
 import { Time } from "./time";
 import { ChatMessageTyped, Mode, SubmitMentionsFn } from "./types";
 import {
@@ -163,6 +154,7 @@ import {
 } from "./message-state";
 import {
   ChatReadAloudButton,
+  useChatReadAloudAction,
   CodexFinalResponseCopy,
 } from "./codex-final-response-copy";
 import {
@@ -621,8 +613,9 @@ export default function Message({
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const messageRowRef = useRef<HTMLDivElement>(null);
   const zenTriggerRef = useRef<HTMLElement | null>(null);
+  const messageMenuRef = useRef<HTMLButtonElement>(null);
   const openZenMessage = (event?: React.MouseEvent<HTMLElement>) => {
-    zenTriggerRef.current = event?.currentTarget ?? null;
+    zenTriggerRef.current = event?.currentTarget ?? messageMenuRef.current;
     setShowZenMessage(true);
   };
   const closeZenMessage = () => {
@@ -1340,6 +1333,13 @@ export default function Message({
   }
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
+  const readAloud = useChatReadAloudAction({
+    value: renderedMessageMarkdown,
+    projectId: project_id,
+    path,
+    threadId: messageThreadId,
+    messageId: field<string>(message, "message_id") ?? `${date}`,
+  });
 
   const useSelectableMessageBody = shouldUseSelectableMessageBody({
     useCodexSelectToolbar,
@@ -1562,78 +1562,20 @@ export default function Message({
     );
   }
 
-  function renderCopyMessageButton() {
-    return (
-      <Tip
-        placement={"top"}
-        title={intl.formatMessage({
-          id: "chat.message.copy_markdown.tooltip",
-          defaultMessage: "Copy message as markdown",
-          description:
-            "Tooltip for button to copy chat message as markdown text",
-        })}
-      >
-        <CopyButton
-          markdown
-          value={message_to_markdown(message, { includeHeader: false })}
-          size="small"
-          noText={true}
-          style={{
-            //color: is_viewers_message ? "white" : "#888",
-            fontSize: "12px",
-            marginTop: "-4px",
-          }}
-        />
-      </Tip>
-    );
-  }
+  const likedByViewer =
+    typeof feedbackMap?.get === "function"
+      ? feedbackMap.get(account_id)
+      : feedbackMap?.[account_id];
+  const feedbackCount =
+    typeof feedbackMap?.size === "number"
+      ? feedbackMap.size
+      : Object.keys(feedbackMap ?? {}).length;
 
-  function renderLinkMessageButton() {
-    return (
-      <Tip
-        placement={"top"}
-        title={intl.formatMessage({
-          id: "chat.message.copy_link.tooltip",
-          defaultMessage: "Copy a direct link to this message.",
-          description:
-            "Tooltip for button to copy URL link to specific chat message",
-        })}
-      >
-        <Button
-          onClick={() => {
-            void copyMessageLink();
-          }}
-          size="small"
-          type={"text"}
-          style={{
-            //color: is_viewers_message ? "white" : "#888",
-            fontSize: "12px",
-            marginTop: "-4px",
-          }}
-        >
-          <Icon name="link" />
-        </Button>
-      </Tip>
-    );
-  }
-
-  function renderLLMFeedbackButtons() {
+  function renderLikeButton() {
     if (isLLMThread) return;
 
-    const feedback =
-      typeof feedbackMap?.get === "function"
-        ? feedbackMap.get(account_id)
-        : feedbackMap?.[account_id];
-    const otherFeedback =
-      isLLMThread && msgWrittenByLLM
-        ? 0
-        : typeof feedbackMap?.size === "number"
-          ? feedbackMap.size
-          : Array.isArray(feedbackMap)
-            ? feedbackMap.length
-            : feedbackMap && typeof feedbackMap === "object"
-              ? Object.keys(feedbackMap).length
-              : 0;
+    const feedback = likedByViewer;
+    const otherFeedback = feedbackCount;
     const showOtherFeedback = otherFeedback > 0;
 
     const iconColor = showOtherFeedback ? UI_COLORS.link : UI_COLORS.secondary;
@@ -1663,6 +1605,9 @@ export default function Message({
       >
         <Button
           size="small"
+          aria-label={`${feedback ? "Unlike" : "Like"} message (${otherFeedback})`}
+          aria-pressed={!!feedback}
+          disabled={read_only || !actions}
           type={feedback ? "dashed" : "text"}
           style={{
             display: "inline-flex",
@@ -1704,9 +1649,20 @@ export default function Message({
           message={message}
           edit={showEditButton ? edit_message : undefined}
         />
-        {useCodexSelectToolbar && codexOverflowMenuLocation === "header" ? (
+        {!useCodexSelectToolbar ? (
+          <span
+            style={{
+              marginLeft: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+          >
+            {feedbackCount > 0 && renderLikeButton()}
+            {renderMessageOverflowMenu()}
+          </span>
+        ) : codexOverflowMenuLocation === "header" ? (
           <span style={{ marginLeft: "auto" }}>
-            {renderCodexOverflowMenu()}
+            {renderMessageOverflowMenu()}
           </span>
         ) : null}
       </div>
@@ -1772,157 +1728,8 @@ export default function Message({
   }
 
   function renderMessageActions() {
-    if (useCodexSelectToolbar) {
-      return renderCodexMessageActions();
-    }
-    const buttons: ReactNode[] = [];
-
-    const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.push(readAloud);
-
-    const llmFeedbackButton = renderLLMFeedbackButtons();
-    if (llmFeedbackButton) {
-      buttons.push(<span key="like">{llmFeedbackButton}</span>);
-    }
-    buttons.push(<span key="copy">{renderCopyMessageButton()}</span>);
-    buttons.push(<span key="link">{renderLinkMessageButton()}</span>);
-
-    if (allowReply && !replying && actions) {
-      buttons.push(
-        <Tooltip
-          key="reply"
-          placement="bottom"
-          title={
-            isLLMThread
-              ? "Reply to this AI thread, sending the thread as context."
-              : "Reply to this thread."
-          }
-        >
-          <Button
-            type="text"
-            size="small"
-            style={{ color: UI_COLORS.muted }}
-            onClick={() => {
-              setReplying(true);
-              setAutoFocusReply(true);
-            }}
-          >
-            <Icon name="reply" /> Reply
-            {isLLMThread ? " to AI" : ""}
-          </Button>
-        </Tooltip>,
-      );
-    }
-
-    const historySize = history_size;
-    if (historySize > 1) {
-      buttons.push(
-        <Tip
-          key="history"
-          title="Message History"
-          tip={`${show_history ? "Hide" : "Show"} history of edits.`}
-        >
-          <Button
-            size="small"
-            type={show_history ? "primary" : "text"}
-            icon={<Icon name="history" />}
-            onClick={() => {
-              set_show_history(!show_history);
-              scroll_into_view?.();
-            }}
-          >
-            {show_history ? "Hide" : "History"}
-          </Button>
-        </Tip>,
-      );
-    }
-
-    if (showEditButton) {
-      buttons.push(
-        <Tip
-          key="edit"
-          title={
-            <>
-              Edit this message. You can edit <b>any</b> past message using this
-              button. Fix other people's typos. All versions are stored.
-            </>
-          }
-          placement="bottom"
-        >
-          <Button
-            size="small"
-            type="text"
-            style={{ color: UI_COLORS.muted }}
-            onClick={edit_message}
-            icon={<Icon name="pencil" />}
-          ></Button>
-        </Tip>,
-      );
-    }
-
-    if (showDeleteButton) {
-      buttons.push(
-        <Tip
-          key="delete"
-          title="Delete this message from the current chat. It remains available in TimeTravel."
-          placement="bottom"
-        >
-          <Button
-            size="small"
-            type="text"
-            danger
-            onClick={confirm_delete_message}
-            icon={<Icon name="trash" />}
-          />
-        </Tip>,
-      );
-    }
-
-    if (isCodexAgentMessage) {
-      buttons.push(
-        <Tooltip key="git-browser" placement="bottom" title="Open git browser">
-          <Button
-            size="small"
-            type="text"
-            style={{ color: UI_COLORS.muted }}
-            onClick={() => void openGitBrowserFromMessage()}
-            icon={<Icon name="git" />}
-          />
-        </Tooltip>,
-      );
-    }
-
-    if (isLLMThread && msgWrittenByLLM) {
-      buttons.push(
-        <span key="feedback-llm">
-          <AIFeedback actions={actions} message={message} />
-        </span>,
-      );
-    }
-    buttons.push(
-      <Tooltip key="focus" placement="top" title="Focus this message">
-        <Button
-          size="small"
-          type="text"
-          style={getFocusMessageButtonStyle()}
-          aria-label="Focus this message"
-          aria-haspopup="dialog"
-          onClick={openZenMessage}
-        >
-          <Icon name="expand-arrows" />
-        </Button>
-      </Tooltip>,
-    );
-
-    if (!buttons.length) {
-      return null;
-    }
-
-    return (
-      <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
-        {buttons}
-      </div>
-    );
+    if (useCodexSelectToolbar) return renderCodexMessageActions();
+    return null;
   }
 
   function getCodexActivityToggle() {
@@ -1959,49 +1766,54 @@ export default function Message({
     };
   }
 
-  function getCodexOverflowItems(): MenuItems {
+  function getMessageOverflowItems(): MenuItems {
     const overflowItems: MenuItems = [
-      {
-        key: "info",
-        label: "Info",
-        onClick: () => {
-          const configValue = (key: keyof CodexThreadConfig) =>
-            (threadCodexConfig as any)?.get?.(key) ?? threadCodexConfig?.[key];
-          const details = [
-            ["Model", configValue("model") ?? isLLMThread],
-            ["Thinking", configValue("reasoning")],
-            [
-              "Speed",
-              configValue("serviceTier") === "fast" ? "Fast" : "Standard",
-            ],
-            ["Payment", configValue("paymentSource") ?? "Automatic"],
-            ["Working directory", configValue("workingDirectory")],
-          ].filter((entry) => entry[1]);
-          Modal.info({
-            title: "Agent response info",
-            content: (
-              <dl
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr",
-                  gap: "6px 14px",
-                }}
-              >
-                <dt>Started</dt>
-                <dd style={{ margin: 0 }}>
-                  <TimeAgo date={new Date(acpStartedAtMs ?? date)} />
-                </dd>
-                {details.flatMap(([label, value]) => [
-                  <dt key={`${label}-label`}>{label}</dt>,
-                  <dd key={`${label}-value`} style={{ margin: 0 }}>
-                    {`${value}`}
-                  </dd>,
-                ])}
-              </dl>
-            ),
-          });
-        },
-      },
+      ...(useCodexSelectToolbar
+        ? [
+            {
+              key: "info",
+              label: "Info",
+              onClick: () => {
+                const configValue = (key: keyof CodexThreadConfig) =>
+                  (threadCodexConfig as any)?.get?.(key) ??
+                  threadCodexConfig?.[key];
+                const details = [
+                  ["Model", configValue("model") ?? isLLMThread],
+                  ["Thinking", configValue("reasoning")],
+                  [
+                    "Speed",
+                    configValue("serviceTier") === "fast" ? "Fast" : "Standard",
+                  ],
+                  ["Payment", configValue("paymentSource") ?? "Automatic"],
+                  ["Working directory", configValue("workingDirectory")],
+                ].filter((entry) => entry[1]);
+                Modal.info({
+                  title: "Agent response info",
+                  content: (
+                    <dl
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr",
+                        gap: "6px 14px",
+                      }}
+                    >
+                      <dt>Started</dt>
+                      <dd style={{ margin: 0 }}>
+                        <TimeAgo date={new Date(acpStartedAtMs ?? date)} />
+                      </dd>
+                      {details.flatMap(([label, value]) => [
+                        <dt key={`${label}-label`}>{label}</dt>,
+                        <dd key={`${label}-value`} style={{ margin: 0 }}>
+                          {`${value}`}
+                        </dd>,
+                      ])}
+                    </dl>
+                  ),
+                });
+              },
+            },
+          ]
+        : []),
       {
         key: "copy-whole",
         label: "Copy whole message",
@@ -2053,7 +1865,7 @@ export default function Message({
       });
     }
 
-    if (!read_only) {
+    if (!read_only && useCodexSelectToolbar) {
       overflowItems.push({
         key: "git-browser",
         label: "Open git browser",
@@ -2113,20 +1925,54 @@ export default function Message({
       });
     }
 
+    if (!useCodexSelectToolbar) {
+      if (!isLLMThread) {
+        overflowItems.unshift({
+          key: "like",
+          label: likedByViewer ? "Unlike message" : "Like message",
+          icon: (
+            <span aria-hidden="true">
+              <Icon name="thumbs-up" />
+            </span>
+          ),
+          disabled: read_only || !actions,
+          onClick: () =>
+            actions?.feedback(message, likedByViewer ? null : "positive"),
+        });
+      }
+      if (
+        readAloud &&
+        msgWrittenByLLM &&
+        !effectiveGenerating &&
+        renderedMessageMarkdown.trim()
+      )
+        overflowItems.push({
+          key: "read-aloud",
+          label: "Read aloud",
+          onClick: readAloud,
+        });
+      if (isLLMThread && msgWrittenByLLM) {
+        for (const feedback of ["positive", "negative"] as const)
+          overflowItems.push({
+            key: `feedback-${feedback}`,
+            label: `${likedByViewer === feedback ? "Remove" : "Give"} ${feedback} feedback`,
+            disabled: read_only || !actions,
+            onClick: () =>
+              actions?.feedback(
+                message,
+                likedByViewer === feedback ? null : feedback,
+              ),
+          });
+      }
+    }
     return overflowItems;
   }
 
-  function renderCodexOverflowMenu() {
-    const overflowItems = getCodexOverflowItems();
+  function renderMessageOverflowMenu() {
+    const overflowItems = getMessageOverflowItems();
     if (overflowItems.length === 0) return null;
     return (
-      <DropdownMenu
-        items={overflowItems}
-        title={<Icon name="ellipsis-vertical" />}
-        size="small"
-        style={{ color: UI_COLORS.muted }}
-        ariaLabel="More message actions"
-      />
+      <MessageActionsMenu items={overflowItems} triggerRef={messageMenuRef} />
     );
   }
 
@@ -2136,7 +1982,7 @@ export default function Message({
     if (readAloud) buttons.push(readAloud);
 
     if (codexOverflowMenuLocation === "footer") {
-      buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
+      buttons.push(<span key="more">{renderMessageOverflowMenu()}</span>);
     }
 
     if (buttons.length === 0) return null;

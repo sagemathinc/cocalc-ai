@@ -903,6 +903,48 @@ function ChatPanelContent({
     path,
   });
 
+  const reportThreadHeader = embeddingOptions.onThreadHeader;
+  useEffect(() => {
+    if (!reportThreadHeader) return;
+    if (!selectedThread) {
+      reportThreadHeader(undefined);
+      return;
+    }
+    reportThreadHeader({
+      appearance: {
+        name: selectedThread.displayLabel ?? selectedThread.label,
+        thread_color: selectedThread.threadColor,
+        thread_accent_color: selectedThread.threadAccentColor,
+        thread_icon: selectedThread.threadIcon,
+        thread_image: selectedThread.threadImage,
+      },
+      editAppearance:
+        !readOnly && modalHandlers
+          ? () =>
+              modalHandlers.openAppearanceModal(
+                selectedThread.key,
+                selectedThread.displayLabel ?? selectedThread.label,
+                selectedThread.hasCustomName,
+                selectedThread.threadColor,
+                selectedThread.threadIcon,
+              )
+          : undefined,
+    });
+    return () => reportThreadHeader(undefined);
+  }, [
+    reportThreadHeader,
+    modalHandlers,
+    readOnly,
+    selectedThread?.key,
+    selectedThread?.displayLabel,
+    selectedThread?.label,
+    selectedThread?.hasCustomName,
+    selectedThread?.threadColor,
+    selectedThread?.threadAccentColor,
+    selectedThread?.threadIcon,
+    selectedThread?.threadImage,
+  ]);
+
   useEffect(() => {
     if (
       !isExternalSideChat &&
@@ -3365,18 +3407,6 @@ function ChatPanelContent({
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
-            onEditThreadAppearance={
-              modalHandlers && selectedThread
-                ? () =>
-                    modalHandlers.openAppearanceModal(
-                      selectedThread.key,
-                      selectedThread.displayLabel ?? selectedThread.label,
-                      selectedThread.hasCustomName,
-                      selectedThread.threadColor,
-                      selectedThread.threadIcon,
-                    )
-                : undefined
-            }
             onComposerFocusChange={() => undefined}
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}

@@ -5,6 +5,19 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { tab_to_path } from "@cocalc/util/misc";
+import type { ThreadMetadataSnapshot } from "./actions";
+
+export interface EmbeddedThreadHeader {
+  appearance: Pick<
+    ThreadMetadataSnapshot,
+    | "name"
+    | "thread_color"
+    | "thread_accent_color"
+    | "thread_icon"
+    | "thread_image"
+  >;
+  editAppearance?: () => void;
+}
 
 export function chatIsForeground(
   path: string,
@@ -29,6 +42,7 @@ export interface ChatEmbeddingOptions {
   hideTopControls?: boolean;
   hideCompactThreadHeader?: boolean;
   hideComposerIdentity?: boolean;
+  onThreadHeader?: (header: EmbeddedThreadHeader | undefined) => void;
   openFilesInWorkbench?: boolean;
   sidebarHiddenByDefault?: boolean;
   sidebarPreferenceKey?: string;

@@ -152,7 +152,7 @@ describe("ChatRoomComposer resize handle", () => {
     renderComposer();
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
-    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.height).toBe("60px");
     expect(lastChatInputProps.autoGrow).toBe(false);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
@@ -179,7 +179,7 @@ describe("ChatRoomComposer resize handle", () => {
     const composer = screen.getByTestId("chat-composer");
     expect(composer.style.maxWidth).toBe("1120px");
     expect(composer.style.margin).toBe("0px auto 8px");
-    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.height).toBe("60px");
     expect(lastChatInputProps.autoGrow).toBe(false);
     expect(lastChatInputProps.compactModeSwitch).toBe(true);
     expect(lastChatInputProps.softFocus).toBe(true);
@@ -425,13 +425,11 @@ describe("ChatRoomComposer resize handle", () => {
   });
 
   it.each([false, true])(
-    "shows the selected thread title without a custom appearance (AI: %s)",
+    "does not repeat the selected thread title in the composer (AI: %s)",
     async (isAI) => {
       const user = userEvent.setup();
-      const onEditThreadAppearance = jest.fn();
       const onSend = jest.fn();
       renderComposer({
-        onEditThreadAppearance,
         on_send: onSend,
         selectedThread: {
           key: "thread-1",
@@ -455,20 +453,11 @@ describe("ChatRoomComposer resize handle", () => {
         } as any,
       });
 
-      const title = screen.getByText("Goal UI smoke test");
-      expect(title.getAttribute("title")).toBe("Goal UI smoke test");
-      expect(title.parentElement?.style.marginLeft).toBe("auto");
-      const edit = screen.getByRole("button", {
-        name: "Edit Thread Appearance: Goal UI smoke test",
-      });
-      expect(edit.getAttribute("aria-haspopup")).toBe("dialog");
-      await user.click(edit);
-      expect(onEditThreadAppearance).toHaveBeenCalledTimes(1);
-      edit.focus();
-      await user.keyboard("{Enter}");
-      expect(onEditThreadAppearance).toHaveBeenCalledTimes(2);
-      await user.keyboard(" ");
-      expect(onEditThreadAppearance).toHaveBeenCalledTimes(3);
+      expect(
+        screen.queryByRole("button", {
+          name: "Edit Thread Appearance: Goal UI smoke test",
+        }),
+      ).toBeNull();
       expect(onSend).not.toHaveBeenCalled();
       if (isAI) {
         await user.click(
@@ -498,7 +487,6 @@ describe("ChatRoomComposer resize handle", () => {
           isPinned: false,
           isArchived: false,
         },
-        onEditThreadAppearance: jest.fn(),
       },
       { hideComposerIdentity: true },
     );
@@ -517,12 +505,12 @@ describe("ChatRoomComposer resize handle", () => {
     const handle = screen.getByRole("separator", { name: "Resize composer" });
     handle.focus();
     await user.keyboard("{ArrowUp}");
-    expect(lastChatInputProps.height).toBe("140px");
-    expect(handle).toHaveAttribute("aria-valuenow", "140");
+    expect(lastChatInputProps.height).toBe("80px");
+    expect(handle).toHaveAttribute("aria-valuenow", "80");
     await user.keyboard("{ArrowDown}{ArrowDown}");
-    expect(lastChatInputProps.height).toBe("100px");
+    expect(lastChatInputProps.height).toBe("60px");
     await user.keyboard("{Home}");
-    expect(lastChatInputProps.height).toBe("120px");
+    expect(lastChatInputProps.height).toBe("60px");
     expect(handle).toHaveFocus();
   });
 
@@ -572,7 +560,7 @@ describe("ChatRoomComposer resize handle", () => {
     ).not.toBeNull();
   });
 
-  it("does not add a divider beside the thread title", () => {
+  it("does not render a duplicate themed title in the composer", () => {
     renderComposer({
       selectedThread: {
         key: "thread-accent",
@@ -590,14 +578,11 @@ describe("ChatRoomComposer resize handle", () => {
         isArchived: false,
         threadColor: "#1677ff",
       },
-      onEditThreadAppearance: jest.fn(),
     });
 
-    const title = screen.getByRole("button", {
-      name: "Edit Thread Appearance: hi",
-    });
-    expect(title.style.borderLeft).toBe("0px");
-    expect(title.style.paddingLeft).toBe("4px");
+    expect(
+      screen.queryByRole("button", { name: "Edit Thread Appearance: hi" }),
+    ).toBeNull();
   });
 
   it("uses the shared attachment and submit controls for human chats", () => {

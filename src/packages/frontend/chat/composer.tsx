@@ -22,7 +22,6 @@ import ChatInput from "./input";
 import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
 import type { ThreadMeta } from "./threads";
-import { ThreadBadge } from "./thread-badge";
 import { CodexGoalControl } from "./codex-goal";
 import type { ChatInputControl } from "./input";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
@@ -80,7 +79,6 @@ export interface ChatRoomComposerProps {
   hasActiveAcpTurn?: boolean;
   threads: ThreadMeta[];
   selectedThread?: ThreadMeta | null;
-  onEditThreadAppearance?: () => void;
   onComposerFocusChange: (focused: boolean) => void;
   onComposerReady?: (
     control: ChatInputControl | null,
@@ -149,7 +147,6 @@ export function ChatRoomComposer({
   hasActiveAcpTurn = false,
   threads: _threads,
   selectedThread,
-  onEditThreadAppearance,
   onComposerFocusChange,
   onComposerReady,
   codexPaymentSource,
@@ -178,15 +175,9 @@ export function ChatRoomComposer({
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
-  const DEFAULT_INPUT_HEIGHT = 120;
-  const stripHtml = (value: string): string =>
-    value.replace(/<[^>]*>/g, "").trim();
+  const DEFAULT_INPUT_HEIGHT = 60;
 
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
-  const threadColor = selectedThread?.threadColor;
-  const threadAccentColor = selectedThread?.threadAccentColor;
-  const threadIcon = selectedThread?.threadIcon;
-  const threadImage = selectedThread?.threadImage;
   const threadMetadata = selectedThread
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
@@ -750,83 +741,47 @@ export function ChatRoomComposer({
               </div>
             </Tooltip>
           )}
-          {!embeddingOptions.hideComposerIdentity && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 6,
-                minWidth: 0,
-                flexWrap: "wrap",
-              }}
-            >
-              {showGoal && selectedThread && (
-                <NameAgent
-                  key={agentMentions.accountId}
-                  agent={agentMentions.namedAgent}
-                  projectId={project_id}
-                  path={path}
-                  threadId={selectedThread.key}
-                  threadTitle={threadLabel}
-                  initiallyOpen={nameAfterPreparation}
-                />
-              )}
-              {!selectedThread && isNewThreadCodex && onPrepareAgentThread && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setNameAfterPreparation(true);
-                    void prepareAgentThread({});
-                  }}
-                >
-                  Name agent
-                </Button>
-              )}
-              {threadLabel && (
-                <button
-                  type="button"
-                  aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
-                  aria-haspopup="dialog"
-                  disabled={!onEditThreadAppearance}
-                  onClick={onEditThreadAppearance}
-                  style={{
-                    background: "none",
-                    border: 0,
-                    cursor: onEditThreadAppearance ? "pointer" : "default",
-                    fontFamily: "inherit",
-                    display: "flex",
-                    alignItems: "center",
-                    marginLeft: "auto",
-                    minWidth: 0,
-                    maxWidth: "100%",
-                    gap: "8px",
-                    color: UI_COLORS.secondary,
-                    fontSize: "12px",
-                    padding: "1px 4px",
-                  }}
-                >
-                  <ThreadBadge
-                    icon={threadIcon}
-                    color={threadColor}
-                    accentColor={threadAccentColor}
-                    image={threadImage}
-                    size={18}
+          {!embeddingOptions.hideComposerIdentity &&
+            (showGoal ||
+              (!selectedThread &&
+                isNewThreadCodex &&
+                onPrepareAgentThread)) && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 6,
+                  minWidth: 0,
+                  flexWrap: "wrap",
+                }}
+              >
+                {showGoal && selectedThread && (
+                  <NameAgent
+                    key={agentMentions.accountId}
+                    agent={agentMentions.namedAgent}
+                    projectId={project_id}
+                    path={path}
+                    threadId={selectedThread.key}
+                    threadTitle={threadLabel}
+                    initiallyOpen={nameAfterPreparation}
                   />
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={stripHtml(threadLabel)}
-                  >
-                    {stripHtml(threadLabel)}
-                  </span>
-                </button>
-              )}
-            </div>
-          )}
+                )}
+                {!selectedThread &&
+                  isNewThreadCodex &&
+                  onPrepareAgentThread && (
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setNameAfterPreparation(true);
+                        void prepareAgentThread({});
+                      }}
+                    >
+                      Name agent
+                    </Button>
+                  )}
+              </div>
+            )}
           {showCodexPaymentSourceBanner && (
             <Alert
               action={
