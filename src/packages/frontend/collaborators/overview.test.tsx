@@ -82,8 +82,69 @@ test.each(["owner", "collaborator", "viewer"])(
     });
     expect(!!button).toBe(role === "owner");
     expect(api.getRoom).not.toHaveBeenCalled();
+    expect(api.listProjects).toHaveBeenCalledWith({
+      shared_only: true,
+      project_id: "project",
+      person_id: undefined,
+      after: undefined,
+      limit: 25,
+    });
   },
 );
+
+test("a project-context person profile lists all shared projects, including later pages", async () => {
+  const user = userEvent.setup();
+  const { api, props } = fixture("complete");
+  const shared = Array.from({ length: 7 }, (_, i) => ({
+    project_id: i === 0 ? "project" : `project-${i}`,
+    title: i === 0 ? "Fresh project" : `Shared project ${i}`,
+    role: "collaborator",
+  }));
+  api.listProjects.mockImplementation(async ({ project_id, after }) => ({
+    items: project_id
+      ? shared.filter((item) => item.project_id === project_id)
+      : after
+        ? shared.slice(3)
+        : shared.slice(0, 3),
+    next: !project_id && !after ? "shared-projects-cursor" : undefined,
+    coverage: "complete",
+  }));
+  render(<Overview {...props} />);
+  const region = screen.getByRole("region", { name: "Shared projects" });
+  await within(region).findByRole("button", {
+    name: "Shared project 1",
+    exact: true,
+  });
+  const more = within(region).getByRole("button", { name: "Load more" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  await within(region).findByRole("button", {
+    name: "Shared project 6",
+    exact: true,
+  });
+  for (const item of shared) {
+    expect(
+      within(region).getByRole("button", { name: item.title, exact: true }),
+    ).toBeVisible();
+  }
+  expect(api.listProjects).toHaveBeenLastCalledWith({
+    shared_only: true,
+    project_id: undefined,
+    person_id: "person",
+    after: "shared-projects-cursor",
+    limit: 25,
+  });
+  expect(
+    within(region).getByRole("group", { name: "End of results" }),
+  ).toHaveFocus();
+  await user.click(
+    within(region).getByRole("button", {
+      name: "Shared project 6",
+      exact: true,
+    }),
+  );
+  expect(props.onProject).toHaveBeenCalledWith("project-6", expect.anything());
+});
 
 test("incomplete project results offer a keyboard-operated bounded owner fallback with independent cursors", async () => {
   const user = userEvent.setup();

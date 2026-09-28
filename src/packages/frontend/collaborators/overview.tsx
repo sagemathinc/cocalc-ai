@@ -48,12 +48,15 @@ export function Overview({
   onPersonAliasChange?: (alias: string | null) => void;
 }) {
   const [replacingRoom, setReplacingRoom] = useState(false);
+  // A person's shared-project list describes the relationship, not the
+  // project context from which their profile was opened.
+  const sharedProjectId = personId ? undefined : projectId;
   const projects = useDirectory(
-    JSON.stringify(["overview-projects", projectId, personId]),
+    JSON.stringify(["overview-projects", sharedProjectId, personId]),
     (after) =>
       api.listProjects({
         shared_only: true,
-        project_id: projectId,
+        project_id: sharedProjectId,
         person_id: personId,
         after,
         limit: 25,
