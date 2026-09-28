@@ -672,7 +672,10 @@ if MODE != 'success': time.sleep(60)
                 if mode != "supervisor-crash":
                     self.assertIsNotNone(proof)
                     self.assertTrue(proof["cleanup"])
-                    self.assertIn(proof["code"], (130, -9) if mode == "project-stop" else (0 if mode == "success" else 130,))
+                    # A reaper/stop can kill the child while the guard is paused
+                    # inside its loop, before it observes cancellation itself.
+                    external_kill = mode in ("project-stop", "wedged-guard")
+                    self.assertIn(proof["code"], (130, -9) if external_kill else (0 if mode == "success" else 130,))
                     proc.wait(timeout=5)
                 self.assertEqual([p for p in project.iterdir() if p.is_dir()] if project.exists() else [], [])
                 with self.assertRaises((FileNotFoundError, ProcessLookupError)):
