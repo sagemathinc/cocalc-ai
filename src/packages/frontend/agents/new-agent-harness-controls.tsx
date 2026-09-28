@@ -4,7 +4,7 @@
  */
 
 import { Button, Modal, Select, Space, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExternalCredentialInfo } from "@cocalc/conat/hub/api/system";
 import type { AcpHarnessCredential } from "@cocalc/util/ai/runtime";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
@@ -22,6 +22,7 @@ import { ClaudeProjectSecretModal } from "@cocalc/frontend/chat/claude-project-s
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { DocsLink } from "@cocalc/frontend/docs/link";
 import { ClaudeConnectorPreference } from "@cocalc/frontend/chat/claude-connector-preference";
+import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 import {
   newAgentClaudeCredentialOptions,
@@ -58,6 +59,9 @@ export function NewAgentClaudeControls({
   assertCurrent: () => void;
 }) {
   const [secretsOpen, setSecretsOpen] = useState(false);
+  const configureButton = useRef<HTMLButtonElement>(null);
+  const { secrets } = useProjectSecrets(projectId ?? "");
+  const secretMetadata = (secrets as any)?.toJS?.() ?? secrets;
   const validDirectory = cwd.startsWith("/");
   const runtime = qualifiedHarnessRuntime(
     "claude-code",
@@ -79,6 +83,21 @@ export function NewAgentClaudeControls({
   }, [scope]);
   const options = newAgentClaudeCredentialOptions(credentials);
   const value = newAgentClaudeCredentialValue(credential);
+  const hasSubscription = credentials.some(
+    (row) => !row.revoked && row.kind === CLAUDE_SUBSCRIPTION_KIND,
+  );
+  // Only known-missing setup is onboarding. Unknown metadata or configured
+  // credentials must retain the normal discovery/error path.
+  const needsConnection =
+    !!projectId &&
+    validDirectory &&
+    credentialsLoaded &&
+    credential.mode === "project-secret" &&
+    !hasSubscription &&
+    secretMetadata != null &&
+    !secretMetadata.some(
+      (secret: { name: string }) => secret.name === "ANTHROPIC_API_KEY",
+    );
   const unavailableCredential =
     credentialsLoaded && !options.some((option) => option.value === value);
   const payment =
@@ -132,9 +151,7 @@ export function NewAgentClaudeControls({
           key={`${accountId}:${projectId}`}
           projectId={projectId}
           disabled={disabled}
-          hasConnection={credentials.some(
-            (row) => row.kind === CLAUDE_SUBSCRIPTION_KIND,
-          )}
+          hasConnection={hasSubscription}
           onConnected={onConnected}
         />
       ) : (
@@ -181,15 +198,45 @@ export function NewAgentClaudeControls({
     <>
       <HarnessRuntimeControl
         key={JSON.stringify([accountId, projectId, runtime.profile])}
-        discoveryKey={JSON.stringify(credential)}
+        discoveryKey={JSON.stringify([credential, needsConnection])}
         compact
         configureLabel="Configure Claude Code"
+        configureButtonRef={configureButton}
         discoveryPending={
           !!projectId &&
           validDirectory &&
           (!credentialsLoaded || readyScope !== scope)
         }
-        inlinePayment={credentialsLoaded ? payment : "Loading payment"}
+        inlineSetup={
+          needsConnection && projectId ? (
+            <ClaudeSubscriptionConnect
+              key={`${accountId}:${projectId}`}
+              modal
+              compact
+              projectId={projectId}
+              disabled={disabled}
+              onConnected={async (credentialId) => {
+                const trigger = configureButton.current;
+                await onConnected(credentialId);
+                assertCurrent();
+                // Successful setup removes the modal's original trigger.
+                if (
+                  trigger === configureButton.current &&
+                  trigger?.isConnected
+                ) {
+                  trigger.focus();
+                }
+              }}
+            />
+          ) : undefined
+        }
+        inlinePayment={
+          needsConnection
+            ? undefined
+            : credentialsLoaded
+              ? payment
+              : "Loading payment"
+        }
         unavailableLabel={
           !projectId
             ? "Select a project to load models"
@@ -206,6 +253,7 @@ export function NewAgentClaudeControls({
         onDiscover={
           projectId &&
           credentialsLoaded &&
+          !needsConnection &&
           !unavailableCredential &&
           !disabled &&
           validDirectory &&

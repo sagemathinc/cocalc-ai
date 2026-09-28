@@ -1,8 +1,17 @@
 /** @jest-environment jsdom */
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ClaudeSubscriptionConnect } from "../claude-subscription-connect";
+
+beforeEach(() => {
+  jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginCancel",
+    )
+    .mockResolvedValue(undefined as any);
+});
 
 test("an existing connection labels sign-in as optional and remains keyboard accessible", async () => {
   render(
@@ -16,12 +25,12 @@ test("an existing connection labels sign-in as optional and remains keyboard acc
   await user.tab();
   expect(document.activeElement).toBe(
     screen.getByRole("button", {
-      name: "Connect another Claude subscription (experimental)",
+      name: "Connect another Claude subscription",
     }),
   );
   expect(
     screen.queryByRole("button", {
-      name: "Connect Claude Pro/Max (experimental)",
+      name: "Connect Claude Pro/Max",
     }),
   ).toBeNull();
 });
@@ -74,9 +83,7 @@ test.each([false, true])(
       );
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
       const connect = screen.getByRole("button", {
-        name: reconnect
-          ? "Reconnect Claude"
-          : "Connect Claude Pro/Max (experimental)",
+        name: reconnect ? "Reconnect Claude" : "Connect Claude Pro/Max",
       });
       await user.tab();
       expect(document.activeElement).toBe(connect);
@@ -167,7 +174,7 @@ test("a failed code submission keeps the code and allows correction", async () =
     const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", {
-        name: "Connect Claude Pro/Max (experimental)",
+        name: "Connect Claude Pro/Max",
       }),
     );
     await user.type(
@@ -186,5 +193,188 @@ test("a failed code submission keeps the code and allows correction", async () =
   } finally {
     start.mockRestore();
     submit.mockRestore();
+  }
+});
+
+test("focused sign-in opens with Enter and Escape cancels and restores focus", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "modal-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const cancel = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginCancel",
+    )
+    .mockResolvedValue(undefined as any);
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", {
+      name: "Connect Claude Pro/Max",
+    });
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Connect Claude Pro/Max",
+    });
+    await waitFor(() =>
+      expect(dialog).toContainElement(document.activeElement as HTMLElement),
+    );
+    expect(
+      screen.getByRole("link", { name: "Open Claude sign-in" }),
+    ).toHaveAttribute("target", "_blank");
+    expect(
+      screen.getByRole("textbox", { name: "Claude sign-in code" }),
+    ).toHaveAttribute("placeholder", "Paste the code from Claude");
+    expect(screen.getByRole("button", { name: "Submit code" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(cancel).toHaveBeenCalledWith({
+      project_id: "project-a",
+      id: "modal-login",
+    });
+    expect(button).toHaveFocus();
+  } finally {
+    start.mockRestore();
+    cancel.mockRestore();
+  }
+});
+
+test("closing while sign-in starts cancels its eventual session without reopening the dialog", async () => {
+  let finish!: (value: any) => void;
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const cancel = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginCancel",
+    )
+    .mockResolvedValue(undefined as any);
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", {
+      name: "Connect Claude Pro/Max",
+    });
+    await user.click(button);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Opening Claude sign-in",
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () =>
+      finish({
+        id: "late-login",
+        state: "pending",
+        verificationUrl: "https://claude.com/oauth/authorize",
+      }),
+    );
+    expect(cancel).toHaveBeenCalledWith({
+      project_id: "project-a",
+      id: "late-login",
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(button).toBeEnabled();
+  } finally {
+    start.mockRestore();
+    cancel.mockRestore();
+  }
+});
+
+test("a modal start failure offers an explicit retry", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockRejectedValueOnce(Error("Service unavailable"))
+    .mockResolvedValue({
+      id: "retry-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  try {
+    render(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Service unavailable");
+    await user.click(screen.getByRole("button", { name: "Retry sign-in" }));
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByRole("link", { name: "Open Claude sign-in" }),
+    ).toBeTruthy();
+  } finally {
+    start.mockRestore();
+  }
+});
+
+test("unmount cancels an active sign-in so navigation does not block the next attempt", async () => {
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "abandoned-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  try {
+    const { unmount } = render(
+      <ClaudeSubscriptionConnect
+        modal
+        projectId="project-a"
+        onConnected={jest.fn()}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Connect Claude Pro/Max" }));
+    unmount();
+    expect(
+      webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel,
+    ).toHaveBeenCalledWith({
+      project_id: "project-a",
+      id: "abandoned-login",
+    });
+  } finally {
+    start.mockRestore();
   }
 });

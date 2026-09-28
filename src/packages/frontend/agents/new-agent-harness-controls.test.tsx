@@ -5,10 +5,14 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PROJECT_DOCS_OPEN_EVENT } from "@cocalc/frontend/docs/navigation";
 import { useState } from "react";
+import { fromJS } from "immutable";
+import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { qualifiedHarnessRuntime } from "@cocalc/frontend/chat/harness-profile";
 import {
@@ -17,11 +21,21 @@ import {
 } from "./new-agent-harness-controls";
 import { discoverNewAgentHarness } from "./discover-new-agent-harness";
 
+// rc-util's constant test ID aliases nested modal labels and Escape handlers.
+jest.mock("@rc-component/util/lib/hooks/useId", () => ({
+  __esModule: true,
+  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
+  default: (id?: string) => {
+    const generated = require("react").useId();
+    return id ?? generated;
+  },
+}));
+
 jest.mock("./discover-new-agent-harness", () => ({
   discoverNewAgentHarness: jest.fn(),
 }));
-jest.mock("@cocalc/frontend/chat/claude-subscription-connect", () => ({
-  ClaudeSubscriptionConnect: () => <button>Connect Claude subscription</button>,
+jest.mock("@cocalc/frontend/project/use-project-secrets", () => ({
+  useProjectSecrets: jest.fn(),
 }));
 
 const controls = {
@@ -74,6 +88,17 @@ const result = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginCancel",
+    )
+    .mockResolvedValue(undefined as any);
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [{ name: "ANTHROPIC_API_KEY" } as any],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
   jest.mocked(discoverNewAgentHarness).mockResolvedValue(result as any);
 });
 
@@ -178,7 +203,7 @@ test("new Claude agent exposes real model/effort controls and keeps both first-t
   expect(screen.getByText("Medium")).toBeTruthy();
   expect(screen.queryByText(/Default/)).toBeNull();
   expect(
-    screen.queryByRole("button", { name: "Connect Claude subscription" }),
+    screen.queryByRole("button", { name: "Connect Claude Pro/Max" }),
   ).toBeNull();
   expect(screen.queryByText(/Experimental Claude Pro/)).toBeNull();
   const user = userEvent.setup();
@@ -250,7 +275,7 @@ test("Claude setup opens from the keyboard, contains connection details, and res
     screen.getByRole("combobox", { name: "Claude credential" }),
   ).toBeTruthy();
   expect(
-    screen.getByRole("button", { name: "Connect Claude subscription" }),
+    screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
   ).toBeTruthy();
   const opened = jest.fn((event: Event) => event.preventDefault());
   window.addEventListener(PROJECT_DOCS_OPEN_EVENT, opened);
@@ -368,4 +393,323 @@ test("custom ACP fields are hidden in a keyboard-accessible configuration dialog
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.activeElement).toBe(trigger);
+});
+
+test("first-use Claude offers connection instead of runtime errors or project-secret payment", async () => {
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "first-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  try {
+    render(<NewAgentClaudeControls {...props} />);
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", {
+      name: "Connect Claude Pro/Max",
+    });
+    expect(screen.queryByText(/Model unavailable|Project secret/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(discoverNewAgentHarness).not.toHaveBeenCalled();
+    await user.click(button);
+    expect(
+      screen.getByRole("dialog", { name: "Connect Claude Pro/Max" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Open Claude sign-in" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("combobox", { name: "Claude credential" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/Experimental preview|Runtime details/),
+    ).toBeNull();
+    expect(discoverNewAgentHarness).not.toHaveBeenCalled();
+  } finally {
+    start.mockRestore();
+  }
+});
+
+test.each([
+  null,
+  [{ name: "ANTHROPIC_API_KEY" }],
+  fromJS([{ name: "ANTHROPIC_API_KEY" }]),
+])(
+  "unknown or configured project-key metadata retains discovery and real errors (%s)",
+  async (secrets) => {
+    jest.mocked(useProjectSecrets).mockReturnValue({
+      secrets: secrets as any,
+      refresh: jest.fn(),
+      setSecrets: jest.fn(),
+    });
+    jest
+      .mocked(discoverNewAgentHarness)
+      .mockRejectedValue(Error("Runtime unavailable"));
+    render(<NewAgentClaudeControls {...props} />);
+    expect(
+      await screen.findByRole("button", { name: "Model unavailable - retry" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("alert")).toHaveTextContent("Runtime unavailable");
+    expect(
+      screen.queryByRole("button", { name: "Connect Claude Pro/Max" }),
+    ).toBeNull();
+  },
+);
+
+test("selecting the newly connected subscription replaces onboarding with model discovery", async () => {
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
+  const { rerender } = render(<NewAgentClaudeControls {...props} />);
+  expect(
+    screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+  ).toBeTruthy();
+  rerender(
+    <NewAgentClaudeControls
+      {...props}
+      credential={{
+        version: 1,
+        provider: "anthropic",
+        mode: "account-subscription",
+        credentialId: "new-connection",
+      }}
+      credentials={[
+        { id: "new-connection", kind: "claude-subscription-home-v1" } as any,
+      ]}
+    />,
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Claude Code Model" }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Connect Claude Pro/Max" }),
+  ).toBeNull();
+  expect(discoverNewAgentHarness).toHaveBeenCalledWith(
+    expect.objectContaining({
+      credential: expect.objectContaining({ credentialId: "new-connection" }),
+    }),
+  );
+});
+
+test("first-use setup retains project API-key entry and account API-key selection", async () => {
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
+  render(
+    <NewAgentClaudeControls
+      {...props}
+      credentials={[
+        {
+          id: "key-a",
+          kind: "anthropic-api-key",
+          metadata: { label: "My API key" },
+        } as any,
+      ]}
+    />,
+  );
+  const user = userEvent.setup();
+  expect(
+    screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+  ).toBeEnabled();
+  await user.click(
+    screen.getByRole("button", { name: "Configure Claude Code" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Configure Claude Code" });
+  const credentialSelect = within(dialog).getByRole("combobox", {
+    name: "Claude credential",
+  });
+  await user.click(credentialSelect);
+  expect(screen.getByRole("option", { name: /My API key/ })).toBeTruthy();
+  await user.click(within(dialog).getByText("Payment method"));
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: "Set ANTHROPIC_API_KEY project secret",
+    }),
+  );
+  const keyDialog = screen.getByRole("dialog", {
+    name: "Claude Code project API key",
+  });
+  expect(within(keyDialog).getByLabelText("ANTHROPIC_API_KEY")).toBeEnabled();
+  expect(
+    within(keyDialog).getByRole("button", { name: "Save key" }),
+  ).toBeDisabled();
+});
+
+test("adding a project API key resumes discovery without changing the selected credential", async () => {
+  const metadata = {
+    secrets: [] as any[],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  };
+  jest.mocked(useProjectSecrets).mockReturnValue(metadata);
+  const { rerender } = render(<NewAgentClaudeControls {...props} />);
+  expect(
+    screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+  ).toBeEnabled();
+  metadata.secrets = [{ name: "ANTHROPIC_API_KEY" }];
+  rerender(<NewAgentClaudeControls {...props} />);
+  await screen.findByRole("combobox", { name: "Claude Code Model" });
+  expect(props.onCredential).not.toHaveBeenCalled();
+  expect(discoverNewAgentHarness).toHaveBeenCalledWith(
+    expect.objectContaining({ credential: props.credential }),
+  );
+});
+
+test("successful first-use sign-in closes its modal and focuses the surviving settings control", async () => {
+  jest.useFakeTimers();
+  jest.mocked(useProjectSecrets).mockReturnValue({
+    secrets: [],
+    refresh: jest.fn(),
+    setSecrets: jest.fn(),
+  });
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "focus-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const status = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStatus",
+    )
+    .mockResolvedValue({
+      id: "focus-login",
+      state: "completed",
+      credentialId: "subscription-a",
+    } as any);
+  function Composer() {
+    const [credentialId, setCredentialId] = useState("");
+    return (
+      <NewAgentClaudeControls
+        {...props}
+        credential={
+          credentialId
+            ? {
+                version: 1,
+                provider: "anthropic",
+                mode: "account-subscription",
+                credentialId,
+              }
+            : props.credential
+        }
+        credentials={
+          credentialId
+            ? [{ id: credentialId, kind: "claude-subscription-home-v1" } as any]
+            : []
+        }
+        onConnected={async (id) => {
+          setCredentialId(id);
+        }}
+      />
+    );
+  }
+  try {
+    render(<Composer />);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    await user.click(
+      screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+    );
+    screen.getByRole("textbox", { name: "Claude sign-in code" }).focus();
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Configure Claude Code" }),
+    ).toHaveFocus();
+    expect(
+      webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel,
+    ).not.toHaveBeenCalled();
+  } finally {
+    start.mockRestore();
+    status.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
+test("a delayed sign-in callback does not steal focus after switching projects", async () => {
+  jest.useFakeTimers();
+  jest
+    .mocked(useProjectSecrets)
+    .mockReturnValue({
+      secrets: [],
+      refresh: jest.fn(),
+      setSecrets: jest.fn(),
+    });
+  const start = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStart",
+    )
+    .mockResolvedValue({
+      id: "old-project-login",
+      state: "pending",
+      verificationUrl: "https://claude.com/oauth/authorize",
+    } as any);
+  const status = jest
+    .spyOn(
+      webapp_client.conat_client.hub.projects,
+      "claudeSubscriptionLoginStatus",
+    )
+    .mockResolvedValue({
+      id: "old-project-login",
+      state: "completed",
+      credentialId: "subscription-a",
+    } as any);
+  let finish!: () => void;
+  const onConnected = jest.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  try {
+    const { rerender } = render(
+      <NewAgentClaudeControls {...props} onConnected={onConnected} />,
+    );
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    await user.click(
+      screen.getByRole("button", { name: "Connect Claude Pro/Max" }),
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+    });
+    expect(onConnected).toHaveBeenCalledWith("subscription-a");
+    rerender(
+      <NewAgentClaudeControls
+        {...props}
+        projectId="project-b"
+        onConnected={onConnected}
+      />,
+    );
+    const newTrigger = screen.getByRole("button", {
+      name: "Connect Claude Pro/Max",
+    });
+    newTrigger.focus();
+    await act(async () => finish());
+    expect(newTrigger).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    start.mockRestore();
+    status.mockRestore();
+    jest.useRealTimers();
+  }
 });

@@ -9,7 +9,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   parseHarnessSessionControls,
   resolveClaudeConfigValue,
@@ -78,11 +78,13 @@ interface HarnessRuntimeSummaryProps {
   onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
   configuration?: ReactNode;
   configureLabel?: string;
+  configureButtonRef?: Ref<HTMLButtonElement>;
   disabled?: boolean;
   discoveryKey?: string;
   unavailableLabel?: string;
   discoveryPending?: boolean;
   inlinePayment?: string;
+  inlineSetup?: ReactNode;
   leadingControl?: ReactNode;
 }
 
@@ -428,11 +430,13 @@ function HarnessRuntimeSummaryContent({
   compact,
   configuration,
   configureLabel,
+  configureButtonRef,
   disabled,
   discoveryKey,
   unavailableLabel,
   discoveryPending,
   inlinePayment,
+  inlineSetup,
   leadingControl,
 }: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
   runtime: AcpHarnessRuntime;
@@ -795,6 +799,7 @@ function HarnessRuntimeSummaryContent({
       fast.currentValue);
   const settingsButton = (
     <Button
+      ref={configureButtonRef}
       size="small"
       type={configureLabel && error ? "primary" : "text"}
       disabled={disabled}
@@ -823,26 +828,33 @@ function HarnessRuntimeSummaryContent({
         {claude && (
           <>
             {!configureLabel && <Tag style={{ margin: 0 }}>Preview</Tag>}
-            {inlineControls.map((control) => (
-              <span key={control.id} style={{ minWidth: 0, maxWidth: "100%" }}>
-                {select(control, true)}
-              </span>
-            ))}
-            {!inlineControls.some(({ id }) => id === "model") && (
-              <Button
-                size="small"
-                type="text"
-                loading={loading || discoveryPending}
-                onClick={() => void discover()}
-                disabled={disabled || !onDiscover}
-              >
-                {loading || discoveryPending || (onDiscover && !autoDiscovered)
-                  ? "Loading model"
-                  : onDiscover
-                    ? "Model unavailable - retry"
-                    : (unavailableLabel ?? "Model unavailable")}
-              </Button>
-            )}
+            {!inlineSetup &&
+              inlineControls.map((control) => (
+                <span
+                  key={control.id}
+                  style={{ minWidth: 0, maxWidth: "100%" }}
+                >
+                  {select(control, true)}
+                </span>
+              ))}
+            {inlineSetup ||
+              (!inlineControls.some(({ id }) => id === "model") && (
+                <Button
+                  size="small"
+                  type="text"
+                  loading={loading || discoveryPending}
+                  onClick={() => void discover()}
+                  disabled={disabled || !onDiscover}
+                >
+                  {loading ||
+                  discoveryPending ||
+                  (onDiscover && !autoDiscovered)
+                    ? "Loading model"
+                    : onDiscover
+                      ? "Model unavailable - retry"
+                      : (unavailableLabel ?? "Model unavailable")}
+                </Button>
+              ))}
             {fast && ["on", "true", "enabled"].includes(fastValue ?? "") && (
               <Button
                 disabled={disabled}
@@ -881,7 +893,7 @@ function HarnessRuntimeSummaryContent({
         )}
         {configureLabel && settingsButton}
       </div>
-      {error && <div role="alert">{error}</div>}
+      {error && !inlineSetup && <div role="alert">{error}</div>}
       <Modal
         open={open}
         title={

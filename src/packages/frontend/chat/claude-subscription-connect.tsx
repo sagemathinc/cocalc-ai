@@ -3,9 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { Button, Input, Space, Spin, Typography } from "antd";
-import { useEffect, useEffectEvent, useState } from "react";
+import { Button, Input, Modal, Space, Spin, Typography } from "antd";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 type LoginStatus = {
   id: string;
@@ -21,12 +22,14 @@ export function ClaudeSubscriptionConnect({
   onConnected,
   hasConnection = false,
   compact = false,
+  modal = false,
   reconnectCredentialId,
 }: {
   projectId: string;
   disabled?: boolean;
   hasConnection?: boolean;
   compact?: boolean;
+  modal?: boolean;
   reconnectCredentialId?: string;
   onConnected: (credentialId: string) => Promise<void> | void;
 }) {
@@ -36,25 +39,83 @@ export function ClaudeSubscriptionConnect({
   const [submitting, setSubmitting] = useState(false);
   const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+  const attempt = useRef(0);
+  const pendingLogin = useRef<{ project_id: string; id: string } | undefined>(
+    undefined,
+  );
   const connected = useEffectEvent(onConnected);
+  useEffect(
+    () => () => {
+      attempt.current++;
+      const pending = pendingLogin.current;
+      pendingLogin.current = undefined;
+      if (pending) {
+        // Navigation must not leave a host-side sign-in blocking the next try.
+        void webapp_client.conat_client.hub.projects
+          .claudeSubscriptionLoginCancel(pending)
+          .catch(() => {});
+      }
+    },
+    [],
+  );
   const start = async (credentialId?: string) => {
+    const started = ++attempt.current;
     setBusy(true);
+    setLogin(undefined);
+    setSubmitting(false);
     setError("");
     setCode("");
     setCodeSubmitted(false);
     try {
-      setLogin(
+      const next =
         await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginStart(
           {
             project_id: projectId,
             ...(credentialId ? { credential_id: credentialId } : {}),
           },
-        ),
+        );
+      if (started !== attempt.current) {
+        if (next.state === "pending" || next.state === "verifying") {
+          await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
+            { project_id: projectId, id: next.id },
+          );
+        }
+        return;
+      }
+      pendingLogin.current =
+        next.state === "pending" || next.state === "verifying"
+          ? { project_id: projectId, id: next.id }
+          : undefined;
+      setLogin(next);
+    } catch (err) {
+      if (started === attempt.current) setError(`${err}`);
+    } finally {
+      if (started === attempt.current) setBusy(false);
+    }
+  };
+  const cancel = async () => {
+    const cancelled = ++attempt.current;
+    const pending = pendingLogin.current;
+    pendingLogin.current = undefined;
+    setBusy(false);
+    setSubmitting(false);
+    setOpen(false);
+    setLogin(undefined);
+    setCode("");
+    setCodeSubmitted(false);
+    if (!pending) return;
+    try {
+      await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
+        pending,
       );
     } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setBusy(false);
+      if (cancelled === attempt.current) {
+        pendingLogin.current = pending;
+        setError(`Unable to cancel sign-in: ${err}`);
+        setLogin(login);
+        if (modal) setOpen(true);
+      }
     }
   };
   const signingIn =
@@ -65,19 +126,24 @@ export function ClaudeSubscriptionConnect({
       return;
     let active = true;
     let completed = false;
+    const started = attempt.current;
     const timer = setInterval(() => {
       void webapp_client.conat_client.hub.projects
         .claudeSubscriptionLoginStatus({ project_id: projectId, id: login.id })
         .then(async (next) => {
-          if (!active) return;
+          if (!active || started !== attempt.current) return;
+          if (next.state !== "pending" && next.state !== "verifying") {
+            pendingLogin.current = undefined;
+          }
           if (next.state === "completed" && next.credentialId && !completed) {
             completed = true;
             await connected(next.credentialId);
+            if (active && started === attempt.current) setOpen(false);
           }
-          if (active) setLogin(next);
+          if (active && started === attempt.current) setLogin(next);
         })
         .catch((err) => {
-          if (active) setError(`${err}`);
+          if (active && started === attempt.current) setError(`${err}`);
         });
     }, 1500);
     return () => {
@@ -86,6 +152,94 @@ export function ClaudeSubscriptionConnect({
     };
   }, [login?.id, login?.state, projectId]);
 
+  const signIn = (
+    <Space
+      orientation="vertical"
+      size={12}
+      style={{ width: "100%", minWidth: 0 }}
+    >
+      {busy && <span role="status">Opening Claude sign-in...</span>}
+      {modal && login?.verificationUrl && (
+        <Typography.Text>
+          Sign in with your Claude Pro or Max subscription, then paste the code
+          from Claude below.
+        </Typography.Text>
+      )}
+      {login && (login.state === "pending" || login.state === "verifying") && (
+        <Space orientation="vertical" style={{ width: "100%", minWidth: 0 }}>
+          {(submitting || codeSubmitted || login.state === "verifying") && (
+            <Space role="status" aria-live="polite">
+              <Spin size="small" />
+              {submitting
+                ? "Submitting sign-in code..."
+                : "Verifying Claude sign-in..."}
+            </Space>
+          )}
+          {login.verificationUrl && (
+            <a
+              href={login.verificationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open Claude sign-in
+            </a>
+          )}
+          {login.state === "pending" && login.verificationUrl && (
+            <Space wrap style={{ width: "100%" }}>
+              <Input
+                aria-label="Claude sign-in code"
+                placeholder="Paste the code from Claude"
+                autoComplete="off"
+                value={code}
+                disabled={submitting || codeSubmitted}
+                onChange={(event) => setCode(event.target.value)}
+              />
+              <Button
+                aria-label="Submit code"
+                aria-busy={submitting || codeSubmitted}
+                loading={submitting || codeSubmitted}
+                disabled={submitting || codeSubmitted || !code.trim()}
+                onClick={async () => {
+                  const started = attempt.current;
+                  setSubmitting(true);
+                  setError("");
+                  try {
+                    await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
+                      { project_id: projectId, id: login.id, code },
+                    );
+                    if (started !== attempt.current) return;
+                    setCode("");
+                    setCodeSubmitted(true);
+                  } catch (err) {
+                    if (started === attempt.current) setError(`${err}`);
+                  } finally {
+                    if (started === attempt.current) setSubmitting(false);
+                  }
+                }}
+              >
+                Submit code
+              </Button>
+            </Space>
+          )}
+          {login.state === "pending" && (
+            <Button onClick={() => void cancel()}>Cancel sign-in</Button>
+          )}
+        </Space>
+      )}
+      {login?.state === "completed" && (
+        <Typography.Text role="status">
+          Claude subscription connected.
+        </Typography.Text>
+      )}
+      {login?.state === "failed" && (
+        <div role="alert">{login.error || "Claude sign-in failed"}</div>
+      )}
+      {error && <div role="alert">Claude sign-in error: {error}</div>}
+      {modal && !signingIn && (error || login?.state === "failed") && (
+        <Button onClick={() => void start()}>Retry sign-in</Button>
+      )}
+    </Space>
+  );
   return (
     <Space
       orientation="vertical"
@@ -107,97 +261,36 @@ export function ClaudeSubscriptionConnect({
         </Button>
       )}
       <Button
-        style={{ maxWidth: "100%" }}
+        style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
+        aria-haspopup={modal ? "dialog" : undefined}
         disabled={disabled || signingIn}
         loading={busy}
-        onClick={() => void start()}
+        onClick={() => {
+          if (modal) setOpen(true);
+          void start();
+        }}
       >
         {hasConnection
           ? compact
             ? "Connect another subscription"
-            : "Connect another Claude subscription (experimental)"
-          : "Connect Claude Pro/Max (experimental)"}
+            : "Connect another Claude subscription"
+          : "Connect Claude Pro/Max"}
       </Button>
-      {login && (login.state === "pending" || login.state === "verifying") && (
-        <Space orientation="vertical">
-          {(submitting || codeSubmitted || login.state === "verifying") && (
-            <Space role="status" aria-live="polite">
-              <Spin size="small" />
-              {submitting
-                ? "Submitting sign-in code..."
-                : "Verifying Claude sign-in..."}
-            </Space>
+      {modal ? (
+        <Modal
+          title="Connect Claude Pro/Max"
+          open={open}
+          footer={null}
+          onCancel={() => void cancel()}
+          modalRender={(content) => (
+            <KeyboardBoundary>{content}</KeyboardBoundary>
           )}
-          {login.verificationUrl && (
-            <a
-              href={login.verificationUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open Claude sign-in
-            </a>
-          )}
-          {login.state === "pending" && login.verificationUrl && (
-            <Space>
-              <Input
-                aria-label="Claude sign-in code"
-                autoComplete="off"
-                value={code}
-                disabled={submitting || codeSubmitted}
-                onChange={(event) => setCode(event.target.value)}
-              />
-              <Button
-                aria-label="Submit code"
-                aria-busy={submitting || codeSubmitted}
-                loading={submitting || codeSubmitted}
-                disabled={submitting || codeSubmitted || !code.trim()}
-                onClick={async () => {
-                  setSubmitting(true);
-                  setError("");
-                  try {
-                    await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginSubmitCode(
-                      { project_id: projectId, id: login.id, code },
-                    );
-                    setCode("");
-                    setCodeSubmitted(true);
-                  } catch (err) {
-                    setError(`${err}`);
-                  } finally {
-                    setSubmitting(false);
-                  }
-                }}
-              >
-                Submit code
-              </Button>
-            </Space>
-          )}
-          {login.state === "pending" && (
-            <Button
-              onClick={async () => {
-                try {
-                  await webapp_client.conat_client.hub.projects.claudeSubscriptionLoginCancel(
-                    { project_id: projectId, id: login.id },
-                  );
-                  setLogin(undefined);
-                } catch (err) {
-                  setError(`${err}`);
-                }
-              }}
-            >
-              Cancel sign-in
-            </Button>
-          )}
-        </Space>
+        >
+          {signIn}
+        </Modal>
+      ) : (
+        signIn
       )}
-      {login?.state === "completed" && (
-        <Typography.Text role="status">
-          Claude subscription connected.
-        </Typography.Text>
-      )}
-      {login?.state === "failed" && (
-        <div role="alert">{login.error || "Claude sign-in failed"}</div>
-      )}
-      {error && <div role="alert">Claude sign-in error: {error}</div>}
     </Space>
   );
 }
