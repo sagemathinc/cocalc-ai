@@ -6,6 +6,58 @@ The approval retention follow-up below tests
 Environment: the three-bay local development stack behind lite2b.cocalc.ai.
 This is development evidence, not production approval or completion of phases 1-4.
 
+## Installed CLI long-execution verification, 2026-09-28
+
+Implementation `b814f0f5692897eaf3581d28cbd7d238c45c998d` corrects the remaining
+scoped blocking-exec path. The previous `6e0ba52d5b` changed async polling only;
+the user's blocking failure was consistent with that gap, not evidence that
+they had failed to deploy. The host reported their `6e0ba52d5b` build installed.
+
+Scoped blocking commands now submit once through the existing async execution
+protocol, poll status through renewable scoped connections, and return the
+ordinary blocking output DTO. Only read-only status polling retries
+CONNECTION_LOST. Submission is not replayed; authorization failures stop; known
+job IDs remain in interrupted-wait diagnostics. No server permissions or lease
+duration changed. CLI build/typecheck and 27 focused tests passed, including
+the real-socket lease renewal/revocation test.
+
+Built the tools artifact from the clean commit above and deployed tools only to
+`My host` (delta's source host). Operation
+`fec8c06a-189c-4084-9d32-b40e0d6bc142` succeeded, installing tools
+`1790566477303`. The already-running source container still mounted the old
+tools, so delta's source project was restarted via operation
+`c8748576-8d89-43c1-ac43-93a376a4af6f` (succeeded). Jupyter Example was not
+restarted. No hub/project-host rollout was needed for this CLI-only fix.
+
+The installed `/opt/cocalc/bin2/cocalc-cli.js` in delta's source project now
+matches the built bundle SHA-256
+`5250e6f6b1a8c7ba4520dce249f42ab0aa785816bf5d793e76990d994a1f6935`.
+Its `--version` output is
+`1.0.3 (git b814f0f5692897eaf3581d28cbd7d238c45c998d)`.
+The bundled CLI now embeds build Git identity instead of requiring wrapper
+environment variables; tracked dirty builds are marked `-dirty`.
+
+Using that installed executable in delta's source project, a disposable
+600-second manual scoped key authorized only Jupyter Example
+(`8c503ab0-1fcf-4fe3-8af3-2f9c30b088e3`). Both probes slept 45 seconds, wrote a
+unique marker once, asserted its line count was one, removed it, and returned
+`EXEC45_OK`. The CLI ran with an isolated environment and no daemon:
+
+- Blocking: exit 0, blocking DTO, completed in 49,429 ms.
+- `--async --wait`: exit 0, completed status, completed in 48,359 ms;
+  job `44bcf1df-a6e1-4684-b4c2-35ff36d48980`.
+
+The temporary key and credential directories were deleted. This proves the
+installed scoped CLI paths across the reported failure interval, not automatic
+replay of the earlier package installation.
+
+An additional synthetic managed-provider probe was not an acceptance pass:
+a plain remote shell had no primary agent/project authentication, so context
+creation failed before execution and refused interactive account-login fallback.
+Its temporary key/files were also deleted. A fresh native delta turn supplies
+that primary identity; this turn did not launch one or claim to validate its
+issuance lifecycle. Existing focused managed-provider tests passed.
+
 ## Narrowed candidate deployment and smoke test, 2026-09-28
 
 Candidate: `498c97703a52bef73228d95528034d2c6273e842`, private implementation
