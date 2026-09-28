@@ -3112,12 +3112,16 @@ const emitProjectFileCatHumanContent = emitWorkspaceFileCatHumanContent;
 const program = new Command();
 
 function cliVersionDisplay(): string {
+  const build = (
+    globalThis as { __COCALC_CLI_BUILD__?: { git: string; dirty: boolean } }
+  ).__COCALC_CLI_BUILD__;
   const artifactId = process.env.COCALC_CLI_ARTIFACT_ID?.trim();
   const releaseVersion = process.env.COCALC_CLI_VERSION?.trim();
   const publishedAt = process.env.COCALC_CLI_PUBLISHED_AT?.trim();
   const git = (
     process.env.COCALC_CLI_GIT_SHORT ||
     process.env.COCALC_CLI_GIT_COMMIT ||
+    (build ? `${build.git}${build.dirty ? "-dirty" : ""}` : "") ||
     ""
   ).trim();
   const version = artifactId || releaseVersion || pkg.version;

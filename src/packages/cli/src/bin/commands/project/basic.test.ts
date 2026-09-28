@@ -599,90 +599,96 @@ test("project exec waits for an async job to complete", async () => {
   assert.equal(returned?.stdout, "done\n");
 });
 
-for (const failure of ["CONNECTION_LOST", "403", "timeout", "submission"]) {
-  test(`async exec preserves single submission across ${failure}`, async () => {
-    const calls: any[] = [];
-    let resolutions = 0;
-    let returned: any;
-    const deps = {
-      withContext: async (_command, _label, fn) => {
-        returned = await fn({
-          timeoutMs: failure === "timeout" ? 0 : 5_000,
-          rpcTimeoutMs: 30_000,
-          globals: { json: true, output: "json" },
-        });
-      },
-      resolveProjectProjectApi: async (_ctx, project) => {
-        resolutions++;
-        const generation = resolutions;
-        return {
-          project: { project_id: project, title: "Project", host_id: null },
-          api: {
-            system: {
-              exec: async (opts) => {
-                calls.push(opts);
-                if (
-                  failure === "submission" ||
-                  (opts.async_get &&
-                    (generation === 2 || failure === "timeout"))
-                ) {
-                  throw Object.assign(new Error("disconnected"), {
-                    code: failure === "403" ? "403" : "CONNECTION_LOST",
-                  });
-                }
-                return {
-                  type: "async",
-                  job_id: "job-1",
-                  stdout: "done",
-                  stderr: "",
-                  exit_code: 0,
-                  status: opts.async_get ? "completed" : "running",
-                };
+for (const mode of ["async", "scoped-blocking"]) {
+  for (const failure of ["CONNECTION_LOST", "403", "timeout", "submission"]) {
+    if (mode === "scoped-blocking" && failure === "timeout") continue;
+    test(`${mode} exec preserves single submission across ${failure}`, async () => {
+      const calls: any[] = [];
+      let resolutions = 0;
+      let returned: any;
+      const deps = {
+        withContext: async (_command, _label, fn) => {
+          returned = await fn({
+            timeoutMs: failure === "timeout" ? 0 : 5_000,
+            rpcTimeoutMs: 30_000,
+            globals: { json: true, output: "json" },
+            apiKey: mode === "scoped-blocking" ? "test-key" : undefined,
+          });
+        },
+        resolveProjectProjectApi: async (_ctx, project) => {
+          resolutions++;
+          const generation = resolutions;
+          return {
+            project: { project_id: project, title: "Project", host_id: null },
+            api: {
+              system: {
+                exec: async (opts) => {
+                  calls.push(opts);
+                  if (
+                    failure === "submission" ||
+                    (opts.async_get &&
+                      (generation === 2 || failure === "timeout"))
+                  ) {
+                    throw Object.assign(new Error("disconnected"), {
+                      code: failure === "403" ? "403" : "CONNECTION_LOST",
+                    });
+                  }
+                  return {
+                    type: "async",
+                    job_id: "job-1",
+                    stdout: "done",
+                    stderr: "",
+                    exit_code: 0,
+                    status: opts.async_get ? "completed" : "running",
+                  };
+                },
               },
             },
-          },
-        };
-      },
-    };
-    const program = new Command();
-    registerProjectBasicCommands(program.command("project"), deps as any);
-    const run = program.parseAsync([
-      "node",
-      "test",
-      "project",
-      "exec",
-      "--project",
-      "project-id",
-      "--async",
-      "--wait",
-      "--poll-ms",
-      "0",
-      "echo done",
-    ]);
-    if (failure === "CONNECTION_LOST") {
-      await run;
-      assert.equal(returned.status, "completed");
-      assert.equal(resolutions, 3);
-      assert.deepEqual(calls.slice(1), [
-        { async_get: "job-1" },
-        { async_get: "job-1" },
+          };
+        },
+      };
+      const program = new Command();
+      registerProjectBasicCommands(program.command("project"), deps as any);
+      const run = program.parseAsync([
+        "node",
+        "test",
+        "project",
+        "exec",
+        "--project",
+        "project-id",
+        ...(mode === "async" ? ["--async", "--wait"] : []),
+        "--timeout",
+        "0.001",
+        "--poll-ms",
+        "0",
+        "echo done",
       ]);
-    } else if (failure === "submission") {
-      await assert.rejects(run, { code: "CONNECTION_LOST" });
-      assert.equal(calls.length, 1);
-    } else {
-      await assert.rejects(run, (error: any) => {
-        assert.match(
-          error.message,
-          /--project project-id --job-id job-1 --wait/,
-        );
-        if (failure === "403") assert.equal(error.code, "403");
-        return true;
-      });
-      if (failure === "403") assert.equal(calls.length, 2);
-    }
-    assert.equal(calls.filter((x) => x.async_call).length, 1);
-  });
+      if (failure === "CONNECTION_LOST") {
+        await run;
+        assert.equal(returned.type, mode === "async" ? "async" : "blocking");
+        assert.equal(returned.stdout, "done");
+        assert.equal(resolutions, 3);
+        assert.deepEqual(calls.slice(1), [
+          { async_get: "job-1" },
+          { async_get: "job-1" },
+        ]);
+      } else if (failure === "submission") {
+        await assert.rejects(run, { code: "CONNECTION_LOST" });
+        assert.equal(calls.length, 1);
+      } else {
+        await assert.rejects(run, (error: any) => {
+          assert.match(
+            error.message,
+            /--project project-id --job-id job-1 --wait/,
+          );
+          if (failure === "403") assert.equal(error.code, "403");
+          return true;
+        });
+        if (failure === "403") assert.equal(calls.length, 2);
+      }
+      assert.equal(calls.filter((x) => x.async_call).length, 1);
+    });
+  }
 }
 
 test("project start passes an explicit backup and accepts running as successful wait state", async () => {

@@ -990,6 +990,10 @@ export function registerProjectBasicCommands(
                   opts.project,
                 );
                 ws = resolved.project;
+                const scoped = !!apiKeyForProject(
+                  ctx,
+                  resolved.project.project_id,
+                );
                 result = await resolved.api.system.exec(
                   opts.bash
                     ? {
@@ -998,6 +1002,7 @@ export function registerProjectBasicCommands(
                         timeout,
                         err_on_exit: false,
                         path: opts.path,
+                        ...(scoped ? { async_call: true } : {}),
                       }
                     : {
                         command: first,
@@ -1006,8 +1011,22 @@ export function registerProjectBasicCommands(
                         timeout,
                         err_on_exit: false,
                         path: opts.path,
+                        ...(scoped ? { async_call: true } : {}),
                       },
                 );
+                if (scoped && isAsyncExecOutput(result)) {
+                  ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+                  const completed = await waitForAsyncExecResult(
+                    result.job_id,
+                    resolved.project.project_id,
+                  );
+                  result = {
+                    type: "blocking",
+                    stdout: completed.stdout,
+                    stderr: completed.stderr,
+                    exit_code: completed.exit_code,
+                  };
+                }
               } finally {
                 ctx.timeoutMs = prevTimeoutMs;
                 ctx.rpcTimeoutMs = prevRpcTimeoutMs;
