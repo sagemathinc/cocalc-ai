@@ -240,6 +240,7 @@ describe("NotificationRow", () => {
       expect(
         screen.getByText(
           (_, element) => element?.textContent === body_markdown,
+          { selector: "span" },
         ),
       ).toBeInTheDocument();
       if (!hasNote) {

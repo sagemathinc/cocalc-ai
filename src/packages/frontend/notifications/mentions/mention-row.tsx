@@ -8,7 +8,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { CSS, redux, useState } from "@cocalc/frontend/app-framework";
 import { openNotificationTarget } from "../open-target";
 import { Icon, IconName, TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { NotificationMarkdown } from "../notification-markdown";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
@@ -20,6 +20,7 @@ const logger = getLogger("frontend:notifications:mention-row");
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
+  minWidth: 0,
 } as const;
 
 const AVATAR_WRAPPING_STYLE: CSS = {
@@ -158,7 +159,7 @@ export function MentionRow(props: Props) {
         )}
         <ProjectTitle project_id={project_id} />.
         {description ? (
-          <StaticMarkdown
+          <NotificationMarkdown
             style={{ color: UI_COLORS.secondary, margin: "4px 10px" }}
             value={description}
           />

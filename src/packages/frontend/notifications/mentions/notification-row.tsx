@@ -13,7 +13,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { openNotificationTarget } from "../open-target";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { NotificationMarkdown } from "../notification-markdown";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
@@ -427,7 +427,7 @@ export function NotificationRow(props: Props) {
             </div>
           ) : null}
           {body_markdown ? (
-            <StaticMarkdown
+            <NotificationMarkdown
               style={{
                 ...MARKDOWN_STYLE,
                 margin: IS_MOBILE ? "4px 0" : "4px 10px",
@@ -458,7 +458,7 @@ export function NotificationRow(props: Props) {
         )}
         <ProjectTitle project_id={project_id} />.
         {description ? (
-          <StaticMarkdown
+          <NotificationMarkdown
             style={{
               ...MARKDOWN_STYLE,
               margin: IS_MOBILE ? "4px 0" : "4px 10px",

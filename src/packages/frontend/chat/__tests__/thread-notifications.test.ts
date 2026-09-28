@@ -32,6 +32,7 @@ import {
   sendThreadFollowerNotifications,
 } from "../thread-notifications";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { serializeCollaborationReference } from "@cocalc/util/collaboration-references";
 
 describe("thread notification planning", () => {
   it("notifies previous thread participants unless muted or directly mentioned", () => {
@@ -75,6 +76,15 @@ describe("thread notification planning", () => {
   });
 
   it("submits followed-thread notifications through the mention RPC", async () => {
+    const reference = serializeCollaborationReference({
+      version: 1,
+      target: {
+        project_id: projectId,
+        kind: "artifact",
+        resource_id: "artifact:picture",
+      },
+      display_fallback: "Picture Lake",
+    });
     const createMention = jest.mocked(
       webapp_client.conat_client.hub.notifications.createMention,
     );
@@ -100,7 +110,7 @@ describe("thread notification planning", () => {
         thread_id: "thread-1",
         message_id: "message-1",
         date: "2026-07-10T00:00:00.000Z",
-        input: "new answer",
+        input: `See ${reference}`,
         target_account_ids: [alice],
       }),
     ).resolves.toEqual({ notified_account_ids: [alice] });
@@ -112,6 +122,7 @@ describe("thread notification planning", () => {
         target_account_ids: [alice],
         stable_source_id: "message-1:thread-follow",
         notification_reason: "thread_follow",
+        description: `New reply in a chat thread you follow:\n\nSee ${reference}`,
       }),
     );
   });
