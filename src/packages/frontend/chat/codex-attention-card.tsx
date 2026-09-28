@@ -68,7 +68,7 @@ function stateLabel(state: AcpAttentionRecord["state"]): string {
     case "declined":
       return "Declined";
     case "stale":
-      return "Codex disconnected";
+      return "Request no longer active";
     case "canceled":
       return "Canceled";
     case "expired":
@@ -404,17 +404,22 @@ function RuntimeCodexAttentionCard({
   const received =
     record.source_kind === "codex_sync_question" &&
     record.state === "answered" &&
-    record.resolution_reason === "Codex accepted the response";
+    (record.resolution_reason === "Codex accepted the response" ||
+      record.resolution_reason === "ACP accepted the response");
+  const responseAgent =
+    record.resolution_reason === "ACP accepted the response"
+      ? "agent"
+      : "Codex";
   const responseLabel = received
-    ? "Received by Codex"
+    ? `Received by ${responseAgent}`
     : staleWithAnswer
       ? "Response saved; delivery failed"
       : "Response submitted";
   const responseDescription = received
-    ? "Codex accepted your response."
+    ? `${responseAgent === "agent" ? "The agent" : "Codex"} accepted your response.`
     : staleWithAnswer
       ? "Your response is saved, but could not be delivered. You can retry with this answer."
-      : "Your response is saved. Receipt by Codex is not confirmed.";
+      : "Your response is saved. Receipt by the agent is not confirmed.";
   const setDismissed = (value: boolean) => {
     setCollapsed(value);
     try {
@@ -483,11 +488,14 @@ function RuntimeCodexAttentionCard({
                   ? "Approve this request in CoCalc. The waiting command will continue automatically."
                   : lateQuestion
                     ? "That turn has ended. Send your answer as a new message to continue."
-                    : record.is_blocking
-                      ? "The current Codex turn is paused until you respond."
-                      : record.source_kind === "codex_async_question"
-                        ? "Codex can keep working while you answer. Your response will be saved with this question and submitted to Codex."
-                        : record.summary}
+                    : !pending
+                      ? record.resolution_reason
+                      : record.is_blocking
+                        ? (record.summary ??
+                          "The current turn is paused until you respond.")
+                        : record.source_kind === "codex_async_question"
+                          ? "Codex can keep working while you answer. Your response will be saved with this question and submitted to Codex."
+                          : record.summary}
               </Text>
             )}
             {lite && pending ? (

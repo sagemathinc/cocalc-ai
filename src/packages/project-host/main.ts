@@ -95,8 +95,19 @@ import {
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
+import {
+  setHarnessAuthorityValidator,
+  setHarnessLauncher,
+} from "@cocalc/lite/hub/acp/harness-runtime";
+import { launchHarnessInProject } from "./acp/harness-launcher";
+import { validateHarnessAuthority } from "./acp/harness-authority";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
+import { startHarnessReaper } from "./acp/harness-reaper";
+import {
+  startClaudeLoginReaper,
+  closeClaudeSubscriptionLoginService,
+} from "./acp/claude-subscription-service";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import {
@@ -532,6 +543,8 @@ export async function main(
   );
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
+  setHarnessLauncher(launchHarnessInProject);
+  setHarnessAuthorityValidator(validateHarnessAuthority);
   initCodexSiteKeyGovernor();
   setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
     const accountId = `${account_id ?? ""}`.trim();
@@ -552,6 +565,8 @@ export async function main(
   }));
   configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
+  const stopHarnessReaper = startHarnessReaper();
+  const stopClaudeLoginReaper = startClaudeLoginReaper();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
@@ -1088,6 +1103,14 @@ export async function main(
     app,
     rewriteRequest: maybeRewriteAppHostnameRequest,
     rewriteResponse: rewritePrivateAppHostnameResponseLocation,
+    assertForwardAllowed: (req) => {
+      const expires = getProjectHostHttpAuthContext(req)?.scoped_api_key_exp_s;
+      if (expires != null && Date.now() >= expires * 1000) {
+        throw Object.assign(new Error("scoped HTTP authorization expired"), {
+          statusCode: 403,
+        });
+      }
+    },
     noteUpstreamHttpBytes: ({ req, bytes }) => {
       noteManagedBoundaryClassifiedBytes({
         req,
@@ -1533,7 +1556,9 @@ export async function main(
         project_id,
         force,
         runtime_exit_reason:
-          shared_compute_priority <= 0 ? "host_pressure_free" : "host_pressure",
+          shared_compute_priority != null && shared_compute_priority <= 0
+            ? "host_pressure_free"
+            : "host_pressure",
       });
     },
   });
@@ -1656,6 +1681,8 @@ export async function main(
     stopGcpPreemptionWatcher();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
+    stopHarnessReaper();
+    stopClaudeLoginReaper();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
     stopHttpProxyRevocationKickLoop?.();
@@ -1680,7 +1707,11 @@ export async function main(
         });
       }
     } finally {
-      close();
+      try {
+        await closeClaudeSubscriptionLoginService();
+      } finally {
+        close();
+      }
     }
   };
   process.once("exit", close);

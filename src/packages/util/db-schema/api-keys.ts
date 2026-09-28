@@ -5,6 +5,7 @@ export type Action = "get" | "delete" | "create" | "edit";
 
 export const API_KEY_CAPABILITIES = [
   "account:read",
+  "api-key:revoke:request",
   "project:create",
   "project:list",
   "project:read",
@@ -17,6 +18,19 @@ export const API_KEY_CAPABILITIES = [
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];
 
+export interface ApiKeyProjectGrant {
+  project_id: string;
+  capabilities: ApiKeyCapability[];
+  viewer_read_roots?: string[];
+}
+
+export interface ApiKeyScope {
+  version: 1;
+  account: ApiKeyCapability[];
+  projects: ApiKeyProjectGrant[];
+  all_projects?: Omit<ApiKeyProjectGrant, "project_id">;
+}
+
 export interface ApiKey {
   id: number;
   key_id?: string;
@@ -24,10 +38,12 @@ export interface ApiKey {
   created: Date;
   hash?: string; // usually NOT available
   trunc: string;
-  expire?: Date;
+  expire?: Date | null;
   name: string;
   capabilities: ApiKeyCapability[];
   allowed_project_ids: string[];
+  scope?: ApiKeyScope;
+  scope_revision?: number;
   last_active?: Date;
   secret?: string; // only when initially creating the key (and never in database)
 }
@@ -35,6 +51,11 @@ export interface ApiKey {
 Table({
   name: "api_keys",
   fields: {
+    api_search_next_ms: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Internal per-key search admission virtual arrival time, preserved on account rehome.",
+    },
     id: ID,
     account_id: CREATED_BY, // who made this api key
     expire: {
@@ -74,6 +95,20 @@ Table({
       type: "array",
       pg_type: "UUID[]",
       desc: "Explicit allow-list of project IDs this API key can access for project-scoped capabilities.",
+    },
+    scope: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Versioned per-project privileges for new scoped API keys.",
+    },
+    scope_revision: {
+      type: "integer",
+      desc: "Monotonically increasing revision invalidating derived credentials.",
+    },
+    issuance_sequence: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home delegation issuance sequence, preserved on renewal and account migration. Historical null values mean zero.",
     },
     last_active: {
       type: "timestamp",

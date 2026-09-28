@@ -304,8 +304,8 @@ const surfaces = [
   {
     label: "notifications",
     chunks: [...initial, ...notifications],
-    // The shared session registry includes the collaboration schema and RPCs.
-    // This measures about 502 KiB; no Collaborators UI is loaded here.
+    // Allow for the shared collaboration schema/RPCs plus resolver single-flight
+    // and end-to-end request deadlines; no Collaborators UI is loaded here.
     max: 505 * KiB,
   },
   {

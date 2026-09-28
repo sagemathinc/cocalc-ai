@@ -25,6 +25,15 @@ describeDb("Agent Network retention", () => {
       agent_id uuid,run_id uuid,ended_at timestamptz,expires_at timestamptz)`);
     await db.query(`CREATE TABLE IF NOT EXISTS agent_external_installations(
       installation_id uuid PRIMARY KEY,state text,created_at timestamptz,expires_at timestamptz)`);
+    await db.query(
+      `CREATE TABLE IF NOT EXISTS accounts(account_id uuid PRIMARY KEY,home_bay_id text)`,
+    );
+    await db.query(
+      `CREATE TABLE IF NOT EXISTS api_keys(account_id uuid,key_id text)`,
+    );
+    await db.query(`CREATE TABLE IF NOT EXISTS agent_cocalc_connector_turns(
+      turn_id uuid PRIMARY KEY,account_id uuid,key_id text,secret_ciphertext text,
+      ended_at timestamptz,expires_at timestamptz)`);
   });
   beforeEach(async () => {
     for (const table of tables) await db.query(`DELETE FROM ${table}`);

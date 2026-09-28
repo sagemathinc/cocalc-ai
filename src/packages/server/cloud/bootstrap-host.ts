@@ -491,7 +491,42 @@ function buildExamHostname({
   return labels.join(".");
 }
 
+type ManagedHarness = {
+  name: "claude-code";
+  version: string;
+  os: "linux";
+  arch: "amd64" | "arm64";
+  url: string;
+  sha256: string;
+};
+
+// Immutable, architecture-specific payloads built from managed-harnesses' lockfile.
+// Publish both pinned archives before deploying a hub that references them.
+export function resolveManagedHarness(
+  softwareBaseUrl: string,
+  os: string,
+  arch: string,
+): ManagedHarness | undefined {
+  if (os !== "linux" || (arch !== "amd64" && arch !== "arm64")) {
+    return undefined;
+  }
+  const sha256 = {
+    amd64: "e19b876ca7a56b39f5f6fa24537df57319908fa44c5a99280948f62a8138f7d3",
+    arm64: "d39ceeceb2501c65502f49c24662c15076361a59c717f8ccfa6d7a99e26c1dac",
+  }[arch];
+  const version = "0.81.1";
+  return {
+    name: "claude-code",
+    version,
+    os,
+    arch,
+    url: `${softwareBaseUrl.replace(/\/$/, "")}/harnesses/claude-code/${version}/${sha256}/harnesses-linux-${arch}.tar.xz`,
+    sha256,
+  };
+}
+
 export type BootstrapScripts = {
+  managedHarness?: ManagedHarness;
   expectedOs: string;
   expectedArch: string;
   bootstrapSelector: string;
@@ -1016,6 +1051,30 @@ export async function buildBootstrapScripts(
     runtime,
     machine,
   });
+  const managedHarnessOverride =
+    process.env.COCALC_PROJECT_HOST_MANAGED_HARNESSES?.trim();
+  const softwareEndpointMode =
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE?.trim().toLowerCase();
+  const runningInBay = !!process.env.COCALC_BAY_ID?.trim();
+  const usesLocalArtifacts =
+    softwareEndpointMode === "local" ||
+    (softwareEndpointMode !== "remote" &&
+      !runningInBay &&
+      (!!process.env.COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT?.trim() ||
+        process.env.NODE_ENV !== "production"));
+  // Local development and on-prem installs may intentionally be air-gapped or
+  // omit the large provider archives. They must opt in to provisioning them.
+  const managedHarness =
+    managedHarnessOverride === "1" ||
+    (managedHarnessOverride !== "0" &&
+      !useOnPremSettings &&
+      !usesLocalArtifacts)
+      ? resolveManagedHarness(
+          softwareBaseUrl,
+          targetPlatform.os,
+          targetPlatform.arch,
+        )
+      : undefined;
   const desiredArtifactVersions = await loadBootstrapArtifactDesiredVersions(
     row.id,
   );
@@ -1417,6 +1476,7 @@ export async function buildBootstrapScripts(
   })();
 
   return {
+    managedHarness,
     expectedOs: targetPlatform.os,
     expectedArch: targetPlatform.arch,
     bootstrapSelector,
@@ -1652,6 +1712,7 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
   "apt_packages": ${aptPackagesJson},
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
+  "managed_harness": ${JSON.stringify(scripts.managedHarness ?? null)},
   "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"],
   "shared_scratch": {
     "enabled": ${scripts.sharedScratchEnabled ? "true" : "false"},

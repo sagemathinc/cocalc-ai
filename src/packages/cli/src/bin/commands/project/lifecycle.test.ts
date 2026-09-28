@@ -6,6 +6,78 @@ import { Command } from "commander";
 import * as archiveInfo from "@cocalc/conat/project/archive-info";
 import { registerProjectLifecycleCommands } from "./lifecycle";
 
+for (const managed of [false, true]) {
+  test(`project proxy curl uses the selected scoped credential (managed: ${managed})`, async () => {
+    const project_id = "22222222-2222-4222-8222-222222222222";
+    const calls: RequestInit[] = [];
+    const originalFetch = global.fetch;
+    let returned: any;
+    global.fetch = (async (_url: any, init: RequestInit) => {
+      calls.push(init);
+      return calls.length === 1
+        ? Response.json({
+            project_id,
+            host_id: "33333333-3333-4333-8333-333333333333",
+            title: "test",
+            connect_url: "https://host.example",
+            local_proxy: false,
+            token: "child",
+            expires_at: Date.now() + 25_000,
+          })
+        : new Response("success");
+    }) as typeof fetch;
+    const unexpected = () => {
+      throw Error("must not use ordinary cookie or broad host resolution");
+    };
+    const program = new Command();
+    registerProjectLifecycleCommands(program.command("project"), {
+      withContext: async (_command, _label, fn) => {
+        returned = await fn({
+          apiBaseUrl: "https://hub.example",
+          timeoutMs: 5000,
+          ...(managed
+            ? {
+                managedConnector: {
+                  sourceProjectId: "11111111-1111-4111-8111-111111111111",
+                  keyFile: "/unused",
+                  keySnapshot: "selected-key",
+                },
+              }
+            : { apiKey: "selected-key" }),
+          globals: { cookie: "operator-cookie" },
+          hub: {},
+        });
+      },
+      resolveProjectFromArgOrContext: async () => ({ project_id }),
+      resolveProxyUrl: unexpected,
+      buildCookieHeader: unexpected,
+      fetchWithTimeout: unexpected,
+    } as any);
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "project",
+        "proxy",
+        "curl",
+        "--project",
+        project_id,
+        "--port",
+        "8080",
+      ]);
+      assert.equal(returned.body_preview, "success");
+      assert.equal(
+        (calls[0].headers as any).Authorization,
+        "Bearer selected-key",
+      );
+      assert.equal(JSON.stringify(calls).includes("operator-cookie"), false);
+      assert.equal(calls.length, 2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+}
+
 test("project archive stops, creates a final backup, waits, and archives when the latest backup is stale", async () => {
   const calls: Array<[string, any]> = [];
   let returned: any;

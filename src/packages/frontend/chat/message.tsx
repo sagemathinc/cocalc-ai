@@ -131,6 +131,7 @@ import {
   codexActivityTextSource,
   codexActivityWindow,
   computeAcpStateToRender,
+  acpMessageStatePresentation,
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getAcpMessageDeliveryLabel,
   getQueuedMessageEditHelpText,
@@ -542,11 +543,8 @@ export default function Message({
     hasAcpAssistantMetadata,
   });
   const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
-  const senderName = rpcAttribution
-    ? rpcAttribution.label
-    : isCodexAgentMessage
-      ? codexAgentName(senderId)
-      : get_user_name(senderId);
+  const isGenericAgentMessage =
+    isCodexAgentMessage && field(message, "acp_runtime_kind") === "acp";
   const showHumanAvatar = showParticipantAvatar({
     showAvatar: show_avatar,
     senderId,
@@ -1305,12 +1303,29 @@ export default function Message({
     [messageThreadId, threadRootMs],
   );
 
-  const threadCodexConfig =
-    threadLookup.threadLookupKey == null
-      ? undefined
-      : actions?.getThreadMetadata(threadLookup.threadLookupKey, {
-          threadId: threadLookup.threadId,
-        })?.acp_config;
+  const threadMetadata = useMemo(() => {
+    if (threadLookup.threadLookupKey == null) return undefined;
+    return actions?.getThreadMetadata(threadLookup.threadLookupKey, {
+      threadId: threadLookup.threadId,
+    });
+  }, [actions, threadLookup]);
+  const threadCodexConfig = threadMetadata?.acp_config;
+  const acpDisplayName =
+    threadMetadata?.agent_runtime?.profile?.id === "claude-code"
+      ? "Claude Code"
+      : "ACP agent";
+  const senderName = rpcAttribution
+    ? rpcAttribution.label
+    : isGenericAgentMessage
+      ? acpDisplayName
+      : isCodexAgentMessage
+        ? codexAgentName(senderId)
+        : get_user_name(senderId);
+  const messageRuntimeKind =
+    (field(message, "acp_runtime_kind") ??
+      threadMetadata?.agent_runtime?.kind) === "acp"
+      ? "acp"
+      : "codex";
 
   const activityBasePath = agentMessageDirectory({
     workingDirectory: field<string>(message, "acp_working_directory"),
@@ -2987,7 +3002,7 @@ export default function Message({
     void cancelQueuedAcpTurn({ actions, message });
   };
   const handleSendQueuedImmediately = () => {
-    if (!actions) return;
+    if (!actions || messageRuntimeKind === "acp") return;
     void sendQueuedAcpTurnImmediately({ actions, message });
   };
   const handleResendNotSent = () => {
@@ -3036,6 +3051,12 @@ export default function Message({
     });
     if (receiptLabel) return <Tag>{receiptLabel}</Tag>;
     if (!acpStateToRender) return null;
+    const presentation = acpMessageStatePresentation({
+      state: acpStateToRender,
+      runtimeKind: messageRuntimeKind,
+      isViewersMessage: is_viewers_message,
+      agentName: acpDisplayName,
+    });
     if (acpStateToRender === "queue") {
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
@@ -3048,15 +3069,17 @@ export default function Message({
               Edit
             </Button>
           ) : null}
-          <Tooltip title="Steer running turn (Ctrl+Enter)">
-            <Button
-              size="small"
-              type="text"
-              onClick={handleSendQueuedImmediately}
-            >
-              Steer
-            </Button>
-          </Tooltip>
+          {presentation.canSteer && (
+            <Tooltip title="Steer running turn (Ctrl+Enter)">
+              <Button
+                size="small"
+                type="text"
+                onClick={handleSendQueuedImmediately}
+              >
+                Steer
+              </Button>
+            </Tooltip>
+          )}
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
           </Button>
@@ -3080,13 +3103,7 @@ export default function Message({
         acpStateToRender === "running" ? (
           <SyncOutlined spin />
         ) : null}{" "}
-        {acpStateToRender === "sending"
-          ? "submitting to Codex"
-          : acpStateToRender === "sent"
-            ? "waiting for Codex"
-            : acpStateToRender === "running" && is_viewers_message
-              ? "Codex is working"
-              : acpStateToRender}
+        {presentation.label}
       </Tag>
     );
   };

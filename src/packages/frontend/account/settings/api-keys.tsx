@@ -24,10 +24,9 @@ export default function ApiKeys() {
       <ApiKeysTables manage={manage} />
       <Paragraph>
         <FormattedMessage
-          id="account.settings.api-keys.explanation"
+          id="account.settings.api-keys.scoped-explanation"
           defaultMessage={`Account API keys are least-privilege credentials.
-          Select explicit capabilities and, for project/file/Codex/exec access,
-          the exact allowed project IDs.`}
+          Choose account privileges and separate permissions for each project.`}
         />
       </Paragraph>
     </SettingBox>

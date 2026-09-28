@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import type { ApiKeyPrincipal } from "@cocalc/server/api/api-key-scope";
 import createProject, {
   createProjectWithBootstrap,
 } from "@cocalc/server/projects/create";
@@ -221,7 +223,10 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { normalizeStudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
-import { listAccountProjectWindow as listAccountProjectWindowLocal } from "@cocalc/server/projects/list-account-window";
+import {
+  listAccountProjectWindow as listAccountProjectWindowLocal,
+  listProjectSummaries as listProjectSummariesLocal,
+} from "@cocalc/server/projects/list-account-window";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import type { ProjectSecretsRuntimeRefreshResult } from "@cocalc/util/project-secrets";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
@@ -3381,6 +3386,92 @@ export async function listAccountProjectWindow({
     hidden,
     search,
     sort,
+  });
+}
+
+export async function listProjectSummaries(opts: {
+  account_id: string;
+  project_id?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  // Public RPC parameters must never supply admission identity.
+  const { account_id, project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+  });
+}
+
+export async function listProjectSummariesForApiKey(
+  principal: ApiKeyPrincipal,
+  opts: {
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  },
+) {
+  requireApiKeyCapability(principal, "project:list");
+  if (!principal.account_id || !principal.key_id || !principal.scope_revision)
+    throw Error("missing authenticated search key identity");
+  const { project_id, limit, offset, search } = opts;
+  return listProjectSummariesWithAdmission({
+    account_id: principal.account_id,
+    project_id,
+    limit,
+    offset,
+    search,
+    admission_key: {
+      key_id: principal.key_id,
+      scope_revision: principal.scope_revision,
+    },
+  });
+}
+
+async function listProjectSummariesWithAdmission({
+  admission_key,
+  account_id,
+  project_id,
+  limit,
+  offset,
+  search,
+}: {
+  admission_key?: { key_id: string; scope_revision: number };
+  account_id: string;
+  project_id?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (location.home_bay_id !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: location.home_bay_id,
+    }).listProjectSummaries({
+      account_id,
+      project_id,
+      limit,
+      offset,
+      search,
+      ...(admission_key ? { admission_key } : {}),
+    });
+  }
+  return await listProjectSummariesLocal({
+    ...(admission_key ? { admission_key } : {}),
+    account_id,
+    project_id,
+    limit,
+    offset,
+    search,
   });
 }
 
@@ -6994,6 +7085,67 @@ export async function codexDeviceAuthCancel({
   throw Error(
     "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
   );
+}
+
+export async function getClaudeSubscriptionUsage({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription usage must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginStart({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id?: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginSubmitCode({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+  code: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
+}
+
+export async function claudeSubscriptionLoginCancel({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error("Claude subscription login must use the project-host endpoint");
 }
 
 export async function codexUploadAuthFile({

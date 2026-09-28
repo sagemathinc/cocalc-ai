@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Map as ImmutableMap } from "immutable";
 import React from "react";
 
@@ -33,6 +34,7 @@ jest.mock("antd", () => {
     value,
     disabled,
     onChange,
+    style,
     ...props
   }: any) => (
     <>
@@ -42,8 +44,9 @@ jest.mock("antd", () => {
       />
       <select
         aria-label={props["aria-label"]}
+        style={style}
         multiple={mode === "multiple"}
-        value={value}
+        value={value === null ? "" : value}
         disabled={disabled}
         onScroll={props.onPopupScroll}
         onChange={(event) =>
@@ -56,6 +59,7 @@ jest.mock("antd", () => {
           )
         }
       >
+        {value === null && <option value="" hidden />}
         {children}
       </select>
     </>
@@ -125,6 +129,32 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 describe("SelectProject", () => {
+  it("keeps a controlled picker empty when cleared to null", () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <SelectProject value="owner-project" onChange={onChange} />,
+    );
+    const select = screen.getByRole("combobox", { name: "Project" });
+    expect(select).toHaveValue("owner-project");
+    rerender(<SelectProject value={null} onChange={onChange} />);
+    expect(select).toHaveValue("");
+    fireEvent.change(select, { target: { value: "collab-project" } });
+    expect(onChange).toHaveBeenCalledWith("collab-project");
+    expect(select).toHaveValue("");
+  });
+
+  it("allows the selector to shrink beside the keyboard-operable hidden-project control", async () => {
+    render(<SelectProject ariaLabel="Project" onChange={jest.fn()} />);
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveStyle({
+      minWidth: "0",
+    });
+    const hidden = screen.getByRole("checkbox", { name: "Hidden" });
+    hidden.focus();
+    await userEvent.keyboard(" ");
+    expect(hidden).toBeChecked();
+    expect(hidden).toHaveFocus();
+    expect(screen.getByText("Hidden Project")).toBeInTheDocument();
+  });
   it("can limit choices to full collaborator projects", () => {
     render(<SelectProject fullCollaboratorOnly onChange={jest.fn()} />);
 

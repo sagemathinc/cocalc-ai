@@ -97,6 +97,8 @@ import { ModalInfo, ProjectStore, ProjectStoreState } from "./store";
 import { downloadProjectFile } from "./download-file";
 import {
   PROJECT_RUNTIME_RECOVERY_EVENT,
+  hasForegroundProjectRuntimeView,
+  shouldAutoRestartAfterRuntimeLoss,
   ProjectRuntimeTracker,
   shouldDisplayRuntimeRecoveryNotice,
   type RuntimeRecoveryNotice,
@@ -2845,6 +2847,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.projectRuntimeTracker.reset();
     this.projectStatusSub?.close();
     delete this.projectStatusSub;
+    if (
+      !shouldAutoRestartAfterRuntimeLoss({
+        runtimeExitReason: runtime_exit_reason,
+        projectVisible:
+          this.isProjectTabVisible() ||
+          hasForegroundProjectRuntimeView(this.project_id),
+        browserVisible:
+          typeof document !== "undefined" &&
+          document.visibilityState === "visible",
+      })
+    ) {
+      this.dismissRuntimeRecoveryNotice();
+      return;
+    }
     this.publishRuntimeRecoveryNotice({
       id: `${this.project_id}:runtime-lost:${Date.now()}`,
       reason: "project_runtime_lost",

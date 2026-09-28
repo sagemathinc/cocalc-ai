@@ -775,6 +775,7 @@ export async function handleProjectReferenceGet(
   }
   const { rows } = await getPool().query<{
     users: Record<string, any> | null;
+    api_key_membership_revocation: unknown;
     runtime_lifecycle_revision: number | string | null;
     usage_account_id: string | null;
     allow_collaborator_destructive_storage_actions: boolean | null;
@@ -782,6 +783,7 @@ export async function handleProjectReferenceGet(
     `
       SELECT
         COALESCE(users, '{}'::jsonb) AS users,
+        api_key_membership_revocations->$2::text AS api_key_membership_revocation,
         COALESCE(runtime_lifecycle_revision, 0)::bigint
           AS runtime_lifecycle_revision,
         usage_account_id,
@@ -791,7 +793,7 @@ export async function handleProjectReferenceGet(
         AND deleted IS NOT TRUE
       LIMIT 1
     `,
-    [req.project_id],
+    [req.project_id, req.account_id],
   );
   return {
     project_id: project.project_id,
@@ -800,6 +802,7 @@ export async function handleProjectReferenceGet(
     owning_bay_id: project.owning_bay_id,
     usage_account_id: rows[0]?.usage_account_id ?? null,
     users: rows[0]?.users ?? {},
+    api_key_membership_revocation: rows[0]?.api_key_membership_revocation,
     runtime_lifecycle_revision: Number(
       rows[0]?.runtime_lifecycle_revision ?? 0,
     ),

@@ -22,6 +22,7 @@ import { type Subvolume } from "./subvolume";
 import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "path";
+import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
@@ -61,6 +62,25 @@ const BACKUP_EXCLUDE_GLOBS = ["!.snapshots", "!.snapshots/**"] as const;
 const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 const MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP = 32;
+const SNAPSHOT_INVENTORY_RETRY_DELAYS_MS = [250, 1000] as const;
+
+function missingInventorySnapshot(stderr: string): string | undefined {
+  const id = stderr.match(
+    /Reading file `snapshots\/([a-f0-9]{64})` failed in the backend\./,
+  )?.[1];
+  if (
+    id &&
+    stderr
+      .split("\n")
+      .some(
+        (line) =>
+          line.includes(`path=snapshots/${id}: read failed NotFound`) &&
+          /\bcode:\s*"NoSuchKey"/.test(line),
+      )
+  ) {
+    return id;
+  }
+}
 
 function isRepositoryCapacityError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -469,13 +489,39 @@ export class SubvolumeRustic {
 
   // returns list of backups, sorted from oldest to newest
   private snapshotsCache: Snapshot[] | null = null;
-  private listSnapshotsFresh = async (): Promise<Snapshot[]> => {
-    const { stdout, truncated } = parseOutput(
-      await this.rusticHost(["snapshots", "--json"], {
-        timeout: DEFAULT_SNAPSHOTS_TIMEOUT_MS,
+  private readSnapshotInventory = async () => {
+    const deadline = Date.now() + DEFAULT_SNAPSHOTS_TIMEOUT_MS;
+    let timeout = DEFAULT_SNAPSHOTS_TIMEOUT_MS;
+    for (let attempt = 0; ; attempt++) {
+      const output = await this.rusticHost(["snapshots", "--json"], {
+        timeout,
         maxSize: DEFAULT_SNAPSHOTS_MAX_SIZE,
-      }),
-    );
+      });
+      try {
+        return parseOutput(output);
+      } catch (err) {
+        const id = output.truncated
+          ? undefined
+          : missingInventorySnapshot(Buffer.from(output.stderr).toString());
+        const wait = SNAPSHOT_INVENTORY_RETRY_DELAYS_MS[attempt];
+        if (!id || wait == null || Date.now() + wait >= deadline) throw err;
+        // A snapshot can disappear between Rustic's listing and read, e.g.
+        // after retention in a shared repository. Retry the read-only inventory,
+        // never forget/upload, and never accept partial or cached inventory.
+        logger.warn("retrying inventory after listed snapshot disappeared", {
+          subvolume: this.subvolume.name,
+          snapshot: id,
+          retry: attempt + 1,
+        });
+        await delay(wait);
+        timeout = deadline - Date.now();
+        if (timeout <= 0) throw err;
+      }
+    }
+  };
+
+  private listSnapshotsFresh = async (): Promise<Snapshot[]> => {
+    const { stdout, truncated } = await this.readSnapshotInventory();
     /* stdout = [
   {
     "group_key": {

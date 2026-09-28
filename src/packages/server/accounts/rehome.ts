@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
+import { ApiKeyActionStore } from "@cocalc/server/api/key-action-store";
 import type {
   AccountCollaborationHandoff,
   AccountMembershipPortableState,
@@ -95,6 +96,7 @@ const PORTABLE_STATE_TABLES = [
   "account_impersonation_grants",
   "account_impersonation_sessions",
   "api_keys",
+  "api_key_action_requests",
   "admin_assigned_memberships",
   "account_entitlement_overrides",
   "account_entitlement_override_events",
@@ -190,6 +192,12 @@ async function ensureAccountRehomeSchema(): Promise<void> {
   if (accountRehomeSchemaReady.has(bay))
     return accountRehomeSchemaReady.get(bay);
   const pending = (async () => {
+    await getPool().query(
+      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_key_issuance_sequence BIGINT",
+    );
+    await getPool().query(
+      "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+    );
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
         op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -238,6 +246,12 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
     return accountRehomeApiKeysSchemaReady.get(bay);
   const pending = (async () => {
     await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS issuance_sequence BIGINT",
+    );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS api_search_next_ms BIGINT",
+    );
+    await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );
     await getPool().query(
@@ -249,6 +263,13 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
     await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
     );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope JSONB",
+    );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1",
+    );
+    await new ApiKeyActionStore(getPool()).ensureSchema();
   })();
   accountRehomeApiKeysSchemaReady.set(bay, pending);
   try {
@@ -381,9 +402,11 @@ async function replacePortableRows({
               ? ["session_hash"]
               : table === "api_keys"
                 ? ["key_id"]
-                : table === "account_entitlement_overrides"
-                  ? ["account_id"]
-                  : ["id"];
+                : table === "api_key_action_requests"
+                  ? ["account_id", "request_id"]
+                  : table === "account_entitlement_overrides"
+                    ? ["account_id"]
+                    : ["id"];
   if (table === "api_keys") {
     await db.query(
       `
@@ -605,7 +628,8 @@ async function loadAccountWidePortableApiKeyRows(
     rows: Record<string, unknown>[] | null;
   }>(
     `
-      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+      SELECT COALESCE(jsonb_agg(to_jsonb(t) ||
+        jsonb_build_object('issuance_sequence',t.issuance_sequence::text)), '[]'::jsonb) AS rows
         FROM (
           SELECT *
             FROM api_keys
@@ -747,9 +771,11 @@ async function loadAccountRowForRehome(
   account_id: string,
   db: Queryable = getPool(),
 ): Promise<Record<string, unknown>> {
+  await ensureAccountRehomeSchema();
   const { rows } = await db.query(
     `
-      SELECT to_jsonb(accounts) AS account
+      SELECT to_jsonb(accounts) || jsonb_build_object(
+        'api_key_issuance_sequence',api_key_issuance_sequence::text) AS account
         FROM accounts
        WHERE account_id=$1
          AND deleted IS NOT TRUE
@@ -792,6 +818,7 @@ async function loadPortableRows(
 async function loadPortableState(
   account_id: string,
 ): Promise<AccountRehomeStateCopyRequest> {
+  await ensureAccountRehomeApiKeysSchema();
   const [
     account_project_index,
     account_collaborator_index,
@@ -804,6 +831,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    api_key_action_requests,
     admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -821,6 +849,7 @@ async function loadPortableState(
     loadPortableRows("account_impersonation_grants", account_id),
     loadPortableRows("account_impersonation_sessions", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    loadPortableRows("api_key_action_requests", account_id),
     loadPortableRows("admin_assigned_memberships", account_id),
     loadPortableRows("account_entitlement_overrides", account_id),
     loadPortableRows("account_entitlement_override_events", account_id),
@@ -842,6 +871,7 @@ async function loadPortableState(
     account_impersonation_grants,
     account_impersonation_sessions,
     api_keys,
+    api_key_action_requests,
     admin_assigned_memberships,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -1276,6 +1306,7 @@ export async function acceptAccountRehome({
       `account rehome accept for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
+  await ensureAccountRehomeSchema();
   const accept = async (db: Queryable = getPool()) =>
     await upsertJsonRow({
       table: "accounts",
@@ -1583,6 +1614,7 @@ async function copyLegacyAccountRehomeState({
   account_impersonation_grants,
   account_impersonation_sessions,
   api_keys,
+  api_key_action_requests,
   admin_assigned_memberships,
   account_entitlement_overrides,
   account_entitlement_override_events,
@@ -1662,6 +1694,11 @@ async function copyLegacyAccountRehomeState({
     table: "api_keys",
     account_id: accountId,
     rows: api_keys ?? [],
+  });
+  await replacePortableRows({
+    table: "api_key_action_requests",
+    account_id: accountId,
+    rows: api_key_action_requests ?? [],
   });
   await replacePortableRows({
     table: "admin_assigned_memberships",

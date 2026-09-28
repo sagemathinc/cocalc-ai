@@ -252,47 +252,158 @@ describe("storage admission controller", () => {
     });
   });
 
-  it("admits an overdue backup during lifecycle work but not an emergency", () => {
-    const controller = create("enforce");
+  it.each(["scheduled_snapshot", "scheduled_backup"] as const)(
+    "preserves lifecycle, settle and emergency gates for overdue %s",
+    (operation_kind) => {
+      const controller = create("enforce");
+      starting = 1;
+      expect(
+        controller.admit({
+          operation_kind,
+          project_id: "project-0",
+          allow_starvation_override: true,
+        }),
+      ).toMatchObject({
+        admitted: false,
+        starvation_override: false,
+        reason: "lifecycle_active",
+      });
+      expect(
+        controller.backgroundDeferralReason({
+          allow_starvation_override: true,
+        }),
+      ).toBe("lifecycle_active");
+      starting = 0;
+      now += 1_000;
+      expect(
+        controller.admit({
+          operation_kind,
+          project_id: "project-1",
+          allow_starvation_override: true,
+        }),
+      ).toMatchObject({
+        admitted: false,
+        would_defer: true,
+        reason: "lifecycle_settle",
+        starvation_override: false,
+      });
+      expect(
+        controller.backgroundDeferralReason({
+          allow_starvation_override: true,
+        }),
+      ).toBe("lifecycle_settle");
+
+      starting = 0;
+      full = 10;
+      now += 5_000;
+      expect(
+        controller.admit({
+          operation_kind,
+          project_id: "project-2",
+          allow_starvation_override: true,
+        }),
+      ).toMatchObject({
+        admitted: false,
+        would_defer: true,
+        reason: "io_pressure_emergency",
+        starvation_override: false,
+      });
+      expect(
+        controller.backgroundDeferralReason({
+          allow_starvation_override: true,
+        }),
+      ).toBe("io_pressure_emergency");
+    },
+  );
+
+  it("allows both maintenance kinds at sustained 2.3% without relaxing recovery or scavengers", () => {
+    const controller = create();
+    full = 10;
+    controller.sample();
+    full = 2.3;
+    for (let i = 0; i < 12; i++) {
+      now += 5 * 60_000;
+      expect(controller.sample().pressure_state).toBe("recovery");
+      for (const operation_kind of [
+        "scheduled_snapshot",
+        "scheduled_backup",
+      ] as const) {
+        expect(controller.admit({ operation_kind }).admitted).toBe(false);
+        const ticket = controller.admit({
+          operation_kind,
+          allow_starvation_override: true,
+        });
+        expect(ticket).toMatchObject({
+          admitted: true,
+          starvation_override: true,
+        });
+        expect(
+          controller.backgroundDeferralReason({
+            allow_starvation_override: true,
+          }),
+        ).toBeUndefined();
+        expect(
+          controller.admit({ operation_kind, allow_starvation_override: true })
+            .admitted,
+        ).toBe(false);
+        ticket.release();
+        ticket.release();
+      }
+      expect(
+        controller.admit({
+          operation_kind: "orphan_cleanup",
+          allow_starvation_override: true,
+        }).admitted,
+      ).toBe(false);
+    }
+  });
+
+  it("rechecks emergency and lifecycle safety at mutation boundaries", () => {
+    const controller = create();
+    full = 6;
+    controller.sample();
+    controller.sample();
+    const ticket = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
+    });
+    expect(ticket.starvation_override).toBe(true);
+    full = 10;
+    expect(
+      controller.backgroundDeferralReason({ allow_starvation_override: true }),
+    ).toBe("io_pressure_emergency");
+    full = 2.3;
     starting = 1;
+    expect(
+      controller.backgroundDeferralReason({ allow_starvation_override: true }),
+    ).toBe("lifecycle_active");
+    ticket.release();
+  });
+
+  it("does not overlap an existing scheduled operation or block interactive work", () => {
+    const controller = create();
+    const normal = controller.admit({ operation_kind: "scheduled_backup" });
+    full = 6;
+    controller.sample();
+    controller.sample();
     expect(
       controller.admit({
         operation_kind: "scheduled_snapshot",
-        project_id: "project-0",
         allow_starvation_override: true,
-      }),
-    ).toMatchObject({
-      admitted: false,
-      starvation_override: false,
+      }).admitted,
+    ).toBe(false);
+    normal.release();
+    const escape = controller.admit({
+      operation_kind: "scheduled_snapshot",
+      allow_starvation_override: true,
     });
-    expect(
-      controller.admit({
-        operation_kind: "scheduled_backup",
-        project_id: "project-1",
-        allow_starvation_override: true,
-      }),
-    ).toMatchObject({
-      admitted: true,
-      would_defer: true,
-      reason: "lifecycle_active",
-      starvation_override: true,
+    expect(escape.starvation_override).toBe(true);
+    const interactive = controller.admit({
+      operation_kind: "interactive_backup",
     });
-
-    starting = 0;
-    full = 10;
-    now += 5_000;
-    expect(
-      controller.admit({
-        operation_kind: "scheduled_backup",
-        project_id: "project-2",
-        allow_starvation_override: true,
-      }),
-    ).toMatchObject({
-      admitted: false,
-      would_defer: true,
-      reason: "io_pressure_emergency",
-      starvation_override: false,
-    });
+    expect(interactive.admitted).toBe(true);
+    interactive.release();
+    escape.release();
   });
 
   it("fails background admission closed when pressure cannot be sampled", () => {
@@ -312,6 +423,7 @@ describe("storage admission controller", () => {
       controller.admit({
         operation_kind: "scheduled_snapshot",
         project_id: "project-1",
+        allow_starvation_override: true,
       }),
     ).toMatchObject({
       admitted: false,

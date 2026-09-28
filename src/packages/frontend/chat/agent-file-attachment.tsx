@@ -28,6 +28,7 @@ export function AgentFileAttachment({
   onInsert,
   onSetGoal,
   extraActions = [],
+  extraMenuItems = [],
   disabled = false,
 }: {
   projectId: string;
@@ -35,6 +36,7 @@ export function AgentFileAttachment({
   onInsert: (markdown: string) => void;
   onSetGoal?: () => void;
   extraActions?: { key: string; label: string; onClick: () => void }[];
+  extraMenuItems?: MenuProps["items"];
   disabled?: boolean;
 }) {
   const home = getProjectHomeDirectory(projectId);
@@ -49,6 +51,7 @@ export function AgentFileAttachment({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const uploadRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -169,8 +172,13 @@ export function AgentFileAttachment({
             ...extraActions.map(({ key, label }) => ({ key, label })),
           ]
         : []),
+      ...(extraMenuItems.length
+        ? [{ type: "divider" as const }, ...extraMenuItems]
+        : []),
     ],
     onClick: ({ key }) => {
+      // Dialogs opened by menu items should restore focus to the persistent +.
+      triggerRef.current?.focus();
       if (key === "upload") uploadRef.current?.click();
       if (key === "choose") setOpen(true);
       if (key === "goal") onSetGoal?.();
@@ -202,6 +210,7 @@ export function AgentFileAttachment({
           }}
         >
           <Button
+            ref={triggerRef}
             aria-label="Add files and more"
             aria-haspopup="menu"
             disabled={disabled}

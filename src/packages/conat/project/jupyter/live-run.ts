@@ -2,6 +2,7 @@ import { projectSubject } from "@cocalc/conat/names";
 import type { DKV, DKVOptions } from "@cocalc/conat/sync/dkv";
 import { JUPYTER_SYNCDB_EXTENSIONS } from "@cocalc/util/jupyter/names";
 import { sha1 } from "@cocalc/util/misc";
+import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 export const JUPYTER_LIVE_RUN_SERVICE = "jupyter-live-run";
 export const JUPYTER_LIVE_RUN_STORE_PREFIX = "jupyter-live-run-v2";
@@ -41,6 +42,59 @@ export type JupyterLiveRunSnapshot = {
   updated_at_ms: number;
   done?: boolean;
 };
+
+export type JupyterLiveRunPage = Omit<JupyterLiveRunSnapshot, "batches"> & {
+  batches: JupyterLiveRunBatch[];
+  next_seq: number;
+  has_more: boolean;
+};
+
+export function jupyterLiveRunPage(
+  snapshot: JupyterLiveRunSnapshot,
+  after_seq = 0,
+  limit = 32,
+): JupyterLiveRunPage {
+  if (
+    !Number.isSafeInteger(after_seq) ||
+    after_seq < 0 ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100
+  ) {
+    throw Error("invalid run replay cursor or page size");
+  }
+  const page: JupyterLiveRunPage = {
+    path: snapshot.path,
+    run_id: snapshot.run_id,
+    updated_at_ms: snapshot.updated_at_ms,
+    done: snapshot.done,
+    batches: [],
+    next_seq: after_seq,
+    has_more: false,
+  };
+  const maxBytes = 1024 * 1024;
+  for (const batch of snapshot.batches) {
+    if (batch.seq <= after_seq) continue;
+    if (page.batches.length === limit) {
+      page.has_more = true;
+      break;
+    }
+    const previousSeq = page.next_seq;
+    page.next_seq = batch.seq;
+    page.batches.push(batch);
+    if (
+      encode({ encoding: DataEncoding.MsgPack, mesg: page }).length > maxBytes
+    ) {
+      page.batches.pop();
+      page.next_seq = previousSeq;
+      if (page.batches.length === 0)
+        throw Error("run replay batch exceeds response limit");
+      page.has_more = true;
+      break;
+    }
+  }
+  return page;
+}
 
 export function canonicalJupyterLiveRunPath(path: string): string {
   const suffix = `.${JUPYTER_SYNCDB_EXTENSIONS}`;

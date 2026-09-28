@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { queryProjects, resolveHost, resolveProject } from "./project-resolve";
+import {
+  queryProjects,
+  resolveHost,
+  resolveProject,
+  resolveProjectFromArgOrContext,
+} from "./project-resolve";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const AGENT_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const HOST_ID = "33333333-3333-4333-8333-333333333333";
+const SOURCE_PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 
 function createContext(
   handler: (table: string, row?: Record<string, unknown>) => any[],
@@ -29,6 +41,163 @@ function createContext(
     },
   } as any;
 }
+
+test("resolveProject uses the sealed project id for an agent session", async () => {
+  const previousProjectId = process.env.COCALC_PROJECT_ID;
+  const previousTokenFile = process.env.COCALC_AGENT_TOKEN_FILE;
+  process.env.COCALC_PROJECT_ID = AGENT_PROJECT_ID;
+  process.env.COCALC_AGENT_TOKEN_FILE = "/tmp/test-agent-token";
+  try {
+    const ctx = createContext(() => {
+      throw Error("account-wide discovery must not run");
+    });
+    const project = await resolveProject(ctx, AGENT_PROJECT_ID, 1000);
+    assert.equal(project.project_id, AGENT_PROJECT_ID);
+    assert.equal(project.title, AGENT_PROJECT_ID);
+    const fromContext = await resolveProjectFromArgOrContext({
+      ctx,
+      projectCacheTtlMs: 1000,
+      readProjectContext: () => undefined,
+      projectContextPath: () => "/tmp/unused",
+    });
+    assert.equal(fromContext.project_id, AGENT_PROJECT_ID);
+  } finally {
+    if (previousProjectId == null) delete process.env.COCALC_PROJECT_ID;
+    else process.env.COCALC_PROJECT_ID = previousProjectId;
+    if (previousTokenFile == null) delete process.env.COCALC_AGENT_TOKEN_FILE;
+    else process.env.COCALC_AGENT_TOKEN_FILE = previousTokenFile;
+  }
+});
+
+test("API key project lookup never falls back to account userQuery", async () => {
+  const originalFetch = global.fetch;
+  const paths: string[] = [];
+  let listArgs: Record<string, unknown> | undefined;
+  global.fetch = (async (url: URL, options: RequestInit) => {
+    paths.push(url.pathname);
+    assert.equal(options.headers?.["Authorization"], "Bearer scoped-key");
+    if (url.pathname === "/api/conat/project-host-api-key") {
+      return { ok: true, json: async () => ({ error: "list-only key" }) };
+    }
+    listArgs = JSON.parse(String(options.body)).args[0];
+    return {
+      ok: true,
+      json: async () => ({
+        projects: [
+          {
+            project_id: PROJECT_ID,
+            title: "SageMath",
+            host_id: HOST_ID,
+            state: "running",
+            last_edited: null,
+          },
+        ],
+        next_offset: null,
+      }),
+    };
+  }) as typeof fetch;
+  try {
+    const ctx = createContext(() => {
+      throw Error("account userQuery must not be called");
+    });
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.apiKey = "scoped-key";
+    const project = await resolveProject(ctx, PROJECT_ID, 1000);
+    assert.equal(project.title, "SageMath");
+    assert.deepEqual(paths, [
+      "/api/conat/project-host-api-key",
+      "/api/conat/hub",
+    ]);
+    assert.equal(listArgs?.project_id, PROJECT_ID);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("API key title lookup applies exact matching to scoped search results", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = (async () => ({
+    ok: true,
+    json: async () => ({
+      projects: [
+        { project_id: PROJECT_ID, title: "SageMath archive", host_id: HOST_ID },
+        { project_id: HOST_ID, title: "SageMath", host_id: HOST_ID },
+      ],
+      next_offset: null,
+    }),
+  })) as unknown as typeof fetch;
+  try {
+    const ctx = createContext(() => {
+      throw Error("account userQuery must not be called");
+    });
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.apiKey = "scoped-key";
+    const project = await resolveProject(ctx, "SageMath", 1000);
+    assert.equal(project.project_id, HOST_ID);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("managed connector uses its key for account and target lookups, not its source project", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-project-auth-"));
+  const originalFetch = global.fetch;
+  const fetched: string[] = [];
+  try {
+    const keyFile = join(dir, "key");
+    writeFileSync(keyFile, "scoped-key\n", { mode: 0o600 });
+    global.fetch = (async (url: URL, options: RequestInit) => {
+      fetched.push(url.pathname);
+      assert.equal(options.headers?.["Authorization"], "Bearer scoped-key");
+      if (url.pathname === "/api/conat/project-host-api-key") {
+        return { ok: true, json: async () => ({ error: "list-only key" }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          projects: [
+            {
+              project_id: PROJECT_ID,
+              title: "SageMath",
+              host_id: HOST_ID,
+            },
+          ],
+          next_offset: null,
+        }),
+      };
+    }) as typeof fetch;
+    const ctx = createContext((table) =>
+      table === "projects"
+        ? [{ project_id: SOURCE_PROJECT_ID, title: "Source", host_id: HOST_ID }]
+        : [],
+    );
+    ctx.apiBaseUrl = "https://example.com";
+    ctx.managedConnector = { keyFile, sourceProjectId: SOURCE_PROJECT_ID };
+    const own = await queryProjects({
+      ctx,
+      project_id: SOURCE_PROJECT_ID,
+      limit: 5,
+    });
+    assert.equal(own[0].project_id, SOURCE_PROJECT_ID);
+    assert.deepEqual(fetched, []);
+    const listed = await queryProjects({ ctx, limit: 5 });
+    assert.equal(listed[0].project_id, PROJECT_ID);
+    assert.deepEqual(fetched, ["/api/conat/hub"]);
+    const target = await queryProjects({
+      ctx,
+      project_id: PROJECT_ID,
+      limit: 5,
+    });
+    assert.equal(target[0].project_id, PROJECT_ID);
+    assert.deepEqual(fetched.slice(1), [
+      "/api/conat/project-host-api-key",
+      "/api/conat/hub",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("queryProjects uses legacy projects reads by default", async () => {
   delete process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS;

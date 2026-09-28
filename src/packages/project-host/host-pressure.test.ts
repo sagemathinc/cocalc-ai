@@ -531,7 +531,7 @@ describe("host pressure controller helpers", () => {
     ]);
   });
 
-  it("ranks lower priority and older activity first", () => {
+  it("ranks older activity before tier", () => {
     const now = 2_000_000;
     const candidates = buildStopCandidates({
       zone: "pressure",
@@ -593,9 +593,152 @@ describe("host pressure controller helpers", () => {
 
     expect(candidates.map((candidate) => candidate.project_id)).toEqual([
       "proj-old",
-      "proj-low",
       "proj-high",
+      "proj-low",
     ]);
+  });
+
+  it.each(
+    [0, 1, 5, 100].flatMap((olderTier) =>
+      [0, 1, 5, 100].map((newerTier) => [olderTier, newerTier]),
+    ),
+  )(
+    "always ranks the more idle ordinary candidate first: tiers %i vs %i",
+    (olderTier, newerTier) => {
+      const now = 10 * 60 * 60_000;
+      const minimumIdleMs = 60 * 60_000;
+      const policies = new Map(
+        ["older", "newer"].map((project_id) => [
+          project_id,
+          {
+            project_id,
+            owner_account_id: "owner",
+            shared_compute_priority:
+              project_id === "older" ? olderTier : newerTier,
+            authoritative_last_edited_ms:
+              now - minimumIdleMs - (project_id === "older" ? 1 : 0),
+            policy_updated_ms: now,
+            stop_override:
+              project_id === "older"
+                ? ("default" as const)
+                : ("deprioritize" as const),
+          },
+        ]),
+      );
+      for (const order of [
+        ["newer", "older"],
+        ["older", "newer"],
+      ]) {
+        const candidates = buildStopCandidates({
+          zone: "pressure",
+          now,
+          minimumIdleMs,
+          projects: order.map((project_id) => ({
+            project_id,
+            state: "running",
+          })),
+          policies,
+          getStopState: () => undefined,
+        });
+        expect(candidates.map(({ project_id }) => project_id)).toEqual([
+          "older",
+          "newer",
+        ]);
+      }
+    },
+  );
+
+  it.each(["pressure", "emergency"] as const)(
+    "uses tier and deprioritize only after idleness in %s",
+    (zone) => {
+      const now = 10 * 60 * 60_000;
+      const rows = [
+        ["recent-free", 0, now - 60_000, "deprioritize"],
+        ["older-paid", 5, now - 2 * 60 * 60_000, "default"],
+        ["oldest-paid", 5, now - 8 * 60 * 60_000, "default"],
+        ["oldest-free", 0, now - 8 * 60 * 60_000, "default"],
+        ["oldest-deprioritized", 5, now - 8 * 60 * 60_000, "deprioritize"],
+      ] as const;
+      const candidates = buildStopCandidates({
+        zone,
+        now,
+        projects: rows.map(([project_id]) => ({
+          project_id,
+          state: "running",
+        })),
+        policies: new Map(
+          rows.map(
+            ([
+              project_id,
+              shared_compute_priority,
+              authoritative_last_edited_ms,
+              stop_override,
+            ]) => [
+              project_id,
+              {
+                project_id,
+                owner_account_id: "owner",
+                shared_compute_priority,
+                authoritative_last_edited_ms,
+                stop_override,
+                policy_updated_ms: now,
+              },
+            ],
+          ),
+        ),
+        getStopState: () => undefined,
+      });
+      expect(candidates.map(({ project_id }) => project_id)).toEqual([
+        "oldest-deprioritized",
+        "oldest-free",
+        "oldest-paid",
+        "older-paid",
+        "recent-free",
+      ]);
+    },
+  );
+
+  it("does not treat open-page heartbeats as edits or permanent protection", () => {
+    const now = 10 * 60 * 60_000;
+    const candidates = buildStopCandidates({
+      zone: "pressure",
+      now,
+      minimumIdleMs: 10 * 60_000,
+      projects: [
+        { project_id: "old-open-tab", state: "running" },
+        { project_id: "newer-edit", state: "running" },
+      ],
+      policies: new Map(
+        ["old-open-tab", "newer-edit"].map((project_id, index) => [
+          project_id,
+          {
+            project_id,
+            owner_account_id: "owner",
+            shared_compute_priority: 0,
+            authoritative_last_edited_ms: now - (8 - index) * 60 * 60_000,
+            policy_updated_ms: now,
+            stop_override: "default",
+          },
+        ]),
+      ),
+      getStopState: (project_id) =>
+        project_id === "old-open-tab"
+          ? { project_id, last_browser_activity_ms: now - 1_000 }
+          : undefined,
+    });
+    expect(candidates.map(({ project_id }) => project_id)).toEqual([
+      "old-open-tab",
+      "newer-edit",
+    ]);
+    expect(candidates[0].explanation).toEqual(
+      expect.arrayContaining([
+        `idle_ms:${8 * 60 * 60_000}`,
+        "browser_presence_age_ms:1000",
+      ]),
+    );
+    expect(candidates[1].explanation).toContain(
+      "browser_presence_age_ms:unknown",
+    );
   });
 
   it("excludes startup-protected and protected projects in pressure", () => {
@@ -679,9 +822,9 @@ describe("host pressure controller helpers", () => {
     });
 
     expect(candidates.map((candidate) => candidate.project_id)).toEqual([
+      "proj-protected",
       "proj-default",
       "proj-starting",
-      "proj-protected",
     ]);
   });
 
@@ -690,6 +833,7 @@ describe("host pressure controller helpers", () => {
     const candidates = buildStopCandidates({
       zone: "pressure",
       now,
+      minimumIdleMs: 10 * 60_000,
       directResourceOffenders: new Map([
         [
           "proj-protected",
@@ -707,6 +851,17 @@ describe("host pressure controller helpers", () => {
         { project_id: "proj-protected", state: "running" },
       ],
       policies: new Map([
+        [
+          "proj-default",
+          {
+            project_id: "proj-default",
+            owner_account_id: "owner-1",
+            shared_compute_priority: 0,
+            authoritative_last_edited_ms: 1000,
+            policy_updated_ms: 1000,
+            stop_override: "default",
+          },
+        ],
         [
           "proj-protected",
           {
@@ -734,6 +889,43 @@ describe("host pressure controller helpers", () => {
       "proj-default",
     ]);
     expect(candidates[0].explanation.join(",")).toContain("direct:resource");
+  });
+
+  it("keeps an unknown-policy direct offender stoppable without inventing a tier", () => {
+    const now = 10 * 60 * 60_000;
+    const candidates = buildStopCandidates({
+      zone: "pressure",
+      now,
+      minimumIdleMs: 60 * 60_000,
+      projects: [{ project_id: "offender", state: "running" }],
+      policies: new Map(),
+      directResourceOffenders: new Map([
+        [
+          "offender",
+          {
+            project_id: "offender",
+            score: 2,
+            zone: "pressure",
+            reason: "resource_project_inotify_watches",
+          },
+        ],
+      ]),
+      getStopState: (project_id) => ({
+        project_id,
+        last_started_ms: now - 60_000,
+        pressure_cooldown_until_ms: now + 60_000,
+      }),
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].shared_compute_priority).toBeUndefined();
+    expect(candidates[0].explanation).toEqual(
+      expect.arrayContaining([
+        "policy_missing",
+        "priority:unknown",
+        "idle_ms:unknown",
+        "direct:resource_project_inotify_watches",
+      ]),
+    );
   });
 
   it("escalates repeated pressure stops to quarantine", () => {

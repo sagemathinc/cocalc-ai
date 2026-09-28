@@ -374,7 +374,14 @@ export const ActiveContent: React.FC = React.memo(() => {
               <p role="status">Loading site settings...</p>
             )
           ) : (
-            <MyAgentsWorkspacePage active={agentsActive} />
+            <>
+              <SurfaceReady segment="agents" />
+              {/* Account-bound actions must not retain the pre-login workspace. */}
+              <MyAgentsWorkspacePage
+                key={accountId ?? "signed-out"}
+                active={agentsActive}
+              />
+            </>
           )}
         </RouteChunk>,
       ),

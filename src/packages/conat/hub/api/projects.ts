@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountOrBoundAgentProject,
   authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
 } from "./util";
@@ -818,6 +819,20 @@ export interface AccountProjectListWindowRow {
   sort_key: Date | string | null;
   updated_at: Date | string | null;
 }
+
+export interface ApiProjectSummary {
+  project_id: string;
+  title: string;
+  description: string;
+  host_id: string | null;
+  state: string | null;
+  last_edited: string | null;
+}
+
+export interface ApiProjectSummaryPage {
+  projects: ApiProjectSummary[];
+  next_offset: number | null;
+}
 export interface ProjectSecretMetadata {
   project_id: string;
   name: string;
@@ -1192,6 +1207,7 @@ export const projects = {
   getProjectCollaboratorInviteUsage: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
   listAccountProjectWindow: authFirstRequireAccount,
+  listProjectSummaries: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
@@ -1283,7 +1299,7 @@ export const projects = {
   start: authFirstRequireAccount,
   startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
-  status: authFirstRequireAccount,
+  status: authFirstRequireAccountOrBoundAgentProject,
   restart: authFirstRequireAccount,
   archiveProject: authFirstRequireAccount,
   getProjectState: authFirstRequireAccount,
@@ -1311,6 +1327,11 @@ export const projects = {
   getCodexCredentialSelectionCapability: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
+  claudeSubscriptionLoginStart: authFirstRequireAccount,
+  claudeSubscriptionLoginStatus: authFirstRequireAccount,
+  getClaudeSubscriptionUsage: authFirstRequireAccount,
+  claudeSubscriptionLoginSubmitCode: authFirstRequireAccount,
+  claudeSubscriptionLoginCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
   codexUploadAuthFileV2: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -1906,6 +1927,14 @@ export interface Projects {
     search?: string;
     sort?: AccountProjectListWindowSort;
   }) => Promise<AccountProjectListWindowRow[]>;
+
+  listProjectSummaries: (opts: {
+    account_id?: string;
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }) => Promise<ApiProjectSummaryPage>;
 
   inviteCollaborator: ({
     account_id,
@@ -2540,6 +2569,45 @@ export interface Projects {
     project_id: string;
     id: string;
   }) => Promise<{ id: string; canceled: boolean }>;
+
+  getClaudeSubscriptionUsage: (opts: {
+    project_id: string;
+    credential_id: string;
+  }) => Promise<import("@cocalc/util/ai/claude-usage").ClaudeSubscriptionUsage>;
+
+  claudeSubscriptionLoginStart: (opts: {
+    account_id?: string;
+    project_id: string;
+    credential_id?: string;
+  }) => Promise<{
+    id: string;
+    state: "pending" | "verifying" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    credentialId?: string;
+    error?: string;
+  }>;
+  claudeSubscriptionLoginStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{
+    id: string;
+    state: "pending" | "verifying" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    credentialId?: string;
+    error?: string;
+  }>;
+  claudeSubscriptionLoginSubmitCode: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+    code: string;
+  }) => Promise<{ accepted: true }>;
+  claudeSubscriptionLoginCancel: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{ canceled: true }>;
 
   codexUploadAuthFile: (opts: {
     account_id?: string;

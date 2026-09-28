@@ -9,6 +9,8 @@ import { Command } from "commander";
 import * as archiveInfo from "@cocalc/conat/project/archive-info";
 
 import type { ProjectCommandDeps } from "../project";
+import { apiKeyForProject } from "../../core/managed-connector-auth";
+import { requestScopedProjectProxy } from "../../core/scoped-project-proxy";
 
 function normalizeDate(value: unknown): Date | undefined {
   if (value == null) return;
@@ -621,6 +623,23 @@ export function registerProjectLifecycleCommands(
       ) => {
         await withContext(command, "project proxy curl", async (ctx) => {
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
+          const apiKey = apiKeyForProject(ctx, ws.project_id);
+          if (apiKey) {
+            if (opts.token)
+              throw Error(
+                "scoped proxy access does not allow a token override",
+              );
+            return await requestScopedProjectProxy({
+              apiBaseUrl: ctx.apiBaseUrl,
+              apiKey,
+              project_id: ws.project_id,
+              port: Number(opts.port),
+              hostIdentifier: opts.host,
+              path: opts.path,
+              timeoutMs: ctx.timeoutMs,
+              expect: opts.expect,
+            });
+          }
           const details = await resolveProxyUrl({
             ctx,
             projectIdentifier: ws.project_id,

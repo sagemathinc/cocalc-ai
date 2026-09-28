@@ -14,7 +14,7 @@ import { type Location } from "@cocalc/conat/types";
 import { getLogger } from "@cocalc/conat/logger";
 import { randomId } from "@cocalc/conat/names";
 import { EventEmitter } from "events";
-import { encodeBase64 } from "@cocalc/conat/util";
+import { encodeBase64, serviceErrorAttributes } from "@cocalc/conat/util";
 import { type Client } from "@cocalc/conat/core/client";
 import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
 import { until } from "@cocalc/util/async-utils";
@@ -87,7 +87,7 @@ export async function callConatService(opts: ServiceCall): Promise<any> {
     });
     const result = resp.data;
     if (result?.error) {
-      throw Error(result.error);
+      throw Object.assign(Error(result.error), serviceErrorAttributes(result));
     }
     return result;
   };
@@ -278,7 +278,7 @@ export class ConatService extends EventEmitter {
           subject: mesg.subject,
         });
       } catch (err) {
-        resp = { error: `${err}` };
+        resp = { error: `${err}`, ...serviceErrorAttributes(err) };
       }
     }
     try {

@@ -290,8 +290,10 @@ function titleForQuestions(questions: AcpAttentionQuestion[]): string {
 export function createCodexAttentionHandler(
   client: ConatClient,
   {
+    runtimeLabel = "Codex",
     onSyncResponseResolved,
   }: {
+    runtimeLabel?: "Codex" | "ACP" | "Claude" | "Agent";
     onSyncResponseResolved?: (
       record: AcpAttentionStoredRecord,
     ) => Promise<void>;
@@ -329,8 +331,8 @@ export function createCodexAttentionHandler(
         is_blocking: isBlocking,
         title: titleForQuestions(questions),
         summary: isBlocking
-          ? "The current Codex turn is paused."
-          : "Codex may continue while it waits.",
+          ? `The current ${runtimeLabel} turn is paused.`
+          : `${runtimeLabel} may continue while it waits.`,
         questions,
         chat: context.chat,
         expires_at: Number.isFinite(expiresAt) ? expiresAt : undefined,
@@ -360,7 +362,7 @@ export function createCodexAttentionHandler(
               source_kind: "codex_sync_question",
               source_id: syncSourceId(context, requestId),
               state: "expired",
-              reason: "Codex request expired",
+              reason: `${runtimeLabel} request expired`,
             });
             if (expired) {
               void publishStoredAttentionNoticeBestEffort({
@@ -368,7 +370,7 @@ export function createCodexAttentionHandler(
                 record: expired,
               });
             }
-            throw new Error("Codex attention request expired");
+            throw new Error(`${runtimeLabel} attention request expired`);
           }
           if (current.response_id) {
             return validateAttentionAnswers({
@@ -386,7 +388,7 @@ export function createCodexAttentionHandler(
             source_kind: "codex_sync_question",
             source_id: syncSourceId(context, requestId),
             state: "stale",
-            reason: "Codex runtime closed before the response was delivered",
+            reason: `${runtimeLabel} runtime closed before the response was delivered`,
           });
           if (stale) {
             void publishStoredAttentionNoticeBestEffort({
@@ -403,6 +405,20 @@ export function createCodexAttentionHandler(
       if (!context.chat?.path || !context.chat.thread_id) {
         throw new Error("Codex attention requires durable chat context");
       }
+      // Keep the historical source kind so existing response/recovery paths
+      // apply equally to native Codex and ACP tool-bridge questions.
+      const existing = getAcpAttentionBySource({
+        project_id: context.projectId,
+        source_kind: "codex_async_question",
+        source_id: asyncSourceId(context, itemId),
+      });
+      if (
+        existing &&
+        JSON.stringify(existing.questions) !== JSON.stringify(questions)
+      )
+        throw Error(
+          "Question request ID was already used for different questions",
+        );
       const stored = upsertAcpAttention({
         project_id: context.projectId,
         account_id: context.accountId,
@@ -414,7 +430,7 @@ export function createCodexAttentionHandler(
         attention_kind: "question",
         is_blocking: false,
         title: titleForQuestions(questions),
-        summary: "Codex may continue while it waits for your reply.",
+        summary: `${runtimeLabel} may continue while it waits for your reply.`,
         questions,
         chat: context.chat,
       });
@@ -451,8 +467,8 @@ export function createCodexAttentionHandler(
         reason: current?.response_id
           ? current.response_declined
             ? "The user declined to answer"
-            : "Codex accepted the response"
-          : "Codex cleared the request before receiving an answer",
+            : `${runtimeLabel} accepted the response`
+          : `${runtimeLabel} cleared the request before receiving an answer`,
       });
       if (resolved) {
         if (onSyncResponseResolved) {
@@ -476,7 +492,7 @@ export function createCodexAttentionHandler(
         project_id: context.projectId,
         thread_id: context.chat?.thread_id,
         turn_id: context.turnId,
-        reason: "Codex runtime closed before the request was resolved",
+        reason: `${runtimeLabel} runtime closed before the request was resolved`,
       });
       for (const stale of staleRecords) {
         void publishStoredAttentionNoticeBestEffort({ client, record: stale });

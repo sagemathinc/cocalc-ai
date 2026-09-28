@@ -2413,14 +2413,15 @@ describe("ConatClient routed project-host reconnect", () => {
         name: "hosts.resolveHostConnection",
         args: [{ host_id: "host-1" }],
       },
-      expect.objectContaining({ timeout: 5_000 }),
+      // Direct callers wait five seconds, but do not shorten the shared flight.
+      expect.objectContaining({ timeout: 15_000 }),
     );
     expect(connect).toHaveBeenCalledTimes(1);
 
     jest.useRealTimers();
   });
 
-  it("coalesces concurrent direct host resolution fallbacks by host", async () => {
+  it("shares ordinary, SDK and direct fallback resolver flights, without crossing accounts", async () => {
     jest.useFakeTimers();
 
     Object.defineProperty(window.navigator, "onLine", {
@@ -2428,15 +2429,12 @@ describe("ConatClient routed project-host reconnect", () => {
       value: true,
     });
 
-    const hubRequest = jest.fn(async (_subject: string, mesg: any) => {
+    let finishRequest!: (value: any) => void;
+    const hubRequest = jest.fn((_subject: string, mesg: any) => {
       if (mesg?.name === "hosts.resolveHostConnection") {
-        return {
-          data: {
-            host_id: "host-1",
-            connect_url: "http://project-host",
-            host_session_id: "session-1",
-          },
-        };
+        return new Promise((resolve) => {
+          finishRequest = resolve;
+        });
       }
       throw Error(`unexpected hub request ${mesg?.name}`);
     });
@@ -2545,14 +2543,45 @@ describe("ConatClient routed project-host reconnect", () => {
       { address: "http://hub", remote: true },
     ) as any;
 
+    const response = {
+      data: {
+        host_id: "host-1",
+        connect_url: "http://project-host",
+        host_session_id: "session-1",
+      },
+    };
+    client.conat().info = {
+      user: { account_id: "acct-1", auth_session_hash: "auth-session-1" },
+    };
+    // Keep stale-transport probe traffic separate from resolver RPC counts.
+    client.maybeProbeStaleHubTransport = jest.fn();
+    const ordinary = Promise.all(
+      Array.from({ length: 300 }, () =>
+        client.callHubApi({
+          name: "hosts.resolveHostConnection",
+          args: [{ host_id: "host-1" }],
+          timeout: 15_000,
+        }),
+      ),
+    );
+    const sdk = require("@cocalc/conat/hub/call-hub").default({
+      client: client.conat(),
+      account_id: "acct-1",
+      name: "hosts.resolveHostConnection",
+      args: [{ host_id: "host-1" }],
+    });
     const refreshes = Promise.all([
       client.refreshHostRoutingInfo("host-1"),
       client.refreshHostRoutingInfo("host-1"),
       client.refreshHostRoutingInfo("host-1"),
     ]);
+    let fallbackError: any;
+    const timedRefreshes = refreshes.catch((err) => {
+      fallbackError = err;
+      return err;
+    });
     await jest.advanceTimersByTimeAsync(5_000);
 
-    const results = await refreshes;
     expect(ensureHostInfo).toHaveBeenCalledTimes(1);
     expect(hubRequest).toHaveBeenCalledTimes(1);
     expect(hubRequest).toHaveBeenCalledWith(
@@ -2560,29 +2589,69 @@ describe("ConatClient routed project-host reconnect", () => {
       {
         name: "hosts.resolveHostConnection",
         args: [{ host_id: "host-1" }],
+        auth_session_hash: "auth-session-1",
       },
-      expect.objectContaining({ timeout: 5_000 }),
+      expect.objectContaining({ timeout: 15_000 }),
     );
-    expect(results).toEqual([
+    // The direct fallback starts after the outer host-info wait at t=5s. Its
+    // own 5s deadline must expire at t=10s, not the ordinary RPC's t=15s.
+    await jest.advanceTimersByTimeAsync(4_999);
+    expect(fallbackError).toBeUndefined();
+    await jest.advanceTimersByTimeAsync(1);
+    const err = await timedRefreshes;
+    expect(err).toBeInstanceOf(require("@cocalc/conat/util").ConatError);
+    expect(err).toMatchObject({ code: 408 });
+    expect(err.message.match(/callHub:/g)).toHaveLength(1);
+    const later = client.callHubApi({
+      name: "hosts.resolveHostConnection",
+      args: [{ host_id: "host-1" }],
+    });
+    expect(hubRequest).toHaveBeenCalledTimes(1);
+    finishRequest(response);
+    expect(await ordinary).toEqual(Array(300).fill(response.data));
+    expect(await sdk).toEqual(response.data);
+    expect(await later).toEqual(response.data);
+
+    // An account change must not join an old refresh even above callHub.
+    const oldRefresh = client.refreshHostRoutingInfo("host-1");
+    const oldTimeout = expect(oldRefresh).rejects.toMatchObject({ code: 408 });
+    await jest.advanceTimersByTimeAsync(5_000);
+    const finishOld = finishRequest;
+    client.client.account_id = "acct-2";
+    client.conat().info.user = {
+      account_id: "acct-2",
+      auth_session_hash: "auth-session-2",
+    };
+    const newRefresh = client.refreshHostRoutingInfo("host-1");
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(ensureHostInfo).toHaveBeenCalledTimes(3);
+    expect(hubRequest).toHaveBeenCalledTimes(3);
+    expect(hubRequest).toHaveBeenLastCalledWith(
+      "hub.account.acct-2.api",
       {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
+        name: "hosts.resolveHostConnection",
+        args: [{ host_id: "host-1" }],
+        auth_session_hash: "auth-session-2",
       },
-      {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
-      },
-      {
-        host_id: "host-1",
-        routing_key: "host-1",
-        address: "http://project-host",
-        host_session_id: "session-1",
-      },
+      expect.anything(),
+    );
+    finishOld(response);
+    await oldTimeout;
+    const joinedRefresh = client.refreshHostRoutingInfo("host-1");
+    finishRequest(response);
+    const [routing, joinedRouting] = await Promise.all([
+      newRefresh,
+      joinedRefresh,
     ]);
+    expect(routing).toEqual({
+      host_id: "host-1",
+      routing_key: "host-1",
+      address: "http://project-host",
+      host_session_id: "session-1",
+    });
+    expect(joinedRouting).toEqual(routing);
+    expect(hubRequest).toHaveBeenCalledTimes(3);
+    expect(ensureHostInfo).toHaveBeenCalledTimes(3);
 
     jest.useRealTimers();
   });

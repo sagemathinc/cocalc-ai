@@ -103,6 +103,133 @@ describe("project-host Conat auth", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
+  it("keeps a scoped key in its viewer service instead of account permissions", async () => {
+    const expires = Math.floor(Date.now() / 1000) + 20;
+    const binding = {
+      account_id,
+      key_id: "key-id-123",
+      scope_revision: 2,
+      project_id,
+      placement_revision: 7,
+      capabilities: ["file:read"],
+      viewer_policy_hash: "a".repeat(64),
+      subjects: [
+        `fs-api-key.project-${project_id}.account-${account_id}.key-key-id-123.rev-2.hash-${"a".repeat(64)}`,
+      ],
+      reply_prefix: "_INBOX.api-key-00000000-0000-4000-8000-000000000003",
+    };
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: expires - 20,
+      exp: expires,
+      api_key: binding,
+    });
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    const user = await getUser(
+      {
+        handshake: { auth: { bearer: "scoped-key-token" }, headers: {} },
+      } as any,
+      undefined as any,
+    );
+    expect(user).toMatchObject({
+      account_id,
+      auth_lease_exp_s: expires,
+      auth_api_key: binding,
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(true);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "viewer" } },
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(false);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    for (const subject of [
+      `fs.project-${project_id}`,
+      `project.${project_id}.run`,
+      `hub.account.${account_id}.api`,
+    ]) {
+      expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    }
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 8,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(false);
+  });
+
+  it("rejects a child token after membership is removed", async () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      exp: Math.floor(Date.now() / 1000) + 20,
+      api_key: {
+        project_id,
+        placement_revision: 7,
+        capabilities: ["project:exec"],
+      },
+    });
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: {},
+    });
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    await expect(
+      getUser(
+        {
+          handshake: { auth: { bearer: "scoped-key-token" }, headers: {} },
+        } as any,
+        undefined as any,
+      ),
+    ).rejects.toThrow("no longer valid");
+  });
+
+  it("keeps agent bearer access inside its signed project on the same host", async () => {
+    const otherProjectId = "00000000-1000-4000-8000-000000000002";
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "agent",
+      project_id,
+    });
+    mockGetRow.mockReturnValue({
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    const user = await getUser({
+      handshake: { auth: { bearer: "signed-agent-token" }, headers: {} },
+    } as any);
+
+    await expect(
+      isAllowed({ user, type: "pub", subject: `fs.project-${project_id}` }),
+    ).resolves.toBe(true);
+    for (const subject of [
+      `fs.project-${otherProjectId}`,
+      `project.${otherProjectId}.terminal.run`,
+      `fs-viewer.project-${otherProjectId}.account-${account_id}`,
+      `fs-share.project-${otherProjectId}.share-${project_id}.account-${account_id}`,
+      `acp.project-${otherProjectId}.account-${account_id}.api`,
+    ]) {
+      await expect(isAllowed({ user, type: "pub", subject })).resolves.toBe(
+        false,
+      );
+    }
+  });
+
   it("rejects a direct account bearer after its browser session expires", async () => {
     mockVerifyProjectHostAuthToken.mockReturnValue({
       act: "account",
@@ -446,6 +573,8 @@ describe("project-host Conat auth", () => {
       `project.${project_id}.archive-info.-`,
       `project.${project_id}.touch.-`,
       `persist.project-${project_id}`,
+      `persist.project-${project_id}.id`,
+      `persist.project-${project_id}.server.shard.client`,
       `acp.project-${project_id}`,
       `codex.project-${project_id}.device-auth`,
       `hub.project.${project_id}.api`,
@@ -474,6 +603,7 @@ describe("project-host Conat auth", () => {
     const otherProjectId = "00000000-1000-4000-8000-000000000003";
     const operations = [
       "api",
+      "harness-v1",
       "interrupt",
       "steer",
       "fork",
@@ -513,6 +643,7 @@ describe("project-host Conat auth", () => {
           sub: account_id,
           iat: 1000,
           auth_actor,
+          ...(auth_actor === "agent" ? { project_id } : {}),
         });
         mockGetRow.mockReturnValue({
           users: { [account_id]: { group: "collaborator" } },
@@ -570,30 +701,33 @@ describe("project-host Conat auth", () => {
       );
     });
 
-    it("rejects account and project authorization mismatches", async () => {
-      mockGetRow.mockImplementation((_table, key) => {
-        const requestedProjectId = JSON.parse(key).project_id;
-        return requestedProjectId === project_id
-          ? { users: { [account_id]: { group: "collaborator" } } }
-          : { users: {} };
-      });
-      const { isAllowed } = createProjectHostConatAuth({ host_id });
+    it.each(["api", "harness-v1"])(
+      "rejects account and project authorization mismatches for %s",
+      async (operation) => {
+        mockGetRow.mockImplementation((_table, key) => {
+          const requestedProjectId = JSON.parse(key).project_id;
+          return requestedProjectId === project_id
+            ? { users: { [account_id]: { group: "collaborator" } } }
+            : { users: {} };
+        });
+        const { isAllowed } = createProjectHostConatAuth({ host_id });
 
-      await expect(
-        isAllowed({
-          user: { account_id },
-          type: "pub",
-          subject: `acp.project-${project_id}.account-${otherAccountId}.api`,
-        }),
-      ).resolves.toBe(false);
-      await expect(
-        isAllowed({
-          user: { account_id },
-          type: "pub",
-          subject: `acp.project-${otherProjectId}.account-${account_id}.api`,
-        }),
-      ).resolves.toBe(false);
-    });
+        await expect(
+          isAllowed({
+            user: { account_id },
+            type: "pub",
+            subject: `acp.project-${project_id}.account-${otherAccountId}.${operation}`,
+          }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({
+            user: { account_id },
+            type: "pub",
+            subject: `acp.project-${otherProjectId}.account-${account_id}.${operation}`,
+          }),
+        ).resolves.toBe(false);
+      },
+    );
 
     it("refreshing a legacy human token enables automation without upgrading the old connection", async () => {
       mockGetRow.mockReturnValue({

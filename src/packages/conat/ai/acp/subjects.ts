@@ -6,6 +6,7 @@ export const ACP_SUBJECT_ROOT = process.env.COCALC_ACP_TEST
 
 export const ACP_OPERATIONS = [
   "api",
+  "harness-v1",
   "interrupt",
   "steer",
   "fork",
@@ -116,6 +117,10 @@ export function legacyAcpSubscriptionSubject(operation: AcpOperation): string {
 
 export function acpSubject(identity: AcpSubjectIdentity): string {
   return buildAcpSubject(identity, "api");
+}
+
+export function acpHarnessSubject(identity: AcpSubjectIdentity): string {
+  return buildAcpSubject(identity, "harness-v1");
 }
 
 export function acpInterruptSubject(identity: AcpSubjectIdentity): string {

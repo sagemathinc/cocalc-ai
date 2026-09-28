@@ -1035,6 +1035,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       return;
     }
     this.lastRuntimeRecoveryId = notice.id;
+    this.attachAfterReplyRotation = false;
     this.pty?.close();
     this.pty = null;
     this.set_connection_status("disconnected");
@@ -1122,6 +1123,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private ptyExited = false;
+  private attachAfterReplyRotation = false;
   private manualStartMessageShown = false;
 
   private setTransientReconnectStyle = (active: boolean): void => {
@@ -1461,6 +1463,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         if (this.isClosed()) return;
         await this.handleDataFromProject(EXIT_MESSAGE);
         this.ptyExited = true;
+        this.attachAfterReplyRotation = false;
         this.ptyInputReady = false;
         pty?.close();
       });
@@ -1513,6 +1516,12 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         if (generation !== this.connectGeneration || this.pty !== pty) {
           return;
         }
+        if (
+          pty.socket.closeReason === "reply-namespace-changed" &&
+          this.initializedPtys.has(pty)
+        ) {
+          this.attachAfterReplyRotation = true;
+        }
         this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
@@ -1560,11 +1569,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           args_count: this.args?.length ?? 0,
           cwd: options.cwd,
         });
-        const history = await pty.spawn(
-          this.command ?? "bash",
-          this.args,
-          options,
-        );
+        const history = this.attachAfterReplyRotation
+          ? await pty.attach(this.termPath, { timeout: SPAWN_TIMEOUT })
+          : await pty.spawn(this.command ?? "bash", this.args, options);
         v2Trace.historyChars = history?.length ?? 0;
         v2Trace.trace.mark("spawn_request_done", {
           history_chars: v2Trace.historyChars,

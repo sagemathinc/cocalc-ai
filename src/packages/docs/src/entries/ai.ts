@@ -4,6 +4,9 @@
  */
 
 import type { DocsEntry } from "../types";
+import { CLAUDE_CODE_BODY } from "../content/claude-code";
+import { AGENT_FEATURES_BODY } from "../content/agent-features";
+import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
   AI_CREDENTIALS_BODY,
@@ -18,6 +21,50 @@ import {
 } from "../content/ai";
 
 export const AI_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: AGENT_FEATURES_BODY.trim(),
+    category: "AI",
+    id: "ai.agent-features",
+    lastReviewed: "2026-09-28",
+    noActionReason:
+      "This reference compares workflows; follow its linked guides to configure or start work.",
+    slug: "ai/agent-features",
+    status: "ready",
+    searchKeywords:
+      "Codex Claude Code feature comparison matrix parity Agent Networks agent-to-agent messaging cross-project workbench artifacts goals schedules subagents",
+    summary:
+      "A systematic feature reference for Codex, with Claude Code support levels, limitations, and links to detailed guides.",
+    title: "Agent features: Codex and Claude Code",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CLAUDE_CODE_BODY.trim(),
+    category: "AI",
+    id: "ai.claude-code",
+    lastReviewed: "2026-09-28",
+    noActionReason:
+      "Claude Code preview availability and credential setup depend on the site and account.",
+    slug: "ai/claude-code",
+    status: "ready",
+    summary:
+      "Use Claude Code in CoCalc: experimental setup, images, Agent Networks, credentials, billing, and the security model.",
+    title: "Claude Code in CoCalc (Experimental Preview)",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: COCALC_ACCESS_BODY.trim(),
+    category: "AI",
+    id: "ai.cocalc-access",
+    lastReviewed: "2026-09-26",
+    noActionReason:
+      "Configure CoCalc access from an existing named agent's header or composer.",
+    slug: "ai/cocalc-access",
+    status: "ready",
+    summary:
+      "Give an agent temporary access to selected CoCalc projects or all your projects.",
+    title: "Give an agent CoCalc access",
+  },
   {
     audiences: ["agents", "researchers", "students", "teams"],
     body: MY_AGENTS_BODY.trim(),

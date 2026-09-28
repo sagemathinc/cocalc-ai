@@ -1,12 +1,20 @@
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
 import { humanSize } from "@cocalc/util/misc";
+import { normalizeApiKeyScopeV1 } from "@cocalc/util/api-key-scope";
+import { normalizeApiKeyActionReview } from "@cocalc/util/api-key-management";
+import { apiKeyForProject } from "../core/managed-connector-auth";
+import { requestApiKeyActionWithKey } from "../core/api-key-actions";
 
 import type {
   ManagedEgressEventSummary,
   ManagedEgressHistory,
   MembershipDetails,
 } from "@cocalc/conat/hub/api/purchases";
-import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
+import type {
+  ApiKeyCapability,
+  ApiKeyScope,
+} from "@cocalc/util/db-schema/api-keys";
 
 export type AccountCommandDeps = {
   withContext: any;
@@ -523,6 +531,82 @@ export function registerAccountCommand(
     .description("manage account API keys");
 
   accountApiKey
+    .command("request-revocation <key-id>")
+    .description("request human approval to revoke a manual API key")
+    .requiredOption(
+      "--request-id <uuid>",
+      "stable request id; reuse only for retries of this exact action",
+    )
+    .action(async (keyId: string, opts, command: Command) => {
+      await withContext(
+        command,
+        "account api-key request-revocation",
+        async (ctx) => {
+          const apiKey = apiKeyForProject(ctx);
+          if (!apiKey)
+            throw new Error(
+              "a scoped API key or managed connector credential is required",
+            );
+          return requestApiKeyActionWithKey({
+            apiBaseUrl: ctx.apiBaseUrl,
+            apiKey,
+            request: {
+              request_id: opts.requestId,
+              action: { kind: "revoke_api_key", target_key_id: keyId },
+            },
+          });
+        },
+      );
+    });
+
+  accountApiKey
+    .command("decide-action <review-file>")
+    .description(
+      "human decision on an exact API key action review; requires fresh authentication",
+    )
+    .requiredOption("--decision <decision>", "execute or reject")
+    .requiredOption(
+      "--target-key-id <id>",
+      "confirm the reviewed target key lookup id",
+    )
+    .action(async (file: string, opts, command: Command) => {
+      if (!["execute", "reject"].includes(opts.decision))
+        throw new Error("decision must be execute or reject");
+      const data = await readFile(file, "utf8");
+      if (Buffer.byteLength(data) > 16_384)
+        throw new Error("API key action review is too large");
+      const parsed = JSON.parse(data);
+      const reviewed = normalizeApiKeyActionReview(
+        parsed?.ok === true &&
+          parsed.command === "account api-key request-revocation"
+          ? parsed.data
+          : parsed,
+      );
+      if (reviewed.binding.target_key_id !== opts.targetKeyId)
+        throw new Error("target confirmation does not match review");
+      await withContext(
+        command,
+        "account api-key decide-action",
+        async (ctx) => {
+          if (
+            ctx.apiKey ||
+            ctx.managedConnector ||
+            ctx.remote?.user?.auth_actor === "agent"
+          )
+            throw new Error(
+              "human account session required; API keys and agents cannot approve actions",
+            );
+          if (ctx.accountId !== reviewed.binding.account_id)
+            throw new Error("review belongs to another account");
+          return ctx.hub.apiKeys.decideAction({
+            reviewed,
+            decision: opts.decision,
+          });
+        },
+      );
+    });
+
+  accountApiKey
     .command("list")
     .description("list account API keys")
     .action(async (command: Command) => {
@@ -536,6 +620,8 @@ export function registerAccountCommand(
           trunc?: string;
           capabilities?: string[];
           allowed_project_ids?: string[];
+          scope?: ApiKeyScope | null;
+          scope_revision?: number | null;
           created?: string | Date | null;
           expire?: string | Date | null;
           last_active?: string | Date | null;
@@ -547,6 +633,8 @@ export function registerAccountCommand(
           trunc: row.trunc ?? "",
           capabilities: row.capabilities ?? [],
           allowed_project_ids: row.allowed_project_ids ?? [],
+          scope: row.scope ?? null,
+          scope_revision: row.scope_revision ?? null,
           created: toIso(row.created),
           expire: toIso(row.expire),
           last_active: toIso(row.last_active),
@@ -564,6 +652,10 @@ export function registerAccountCommand(
     )
     .option("--expire-seconds <n>", "expire in n seconds")
     .option(
+      "--scope-file <path>",
+      "JSON versioned scope; cannot be combined with legacy capability/project flags",
+    )
+    .option(
       "--capability <capability...>",
       "explicit capability to grant; repeat or pass multiple values",
     )
@@ -578,10 +670,27 @@ export function registerAccountCommand(
           expireSeconds?: string;
           capability?: string[];
           projectId?: string[];
+          scopeFile?: string;
         },
         command: Command,
       ) => {
         await withContext(command, "account api-key create", async (ctx) => {
+          let scope: ApiKeyScope | undefined;
+          if (opts.scopeFile != null) {
+            if (opts.capability != null || opts.projectId != null) {
+              throw new Error(
+                "--scope-file cannot be combined with --capability or --project-id",
+              );
+            }
+            const text = await readFile(opts.scopeFile, "utf8");
+            let input: unknown;
+            try {
+              input = JSON.parse(text);
+            } catch {
+              throw new Error("invalid JSON in --scope-file");
+            }
+            scope = normalizeApiKeyScopeV1(input);
+          }
           const expireSeconds =
             opts.expireSeconds == null ? undefined : Number(opts.expireSeconds);
           if (
@@ -599,6 +708,7 @@ export function registerAccountCommand(
             expire,
             capabilities: opts.capability as ApiKeyCapability[] | undefined,
             allowed_project_ids: opts.projectId,
+            ...(scope ? { scope } : {}),
           })) as Array<{
             id?: number;
             key_id?: string;
@@ -607,6 +717,8 @@ export function registerAccountCommand(
             secret?: string;
             capabilities?: string[];
             allowed_project_ids?: string[];
+            scope?: ApiKeyScope | null;
+            scope_revision?: number | null;
             created?: string | Date | null;
             expire?: string | Date | null;
           }>;
@@ -622,6 +734,8 @@ export function registerAccountCommand(
             secret: key.secret ?? null,
             capabilities: key.capabilities ?? [],
             allowed_project_ids: key.allowed_project_ids ?? [],
+            scope: key.scope ?? null,
+            scope_revision: key.scope_revision ?? null,
             created: toIso(key.created),
             expire: toIso(key.expire),
           };

@@ -44,7 +44,7 @@ type Props = CommonProps &
     | {
         multiple?: false;
         onChange: (project_id: string) => void;
-        value?: string;
+        value?: string | null; // null keeps a controlled picker empty
         defaultValue?: string;
       }
   );

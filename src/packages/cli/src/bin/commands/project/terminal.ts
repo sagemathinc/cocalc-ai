@@ -151,6 +151,7 @@ export function registerProjectTerminalCommands(
               rows,
               cols,
             });
+            await terminal.closeAndWait();
             return {
               project_id: project.project_id,
               id,

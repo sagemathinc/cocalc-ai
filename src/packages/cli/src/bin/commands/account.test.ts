@@ -1,9 +1,140 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { Command } from "commander";
 
 import { registerAccountCommand } from "./account";
+
+test("manual API keys accept canonical scope files and list stored scopes without secrets", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "api-key-scope-"));
+  const scopeFile = join(directory, "scope.json");
+  const scope = {
+    version: 1,
+    account: ["project:list"],
+    projects: [],
+    all_projects: {
+      capabilities: ["file:read"],
+      viewer_read_roots: ["assignments"],
+    },
+  };
+  const calls: any[] = [];
+  let output: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      output = await fn({
+        hub: {
+          system: {
+            manageApiKeys: async (opts) => {
+              calls.push(opts);
+              return [
+                {
+                  id: 42,
+                  scope,
+                  scope_revision: 1,
+                  secret: "synthetic-secret",
+                },
+              ];
+            },
+          },
+        },
+      });
+    },
+    toIso: (value) => value,
+  } as any);
+  try {
+    writeFileSync(scopeFile, JSON.stringify(scope));
+    await program.parseAsync([
+      "node",
+      "test",
+      "account",
+      "api-key",
+      "create",
+      "--scope-file",
+      scopeFile,
+    ]);
+    assert.deepEqual(calls[0].scope, scope);
+    assert.equal(calls[0].capabilities, undefined);
+    assert.equal(calls[0].allowed_project_ids, undefined);
+    assert.deepEqual(output.scope, scope);
+    await program.parseAsync(["node", "test", "account", "api-key", "list"]);
+    assert.deepEqual(output[0].scope, scope);
+    assert.equal(output[0].scope_revision, 1);
+    assert.equal("secret" in output[0], false);
+    const before = calls.length;
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "account",
+        "api-key",
+        "create",
+        "--scope-file",
+        scopeFile,
+        "--capability",
+        "project:list",
+      ]),
+      /cannot be combined/,
+    );
+    assert.equal(calls.length, before);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("invalid scope files never reach API key issuance", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "api-key-invalid-"));
+  const scopeFile = join(directory, "scope.json");
+  let calls = 0;
+  try {
+    for (const input of [
+      "not JSON",
+      JSON.stringify({ version: 1, account: [], projects: [] }),
+      JSON.stringify({
+        version: 1,
+        account: [],
+        projects: [],
+        all_projects: {
+          capabilities: ["file:read"],
+          viewer_read_roots: ["../secret"],
+        },
+      }),
+    ]) {
+      writeFileSync(scopeFile, input);
+      const program = new Command();
+      registerAccountCommand(program, {
+        withContext: async (_command, _label, fn) =>
+          fn({
+            hub: {
+              system: {
+                manageApiKeys: async () => {
+                  calls++;
+                },
+              },
+            },
+          }),
+        toIso: (value) => value,
+      } as any);
+      await assert.rejects(
+        program.parseAsync([
+          "node",
+          "test",
+          "account",
+          "api-key",
+          "create",
+          "--scope-file",
+          scopeFile,
+        ]),
+      );
+    }
+    assert.equal(calls, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("account where defaults to the current account", async () => {
   let captured: any;

@@ -376,7 +376,12 @@ export async function deleteClusterAccountApiKeyDirectoryEntry(
   opts: AccountApiKeyDirectoryDeleteRequest,
 ): Promise<void> {
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
-    await deleteClusterAccountApiKeyDirectoryEntryDirect(opts.key_id);
+    await deleteClusterAccountApiKeyDirectoryEntryDirect(
+      opts.key_id,
+      opts.account_id && opts.home_bay_id
+        ? { account_id: opts.account_id, home_bay_id: opts.home_bay_id }
+        : undefined,
+    );
     return;
   }
   await createInterBayAccountDirectoryClient({

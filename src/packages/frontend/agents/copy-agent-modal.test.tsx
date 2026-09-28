@@ -22,6 +22,8 @@ test("typing validates locally without rerendering the parent or submitting", ()
     );
   }
   render(<Parent />);
+  expect(screen.getByText(/Copy the agent context/)).toBeTruthy();
+  expect(screen.queryByText(/Codex context/)).toBeNull();
   const renders = parentRender.mock.calls.length;
   const input = screen.getByRole("textbox", { name: "Agent name" });
   input.focus();

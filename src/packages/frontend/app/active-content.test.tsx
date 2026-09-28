@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Map } from "immutable";
 import { ActiveContent } from "./active-content";
+import { recordSignedInSurfaceReady } from "./bootstrap-ux-latency";
 
 let disabled: boolean | undefined;
 let mockLite = false;
@@ -16,10 +17,14 @@ let collaboratorsEnabled = false;
 let customizeReady = true;
 const collaborationProps = jest.fn();
 const openCollaborators = jest.fn();
+let accountId: string | undefined;
+const accountBindings: Array<{ assertCurrent: () => void }> = [];
+const copied = jest.fn();
 const actions = { set_active_tab: jest.fn() };
 jest.mock("@cocalc/frontend/app-framework", () => ({
   React: { ...require("react"), memo: (component) => component },
   useActions: () => actions,
+  redux: { getStore: () => ({ get: () => accountId }) },
   useTypedRedux: (store, field) => {
     if (store === "page" && field === "active_top_tab") return activeTab;
     if (store === "page" && field === "collaborators_open")
@@ -37,12 +42,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       return collaboratorsEnabled;
     if (store === "customize" && field === "_is_configured")
       return customizeReady;
-    if (store === "account" && field === "account_id") return "viewer";
     if (store === "account" && field === "other_settings")
       return disabled === undefined
         ? undefined
         : Map({ openai_disabled: disabled });
     if (field === "is_logged_in") return true;
+    if (store === "account" && field === "account_id") return accountId;
     if (field === "open_projects") return [];
   },
 }));
@@ -87,9 +92,23 @@ jest.mock("./route-components", () => ({
     );
   },
   ProjectsPage: () => <section aria-label="Projects" />,
-  MyAgentsWorkspacePage: () => (
-    <div role="region" aria-label="Agents workspace" />
-  ),
+  MyAgentsWorkspacePage: () => {
+    const { useBoundAgentAccount } = require("../agents/use-bound-account");
+    const binding = useBoundAgentAccount();
+    accountBindings.push(binding);
+    return (
+      <div role="region" aria-label="Agents workspace">
+        <button
+          onClick={() => {
+            binding.assertCurrent();
+            copied();
+          }}
+        >
+          Copy agent
+        </button>
+      </div>
+    );
+  },
 }));
 
 beforeEach(() => {
@@ -99,12 +118,15 @@ beforeEach(() => {
   collaboratorsOpen = false;
   collaboratorsEnabled = false;
   customizeReady = true;
+  accountId = undefined;
+  accountBindings.length = 0;
   jest.clearAllMocks();
 });
 
 it.each(["AI-disabled", "Lite"])(
   "opens feature-enabled human discovery without mounting Agents in %s",
   async (mode) => {
+    accountId = "viewer";
     disabled = mode === "AI-disabled";
     mockLite = mode === "Lite";
     collaboratorsOpen = true;
@@ -117,6 +139,8 @@ it.each(["AI-disabled", "Lite"])(
       screen.queryByRole("region", { name: "Agents workspace" }),
     ).toBeNull();
     expect(actions.set_active_tab).not.toHaveBeenCalled();
+    expect(recordSignedInSurfaceReady).toHaveBeenCalledWith("collaborators");
+    expect(recordSignedInSurfaceReady).not.toHaveBeenCalledWith("agents");
     expect(collaborationProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
         active: true,
@@ -227,4 +251,82 @@ it("unmounts and redirects when the opt-out arrives or changes", () => {
   rerender(<ActiveContent />);
   expect(screen.queryByRole("region", { name: "Agents workspace" })).toBeNull();
   expect(actions.set_active_tab).toHaveBeenCalledWith("projects");
+});
+
+it("marks the Agents workspace ready for browser automation", () => {
+  render(<ActiveContent />);
+  expect(recordSignedInSurfaceReady).toHaveBeenCalledWith("agents");
+});
+
+it.each(["AI-disabled", "Lite"])(
+  "rebinds Agents after switching accounts in the %s human workspace",
+  async (mode) => {
+    const user = userEvent.setup();
+    accountId = "account-a";
+    const { rerender } = render(<ActiveContent />);
+    const accountA = accountBindings.at(-1)!;
+    expect(() => accountA.assertCurrent()).not.toThrow();
+
+    disabled = mode === "AI-disabled";
+    mockLite = mode === "Lite";
+    collaboratorsOpen = true;
+    collaboratorsEnabled = true;
+    rerender(<ActiveContent />);
+    expect(
+      screen.getByRole("region", { name: "Human collaboration workspace" }),
+    ).toBeVisible();
+    expect(() => accountA.assertCurrent()).toThrow("The account changed");
+
+    accountId = "account-b";
+    rerender(<ActiveContent />);
+    expect(collaborationProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ accountId: "account-b", active: true }),
+    );
+
+    collaboratorsOpen = false;
+    disabled = false;
+    rerender(<ActiveContent />);
+    expect(
+      screen.queryByRole("region", { name: "Human collaboration workspace" }),
+    ).toBeNull();
+    expect(() => accountBindings.at(-1)!.assertCurrent()).not.toThrow();
+    expect(() => accountA.assertCurrent()).toThrow("The account changed");
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Copy agent" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(copied).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("rebinds workspace actions after account loading without reviving old actions", async () => {
+  const user = userEvent.setup();
+  const { rerender, unmount } = render(<ActiveContent />);
+  const beforeLogin = accountBindings.at(-1)!;
+  expect(() => beforeLogin.assertCurrent()).toThrow("The account changed");
+  accountId = "account-a";
+  rerender(<ActiveContent />);
+  const accountA = accountBindings.at(-1)!;
+  const copy = screen.getByRole("button", { name: "Copy agent" });
+  copy.focus();
+  await user.keyboard("{Enter}");
+  expect(copied).toHaveBeenCalledTimes(1);
+  expect(document.activeElement).toBe(copy);
+  expect(() => beforeLogin.assertCurrent()).toThrow("The account changed");
+
+  // Ordinary rerenders retain the workspace; an identity change replaces it.
+  rerender(<ActiveContent />);
+  expect(screen.getByRole("button", { name: "Copy agent" })).toBe(copy);
+  accountId = "account-b";
+  rerender(<ActiveContent />);
+  expect(screen.getByRole("button", { name: "Copy agent" })).not.toBe(copy);
+  expect(() => accountA.assertCurrent()).toThrow("The account changed");
+  expect(() => accountBindings.at(-1)!.assertCurrent()).not.toThrow();
+
+  accountId = "account-a";
+  rerender(<ActiveContent />);
+  expect(() => accountA.assertCurrent()).toThrow("The account changed");
+  const current = accountBindings.at(-1)!;
+  expect(() => current.assertCurrent()).not.toThrow();
+  unmount();
+  expect(() => current.assertCurrent()).toThrow("The account changed");
 });

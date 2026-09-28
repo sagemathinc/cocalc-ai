@@ -97,12 +97,20 @@ export function inboxPrefix({
   project_id,
   hub_id,
   host_id,
+  auth_api_key_reply_prefix,
 }: {
   account_id?: string;
   project_id?: string;
   hub_id?: string;
   host_id?: string;
+  auth_api_key_reply_prefix?: string;
 }) {
+  if (
+    auth_api_key_reply_prefix &&
+    /^_INBOX\.api-key-[0-9a-f-]{36}$/.test(auth_api_key_reply_prefix)
+  ) {
+    return auth_api_key_reply_prefix;
+  }
   // a project or account:
   return `_INBOX.${jsName({ account_id, project_id, hub_id, host_id })}`;
 }

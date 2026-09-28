@@ -3,8 +3,35 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolve } from "node:path";
+import { buildCookieHeader } from "../../core/auth-cookies";
 
-import { effectiveDaemonGlobals } from "./daemon-globals";
+import {
+  effectiveDaemonGlobals,
+  prepareDaemonAuthGlobals,
+  shouldUseFileOpsDaemon,
+} from "./daemon-globals";
+import { applyAuthProfile } from "../../core/auth-config";
+
+test("manual and managed file-backed keys use the daemon", () => {
+  assert.equal(
+    shouldUseFileOpsDaemon(
+      { apiKeyFile: "/tmp/scoped-key" },
+      {} as NodeJS.ProcessEnv,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldUseFileOpsDaemon(
+      {},
+      {
+        COCALC_CONNECTOR_API_KEY_FILE: "/tmp/rotating-key",
+      },
+    ),
+    true,
+  );
+  assert.equal(shouldUseFileOpsDaemon({}, {} as NodeJS.ProcessEnv), true);
+});
 
 test("effectiveDaemonGlobals propagates env-backed api and auth into daemon requests", () => {
   const globals = effectiveDaemonGlobals(
@@ -23,6 +50,110 @@ test("effectiveDaemonGlobals propagates env-backed api and auth into daemon requ
   assert.equal(globals.api, "http://localhost:7103");
   assert.equal(globals.accountId, "11111111-1111-4111-8111-111111111111");
   assert.equal(globals.bearer, "bearer-token");
+});
+
+test("key-file daemon requests carry an absolute provider path without ambient credentials", () => {
+  const globals = effectiveDaemonGlobals(
+    { apiKeyFile: "private-key" },
+    {
+      env: {
+        COCALC_API_URL: "https://example.test",
+        COCALC_API_KEY: "ambient-key",
+        COCALC_BEARER_TOKEN: "agent-token",
+        COCALC_HUB_PASSWORD: "admin",
+      },
+    },
+  );
+  assert.equal(globals.apiKeyFile, resolve("private-key"));
+  assert.equal(globals.api, "https://example.test");
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  assert.equal(globals.apiKey, undefined);
+  assert.equal(globals.bearer, undefined);
+  assert.equal(globals.hubPassword, undefined);
+});
+
+test("managed daemon requests carry source and provider, not ambient account authority", () => {
+  const source = "00000000-0000-4000-8000-000000000001";
+  const globals = effectiveDaemonGlobals(
+    {},
+    {
+      env: {
+        COCALC_CONNECTOR_API_KEY_FILE: "turn-key",
+        COCALC_PROJECT_ID: source,
+        COCALC_API_URL: "https://example.test",
+        COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000002",
+        COCALC_BEARER_TOKEN: "source-agent-token",
+        COCALC_API_KEY: "unrelated-account-key",
+        COCALC_HUB_PASSWORD: "unrelated-admin-password",
+      },
+    },
+  );
+  assert.deepEqual(globals.managedConnector, {
+    keyFile: resolve("turn-key"),
+    sourceProjectId: source,
+  });
+  assert.equal(globals.bearer, "source-agent-token");
+  assert.equal(globals.authProjectId, source);
+  assert.equal(globals.apiKey, undefined);
+  assert.equal(globals.hubPassword, undefined);
+  assert.equal(globals.profile, "_env");
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  const explicit = effectiveDaemonGlobals(
+    { profile: "manual", disableEnvAuthDefaults: true },
+    {
+      env: {
+        COCALC_CONNECTOR_API_KEY_FILE: "turn-key",
+        COCALC_PROJECT_ID: source,
+      },
+    },
+  );
+  assert.equal(explicit.managedConnector, undefined);
+});
+
+test("ordinary project daemon requests freeze their own project credential", () => {
+  const source = "00000000-0000-4000-8000-000000000001";
+  const globals = effectiveDaemonGlobals(
+    {},
+    {
+      env: {
+        COCALC_API_URL: "https://example.test",
+        COCALC_PROJECT_ID: source,
+        COCALC_PROJECT_SECRET: "request-project-secret",
+      },
+    },
+  );
+  assert.equal(globals.disableEnvAuthDefaults, true);
+  assert.match(globals.cookie!, /request-project-secret/);
+  assert.match(globals.cookie!, new RegExp(source));
+  const header = buildCookieHeader(
+    "https://example.test",
+    globals,
+    {},
+    {
+      COCALC_API_KEY: "daemon-account-key",
+      COCALC_HUB_PASSWORD: "daemon-admin",
+      COCALC_PROJECT_SECRET: "daemon-project-secret",
+    },
+  );
+  assert.match(header ?? "", /request-project-secret/);
+  assert.doesNotMatch(header ?? "", /daemon-/);
+});
+
+test("daemon admission never fills missing request credentials from its profile or environment", () => {
+  const request = prepareDaemonAuthGlobals({ profile: "stored-human" });
+  const applied = applyAuthProfile(request, {
+    profiles: { "stored-human": { cookie: "human-cookie" } },
+  });
+  assert.equal(applied.globals.cookie, undefined);
+  assert.equal(
+    buildCookieHeader(
+      "https://example.test",
+      applied.globals,
+      {},
+      { COCALC_API_KEY: "old-key", COCALC_HUB_PASSWORD: "old-admin" },
+    ),
+    undefined,
+  );
 });
 
 test("effectiveDaemonGlobals preserves explicit globals over env fallbacks", () => {

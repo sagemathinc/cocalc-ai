@@ -41,6 +41,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { useProjectCourseInfo } from "./use-project-course";
+import { useRuntimeRecoveryView } from "./use-runtime-recovery-view";
 import {
   pathMatchesRoot,
   selectionForPath,
@@ -255,6 +256,7 @@ export function useProjectContextProvider({
   publicDirectoryShare?: ResolvedPublicDirectoryShare;
   manageWorkspaceSelection?: boolean;
 }): ProjectContextState {
+  useRuntimeRecoveryView(project_id, is_active);
   const actions = useActions({ project_id });
   const { project, group } = useProject(project_id);
   const account_id = useTypedRedux("account", "account_id");

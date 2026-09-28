@@ -6770,6 +6770,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
         account_id: ACCOUNT_UUID,
         host_id: HOST_UUID,
         auth_actor: "agent",
+        project_id: PROJECT_UUID,
       }),
     );
   });

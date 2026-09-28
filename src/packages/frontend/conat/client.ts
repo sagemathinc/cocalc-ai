@@ -102,7 +102,7 @@ import {
 } from "@cocalc/frontend/syncdoc-diagnostics";
 import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
-import { annotateCallHubError } from "@cocalc/conat/hub/call-hub";
+import { annotateCallHubError, requestHub } from "@cocalc/conat/hub/call-hub";
 import {
   getProjectUserRole,
   isViewerProjectRole,
@@ -155,6 +155,11 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.getCodexCredentialSelectionCapability",
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
+  "projects.claudeSubscriptionLoginStart",
+  "projects.claudeSubscriptionLoginStatus",
+  "projects.getClaudeSubscriptionUsage",
+  "projects.claudeSubscriptionLoginSubmitCode",
+  "projects.claudeSubscriptionLoginCancel",
   "projects.codexUploadAuthFile",
   "projects.codexUploadAuthFileV2",
   "projects.getCodexUsageStatus",
@@ -1544,6 +1549,17 @@ export class ConatClient extends EventEmitter {
         routing,
       });
       return routing;
+    },
+    {
+      createKey: (args) => {
+        const cn = this.conat();
+        return JSON.stringify([
+          cn.id,
+          this.client.account_id,
+          cn.info?.user,
+          args,
+        ]);
+      },
     },
   );
 
@@ -3407,7 +3423,7 @@ export class ConatClient extends EventEmitter {
         args,
         ...(auth_session_hash ? { auth_session_hash } : {}),
       };
-      const resp = await cn.request(subject, data, { timeout });
+      const resp = await requestHub(cn, subject, data, { timeout });
       if (!routeToProjectHost) {
         this.noteHealthyHubResponse();
       }

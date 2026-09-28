@@ -282,7 +282,7 @@ async function assertAccountCanIssueProjectHostToken({
   return "host";
 }
 
-async function syncProjectUsersOnHostForBrowserAccess({
+export async function syncProjectUsersOnHostForBrowserAccess({
   account_id,
   project_id,
   expected_host_id,
@@ -432,6 +432,7 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
   const { token, expires_at } = issueProjectHostAuthTokenJwt({
     account_id,
     host_id,
+    project_id,
     ttl_seconds,
     session_id,
     auth_actor: "agent",

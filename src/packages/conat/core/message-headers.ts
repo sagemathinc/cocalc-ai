@@ -2,6 +2,7 @@ import { ConatError, isValidSubjectWithoutWildcards } from "../util";
 import type { Headers } from "./client";
 
 export const REPLY_HEADER = "CN-Reply";
+export const SOCKET_RETURN_HEADER = "CN-SocketReturn";
 export const MAX_MESSAGE_HEADER_BYTES = 100_000;
 
 function invalid(reason: string): never {
@@ -116,4 +117,9 @@ export function validateMessageHeaders(
   }
   if (Object.prototype.hasOwnProperty.call(value, REPLY_HEADER))
     validateReplySubject(value[REPLY_HEADER]);
+  if (Object.prototype.hasOwnProperty.call(value, SOCKET_RETURN_HEADER)) {
+    validateReplySubject(value[SOCKET_RETURN_HEADER]);
+    if (!(value[SOCKET_RETURN_HEADER] as string).startsWith("_INBOX."))
+      invalid("socket return must be an inbox subject");
+  }
 }

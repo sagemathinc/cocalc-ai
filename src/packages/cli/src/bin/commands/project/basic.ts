@@ -13,6 +13,8 @@ import { uuid } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
 import { durationToMs } from "../../../core/utils";
+import { listProjectsWithApiKey } from "../../core/api-key-hub";
+import { apiKeyForProject } from "../../core/managed-connector-auth";
 import {
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
@@ -208,6 +210,45 @@ export function registerProjectBasicCommands(
         command: Command,
       ) => {
         await withContext(command, "project list", async (ctx) => {
+          const apiKey = apiKeyForProject(ctx);
+          if (apiKey) {
+            const limitNum = Math.max(
+              1,
+              Math.min(10000, Number(opts.limit ?? "100") || 100),
+            );
+            const hostId = opts.host ? opts.host.trim() : undefined;
+            if (hostId && !isValidUUID(hostId)) {
+              throw Error("API key project listing requires a host ID");
+            }
+            const prefix = opts.prefix?.trim().toLowerCase() ?? "";
+            const rows: Array<{
+              project_id: string;
+              title: string;
+              host_id: string | null;
+              state: string | null;
+              last_edited: string | null;
+            }> = [];
+            let offset = 0;
+            while (rows.length < limitNum) {
+              const page = await listProjectsWithApiKey({
+                apiBaseUrl: ctx.apiBaseUrl,
+                apiKey,
+                limit: Math.min(500, limitNum - rows.length),
+                offset,
+                search: prefix || undefined,
+              });
+              rows.push(
+                ...page.projects.filter(
+                  (row) =>
+                    (!hostId || row.host_id === hostId) &&
+                    (!prefix || row.title.toLowerCase().startsWith(prefix)),
+                ),
+              );
+              if (page.next_offset == null || page.next_offset <= offset) break;
+              offset = page.next_offset;
+            }
+            return rows.slice(0, limitNum);
+          }
           const hostId = opts.host
             ? (await resolveHost(ctx, opts.host)).id
             : null;
@@ -846,18 +887,28 @@ export function registerProjectBasicCommands(
 
           const waitForAsyncExecResult = async (
             existingJobId: string,
-            api: {
-              system: {
-                exec: (opts: {
-                  async_get: string;
-                }) => Promise<ExecuteCodeOutput>;
-              };
-            },
+            projectId: string,
           ): Promise<ExecuteCodeOutput> => {
             const started = Date.now();
             let last: ExecuteCodeOutput | undefined;
             while (Date.now() - started <= ctx.timeoutMs) {
-              last = await fetchAsyncExecResult(existingJobId, api);
+              try {
+                // Re-resolve the scoped connection as its authorization lease expires.
+                // Only status reads may be retried; never resubmit the command.
+                const { api } = await resolveProjectProjectApi(ctx, projectId);
+                last = await fetchAsyncExecResult(existingJobId, api);
+              } catch (error) {
+                if ((error as { code?: string })?.code !== "CONNECTION_LOST") {
+                  throw Object.assign(
+                    new Error(
+                      `Unable to read exec job ${existingJobId}. Resume with project exec --project ${projectId} --job-id ${existingJobId} --wait. The command was not resubmitted.`,
+                    ),
+                    { cause: error, code: (error as { code?: unknown })?.code },
+                  );
+                }
+                await sleep(Math.max(100, pollMs));
+                continue;
+              }
               if (
                 !isAsyncExecOutput(last) ||
                 isTerminalAsyncStatus(last.status)
@@ -869,7 +920,7 @@ export function registerProjectBasicCommands(
             const lastStatus =
               last && isAsyncExecOutput(last) ? last.status : "unknown";
             throw new Error(
-              `timeout waiting for exec job ${existingJobId}; last status=${lastStatus}`,
+              `timeout waiting for exec job ${existingJobId}; last status=${lastStatus}. Resume with project exec --project ${projectId} --job-id ${existingJobId} --wait. The command was not resubmitted.`,
             );
           };
 
@@ -885,7 +936,7 @@ export function registerProjectBasicCommands(
             const resolved = await resolveProjectProjectApi(ctx, opts.project);
             ws = resolved.project;
             result = wantsWait
-              ? await waitForAsyncExecResult(jobId, resolved.api)
+              ? await waitForAsyncExecResult(jobId, resolved.project.project_id)
               : await fetchAsyncExecResult(jobId, resolved.api);
           } else {
             const timeout = getProjectExecTimeoutSeconds(
@@ -921,7 +972,7 @@ export function registerProjectBasicCommands(
               if (wantsWait && isAsyncExecOutput(result)) {
                 result = await waitForAsyncExecResult(
                   result.job_id,
-                  resolved.api,
+                  resolved.project.project_id,
                 );
               }
             } else {
@@ -939,6 +990,10 @@ export function registerProjectBasicCommands(
                   opts.project,
                 );
                 ws = resolved.project;
+                const scoped = !!apiKeyForProject(
+                  ctx,
+                  resolved.project.project_id,
+                );
                 result = await resolved.api.system.exec(
                   opts.bash
                     ? {
@@ -947,6 +1002,7 @@ export function registerProjectBasicCommands(
                         timeout,
                         err_on_exit: false,
                         path: opts.path,
+                        ...(scoped ? { async_call: true } : {}),
                       }
                     : {
                         command: first,
@@ -955,8 +1011,22 @@ export function registerProjectBasicCommands(
                         timeout,
                         err_on_exit: false,
                         path: opts.path,
+                        ...(scoped ? { async_call: true } : {}),
                       },
                 );
+                if (scoped && isAsyncExecOutput(result)) {
+                  ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+                  const completed = await waitForAsyncExecResult(
+                    result.job_id,
+                    resolved.project.project_id,
+                  );
+                  result = {
+                    type: "blocking",
+                    stdout: completed.stdout,
+                    stderr: completed.stderr,
+                    exit_code: completed.exit_code,
+                  };
+                }
               } finally {
                 ctx.timeoutMs = prevTimeoutMs;
                 ctx.rpcTimeoutMs = prevRpcTimeoutMs;

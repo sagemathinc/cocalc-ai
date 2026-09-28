@@ -9,7 +9,6 @@ import { journalSameProjectBulkCopy } from "./collaborators-bulk-copy";
 import {
   deleteRedundantSnapshotHome,
   preserveSnapshotHistory,
-  replaceSnapshotHome,
 } from "./snapshot-restore-history";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -123,6 +122,10 @@ import {
   parseShareFsSubject,
   parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
+import {
+  API_KEY_VIEWER_FILE_SERVICE,
+  parseApiKeyViewerFsSubject,
+} from "@cocalc/conat/auth/project-host-api-key-subject";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
 import execSandbox from "@cocalc/backend/sandbox/exec";
@@ -174,6 +177,9 @@ import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { planBackupRetention } from "./backup-retention";
+import { prepareHomeSnapshotRootfs } from "./snapshot-home-rootfs";
+import { swapSnapshotHome } from "./snapshot-home-swap";
+import { restoreSnapshotRootfs } from "./snapshot-rootfs-restore";
 import {
   assertFrozenVolumeMatchesBackup,
   deleteOrphanedStagedArchiveSnapshots,
@@ -794,11 +800,6 @@ async function ensureSnapshotRestoreRoot(): Promise<string> {
   return root;
 }
 
-async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
-  const root = await ensureSnapshotRestoreRoot();
-  return join(root, `${prefix}${randomUUID()}`);
-}
-
 async function createImageCacheTempSubvolume(prefix: string): Promise<string> {
   await mkdir(IMAGE_CACHE, { recursive: true });
   const path = join(IMAGE_CACHE, `${prefix}${randomUUID()}`);
@@ -815,47 +816,6 @@ async function createOverlayMountTempPath(): Promise<string> {
   const path = join(PROJECT_ROOTS_CACHE, randomUUID());
   await mkdir(path, { recursive: true });
   return path;
-}
-
-async function replaceTreeByMove({
-  src,
-  dest,
-}: {
-  src?: string;
-  dest: string;
-}): Promise<void> {
-  if (await exists(dest)) {
-    await sudo({ command: "rm", args: ["-rf", dest] });
-  }
-  if (!src || !(await exists(src))) {
-    return;
-  }
-  await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
-  await sudo({ command: "mv", args: [src, dest] });
-}
-
-async function replaceTreeByCopy({
-  src,
-  dest,
-}: {
-  src?: string;
-  dest: string;
-}): Promise<void> {
-  if (await exists(dest)) {
-    await sudo({ command: "rm", args: ["-rf", dest] });
-  }
-  if (!src || !(await exists(src))) {
-    return;
-  }
-  // A directory inside the old Btrfs project subvolume cannot be renamed into
-  // the restored subvolume (EXDEV). The privileged helper preserves ownership
-  // and metadata while reflinking file data when the filesystem permits it.
-  await sudo({ command: "mkdir", args: ["-p", dest] });
-  await sudo({
-    command: "copy-tree-reflink",
-    args: [src, dest],
-    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
-  });
 }
 
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
@@ -1199,12 +1159,17 @@ async function swapProjectHome({
     reason: "project home replacement started",
   });
   markProjectVolumeAbsent(project_id, "home");
-  await replaceSnapshotHome({
+  await swapSnapshotHome({
     home,
     replacement: replacementPath,
-    retired: oldHomePath,
-    record: () =>
-      recordManagedProjectVolume({ project_id, path: home, force: true }),
+    previous: oldHomePath,
+    record: async () => {
+      await recordManagedProjectVolume({
+        project_id,
+        path: home,
+        force: true,
+      });
+    },
   });
   return { oldHomePath };
 }
@@ -3241,34 +3206,25 @@ async function restoreSnapshot({
   const stagedRootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
-  let preservedRootfsPath: string | undefined;
   const copiedSnapshots: string[] = [];
   try {
     if (mode === "rootfs") {
-      preservedRootfsPath = await createSnapshotRestoreTempPath(
-        `${volName(project_id)}.rootfs-`,
-      );
-      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
-      try {
-        await replaceTreeByMove({ src: stagedRootfsPath, dest: rootfsPath });
-      } catch (err) {
-        await replaceTreeByMove({
-          src: preservedRootfsPath,
-          dest: rootfsPath,
-        }).catch(() => {});
-        throw err;
-      }
+      await restoreSnapshotRootfs({
+        current: rootfsPath,
+        snapshot: stagedRootfsPath,
+      });
       invalidateProjectFsServer(project_id);
       void touchProjectLastEdited(project_id, "restore-snapshot");
       return;
     }
 
     if (mode === "home") {
-      await replaceTreeByCopy({
-        src: rootfsPath,
-        dest: stagedRootfsPath,
+      await prepareHomeSnapshotRootfs({
+        current: rootfsPath,
+        staged: stagedRootfsPath,
       });
     }
+
     await preserveSnapshotHistory({
       home,
       replacement: staged.path,
@@ -3297,7 +3253,6 @@ async function restoreSnapshot({
         });
       });
     }
-    await removeDirectoryTree(preservedRootfsPath).catch(() => {});
   }
 
   if (oldHomePath) {
@@ -5327,6 +5282,46 @@ export async function initViewerFsServer({
   });
 }
 
+export async function initApiKeyViewerFsServer({
+  client,
+}: {
+  client: ConatClient;
+}) {
+  return await fsReadOnlyServer({
+    service: API_KEY_VIEWER_FILE_SERVICE,
+    client,
+    cacheTtlMs: 25_000,
+    fs: async (subject?: string) => {
+      const binding = subject ? parseApiKeyViewerFsSubject(subject) : undefined;
+      if (!binding)
+        throw new Error("invalid API key viewer filesystem subject");
+      const master = getMasterConatClient();
+      if (!master) throw new Error("project-host authority is unavailable");
+      const readPolicy = await callHub({
+        client: master,
+        host_id: requireHostId(),
+        name: "apiKeys.getViewerReadPolicy",
+        args: [binding],
+        timeout: 5_000,
+      });
+      const { path } = await getOrEnsureVolume(binding.project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id: binding.project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(binding.project_id),
+        scratch: getScratchMountpoint(binding.project_id),
+        sharedScratch: getSharedScratchMountpoint(),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id: binding.project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy,
+      });
+    },
+  });
+}
+
 export async function initShareFsServer({
   client,
   service = SHARE_FILE_SERVICE,
@@ -5369,11 +5364,17 @@ export async function initShareFsServer({
 function invalidateProjectFsServer(project_id: string): void {
   servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
   servers?.viewerFile?.invalidateAll?.();
+  servers?.apiKeyViewerFile?.invalidateAll?.();
   servers?.shareFile?.invalidateAll?.();
 }
 
-let servers: null | { ssh: any; file: any; viewerFile: any; shareFile: any } =
-  null;
+let servers: null | {
+  ssh: any;
+  file: any;
+  viewerFile: any;
+  apiKeyViewerFile: any;
+  shareFile: any;
+} = null;
 
 export async function initFileServer({
   client,
@@ -5522,6 +5523,7 @@ export async function initFileServer({
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
   const viewerFile = await initViewerFsServer({ client });
+  const apiKeyViewerFile = await initApiKeyViewerFsServer({ client });
   const shareFile = await initShareFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
   startProjectQuotaRepairMonitor();
@@ -5750,7 +5752,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh, viewerFile, shareFile };
+  servers = { file, ssh, viewerFile, apiKeyViewerFile, shareFile };
   return servers;
 }
 
@@ -5797,10 +5799,11 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh, viewerFile, shareFile } = servers;
+  const { file, ssh, viewerFile, apiKeyViewerFile, shareFile } = servers;
   servers = null;
   file.close();
   viewerFile.close();
+  apiKeyViewerFile.close();
   shareFile.close();
   void ssh.close?.();
 }

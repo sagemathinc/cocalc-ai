@@ -76,6 +76,15 @@ const listStoppedScratchVolumePreparationBatch = jest.fn();
 const currentProjectVolumeLifecycleGeneration = jest.fn(() => 0);
 const getRecordedProjectVolumeIdentity = jest.fn();
 const fenceProjectHostAcpWork = jest.fn(async () => undefined);
+const resumeHarnessDiscovery = jest.fn();
+const pauseHarnessDiscovery = jest.fn(
+  (_projectId: string) => resumeHarnessDiscovery,
+);
+
+jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
+  pauseHarnessDiscovery: (projectId: string) =>
+    pauseHarnessDiscovery(projectId),
+}));
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -881,6 +890,21 @@ describe("project host start ACP rehydrate ordering", () => {
     await expect(hubApi.projects.stop({ project_id })).resolves.toBeUndefined();
     expect(runnerApi.status).toHaveBeenCalledTimes(2);
     expect(fenceProjectHostAcpWork).toHaveBeenCalledWith({ project_id });
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledTimes(2);
+    expect(pauseHarnessDiscovery).toHaveBeenCalledWith(project_id);
+    expect(pauseHarnessDiscovery.mock.invocationCallOrder[0]).toBeLessThan(
+      fenceProjectHostAcpWork.mock.invocationCallOrder[0],
+    );
+    expect(resumeHarnessDiscovery).toHaveBeenCalledTimes(1);
+    expect(resumeHarnessDiscovery.mock.invocationCallOrder[0]).toBeGreaterThan(
+      fenceProjectHostAcpWork.mock.invocationCallOrder[1],
+    );
+    expect(fenceProjectHostAcpWork.mock.invocationCallOrder[0]).toBeLessThan(
+      runnerApi.stop.mock.invocationCallOrder[0],
+    );
+    expect(fenceProjectHostAcpWork.mock.invocationCallOrder[1]).toBeGreaterThan(
+      runnerApi.stop.mock.invocationCallOrder[0],
+    );
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,
@@ -889,6 +913,26 @@ describe("project host start ACP rehydrate ordering", () => {
         ssh_port: null,
       }),
     );
+  });
+
+  it("does not remove the primary container when its ACP fence fails", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+      status: jest.fn(),
+    } as any;
+    fenceProjectHostAcpWork.mockRejectedValueOnce(
+      Error("sidecar cleanup failed"),
+    );
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.stop({ project_id })).rejects.toThrow(
+      "sidecar cleanup failed",
+    );
+    expect(resumeHarnessDiscovery).toHaveBeenCalledTimes(1);
+    expect(runnerApi.stop).not.toHaveBeenCalled();
+    expect(runnerApi.status).not.toHaveBeenCalled();
   });
 
   it("prepares scratch after stop without blocking stop or repeating reset on restart", async () => {
@@ -1196,7 +1240,7 @@ describe("project host start ACP rehydrate ordering", () => {
       "project stop did not converge",
     );
     expect(runnerApi.status).toHaveBeenCalledTimes(5);
-    expect(fenceProjectHostAcpWork).not.toHaveBeenCalled();
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledTimes(1);
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,

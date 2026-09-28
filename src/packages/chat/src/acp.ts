@@ -38,6 +38,15 @@ export interface CodexThreadConfig {
 
 export type CodexCompletionNotificationOverride = "inherit" | "on" | "off";
 
+/** An empty stored harness ID explicitly resets context; absence may be sync lag. */
+export function resolveHarnessSessionId(
+  persisted?: string | null,
+  inferred?: string,
+): string | undefined {
+  if (persisted === "") return undefined;
+  return normalizeCodexSessionId(persisted) ?? inferred;
+}
+
 export function normalizeCodexMention(model?: string): string | undefined {
   if (!model || model === "codex-agent") return undefined;
   return model;

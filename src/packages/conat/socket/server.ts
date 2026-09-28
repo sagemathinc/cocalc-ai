@@ -4,11 +4,13 @@ import {
   type Command,
   SOCKET_HEADER_CMD,
   SOCKET_HEADER_CONNECT_ATTEMPT,
+  SOCKET_RESPONSE_ID,
   clientSubject,
   serverStatusSubject,
 } from "./util";
 import { ServerSocket } from "./server-socket";
 import { type Headers } from "@cocalc/conat/core/client";
+import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("socket:server");
@@ -63,7 +65,7 @@ export class ConatSocketServer extends ConatSocketBase {
           continue;
         }
         // TODO: may return load info at some point
-        mesg.respondSync({ id: this.id });
+        mesg.respondSync({ id: this.id, inboxReturn: 1 });
       }
     })();
   };
@@ -117,6 +119,11 @@ export class ConatSocketServer extends ConatSocketBase {
       return;
     }
     const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
+    const returnInbox = mesg.headers?.[SOCKET_RETURN_HEADER];
+    if (returnInbox && mesg.caller?.socket_return !== returnInbox) {
+      // Older brokers cannot attest this route; never trust the client header.
+      return;
+    }
     const id = this.socketIdFromSubject(mesg.subject);
     let socket = this.sockets[id];
 
@@ -141,6 +148,7 @@ export class ConatSocketServer extends ConatSocketBase {
         conatSocket: this,
         id,
         subject: mesg.subject,
+        returnInbox,
       });
       this.sockets[id] = socket;
       // in a cluster, it's critical that the other side is visible
@@ -170,7 +178,10 @@ export class ConatSocketServer extends ConatSocketBase {
       this.emit("connection", socket);
     }
 
-    if (cmd !== undefined) {
+    if (socket.returnInbox && socket.returnInbox !== returnInbox) return;
+    if (mesg.headers?.[SOCKET_RESPONSE_ID] !== undefined) {
+      socket.receiveResponse(mesg);
+    } else if (cmd !== undefined) {
       // note: test this first since it is also a request
       // a special internal control command
       this.handleCommandFromClient({ socket, cmd: cmd as Command, mesg });

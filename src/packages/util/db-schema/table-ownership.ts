@@ -498,6 +498,17 @@ export const TABLE_OWNERSHIP = {
       "Agent runs derive authority from their project-owned identity and account execution principal. They must use agent routing helpers.",
   }),
 
+  ...entries(
+    ["agent_cocalc_connector_configs", "agent_cocalc_connector_turns"],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      notes:
+        "Human-owned connector consent and turn-key lifecycle are authoritative only at the account home. Source project/run authority is checked through project ownership; account rehome requires explicit migration before these tables are portable.",
+    },
+  ),
+
   ...entries(["agent_rpc_admission_state"], {
     ownership: "ephemeral",
     authority: "local",
@@ -895,6 +906,15 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...adHocEntries(["api_key_action_requests"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    source: "API key action approval store",
+    migrate_to_schema: true,
+    notes:
+      "Immutable API-key action reviews and terminal decisions follow the account during rehome. Request IDs, exact authority bindings, expiry, and status are copied unchanged; requests and decisions share the account-rehome fence. No human session or approval credential is stored in these rows.",
+  }),
   ...adHocEntries(["live_voice_sessions"], {
     ownership: "account-home",
     authority: "account_id",
