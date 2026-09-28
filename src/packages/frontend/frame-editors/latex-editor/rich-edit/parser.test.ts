@@ -643,3 +643,109 @@ describe("stripComment behavior", () => {
     expect(first(ds, "textit")).toBeUndefined();
   });
 });
+
+describe("inline $ delimiter state skips opaque \\verb and verbatim bodies", () => {
+  /** The inline-math widgets, as their raw source. */
+  function inlineMath(ds: WidgetDescriptor[]): string[] {
+    return ds.filter((d) => d.type === "math-inline").map((d) => d.source);
+  }
+
+  it("\\verb|$| and $x^2$ on the same line", () => {
+    const ds = parse1("Use \\verb|$| for $x^2$.");
+    expect(first(ds, "verb")).toBeDefined();
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+
+  it("\\verb|$| with the math on the next line", () => {
+    const ds = parse(["Use \\verb|$| for", "the formula $x^2$."]);
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+
+  it("starred \\verb*|$| is skipped the same way", () => {
+    expect(inlineMath(parse1("Use \\verb*|$| for $x^2$."))).toEqual(["$x^2$"]);
+  });
+
+  it("\\verb with an even $ count keeps working", () => {
+    const ds = parse(["See \\verb|$x$| and", "then $x^2$."]);
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+
+  it("an escaped \\\\verb is not a verb (line break, then prose)", () => {
+    // `\\` is a line break, so `verb|$x$|` is ordinary text and its
+    // `$x$` is real inline math.
+    expect(inlineMath(parse1("a \\\\verb|$x$| b"))).toEqual(["$x$"]);
+  });
+
+  it("an unterminated \\verb does not hide the rest of the line", () => {
+    // Fail-open like scanVerb: no closing delimiter, so the `$` pair
+    // is still counted as ordinary math delimiters.
+    expect(inlineMath(parse1("\\verb|oops $x$"))).toEqual(["$x$"]);
+  });
+
+  it.each(["lstlisting", "verbatim", "Verbatim"])(
+    "%s body with an odd $ count, math right after \\end",
+    (env) => {
+      const ds = parse([
+        `\\begin{${env}}`,
+        "echo $HOME",
+        `\\end{${env}}`,
+        "Then $x^2$ follows.",
+      ]);
+      expect(inlineMath(ds)).toEqual(["$x^2$"]);
+    },
+  );
+
+  it("minted body with an odd $ count, math right after \\end", () => {
+    const ds = parse([
+      "\\begin{minted}{bash}",
+      "echo $HOME",
+      "\\end{minted}",
+      "Then $x^2$ follows.",
+    ]);
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+
+  it("a blank line after \\end{lstlisting} keeps working", () => {
+    const ds = parse([
+      "\\begin{lstlisting}",
+      "echo $HOME",
+      "\\end{lstlisting}",
+      "",
+      "Then $x^2$ follows.",
+    ]);
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+
+  it("a viewport starting after the listing replays the same state", () => {
+    const lines = [
+      "\\begin{lstlisting}",
+      "echo $HOME",
+      "\\end{lstlisting}",
+      "Then $x^2$ follows.",
+    ];
+    expect(inlineMath(parseRange(lines, 3, lines.length))).toEqual(["$x^2$"]);
+  });
+
+  it("a viewport starting after \\verb|$| replays the same state", () => {
+    const lines = ["Use \\verb|$| for", "the formula $x^2$."];
+    expect(inlineMath(parseRange(lines, 1, lines.length))).toEqual(["$x^2$"]);
+  });
+
+  it("dollars inside a listing body still render no math widget", () => {
+    const ds = parse(["\\begin{lstlisting}", "echo $a$", "\\end{lstlisting}"]);
+    expect(first(ds, "math-inline")).toBeUndefined();
+    expect(first(ds, "code-listing-env")).toBeDefined();
+  });
+
+  it("math in a supported tabular still pairs its own $…$", () => {
+    // Only raw-text (verbatim / code-listing) bodies are opaque to the
+    // delimiter walk; a tabular body is ordinary LaTeX.
+    const ds = parse([
+      "\\begin{tabular}{l}",
+      "$a$ \\\\",
+      "\\end{tabular}",
+      "Then $x^2$ follows.",
+    ]);
+    expect(inlineMath(ds)).toEqual(["$x^2$"]);
+  });
+});
