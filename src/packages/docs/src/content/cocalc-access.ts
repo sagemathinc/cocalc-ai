@@ -18,8 +18,10 @@ a report in your own project."
 
 ## Configure access
 
-Open a named agent and click **CoCalc** beside the message composer, or the
-**CoCalc access** link button in its header. Both open the same settings.
+Open a named agent and choose **+ > CoCalc** in the message composer. Once
+configured, the small CoCalc connector icon beside **+** reopens these settings;
+it is muted when access is disabled. Settings apply to the agent across
+conversations, not just the current conversation.
 
 1. Turn on **Enable CoCalc access**.
 2. Choose the account privileges the task needs.
