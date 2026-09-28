@@ -240,6 +240,13 @@ an admin account for smoke-test workflows.
 short-lived host tokens kept in-process (no on-disk token cache). All
 `project file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
+
+Each daemon admits at most 64 cached or in-flight authentication contexts.
+Existing contexts remain usable at the limit; additional contexts receive an
+explicit error. Use `daemon stop` to release cached connections, or
+`--no-daemon` for a one-shot command. Credential-file rotation replaces the old
+context rather than consuming another cache slot. This is a local daemon limit,
+not a substitute for server-side account and API-key resource limits.
 These file commands do not require the project to be running.
 `project sync forward ...` uses `reflect-sync` for SSH forward sessions.
 Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
@@ -251,6 +258,39 @@ project codex execution run in the same project-host containerized path as the U
 `project codex exec --stream` prints progress events to stderr; `--jsonl`
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
+
+### Create A Scoped API Key
+
+Use a signed-in human profile with fresh authentication to manage keys. A scoped
+key cannot approve or create its own additional authority.
+
+`account api-key create --scope-file scope.json --expire-seconds 3600` accepts the
+same versioned permissions as the API Keys editor. For example, this scope lists
+your projects and reads their `assignments` directories:
+
+```json
+{
+  "version": 1,
+  "account": ["project:list"],
+  "projects": [],
+  "all_projects": {
+    "capabilities": ["file:read"],
+    "viewer_read_roots": ["assignments"]
+  }
+}
+```
+
+All-projects access includes future projects where you are a full collaborator;
+current membership is still required. Individual entries in `projects` have a
+`project_id` and override that default for the specified project. Omit
+`all_projects` to grant access only to explicit projects.
+
+Do not combine `--scope-file` with legacy `--capability` or `--project-id` flags.
+`account api-key list` reports the stored scope and revision without secrets.
+Creation returns the new secret once; do not put that output in logs or chat.
+The scope file contains permissions, not the key secret. Agents with CoCalc
+access configured receive a managed credential automatically and should not
+create a manual key for their turn.
 
 ## Run And Continue Codex From The CLI
 

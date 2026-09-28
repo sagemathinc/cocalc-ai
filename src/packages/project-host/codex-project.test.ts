@@ -140,6 +140,9 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     agent: {
       issueIdentity: jest.fn(),
       endIdentityRun: jest.fn(),
+      beginCocalcConnectorTurn: jest.fn(),
+      renewCocalcConnectorTurn: jest.fn(),
+      endCocalcConnectorTurn: jest.fn(),
     },
   },
 }));
@@ -185,9 +188,17 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("initCodexProjectRunner", () => {
+  const originalSiteUrl = process.env.COCALC_SITE_URL;
+  afterEach(() => {
+    if (originalSiteUrl === undefined) delete process.env.COCALC_SITE_URL;
+    else process.env.COCALC_SITE_URL = originalSiteUrl;
+  });
   beforeEach(() => {
     hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
     hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
+    hubApi.agent.beginCocalcConnectorTurn.mockReset();
+    hubApi.agent.renewCocalcConnectorTurn.mockReset();
+    hubApi.agent.endCocalcConnectorTurn.mockReset();
     spawnMock.mockReset();
     execFileMock.mockReset();
     execMock.mockReset();
@@ -195,6 +206,7 @@ describe("initCodexProjectRunner", () => {
     delete process.env.COCALC_BIN_PATH;
     delete process.env.COCALC_CLI_BIN;
     delete process.env.COCALC_API_URL;
+    delete process.env.COCALC_SITE_URL;
     delete process.env.BASE_URL;
     delete process.env.MASTER_CONAT_SERVER;
     delete process.env.COCALC_MASTER_CONAT_SERVER;
@@ -434,6 +446,9 @@ describe("initCodexProjectRunner", () => {
         const identityPath = spawned.runtimeEnv!.COCALC_AGENT_IDENTITY_FILE;
         const file = spawned.runtimeEnv!.COCALC_AGENT_MENTION_REFERENCES_FILE;
         expect(identityPath).toMatch(/\/identity.json$/);
+        expect(spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE).toMatch(
+          /\/connector-key$/,
+        );
         expect(file).toBe(`${identityPath}.mentions.json`);
         const args = spawnMock.mock.calls.at(-1)![1];
         expect(args).toContain(`COCALC_AGENT_MENTION_REFERENCES_FILE=${file}`);
@@ -450,6 +465,272 @@ describe("initCodexProjectRunner", () => {
     }
     expect(paths[0]).not.toBe(paths[1]);
   });
+
+  it.each(["ordinary", "ended-during-issuance", "replaced-during-issuance"])(
+    "provisions and revokes a turn key through a restricted runtime file (%s)",
+    async (outcome) => {
+      spawnMock.mockImplementation(() => new FakeProc());
+      execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+        cb(null, "true\n", ""),
+      );
+      const home = await mkTempDir("codex-project-connector-");
+      filesystem.localPath.mockResolvedValue({ home });
+      auth.resolveCodexAuthRuntime.mockResolvedValue({
+        source: "account-api-key",
+        contextId: "connector-test",
+        env: { OPENAI_API_KEY: "test-key" },
+      });
+      hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+        agent_id: "registered-agent",
+        run_id,
+        token: "identity-token",
+        expires_at: Date.now() + 600000,
+      }));
+      hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+        turn_id: "turn-id",
+        key_id: "key-id",
+        secret: "test.scoped-key.secret",
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      });
+      hubApi.agent.endCocalcConnectorTurn.mockResolvedValue(undefined);
+      const { initCodexProjectRunner } = await import("./codex/codex-project");
+      initCodexProjectRunner();
+      const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        cwd: "/home/user",
+        env: {
+          COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+        },
+      });
+      const chat = {
+        project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        path: "/home/user/send.chat",
+        message_date: "2026-09-25T00:00:00.000Z",
+        message_id: "message-1",
+        thread_id: "thread-1",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+      };
+      try {
+        if (outcome !== "ordinary") {
+          let finishIssuance!: (value: any) => void;
+          hubApi.agent.beginCocalcConnectorTurn.mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                finishIssuance = resolve;
+              }),
+          );
+          const pending = spawned.beginConnectorTurn!(chat).then(
+            () => "unexpected success",
+            (error) => error.message,
+          );
+          for (let i = 0; i < 100 && !finishIssuance; i++)
+            await new Promise((resolve) => setImmediate(resolve));
+          expect(finishIssuance).toBeDefined();
+          await spawned.endConnectorTurn?.();
+          if (outcome === "replaced-during-issuance") {
+            await spawned.beginConnectorTurn!({
+              ...chat,
+              message_id: "message-2",
+            });
+          }
+          finishIssuance({
+            turn_id: "cancelled-turn",
+            key_id: "cancelled-key",
+            secret: "cancelled.scoped.secret",
+            expires_at: Date.now() + 300000,
+            config_id: "config-id",
+            config_revision: 1,
+          });
+          expect(await pending).toMatch(/unavailable|closed|superseded/);
+          const hostFile =
+            spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE.replace(
+              "/home/user",
+              home,
+            );
+          if (outcome === "replaced-during-issuance") {
+            expect(await fs.readFile(hostFile, "utf8")).toBe(
+              "test.scoped-key.secret\n",
+            );
+          } else {
+            await expect(fs.stat(hostFile)).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
+          expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledWith(
+            expect.objectContaining({ turn_id: "cancelled-turn" }),
+          );
+          expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+          return;
+        }
+        await spawned.beginConnectorTurn?.(chat);
+        expect(hubApi.agent.beginCocalcConnectorTurn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agent_id: "registered-agent",
+            turn_ref: expect.objectContaining({
+              message_id: "message-1",
+              thread_id: "thread-1",
+            }),
+          }),
+        );
+        const containerFile = spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE;
+        const hostFile = containerFile.replace("/home/user", home);
+        expect(await fs.readFile(hostFile, "utf8")).toBe(
+          "test.scoped-key.secret\n",
+        );
+        expect((await fs.stat(hostFile)).mode & 0o777).toBe(0o600);
+        expect(spawnMock.mock.calls.at(-1)![1].join(" ")).not.toContain(
+          "test.scoped-key.secret",
+        );
+        await spawned.endConnectorTurn?.();
+        await expect(fs.stat(hostFile)).rejects.toThrow();
+        expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+      } finally {
+        for (const listener of spawned.proc.listeners("exit"))
+          await listener(0);
+      }
+    },
+  );
+
+  it.each(["failure", "ended", "replacement-success", "replacement-failure"])(
+    "handles delayed managed renewal (%s)",
+    async (outcome) => {
+      spawnMock.mockImplementation(() => new FakeProc());
+      execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+        cb(null, "true\n", ""),
+      );
+      const home = await mkTempDir("codex-project-renew-failure-");
+      filesystem.localPath.mockResolvedValue({ home });
+      auth.resolveCodexAuthRuntime.mockResolvedValue({
+        source: "account-api-key",
+        contextId: "connector-renew-test",
+        env: { OPENAI_API_KEY: "test-key" },
+      });
+      hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+        agent_id: "registered-agent",
+        run_id,
+        token: "identity-token",
+        expires_at: Date.now() + 600000,
+      }));
+      hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+        turn_id: "turn-id",
+        key_id: "key-id",
+        secret: "test.scoped-key.secret",
+        expires_at: Date.now() + 300000,
+        config_id: "config-id",
+        config_revision: 1,
+      });
+      let finishRenewal!: (expiresAt: number) => void;
+      let failRenewal!: (error: Error) => void;
+      hubApi.agent.renewCocalcConnectorTurn.mockImplementation(
+        () =>
+          new Promise((resolve, reject) => {
+            finishRenewal = resolve;
+            failRenewal = reject;
+          }),
+      );
+      let notifyRevocation!: () => void;
+      const revocationObserved = new Promise<void>((resolve) => {
+        notifyRevocation = resolve;
+      });
+      hubApi.agent.endCocalcConnectorTurn.mockImplementation(async () => {
+        notifyRevocation();
+      });
+      const intervalSpy = jest.spyOn(global, "setInterval");
+      const { initCodexProjectRunner } = await import("./codex/codex-project");
+      initCodexProjectRunner();
+      const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        cwd: "/home/user",
+        env: {
+          COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+        },
+      });
+      try {
+        const chat = {
+          project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+          path: "/home/user/send.chat",
+          message_date: "2026-09-25T00:00:00.000Z",
+          message_id: "message-1",
+          thread_id: "thread-1",
+          sender_id: "00000000-0000-4000-8000-000000000001",
+        };
+        await spawned.beginConnectorTurn?.(chat);
+        const renewal = intervalSpy.mock.calls.find(
+          ([, ms]) => ms === 60_000,
+        )?.[0];
+        expect(renewal).toBeDefined();
+        (renewal as () => void)();
+        (renewal as () => void)();
+        expect(hubApi.agent.renewCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+        const replacement = outcome.startsWith("replacement-");
+        if (outcome !== "failure") {
+          await spawned.endConnectorTurn?.();
+          if (replacement) {
+            hubApi.agent.beginCocalcConnectorTurn.mockResolvedValue({
+              turn_id: "next-turn-id",
+              key_id: "next-key-id",
+              secret: "next.scoped-key.secret",
+              expires_at: Date.now() + 300000,
+              config_id: "config-id",
+              config_revision: 1,
+            });
+            await spawned.beginConnectorTurn?.({
+              ...chat,
+              message_id: "message-2",
+            });
+          }
+          if (outcome === "replacement-failure") {
+            failRenewal(new Error("old turn ended"));
+          } else {
+            finishRenewal(Date.now() + 300000);
+          }
+        } else {
+          failRenewal(new Error("source access revoked"));
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        // Revocation follows real asynchronous credential-file removal. Event
+        // loop iterations do not establish that the filesystem work has ended.
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            revocationObserved,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(Error("connector revocation was not observed")),
+                2000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+        expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(1);
+        const containerFile = spawned.runtimeEnv!.COCALC_CONNECTOR_API_KEY_FILE;
+        const hostFile = containerFile.replace("/home/user", home);
+        if (replacement) {
+          expect(await fs.readFile(hostFile, "utf8")).toBe(
+            "next.scoped-key.secret\n",
+          );
+        } else {
+          await expect(fs.stat(hostFile)).rejects.toThrow();
+        }
+        await spawned.endConnectorTurn?.();
+        expect(hubApi.agent.endCocalcConnectorTurn).toHaveBeenCalledTimes(
+          replacement ? 2 : 1,
+        );
+      } finally {
+        intervalSpy.mockRestore();
+        for (const listener of spawned.proc.listeners("exit"))
+          await listener(0);
+      }
+    },
+  );
 
   it("uses authenticated real-project app-server exec", async () => {
     spawnMock.mockReturnValue(new FakeProc());
@@ -940,6 +1221,55 @@ describe("initCodexProjectRunner", () => {
 
     await lease!.close();
     await expect(fs.stat(lease!.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("atomically provisions and removes a native connector credential file", async () => {
+    const scratch = await mkTempDir("codex-project-connector-key-");
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = (await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+      home: scratch,
+      scratch,
+      refreshMs: 60_000,
+    }))!;
+    const connectorHostPath = path.join(
+      path.dirname(lease.hostPath),
+      "connector-key",
+    );
+    try {
+      expect(lease.connectorContainerPath).toMatch(/\/connector-key$/);
+      await lease.setConnectorKey("sk-cc-v2.key-one.secret");
+      expect(await fs.readFile(connectorHostPath, "utf8")).toBe(
+        "sk-cc-v2.key-one.secret\n",
+      );
+      expect((await fs.stat(connectorHostPath)).mode & 0o777).toBe(0o600);
+      await lease.setConnectorKey("sk-cc-v2.key-two.secret");
+      expect(await fs.readFile(connectorHostPath, "utf8")).toBe(
+        "sk-cc-v2.key-two.secret\n",
+      );
+      await lease.setAgentSessionKey("thread-1\0turn-2");
+      await expect(fs.stat(connectorHostPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await lease.setConnectorKey("sk-cc-v2.key-three.secret");
+    } finally {
+      await lease.close();
+    }
+    await expect(fs.stat(connectorHostPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

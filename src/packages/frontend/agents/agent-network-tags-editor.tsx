@@ -36,11 +36,13 @@ function isMember(network: AgentNetwork, agent: NamedAgent): boolean {
 }
 
 export function AgentNetworkTagsEditor({
+  open = true,
   agent,
   directory,
   onClose,
   onOpenNetwork,
 }: {
+  open?: boolean;
   agent: NamedAgent;
   directory: AgentNetworkDirectory;
   onClose: () => void;
@@ -199,7 +201,7 @@ export function AgentNetworkTagsEditor({
   return (
     <>
       <Modal
-        open
+        open={open}
         title={`Network tags${value.length ? ` (${value.length})` : ""} for @${agent.name}`}
         onCancel={() => {
           if (!busy) onClose();

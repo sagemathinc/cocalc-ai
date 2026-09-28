@@ -75,6 +75,7 @@ function loadTerminalModule({
       }
       return "";
     }),
+    attach: jest.fn(async () => ""),
     resize: jest.fn(async () => {}),
     sizes: jest.fn(async () => []),
     cwd: jest.fn(async () => "/tmp"),
@@ -758,6 +759,47 @@ describe("connected terminal resizing", () => {
 
     terminal.close();
   });
+
+  it.each([false, true])(
+    "reattaches after reply rotation without falling back to spawn (failure=%s)",
+    async (failure) => {
+      const { Terminal, ptys, registerReconnectResource, reconnectResources } =
+        loadTerminalModule();
+      const parent = document.createElement("div");
+      document.body.appendChild(parent);
+      const terminal = new Terminal(makeActions(), 0, "term-1", parent);
+      await terminal.connect();
+      const reconnect = registerReconnectResource.mock.calls[0][0].reconnect;
+      const closed = ptys[0].socket.on.mock.calls
+        .filter(([event]) => event === "closed")
+        .at(-1)?.[1];
+      ptys[0].socket.state = "closed";
+      (ptys[0].socket as any).closeReason = "reply-namespace-changed";
+      closed();
+      expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+        reason: "terminal_socket_closed",
+      });
+      terminal.conn_write("buffered input");
+      if (failure)
+        ptys[1].attach.mockRejectedValueOnce(new Error("unavailable"));
+      await reconnect();
+      expect(ptys[1].spawn).not.toHaveBeenCalled();
+      expect(ptys[1].attach).toHaveBeenCalledWith(terminal["termPath"], {
+        timeout: expect.any(Number),
+      });
+      if (failure) {
+        expect(ptys[1].socket.write).not.toHaveBeenCalled();
+        await reconnect();
+        expect(ptys[2].spawn).not.toHaveBeenCalled();
+        expect(ptys[2].attach).toHaveBeenCalled();
+      }
+      expect(ptys[failure ? 2 : 1].socket.write).toHaveBeenCalledWith({
+        data: "buffered input",
+        kind: "user",
+      });
+      terminal.close();
+    },
+  );
 
   it("does not let new input overtake buffered disconnected input during reconnect", async () => {
     const { Terminal, ptys } = loadTerminalModule();

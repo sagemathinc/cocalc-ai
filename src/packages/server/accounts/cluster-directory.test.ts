@@ -114,6 +114,56 @@ describe("accounts.cluster-directory", () => {
     });
   });
 
+  it("keeps revoked API keys as tombstones so stale writes cannot restore them", async () => {
+    const {
+      deleteClusterAccountApiKeyDirectoryEntryDirect,
+      getClusterAccountApiKeyByKeyIdDirect,
+      upsertClusterAccountApiKeyDirectoryEntryDirect,
+    } = await import("./cluster-directory");
+    await deleteClusterAccountApiKeyDirectoryEntryDirect("key-1");
+    await upsertClusterAccountApiKeyDirectoryEntryDirect({
+      key_id: "key-1",
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-0",
+      hash: "hash",
+      scope_revision: 1,
+    });
+    await getClusterAccountApiKeyByKeyIdDirect("key-1");
+    const statements = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(
+      statements.find((sql) => sql.includes("SET revoked_at=NOW()")),
+    ).toContain("scope_revision=scope_revision+1");
+    expect(
+      statements.find((sql) => sql.includes("ON CONFLICT (key_id)")),
+    ).toContain("revoked_at IS NULL");
+    expect(
+      statements.find((sql) => sql.includes("SELECT key_id, account_id")),
+    ).toContain("revoked_at IS NULL");
+  });
+
+  it("creates a tombstone when revocation wins the race with first upsert", async () => {
+    queryMock.mockImplementation(async (sql: string) => ({
+      rows: [],
+      rowCount: sql.includes("INSERT INTO cluster_account_api_key_directory")
+        ? 1
+        : 0,
+    }));
+    const { deleteClusterAccountApiKeyDirectoryEntryDirect } =
+      await import("./cluster-directory");
+    await deleteClusterAccountApiKeyDirectoryEntryDirect("key-2", {
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-2",
+    });
+    const sql = queryMock.mock.calls
+      .map(([statement]) => `${statement}`)
+      .find((statement) =>
+        statement.includes("INSERT INTO cluster_account_api_key_directory"),
+      );
+    expect(sql).toContain("revoked_at");
+    expect(sql).toContain("ON CONFLICT (key_id) DO UPDATE");
+    expect(sql).toContain("account_id=EXCLUDED.account_id");
+  });
+
   it("uses directory identity fields after an account moves to another bay", async () => {
     const { getClusterAccountByIdDirect } = await import("./cluster-directory");
     const account = await getClusterAccountByIdDirect(

@@ -4,10 +4,14 @@ import { join } from "path";
 import createApiV2Router, { type ApiV2RouterOptions } from "./router";
 import hubHandler from "../pages/api/conat/hub";
 import projectHandler from "../pages/api/conat/project";
+import projectHostApiKeyHandler from "../pages/api/conat/project-host-api-key";
+import apiKeyActionHandler from "../pages/api/conat/api-key-action";
 
 const CONAT_API_MANIFEST = [
   { path: "/hub", handler: hubHandler },
   { path: "/project", handler: projectHandler },
+  { path: "/project-host-api-key", handler: projectHostApiKeyHandler },
+  { path: "/api-key-action", handler: apiKeyActionHandler },
 ];
 
 export default function createConatRouter(

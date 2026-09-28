@@ -726,7 +726,15 @@ export function terminalServer({
             ? retainedHistory
             : boundedTerminalHistory(retainedHistory, data.limit);
 
+        case "attach":
         case "spawn":
+          if (
+            cmd === "attach" &&
+            (typeof data.options?.id !== "string" ||
+              !sessions[data.options.id]?.pid)
+          ) {
+            throw Error("terminal session is not running");
+          }
           removeListeners();
           let { command, args, options = {} } = data;
           const { id } = options ?? {};
@@ -801,7 +809,7 @@ export function terminalServer({
         mesg.respondSync(resp ?? null);
       } catch (err) {
         logger.debug(err);
-        mesg.respondSync(err);
+        mesg.respondSync(null, { headers: { error: `${err}` } });
       }
     });
 
@@ -874,6 +882,14 @@ export class TerminalClient extends EventEmitter {
     } catch {}
   };
 
+  closeAndWait = async (options?: { timeout?: number }) => {
+    try {
+      await this.socket.closeAndWait(options);
+    } finally {
+      this.close();
+    }
+  };
+
   spawn = async (
     command,
     args?: string[],
@@ -888,11 +904,33 @@ export class TerminalClient extends EventEmitter {
       },
       { timeout: options?.timeout },
     );
-    // console.log("spawned terminal with pid", data.pid);
+    return this.setAttachedSession(data, options?.historyLimit);
+  };
+
+  // Unlike spawn, recovery must never create a replacement process.
+  attach = async (
+    id: string,
+    options?: Pick<Options, "timeout" | "historyLimit">,
+  ): Promise<string | undefined> => {
+    const { data } = await this.socket.request(
+      { cmd: "attach", options: { ...options, id } },
+      { timeout: options?.timeout },
+    );
+    return this.setAttachedSession(data, options?.historyLimit);
+  };
+
+  private setAttachedSession = (data, historyLimit?: number) => {
+    if (!Number.isInteger(data?.pid) || data.pid <= 0) {
+      throw Error(
+        typeof data?.message === "string"
+          ? data.message
+          : "terminal did not return a running session",
+      );
+    }
     this.pid = data.pid;
     const bounded = boundedTerminalHistory(
       typeof data.history === "string" ? data.history : undefined,
-      options?.historyLimit,
+      historyLimit,
     );
     this.historyOmitted = data.history_omitted === true || bounded.omitted;
     return bounded.history;

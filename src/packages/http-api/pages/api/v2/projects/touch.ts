@@ -23,7 +23,7 @@ export default async function handle(req, res) {
       if (!principal?.account_id || principal.account_id !== account_id) {
         throw Error("must be signed in with a valid account API key");
       }
-      assertHttpProjectApiKeyAllowed({
+      await assertHttpProjectApiKeyAllowed({
         principal,
         project_id,
       });

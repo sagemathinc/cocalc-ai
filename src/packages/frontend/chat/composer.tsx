@@ -48,6 +48,7 @@ import {
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
+import { ComposerConnectors } from "@cocalc/frontend/agents/composer-connectors";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { ComposerDeliverySelector } from "./composer-delivery";
@@ -974,21 +975,27 @@ export function ChatRoomComposer({
               minHeight: 32,
             }}
           >
-            <AgentFileAttachment
-              projectId={project_id}
-              workingDirectory={
-                actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
-              }
-              onSetGoal={
-                showGoal && selectedThread
-                  ? () => setGoalOpenRequest((request) => request + 1)
-                  : undefined
-              }
-              onInsert={(markdown) => {
-                chatInputControlRef.current?.insertText(markdown);
-                refocusComposerInput();
-              }}
-            />
+            <ComposerConnectors agent={agentMentions.namedAgent}>
+              {(extraMenuItems) => (
+                <AgentFileAttachment
+                  extraMenuItems={extraMenuItems}
+                  projectId={project_id}
+                  workingDirectory={
+                    actions.getCodexConfig?.(selectedThread?.key)
+                      ?.workingDirectory
+                  }
+                  onSetGoal={
+                    showGoal && selectedThread
+                      ? () => setGoalOpenRequest((request) => request + 1)
+                      : undefined
+                  }
+                  onInsert={(markdown) => {
+                    chatInputControlRef.current?.insertText(markdown);
+                    refocusComposerInput();
+                  }}
+                />
+              )}
+            </ComposerConnectors>
             <DictateButton
               borderless
               inputControlRef={chatInputControlRef}

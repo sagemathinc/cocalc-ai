@@ -31,6 +31,7 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 - [Start and review work in Agents](/docs/ai/my-agents).
 - [Use Claude Code (experimental preview)](/docs/ai/claude-code).
 - [Connect access and choose funding](/docs/ai/connect-credentials).
+- [Give an agent access to other CoCalc projects](/docs/ai/cocalc-access).
 - [Configure models, access, and defaults](/docs/ai/codex-settings).
 - [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
 - [Manage goals and answer questions](/docs/ai/codex-goals).

@@ -2347,6 +2347,7 @@ export class ChatStreamWriter {
     try {
       startAcpTurnLease({
         context: this.metadata,
+        approver_account_id: this.approverAccountId,
         owner_instance_id: ACP_INSTANCE_ID,
         pid: process.pid,
         session_id: this.sessionKey ?? undefined,
@@ -5223,8 +5224,7 @@ export function finalizeInterruptedAcpBackendState({
           },
           state: outcomeUnknown ? "error" : "aborted",
           reason: recoveryReason,
-          owner_instance_id:
-            turn.owner_instance_id ?? row.owner_instance_id ?? undefined,
+          owner_instance_id: turn.owner_instance_id ?? row.owner_instance_id,
         });
         finalized = true;
       }
@@ -6381,7 +6381,7 @@ export async function recoverOrphanedAcpTurns(
         },
         state: outcomeUnknown ? "error" : "aborted",
         reason: turnReason,
-        owner_instance_id: ACP_INSTANCE_ID,
+        owner_instance_id: turn.owner_instance_id,
       });
       recovered += 1;
     } catch (err) {

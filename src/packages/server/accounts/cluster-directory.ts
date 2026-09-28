@@ -269,8 +269,11 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
       hash TEXT NOT NULL,
       capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
       allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[],
+      scope JSONB,
+      scope_revision INTEGER NOT NULL DEFAULT 1,
       expire TIMESTAMPTZ,
-      last_active TIMESTAMPTZ
+      last_active TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ
     )
   `);
   await pool.query(
@@ -278,6 +281,15 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
   );
   await pool.query(
     `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope JSONB`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope_revision INTEGER NOT NULL DEFAULT 1`,
+  );
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_account_idx ON ${API_KEY_TABLE} (account_id)`,
@@ -359,6 +371,8 @@ function canonicalApiKeyDirectoryEntry(row: any): AccountApiKeyDirectoryEntry {
     allowed_project_ids: Array.isArray(row.allowed_project_ids)
       ? row.allowed_project_ids
       : [],
+    scope: row.scope ?? null,
+    scope_revision: Number(row.scope_revision ?? 1),
     expire:
       row.expire instanceof Date ? row.expire.valueOf() : (row.expire ?? null),
     last_active:
@@ -464,9 +478,10 @@ export async function getClusterAccountApiKeyByKeyIdDirect(
   }
   await ensureClusterAccountApiKeyDirectorySchema();
   const { rows } = await getPool().query(
-    `SELECT key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, expire, last_active
+    `SELECT key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, scope, scope_revision, expire, last_active
        FROM ${API_KEY_TABLE}
       WHERE key_id=$1
+        AND revoked_at IS NULL
       LIMIT 1`,
     [normalized],
   );
@@ -1316,6 +1331,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   hash,
   capabilities,
   allowed_project_ids,
+  scope,
+  scope_revision,
   expire,
   last_active,
 }: {
@@ -1325,6 +1342,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   hash: string;
   capabilities?: string[];
   allowed_project_ids?: string[];
+  scope?: import("@cocalc/util/db-schema/api-keys").ApiKeyScope | null;
+  scope_revision?: number;
   expire?: number | null;
   last_active?: number | null;
 }): Promise<void> {
@@ -1341,17 +1360,21 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   await ensureClusterAccountApiKeyDirectorySchema();
   await getPool().query(
     `INSERT INTO ${API_KEY_TABLE}
-       (key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, expire, last_active)
+       (key_id, account_id, home_bay_id, hash, capabilities, allowed_project_ids, scope, scope_revision, expire, last_active)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8)
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (key_id) DO UPDATE SET
        account_id=EXCLUDED.account_id,
        home_bay_id=EXCLUDED.home_bay_id,
        hash=EXCLUDED.hash,
        capabilities=EXCLUDED.capabilities,
        allowed_project_ids=EXCLUDED.allowed_project_ids,
+       scope=EXCLUDED.scope,
+       scope_revision=EXCLUDED.scope_revision,
        expire=EXCLUDED.expire,
-       last_active=EXCLUDED.last_active`,
+       last_active=EXCLUDED.last_active
+     WHERE ${API_KEY_TABLE}.revoked_at IS NULL
+       AND ${API_KEY_TABLE}.scope_revision <= EXCLUDED.scope_revision`,
     [
       normalizedKeyId,
       account_id,
@@ -1359,6 +1382,8 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
       hash,
       capabilities ?? [],
       allowed_project_ids ?? [],
+      scope == null ? null : JSON.stringify(scope),
+      scope_revision ?? 1,
       expire == null ? null : new Date(expire),
       last_active == null ? null : new Date(last_active),
     ],
@@ -1367,15 +1392,43 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
 
 export async function deleteClusterAccountApiKeyDirectoryEntryDirect(
   key_id: string,
+  owner?: { account_id: string; home_bay_id: string },
 ): Promise<void> {
   const normalized = `${key_id ?? ""}`.trim();
   if (!normalized) {
     return;
   }
   await ensureClusterAccountApiKeyDirectorySchema();
-  await getPool().query(`DELETE FROM ${API_KEY_TABLE} WHERE key_id=$1`, [
-    normalized,
-  ]);
+  if (owner) {
+    if (!isValidUUID(owner.account_id) || !owner.home_bay_id?.trim()) {
+      throw new Error("valid account_id and home_bay_id are required");
+    }
+    const { rowCount } = await getPool().query(
+      `INSERT INTO ${API_KEY_TABLE}
+         (key_id,account_id,home_bay_id,hash,revoked_at)
+       VALUES($1,$2,$3,'',NOW())
+       ON CONFLICT (key_id) DO UPDATE SET
+         revoked_at=COALESCE(${API_KEY_TABLE}.revoked_at,NOW()),
+         hash='',capabilities='{}'::TEXT[],
+         allowed_project_ids='{}'::UUID[],scope=NULL,
+         scope_revision=${API_KEY_TABLE}.scope_revision+
+           CASE WHEN ${API_KEY_TABLE}.revoked_at IS NULL THEN 1 ELSE 0 END
+       WHERE ${API_KEY_TABLE}.account_id=EXCLUDED.account_id`,
+      [normalized, owner.account_id, owner.home_bay_id.trim()],
+    );
+    if (rowCount !== 1) {
+      throw new Error("API key directory owner mismatch");
+    }
+    return;
+  }
+  await getPool().query(
+    `UPDATE ${API_KEY_TABLE}
+        SET revoked_at=NOW(), hash='', capabilities='{}'::TEXT[],
+            allowed_project_ids='{}'::UUID[], scope=NULL,
+            scope_revision=scope_revision+1
+      WHERE key_id=$1 AND revoked_at IS NULL`,
+    [normalized],
+  );
 }
 
 export async function updateClusterAccountApiKeysHomeBayDirect({

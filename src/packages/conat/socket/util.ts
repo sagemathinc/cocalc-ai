@@ -1,6 +1,8 @@
 export const SOCKET_HEADER_CMD = "CN-SocketCmd";
 export const SOCKET_HEADER_CONNECT_ATTEMPT = "CN-SocketConnectAttempt";
 export const SOCKET_HEADER_SEQ = "CN-SocketSeq";
+export const SOCKET_REQUEST_ID = "CN-SocketRequestId";
+export const SOCKET_RESPONSE_ID = "CN-SocketResponseId";
 
 export type State = "disconnected" | "connecting" | "ready" | "closed";
 
@@ -65,6 +67,11 @@ export type SocketLifecycleReporter = (
   details?: { [key: string]: string | number | boolean | undefined },
 ) => void;
 
+export interface SocketServerInfo {
+  id: string;
+  inboxReturn?: 1;
+}
+
 export interface SocketConfiguration {
   maxQueueSize?: number;
   // (Default: true) Whether reconnection is enabled or not.
@@ -83,7 +90,7 @@ export interface SocketConfiguration {
   // instead of just selecting a random socket server (in case of multiple
   // socket servers with the same subject). This is used
   // by the persist server.
-  loadBalancer?: (subject: string) => Promise<string>;
+  loadBalancer?: (subject: string) => Promise<string | SocketServerInfo>;
   loadBalancerTimeout?: number;
   lifecycleReporter?: SocketLifecycleReporter;
 }

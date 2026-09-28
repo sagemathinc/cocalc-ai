@@ -819,6 +819,20 @@ export interface AccountProjectListWindowRow {
   sort_key: Date | string | null;
   updated_at: Date | string | null;
 }
+
+export interface ApiProjectSummary {
+  project_id: string;
+  title: string;
+  description: string;
+  host_id: string | null;
+  state: string | null;
+  last_edited: string | null;
+}
+
+export interface ApiProjectSummaryPage {
+  projects: ApiProjectSummary[];
+  next_offset: number | null;
+}
 export interface ProjectSecretMetadata {
   project_id: string;
   name: string;
@@ -1193,6 +1207,7 @@ export const projects = {
   getProjectCollaboratorInviteUsage: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
   listAccountProjectWindow: authFirstRequireAccount,
+  listProjectSummaries: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
@@ -1912,6 +1927,14 @@ export interface Projects {
     search?: string;
     sort?: AccountProjectListWindowSort;
   }) => Promise<AccountProjectListWindowRow[]>;
+
+  listProjectSummaries: (opts: {
+    account_id?: string;
+    project_id?: string;
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }) => Promise<ApiProjectSummaryPage>;
 
   inviteCollaborator: ({
     account_id,

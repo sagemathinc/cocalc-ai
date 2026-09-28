@@ -5,7 +5,8 @@
 
 export {};
 
-import { createConatService } from "./service";
+import { callConatService, createConatService } from "./service";
+import { serviceErrorAttributes } from "../util";
 
 function deferred<T = void>() {
   let resolve: (value: T | PromiseLike<T>) => void = () => {};
@@ -39,6 +40,81 @@ async function flushAsyncWork() {
 }
 
 describe("ConatService", () => {
+  it("round trips admission metadata without copying private error fields or replaying", async () => {
+    const reply = deferred<any>();
+    const handler = jest.fn(async () => {
+      throw Object.assign(new Error("search rate exceeded"), {
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+        credential: "must-not-cross-wire",
+      });
+    });
+    const subscription = createSubscription([
+      {
+        data: {},
+        respond: (data) => reply.resolve(JSON.parse(JSON.stringify(data))),
+      },
+    ]);
+    const service = createConatService({
+      client: { subscribe: async () => subscription } as any,
+      service: "test",
+      handler,
+    });
+    try {
+      const data = await reply.promise;
+      expect(data).toEqual({
+        error: "Error: search rate exceeded",
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+      });
+      const request = jest.fn(async () => ({ data }));
+      await expect(
+        callConatService({
+          client: { request } as any,
+          service: "test",
+          mesg: {},
+        }),
+      ).rejects.toMatchObject({
+        code: "api_search_rate_limited",
+        retry_after_ms: 1250,
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally {
+      service.close();
+    }
+  });
+
+  it.each([-1, 0.5, Infinity, NaN, "100", {}, Number.MAX_SAFE_INTEGER + 1])(
+    "ignores invalid retry metadata %p",
+    (retry_after_ms) => {
+      expect(
+        serviceErrorAttributes({ code: {}, retry_after_ms, stack: "private" }),
+      ).toEqual({});
+    },
+  );
+
+  it("retains legacy errors and rejects arbitrary remote properties", async () => {
+    const request = jest.fn(async () => ({
+      data: {
+        error: "legacy failure",
+        message: "spoofed message",
+        stack: "spoofed stack",
+        credential: "private",
+        code: "bad code",
+      },
+    }));
+    const error = await callConatService({
+      client: { request } as any,
+      service: "test",
+      mesg: {},
+    }).catch((err) => err);
+    expect(error.message).toBe("legacy failure");
+    expect(error.stack).not.toBe("spoofed stack");
+    expect(error.credential).toBeUndefined();
+    expect(error.code).toBeUndefined();
+  });
+
   it("can handle multiple requests concurrently when parallel=true", async () => {
     const firstDone = deferred<void>();
     const secondStarted = deferred<void>();

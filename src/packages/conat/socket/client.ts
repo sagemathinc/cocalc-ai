@@ -3,20 +3,25 @@ import {
   type Subscription,
   type Headers,
   ConatError,
+  type Message,
 } from "@cocalc/conat/core/client";
 import { ConatSocketBase } from "./base";
 import { type TCP, createTCP } from "./tcp";
 import {
   SOCKET_HEADER_CMD,
   SOCKET_HEADER_CONNECT_ATTEMPT,
+  SOCKET_REQUEST_ID,
+  SOCKET_RESPONSE_ID,
   DEFAULT_COMMAND_TIMEOUT,
   type ConatSocketOptions,
+  type SocketServerInfo,
   serverStatusSubject,
 } from "./util";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { keepAlive, KeepAlive } from "./keepalive";
 import { getLogger } from "@cocalc/conat/logger";
 import { once } from "@cocalc/util/async-utils";
+import { SOCKET_RETURN_HEADER } from "../core/message-headers";
 
 const logger = getLogger("socket:client");
 const INITIAL_SERVER_INTEREST_TIMEOUT = 250;
@@ -39,7 +44,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private tcp?: TCP;
   private alive?: KeepAlive;
   private serverId?: string;
-  private loadBalancer?: (subject: string) => Promise<string>;
+  private loadBalancer?: ConatSocketOptions["loadBalancer"];
   private loadBalancerTimeout?: number;
   private nextConnectAttemptId = 0;
   private connectAttempts = new Map<
@@ -49,11 +54,30 @@ export class ConatSocketClient extends ConatSocketBase {
   private requestRetryInFlight = false;
   private dataQueue: { data: any; headers?: Headers }[] = [];
   private dataQueueScheduled = false;
+  private inboxReturn = false;
+  private returnInbox?: string;
+  public closeReason?: "reply-namespace-changed";
+
+  private onInboxReady = (inboxSubject: string) => {
+    if (
+      this.returnInbox != null &&
+      !this.returnInbox.startsWith(`${inboxSubject}.socket.`)
+    ) {
+      // An existing server socket is bound to its original return route.
+      // Its owner must reattach application state on a new authorized socket.
+      this.closeReason = "reply-namespace-changed";
+      this.close();
+    }
+  };
+
+  private returnHeaders = (): Headers =>
+    this.returnInbox ? { [SOCKET_RETURN_HEADER]: this.returnInbox } : {};
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
     this.loadBalancer = opts.loadBalancer;
     this.loadBalancerTimeout = opts.loadBalancerTimeout;
+    this.client.on("inbox", this.onInboxReady);
     // logger.silly("creating a client socket connecting to ", this.subject);
     this.initTCP();
     this.on("ready", () => {
@@ -123,7 +147,11 @@ export class ConatSocketClient extends ConatSocketBase {
     const request = async (mesg, opts?) =>
       await this.client.request(this.serverSubject(), mesg, {
         ...opts,
-        headers: { ...opts?.headers, [SOCKET_HEADER_CMD]: "socket" },
+        headers: {
+          ...opts?.headers,
+          ...this.returnHeaders(),
+          [SOCKET_HEADER_CMD]: "socket",
+        },
       });
 
     this.tcp = createTCP({
@@ -177,6 +205,7 @@ export class ConatSocketClient extends ConatSocketBase {
     timeout = DEFAULT_COMMAND_TIMEOUT,
   ) => {
     const headers = {
+      ...this.returnHeaders(),
       [SOCKET_HEADER_CMD]: cmd,
       id: this.id,
     };
@@ -200,6 +229,7 @@ export class ConatSocketClient extends ConatSocketBase {
     const started_at = Date.now();
     this.client.publishSync(this.serverSubject(), null, {
       headers: {
+        ...this.returnHeaders(),
         [SOCKET_HEADER_CMD]: "connect",
         [SOCKET_HEADER_CONNECT_ATTEMPT]: attempt,
         id: this.id,
@@ -247,6 +277,7 @@ export class ConatSocketClient extends ConatSocketBase {
 
   private processMessages = async () => {
     for await (const mesg of this.sub!) {
+      this.bindReverseResponse(mesg);
       this.alive?.recv();
       const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
       if (cmd == "connected") {
@@ -269,6 +300,34 @@ export class ConatSocketClient extends ConatSocketBase {
         this.tcp?.recv.process(mesg);
       }
     }
+  };
+
+  private bindReverseResponse = (mesg: Message) => {
+    const id = mesg.headers?.[SOCKET_REQUEST_ID];
+    if (!this.returnInbox || typeof id !== "string") return;
+    const options = (opts?) => ({
+      ...opts,
+      headers: {
+        ...opts?.headers,
+        ...this.returnHeaders(),
+        [SOCKET_RESPONSE_ID]: id,
+      },
+    });
+    mesg.isRequest = () => true;
+    mesg.respondSync = (data, opts) =>
+      this.client.publishSync(this.serverSubject(), data, options(opts));
+    mesg.respond = (data, opts) => {
+      const response = this.client.publish(
+        this.serverSubject(),
+        data,
+        options(opts),
+      );
+      response.catch(() => undefined);
+      return response;
+    };
+    mesg.respondMany = async () => {
+      throw Error("reverse socket requests accept one response");
+    };
   };
 
   private waitForConnected = async () => {
@@ -294,10 +353,13 @@ export class ConatSocketClient extends ConatSocketBase {
       const timeout = this.loadBalancerTimeout ?? DEFAULT_COMMAND_TIMEOUT;
       if (this.loadBalancer != null) {
         logger.debug("getting server id from load balancer");
-        id = await this.withServerIdTimeout(
+        const selected = await this.withServerIdTimeout(
           this.loadBalancer(this.subject),
           timeout,
         );
+        id = typeof selected === "string" ? selected : selected.id;
+        this.inboxReturn =
+          typeof selected !== "string" && selected.inboxReturn === 1;
       } else {
         logger.debug("getting server id from socket server");
         const resp = await this.client.request(
@@ -306,6 +368,7 @@ export class ConatSocketClient extends ConatSocketBase {
           { timeout },
         );
         ({ id } = resp.data);
+        this.inboxReturn = resp.data.inboxReturn === 1;
       }
     } catch (err) {
       this.lifecycleReporter?.("get_server_id_error", { error: `${err}` });
@@ -316,9 +379,9 @@ export class ConatSocketClient extends ConatSocketBase {
   }
 
   private withServerIdTimeout = async (
-    promise: Promise<string>,
+    promise: Promise<string | SocketServerInfo>,
     timeout: number,
-  ): Promise<string> => {
+  ): Promise<string | SocketServerInfo> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -394,8 +457,11 @@ export class ConatSocketClient extends ConatSocketBase {
 
       //  logger.silly("run: getting subscription");
       this.lifecycleReporter?.("subscribe_start");
+      if (this.inboxReturn)
+        this.returnInbox ??= await this.client.socketInboxSubject();
+      else this.returnInbox = undefined;
       const sub = await this.client.subscribe(
-        `${this.subject}.client.${this.id}`,
+        this.returnInbox ?? `${this.subject}.client.${this.id}`,
       );
       this.lifecycleReporter?.("subscribe_done");
       // @ts-ignore
@@ -421,7 +487,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private sendDataToServer = (mesg) => {
     this.client.publishSync(this.serverSubject(), null, {
       raw: mesg.raw,
-      headers: mesg.headers,
+      headers: { ...mesg.headers, ...this.returnHeaders() },
     });
   };
 
@@ -446,68 +512,37 @@ export class ConatSocketClient extends ConatSocketBase {
   };
 
   request = async (data, options?) => {
-    const timeout = options?.timeout;
-    const doRequest = async () => {
-      try {
-        await this.waitUntilReady(timeout);
-      } catch {
-        throw Error("request timed out");
-      }
-      if (this.state == "closed") {
-        throw Error("closed");
-      }
-      // console.log("sending request from client ", { subject, data, options });
-      return await this.client.request(this.serverSubject(), data, {
-        waitForInterest: options?.waitForInterest ?? true,
-        ...options,
-      });
-    };
-
-    try {
-      return await doRequest();
-    } catch (err) {
-      if (!this.shouldRetrySocketRequest(err)) {
-        throw err;
-      }
-      await this.reconnectAndWait(timeout);
-      return await doRequest();
-    }
+    await this.waitForRequestReady(options?.timeout);
+    // Once published, a timeout or service error does not prove non-execution.
+    // Application protocols must explicitly decide whether replay is safe.
+    return await this.client.request(this.serverSubject(), data, {
+      waitForInterest: options?.waitForInterest ?? true,
+      ...options,
+      headers: { ...options?.headers, ...this.returnHeaders() },
+    });
   };
 
   requestMany = async (data, options?): Promise<Subscription> => {
-    const timeout = options?.timeout;
-    const doRequestMany = async () => {
-      await this.waitUntilReady(timeout);
-      return await this.client.requestMany(this.serverSubject(), data, {
-        waitForInterest: options?.waitForInterest ?? true,
-        ...options,
-      });
-    };
+    await this.waitForRequestReady(options?.timeout);
+    return await this.client.requestMany(this.serverSubject(), data, {
+      waitForInterest: options?.waitForInterest ?? true,
+      ...options,
+      headers: { ...options?.headers, ...this.returnHeaders() },
+    });
+  };
+
+  private waitForRequestReady = async (timeout?: number): Promise<void> => {
     try {
-      return await doRequestMany();
+      await this.waitUntilReady(timeout);
     } catch (err) {
-      if (!this.shouldRetrySocketRequest(err)) {
+      if (this.state === "closed" || !this.reconnection) {
         throw err;
       }
       await this.reconnectAndWait(timeout);
-      return await doRequestMany();
     }
-  };
-
-  private shouldRetrySocketRequest = (err: unknown): boolean => {
-    if (this.state == "closed") {
-      return false;
+    if (this.state === "closed") {
+      throw Error("closed");
     }
-    const msg = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-    const code = `${(err as any)?.code ?? ""}`.toLowerCase();
-    if (code === "503" || code === "408") {
-      return true;
-    }
-    return (
-      msg.includes("no subscribers matching") ||
-      msg.includes("request timed out") ||
-      msg === "timeout"
-    );
   };
 
   private reconnectAndWait = async (timeout?: number): Promise<void> => {
@@ -537,10 +572,24 @@ export class ConatSocketClient extends ConatSocketBase {
     this.close();
   }
 
+  // Short-lived callers must confirm server cleanup before closing their transport.
+  async closeAndWait({ timeout = 5000 }: { timeout?: number } = {}) {
+    try {
+      const { data } = await this.request(null, {
+        timeout,
+        headers: { [SOCKET_HEADER_CMD]: "close", id: this.id },
+      });
+      if (data !== "closed") throw Error("socket close was not acknowledged");
+    } finally {
+      this.close();
+    }
+  }
+
   close() {
     if (this.state == "closed") {
       return;
     }
+    this.client.removeListener("inbox", this.onInboxReady);
     this.connectAttempts.clear();
     this.sub?.close();
     if (this.tcp != null) {
@@ -550,10 +599,12 @@ export class ConatSocketClient extends ConatSocketBase {
       );
     }
     this.queuedWrites = [];
+    this.dataQueue = [];
     // tell server we're gone (but don't wait for a reply)
     try {
       this.client.publishSync(this.serverSubject(), null, {
         headers: {
+          ...this.returnHeaders(),
           [SOCKET_HEADER_CMD]: "close",
           id: this.id,
         },

@@ -29,6 +29,9 @@ export async function getRoutedHostControlClient({
       timeout_ms: timeout,
     });
     return {
+      verifyActiveAcpConnectorTurn: async () => {
+        throw new Error("remote ACP turn verification is unavailable");
+      },
       prepareAgentRpcAttachments: async () => {
         throw new Error(
           "agent attachments must route through the target owner",

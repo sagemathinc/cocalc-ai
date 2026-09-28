@@ -120,6 +120,10 @@ import {
   parseShareFsSubject,
   parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
+import {
+  API_KEY_VIEWER_FILE_SERVICE,
+  parseApiKeyViewerFsSubject,
+} from "@cocalc/conat/auth/project-host-api-key-subject";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
 import execSandbox from "@cocalc/backend/sandbox/exec";
@@ -5259,6 +5263,46 @@ export async function initViewerFsServer({
   });
 }
 
+export async function initApiKeyViewerFsServer({
+  client,
+}: {
+  client: ConatClient;
+}) {
+  return await fsReadOnlyServer({
+    service: API_KEY_VIEWER_FILE_SERVICE,
+    client,
+    cacheTtlMs: 25_000,
+    fs: async (subject?: string) => {
+      const binding = subject ? parseApiKeyViewerFsSubject(subject) : undefined;
+      if (!binding)
+        throw new Error("invalid API key viewer filesystem subject");
+      const master = getMasterConatClient();
+      if (!master) throw new Error("project-host authority is unavailable");
+      const readPolicy = await callHub({
+        client: master,
+        host_id: requireHostId(),
+        name: "apiKeys.getViewerReadPolicy",
+        args: [binding],
+        timeout: 5_000,
+      });
+      const { path } = await getOrEnsureVolume(binding.project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id: binding.project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(binding.project_id),
+        scratch: getScratchMountpoint(binding.project_id),
+        sharedScratch: getSharedScratchMountpoint(),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id: binding.project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy,
+      });
+    },
+  });
+}
+
 export async function initShareFsServer({
   client,
   service = SHARE_FILE_SERVICE,
@@ -5301,11 +5345,17 @@ export async function initShareFsServer({
 function invalidateProjectFsServer(project_id: string): void {
   servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
   servers?.viewerFile?.invalidateAll?.();
+  servers?.apiKeyViewerFile?.invalidateAll?.();
   servers?.shareFile?.invalidateAll?.();
 }
 
-let servers: null | { ssh: any; file: any; viewerFile: any; shareFile: any } =
-  null;
+let servers: null | {
+  ssh: any;
+  file: any;
+  viewerFile: any;
+  apiKeyViewerFile: any;
+  shareFile: any;
+} = null;
 
 export async function initFileServer({
   client,
@@ -5454,6 +5504,7 @@ export async function initFileServer({
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
   const viewerFile = await initViewerFsServer({ client });
+  const apiKeyViewerFile = await initApiKeyViewerFsServer({ client });
   const shareFile = await initShareFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
   startProjectQuotaRepairMonitor();
@@ -5682,7 +5733,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh, viewerFile, shareFile };
+  servers = { file, ssh, viewerFile, apiKeyViewerFile, shareFile };
   return servers;
 }
 
@@ -5729,10 +5780,11 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh, viewerFile, shareFile } = servers;
+  const { file, ssh, viewerFile, apiKeyViewerFile, shareFile } = servers;
   servers = null;
   file.close();
   viewerFile.close();
+  apiKeyViewerFile.close();
   shareFile.close();
   void ssh.close?.();
 }

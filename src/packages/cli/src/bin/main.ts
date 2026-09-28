@@ -32,6 +32,9 @@ import {
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import type { ProjectHostApiKeyBinding } from "@cocalc/conat/auth/project-host-token";
+import { apiKeyViewerFsSubject } from "@cocalc/conat/auth/project-host-api-key-subject";
+import { resolveApiKeyFileGlobals } from "./core/api-key-file";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -80,7 +83,22 @@ import {
   withTimeout,
 } from "./core/context";
 import { isProjectScopedRemoteForProject } from "./core/remote-scope";
-import { effectiveDaemonGlobals } from "./core/daemon-globals";
+import {
+  callHubWithApiKey,
+  getProjectHostAccessWithApiKey,
+  reconnectApiKeyProjectHostAfterLease,
+} from "./core/api-key-hub";
+import {
+  apiKeyForProject,
+  defaultApiKey,
+  managedConnectorCredentialFromEnv,
+  type ManagedConnectorCredential,
+} from "./core/managed-connector-auth";
+import {
+  effectiveDaemonGlobals,
+  prepareDaemonAuthGlobals,
+  shouldUseFileOpsDaemon,
+} from "./core/daemon-globals";
 import { resolveConatAddress } from "./core/conat-address";
 import { openProjectOnlyContextConnection } from "./core/project-only-context";
 import type { CommandContextOptions } from "./core/project-only-context";
@@ -280,6 +298,9 @@ console.log = (...args: any[]) => {
 };
 
 type GlobalOptions = GlobalAuthOptions & {
+  managedConnector?: ManagedConnectorCredential;
+  authProjectId?: string;
+  apiKeyFile?: string;
   json?: boolean;
   output?: "table" | "json" | "yaml";
   quiet?: boolean;
@@ -303,6 +324,8 @@ type CommandContext = {
   rpcTimeoutMs: number;
   pollMs: number;
   apiBaseUrl: string;
+  apiKey?: string;
+  managedConnector?: ManagedConnectorCredential;
   remote: RemoteConnection;
   currentProjectId?: string;
   currentProjectClient?: ConatClient;
@@ -324,6 +347,7 @@ type RoutedProjectHostClientState = {
   expiresAt?: number;
   tokenSource?: "memory" | "hub";
   tokenInFlight?: Promise<string>;
+  apiKeyBinding?: ProjectHostApiKeyBinding;
 };
 
 type ProjectRow = {
@@ -472,6 +496,9 @@ function daemonContextKey(globals: GlobalOptions): string {
     api: globals.api ?? null,
     account_id: getExplicitAccountId(globals) ?? null,
     api_key: globals.apiKey ?? null,
+    api_key_file: globals.apiKeyFile ?? null,
+    managed_connector: globals.managedConnector ?? null,
+    auth_project_id: globals.authProjectId ?? null,
     cookie: globals.cookie ?? null,
     bearer: globals.bearer ?? null,
     hub_password: globals.hubPassword ?? null,
@@ -1274,7 +1301,8 @@ async function connectRemote({
     !hasDirectAuth && !effectiveBearer && allowEnvAuthDefaults
       ? resolveProjectScopedAuth(process.env)
       : undefined;
-  const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const agentProjectId =
+    `${globals.authProjectId ?? globals.managedConnector?.sourceProjectId ?? (!globals.disableEnvAuthDefaults ? process.env.COCALC_PROJECT_ID : undefined) ?? ""}`.trim();
   const client = connectConat({
     address: relay?.address ?? conatAddress,
     noCache: true,
@@ -1316,6 +1344,7 @@ async function connectRemote({
           project_id?: string;
           hub_id?: string;
           host_id?: string;
+          auth_api_key_reply_prefix?: string;
         }
       | undefined;
     if (!user) return undefined;
@@ -1324,6 +1353,7 @@ async function connectRemote({
       project_id: user.project_id,
       hub_id: user.hub_id,
       host_id: user.host_id,
+      auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
     });
   };
 
@@ -1519,7 +1549,9 @@ async function contextForGlobals(
   const config = loadAuthConfig();
   const applied = applyAuthProfile(globals, config);
   const preferApiTransport = applied.fromProfile || !!globals.api?.trim();
-  let effectiveGlobals = applied.globals as GlobalOptions;
+  let effectiveGlobals = resolveApiKeyFileGlobals(
+    applied.globals as GlobalOptions,
+  );
 
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
   const rpcTimeoutMs = Math.max(
@@ -1598,6 +1630,11 @@ async function contextForGlobals(
     );
   }
 
+  const managedConnector =
+    effectiveGlobals.managedConnector ??
+    (!effectiveGlobals.disableEnvAuthDefaults
+      ? managedConnectorCredentialFromEnv()
+      : undefined);
   const ctx: CommandContext = {
     globals: effectiveGlobals,
     accountId,
@@ -1605,6 +1642,14 @@ async function contextForGlobals(
     rpcTimeoutMs,
     pollMs,
     apiBaseUrl,
+    apiKey: defaultApiKey({
+      explicitKey: normalizeOptionalSecret(effectiveGlobals.apiKey),
+      envKey: !effectiveGlobals.disableEnvAuthDefaults
+        ? normalizeOptionalSecret(process.env.COCALC_API_KEY)
+        : undefined,
+      managedConnector,
+    }),
+    managedConnector,
     remote,
     currentProjectId: currentProject?.projectId,
     currentProjectClient: currentProject?.client,
@@ -1870,6 +1915,22 @@ async function hubCallByName<T>(
   args: any[] = [],
   timeout?: number,
 ): Promise<T> {
+  if (
+    ctx.managedConnector &&
+    [
+      "system.getNames",
+      "projects.createProject",
+      "projects.listProjectSummaries",
+    ].includes(name)
+  ) {
+    return await callHubWithApiKey<T>({
+      apiBaseUrl: ctx.apiBaseUrl,
+      apiKey: apiKeyForProject(ctx)!,
+      name,
+      args,
+      timeoutMs: timeout ?? ctx.rpcTimeoutMs,
+    });
+  }
   await ctx.connectHub?.();
   return await hubCallByNameCore<T>({
     ctx,
@@ -2120,6 +2181,32 @@ async function issueProjectHostAuthToken(
   }
 
   state.tokenInFlight = (async () => {
+    const apiKey = apiKeyForProject(ctx, project_id);
+    if (apiKey) {
+      const access = await getProjectHostAccessWithApiKey({
+        apiBaseUrl: ctx.apiBaseUrl,
+        apiKey,
+        project_id,
+      });
+      if (access.host_id !== state.host_id) {
+        throw new Error("project host changed; retry the command");
+      }
+      const claims = JSON.parse(
+        Buffer.from(access.token.split(".")[1], "base64url").toString("utf8"),
+      );
+      if (
+        claims?.api_key?.project_id !== project_id ||
+        claims?.api_key?.account_id !== ctx.accountId ||
+        claims?.api_key?.reply_prefix !== `_INBOX.api-key-${claims.jti}`
+      ) {
+        throw new Error("invalid project-host API key token response");
+      }
+      state.token = access.token;
+      state.expiresAt = access.expires_at;
+      state.apiKeyBinding = claims.api_key;
+      state.tokenSource = "hub";
+      return access.token;
+    }
     const issued = await ctx.hub.hosts.issueProjectHostAuthToken({
       host_id: state.host_id,
       project_id,
@@ -2142,6 +2229,16 @@ function invalidateProjectHostAuthToken(
   delete state.expiresAt;
   delete state.tokenSource;
   delete state.tokenInFlight;
+  delete state.apiKeyBinding;
+}
+
+function routedProjectHostCacheKey(
+  ctx: CommandContext,
+  project: Pick<ProjectRow, "project_id" | "host_id">,
+): string {
+  return apiKeyForProject(ctx, project.project_id)
+    ? `${project.host_id}:${project.project_id}`
+    : `${project.host_id}`;
 }
 
 function closeRoutedProjectHostClient(
@@ -2168,25 +2265,43 @@ async function getOrCreateRoutedProjectHostClient(
   if (!host_id) {
     throw new Error("project has no assigned host");
   }
+  const cacheKey = routedProjectHostCacheKey(ctx, project);
+  const apiKey = apiKeyForProject(ctx, project.project_id);
 
   let connection: HostConnectionInfo | undefined;
-  const cachedConnection = ctx.hostConnectionCache.get(host_id);
+  const cachedConnection = ctx.hostConnectionCache.get(cacheKey);
   if (cachedConnection && Date.now() < cachedConnection.expiresAt) {
     connection = cachedConnection.connection;
   }
   if (!connection && knownConnection) {
     connection = knownConnection;
-    ctx.hostConnectionCache.set(host_id, {
+    ctx.hostConnectionCache.set(cacheKey, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
     });
   }
   if (!connection) {
-    connection = await ctx.hub.hosts.resolveHostConnection({
-      host_id,
-      project_id: project.project_id,
-    });
-    ctx.hostConnectionCache.set(host_id, {
+    if (apiKey) {
+      const access = await getProjectHostAccessWithApiKey({
+        apiBaseUrl: ctx.apiBaseUrl,
+        apiKey,
+        project_id: project.project_id,
+      });
+      if (access.host_id !== host_id) {
+        throw new Error("project host changed; retry the command");
+      }
+      connection = {
+        host_id,
+        connect_url: access.connect_url,
+        local_proxy: access.local_proxy,
+      };
+    } else {
+      connection = await ctx.hub.hosts.resolveHostConnection({
+        host_id,
+        project_id: project.project_id,
+      });
+    }
+    ctx.hostConnectionCache.set(cacheKey, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
     });
@@ -2202,12 +2317,18 @@ async function getOrCreateRoutedProjectHostClient(
     );
   }
 
-  const existing = ctx.routedProjectHostClients[host_id];
-  if (existing && existing.address === address && existing.client) {
+  const existing = ctx.routedProjectHostClients[cacheKey];
+  if (
+    existing &&
+    existing.address === address &&
+    existing.client &&
+    (!apiKey ||
+      (existing.expiresAt != null && Date.now() < existing.expiresAt - 1_000))
+  ) {
     return existing;
   }
   if (existing) {
-    closeRoutedProjectHostClient(ctx, host_id);
+    closeRoutedProjectHostClient(ctx, cacheKey);
   }
 
   const state: RoutedProjectHostClientState = {
@@ -2226,7 +2347,7 @@ async function getOrCreateRoutedProjectHostClient(
   const routed = connectConat({
     address: relay?.address ?? address,
     noCache: true,
-    reconnection: false,
+    reconnection: !!apiKey,
     extraHeaders: {
       ...relay?.extraHeaders,
       ...(cookie ? { Cookie: cookie } : {}),
@@ -2250,12 +2371,14 @@ async function getOrCreateRoutedProjectHostClient(
   });
   state.client = routed;
   routed.inboxPrefixHook = (info) => {
+    if (apiKey) return state.apiKeyBinding?.reply_prefix;
     const user = info?.user as
       | {
           account_id?: string;
           project_id?: string;
           hub_id?: string;
           host_id?: string;
+          auth_api_key_reply_prefix?: string;
         }
       | undefined;
     if (!user) return undefined;
@@ -2264,6 +2387,7 @@ async function getOrCreateRoutedProjectHostClient(
       project_id: user.project_id,
       hub_id: user.hub_id,
       host_id: user.host_id,
+      auth_api_key_reply_prefix: user.auth_api_key_reply_prefix,
     });
   };
   routed.conn.on("connect_error", (err: unknown) => {
@@ -2271,7 +2395,12 @@ async function getOrCreateRoutedProjectHostClient(
       invalidateProjectHostAuthToken(state);
     }
   });
-  ctx.routedProjectHostClients[host_id] = state;
+  if (apiKey) {
+    reconnectApiKeyProjectHostAfterLease(routed, () =>
+      invalidateProjectHostAuthToken(state),
+    );
+  }
+  ctx.routedProjectHostClients[cacheKey] = state;
 
   const signInTimeoutMs = Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
   try {
@@ -2284,7 +2413,7 @@ async function getOrCreateRoutedProjectHostClient(
     const hadToken = !!state.token;
     const shouldRetryWithFreshToken =
       allowTokenRetry && (hadToken || isProjectHostAuthError(err));
-    closeRoutedProjectHostClient(ctx, host_id);
+    closeRoutedProjectHostClient(ctx, cacheKey);
     if (shouldRetryWithFreshToken) {
       invalidateProjectHostAuthToken(state);
       return await getOrCreateRoutedProjectHostClient(
@@ -2330,14 +2459,29 @@ async function resolveProjectFilesystem(
       `internal error: routed client missing for host ${routed.host_id}`,
     );
   }
-  const readOnly = isProjectViewerRole(projectUserRole(project, ctx.accountId));
+  const readOnly = apiKeyForProject(ctx, project.project_id)
+    ? !!routed.apiKeyBinding?.viewer_policy_hash
+    : isProjectViewerRole(projectUserRole(project, ctx.accountId));
   const timeout = Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000));
   if (readOnly) {
-    const fs = routed.client.viewerFs({
-      project_id: project.project_id,
-      account_id: ctx.accountId,
-      timeout,
-    });
+    const binding = routed.apiKeyBinding;
+    const fs = binding?.viewer_policy_hash
+      ? fsClient({
+          client: routed.client,
+          subject: apiKeyViewerFsSubject({
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+            key_id: binding.key_id,
+            scope_revision: binding.scope_revision,
+            viewer_policy_hash: binding.viewer_policy_hash,
+          }),
+          timeout,
+        })
+      : routed.client.viewerFs({
+          project_id: project.project_id,
+          account_id: ctx.accountId,
+          timeout,
+        });
     return { project, fs, readOnly };
   }
   const fs = fsClient({
@@ -2667,7 +2811,10 @@ async function projectHostHubCallAccount<T>(
     )) as T;
   } catch (err) {
     if (allowAuthRetry && isProjectHostAuthError(err) && project.host_id) {
-      closeRoutedProjectHostClient(ctx, project.host_id);
+      closeRoutedProjectHostClient(
+        ctx,
+        routedProjectHostCacheKey(ctx, project),
+      );
       return await projectHostHubCallAccount(
         ctx,
         project,
@@ -2862,6 +3009,18 @@ async function resolveProxyUrl({
   local_proxy: boolean;
 }> {
   const project = await resolveProject(ctx, projectIdentifier);
+  const apiKey = apiKeyForProject(ctx, project.project_id);
+  if (apiKey) {
+    const { resolveScopedProxyUrl } =
+      await import("./core/scoped-project-proxy");
+    return await resolveScopedProxyUrl({
+      apiBaseUrl: ctx.apiBaseUrl,
+      apiKey,
+      project_id: project.project_id,
+      port,
+      hostIdentifier,
+    });
+  }
   const host = hostIdentifier
     ? await resolveHost(ctx, hostIdentifier)
     : project.host_id
@@ -2904,21 +3063,24 @@ async function resolveProxyUrl({
 const { serveDaemon, runDaemonRequestFromCommand } =
   createDaemonServerOps<CommandContext>({
     daemonContextKey,
+    prepareDaemonContextGlobals: prepareDaemonAuthGlobals,
     contextForGlobals: (globals) =>
       contextForGlobals(globals, { projectOnly: {} }),
     closeCommandContext,
     globalsFrom,
     daemonRequestGlobals: (globals) => {
       const applied = applyAuthProfile(globals, loadAuthConfig());
-      return effectiveDaemonGlobals(
+      const resolved = effectiveDaemonGlobals(
         {
           ...globals,
+          ...applied.globals,
           profile: applied.profile,
           disableEnvAuthDefaults:
             globals.disableEnvAuthDefaults || applied.fromProfile,
         },
         { defaultApiBaseUrl },
       );
+      return { ...resolved, profile: "_env", disableEnvAuthDefaults: true };
     },
     daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,
@@ -2935,9 +3097,7 @@ const { serveDaemon, runDaemonRequestFromCommand } =
   });
 
 function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
-  if (process.env.COCALC_CLI_DAEMON_MODE === "1") return false;
-  if (globals.daemon === false) return false;
-  return globals.noDaemon !== true;
+  return shouldUseFileOpsDaemon(globals);
 }
 
 function emitWorkspaceFileCatHumanContent(content: string): void {
@@ -2952,12 +3112,16 @@ const emitProjectFileCatHumanContent = emitWorkspaceFileCatHumanContent;
 const program = new Command();
 
 function cliVersionDisplay(): string {
+  const build = (
+    globalThis as { __COCALC_CLI_BUILD__?: { git: string; dirty: boolean } }
+  ).__COCALC_CLI_BUILD__;
   const artifactId = process.env.COCALC_CLI_ARTIFACT_ID?.trim();
   const releaseVersion = process.env.COCALC_CLI_VERSION?.trim();
   const publishedAt = process.env.COCALC_CLI_PUBLISHED_AT?.trim();
   const git = (
     process.env.COCALC_CLI_GIT_SHORT ||
     process.env.COCALC_CLI_GIT_COMMIT ||
+    (build ? `${build.git}${build.dirty ? "-dirty" : ""}` : "") ||
     ""
   ).trim();
   const version = artifactId || releaseVersion || pkg.version;
@@ -2984,6 +3148,7 @@ program
   .option("--rpc-timeout <duration>", "per-RPC timeout (default: 30s)", "30s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
   .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
+  .option("--api-key-file <path>", "read an account API key from a file")
   .option("--cookie <cookie>", "raw Cookie header value")
   .option("--bearer <token>", "bearer token for conat authorization")
   .option(

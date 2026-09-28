@@ -96,6 +96,33 @@ describe("wireHostsApi", () => {
     });
   });
 
+  it("forwards the connector turn lifecycle through the authenticated host", async () => {
+    const { hubApi } = await import("@cocalc/lite/hub/api");
+    const { wireHostsApi } = await import("./hosts");
+    wireHostsApi();
+    const opts = {
+      account_id: "target-account",
+      agent_id: "native-agent",
+      source_project_id: "source-project",
+      run_id: "active-run",
+      turn_id: "active-turn",
+    };
+    for (const method of [
+      "beginCocalcConnectorTurn",
+      "renewCocalcConnectorTurn",
+      "endCocalcConnectorTurn",
+    ] as const) {
+      await hubApi.agent[method](opts as any);
+      expect(callHubMock).toHaveBeenLastCalledWith({
+        client: { id: "master-client" },
+        name: `agent.${method}`,
+        args: [opts],
+        host_id: process.env.PROJECT_HOST_ID,
+      });
+    }
+    expect(callHubMock).toHaveBeenCalledTimes(3);
+  });
+
   it("forwards issueProjectHostAgentAuthToken through the master host scope", async () => {
     callHubMock.mockResolvedValue({
       host_id: "00000000-1000-4000-8000-000000000123",

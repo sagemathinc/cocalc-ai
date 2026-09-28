@@ -27,11 +27,281 @@ import {
   type UserFunction,
 } from "./server";
 import { createServiceClient, createServiceHandler } from "../service/typed";
+import { fileMutationAuthority } from "../files/mutation-authority";
+import { DataEncoding } from "./codec";
 
 describe("authenticated Conat caller metadata", () => {
   afterEach(async () => {
     Client.closeAllForTests();
     await ConatServer.closeAllForTests();
+  });
+
+  it.each([true, false])(
+    "replaces forged mutation caller metadata (scoped key: %s)",
+    async (key) => {
+      const principal = {
+        account_id: "account",
+        auth_api_key: {
+          account_id: "account",
+          key_id: "key",
+          scope_revision: 1,
+          project_id: "project",
+          placement_revision: 0,
+          capabilities: ["file:write" as const],
+          subjects: ["fs.project-project"],
+          reply_prefix: "_INBOX.first",
+        },
+      };
+      const server = init({
+        port: 0,
+        getUser: async (socket) =>
+          socket.handshake.auth.key ? principal : { hub_id: "service" },
+        isAllowed: async () => true,
+      });
+      const receiver = connect({ address: server.address(), noCache: true });
+      const sender = connect({
+        address: server.address(),
+        noCache: true,
+        auth: { key },
+      });
+      await receiver.waitUntilSignedIn({ timeout: 5_000 });
+      await sender.waitUntilSignedIn({ timeout: 5_000 });
+      const subscription = await receiver.subscribe("fs.project-project");
+      const response = await sender.conn
+        .timeout(5_000)
+        .emitWithAck("publish", [
+          "fs.project-project",
+          "receipt-test",
+          0,
+          1,
+          DataEncoding.JsonCodec,
+          Buffer.from("null"),
+          undefined,
+          undefined,
+          { file_mutation_authority: "forged", bay_id: "forged" },
+        ]);
+      expect(response?.error).toBeUndefined();
+      expect((await subscription.next()).value?.caller ?? undefined).toEqual(
+        key
+          ? {
+              file_mutation_authority: fileMutationAuthority(principal),
+            }
+          : undefined,
+      );
+    },
+  );
+
+  it("closes a credential-backed socket when its authorization lease expires", async () => {
+    const server = init({
+      port: 0,
+      getUser: async () => ({
+        account_id: "00000000-0000-4000-8000-000000000001",
+        auth_lease_exp_s: (Date.now() + 1_000) / 1_000,
+      }),
+      isAllowed: async () => true,
+    });
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    expect(client.conn.connected).toBe(true);
+    await delay(1_300);
+    expect(client.conn.connected).toBe(false);
+    client.close();
+    await server.close();
+  });
+
+  it("keeps a valid API-key socket open, then closes its interests after revocation", async () => {
+    let valid = true;
+    const getUser = jest.fn(async () => {
+      if (!valid) throw new Error("API key revoked");
+      return {
+        account_id: "00000000-0000-4000-8000-000000000001",
+        auth_method: "api_key",
+        key_id: "key-1",
+        scope_revision: 1,
+      };
+    });
+    const server = init({ port: 0, getUser, isAllowed: async () => true });
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    await client.subscribe("test.api-key.subscription", () => undefined);
+    await delay(16_000);
+    expect(client.conn.connected).toBe(true);
+    expect(getUser).toHaveBeenCalledTimes(2);
+    valid = false;
+    await delay(16_000);
+    expect(client.conn.connected).toBe(false);
+    client.close();
+    await server.close();
+  }, 40_000);
+
+  it.each(["subscription", "rpc", "publication"])(
+    "closes an API-key %s after project authority changes while the key remains valid",
+    async (kind) => {
+      let allowed = true;
+      let logins = 0;
+      let originalPrefix: string;
+      const server = init({
+        port: 0,
+        getUser: async () => {
+          const prefix = `_INBOX.test-${++logins}`;
+          originalPrefix ??= prefix;
+          return {
+            account_id: "00000000-0000-4000-8000-000000000001",
+            auth_method: "api_key",
+            key_id: "key-1",
+            scope_revision: 1,
+            auth_api_key_reply_prefix: prefix,
+          };
+        },
+        isAllowed: async ({ user, subject }) =>
+          subject.startsWith("_INBOX.")
+            ? user.auth_api_key_reply_prefix === originalPrefix
+            : subject !== "test.denied.probe" && allowed,
+      });
+      const client = connect({ address: server.address(), noCache: true });
+      let service: ReturnType<typeof createServiceHandler> | undefined;
+      try {
+        await client.waitUntilSignedIn({ timeout: 5_000 });
+        await client.subscribe(`${originalPrefix!}.reply`, () => undefined);
+        if (kind === "subscription")
+          await client.subscribe("test.project.interest", () => undefined);
+        else if (kind === "publication") {
+          await expect(
+            client.publish("test.denied.probe", "probe"),
+          ).rejects.toThrow();
+          await client.publish("test.project.interest", "request");
+        } else
+          service = createServiceHandler({
+            client,
+            subject: "test.project.interest",
+            service: "revocation-test",
+            transport: "fast-rpc",
+            impl: { read: async () => "ok" },
+          });
+        await delay(250);
+        await delay(16_000);
+        expect(client.conn.connected).toBe(true);
+        allowed = false;
+        await delay(16_000);
+        expect(logins).toBeGreaterThanOrEqual(2);
+        expect(client.conn.connected).toBe(false);
+        expect(
+          Object.values((server as any).subscriptions).some(
+            (subjects: Set<string>) => subjects.has("test.project.interest"),
+          ),
+        ).toBe(false);
+        expect(
+          Object.values((server as any).rpcServiceSubjects).some(
+            (subjects: Set<string>) => subjects.has("test.project.interest"),
+          ),
+        ).toBe(false);
+      } finally {
+        service?.close();
+        client.close();
+        await server.close();
+      }
+    },
+    40_000,
+  );
+
+  it("bounds retained publication interests and permits repeat publications", async () => {
+    const server = init({
+      port: 0,
+      maxSubscriptionsPerClient: 2,
+      getUser: async () => ({
+        account_id: "test-account",
+        auth_method: "api_key",
+      }),
+      isAllowed: async () => true,
+    });
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    await client.publish("test.first", "one");
+    await client.publish("test.first", "two");
+    await client.publish("test.second", "three");
+    expect(client.conn.connected).toBe(true);
+    const disconnected = new Promise<void>((resolve) =>
+      client.conn.once("disconnect", () => resolve()),
+    );
+    client
+      .publish("test.third", "four", { timeout: 500 })
+      .catch(() => undefined);
+    await disconnected;
+    expect(client.conn.connected).toBe(false);
+    client.close();
+    await server.close();
+  });
+
+  it("does not wait for interest after publication authorization is denied", async () => {
+    const server = init({
+      port: 0,
+      getUser: async () => ({
+        account_id: "test-account",
+        auth_method: "api_key",
+      }),
+      isAllowed: async () => false,
+    });
+    const wait = jest.spyOn(server as any, "waitForInterest");
+    const client = connect({ address: server.address(), noCache: true });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    const response = await client.conn
+      .timeout(2_000)
+      .emitWithAck("wait-for-interest", {
+        subject: "test.denied",
+        timeout: 100,
+      });
+    expect(response.code).toBe(403);
+    expect(wait).not.toHaveBeenCalled();
+    client.close();
+    await server.close();
+  });
+
+  it("does not deliver an API-key publication when authorization finishes after disconnect", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const server = init({
+      port: 0,
+      getUser: async (socket) => socket.handshake.auth,
+      isAllowed: async ({ user, type }) => {
+        if (user.auth_method === "api_key" && type === "pub") {
+          entered();
+          await gate;
+        }
+        return true;
+      },
+    });
+    const client = connect({
+      address: server.address(),
+      noCache: true,
+      auth: { account_id: "caller", auth_method: "api_key" },
+    });
+    const receiver = connect({
+      address: server.address(),
+      noCache: true,
+      auth: { account_id: "receiver" },
+    });
+    await client.waitUntilSignedIn({ timeout: 5_000 });
+    await receiver.waitUntilSignedIn({ timeout: 5_000 });
+    const delivered = jest.fn();
+    await receiver.subscribe("test.delayed", delivered);
+    const pending = client
+      .publish("test.delayed", "payload", { timeout: 500 })
+      .catch(() => undefined);
+    await started;
+    client.close();
+    await delay(100);
+    release();
+    await pending;
+    await delay(100);
+    expect(delivered).not.toHaveBeenCalled();
+    receiver.close();
+    await server.close();
   });
 
   it("requires a distinct link credential for authenticated clusters", () => {

@@ -25,7 +25,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { until } from "@cocalc/util/async-utils";
 import {
   clearPersistServerIdCache,
-  getPersistServerId,
+  getPersistServerInfo,
   PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
 } from "./load-balancer";
 import type { JSONValue } from "@cocalc/util/types";
@@ -354,7 +354,7 @@ class PersistStreamClient extends EventEmitter {
       keepAlive: 0,
       loadBalancerTimeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
       loadBalancer: async (subject: string) =>
-        await getPersistServerId({ client: this.client, subject }),
+        await getPersistServerInfo({ client: this.client, subject }),
       lifecycleReporter: (phase, details) => {
         this.emitInitPhase(`persist_socket_${phase}`, details);
       },

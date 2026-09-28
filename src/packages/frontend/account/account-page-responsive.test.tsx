@@ -43,7 +43,19 @@ jest.mock("./settings-page-registry", () => ({
   SETTINGS_PAGE_DEFINITIONS: {
     ai: {
       key: "ai",
-      component: () => <p>AI preferences content</p>,
+      component: function DraftSettings() {
+        const [draft, setDraft] = React.useState("");
+        return (
+          <>
+            <p>AI preferences content</p>
+            <input
+              aria-label="Unsaved settings draft"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </>
+        );
+      },
       label: { id: "ai", defaultMessage: "AI" },
       icon: "cog",
     },
@@ -133,4 +145,21 @@ test("mobile settings menu retains readable page labels", () => {
   render(<Page />);
   expect(screen.getByRole("combobox", { name: "Settings menu" })).toBeTruthy();
   expect(screen.getAllByText("AI").length).toBeGreaterThan(1);
+});
+
+test("unsaved content and focused input survive both responsive transitions", async () => {
+  mockWidth = 1000;
+  const user = userEvent.setup();
+  const view = render(<Page />);
+  const input = screen.getByRole("textbox", { name: "Unsaved settings draft" });
+  await user.type(input, "Keep this unsaved draft");
+  for (const width of [320, 1000]) {
+    mockWidth = width;
+    view.rerender(<Page />);
+    expect(
+      screen.getByRole("textbox", { name: "Unsaved settings draft" }),
+    ).toBe(input);
+    expect(input).toHaveValue("Keep this unsaved draft");
+    expect(input).toHaveFocus();
+  }
 });

@@ -239,6 +239,7 @@ import {
   isValidSubjectWithoutWildcards,
   ConatError,
   headerToError,
+  serviceErrorAttributes,
 } from "@cocalc/conat/util";
 export { ConatError, headerToError };
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -628,7 +629,15 @@ export class Client extends EventEmitter {
   } = { servers: {}, clients: {} };
   public readonly options: ClientOptions;
   private inboxSubject: string;
+  private initializedInboxPrefix?: string;
+  private inboxConnectionId?: string;
   private inbox?: EventEmitter;
+  private inboxRequests = new Map<
+    EventEmitter,
+    Map<EventIterator<Message>, string>
+  >();
+  private inboxSubscription?: Subscription;
+  private inboxGeneration = 0;
   private permissionError = {
     pub: new TTL<string, string>({ ttl: 1000 * 60 }),
     sub: new TTL<string, string>({ ttl: 1000 * 60 }),
@@ -768,8 +777,14 @@ export class Client extends EventEmitter {
       }
       const firstTime = this.info == null;
       this.info = info;
-      if (firstTime) {
-        void this.initInbox().catch((err) => {
+      const prefixChanged =
+        this.initializedInboxPrefix !== this.getInboxPrefix();
+      if (
+        firstTime ||
+        prefixChanged ||
+        this.inboxConnectionId !== this.conn.id
+      ) {
+        void this.initInbox({ preserve: !prefixChanged }).catch((err) => {
           if (this.isClosed()) {
             return;
           }
@@ -937,6 +952,12 @@ export class Client extends EventEmitter {
         this.state != "connected" ||
         this.info?.user?.error
       ) {
+        // A caller may arrive after the failed handshake's info event. Do not
+        // wait for another event on that connection; a disconnected client can
+        // still wait for a new handshake instead of reusing the old failure.
+        if (this.state === "connected" && this.info?.user?.error) {
+          throw Error(`failed to sign in - ${this.info.user.error}`);
+        }
         const remaining = deadline == null ? timeout : deadline - Date.now();
         if (remaining != null && remaining <= 0) {
           throw new TimeoutError(
@@ -1082,6 +1103,12 @@ export class Client extends EventEmitter {
     return `${this.inboxSubject}.${randomId()}`;
   };
 
+  // Separate branch from request/reply multiplexing for persistent protocols.
+  socketInboxSubject = async (): Promise<string> => {
+    await this.getInbox();
+    return `${this.inboxSubject}.socket.${randomId()}`;
+  };
+
   private getInbox = reuseInFlight(async (): Promise<EventEmitter> => {
     if (this.inbox == null) {
       if (this.isClosed()) {
@@ -1113,7 +1140,23 @@ export class Client extends EventEmitter {
   // identity wrt a remote server (example: a project api key knows
   // the project_id but the client might not).
   public inboxPrefixHook?: (info: ServerInfo | undefined) => string | undefined;
-  private initInbox = async () => {
+  private getInboxPrefix = () =>
+    this.inboxPrefixHook?.(this.info) ??
+    this.options?.inboxPrefix ??
+    INBOX_PREFIX;
+
+  private initInbox = async ({ preserve = false } = {}) => {
+    const preservedInbox = preserve ? this.inbox : undefined;
+    const preservedSubject = preservedInbox ? this.inboxSubject : undefined;
+    for (const inbox of this.inboxRequests.keys()) {
+      if (inbox !== preservedInbox) this.invalidateInboxRequests(inbox);
+    }
+    // A new authenticated namespace must not reuse replies or subscriptions
+    // from the previous one, including an initialization still in flight.
+    const generation = ++this.inboxGeneration;
+    this.inboxSubscription?.close();
+    this.inboxSubscription = undefined;
+    this.inbox = undefined;
     // For request/respond instead of setting up one
     // inbox *every time there is a request*, we setup a single
     // inbox once and for all for all responses.  We listen for
@@ -1127,23 +1170,27 @@ export class Client extends EventEmitter {
     // multiple servers solving the race condition would slow everything down
     // due to having to wait for so many acknowledgements.  Instead, we
     // remove all those problems by just using a single inbox subscription.
-    const inboxPrefix =
-      this.inboxPrefixHook?.(this.info) ??
-      this.options?.inboxPrefix ??
-      INBOX_PREFIX;
+    const inboxPrefix = this.getInboxPrefix();
     if (!inboxPrefix.startsWith(INBOX_PREFIX)) {
       throw Error(`custom inboxPrefix must start with '${INBOX_PREFIX}'`);
     }
-    this.inboxSubject = `${inboxPrefix}.${randomId()}`;
+    this.initializedInboxPrefix = inboxPrefix;
+    this.inboxConnectionId = this.conn.id;
+    const inboxSubject = preservedSubject ?? `${inboxPrefix}.${randomId()}`;
+    this.inboxSubject = inboxSubject;
+    const superseded = () =>
+      this.isClosed() || generation !== this.inboxGeneration;
     let sub;
     await until(
       async () => {
+        if (superseded()) return true;
         try {
           await this.waitUntilSignedIn();
-          sub = await this.subscribe(this.inboxSubject + ".*");
+          if (superseded()) return true;
+          sub = await this.subscribe(inboxSubject + ".*");
           return true;
         } catch (err) {
-          if (this.isClosed()) {
+          if (superseded()) {
             return true;
           }
           // this should only fail due to permissions issues, at which point
@@ -1156,21 +1203,68 @@ export class Client extends EventEmitter {
       },
       { start: 3000, max: 30000 },
     );
-    if (this.isClosed()) {
+    if (superseded()) {
+      sub?.close();
       return;
     }
 
-    this.inbox = new EventEmitter();
+    this.inboxSubscription = sub;
+    const inbox = preservedInbox ?? new EventEmitter();
+    this.inbox = inbox;
     (async () => {
       for await (const mesg of sub) {
-        if (this.inbox == null) {
+        if (superseded()) {
           return;
         }
-        this.inbox.emit(mesg.subject, mesg);
+        inbox.emit(mesg.subject, mesg);
       }
     })();
-    this.emit("inbox", this.inboxSubject);
+    this.emit("inbox", inboxSubject);
   };
+
+  private trackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+    subject: string,
+  ) {
+    if (inbox !== this.inbox || this.isClosed()) {
+      sub.cancel();
+      throw new ConatError("request reply inbox was replaced", {
+        code: "CONNECTION_LOST",
+        subject,
+      });
+    }
+    let requests = this.inboxRequests.get(inbox);
+    if (!requests) {
+      requests = new Map();
+      this.inboxRequests.set(inbox, requests);
+    }
+    requests.set(sub, subject);
+  }
+
+  private untrackInboxRequest(
+    inbox: EventEmitter,
+    sub: EventIterator<Message>,
+  ) {
+    const requests = this.inboxRequests.get(inbox);
+    requests?.delete(sub);
+    if (!requests?.size) this.inboxRequests.delete(inbox);
+  }
+
+  private invalidateInboxRequests(inbox: EventEmitter) {
+    const requests = this.inboxRequests.get(inbox);
+    this.inboxRequests.delete(inbox);
+    for (const [sub, subject] of requests ?? []) {
+      // Losing the response channel says nothing about execution. Recovery
+      // belongs to the operation protocol, not automatic transport replay.
+      sub.cancel(
+        new ConatError("request reply inbox was replaced or closed", {
+          code: "CONNECTION_LOST",
+          subject,
+        }),
+      );
+    }
+  }
 
   private isClosed = () => {
     return this.state == "closed";
@@ -1203,6 +1297,8 @@ export class Client extends EventEmitter {
     }
     this.routedClients = {};
     this.setState("closed");
+    for (const inbox of this.inboxRequests.keys())
+      this.invalidateInboxRequests(inbox);
     this.removeAllListeners();
     this.closeAllSockets();
     // @ts-ignore
@@ -1569,7 +1665,7 @@ export class Client extends EventEmitter {
     } catch (err) {
       respond({
         error: err instanceof Error ? err.message : `${err}`,
-        code: (err as any)?.code,
+        ...serviceErrorAttributes(err),
         serviceHandlerMs: Date.now() - handlerStart,
       });
     }
@@ -1980,7 +2076,10 @@ export class Client extends EventEmitter {
       throw toConatError(err, { subject });
     }
     if (response?.error) {
-      throw new ConatError(response.error, { code: response.code, subject });
+      throw new ConatError(response.error, {
+        ...serviceErrorAttributes(response),
+        subject,
+      });
     }
     return response;
   };
@@ -2226,7 +2325,10 @@ export class Client extends EventEmitter {
         return { bytes: 0, count: 0 };
       }
       opts.signal?.throwIfAborted();
-      await abortable(this.waitUntilSignedIn(), opts.signal);
+      await abortable(
+        this.waitUntilSignedIn({ timeout: opts.timeout }),
+        opts.signal,
+      );
       opts.signal?.throwIfAborted();
       const start = Date.now();
       const { bytes, getCount, getServerTiming, promise } = this._publish(
@@ -2531,7 +2633,9 @@ export class Client extends EventEmitter {
       sub = new EventIterator<Message>(inbox, inboxSubject, {
         limit: 1,
         map: (args) => args[0],
+        onEnd: () => this.untrackInboxRequest(inbox, sub!),
       });
+      this.trackInboxRequest(inbox, sub, subject);
 
       const { count } = await abortable(
         this.publish(subject, mesg, {
@@ -2626,8 +2730,12 @@ export class Client extends EventEmitter {
       sizeOf: (message) => message.length,
       overflow: "throw",
       map: (args) => args[0],
-      onEnd: () => signal?.removeEventListener("abort", abort),
+      onEnd: () => {
+        signal?.removeEventListener("abort", abort);
+        this.untrackInboxRequest(inbox, sub);
+      },
     });
+    this.trackInboxRequest(inbox, sub, subject);
     signal?.addEventListener("abort", abort, { once: true });
     try {
       const { count } = await this.publish(subject, mesg, {
@@ -3233,9 +3341,13 @@ function concatArrayBuffers(buffers) {
 export type Headers = { [key: string]: JSONValue };
 
 export interface AuthenticatedCaller {
-  cluster_id: string;
-  bay_id: string;
-  bay_credential_id: string;
+  // Opaque server-derived binding for project-host API-key mutation receipts.
+  // This is attribution for deduplication, not permission to execute a request.
+  file_mutation_authority?: string;
+  cluster_id?: string;
+  bay_id?: string;
+  bay_credential_id?: string;
+  socket_return?: string;
 }
 
 export class MessageData<T = any> {
@@ -3365,7 +3477,9 @@ function toConatError(socketIoError, { subject }: { subject?: string } = {}) {
   // only errors are "disconnected" and a timeout
   const e = `${socketIoError}`;
   if (e.includes("disconnected")) {
-    return e;
+    // A lost acknowledgment does not establish whether the operation executed.
+    // Keep this distinct from admission denial or a safe-to-retry failure.
+    return new ConatError(e, { code: "CONNECTION_LOST", subject });
   } else {
     return new ConatError(
       `timeout - ${e}${subject ? " subject:" + subject : ""}`,

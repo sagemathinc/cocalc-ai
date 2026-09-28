@@ -12,6 +12,10 @@ const mockGetAccountFromApiKey = jest.fn();
 const mockStartProject = jest.fn();
 const mockStopProject = jest.fn();
 const mockCreateProject = jest.fn();
+const mockMembership = jest.fn();
+jest.mock("@cocalc/server/api/project-membership-revocation", () => ({
+  assertApiKeyProjectMembership: (...args) => mockMembership(...args),
+}));
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -41,6 +45,7 @@ describe("/api/v2/projects legacy control handlers", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => {
+    mockMembership.mockReset().mockResolvedValue(undefined);
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
     mockGetAccountFromApiKey.mockReset().mockResolvedValue({
       account_id: "acct-1",
@@ -70,6 +75,21 @@ describe("/api/v2/projects legacy control handlers", () => {
       project_id,
       wait: false,
     });
+  });
+  it("does not start a project when membership authorization rejects asynchronously", async () => {
+    mockMembership.mockRejectedValueOnce(Error("membership loss"));
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: {
+        Authorization: "Bearer cocalc_api_key_test",
+        "Content-Type": "application/json",
+      },
+      body: { project_id },
+    });
+    const { default: handler } = await import("./start");
+    await handler(req, res);
+    expect(res._getJSONData()).toMatchObject({ error: "membership loss" });
+    expect(mockStartProject).not.toHaveBeenCalled();
   });
 
   it("stops projects through the Conat routing path", async () => {

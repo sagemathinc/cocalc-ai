@@ -3789,6 +3789,7 @@ describe("recoverOrphanedAcpTurns", () => {
         reply_to: null,
         message_id: "msg-recover-1",
         thread_id: "thread-recover-1",
+        owner_instance_id: "orphaned-worker",
       },
     ]);
 
@@ -3817,6 +3818,7 @@ describe("recoverOrphanedAcpTurns", () => {
           expect.objectContaining({
             state: "aborted",
             reason: "server restart recovery",
+            owner_instance_id: "orphaned-worker",
           }),
         ],
       ]),

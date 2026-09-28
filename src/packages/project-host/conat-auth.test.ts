@@ -103,6 +103,100 @@ describe("project-host Conat auth", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
+  it("keeps a scoped key in its viewer service instead of account permissions", async () => {
+    const expires = Math.floor(Date.now() / 1000) + 20;
+    const binding = {
+      account_id,
+      key_id: "key-id-123",
+      scope_revision: 2,
+      project_id,
+      placement_revision: 7,
+      capabilities: ["file:read"],
+      viewer_policy_hash: "a".repeat(64),
+      subjects: [
+        `fs-api-key.project-${project_id}.account-${account_id}.key-key-id-123.rev-2.hash-${"a".repeat(64)}`,
+      ],
+      reply_prefix: "_INBOX.api-key-00000000-0000-4000-8000-000000000003",
+    };
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: expires - 20,
+      exp: expires,
+      api_key: binding,
+    });
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+    const user = await getUser(
+      {
+        handshake: { auth: { bearer: "scoped-key-token" }, headers: {} },
+      } as any,
+      undefined as any,
+    );
+    expect(user).toMatchObject({
+      account_id,
+      auth_lease_exp_s: expires,
+      auth_api_key: binding,
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(true);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "viewer" } },
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(false);
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    for (const subject of [
+      `fs.project-${project_id}`,
+      `project.${project_id}.run`,
+      `hub.account.${account_id}.api`,
+    ]) {
+      expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    }
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 8,
+      users: { [account_id]: { group: "collaborator" } },
+    });
+    expect(
+      await isAllowed({ user, subject: binding.subjects[0], type: "pub" }),
+    ).toBe(false);
+  });
+
+  it("rejects a child token after membership is removed", async () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      exp: Math.floor(Date.now() / 1000) + 20,
+      api_key: {
+        project_id,
+        placement_revision: 7,
+        capabilities: ["project:exec"],
+      },
+    });
+    mockGetProject.mockReturnValue({
+      runtime_lifecycle_revision: 7,
+      users: {},
+    });
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    await expect(
+      getUser(
+        {
+          handshake: { auth: { bearer: "scoped-key-token" }, headers: {} },
+        } as any,
+        undefined as any,
+      ),
+    ).rejects.toThrow("no longer valid");
+  });
+
   it("rejects a direct account bearer after its browser session expires", async () => {
     mockVerifyProjectHostAuthToken.mockReturnValue({
       act: "account",
@@ -446,6 +540,8 @@ describe("project-host Conat auth", () => {
       `project.${project_id}.archive-info.-`,
       `project.${project_id}.touch.-`,
       `persist.project-${project_id}`,
+      `persist.project-${project_id}.id`,
+      `persist.project-${project_id}.server.shard.client`,
       `acp.project-${project_id}`,
       `codex.project-${project_id}.device-auth`,
       `hub.project.${project_id}.api`,

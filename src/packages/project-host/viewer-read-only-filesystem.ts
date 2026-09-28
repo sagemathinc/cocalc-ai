@@ -186,8 +186,32 @@ export function createViewerReadOnlyFilesystem({
       return await fs.lstat(path);
     },
     readFile: async (path: string, encoding?: string, lock?: number) => {
-      await assertViewerPathAllowed({ fs, readPolicy, path });
-      return await fs.readFile(path, encoding, lock);
+      const readAuthorized = (
+        fs as ConatFilesystem & {
+          readRegularFileAuthorized?: (opts: {
+            path: string;
+            authorizeCanonicalIdentity: (identity: string) => void;
+            maxBytes: number;
+            encoding?: string;
+            lock?: number;
+          }) => Promise<string | Buffer>;
+        }
+      ).readRegularFileAuthorized;
+      if (!readAuthorized) {
+        throw new Error("viewer filesystem requires descriptor-anchored reads");
+      }
+      return await readAuthorized({
+        path,
+        authorizeCanonicalIdentity: (canonicalIdentity) =>
+          assertViewerCanonicalPathAllowed({
+            canonicalIdentity,
+            readPolicy,
+            path,
+          }),
+        maxBytes: 8 * 1024 * 1024,
+        encoding,
+        lock,
+      });
     },
     readdir: async (path: string, options?: any) => {
       if (options?.recursive) {

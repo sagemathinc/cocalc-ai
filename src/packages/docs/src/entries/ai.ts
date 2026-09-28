@@ -6,6 +6,7 @@
 import type { DocsEntry } from "../types";
 import { CLAUDE_CODE_BODY } from "../content/claude-code";
 import { AGENT_FEATURES_BODY } from "../content/agent-features";
+import { COCALC_ACCESS_BODY } from "../content/cocalc-access";
 import { docsIcon, projectActionParameters } from "../helpers";
 import {
   AI_CREDENTIALS_BODY,
@@ -49,6 +50,20 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Use Claude Code in CoCalc: experimental setup, images, Agent Networks, credentials, billing, and the security model.",
     title: "Claude Code in CoCalc (Experimental Preview)",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: COCALC_ACCESS_BODY.trim(),
+    category: "AI",
+    id: "ai.cocalc-access",
+    lastReviewed: "2026-09-26",
+    noActionReason:
+      "Configure CoCalc access from an existing named agent's header or composer.",
+    slug: "ai/cocalc-access",
+    status: "ready",
+    summary:
+      "Give an agent temporary access to selected CoCalc projects or all your projects.",
+    title: "Give an agent CoCalc access",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

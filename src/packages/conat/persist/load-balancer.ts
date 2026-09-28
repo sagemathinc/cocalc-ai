@@ -28,6 +28,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { SERVICE } from "./util";
 import { hash_string } from "@cocalc/util/misc";
 import { delay } from "awaiting";
+import type { SocketServerInfo } from "../socket/util";
 
 const logger = getLogger("persist:load-balancer");
 
@@ -55,7 +56,11 @@ export function initLoadBalancer({
         logger.debug("creating persist load balancer: ", { subject, ids });
         sub = await client.subscribe(subject);
         for await (const mesg of sub) {
-          mesg.respondSync(getId(ids, mesg.subject));
+          const id = getId(ids, mesg.subject);
+          // Old clients require a string; new clients explicitly request features.
+          mesg.respondSync(
+            mesg.headers?.socketInfo === 1 ? { id, inboxReturn: 1 } : id,
+          );
         }
       } catch (err) {
         sub?.close();
@@ -85,7 +90,7 @@ export const PERSIST_SERVER_ID_CACHE_TTL_MS = 15000;
 export const PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS = 2000;
 
 type CacheEntry = {
-  promise: Promise<string>;
+  promise: Promise<SocketServerInfo>;
   expiresAt: number;
 };
 
@@ -108,7 +113,14 @@ export function clearPersistServerIdCache(client: Client) {
   persistServerIdCache.get(client)?.clear();
 }
 
-export async function getPersistServerId({
+export async function getPersistServerId(opts: {
+  client: Client;
+  subject: string;
+}): Promise<string> {
+  return (await getPersistServerInfo(opts)).id;
+}
+
+export async function getPersistServerInfo({
   client,
   subject,
 }: {
@@ -130,10 +142,21 @@ export async function getPersistServerId({
   entry = {
     expiresAt: now + PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
     promise: client
-      .request(s, null, { timeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS })
+      .request(s, null, {
+        timeout: PERSIST_SERVER_ID_REQUEST_TIMEOUT_MS,
+        headers: { socketInfo: 1 },
+      })
       .then((resp) => {
+        const info =
+          typeof resp.data === "string" ? { id: resp.data } : resp.data;
+        if (!info || typeof info.id !== "string" || !info.id.length) {
+          throw Error("invalid persist server discovery response");
+        }
         entry!.expiresAt = Date.now() + PERSIST_SERVER_ID_CACHE_TTL_MS;
-        return resp.data as string;
+        return {
+          id: info.id,
+          ...(info.inboxReturn === 1 ? { inboxReturn: 1 as const } : {}),
+        };
       })
       .catch((err) => {
         if (cache.get(s) === entry) {

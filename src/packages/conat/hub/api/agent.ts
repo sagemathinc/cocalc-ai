@@ -14,6 +14,7 @@ import {
   authFirstRequireAccountWithBoundSession,
   authFirstRequireHostWithAccountTarget,
 } from "./util";
+import type { ApiKeyScope } from "@cocalc/util/db-schema/api-keys";
 import type {
   AgentIdentity,
   AgentCredential,
@@ -59,6 +60,12 @@ export const agent = {
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
+  getCocalcConnectorConfig: authFirstRequireAccount,
+  saveCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
+  removeCocalcConnectorConfig: authFirstRequireAccountWithBoundSession,
+  beginCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
+  renewCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
+  endCocalcConnectorTurn: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -197,7 +204,74 @@ export interface AgentIdentityLocator {
   project_id?: string;
 }
 
+export interface CocalcConnectorConfig {
+  config_id: string;
+  account_id: string;
+  agent_id: string;
+  source_project_id: string;
+  scope: ApiKeyScope;
+  revision: number;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CocalcConnectorTurnRef {
+  chat_path: string;
+  message_date: string;
+  message_id: string;
+  thread_id: string;
+}
+
+export interface CocalcConnectorTurnRequest extends AgentHostAuth {
+  agent_id: string;
+  source_project_id: string;
+  run_id: string;
+  turn_ref: CocalcConnectorTurnRef;
+}
+
+export interface CocalcConnectorTurnKey {
+  turn_id: string;
+  key_id: string;
+  secret: string;
+  expires_at: number;
+  config_id: string;
+  config_revision: number;
+}
+
 export interface AgentApi {
+  beginCocalcConnectorTurn(
+    opts: CocalcConnectorTurnRequest & { idempotency_key: string },
+  ): Promise<CocalcConnectorTurnKey | undefined>;
+  renewCocalcConnectorTurn(
+    opts: CocalcConnectorTurnRequest & { turn_id: string },
+  ): Promise<number>;
+  endCocalcConnectorTurn(
+    opts: Omit<CocalcConnectorTurnRequest, "turn_ref"> & { turn_id: string },
+  ): Promise<void>;
+  getCocalcConnectorConfig(opts: {
+    account_id?: string;
+    agent_id: string;
+    source_project_id: string;
+  }): Promise<CocalcConnectorConfig | null>;
+  saveCocalcConnectorConfig(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      expected_config_id?: string;
+      expected_revision?: number;
+      scope: ApiKeyScope;
+      enabled: boolean;
+    },
+  ): Promise<CocalcConnectorConfig>;
+  removeCocalcConnectorConfig(
+    opts: AgentHumanAuth & {
+      agent_id: string;
+      source_project_id: string;
+      expected_config_id: string;
+      expected_revision: number;
+    },
+  ): Promise<void>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(

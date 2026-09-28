@@ -57,7 +57,7 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -67,6 +67,7 @@ import {
 } from "@cocalc/server/api/api-key-scope";
 import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
+import { assertApiKeyProjectMembership } from "@cocalc/server/api/project-membership-revocation";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
@@ -196,6 +197,9 @@ function verifyAgentScopedProjectHostBearer(
       host_id,
       public_key: getProjectHostAuthTokenPublicKey(),
     });
+    if (claims.api_key != null) {
+      return;
+    }
     if (claims.act !== "account" || !isValidUUID(claims.sub)) {
       return;
     }
@@ -274,6 +278,7 @@ async function accountSecurityStateAllowsAccount({
 export async function getUser(
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
+  options?: { revalidation?: boolean },
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
@@ -386,12 +391,17 @@ export async function getUser(
 
   if (cookies[API_COOKIE_NAME]) {
     // account API key
-    const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!);
+    const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!, {
+      recordActivity: !options?.revalidation,
+    });
     if (!user) {
       throw Error("api key no longer valid");
     }
     assertHubInteractiveEgressAllowed(socket, user);
-    return user;
+    return {
+      ...user,
+      auth_api_key_reply_prefix: `_INBOX.api-key-${randomUUID()}`,
+    };
   }
   if (cookies[PROJECT_SECRET_COOKIE_NAME]) {
     const project_id = cookies[PROJECT_ID_COOKIE_NAME];
@@ -926,6 +936,7 @@ async function isApiKeyAllowed({
       {
         capabilities: user.capabilities ?? [],
         allowed_project_ids: user.allowed_project_ids ?? [],
+        scope: user.scope,
       },
       requiredCapability,
       project_id,
@@ -941,10 +952,24 @@ async function isApiKeyAllowed({
     });
     return false;
   }
-  const allowed = await hasProjectCollaboratorAccessAllowRemote({
+  let allowed = await hasProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id,
   });
+  if (allowed) {
+    try {
+      await assertApiKeyProjectMembership(
+        {
+          account_id,
+          key_id: user.key_id,
+          scope_revision: user.scope_revision,
+        },
+        project_id,
+      );
+    } catch {
+      allowed = false;
+    }
+  }
   if (!allowed) {
     recordConatApiKeyDenial({
       user,

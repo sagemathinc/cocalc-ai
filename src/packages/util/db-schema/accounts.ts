@@ -155,6 +155,16 @@ export function ensureAutoBalanceValid(obj) {
 Table({
   name: "accounts",
   fields: {
+    api_search_next_ms: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home API search token-bucket virtual arrival time in milliseconds; internal admission state carried through rehome.",
+    },
+    api_key_issuance_sequence: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Account-home monotonic API delegation issuance counter. Null historical values mean zero; transport as a decimal string to preserve precision.",
+    },
     account_id: {
       type: "uuid",
       desc: "The uuid that determines the user account",
