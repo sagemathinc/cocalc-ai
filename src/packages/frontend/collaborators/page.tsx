@@ -572,6 +572,7 @@ function CollaboratorsWorkspace({
                 <DirectoryCollection
                   items={items as CollaborationPerson[]}
                   collection="people"
+                  viewOverride={selection ? "list" : undefined}
                   label="People"
                   preferences={preferences}
                   itemId={(item) => item.account_id}
@@ -808,6 +809,7 @@ function CollaboratorsWorkspace({
           api={api}
           accountId={accountId}
           project={newProject}
+          onManageProject={() => void manageProject(newProject.id)}
           onChangeProject={() => {
             setNewProject(undefined);
             setPicker("conversation");

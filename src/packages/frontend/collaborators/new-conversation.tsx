@@ -3,12 +3,13 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { useEffect, useId, useRef, useState } from "react";
-import { Alert, Button, Input } from "antd";
+import { Button, Input } from "antd";
 import { uuid } from "@cocalc/util/misc";
 import type { CollaborationTarget } from "@cocalc/util/collaborators";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { DirectoryApi } from "./workspace-api";
 import { CollaboratorsModal } from "./modal";
+import { ConversationFailure } from "./conversation-failure";
 
 export function NewConversation({
   api,
@@ -17,6 +18,7 @@ export function NewConversation({
   onCreated,
   onClose,
   onChangeProject,
+  onManageProject,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -24,6 +26,7 @@ export function NewConversation({
   onCreated: (target: CollaborationTarget) => void;
   onClose: () => void;
   onChangeProject: () => void;
+  onManageProject?: () => void;
 }) {
   const titleId = useId();
   const [title, setTitle] = useState("");
@@ -36,6 +39,8 @@ export function NewConversation({
   });
   const abort = useRef(new AbortController());
   const pending = useRef(false);
+  // Keep this across retries: a later routing failure cannot resolve an earlier timeout.
+  const dispatched = useRef(false);
   useEffect(() => {
     abort.current = new AbortController();
     return () => abort.current.abort();
@@ -56,6 +61,9 @@ export function NewConversation({
         title: operation.current.title,
         signal: abort.current.signal,
         onProgress: setStage,
+        onDispatch: () => {
+          dispatched.current = true;
+        },
       });
       if (!abort.current.signal.aborted) onCreated(target);
     } catch (error) {
@@ -73,7 +81,7 @@ export function NewConversation({
       footer={null}
     >
       <KeyboardBoundary boundary="collaborators-new-conversation">
-        {!operation.current.title && (
+        {!dispatched.current && !busy && (
           <Button onClick={onChangeProject}>Change project</Button>
         )}
         <p>
@@ -110,20 +118,11 @@ export function NewConversation({
         </form>
         <p role="status">{busy ? stage || "Preparing conversation..." : ""}</p>
         {error && (
-          <Alert
-            role="alert"
-            type="error"
-            title="Conversation not confirmed"
-            description={
-              <>
-                {error}
-                <p>
-                  The request may have reached the project. Retry uses the same
-                  room and thread identity; it does not create a duplicate
-                  discussion.
-                </p>
-              </>
-            }
+          <ConversationFailure
+            projectId={project.id}
+            error={error}
+            dispatched={dispatched.current}
+            onManageProject={onManageProject}
           />
         )}
       </KeyboardBoundary>

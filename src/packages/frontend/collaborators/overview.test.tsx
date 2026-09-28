@@ -205,3 +205,42 @@ test("owner authorization failures stay explicit and permit return to the accoun
   expect(api.listProjectResources).toHaveBeenCalledTimes(1);
 });
 jest.mock("react-virtuoso", () => require("../test/mocks/virtuoso-list"));
+
+test("person overview keeps alias editing compact and lazily opens related work tabs", async () => {
+  const user = userEvent.setup();
+  const { api, props } = fixture("complete");
+  api.listPeople.mockResolvedValue({
+    items: [{ account_id: "person", display_name: "Bella Boo" }] as any,
+    coverage: "complete",
+  });
+  Object.assign(api, {
+    getPersonAlias: jest.fn(async () => ({ alias: "bella" })),
+  });
+  const onPersonAliasChange = jest.fn();
+  render(
+    <Overview
+      {...props}
+      projectId={undefined}
+      onPersonAliasChange={onPersonAliasChange}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Bella Boo" });
+  await screen.findByRole("button", { name: "Edit private alias @bella" });
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(onPersonAliasChange).toHaveBeenCalledWith("bella");
+  expect(
+    api.listResources.mock.calls.every(
+      ([query]) => query.kind === "conversation",
+    ),
+  ).toBe(true);
+  const agents = screen.getByRole("tab", { name: "Agents" });
+  agents.focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByText("No agents to show.")).toBeVisible();
+  expect(screen.queryByText("No artifacts to show.")).not.toBeInTheDocument();
+  const projects = screen.getByRole("region", { name: "Shared projects" });
+  await user.click(
+    within(projects).getByRole("button", { name: "Project", exact: true }),
+  );
+  expect(props.onProject).toHaveBeenCalledWith("project", expect.anything());
+});

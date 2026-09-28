@@ -3,6 +3,38 @@ import userEvent from "@testing-library/user-event";
 jest.mock("./workspace-api", () => ({ boundCollaboratorsApi: jest.fn() }));
 import { PersonAliasControl } from "./person-alias-control";
 
+test("compact alias resolves without opening a form and supports keyboard editing and focus return", async () => {
+  const user = userEvent.setup();
+  const onResolve = jest.fn();
+  render(
+    <PersonAliasControl
+      compact
+      accountId="me"
+      personId="person"
+      onResolve={onResolve}
+      api={{
+        getPersonAlias: async () => ({ alias: "bella" }),
+        setPersonAlias: async ({ alias }) => ({ alias }),
+      }}
+    />,
+  );
+  const trigger = await screen.findByRole("button", {
+    name: "Edit private alias @bella",
+  });
+  expect(onResolve).toHaveBeenCalledWith("bella");
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "Private alias" });
+  const input = screen.getByRole("textbox", { name: "Private person alias" });
+  await waitFor(() => expect(input).toHaveFocus());
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(trigger).toHaveFocus();
+});
+
 test("keyboard users can set, rename, and clear a private person alias", async () => {
   const user = userEvent.setup();
   const api = {

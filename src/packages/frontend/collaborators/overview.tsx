@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
  * License: MS-RSL - see LICENSE.md for details
  */
-import { Button } from "antd";
+import { Button, Tabs } from "antd";
 import { useState } from "react";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { ProjectThemeAvatar } from "@cocalc/frontend/projects/theme";
@@ -77,8 +77,8 @@ export function Overview({
       ? projects.page?.items.find((p) => p.project_id === projectId)
       : undefined;
   return (
-    <div>
-      <h2>
+    <div className="collaborators-overview">
+      <div className="collaborators-overview-identity">
         {person ? (
           <Avatar
             account_id={person.account_id}
@@ -89,36 +89,37 @@ export function Overview({
         ) : project ? (
           <ProjectThemeAvatar theme={project.theme} size={40} border />
         ) : null}
-        {personId
-          ? person?.display_name || "Person overview"
-          : project?.title || "Project overview"}
-      </h2>
-      {person && (
-        <details>
-          <summary>Private alias</summary>
-          <PersonAliasControl
-            accountId={accountId}
-            personId={person.account_id}
-            api={api}
-            onChange={onPersonAliasChange}
-            onResolve={onPersonAliasChange}
-          />
-        </details>
-      )}
-      {personId ? (
-        <p>
-          Only shared projects and accessible work are shown. Participation and
-          creator attribution are different relationships.
-        </p>
-      ) : (
+        <div>
+          <h2>
+            {personId
+              ? person?.display_name || "Person overview"
+              : project?.title || "Project overview"}
+          </h2>
+          {person && (
+            <PersonAliasControl
+              compact
+              accountId={accountId}
+              personId={person.account_id}
+              api={api}
+              onChange={onPersonAliasChange}
+              onResolve={onPersonAliasChange}
+            />
+          )}
+        </div>
+      </div>
+      {!personId && (
         <p>
           {project?.description ||
             "People and work in this project. Browsing does not start project compute."}
         </p>
       )}
       <div className="collaborators-actions">
-        <Button onClick={onNewConversation}>Start discussion</Button>
-        <Button onClick={onInvite}>Invite collaborator</Button>
+        <Button type="primary" onClick={onNewConversation}>
+          Start discussion
+        </Button>
+        <Button onClick={onInvite}>
+          {personId ? "Invite to projects" : "Invite collaborator"}
+        </Button>
         {project && (
           <Button onClick={() => onManageProject(project.project_id)}>
             Settings
@@ -146,8 +147,12 @@ export function Overview({
       )}
       {personId ? (
         <>
-          <h3>Shared projects</h3>
-          <DirectoryResults label="Shared projects" result={projects}>
+          <DirectoryResults
+            label="Shared projects"
+            result={projects}
+            heading={<h3>Shared projects</h3>}
+            empty="No shared projects to show."
+          >
             {(items) => (
               <VirtualCollectionList
                 className="collaborators-list"
@@ -155,6 +160,8 @@ export function Overview({
                 itemId={(item) => item.project_id}
                 renderItem={(item) => (
                   <Button
+                    type="text"
+                    className="collaborators-row collaborators-person-row"
                     onClick={(event) => onProject(item.project_id, event)}
                   >
                     <ProjectThemeAvatar theme={item.theme} size={24} border />{" "}
@@ -177,8 +184,8 @@ export function Overview({
               {() => null}
             </DirectoryResults>
           )}
-          <h3>People</h3>
           <DirectoryResults
+            heading={<h3>People</h3>}
             label="Project people"
             result={people}
             empty="No other collaborators. Invite someone to work together in this project."
@@ -204,18 +211,50 @@ export function Overview({
           </DirectoryResults>
         </>
       )}
-      {(["conversation", "agent", "artifact"] as const).map((kind) => (
-        <ResourceSection
-          key={JSON.stringify([kind, projectId, personId])}
-          api={api}
-          kind={kind}
-          projectId={projectId}
-          personId={personId}
-          onOpen={onResource}
+      {personId ? (
+        <Tabs
+          aria-label="Related work"
+          defaultActiveKey="conversation"
+          destroyOnHidden
+          items={(["conversation", "agent", "artifact"] as const).map(
+            (kind) => ({
+              key: kind,
+              label: resourceLabel(kind),
+              children: (
+                <ResourceSection
+                  key={JSON.stringify([kind, projectId, personId])}
+                  api={api}
+                  kind={kind}
+                  projectId={projectId}
+                  personId={personId}
+                  onOpen={onResource}
+                />
+              ),
+            }),
+          )}
         />
-      ))}
+      ) : (
+        (["conversation", "agent", "artifact"] as const).map((kind) => (
+          <ResourceSection
+            key={JSON.stringify([kind, projectId, personId])}
+            api={api}
+            kind={kind}
+            projectId={projectId}
+            personId={personId}
+            onOpen={onResource}
+          />
+        ))
+      )}
     </div>
   );
+}
+
+function resourceLabel(kind: CollaborationResourceKind) {
+  return kind === "conversation"
+    ? "Conversations"
+    : kind === "agent"
+      ? "Agents"
+      : "Artifacts";
 }
 
 function ResourceSection({
@@ -250,15 +289,9 @@ function ResourceSection({
         : api.listResources({ ...query, scope: "all" });
     },
   );
-  const label =
-    kind === "conversation"
-      ? "Conversations"
-      : kind === "agent"
-        ? "Agents"
-        : "Artifacts";
+  const label = resourceLabel(kind);
   return (
     <>
-      <h3>{ownerIndexed ? `Owner indexed work: ${label}` : label}</h3>
       {projectId &&
         (ownerIndexed ||
           (result.page && result.page.coverage !== "complete")) && (
@@ -275,20 +308,24 @@ function ResourceSection({
             </Button>
           </div>
         )}
-      {personId && (
-        <p>
-          {kind === "conversation"
-            ? "Conversations involving this person."
-            : "Accessible work related to this person; a personal alias is not attribution."}
-        </p>
-      )}
       <DirectoryResults
+        heading={
+          personId ? (
+            <span className="collaborators-person-meta">
+              {kind === "conversation"
+                ? "Conversations involving this person"
+                : "Related work you can access"}
+            </span>
+          ) : (
+            <h3>{ownerIndexed ? `Owner indexed work: ${label}` : label}</h3>
+          )
+        }
         result={result}
         label={ownerIndexed ? `Owner indexed ${label.toLowerCase()}` : label}
         empty={
           kind === "conversation"
-            ? "No indexed conversations yet. Start a discussion explicitly; browsing creates no chat file."
-            : `No indexed ${label.toLowerCase()} match this scope.`
+            ? "No conversations to show yet. Start a discussion in a shared project."
+            : `No ${label.toLowerCase()} to show.`
         }
       >
         {(items) => <ResourceList items={items} onOpen={onOpen} />}

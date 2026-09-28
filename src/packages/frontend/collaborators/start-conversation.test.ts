@@ -32,6 +32,7 @@ function options() {
     title: "Seminar",
     signal: new AbortController().signal,
     onProgress: jest.fn(),
+    onDispatch: jest.fn(),
   };
 }
 beforeEach(() => {
@@ -65,6 +66,22 @@ test("registers metadata then calls the authorized host service, never a file wr
     ],
     { timeout: 60_000, waitForInterest: true },
   );
+  expect(opts.onDispatch).toHaveBeenCalledTimes(1);
+  expect(opts.onDispatch.mock.invocationCallOrder[0]).toBeLessThan(
+    mockRequest.mock.invocationCallOrder[0],
+  );
+});
+
+test("missing routing does not dispatch a conversation request", async () => {
+  const opts = options();
+  mockProjectConat.mockRejectedValueOnce(
+    Error("host routing info unavailable"),
+  );
+  await expect(createConversation(opts)).rejects.toThrow(
+    "host routing info unavailable",
+  );
+  expect(opts.onDispatch).not.toHaveBeenCalled();
+  expect(mockRequest).not.toHaveBeenCalled();
 });
 
 test("lost acknowledgments retry the exact operation identity", async () => {

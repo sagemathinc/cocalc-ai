@@ -126,6 +126,43 @@
   display: flex;
   flex-direction: column;
 }
+.collaborators-overview {
+  width: 100%;
+  max-width: 960px;
+  margin-top: 16px;
+}
+.collaborators-overview-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.collaborators-overview-identity > :first-child {
+  flex-shrink: 0;
+}
+.collaborators-overview-identity > div {
+  min-width: 0;
+}
+.collaborators-overview h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.3;
+}
+.collaborators-overview h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.collaborators-overview > section,
+.collaborators-overview > .ant-tabs {
+  margin-top: 24px;
+}
+.collaborators-overview section > p {
+  margin: 12px 0;
+  color: var(--cocalc-ui-secondary);
+}
+.collaborators-overview .collaborators-person-meta {
+  white-space: normal;
+}
 .collaborators-list {
   list-style: none;
   padding: 0;

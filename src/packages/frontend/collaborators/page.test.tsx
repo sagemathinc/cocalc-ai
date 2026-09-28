@@ -449,7 +449,7 @@ test("inviting from a person's overview also offers projects not yet shared with
   render(<Workspace initial={{ view: "people", personId: "bob" }} />);
   await user.click(
     await screen.findByRole("button", {
-      name: "Invite collaborator",
+      name: "Invite to projects",
       exact: true,
     }),
   );

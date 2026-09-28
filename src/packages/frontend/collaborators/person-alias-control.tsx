@@ -1,11 +1,14 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Input } from "antd";
+import type { InputRef } from "antd";
 import {
   normalizePrivateAlias,
   privateAliasPath,
 } from "@cocalc/util/private-alias";
 import { boundCollaboratorsApi } from "./workspace-api";
 import type { DirectoryApi } from "./workspace-api";
+import { CollaboratorsModal } from "./modal";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 export interface PersonAliasControlProps {
   accountId: string;
@@ -15,6 +18,7 @@ export interface PersonAliasControlProps {
   onChange?: (alias: string | null) => void;
   /** Initial successful lookup, including an absent alias. */
   onResolve?: (alias: string | null) => void;
+  compact?: boolean;
 }
 
 export function PersonAliasControl(props: PersonAliasControlProps) {
@@ -30,6 +34,7 @@ function PersonAliasForm({
   api: providedApi,
   onChange,
   onResolve,
+  compact = false,
 }: PersonAliasControlProps) {
   const [api] = useState(() => providedApi ?? boundCollaboratorsApi(accountId));
   const id = useId();
@@ -42,6 +47,8 @@ function PersonAliasForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("");
+  const [editing, setEditing] = useState(false);
+  const input = useRef<InputRef>(null);
   useEffect(() => {
     mounted.current = true;
     let disposed = false;
@@ -88,7 +95,7 @@ function PersonAliasForm({
       if (mounted.current) setBusy(false);
     }
   }
-  return (
+  const form = (
     <form
       onSubmit={(event) => {
         event.preventDefault();
@@ -97,6 +104,8 @@ function PersonAliasForm({
     >
       <label htmlFor={id}>Private person alias</label>
       <Input
+        ref={input}
+        autoFocus={compact}
         id={id}
         value={alias}
         disabled={loading || busy}
@@ -124,5 +133,42 @@ function PersonAliasForm({
       {error && <p role="alert">{error}</p>}
       <p role="status">{loading ? "Loading private alias..." : status}</p>
     </form>
+  );
+  if (!compact) return form;
+  return (
+    <>
+      <Button
+        type="text"
+        size="small"
+        aria-haspopup="dialog"
+        aria-label={
+          saved ? `Edit private alias @${saved}` : "Add private alias"
+        }
+        onClick={() => {
+          setAlias(saved ?? "");
+          setStatus("");
+          setEditing(true);
+        }}
+      >
+        {saved ? `@${saved}` : "Add private alias"}
+      </Button>
+      {error && !editing && (
+        <span role="alert">
+          Private alias needs attention. Open it for details.
+        </span>
+      )}
+      <CollaboratorsModal
+        open={editing}
+        title="Private alias"
+        footer={null}
+        onCancel={() => setEditing(false)}
+        afterOpenChange={(open) => {
+          if (open) input.current?.focus();
+        }}
+        destroyOnHidden
+      >
+        <KeyboardBoundary boundary="person-alias">{form}</KeyboardBoundary>
+      </CollaboratorsModal>
+    </>
   );
 }

@@ -16,6 +16,7 @@ export async function createConversation({
   title,
   signal,
   onProgress,
+  onDispatch,
 }: {
   api: DirectoryApi;
   accountId: string;
@@ -24,6 +25,8 @@ export async function createConversation({
   title: string;
   signal: AbortSignal;
   onProgress: (message: string) => void;
+  /** Called before sending; once sent, a failure may have an unknown outcome. */
+  onDispatch?: () => void;
 }): Promise<CollaborationTarget> {
   function check() {
     if (
@@ -53,6 +56,7 @@ export async function createConversation({
   onProgress("Creating a human-only conversation...");
   // The host serializes initialization and checks its durable deleted-room
   // guard. A timeout has an unknown outcome; retry this same request_id.
+  onDispatch?.();
   const response = await client.request(
     `services.account-${accountId}._.${projectId}._.collaborators`,
     [

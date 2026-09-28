@@ -112,6 +112,7 @@ export function DirectoryResults<T>({
   onRestart,
   hideOptions = false,
   autoLoad = true,
+  heading,
 }: {
   result: DirectoryPage<T>;
   label: string;
@@ -120,6 +121,7 @@ export function DirectoryResults<T>({
   onRestart?: () => void;
   hideOptions?: boolean;
   autoLoad?: boolean;
+  heading?: ReactNode;
 }) {
   const { page, loading, loadingMore, error } = result;
   const root = useRef<HTMLElement>(null);
@@ -172,9 +174,17 @@ export function DirectoryResults<T>({
       aria-label={label}
       aria-busy={loading || loadingMore}
     >
-      {!hideOptions && (
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <DirectoryResultOptions result={result} />
+      {(heading || !hideOptions) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 8,
+          }}
+        >
+          {heading && <div style={{ flex: 1, minWidth: 0 }}>{heading}</div>}
+          {!hideOptions && <DirectoryResultOptions result={result} />}
         </div>
       )}
       {loading && !page && (
