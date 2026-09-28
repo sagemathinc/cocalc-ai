@@ -575,7 +575,7 @@ test("keyboard opens a conversation and restores focus and search on back", asyn
   expect(mockApi.ensureRoom).not.toHaveBeenCalled();
 });
 
-test("conversation heading includes its private alias", async () => {
+test("conversation heading includes its personal alias", async () => {
   mockApi.getResource.mockResolvedValue({
     ...conversation,
     personal: { alias: "team-room" },
@@ -623,11 +623,11 @@ test("the live thread theme and keyboard title/alias controls are used in the he
   await user.keyboard("{Enter}");
   expect(mockEditAppearance).toHaveBeenCalled();
   const alias = screen.getByRole("button", {
-    name: "Edit private alias @team-room",
+    name: "Edit personal alias @team-room",
   });
   alias.focus();
   await user.keyboard("{Enter}");
-  await screen.findByRole("textbox", { name: "Private alias" });
+  await screen.findByRole("textbox", { name: "Personal alias" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(alias).toHaveFocus());
   await user.click(
@@ -682,7 +682,7 @@ test("open conversation has compact navigation, accessible audience and project 
   expect(
     screen.getByRole("button", { name: /Office hours.*Geometry Lab/ }),
   ).toHaveAttribute("aria-current", "true");
-  expect(screen.queryByRole("textbox", { name: "Private alias" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Personal alias" })).toBeNull();
   await user.click(audience);
   expect(
     await screen.findByRole("dialog", { name: "Participants and access" }),

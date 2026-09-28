@@ -208,6 +208,7 @@ import {
 } from "./commands/project";
 import { registerShareCommand, type ShareCommandDeps } from "./commands/share";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
+import { registerUrlCommand } from "./commands/personal-urls";
 import {
   registerDaemonCommand,
   type DaemonCommandDeps,
@@ -3352,6 +3353,7 @@ const shareCommandDeps = {
 } satisfies ShareCommandDeps;
 
 registerShareCommand(program, shareCommandDeps);
+registerUrlCommand(program, { withContext });
 const rootfsCommandDeps = {
   withContext,
   resolveProjectFromArgOrContext,

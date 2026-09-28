@@ -56,6 +56,12 @@ jest.mock("./password-reset", () => ({
   ),
 }));
 
+jest.mock("./personal-urls", () => ({
+  AdminPersonalUrls: ({ account_id }: { account_id: string }) => (
+    <div>{`personal-urls:${account_id}`}</div>
+  ),
+}));
+
 jest.mock("./admin-role", () => ({
   AdminRole: ({ is_admin }: any) => (
     <div>{is_admin ? "admin-role-current" : "admin-role-grant"}</div>
@@ -203,6 +209,7 @@ describe("UserResult admin tools", () => {
     fireEvent.click(screen.getByText("Profile"));
 
     expect(screen.getByText("password-reset-email-status:true")).toBeTruthy();
+    expect(screen.getByText("personal-urls:acct-1")).toBeInTheDocument();
   });
 
   it("opens at most one expandable admin section", () => {

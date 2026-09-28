@@ -348,36 +348,40 @@ test("uses sanitized source context and follows live title/content updates, not 
   ).not.toBeInTheDocument();
 });
 
-test("Copy link reads the parent's current URL at activation and reports clipboard failures", async () => {
-  const user = userEvent.setup();
-  render(<LibraryArtifactView target={target} onBack={() => {}} />);
-  await screen.findByRole("heading", { name: "Actual source title" });
-  const originalUrl = window.location.href;
-  try {
-    window.history.replaceState(
-      null,
-      "",
-      "/artifacts/source-project/stable-entry",
-    );
-    const copy = screen.getByRole("button", { name: "Copy link" });
-    copy.focus();
-    await user.keyboard("{Enter}");
-    expect(mockCopy).toHaveBeenLastCalledWith({ text: window.location.href });
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
-    expect(copy).toHaveFocus();
-    mockCopy.mockResolvedValueOnce(false);
-    await user.keyboard(" ");
-    expect(screen.getByRole("alert")).toHaveTextContent("Unable to copy link");
-    expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
-    expect(copy).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
-    expect(mockOpen).toHaveBeenCalledTimes(1);
-  } finally {
-    window.history.replaceState(null, "", originalUrl);
-  }
-});
+test.each([
+  "/artifacts/source-project/stable-entry",
+  "/u/another-owner/artifacts/notes",
+])(
+  "Copy link preserves %s at activation and reports clipboard failures",
+  async (url) => {
+    const user = userEvent.setup();
+    render(<LibraryArtifactView target={target} onBack={() => {}} />);
+    await screen.findByRole("heading", { name: "Actual source title" });
+    const originalUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", url);
+      const copy = screen.getByRole("button", { name: "Copy link" });
+      copy.focus();
+      await user.keyboard("{Enter}");
+      expect(mockCopy).toHaveBeenLastCalledWith({ text: window.location.href });
+      expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
+      expect(copy).toHaveFocus();
+      mockCopy.mockResolvedValueOnce(false);
+      await user.keyboard(" ");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Unable to copy link",
+      );
+      expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+      expect(copy).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByText("Link copied")).toHaveAttribute("role", "status");
+      expect(mockOpen).toHaveBeenCalledTimes(1);
+    } finally {
+      window.history.replaceState(null, "", originalUrl);
+    }
+  },
+);
 
 test("name control saves an account alias through a keyboard-accessible dialog", async () => {
   const user = userEvent.setup();

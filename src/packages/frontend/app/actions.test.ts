@@ -305,13 +305,42 @@ describe("project context across global navigation", () => {
   });
 
   it("opens the selected agent's stable workspace URL", async () => {
+    redux.getActions("account").setState({ account_id: A });
     actions.setState({
-      active_agent_id: "agent-123",
+      active_agent_id: C,
       active_agent_name: "reviewer",
     });
     await actions.set_active_tab("agents");
-    expect(set_url).toHaveBeenLastCalledWith("/agents/reviewer", undefined);
+    expect(set_url).toHaveBeenLastCalledWith(
+      `/u/${A}/agents/reviewer`,
+      undefined,
+    );
   });
+
+  it("uses a stable ID while the agent name or account is unavailable", async () => {
+    actions.setState({ active_agent_id: C });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(`/agents/${C}`, undefined);
+    redux.getActions("account").setState({ account_id: A });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith(`/agents/${C}`, undefined);
+  });
+
+  it.each(["chats", "people"])(
+    "qualified %s can resolve with AI disabled in Lite",
+    async (kind) => {
+      mockLite = true;
+      redux
+        .getActions("account")
+        .setState({ other_settings: { openai_disabled: true } });
+      actions.setState({
+        personal_url: `u/alice/${kind}/shared`,
+        personal_url_status: "loading",
+      });
+      await actions.set_active_tab("agents", false);
+      expect(page().get("active_top_tab")).toBe("agents");
+    },
+  );
 
   it("agent identity canonicalization does not implicitly close Artifacts", () => {
     actions.setState({
@@ -368,7 +397,7 @@ describe("project context across global navigation", () => {
     },
   );
 
-  it.each(["artifacts", `artifacts/${A}/${B}`, "agents/reviewer"])(
+  it.each(["artifacts", `artifacts/${A}/${B}`, `agents/${C}`])(
     "initializes scalar route state on reload of %s",
     (target) => {
       jest.requireMock("@cocalc/frontend/client/handle-target").default =
@@ -384,15 +413,22 @@ describe("project context across global navigation", () => {
       expect(page().get("library_entry_id")).toBe(
         target.includes(B) ? B : undefined,
       );
-      expect(page().get("active_agent_id")).toBe(
-        library ? undefined : "reviewer",
-      );
-      expect(page().get("active_agent_name")).toBe(
-        library ? undefined : "reviewer",
-      );
+      expect(page().get("active_agent_id")).toBe(library ? undefined : C);
+      expect(page().get("active_agent_name")).toBeUndefined();
       expect(page().get("last_project_tab")).toBeUndefined();
     },
   );
+
+  it("initial qualified URLs contain no viewer-local selection", () => {
+    jest.requireMock("@cocalc/frontend/client/handle-target").default =
+      "u/bob/agents/reviewer";
+    redux.removeStore("page");
+    init_store();
+    expect(page().get("personal_url")).toBe("u/bob/agents/reviewer");
+    expect(page().get("personal_url_status")).toBe("loading");
+    expect(page().get("active_agent_id")).toBeUndefined();
+    expect(page().get("active_agent_name")).toBeUndefined();
+  });
 
   it("retains context across repeated Account/Admin visits and updates on explicit project navigation", async () => {
     await actions.set_active_tab(B);

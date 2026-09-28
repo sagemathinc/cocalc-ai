@@ -3,6 +3,12 @@ import express from "express";
 import initAppRedirect from "./app-redirect";
 
 describe("app redirect routes", () => {
+  it.each(["/users", "/u-alice/agents/reviewer", "/home/user/notes.md"])(
+    "does not mount neighboring routes or filesystem paths: %s",
+    async (path) => {
+      expect((await request(path)).status).toBe(404);
+    },
+  );
   async function request(path: string) {
     const app = express();
     const router = express.Router();
@@ -42,6 +48,25 @@ describe("app redirect routes", () => {
     const redirected = new URL(`http://host${location}`);
     expect(redirected.searchParams.get("target")).toBe("/agents/agent-123");
   });
+
+  it.each([
+    "/u/alice/agents/reviewer",
+    "/u/alice/artifacts/notes?view=grid",
+    "/u/11111111-1111-4111-8111-111111111111/chats/team",
+    "/u/alice/people/friend",
+    "/u//artifacts/notes",
+    "/u/alice/artifacts/notes/extra",
+  ])(
+    "preserves qualified owner URL %s while mounting the frontend",
+    async (path) => {
+      const response = await request(path);
+      expect(response.status).toBe(302);
+      const redirected = new URL(
+        `http://host${response.headers.get("location")}`,
+      );
+      expect(redirected.searchParams.get("target")).toBe(path);
+    },
+  );
 
   it.each([
     "/artifacts",

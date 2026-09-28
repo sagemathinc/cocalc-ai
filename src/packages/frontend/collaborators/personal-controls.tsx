@@ -107,7 +107,7 @@ export function PersonalControls({
         void update({ alias: alias.trim() });
       }}
     >
-      <label htmlFor={id}>Private alias</label>
+      <label htmlFor={id}>Personal alias</label>
       <div className="collaborators-actions">
         <Input
           id={id}
@@ -154,7 +154,7 @@ export function PersonalControls({
                 : []),
               {
                 key: "alias",
-                label: "Private alias...",
+                label: "Personal alias...",
                 disabled: busy || aliasUnavailable,
               },
               {
@@ -228,7 +228,7 @@ export function PersonalControls({
           />
         </Dropdown>
         <CollaboratorsModal
-          title="Private alias"
+          title="Personal alias"
           open={aliasOpen}
           footer={null}
           onCancel={() => setAliasOpen(false)}
@@ -243,8 +243,8 @@ export function PersonalControls({
           <KeyboardBoundary boundary="conversation-alias">
             {aliasForm}
             <p>
-              Only you see this alias. It does not change who can access the
-              conversation.
+              This alias belongs to your account. It does not change who can
+              access the conversation.
             </p>
             {error && (
               <Alert

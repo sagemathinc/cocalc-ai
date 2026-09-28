@@ -1,6 +1,30 @@
 /** @jest-environment jsdom */
 
 describe("client handle-target", () => {
+  it.each([
+    "/u/alice/agents/reviewer",
+    "/u/alice/artifacts/notes",
+    "/u//chats/name",
+    "/u/alice/chats/%",
+    "/u/alice/chats/%2F",
+    "/u/alice/chats/%252F",
+  ])(
+    "preserves qualified URL encoding and malformed structure at app entry: %s",
+    async (path) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/static/app.html?target=${encodeURIComponent(path)}&view=grid#details`,
+      );
+      const push = jest.spyOn(window.history, "pushState");
+      const { default: target } = await import("./handle-target");
+      expect(target).toBe(path.slice(1));
+      expect(location.pathname + location.search + location.hash).toBe(
+        `${path}?view=grid#details`,
+      );
+      expect(push).not.toHaveBeenCalled();
+    },
+  );
   beforeEach(() => {
     jest.resetModules();
     jest.doMock("@cocalc/frontend/misc/remember-me", () => ({

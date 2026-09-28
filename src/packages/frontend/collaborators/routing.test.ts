@@ -2,20 +2,52 @@ import { collaboratorsTargetPath, parseCollaboratorsRoute } from "./routing";
 import { getPageUrlPath, parsePageTarget } from "../page-routing";
 
 test.each(["chats", "people"])(
-  "clean %s aliases roundtrip without becoming stable IDs",
+  "unqualified %s aliases do not resolve in the viewer's namespace",
   (kind) => {
     const parsed = parsePageTarget(`${kind}/Alice-2`);
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       page: "agents",
       collaborators: {
         view: kind === "people" ? "people" : "conversations",
-        aliasKind: kind,
-        alias: "alice-2",
+        routeError: expect.stringContaining("owner"),
       },
     });
-    expect(getPageUrlPath(parsed)).toBe(`/${kind}/alice-2`);
+    expect(parsePageTarget(kind)).toMatchObject({
+      page: "agents",
+      collaborators: { aliasKind: kind },
+    });
   },
 );
+test("qualified links use the alias owner, never a person/resource ID", () => {
+  expect(
+    collaboratorsTargetPath({
+      view: "people",
+      aliasOwner: "alice",
+      aliasKind: "people",
+      alias: "friend",
+      personId: "bob",
+    }),
+  ).toBe("u/alice/people/friend");
+  expect(
+    collaboratorsTargetPath({
+      view: "conversations",
+      aliasOwner: "alice",
+      aliasKind: "chats",
+      alias: "team",
+      projectId: "project",
+      resourceKind: "conversation",
+      resourceId: "thread",
+    }),
+  ).toBe("u/alice/chats/team");
+  expect(
+    collaboratorsTargetPath({
+      view: "people",
+      aliasKind: "people",
+      alias: "friend",
+      personId: "bob",
+    }),
+  ).toBe("collaborators/people/person/bob");
+});
 test.each([
   "chats/a/b",
   "people/%2f",

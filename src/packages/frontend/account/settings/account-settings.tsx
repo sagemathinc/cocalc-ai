@@ -48,6 +48,7 @@ import { set_account_table, ugly_error } from "../util";
 import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
 import { TextSetting } from "./text-setting";
+import { UsernameSetting } from "./username-setting";
 import { lite } from "@cocalc/frontend/lite";
 import { SettingsCard } from "../settings-card";
 
@@ -522,6 +523,9 @@ export function AccountSettings(props: Readonly<Props>) {
       <Space vertical>
         {render_account_id()}
         {render_name()}
+        {props.account_id && !lite && (
+          <UsernameSetting key={props.account_id} />
+        )}
         {render_email_address()}
         {render_unlisted()}
         {render_email_verification()}

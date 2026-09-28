@@ -16,8 +16,11 @@ const projectsActions = {
 const mentionsActions = {
   set_filter: jest.fn(),
 };
+const mockResolveUrl = jest.fn();
+let mockPageState: Record<string, unknown> = {};
 const webappClient = {
   is_signed_in: jest.fn(() => false),
+  conat_client: { hub: { personalUrls: { resolveUrl: mockResolveUrl } } },
 };
 const mockResolvePersonAlias = jest.fn();
 const mockResolveChatAlias = jest.fn();
@@ -131,8 +134,8 @@ describe("load_target", () => {
     expect(pageActions.setState).not.toHaveBeenCalled();
     push.mockRestore();
   });
-  it("keeps a private alias URL through login and resolves it to a stable ID without a history push", async () => {
-    const path = "/people/alice?view=grid#details";
+  it("keeps a personal alias URL through login and resolves it to a stable ID without a history push", async () => {
+    const path = "/u/bob/people/alice?view=grid#details";
     window.history.replaceState({}, "", path);
     accountStore.get.mockReturnValue(false);
     load_target(path, false, false);
@@ -140,24 +143,27 @@ describe("load_target", () => {
       "account",
       false,
     );
-    expect(mockResolvePersonAlias).not.toHaveBeenCalled();
+    expect(mockResolveUrl).not.toHaveBeenCalled();
     expect(location.pathname + location.search + location.hash).toBe(path);
     accountStore.get.mockImplementation((key) =>
       key === "account_id" ? "signed-in-account" : key === "is_logged_in",
     );
-    mockResolvePersonAlias.mockResolvedValue({
-      account_id: "stable-person-id",
+    mockResolveUrl.mockResolvedValue({
+      owner: { account_id: "bob", username: "bob", redirect: false },
+      kind: "people",
+      alias: "alice",
+      status: "resolved",
+      canonical_path: "/u/bob/people/alice",
+      target: { kind: "person", person_id: "stable-person-id" },
     });
     const push = jest.spyOn(window.history, "pushState");
     load_target(path, false, false);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((done) => setTimeout(done, 0));
     expect(pageActions.setState).toHaveBeenLastCalledWith(
       expect.objectContaining({
         collaborators_person_id: "stable-person-id",
-        collaborators_alias: "alice",
-        collaborators_alias_kind: "people",
+        personal_url: "u/bob/people/alice",
+        personal_url_status: "resolved",
       }),
     );
     expect(push).not.toHaveBeenCalled();
@@ -169,12 +175,12 @@ describe("load_target", () => {
     pageActions.setState.mockImplementation((update) =>
       Object.assign(state, update),
     );
-    load_target("agents/reviewer");
+    load_target("agents/11111111-1111-4111-8111-111111111111");
     load_target(
       "collaborators/conversations/project/project-1/resource/conversation/thread-1",
     );
     expect(state).toMatchObject({
-      active_agent_id: "reviewer",
+      active_agent_id: "11111111-1111-4111-8111-111111111111",
       collaborators_open: true,
       library_open: false,
       collaborators_project_id: "project-1",
@@ -184,25 +190,30 @@ describe("load_target", () => {
     expect(state.collaborators_open).toBe(false);
     expect(state.collaborators_resource_id).toBeUndefined();
     load_target("collaborators/people/person/person-1", false, false);
-    expect(state.active_agent_id).toBe("reviewer");
+    expect(state.active_agent_id).toBe("11111111-1111-4111-8111-111111111111");
     expect(state.library_open).toBe(false);
     expect(state.collaborators_person_id).toBe("person-1");
     expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
       "agents",
       false,
     );
-    load_target("agents/reviewer");
+    load_target("agents/11111111-1111-4111-8111-111111111111");
     expect(state.collaborators_open).toBe(false);
   });
   beforeEach(() => {
     jest.clearAllMocks();
     pageActions.setState.mockReset();
+    mockPageState = {};
+    pageActions.setState.mockImplementation((update) =>
+      Object.assign(mockPageState, update),
+    );
+    mockResolveUrl.mockReset();
     delete (globalThis as any).__cocalc_public_app;
     mockRedux.getStore.mockImplementation((name: string) => {
       if (name === "account") {
         return accountStore;
       }
-      return {};
+      return { get: (key) => mockPageState[key] };
     });
     webappClient.is_signed_in.mockReturnValue(false);
     accountStore.get.mockImplementation((key: string) => {
@@ -218,11 +229,11 @@ describe("load_target", () => {
     pageActions.setState.mockImplementation((update) =>
       Object.assign(state, update),
     );
-    load_target("agents/reviewer");
+    load_target("agents/11111111-1111-4111-8111-111111111111");
     load_target("artifacts/project-1/entry-1");
     expect(state).toMatchObject({
-      active_agent_id: "reviewer",
-      active_agent_name: "reviewer",
+      active_agent_id: "11111111-1111-4111-8111-111111111111",
+      active_agent_name: undefined,
       library_open: true,
       library_project_id: "project-1",
       library_entry_id: "entry-1",
@@ -233,14 +244,16 @@ describe("load_target", () => {
     const pushState = jest.spyOn(window.history, "pushState");
     for (const path of [
       "/artifacts/project-1/entry-1",
-      "/agents/reviewer",
+      "/agents/11111111-1111-4111-8111-111111111111",
       "/artifacts",
     ]) {
       window.history.replaceState({}, "", path);
       window.onpopstate?.(new PopStateEvent("popstate"));
       expect(state.library_open).toBe(path.startsWith("/artifacts"));
-      expect(state.active_agent_id).toBe("reviewer");
-      expect(state.active_agent_name).toBe("reviewer");
+      expect(state.active_agent_id).toBe(
+        "11111111-1111-4111-8111-111111111111",
+      );
+      expect(state.active_agent_name).toBeUndefined();
       expect(pageActions.set_active_tab).toHaveBeenLastCalledWith(
         "agents",
         false,
@@ -258,7 +271,7 @@ describe("load_target", () => {
         name === "page" ? { get: () => undefined } : accountStore,
       );
       window.history.replaceState({}, "", "/projects?view=grid#details");
-      set_url("/agents/reviewer");
+      set_url("/agents/11111111-1111-4111-8111-111111111111");
       set_url(libraryPath);
       const historyLength = window.history.length;
       const pushState = jest.spyOn(window.history, "pushState");
@@ -269,11 +282,11 @@ describe("load_target", () => {
         window.history.back();
         await back;
         expect(location.pathname + location.search + location.hash).toBe(
-          "/agents/reviewer?view=grid#details",
+          "/agents/11111111-1111-4111-8111-111111111111?view=grid#details",
         );
 
         // useWorkspaceRoute synchronizes the selected agent after popstate.
-        set_url("/agents/reviewer");
+        set_url("/agents/11111111-1111-4111-8111-111111111111");
         update_params();
         expect(pushState).not.toHaveBeenCalled();
         expect(window.history.length).toBe(historyLength);
@@ -306,15 +319,27 @@ describe("load_target", () => {
       mockRedux.getStore.mockImplementation((name: string) =>
         name === "page" ? { get: () => undefined } : accountStore,
       );
-      window.history.replaceState({}, "", "/agents/reviewer?view=grid#details");
+      window.history.replaceState(
+        {},
+        "",
+        "/agents/11111111-1111-4111-8111-111111111111?view=grid#details",
+      );
       const pushState = jest.spyOn(window.history, "pushState");
       try {
-        set_url_with_search("/agents/reviewer", search, hash);
+        set_url_with_search(
+          "/agents/11111111-1111-4111-8111-111111111111",
+          search,
+          hash,
+        );
         expect(pushState).toHaveBeenCalledTimes(1);
         expect(location.pathname + location.search + location.hash).toBe(
-          `/agents/reviewer${search}${hash}`,
+          `/agents/11111111-1111-4111-8111-111111111111${search}${hash}`,
         );
-        set_url_with_search("/agents/reviewer", search, hash);
+        set_url_with_search(
+          "/agents/11111111-1111-4111-8111-111111111111",
+          search,
+          hash,
+        );
         expect(pushState).toHaveBeenCalledTimes(1);
       } finally {
         pushState.mockRestore();
@@ -322,21 +347,22 @@ describe("load_target", () => {
     },
   );
 
-  it.each(["agents", "agents/new", "agents/another"])(
-    "clears Artifacts state on %s",
-    (target) => {
-      load_target("artifacts/project-1/entry-1");
-      load_target(target);
-      expect(pageActions.setState).toHaveBeenLastCalledWith({
-        ...closedCollaboratorsState,
-        library_open: false,
-        library_project_id: undefined,
-        library_entry_id: undefined,
-        active_agent_id: target.split("/")[1],
-        active_agent_name: target.split("/")[1],
-      });
-    },
-  );
+  it.each([
+    "agents",
+    "agents/new",
+    "agents/22222222-2222-4222-8222-222222222222",
+  ])("clears Artifacts state on %s", (target) => {
+    load_target("artifacts/project-1/entry-1");
+    load_target(target);
+    expect(pageActions.setState).toHaveBeenLastCalledWith({
+      ...closedCollaboratorsState,
+      library_open: false,
+      library_project_id: undefined,
+      library_entry_id: undefined,
+      active_agent_id: target.split("/")[1],
+      active_agent_name: target === "agents/new" ? "new" : undefined,
+    });
+  });
 
   it.each([
     "artifacts/bad-project",
@@ -392,7 +418,11 @@ describe("load_target", () => {
   ])(
     "preserves Artifacts path structure and full URL on history updates: %s",
     (target) => {
-      window.history.replaceState({}, "", "/agents/reviewer?view=grid#details");
+      window.history.replaceState(
+        {},
+        "",
+        "/agents/11111111-1111-4111-8111-111111111111?view=grid#details",
+      );
       mockRedux.getStore.mockImplementation((name: string) =>
         name === "page" ? { get: () => undefined } : accountStore,
       );

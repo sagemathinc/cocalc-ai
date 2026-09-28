@@ -163,7 +163,7 @@ export function ResourceDetail({
                     type="text"
                     className="collaborators-heading-button"
                     ref={aliasTrigger}
-                    aria-label={`Edit private alias @${resource.personal.alias}`}
+                    aria-label={`Edit personal alias @${resource.personal.alias}`}
                     aria-haspopup="dialog"
                     onClick={() => setAliasOpen(true)}
                   >

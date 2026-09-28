@@ -1,10 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Input } from "antd";
 import type { InputRef } from "antd";
-import {
-  normalizePrivateAlias,
-  privateAliasPath,
-} from "@cocalc/util/private-alias";
+import { normalizePrivateAlias } from "@cocalc/util/private-alias";
+import { usePersonalUrlOwner } from "@cocalc/frontend/personal-url-owner";
+import { personalUrlPath } from "@cocalc/util/personal-urls";
 import { boundCollaboratorsApi } from "./workspace-api";
 import type { DirectoryApi } from "./workspace-api";
 import { CollaboratorsModal } from "./modal";
@@ -36,6 +35,7 @@ function PersonAliasForm({
   onResolve,
   compact = false,
 }: PersonAliasControlProps) {
+  const owner = usePersonalUrlOwner(accountId);
   const [api] = useState(() => providedApi ?? boundCollaboratorsApi(accountId));
   const id = useId();
   const mounted = useRef(false);
@@ -87,7 +87,7 @@ function PersonAliasForm({
       if (!mounted.current) return;
       setSaved(result.alias);
       setAlias(result.alias ?? "");
-      setStatus("Private alias saved.");
+      setStatus("Personal alias saved.");
       onChange?.(result.alias);
     } catch (err) {
       if (mounted.current) setError(`${err}`);
@@ -102,7 +102,7 @@ function PersonAliasForm({
         void save();
       }}
     >
-      <label htmlFor={id}>Private person alias</label>
+      <label htmlFor={id}>Personal person alias</label>
       <Input
         ref={input}
         autoFocus={compact}
@@ -115,8 +115,8 @@ function PersonAliasForm({
         onChange={(event) => setAlias(event.target.value)}
       />
       <p id={`${id}-help`}>
-        Only you use this alias. It does not change this person's name or
-        access. Leave blank to remove it.
+        This alias belongs to your account. It does not change this person's
+        name or access. Leave blank to remove it.
       </p>
       <Button
         htmlType="submit"
@@ -127,11 +127,12 @@ function PersonAliasForm({
       </Button>
       {saved && (
         <p>
-          Private address: <code>{privateAliasPath("people", saved)}</code>
+          Personal address:{" "}
+          <code>{personalUrlPath(owner ?? accountId, "people", saved)}</code>
         </p>
       )}
       {error && <p role="alert">{error}</p>}
-      <p role="status">{loading ? "Loading private alias..." : status}</p>
+      <p role="status">{loading ? "Loading personal alias..." : status}</p>
     </form>
   );
   if (!compact) return form;
@@ -142,7 +143,7 @@ function PersonAliasForm({
         size="small"
         aria-haspopup="dialog"
         aria-label={
-          saved ? `Edit private alias @${saved}` : "Add private alias"
+          saved ? `Edit personal alias @${saved}` : "Add personal alias"
         }
         onClick={() => {
           setAlias(saved ?? "");
@@ -150,16 +151,16 @@ function PersonAliasForm({
           setEditing(true);
         }}
       >
-        {saved ? `@${saved}` : "Add private alias"}
+        {saved ? `@${saved}` : "Add personal alias"}
       </Button>
       {error && !editing && (
         <span role="alert">
-          Private alias needs attention. Open it for details.
+          Personal alias needs attention. Open it for details.
         </span>
       )}
       <CollaboratorsModal
         open={editing}
-        title="Private alias"
+        title="Personal alias"
         footer={null}
         onCancel={() => setEditing(false)}
         afterOpenChange={(open) => {

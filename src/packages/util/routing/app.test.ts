@@ -6,6 +6,9 @@ describe("routing/app", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/agents")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/agents/agent-123")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/u/alice/agents/reviewer")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/u/alice/artifacts/notes")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/u-alice/artifacts/notes")).toBe(false);
     expect(hasHostAbsoluteRoutePrefix("/artifacts")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/artifacts/sphere")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/library")).toBe(false);
@@ -26,12 +29,17 @@ describe("routing/app", () => {
     expect(hasHostAbsoluteRoutePrefix("/billing?tab=upgrade")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/store/membership")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/home/wstein/x.txt")).toBe(false);
+    expect(hasHostAbsoluteRoutePrefix("/home")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/home/")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/home?view=grid")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/home/user/notes.md")).toBe(false);
     expect(hasHostAbsoluteRoutePrefix("/tmp/authors.txt")).toBe(false);
   });
 
   it("exposes shared markers for base-path inference", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/artifacts");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/u");
     expect(APP_BASE_PATH_ROUTE_MARKERS).not.toContain("/library");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/app-docs");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/collaborators");

@@ -28,6 +28,12 @@ export interface PageState {
   active_top_tab: TopTab; // key of the active tab
   active_agent_id?: string;
   active_agent_name?: string;
+  personal_url?: string;
+  personal_url_status?: "loading" | "resolved" | "error";
+  personal_url_error?: string;
+  personal_url_viewer?: string;
+  personal_url_owner_account_id?: string;
+  personal_url_project_id?: string;
   library_open?: boolean;
   library_project_id?: string;
   library_entry_id?: string;
@@ -41,6 +47,7 @@ export interface PageState {
   collaborators_route_error?: string;
   collaborators_alias?: string;
   collaborators_alias_kind?: CollaboratorsRoute["aliasKind"];
+  collaborators_alias_owner?: string;
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -93,6 +100,9 @@ export function init_store() {
     parsed.page === "agents" ? parsed.collaborators : undefined;
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    personal_url: parsed.page === "agents" ? parsed.personal_url : undefined,
+    personal_url_status:
+      parsed.page === "agents" && parsed.personal_url ? "loading" : undefined,
     collaborators_open: collaborators != null,
     collaborators_view: collaborators?.view,
     collaborators_project_id: collaborators?.projectId,

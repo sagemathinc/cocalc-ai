@@ -17,6 +17,8 @@ import {
 } from "@cocalc/frontend/admin/routing";
 import { getLegacyCommerceTargetPath } from "@cocalc/util/routing/legacy-commerce";
 import type { SettingsPageType } from "@cocalc/util/types/settings";
+import { personalUrlPath } from "@cocalc/util/personal-urls";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import {
   collaboratorsTargetPath,
   parseCollaboratorsRoute,
@@ -43,6 +45,9 @@ export type ParsedPageTarget =
   | { page: "projects" }
   | {
       page: "agents";
+      /** Owner-qualified route, never a viewer-local agent/artifact name. */
+      personal_url?: string;
+      owner?: string;
       agent_id?: string;
       library?: boolean;
       artifact_project_id?: string;
@@ -93,6 +98,9 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "u":
+      // Keep even malformed qualified addresses separate from local aliases.
+      return { page: "agents", personal_url: cleanTarget };
     case "chats":
     case "people":
       return {
@@ -116,11 +124,15 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
           segments.length > 2 ? segments.slice(2).join("/") : undefined,
       };
     case "home":
-    case "agents":
+    case "agents": {
+      const agentId = segments.slice(1).join("/") || undefined;
+      if (agentId && agentId !== "new" && !is_valid_uuid_string(agentId))
+        return { page: "agents", personal_url: cleanTarget };
       return {
         page: "agents",
-        agent_id: segments.slice(1).filter(Boolean).join("/") || undefined,
+        agent_id: agentId,
       };
+    }
     case "projects":
       if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
         return { page: "projects" };
@@ -204,10 +216,17 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
     case "agents":
+      if (parsed.personal_url) return parsed.personal_url.replace(/^\//, "");
       if (parsed.collaborators)
         return collaboratorsTargetPath(parsed.collaborators);
       if (parsed.library) {
         if (parsed.artifact_project_id == null) return "artifacts";
+        if (parsed.owner && parsed.artifact_entry_id == null)
+          return personalUrlPath(
+            parsed.owner,
+            "artifacts",
+            parsed.artifact_project_id,
+          ).slice(1);
         const suffix =
           parsed.artifact_entry_id == null
             ? [parsed.artifact_project_id]
@@ -217,9 +236,16 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
               ];
         return `artifacts/${suffix.map(encodeURIComponent).join("/")}`;
       }
-      return parsed.agent_id
-        ? `agents/${encodeURIComponent(parsed.agent_id)}`
-        : "agents";
+      if (!parsed.agent_id) return "agents";
+      if (
+        parsed.owner &&
+        parsed.agent_id !== "new" &&
+        !is_valid_uuid_string(parsed.agent_id)
+      )
+        return personalUrlPath(parsed.owner, "agents", parsed.agent_id).slice(
+          1,
+        );
+      return `agents/${encodeURIComponent(parsed.agent_id)}`;
     case "projects":
       return "projects";
     case "project":

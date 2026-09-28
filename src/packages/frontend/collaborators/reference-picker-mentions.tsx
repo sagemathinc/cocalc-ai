@@ -63,7 +63,7 @@ export function useReferenceCompletions({
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      // Exact private aliases must not disappear behind newer prefix matches.
+      // Exact personal aliases must not disappear behind newer prefix matches.
       void Promise.resolve()
         .then(() => referencePickerApi().resolveChatAlias?.({ alias: query }))
         .then(

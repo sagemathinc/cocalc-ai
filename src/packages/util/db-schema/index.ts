@@ -118,6 +118,7 @@ import "./project-entitlement-overrides";
 import "./project-events-outbox";
 import "./artifact-catalog";
 import "./personal-library";
+import "./account-usernames";
 import "./collaborators-workspace";
 import "./project-labels";
 import "./project-host-route-invalidations";

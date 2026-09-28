@@ -48,10 +48,12 @@ The URI schema handled by the single page app is as follows:
 */
 
 import { join } from "path";
+import { cancelAliasNavigation } from "./collaborators/navigation";
+import { resolvePersonalUrl } from "./personal-url-navigation";
 import {
-  cancelAliasNavigation,
-  resolveCollaboratorsAlias,
-} from "./collaborators/navigation";
+  cancelPersonalUrlNavigation,
+  closedPersonalUrlState,
+} from "./personal-url-state";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -138,6 +140,11 @@ export function set_url_with_search(
     // no need to mess with url in embedded mode.
     return;
   }
+  const personalUrl = redux.getStore("page")?.get?.("personal_url");
+  if (personalUrl && url.replace(/^\//, "").split(/[?#]/)[0] !== personalUrl) {
+    cancelPersonalUrlNavigation();
+    redux.getActions("page").setState(closedPersonalUrlState);
+  }
   last_url = url;
   const current = new URL(location.href);
   current.search = params();
@@ -145,11 +152,10 @@ export function set_url_with_search(
     search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   // Empty artifact segments are invalid selections, not redundant separators.
   // path.join would turn /artifacts//project/entry into a different, valid route.
-  const full_url = /^\/?(?:artifacts|collaborators|chats|people)(?:\/|$)/.test(
-    url,
-  )
-    ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
-    : join(appBasePath, url + query_params + (hash ?? location.hash));
+  const full_url =
+    /^\/?(?:u|artifacts|collaborators|chats|people)(?:\/|$)/.test(url)
+      ? `${join(appBasePath, "/")}${url.replace(/^\//, "")}${query_params}${hash ?? location.hash}`
+      : join(appBasePath, url + query_params + (hash ?? location.hash));
   if (full_url === location.pathname + location.search + location.hash) {
     // Back/Forward can change the current URL without going through set_url.
     // Rewriting that URL would push a duplicate and discard Forward history.
@@ -167,7 +173,7 @@ export function load_target(
   ignore_kiosk: boolean = false,
   change_history: boolean = true,
 ) {
-  const aliasRevision = cancelAliasNavigation();
+  cancelAliasNavigation();
   if (target?.[0] == "/") {
     target = target.slice(1);
   }
@@ -187,6 +193,21 @@ export function load_target(
     return;
   }
   const parsed = parsePageTarget(target);
+  if (parsed.page === "agents" && parsed.personal_url) {
+    // Start watching before login/account hydration. The namespace owner stays
+    // in the URL; no viewer-local alias resolver ever sees this route.
+    void resolvePersonalUrl(parsed.personal_url);
+    if (
+      !redux.getStore("account").get("is_logged_in") &&
+      !webapp_client.is_signed_in()
+    ) {
+      redux.getActions("page").set_active_tab("account", false);
+    } else {
+      redux.getActions("page").set_active_tab("agents", false);
+      if (change_history) set_url(getPageUrlPath(parsed));
+    }
+    return;
+  }
   if (
     !redux.getStore("account").get("is_logged_in") &&
     !webapp_client.is_signed_in() &&
@@ -201,6 +222,7 @@ export function load_target(
   switch (parsed.page) {
     case "agents":
       redux.getActions("page").setState({
+        ...closedPersonalUrlState,
         library_open: parsed.library === true,
         library_project_id: parsed.artifact_project_id,
         library_entry_id: parsed.artifact_entry_id,
@@ -213,10 +235,11 @@ export function load_target(
         collaborators_resource_id: parsed.collaborators?.resourceId,
         collaborators_alias: parsed.collaborators?.alias,
         collaborators_alias_kind: parsed.collaborators?.aliasKind,
+        collaborators_alias_owner: parsed.collaborators?.aliasOwner,
         collaborators_route_error:
           parsed.collaborators?.routeError ??
           (parsed.collaborators?.alias
-            ? "Resolving private alias..."
+            ? "Resolving personal alias..."
             : undefined),
         // Library overlays the workspace; keep its selected conversation.
         ...(!parsed.library && !parsed.collaborators
@@ -230,8 +253,6 @@ export function load_target(
           : {}),
       });
       redux.getActions("page").set_active_tab("agents", change_history);
-      if (parsed.collaborators?.alias)
-        void resolveCollaboratorsAlias(parsed.collaborators, aliasRevision);
       break;
 
     case "project": {
@@ -356,10 +377,8 @@ window.onpopstate = (_) => {
   // selection can create an extra history entry and discard the Forward stack.
   if (consumeGitReviewOnlyNavigation(new URL(location.href))) return;
   load_target(
-    decodeURIComponent(
-      document.location.pathname.slice(
-        appBasePath.length + (appBasePath.endsWith("/") ? 0 : 1),
-      ),
+    document.location.pathname.slice(
+      appBasePath.length + (appBasePath.endsWith("/") ? 0 : 1),
     ),
     false,
     false,

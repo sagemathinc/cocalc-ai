@@ -286,7 +286,7 @@ test("person overview keeps alias editing compact and lazily opens related work 
     />,
   );
   await screen.findByRole("heading", { name: "Bella Boo" });
-  await screen.findByRole("button", { name: "Edit private alias @bella" });
+  await screen.findByRole("button", { name: "Edit personal alias @bella" });
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(onPersonAliasChange).toHaveBeenCalledWith("bella");
   expect(

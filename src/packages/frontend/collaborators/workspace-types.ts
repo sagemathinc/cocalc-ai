@@ -22,6 +22,8 @@ export interface CollaboratorsRoute {
   /** URL label only. Selections and authorization always use stable IDs. */
   alias?: string;
   aliasKind?: PrivateAliasKind;
+  /** Namespace owner, not the resource's owner or the current viewer. */
+  aliasOwner?: string;
 }
 
 export interface CollaboratorsPageProps extends Partial<CollaboratorsRoute> {

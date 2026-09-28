@@ -3,10 +3,20 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-editor/foreign-artifact-source";
 import type { AgentSearchHit } from "./search-runner";
 import { closedCollaboratorsState } from "@cocalc/frontend/collaborators/navigation";
+import { cancelPersonalUrlNavigation } from "@cocalc/frontend/personal-url-state";
+import { resolvePersonalUrl } from "@cocalc/frontend/personal-url-navigation";
+import { personalUrlPath } from "@cocalc/util/personal-urls";
 
 /** Library navigation never selects or starts an agent. */
 export function openLibrary(projectId?: string, entryId?: string) {
+  cancelPersonalUrlNavigation();
   const page = redux.getActions("page");
+  if (projectId && !entryId) {
+    const owner = redux.getStore("account")?.get("account_id");
+    if (!owner) return;
+    void resolvePersonalUrl(personalUrlPath(owner, "artifacts", projectId));
+    return page.set_active_tab("agents");
+  }
   page.setState({
     ...closedCollaboratorsState,
     library_open: true,

@@ -65,19 +65,16 @@ beforeEach(() => {
   getEntry.mockResolvedValue(entry);
 });
 
-test("personal short URL resolves through the same authorized catalog lookup", async () => {
+test("an unresolved alias never falls back to the viewer's personal library", async () => {
   artifactNames = [
     { name: "nb1", project_id: "project", entry_id: "entry", active: true },
   ];
   resolveName.mockResolvedValue(artifactNames[0]);
   render(<LibraryEntry {...props} projectId="nb1" entryId="" />);
-  await screen.findByText("artifact");
-  expect(getEntry).toHaveBeenCalledWith({
-    project_id: "project",
-    entry_id: "entry",
-  });
-  expect(resolveName).toHaveBeenCalledWith("nb1");
-  expect(view.mock.calls.at(-1)[0].artifactName).toBe("nb1");
+  await screen.findByRole("alert");
+  expect(getEntry).not.toHaveBeenCalled();
+  expect(resolveName).not.toHaveBeenCalled();
+  expect(view).not.toHaveBeenCalled();
 });
 
 test("direct links resolve without an agent; source navigation is explicit", async () => {

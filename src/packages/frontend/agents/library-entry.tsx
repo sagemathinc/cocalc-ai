@@ -46,7 +46,7 @@ function ResolvedLibraryEntry({
     navigationIntent.current++;
     onBack();
   };
-  const { names, setName, resolve } = useArtifactNames();
+  const { names, setName } = useArtifactNames();
   const [entry, setEntry] = useState<CatalogEntry>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -55,11 +55,8 @@ function ResolvedLibraryEntry({
     setEntry(undefined);
     setError("");
     void (async () => {
-      const alias = entryId ? undefined : await resolve(projectId);
-      if (!entryId && !alias)
-        throw Error("This artifact name was not found in your account.");
-      const resolvedProjectId = alias?.project_id ?? projectId;
-      const resolvedEntryId = alias?.entry_id ?? entryId;
+      const resolvedProjectId = projectId;
+      const resolvedEntryId = entryId;
       if (!resolvedEntryId) throw Error("Missing artifact identity.");
       const value =
         await webapp_client.conat_client.hub.artifactCatalog.getEntry({

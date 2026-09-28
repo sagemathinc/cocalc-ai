@@ -1,6 +1,6 @@
-/** Private URL names are labels, never identities or access grants. */
+/** Personal URL names are labels, never identities or access grants. */
 export function normalizePrivateAlias(value: string): string {
-  if (typeof value !== "string") throw Error("Invalid private alias");
+  if (typeof value !== "string") throw Error("Invalid personal alias");
   const alias = value.trim().toLowerCase();
   if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(alias))
     throw Error(
@@ -10,13 +10,6 @@ export function normalizePrivateAlias(value: string): string {
 }
 
 export type PrivateAliasKind = "chats" | "people";
-
-export function privateAliasPath(
-  kind: PrivateAliasKind,
-  alias: string,
-): string {
-  return `/${kind}/${encodeURIComponent(normalizePrivateAlias(alias))}`;
-}
 
 export const PERSON_ALIASES_SETTING = "private_person_aliases_v1";
 export const MAX_PERSON_ALIASES = 500;

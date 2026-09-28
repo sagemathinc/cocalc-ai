@@ -1,14 +1,8 @@
-import {
-  normalizePrivateAlias,
-  personAliases,
-  privateAliasPath,
-} from "./private-alias";
+import { normalizePrivateAlias, personAliases } from "./private-alias";
 
 const person = "11111111-1111-4111-8111-111111111111";
-test("private names normalize to a single clean path segment", () => {
+test("personal aliases normalize to a single clean path segment", () => {
   expect(normalizePrivateAlias("  Alice-2 ")).toBe("alice-2");
-  expect(privateAliasPath("people", "Alice-2")).toBe("/people/alice-2");
-  expect(privateAliasPath("chats", "review")).toBe("/chats/review");
 });
 test.each([
   "",

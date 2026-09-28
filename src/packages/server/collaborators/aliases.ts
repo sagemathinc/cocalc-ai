@@ -29,11 +29,11 @@ export async function writePersonAlias(
 ): Promise<{ alias: string | null }> {
   uuid(person_id, "person_id");
   person_id = person_id.toLowerCase();
-  if (typeof value !== "string") throw Error("Invalid private alias");
+  if (typeof value !== "string") throw Error("Invalid personal alias");
   const alias = value.trim() ? normalizePrivateAlias(value) : null;
   return withAccountRehomeWriteFence({
     account_id,
-    action: "change private person alias",
+    action: "change personal alias for person",
     fn: async (db) => {
       await checkAccess();
       const row = (

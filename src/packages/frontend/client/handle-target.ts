@@ -22,7 +22,11 @@ function handleTarget(): string {
   // We use the URL object and a fake host to parse things, since it's much
   // more secure/robust than parsing it directly.
   const url = new URL(`http://host/${t.replace(/^\/+/, "")}`);
-  let target = decodeURIComponent(url.pathname.slice(1));
+  const encodedTarget = url.pathname.slice(1);
+  const qualified = /^u(?:\/|$)/.test(encodedTarget);
+  // Decode only individual qualified segments in the shared parser. Decoding
+  // here would change separators or throw before the not-found UI can load.
+  let target = qualified ? encodedTarget : decodeURIComponent(encodedTarget);
   if (IS_PUBLIC_APP) {
     if (target) return target;
     return location.pathname.replace(/^\/+/, "") || "";
@@ -45,7 +49,9 @@ function handleTarget(): string {
     // Write the full url for the given target, preserving any search (except target) and fragment parts of the url.
     const fullUrl =
       document.location.origin +
-      joinUrlPath(appBasePath, encode_path(target)) +
+      (qualified
+        ? `${appBasePath.replace(/\/$/, "")}/${target}`
+        : joinUrlPath(appBasePath, encode_path(target))) +
       url.search +
       u.hash;
     // Restore the requested URL after the app redirect, not a new navigation.

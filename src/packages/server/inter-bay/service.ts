@@ -10,6 +10,10 @@ import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/ar
 import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createInterBayPersonalLibraryHandler } from "@cocalc/conat/inter-bay/personal-library";
 import { personalLibraryHomeControl } from "@cocalc/server/artifacts/personal-library-api";
+import { createInterBayUsernamesHandler } from "@cocalc/conat/inter-bay/usernames";
+import { usernameSeedControl } from "@cocalc/server/accounts/usernames";
+import { createInterBayPersonalUrlAliasesHandler } from "@cocalc/conat/inter-bay/personal-url-aliases";
+import { personalUrlAliasHomeControl } from "@cocalc/server/personal-url-aliases";
 import { createInterBayCollaboratorsHandler } from "@cocalc/conat/inter-bay/collaborators";
 import { collaboratorsControl } from "@cocalc/server/collaborators/api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
@@ -721,6 +725,18 @@ export async function initInterBayServices(): Promise<void> {
         bayId: getConfiguredBayId(),
         parallel: true,
         impl: personalLibraryHomeControl,
+      }),
+      createInterBayUsernamesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: usernameSeedControl,
+      }),
+      createInterBayPersonalUrlAliasesHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bayId: getConfiguredBayId(),
+        parallel: true,
+        impl: personalUrlAliasHomeControl,
       }),
     );
     await startProjectSecretsService();

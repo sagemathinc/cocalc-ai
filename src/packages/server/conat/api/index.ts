@@ -46,6 +46,7 @@ import * as lro from "./lro";
 import * as agent from "./agent";
 import * as artifactCatalog from "./artifact-catalog";
 import * as personalLibrary from "./personal-library";
+import * as personalUrls from "./personal-urls";
 import * as collaborators from "./collaborators";
 import {
   startCollaboratorsMaintenance,
@@ -117,6 +118,7 @@ export const hubApi: HubApi = {
   agent,
   artifactCatalog,
   personalLibrary,
+  personalUrls,
   collaborators,
   notifications,
   adminData,

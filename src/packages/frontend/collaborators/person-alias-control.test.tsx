@@ -1,6 +1,9 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 jest.mock("./workspace-api", () => ({ boundCollaboratorsApi: jest.fn() }));
+jest.mock("@cocalc/frontend/personal-url-owner", () => ({
+  usePersonalUrlOwner: () => "alice",
+}));
 import { PersonAliasControl } from "./person-alias-control";
 
 test("compact alias resolves without opening a form and supports keyboard editing and focus return", async () => {
@@ -19,14 +22,14 @@ test("compact alias resolves without opening a form and supports keyboard editin
     />,
   );
   const trigger = await screen.findByRole("button", {
-    name: "Edit private alias @bella",
+    name: "Edit personal alias @bella",
   });
   expect(onResolve).toHaveBeenCalledWith("bella");
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   trigger.focus();
   await user.keyboard("{Enter}");
-  await screen.findByRole("dialog", { name: "Private alias" });
-  const input = screen.getByRole("textbox", { name: "Private person alias" });
+  await screen.findByRole("dialog", { name: "Personal alias" });
+  const input = screen.getByRole("textbox", { name: "Personal person alias" });
   await waitFor(() => expect(input).toHaveFocus());
   await user.keyboard("{Escape}");
   await waitFor(() =>
@@ -35,7 +38,7 @@ test("compact alias resolves without opening a form and supports keyboard editin
   expect(trigger).toHaveFocus();
 });
 
-test("keyboard users can set, rename, and clear a private person alias", async () => {
+test("keyboard users can set, rename, and clear a personal alias", async () => {
   const user = userEvent.setup();
   const api = {
     getPersonAlias: jest.fn(async () => ({ alias: null })),
@@ -52,12 +55,12 @@ test("keyboard users can set, rename, and clear a private person alias", async (
       onResolve={onResolve}
     />,
   );
-  const input = screen.getByRole("textbox", { name: "Private person alias" });
+  const input = screen.getByRole("textbox", { name: "Personal person alias" });
   await waitFor(() => expect(input).toBeEnabled());
   expect(onResolve).toHaveBeenCalledWith(null);
   input.focus();
   await user.keyboard("Alice{Tab}{Enter}");
-  await screen.findByText("/people/alice");
+  await screen.findByText("/u/alice/people/alice");
   expect(onChange).toHaveBeenLastCalledWith("alice");
   expect(api.setPersonAlias).toHaveBeenLastCalledWith({
     person_id: "person",
@@ -66,13 +69,13 @@ test("keyboard users can set, rename, and clear a private person alias", async (
   await user.click(input);
   await user.clear(input);
   await user.keyboard("Bob{Enter}");
-  await screen.findByText("/people/bob");
+  await screen.findByText("/u/alice/people/bob");
   await user.clear(input);
   input.focus();
   await user.keyboard("{Enter}");
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(null));
   expect(input).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent("Private alias saved.");
+  expect(screen.getByRole("status")).toHaveTextContent("Personal alias saved.");
 });
 test("errors are announced and person/account switches discard pending replies", async () => {
   let finish!: (value: { alias: string | null }) => void;

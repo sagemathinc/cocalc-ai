@@ -106,6 +106,7 @@ import { set_url } from "@cocalc/frontend/history";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { useWorkspaceRoute } from "./use-workspace-route";
+import { PersonalUrlStatus } from "@cocalc/frontend/personal-url-status";
 import { lite } from "@cocalc/frontend/lite";
 import { useNavigationIntent } from "./use-navigation-intent";
 import {
@@ -3056,6 +3057,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | undefined;
   const searchNavigation = useNavigationIntent(active, accountId);
   const libraryOpen = !!useTypedRedux("page", "library_open");
+  const personalUrl = useTypedRedux("page", "personal_url");
+  const personalUrlStatus = useTypedRedux("page", "personal_url_status");
+  const personalUrlError = useTypedRedux("page", "personal_url_error");
+  const personalUrlViewer = useTypedRedux("page", "personal_url_viewer");
+  const personalUrlProjectId = useTypedRedux("page", "personal_url_project_id");
+  const personalUrlBlocked =
+    !!personalUrl &&
+    (personalUrlStatus !== "resolved" || personalUrlViewer !== accountId);
   const collaboratorsOpen = !!useTypedRedux("page", "collaborators_open");
   const collaboratorsEnabled = !!useTypedRedux(
     "customize",
@@ -3091,7 +3100,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     "page",
     "collaborators_route_error",
   );
-  const workspaceOverlayOpen = libraryOpen || collaboratorsOpen;
+  const workspaceOverlayOpen =
+    libraryOpen || collaboratorsOpen || personalUrlBlocked;
   const retainedCollaborators = useRef<{
     accountId?: string;
     route: CollaboratorsRoute;
@@ -3289,6 +3299,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       const currentAgentId = redux.getStore("page")?.get("active_agent_id");
       if (currentAgentId === nextAgent.endpoint.agent_id) return;
       redux.getActions("page").setState({
+        ...closedLibraryState,
         active_agent_id: nextAgent.endpoint.agent_id,
         active_agent_name: nextAgent.name,
       });
@@ -3296,6 +3307,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         getPageUrlPath({
           page: "agents",
           agent_id: nextAgent.name,
+          owner: nextAgent.account_id,
         }),
       );
     },
@@ -3333,6 +3345,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       getPageUrlPath({
         page: "agents",
         agent_id: routeName ?? agentId,
+        owner: accountId,
       }),
       "",
     );
@@ -4367,7 +4380,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        {personalUrlBlocked && personalUrl && (
+          <div>
+            {libraryNavigationControl()}
+            <PersonalUrlStatus
+              key={`${accountId}:${personalUrl}`}
+              url={personalUrl}
+              loading={
+                personalUrlStatus !== "error" || personalUrlViewer !== accountId
+              }
+              error={personalUrlError}
+              projectId={
+                personalUrlViewer === accountId
+                  ? personalUrlProjectId
+                  : undefined
+              }
+            />
+          </div>
+        )}
         {accountId &&
+          !personalUrlBlocked &&
           (collaboratorsEnabled ? (
             <CollaboratorsPage
               key={accountId}
@@ -4406,18 +4438,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             onShowConversation={(result) => openLibraryHit(result, true)}
           />
         )}
-        {active && artifactOpen && accountId && (!isNarrow || !mobileList) && (
-          <LibraryEntry
-            navigation={libraryNavigationControl()}
-            headerActions={<AgentsWorkspaceNavigation />}
-            accountId={accountId}
-            projectId={libraryProjectId ?? ""}
-            entryId={libraryEntryId ?? ""}
-            agents={agents}
-            onBack={showLibrary}
-            onShowConversation={showLibraryConversation}
-          />
-        )}
+        {active &&
+          !personalUrlBlocked &&
+          artifactOpen &&
+          accountId &&
+          (!isNarrow || !mobileList) && (
+            <LibraryEntry
+              navigation={libraryNavigationControl()}
+              headerActions={<AgentsWorkspaceNavigation />}
+              accountId={accountId}
+              projectId={libraryProjectId ?? ""}
+              entryId={libraryEntryId ?? ""}
+              agents={agents}
+              onBack={showLibrary}
+              onShowConversation={showLibraryConversation}
+            />
+          )}
         <div
           style={{
             flex: 1,
