@@ -274,6 +274,7 @@ import {
 } from "@cocalc/conat/files/fs";
 import TTL from "@isaacs/ttlcache";
 import { abortable } from "./abort";
+import { emitWithDeadline } from "./deadline-socket";
 import {
   ConatSocketServer,
   ConatSocketClient,
@@ -1004,8 +1005,12 @@ export class Client extends EventEmitter {
     subject: string,
     {
       timeout = MAX_INTEREST_TIMEOUT,
+      deadline,
+      signal,
     }: {
       timeout?: number;
+      deadline?: number;
+      signal?: AbortSignal;
     } = {},
   ) => {
     if (!isValidSubjectWithoutWildcards(subject)) {
@@ -1015,11 +1020,27 @@ export class Client extends EventEmitter {
     }
     timeout = Math.min(timeout, MAX_INTEREST_TIMEOUT);
     try {
+      if (deadline != null) {
+        return await emitWithDeadline(
+          this.conn,
+          "wait-for-interest",
+          (remaining) => ({ subject, timeout: remaining }),
+          {
+            timeout,
+            deadline,
+            signal,
+            isReady: () =>
+              this.isConnected() && this.info != null && !this.info.user?.error,
+            isClosed: this.isClosed,
+          },
+        );
+      }
       const response = await this.conn
         .timeout(timeout ? timeout : 10000)
         .emitWithAck("wait-for-interest", { subject, timeout });
       return response;
     } catch (err) {
+      signal?.throwIfAborted();
       throw toConatError(err, { subject });
     }
   };
@@ -2206,6 +2227,7 @@ export class Client extends EventEmitter {
       }
       opts.signal?.throwIfAborted();
       await abortable(this.waitUntilSignedIn(), opts.signal);
+      opts.signal?.throwIfAborted();
       const start = Date.now();
       const { bytes, getCount, getServerTiming, promise } = this._publish(
         subject,
@@ -2238,6 +2260,8 @@ export class Client extends EventEmitter {
         await abortable(
           this.waitForInterest(subject, {
             timeout: timeout ? timeout - (Date.now() - start) : undefined,
+            deadline: opts.deadline,
+            signal: opts.signal,
           }),
           opts.signal,
         );
@@ -2250,6 +2274,10 @@ export class Client extends EventEmitter {
         }
         const elapsed = Date.now() - start;
         timeout -= elapsed;
+        if (opts.deadline != null) {
+          timeout = Math.min(timeout, opts.deadline - Date.now());
+          if (timeout <= 0) throw new ConatError("timeout", { code: 408 });
+        }
         // client and there is interest
         if (timeout <= 500) {
           // but... not enough time left to try again even if there is interest,
@@ -2298,8 +2326,17 @@ export class Client extends EventEmitter {
       timeout = DEFAULT_PUBLISH_TIMEOUT,
       noThrow,
       phaseReporter: _phaseReporter,
+      signal,
+      deadline,
     }: PublishOptions & { confirm?: boolean } = {},
   ) => {
+    signal?.throwIfAborted();
+    if (deadline != null) {
+      timeout = Math.min(timeout, deadline - Date.now());
+      if (timeout <= 0) {
+        throw new ConatError("timeout", { code: 408 });
+      }
+    }
     if (this.isClosed()) {
       return { bytes: 0 };
     }
@@ -2372,10 +2409,25 @@ export class Client extends EventEmitter {
         const f = async () => {
           let response;
           try {
-            response = timeout
-              ? await this.conn.timeout(timeout).emitWithAck("publish", v)
-              : await this.conn.emitWithAck("publish", v);
+            response =
+              deadline != null
+                ? await emitWithDeadline(this.conn, "publish", () => v, {
+                    timeout,
+                    deadline,
+                    signal,
+                    // Match waitUntilSignedIn: no-auth servers send info
+                    // without a user identity, which is valid readiness.
+                    isReady: () =>
+                      this.isConnected() &&
+                      this.info != null &&
+                      !this.info.user?.error,
+                    isClosed: this.isClosed,
+                  })
+                : timeout
+                  ? await this.conn.timeout(timeout).emitWithAck("publish", v)
+                  : await this.conn.emitWithAck("publish", v);
           } catch (err) {
+            signal?.throwIfAborted();
             throw toConatError(err, { subject });
           }
           // Server rejections are not Socket.IO timeouts. Preserve their code
@@ -2446,47 +2498,82 @@ export class Client extends EventEmitter {
       return await client.request(subject, mesg, {
         timeout,
         ignoreErrorHeader,
+        phaseReporter,
         ...options,
       });
     }
-    if (timeout <= 0) {
-      throw Error("timeout must be positive");
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      throw Error("timeout must be finite and positive");
     }
-    const inbox = await this.getInbox();
-    const inboxSubject = this.temporaryInboxSubject();
-    const sub = new EventIterator<Message>(inbox, inboxSubject, {
-      idle: timeout,
-      limit: 1,
-      map: (args) => args[0],
-    });
+    // Expiry stops new transport handoffs, never shared readiness. Already
+    // handed-off packets (including binary frames) have an unknown outcome;
+    // cancellation cannot undo a mutation or withdraw downstream buffers.
+    const deadline = Math.min(
+      options.deadline ?? Infinity,
+      Date.now() + timeout,
+    );
+    const controller = new AbortController();
+    const { signal } = controller;
+    const expire = () =>
+      controller.abort(new ConatError("timeout", { code: 408 }));
+    const abort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
+    const timer = setTimeout(expire, Math.max(0, deadline - Date.now()));
+    let sub: EventIterator<Message> | undefined;
+    const cancelResponse = () => sub?.cancel(signal.reason);
+    signal.addEventListener("abort", cancelResponse, { once: true });
+    try {
+      signal.throwIfAborted();
+      const inbox = await abortable(this.getInbox(), signal);
+      signal.throwIfAborted();
+      const inboxSubject = this.temporaryInboxSubject();
+      sub = new EventIterator<Message>(inbox, inboxSubject, {
+        limit: 1,
+        map: (args) => args[0],
+      });
 
-    const opts = {
-      ...options,
-      timeout,
-      phaseReporter,
-      headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
-    };
-    const { count } = await this.publish(subject, mesg, opts);
-    if (!count) {
-      sub.stop();
-      // if you hit this, consider using the option waitForInterest:true
-      throw new ConatError(`request -- no subscribers matching '${subject}'`, {
-        code: 503,
-      });
-    }
-    const responseWaitStart = Date.now();
-    for await (const resp of sub) {
-      sub.stop();
-      phaseReporter?.("response_received", {
-        elapsed_ms: Date.now() - responseWaitStart,
-      });
-      if (!ignoreErrorHeader && resp.headers?.error) {
-        throw headerToError(resp.headers);
+      const { count } = await abortable(
+        this.publish(subject, mesg, {
+          ...options,
+          timeout,
+          deadline,
+          signal,
+          phaseReporter,
+          headers: { ...options.headers, [REPLY_HEADER]: inboxSubject },
+        }),
+        signal,
+      );
+      signal.throwIfAborted();
+      if (!count) {
+        // if you hit this, consider using the option waitForInterest:true
+        throw new ConatError(
+          `request -- no subscribers matching '${subject}'`,
+          {
+            code: 503,
+          },
+        );
       }
-      return resp;
+      const responseWaitStart = Date.now();
+      for await (const resp of sub) {
+        signal.throwIfAborted();
+        phaseReporter?.("response_received", {
+          elapsed_ms: Date.now() - responseWaitStart,
+        });
+        if (!ignoreErrorHeader && resp.headers?.error) {
+          throw headerToError(resp.headers);
+        }
+        return resp;
+      }
+      throw new ConatError("timeout", { code: 408 });
+    } finally {
+      clearTimeout(timer);
+      // An early ACK failure must also stop chunks still waiting for admission.
+      controller.abort();
+      options.signal?.removeEventListener("abort", abort);
+      signal.removeEventListener("abort", cancelResponse);
+      sub?.stop();
     }
-    sub.stop();
-    throw new ConatError("timeout", { code: 408 });
   };
 
   // NOTE: Using requestMany returns a Subscription sub, and
@@ -2773,6 +2860,9 @@ export class Client extends EventEmitter {
 
 interface PublishOptions {
   signal?: AbortSignal;
+  // Absolute admission/response deadline. After transport handoff, outcome is
+  // unknown on timeout/cancellation; this does not retract downstream buffers.
+  deadline?: number;
   headers?: Headers;
   // if encoding is given, it specifies the encoding used to encode the message
   encoding?: DataEncoding;

@@ -4,6 +4,7 @@
  */
 
 import type { Client } from "@cocalc/conat/core/client";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 
 import { ProjectHostClientManager } from "./client-manager";
 
@@ -12,6 +13,109 @@ function client() {
 }
 
 describe("ProjectHostClientManager", () => {
+  it("resolves once for 300 same-host projects with a custom API, but issues 300 scoped tokens", async () => {
+    let resolve!: (value: HostConnectionInfo) => void;
+    const api = {
+      resolveHostConnection: jest.fn(
+        () => new Promise<HostConnectionInfo>((r) => (resolve = r)),
+      ),
+      issueProjectHostAuthToken: jest.fn(async ({ host_id, project_id }) => ({
+        host_id,
+        token: `token-${project_id}`,
+        expires_at: 500_000,
+      })),
+    };
+    const createClient = jest.fn(() => client());
+    const manager = new ProjectHostClientManager({
+      account_id: "account-1",
+      api,
+      createClient,
+      maxClients: 300,
+      now: () => 1_000,
+    });
+    const pending = Array.from({ length: 300 }, (_, i) =>
+      manager.getClient({ project_id: `project-${i}`, host_id: "host-1" }),
+    );
+    expect(api.resolveHostConnection).toHaveBeenCalledTimes(1);
+    resolve({ host_id: "host-1", connect_url: "https://host.example" });
+    const leases = await Promise.all(pending);
+    expect(leases).toHaveLength(300);
+    expect(api.issueProjectHostAuthToken).toHaveBeenCalledTimes(300);
+    for (let i = 0; i < 300; i++) {
+      expect(createClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: `project-${i}`,
+          bearer_token: `token-project-${i}`,
+        }),
+      );
+    }
+    manager.close();
+  });
+
+  it("isolates hosts and authenticated manager lifetimes, and retries failed resolution", async () => {
+    const pending: {
+      resolve: (value: HostConnectionInfo) => void;
+      reject: (error: Error) => void;
+    }[] = [];
+    const api = {
+      resolveHostConnection: jest.fn(
+        () =>
+          new Promise<HostConnectionInfo>((resolve, reject) =>
+            pending.push({ resolve, reject }),
+          ),
+      ),
+      issueProjectHostAuthToken: jest.fn(async ({ host_id, project_id }) => ({
+        host_id,
+        token: `token-${project_id}`,
+        expires_at: 500_000,
+      })),
+    };
+    const managers = ["account-1", "account-2", "account-1"].map(
+      (account_id) =>
+        new ProjectHostClientManager({
+          account_id,
+          api,
+          createClient: client,
+          now: () => 1_000,
+        }),
+    );
+    const old = managers[0].getClient({ project_id: "p1", host_id: "host-1" });
+    const failed = expect(old).rejects.toThrow("offline");
+    const otherHost = managers[0].getClient({
+      project_id: "p2",
+      host_id: "host-2",
+    });
+    const otherAccount = managers[1].getClient({
+      project_id: "p1",
+      host_id: "host-1",
+    });
+    const otherSession = managers[2].getClient({
+      project_id: "p1",
+      host_id: "host-1",
+    });
+    expect(api.resolveHostConnection).toHaveBeenCalledTimes(4);
+    pending[0].reject(new Error("offline"));
+    await failed;
+    const joined = managers[1].getClient({
+      project_id: "p3",
+      host_id: "host-1",
+    });
+    expect(api.resolveHostConnection).toHaveBeenCalledTimes(4);
+    const retry = managers[0].getClient({
+      project_id: "p1",
+      host_id: "host-1",
+    });
+    expect(api.resolveHostConnection).toHaveBeenCalledTimes(5);
+    pending.slice(1).forEach((p, i) =>
+      p.resolve({
+        host_id: i === 0 ? "host-2" : "host-1",
+        connect_url: "https://host.example",
+      }),
+    );
+    await Promise.all([otherHost, otherAccount, otherSession, joined, retry]);
+    managers.forEach((manager) => manager.close());
+  });
+
   it("reuses a healthy route and scoped token", async () => {
     const created = client();
     const api = {
@@ -129,8 +233,7 @@ describe("ProjectHostClientManager", () => {
       project_id: "project-2",
       host_id: "host-1",
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(setImmediate);
     issued.get("project-2")?.();
     issued.get("project-1")?.();
     await Promise.all([first, second]);
