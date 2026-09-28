@@ -6,7 +6,7 @@
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { getLogger } from "@cocalc/conat/logger";
 import { CSS, redux, useState } from "@cocalc/frontend/app-framework";
-import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
+import { openNotificationTarget } from "../open-target";
 import { Icon, IconName, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -50,6 +50,7 @@ export function MentionRow(props: Props) {
     target,
     description,
     fragment_id,
+    thread_id,
     notification_reason,
   } = mention.toJS();
   const shownPath = display_path || path;
@@ -108,13 +109,16 @@ export function MentionRow(props: Props) {
     // If fragment given, then it can explicitly specify chat, e.g.,
     //    file.txt#chat=true,id=092ab039
     try {
-      await ensureProjectReduxRuntime();
-      await redux.getProjectActions(project_id).open_file({
-        path: path,
-        chat: !!fragmentId?.chat,
-        fragmentId,
-      });
-      markReadState("read");
+      if (!project_id || !path) return;
+      if (
+        await openNotificationTarget({
+          projectId: project_id,
+          path,
+          threadId: thread_id,
+          fragmentId,
+        })
+      )
+        markReadState("read");
     } catch (err) {
       logger.warn("Unable to open mention target", err);
     }

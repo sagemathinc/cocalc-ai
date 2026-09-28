@@ -11,7 +11,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
-import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
+import { openNotificationTarget } from "../open-target";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -181,25 +181,16 @@ export function NotificationRow(props: Props) {
   async function clickNotificationTarget(): Promise<void> {
     if (!project_id || !path) return;
     try {
-      const { openAgentNotification } =
-        await import("../../agents/open-notification");
       if (
-        await openAgentNotification(
-          project_id,
+        await openNotificationTarget({
+          projectId: project_id,
           path,
-          thread_id ?? fragmentId?.thread,
-        )
+          threadId: thread_id,
+          fragmentId,
+        })
       ) {
         markReadState("read");
-        return;
       }
-      await ensureProjectReduxRuntime();
-      await redux.getProjectActions(project_id).open_file({
-        path,
-        chat: !!fragmentId?.chat,
-        fragmentId,
-      });
-      markReadState("read");
     } catch (err) {
       logger.warn("Unable to open notification target", err);
     }
